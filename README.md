@@ -80,6 +80,11 @@ Architecture — **Feature-Sliced Design (FSD)**.
 **AI companion profiles**
 - Unique id, system message, an optional **greeting** (the model starts the
   conversation first), role names, tool set, sampling defaults.
+- **Custom names for the user and the assistant** ("Persona" group): a set name
+  replaces the feed's role header (in caps — `GAIA` instead of `YOU`) and the label
+  in the `F5` conversation export (`Gaia:` instead of `User:`). Empty by default —
+  then the labels follow the interface language. They apply to existing chats too
+  (resolved from the profile at render time), so they can be changed at any time.
 - **Agent-scaffold language** (the "Scaffold language" field in the Persona
   subsection): the language of background-task prompts, the self-model scaffold, and
   tool results — text that the *model* reads (not the language of its replies, which

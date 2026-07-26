@@ -19,6 +19,10 @@ pub struct Chat {
     pub modified_at: DateTime<Utc>,
     /// The chat's active system message (the assistant can change it via a tool).
     pub system_message: String,
+    /// A snapshot of the profile's role names at creation time (spec §10). **Not
+    /// used for display**: the feed and the `F5` export resolve names from the
+    /// profile, so editing them in settings applies to existing chats as well.
+    /// Kept for the import format and a possible future per-chat override.
     #[serde(default)]
     pub character_names: CharacterNames,
     #[serde(default)]

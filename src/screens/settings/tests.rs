@@ -756,6 +756,64 @@ fn greeting_editor_is_multiline_and_keeps_newlines() {
     }
 }
 
+/// Custom role names (spec §5.1): the fields live in the profile's "Persona" group,
+/// carry a description, and commit into `character_names` — an empty value is
+/// legitimate ("not set" → the localized label).
+#[test]
+fn role_name_fields_edit_character_names() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PUserName);
+    s.handle_key(key(KeyCode::Enter)); // open the editor
+    for c in "Гайя".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            let names = edit
+                .character_names
+                .expect("names are part of the snapshot");
+            assert_eq!(names.user, "Гайя");
+            assert_eq!(names.assistant, "", "the assistant's name isn't touched");
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+    // The working copy is updated too — the row now shows the new value.
+    assert!(s.fields().iter().any(
+        |f| f.id == FieldId::PUserName && matches!(&f.kind, FieldKind::Text(t) if t == "Гайя")
+    ));
+
+    // Clearing the name is a valid edit: the feed goes back to the localized header.
+    let mut s2 = screen();
+    s2.profiles[0].character_names.user = "Гайя".into();
+    goto_section(&mut s2, Section::Profiles);
+    goto_field(&mut s2, FieldId::PUserName);
+    s2.handle_key(key(KeyCode::Enter));
+    s2.handle_key(ctrl('k')); // clear the field
+    match s2.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            assert_eq!(edit.character_names.unwrap().user, "");
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+}
+
+#[test]
+fn role_name_fields_are_described_and_grouped_with_persona() {
+    let s = screen();
+    let rows = s.profile_fields_for(Subsection::Assistant);
+    let persona = rows
+        .iter()
+        .find(|r| r.id == FieldId::PSystem)
+        .expect("the system message is in the Persona group")
+        .group;
+    for id in [FieldId::PUserName, FieldId::PAssistantName] {
+        let r = rows.iter().find(|r| r.id == id).expect("field present");
+        assert_eq!(r.group, persona);
+        assert!(field_desc(&s, id).is_some(), "{id:?} has no description");
+    }
+}
+
 #[test]
 fn other_fields_edit_single_line() {
     let mut s = screen();

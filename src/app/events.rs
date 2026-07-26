@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
-use crate::entities::profile::{Profile, ProfileSummary};
+use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
 use crate::shared::api::FinishReason;
@@ -167,6 +167,11 @@ pub enum AppEvent {
         mcp: crate::features::tools::mcp::McpSnapshot,
         api_keys_present: Vec<crate::shared::config::CloudProvider>,
     },
+    /// The role names to show in the feed — the active chat's profile
+    /// `character_names` (spec §5.1). Sent on chat activation and whenever the
+    /// profile is edited, so a name change applies to the open chat immediately.
+    /// An empty field means "not set": the feed keeps its localized header.
+    CharacterNames(CharacterNames),
     /// The active chat changed — UI rebuilds the feed from its messages and loads
     /// the saved draft into the input box (`draft`; empty for a new chat).
     ChatActivated {

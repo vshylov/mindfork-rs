@@ -239,3 +239,43 @@ fn self_model_changed_refreshes_open_screen_only() {
         },
     );
 }
+
+/// The names reach the chat screen's feed even while another screen is on top
+/// (the event is applied to the chat unconditionally, like `ChatList`).
+#[test]
+fn character_names_event_reaches_the_feed() {
+    use crate::entities::message::Message;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+        None,
+        screen.palette(),
+        screen.loc(),
+    )));
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::CharacterNames(crate::entities::profile::CharacterNames {
+            user: "Gaia".into(),
+            assistant: String::new(),
+            system: String::new(),
+        }),
+    );
+
+    screen.activate_chat(
+        uuid::Uuid::new_v4(),
+        "chat".into(),
+        &[Message::user("hi")],
+        "",
+    );
+    let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+    term.draw(|f| screen.render(f)).unwrap();
+    let dump = format!("{:?}", term.backend().buffer());
+    assert!(dump.contains("GAIA"), "{dump}");
+}

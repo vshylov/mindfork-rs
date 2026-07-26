@@ -833,6 +833,8 @@
   "ui.settings.field.profile_language": "Framework language",
   "ui.settings.field.system_message": "System message",
   "ui.settings.field.greeting": "Greeting",
+  "ui.settings.field.user_name": "User name",
+  "ui.settings.field.assistant_name": "Assistant name",
   "ui.settings.field.imp_profile": "Impersonation profile",
 
   "ui.settings.value.no_profiles": "(no profiles)",
@@ -841,6 +843,8 @@
   "ui.settings.hint.language_locked": "locked: the profile has data",
   "ui.settings.new_profile_name": "New profile",
   "ui.settings.imp_profile_migrated_name": "{name} (impersonation)",
+  "ui.settings.desc.user_name": "What to call the user in this profile's chats: the feed header (in caps) and the label when copying the conversation with F5. Empty — the interface language's label («YOU» / «User:»).",
+  "ui.settings.desc.assistant_name": "What to call the assistant in this profile's chats: the feed header (in caps) and the label when copying the conversation with F5. Empty — the interface language's label («ASSISTANT» / «Assistant:»).",
   "ui.settings.desc.imp_profile": "The impersonation profile (the user persona) the model writes a message as on Ctrl+U in this profile's chats. The profiles themselves live in the «Impersonation» tab. Not set — the shared default text is used.",
   "ui.settings.desc.imp_profile_select": "An impersonation profile — a user persona (name + system message). Ctrl+N — create, Ctrl+D — delete. An assistant profile picks one in the «Assistant» tab via the «Impersonation profile» field.",
   "ui.settings.desc.imp_system_message": "The impersonation system message: describes the user the model writes the next message as (Ctrl+U). There are no tools in this mode.",

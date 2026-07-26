@@ -346,6 +346,8 @@ pub struct Profile {
     pub is_hidden: bool,
 }
 
+// Role names shown to the user (feed headers, `F5` export). Empty = not set:
+// the surface falls back to the interface language's label (§11.3).
 pub struct CharacterNames { pub user: String, pub assistant: String, pub system: String }
 
 pub struct Note { pub id: Uuid, pub profile_id: Uuid, pub content: String,
@@ -701,10 +703,12 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 - **Unique `Profile.id: Uuid`**; a chat is tied to a profile (`Chat.profile_id`).
 - **Data isolation**: notes and RAG are separate per profile (`WHERE profile_id = ?`).
 - **Creating a chat from a profile**: `default_system_message → Chat.system_message`, `character_names`, `greeting` (as the assistant's first message), and `default_sampling` are copied over.
-- **Editing a profile** doesn't affect already-created chats (they have their own copy of `system_message`).
+- **Editing a profile** doesn't affect already-created chats (they have their own copy of `system_message`). **Exception — role names** (`character_names`): they're display-only, so they're resolved from the profile at render time (the chat's copy is kept but not used) and a rename applies to existing chats immediately.
 - **Deleting a profile** is soft (`is_hidden`), cascading to hide its chats and exclude its notes/RAG.
 
 A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
+
+**Role names** (`Profile.character_names`, settings → "Profiles" → the "Persona" group): what the interlocutors are called in this profile's chats — the feed's headers (in caps: `GAIA` instead of `YOU`) and the labels of the `F5` conversation export (`Gaia:` instead of `User:`). Both fields are **empty by default** — then each surface uses the interface language's own label, so the chat follows axis B until the user overrides it. The names are resolved at render time from the profile (see the exception above), so they can be changed at any point, including for old chats. Whitespace-only counts as unset. Legacy seed values (the pre-i18n Russian placeholders, and the `You`/`Assistant` they were migrated to) were never displayed and are cleared once at startup so the labels don't get stuck in a foreign language.
 
 **Scaffold language** (`Profile.language: Lang`, i18n Tier 1, [docs/history/i18n.md](docs/history/i18n.md)): the language of background-task prompts, the "self-model" scaffold, and tool results — text that the **model** reads (axis A). This is **not** the language the model answers in (that's set by the system message) and **not** the interface language (axis B, separate). Chosen when the profile is created and then **locked** as soon as the profile has data (visible chats / a non-empty self-model / notes) — so that the entire profile's memory stays in one language; the gate is authoritatively checked by the orchestrator (`profile_has_data`), and the UI renders the "Scaffold language" field as locked. The default (bootstrap) profile is created together with a default chat → immediately locked to `Ru`; for a different language, a new profile is created instead. Resolution — `profile.language` at request time; scaffold text is fetched through `shared/i18n` from the built-in `locales/<lang>.json` bundle, with external `data/locales/*.json` layered on top at startup (Tier 3 — overriding built-in text and adding new languages with no rebuild, [docs/history/i18n-external-locales.md](docs/history/i18n-external-locales.md)). Tiers 1–2 translated the hot core and all 35 tools; `Lang` is `Ru`/`En`/`Ext(code)`.
 
@@ -774,6 +778,8 @@ A direct requirement from the task:
   **The copy's contents are configurable** (`config.copy`, the "Interface" section): by default —
   only the message text; optionally includes "thoughts" (CoT), tool-call parameters
   (name + arguments), and their results (taken from `Message.tool_calls`).
+  Roles are labeled with the chat profile's **custom names** when set (`Gaia:` instead
+  of `User:`, §10); otherwise with the interface language's labels.
 - Virtualization of a long list (only visible rows are rendered).
 
 ### 11.3. The message feed
@@ -782,6 +788,12 @@ A direct requirement from the task:
 - **Collapsible blocks**: "thoughts" (CoT) and each tool call (name, arguments, result) — expand/collapse via a key on the selected block.
 - **Tool cards** (`⚒ name(…)`) show arguments/results meaningfully rather than as raw JSON: a presenter (`features/tools/present.rs`) produces a compact header (`name(value)`/`name(k=v, …)`) and blocks — `python_exec` draws a highlighted Python code block and a console (stdout/stderr/exit code in separate colors), `fs_read`/`fs_write` — content highlighted by the path's extension, prose tools (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, short arguments — inline. Knowledge about tools lives in the tools layer; `message_feed` stays generic, reusing `markdown::highlight_code`. A card gets a **rail extension underneath it** (the colored `▌` gutter continues under the result) regardless of whether assistant text follows — so the rail doesn't cut off at the result when the call ends the turn.
 - A per-message Markdown toggle.
+- **Role headers** (`✦ ASSISTANT` / `❯ YOU`) show the profile's **custom names** when set
+  (`Profile.character_names`, §10): the name is uppercased to match the header's style
+  (Unicode-aware), an unset field keeps the interface language's label. The names are
+  resolved from the profile and pushed to the screen by the orchestrator
+  (`AppEvent::CharacterNames`) on chat activation and after a profile edit, so a rename
+  applies to the open chat at once; they take part in the feed's render-cache key.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.

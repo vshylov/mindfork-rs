@@ -65,6 +65,9 @@ pub(super) fn apply_event(
             }
             screen.set_settings(*config, profiles, language_locked, mcp, api_keys_present);
         }
+        // Always applied to the chat screen (like `ChatList`): the names must be
+        // current whether or not the chat is the visible screen right now.
+        AppEvent::CharacterNames(names) => screen.set_character_names(names),
         AppEvent::ChatActivated {
             id,
             title,

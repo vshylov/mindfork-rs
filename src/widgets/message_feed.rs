@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
+use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::i18n::Locale;
 use crate::shared::markdown;
@@ -177,6 +178,10 @@ pub struct MessageFeed {
     /// threaded via [`MessageFeed::set_render_mermaid`]). On a render failure the
     /// block is printed as source (hard fallback, see `shared::markdown::mermaid`).
     render_mermaid: bool,
+    /// The active chat profile's custom role names (threaded via
+    /// [`MessageFeed::set_role_names`]). An unset field falls back to the localized
+    /// header (`YOU`/`ASSISTANT`). See spec §11.3.
+    role_names: CharacterNames,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -198,6 +203,9 @@ struct CacheKey {
     /// Interface language (axis B): role headers/the "thoughts" pill/the placeholder
     /// depend on it — a language change clears the feed's block cache.
     lang: crate::shared::i18n::Lang,
+    /// Custom role names: they're baked into the cached header lines, so editing
+    /// them in settings has to clear the cache.
+    role_names: CharacterNames,
 }
 
 /// One message's cached contribution to the feed (already width-wrapped lines
@@ -224,9 +232,17 @@ impl MessageFeed {
             // first settings snapshot arrives, the feed renders as the default config.
             table_row_separators: false,
             render_mermaid: true,
+            role_names: CharacterNames::default(),
             cache: Vec::new(),
             cache_key: None,
         }
+    }
+
+    /// Sets the active chat profile's custom role names (spec §5.1). An empty field
+    /// means "not set" — the header falls back to the localized default. Changing
+    /// the value invalidates the render cache via [`CacheKey`].
+    pub fn set_role_names(&mut self, names: CharacterNames) {
+        self.role_names = names;
     }
 
     /// Toggles horizontal separators between rows of Markdown tables
@@ -377,6 +393,7 @@ impl MessageFeed {
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
             lang: loc.lang(),
+            role_names: self.role_names.clone(),
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -398,8 +415,15 @@ impl MessageFeed {
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
                 // A streaming/changed message — recompute only its block.
-                let block =
-                    build_message_block(item, palette, width, self.show_thoughts, opts, loc);
+                let block = build_message_block(
+                    item,
+                    palette,
+                    width,
+                    self.show_thoughts,
+                    opts,
+                    loc,
+                    &self.role_names,
+                );
                 let cb = CachedBlock {
                     fingerprint: fp,
                     lines: block,
@@ -418,9 +442,11 @@ impl MessageFeed {
 
 /// Builds one message's contribution to the feed: width-wrapped lines with a colored
 /// role rail + a trailing separator (if the body doesn't already end on a blank line).
-/// A pure function of (`item`, `palette`, `width`, `show_thoughts`, `opts`) —
+/// A pure function of (`item`, `palette`, `width`, `show_thoughts`, `opts`, `names`) —
 /// the basis of the cache. `opts` — base markdown-render flags (tables/mermaid from
 /// settings; `soft_break_as_newline` is added on by `push_body` for the user).
+/// `names` — the profile's custom role names (empty field → the localized header).
+#[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
     palette: &Palette,
@@ -428,6 +454,7 @@ fn build_message_block(
     show_thoughts: bool,
     opts: markdown::RenderOpts,
     loc: &'static Locale,
+    names: &CharacterNames,
 ) -> Vec<Line<'static>> {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -442,7 +469,11 @@ fn build_message_block(
     match item.role {
         FeedRole::User => {
             body.push(role_header(
-                &format!("{} {}", glyphs.user_icon, loc.t("ui.feed.role.user")),
+                &format!(
+                    "{} {}",
+                    glyphs.user_icon,
+                    role_name(names.user_name(), "ui.feed.role.user", loc)
+                ),
                 palette.user_soft,
             ));
             push_body(&mut body, item, palette, inner, opts);
@@ -452,7 +483,7 @@ fn build_message_block(
                 &format!(
                     "{} {}",
                     glyphs.assistant_icon,
-                    loc.t("ui.feed.role.assistant")
+                    role_name(names.assistant_name(), "ui.feed.role.assistant", loc)
                 ),
                 palette.assistant_soft,
             ));
@@ -504,6 +535,16 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
         tc.text_offset.hash(&mut h);
     }
     h.finish()
+}
+
+/// The header text for a role: the profile's custom name, or the localized default
+/// under `key`. Feed headers are set in caps, so a custom name is uppercased too
+/// (Unicode-aware, so non-Latin scripts are uppercased as well).
+fn role_name(custom: Option<&str>, key: &str, loc: &'static Locale) -> String {
+    match custom {
+        Some(name) => name.to_uppercase(),
+        None => loc.t(key).to_string(),
+    }
 }
 
 /// A role-header line: icon + name in caps, colored with the role's "soft" variant.
@@ -930,6 +971,61 @@ mod tests {
         let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
         assert_eq!(en.t("ui.feed.role.assistant"), "ASSISTANT");
         assert_eq!(en.t("ui.feed.role.user"), "YOU");
+    }
+
+    /// A custom role name from the profile replaces the localized header and is
+    /// uppercased to match the feed's style; an unset field keeps its default.
+    #[test]
+    fn custom_role_names_replace_headers_in_caps() {
+        let mut feed = MessageFeed::new();
+        feed.set_role_names(CharacterNames {
+            user: "Гайя".into(),
+            assistant: "анна".into(),
+            system: String::new(),
+        });
+        let msgs = vec![
+            msg(FeedRole::User, "привет", ""),
+            msg(FeedRole::Assistant, "здравствуй", ""),
+        ];
+        let joined = flatten(&feed.build_lines(&msgs, &Palette::default(), 80, ru()));
+        assert!(
+            joined.contains("ГАЙЯ") && joined.contains("АННА"),
+            "{joined}"
+        );
+        assert!(!joined.contains("ВЫ") && !joined.contains("АССИСТЕНТ"));
+
+        // Only the assistant named — the user keeps the localized header.
+        let mut feed = MessageFeed::new();
+        feed.set_role_names(CharacterNames {
+            assistant: "Анна".into(),
+            ..Default::default()
+        });
+        let joined = flatten(&feed.build_lines(&msgs, &Palette::default(), 80, ru()));
+        assert!(joined.contains("ВЫ") && joined.contains("АННА"), "{joined}");
+    }
+
+    /// Names are baked into the cached header lines — changing them has to reset
+    /// the block cache (otherwise a rename in settings wouldn't show up).
+    #[test]
+    fn changing_role_names_invalidates_cache() {
+        let mut feed = MessageFeed::new();
+        let msgs = vec![msg(FeedRole::User, "привет", "")];
+        let before = flatten(&feed.build_lines(&msgs, &Palette::default(), 80, ru()));
+        assert!(before.contains("ВЫ"));
+        feed.set_role_names(CharacterNames {
+            user: "Гайя".into(),
+            ..Default::default()
+        });
+        let after = flatten(&feed.build_lines(&msgs, &Palette::default(), 80, ru()));
+        assert!(after.contains("ГАЙЯ"), "{after}");
+    }
+
+    /// Concatenates the rendered lines' text (a helper for header assertions).
+    fn flatten(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect()
     }
 
     #[test]

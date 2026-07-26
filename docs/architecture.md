@@ -391,7 +391,9 @@ flowchart LR
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
-`ChatActivated`, `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
+`ChatActivated`, `CharacterNames` (the active chat profile's role names for the
+feed's headers — sent on activation and after a profile edit, §10 of the spec),
+`UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
 (conversation control tools — §8), `Finished`,
 `Impersonation{Started,Chunk,Finished}`, `RagProgress`, `SelfModelView`,
