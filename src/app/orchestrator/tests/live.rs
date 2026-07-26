@@ -3,6 +3,82 @@
 
 use super::*;
 
+/// Chat attachments (docs/file-attachments.md, stage 1 go/no-go): a file attached
+/// with `/file attach` actually reaches the model through the real wire path and
+/// is used to answer. Two phases in two chats: a **baseline** (no attachment —
+/// the model can't know the invented code) and the attached case (it answers with
+/// the code). The mirror half — that `/file remove` takes the text back out of the
+/// request — is deterministic and covered by a unit test
+/// (`attachments::removing_an_attachment_takes_it_out_of_the_request`), so it
+/// needs no model. `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn file_attachment_e2e_live() {
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    // An invented fact no model can know from pretraining.
+    const CODE: &str = "ZARYA-7719";
+    const QUESTION: &str =
+        "What is the internal build code for project Mindfork? Reply with the code only.";
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Phase 1 — baseline: with nothing attached, the model must not produce the code.
+    let (baseline, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;
+    eprintln!("baseline reply: {baseline}");
+
+    // Phase 2 — a fresh chat with the file attached.
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let path = dir.path().join("build-notes.md");
+    std::fs::write(
+        &path,
+        format!(
+            "# Project Mindfork — internal notes\n\n\
+             The internal build code for project Mindfork is {CODE}.\n\
+             Do not confuse it with the release tag.\n"
+        ),
+    )
+    .unwrap();
+    cmd_tx
+        .send(AppCommand::FileAttach {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let attached = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(crate::app::events::FileProgress::Attached { .. })
+                | AppEvent::FileProgress(crate::app::events::FileProgress::Failed(_))
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("attach: {attached:?}");
+
+    let (answer, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;
+    eprintln!("attached reply: {answer}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        answer.contains(CODE),
+        "the model must answer from the attached file, got: {answer}"
+    );
+    assert!(
+        !baseline.contains(CODE),
+        "the baseline must not know the invented code (otherwise the test proves nothing): {baseline}"
+    );
+}
+
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
 /// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
 /// (the bootstrap profile is locked: it already has a default chat), set it to En, create a

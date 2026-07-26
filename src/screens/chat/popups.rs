@@ -203,6 +203,11 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
 /// [`HELP_KEYS`]; a command label (`/…`) is drawn in the command color. Split out
 /// of the hotkeys so they don't clutter reading them. See spec §11.7.
 pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
+    // Attachments come first — they are the commands a user reaches for while
+    // writing a message (see docs/file-attachments.md §4.8).
+    ("ui.help.k.file_attach", "ui.help.file_attach"),
+    ("ui.help.k.file_remove", "ui.help.file_remove"),
+    ("/file list", "ui.help.file_list"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),

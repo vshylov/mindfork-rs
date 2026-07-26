@@ -2,8 +2,12 @@
 
 Design plan for the "attach text files to a conversation" track. Genre — a track
 design plan per [AGENTS.md §1](../AGENTS.md): stages, scope, and forks. Forks
-**F1–F10 were confirmed by the user on 2026-07-27**; the sub-forks they opened
-up (**F11–F14**) carry recommendations and are still open.
+**F1–F10 were confirmed by the user on 2026-07-27**, as was **F11** (a separate
+chat-scoped index) on the same day; **F12–F14** follow the recommendations below.
+
+**Status: stage 1 implemented** (`feat/file-attachments`) — entity, commands,
+extraction, the pinned block, modes/budgets and UI; awaiting its live run.
+Stages 2–3 (`attachment_read`, the semantic index) are next.
 
 Related: spec [§6.2](../spec.md) (building the request), [§6.6](../spec.md) (KV
 cache and prefix caching), [§9.3](../spec.md) (tool roster / RAG),

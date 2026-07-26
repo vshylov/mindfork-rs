@@ -115,6 +115,18 @@ Architecture — **Feature-Sliced Design (FSD)**.
   grouped; markdown is split **semantically** (by headings, protecting code blocks).
   On search, neighboring chunks are **stitched** back together via the overlap —
   saves context and doesn't confuse the model with a repeat.
+- **Attaching files to a chat:** `/file attach <path>` attaches a text file to the
+  current chat, `/file remove <name|#N>` takes it away, `/file list` shows what is
+  attached. The file's text is passed to the model with **every** message of that
+  chat, so it can be asked about at any point — and removing it genuinely takes it
+  out of what the model sees. Unlike `/rag add`, this is chat-scoped, needs no
+  embedding server, and delivers the file **in full** rather than as
+  search-matched fragments. Attachable: any text file (source code, configs,
+  logs), plus `.html`/`.pdf`/`.docx`. The content is snapshotted when attached, so
+  the conversation stays coherent even if the file later changes. A file above the
+  budget isn't refused — it is attached "by reference" (name, size and the
+  beginning). Budgets live in settings ("Memory" → "Attachments"); the status bar
+  shows a `§ files: N (~tokens)` chip, since attachments cost tokens every turn.
 - **Loading files into RAG from the input box:** `/rag add <path> [-r]` commands
   (indexes a file or directory, recursively with the flag; currently `*.txt`/`*.md`)
   and `/rag remove <path>` (removes a file/directory from the store). Indexing runs
@@ -391,6 +403,8 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Ctrl+W` | toggle: mouse wheel ↔ text selection |
 | click / drag with the mouse in the input box | cursor / text selection (with `Ctrl+W` capture on) |
 | `PageUp` / `PageDown` / mouse wheel | scroll the feed |
+| `/file attach <path>` | attach a text file to the chat (an input-box command) |
+| `/file remove <name\|#N>` · `/file list` | remove an attachment / show what is attached |
 | `/rag add <path> [-r]` | index a file/directory into RAG (an input-box command) |
 | `/rag remove <path>` | remove a file/directory from RAG (an input-box command) |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |

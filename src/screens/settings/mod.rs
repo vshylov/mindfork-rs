@@ -503,6 +503,10 @@ enum FieldId {
     RagTarget,
     RagOverlap,
     RagMax,
+    // Chat file attachments (`/file attach`) — budgets in estimated tokens
+    AttachMaxFile,
+    AttachMaxTotal,
+    AttachExcerpt,
     // Self-model (narrative, prompt injection)
     SmMaxNarrative,
     SmNarrativeInPrompt,

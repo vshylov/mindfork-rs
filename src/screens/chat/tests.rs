@@ -1371,6 +1371,100 @@ fn invalid_rag_command_shows_note_and_does_not_send() {
 }
 
 #[test]
+fn file_command_intercepted_on_enter() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    // A path with spaces (quoted) — the whole thing is one argument.
+    type_str(&mut s, "/file attach \"d:\\my docs\\notes.md\"");
+    let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        intent,
+        Some(ChatIntent::FileAttach {
+            path: "d:\\my docs\\notes.md".into(),
+        })
+    );
+    assert!(s.input.is_empty(), "the field is cleared after the command");
+
+    type_str(&mut s, "/file remove #2");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::FileRemove {
+            target: "#2".into()
+        })
+    );
+    type_str(&mut s, "/file list");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::FileList)
+    );
+}
+
+#[test]
+fn invalid_file_command_shows_note_and_does_not_send() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    type_str(&mut s, "/file attach");
+    let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(intent, None, "an invalid command isn't sent as a message");
+    // Errors go into the feed as a service note (there is no separate error role).
+    assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+}
+
+#[test]
+fn attachment_chip_shows_count_and_standing_cost() {
+    use crate::entities::attachment::{AttachMode, AttachmentInfo};
+    let mut s = ChatScreen::new();
+    assert_eq!(s.attachments_hint(), None, "no chip without attachments");
+
+    s.set_attachments(vec![
+        AttachmentInfo {
+            name: "a.md".into(),
+            bytes: 4096,
+            est_tokens: 1200,
+            mode: AttachMode::Inline,
+        },
+        // A by-reference file contributes only its excerpt, so it must not be
+        // counted at full weight in the standing cost.
+        AttachmentInfo {
+            name: "big.log".into(),
+            bytes: 900_000,
+            est_tokens: 200_000,
+            mode: AttachMode::ByReference,
+        },
+    ]);
+    let hint = s.attachments_hint().expect("a chip with attachments");
+    assert!(hint.contains('2'), "the count of files: {hint}");
+    assert!(hint.contains("1.2k"), "the inline cost only: {hint}");
+    assert!(
+        !hint.contains("200k"),
+        "by-reference weight must not be counted: {hint}"
+    );
+}
+
+#[test]
+fn file_list_note_numbers_items_for_removal() {
+    use crate::entities::attachment::{AttachMode, AttachmentInfo};
+    use crate::features::file_command::FileProgress;
+    let mut s = ChatScreen::new();
+    s.set_file_progress(FileProgress::Listed {
+        items: vec![AttachmentInfo {
+            name: "notes.md".into(),
+            bytes: 2048,
+            est_tokens: 400,
+            mode: AttachMode::Inline,
+        }],
+    });
+    let note = s
+        .feed
+        .iter()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note in the feed");
+    // The `#N` handle is what `/file remove #N` accepts.
+    assert!(note.text.contains("#1"), "{}", note.text);
+    assert!(note.text.contains("notes.md"), "{}", note.text);
+}
+
+#[test]
 fn rag_progress_banner_lifecycle() {
     let mut s = ChatScreen::new();
     assert!(!s.is_rag_active());
@@ -1690,6 +1784,16 @@ fn help_tabs_render_distinct_content() {
         "missing the /rag add command"
     );
     assert!(commands.contains("/tts"), "missing the /tts command");
+    // Attachments are listed FIRST — they're the commands used while writing a
+    // message (docs/file-attachments.md §4.8).
+    assert!(
+        commands.contains("/file attach"),
+        "missing the /file attach command"
+    );
+    assert!(
+        commands.find("/file attach") < commands.find("/rag add"),
+        "the /file commands must come before /rag: {commands}"
+    );
 
     // "License": the MIT text.
     let license = text_for(HelpTab::License);

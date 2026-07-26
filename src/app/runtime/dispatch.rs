@@ -130,6 +130,10 @@ pub(super) fn apply_event(
             reason,
         } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
+        AppEvent::FileProgress(progress) => screen.set_file_progress(progress),
+        // Always applied to the chat screen (like `CharacterNames`): the chip
+        // must be current whichever screen is visible right now.
+        AppEvent::Attachments(items) => screen.set_attachments(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
         AppEvent::SelfModelView(model) => match active {
@@ -231,6 +235,9 @@ pub(super) fn dispatch(
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
+        ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
+        ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
+        ChatIntent::FileList => AppCommand::FileList,
         ChatIntent::Tts(scope) => AppCommand::Tts(scope),
         ChatIntent::TtsStop => AppCommand::TtsStop,
         ChatIntent::TtsPause => AppCommand::TtsPause,

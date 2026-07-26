@@ -470,7 +470,12 @@ fn spawn_rag_rebuild(task: RagRebuild) {
 /// Binary formats (pdf/docx) are read as raw bytes (`fs::read`), not via
 /// `read_text` (which decodes as UTF-8). Extraction can fail with
 /// context (the caller skips such a source).
-fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
+///
+/// Shared with chat attachments (`/file attach`, see [`super::attachments`]) —
+/// both need the same per-format extraction, and it lives in `app` because it
+/// reaches into `features/tools/web`, which `features` may not import sideways
+/// (FSD).
+pub(super) fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
     use crate::features::{doc_extract, rag_ingest};
     if rag_ingest::is_html(path) {
         let raw = rag_ingest::read_text(path)?;

@@ -33,7 +33,11 @@ impl ChatScreen {
     /// adds a field here rather than extending `status_bar::render`/`height`'s
     /// signatures. `background` is passed separately (the owning `String` at the
     /// call site outlives the borrow).
-    fn status_model<'a>(&'a self, background: Option<&'a str>) -> status_bar::StatusModel<'a> {
+    fn status_model<'a>(
+        &'a self,
+        background: Option<&'a str>,
+        attachments: Option<&'a str>,
+    ) -> status_bar::StatusModel<'a> {
         status_bar::StatusModel {
             statuses: &self.statuses,
             generating: self.generating,
@@ -44,6 +48,7 @@ impl ChatScreen {
             mouse_scroll: self.mouse_scroll,
             background,
             speaking: self.speaking,
+            attachments,
         }
     }
 
@@ -86,9 +91,10 @@ impl ChatScreen {
         // `status_model` on each call (a short-lived `&self` borrow — doesn't
         // overlap `&mut self.feed_view` below).
         let background = self.background_hint();
+        let files = self.attachments_hint();
         let status_h = status_bar::height(
             frame.area().width as usize,
-            &self.status_model(background.as_deref()),
+            &self.status_model(background.as_deref(), files.as_deref()),
             &self.palette,
             self.loc,
         );
@@ -131,7 +137,7 @@ impl ChatScreen {
         status_bar::render(
             frame,
             status_area,
-            &self.status_model(background.as_deref()),
+            &self.status_model(background.as_deref(), files.as_deref()),
             &self.palette,
             self.loc,
         );

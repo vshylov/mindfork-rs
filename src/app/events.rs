@@ -3,9 +3,11 @@
 
 use uuid::Uuid;
 
+use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+pub use crate::features::file_command::FileProgress;
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
 use crate::shared::api::FinishReason;
@@ -84,6 +86,16 @@ pub enum AppCommand {
     /// re-chunk and re-embed the stored sources. Runs as a background task;
     /// progress — via `RagProgress` events. See spec §9.3.
     RagRebuild,
+    /// Attach a file to the active chat (the `/file attach <path>` command).
+    /// Reading/extracting the text runs as a background task; the result arrives
+    /// as a `FileProgress` event. See docs/file-attachments.md, spec §9.7.
+    FileAttach { path: String },
+    /// Remove an attachment from the active chat by display name, path, or `#N`
+    /// (the `/file remove <target>` command).
+    FileRemove { target: String },
+    /// Show the active chat's attachments (the `/file list` command). The result
+    /// is a `FileProgress::Listed` event.
+    FileList,
     /// Speak the active chat's messages (the `/tts [N|all]` command). The orchestrator
     /// (the owner of `Chat`) takes a **snapshot** of the conversation at command time and
     /// starts a background synthesis/playback task. A new command interrupts the current
@@ -241,6 +253,14 @@ pub enum AppEvent {
     /// Progress of background file indexing into RAG (the `/rag add` command). See
     /// spec §9.3.
     RagProgress(RagProgress),
+    /// Outcome of a `/file` command (attached/removed/list/error) — a note in the
+    /// feed. See docs/file-attachments.md.
+    FileProgress(FileProgress),
+    /// The active chat's attachment cards — for the status-bar chip (attachments
+    /// cost tokens on every turn, so their presence has to be visible). Sent on
+    /// chat activation and after every attach/remove, like `CharacterNames`.
+    /// Cards only: the text itself never travels through the event channel.
+    Attachments(Vec<AttachmentInfo>),
     /// A snapshot of the active profile's "self-model" (a reply to `RequestSelfModel`)
     /// for the viewer screen (`F3`). `None` — the model hasn't been created yet. `Box` —
     /// a large type, don't bloat the enum. See docs/history/self-model-mvp.md.

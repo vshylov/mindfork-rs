@@ -320,6 +320,8 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         messages,
         sampling_override: None,
         draft: String::new(),
+        // The import format (v1) carries no attachments — see docs/import-format.md.
+        attachments: Vec::new(),
         deleted: Vec::new(),
         reflected_upto: None,
         reflected_at: None,

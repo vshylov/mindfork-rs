@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::entities::attachment::Attachment;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
@@ -34,6 +35,12 @@ pub struct Chat {
     /// chat; empty for a new chat. See spec §11.7.
     #[serde(default)]
     pub draft: String,
+    /// Files attached to the chat (`/file attach`). Their text is injected into
+    /// the request's system prompt on every turn, so `/file remove` genuinely
+    /// removes them from what the model sees. Additive field — old chat files
+    /// read without migration. See docs/file-attachments.md, spec §9.7.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
     /// Deleted exchanges (`Ctrl+E`/`Ctrl+R`). Stored in the chat file only for
     /// **manual** recovery (editing JSON) in rare cases where something important
     /// was deleted; not used by the UI and not restored automatically.
@@ -117,6 +124,7 @@ impl Chat {
             messages: Vec::new(),
             sampling_override: None,
             draft: String::new(),
+            attachments: Vec::new(),
             deleted: Vec::new(),
             reflected_upto: None,
             reflected_at: None,
@@ -230,6 +238,45 @@ mod tests {
         let chat = Chat::from_profile(&p, "t");
         let json = serde_json::to_string(&chat).unwrap();
         assert!(!json.contains("deleted"));
+    }
+
+    #[test]
+    fn attachments_are_additive_and_not_serialized_when_empty() {
+        use crate::entities::attachment::{AttachMode, Attachment};
+        let p = Profile::new("X", "s");
+        let chat = Chat::from_profile(&p, "t");
+        assert!(chat.attachments.is_empty());
+        let json = serde_json::to_string(&chat).unwrap();
+        assert!(
+            !json.contains("attachments"),
+            "empty list doesn't clutter the file"
+        );
+
+        // An old chat file (no `attachments` key) reads without migration.
+        let old = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "profile_id": "00000000-0000-0000-0000-000000000002",
+            "title": "old chat",
+            "created_at": "2026-01-01T00:00:00Z",
+            "modified_at": "2026-01-01T00:00:00Z",
+            "system_message": "s",
+            "messages": []
+        }"#;
+        let loaded: Chat = serde_json::from_str(old).unwrap();
+        assert!(loaded.attachments.is_empty());
+
+        // A non-empty list round-trips.
+        let mut with = chat.clone();
+        with.attachments.push(Attachment::new(
+            "notes.md",
+            "/tmp/notes.md",
+            "содержимое".into(),
+            20,
+            AttachMode::Inline,
+        ));
+        let json = serde_json::to_string(&with).unwrap();
+        let back: Chat = serde_json::from_str(&json).unwrap();
+        assert_eq!(with, back);
     }
 
     #[test]
