@@ -43,9 +43,10 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 - **The project site `mindfork.io`** is now carried by the package metadata as
   well: the Windows installer shows it as the publisher link in "Apps &
   features" (support and updates there now point at GitHub issues and releases
-  respectively), and the Linux packages use it for `Homepage:`/`URL:`. The site
-  itself is not up yet — the repository stays the live destination for issues
-  and downloads.
+  respectively), and the Linux packages use it for `Homepage:`/`URL:`. Every
+  GitHub Release page also gains a footer linking the site and the install guide
+  as of that release. The site itself is not up yet — the repository stays the
+  live destination for issues and downloads.
 
 ### Fixed
 
