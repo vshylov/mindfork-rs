@@ -376,7 +376,7 @@ The `python_exec` tool works in two modes ("Tools" setting → "Python"):
 
 - **Wasmer sandbox** (default) — code runs isolated in WASIX (no access to the
   machine's files; network is a toggle), with preinstalled packages (numpy,
-  requests, …). Doesn't need Python on the machine.
+  pandas, requests, beautifulsoup4, …). Doesn't need Python on the machine.
 - **Local interpreter** — the system `python`/`python3` (the previous behavior, no
   isolation; the path is configurable).
 

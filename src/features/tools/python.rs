@@ -487,6 +487,32 @@ mod tests {
         assert!(out.result.contains("total 21"), "got: {}", out.result);
     }
 
+    /// beautifulsoup4 (pure Python + soupsieve for CSS selectors) in a provisioned
+    /// sandbox — parses offline, so no network access is needed.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn beautifulsoup_in_sandbox() {
+        let Some(tool) = provisioned(false, 120) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        // `select` exercises soupsieve, the dependency most likely to be missing.
+        let code = "import bs4\n\
+                    from bs4 import BeautifulSoup\n\
+                    html = '<html><body><p class=\"x\">hi</p><p>bye</p></body></html>'\n\
+                    soup = BeautifulSoup(html, 'html.parser')\n\
+                    print('bs4', bs4.__version__)\n\
+                    print('text', soup.p.get_text())\n\
+                    print('select', len(soup.select('p.x')))";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("bs4 4."), "got: {}", out.result);
+        assert!(out.result.contains("text hi"), "got: {}", out.result);
+        assert!(out.result.contains("select 1"), "got: {}", out.result);
+    }
+
     /// requests over HTTPS with network access enabled.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]

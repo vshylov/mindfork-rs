@@ -15,6 +15,12 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **beautifulsoup4 in the Python sandbox** — `mindfork-rs sandbox setup` now also
+  installs BeautifulSoup (with `soupsieve` for CSS selectors), so sandboxed code
+  can parse HTML — a natural companion to the already-available `requests`. An
+  existing sandbox picks it up by re-running the same command; everything already
+  installed is skipped.
+
 - **Custom names for the user and the assistant** — two new fields in the
   settings "Profiles" section ("Persona" group). When set, the name replaces the
   role headers in the chat feed (in caps: `GAIA` instead of `YOU`) and the labels

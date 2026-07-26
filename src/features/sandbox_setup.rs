@@ -1,8 +1,8 @@
 //! Provisioning of Python-sandbox assets (`mindfork sandbox setup`, Phase 2 —
 //! [docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)).
 //! Downloads into `data/sandbox/`: the `wasmer` binary (a platform tar.gz from GitHub),
-//! `python.webc` (via `wasmer` itself), package wheels (numpy from the wasix index,
-//! the requests stack from PyPI) — all via a **lock list with exact URL + sha256** (resilient
+//! `python.webc` (via `wasmer` itself), package wheels (numpy/pandas from the wasix index,
+//! the requests stack and beautifulsoup4 from PyPI) — all via a **lock list with exact URL + sha256** (resilient
 //! to "latest"). Provisioning is idempotent; the network layer is thin, the logic is
 //! pure/testable.
 //!
@@ -75,9 +75,10 @@ struct Wheel {
 }
 
 /// Lock list of wheels. **numpy**/**pandas** — native wasix wheels from
-/// `pythonindex.wasix.org`; their pure dependencies (dateutil/six/pytz/tzdata) and the
-/// **requests stack** (requests/urllib3/certifi/idna/charset_normalizer) — pure
-/// Python from PyPI (`py3-none-any`). Versions are pinned; sha256 — from the index/PyPI.
+/// `pythonindex.wasix.org`; their pure dependencies (dateutil/six/pytz/tzdata), the
+/// **requests stack** (requests/urllib3/certifi/idna/charset_normalizer) and
+/// **beautifulsoup4** (+ soupsieve/typing_extensions) — pure Python from PyPI
+/// (`py3-none-any`). Versions are pinned; sha256 — from the index/PyPI.
 const WHEELS: &[Wheel] = &[
     Wheel {
         dir: "numpy",
@@ -134,6 +135,23 @@ const WHEELS: &[Wheel] = &[
         dir: "charset_normalizer",
         url: "https://files.pythonhosted.org/packages/98/2b/f97f1c193fb855c345d678f5077d6926034db0722df74c8f057020e05a25/charset_normalizer-3.4.9-py3-none-any.whl",
         sha256: "68e5f26a1ad57ded6d1cfb85331d1c1a195314756471d97758c48498bb4dcdf5",
+    },
+    // beautifulsoup4 (HTML parsing, the natural companion to requests) + its dependencies.
+    // The package directory is `bs4`, not the distribution name.
+    Wheel {
+        dir: "bs4",
+        url: "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl",
+        sha256: "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9",
+    },
+    Wheel {
+        dir: "soupsieve",
+        url: "https://files.pythonhosted.org/packages/0f/2c/437fe806897c2d6cfdc3ee43a18da8bf8e568530a4ae9bac781541ca9896/soupsieve-2.9.1-py3-none-any.whl",
+        sha256: "4f4477399246b7a0c720a88ca2454b11cd6bb9ae4c9d170140786e916776c14c",
+    },
+    Wheel {
+        dir: "typing_extensions.py",
+        url: "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+        sha256: "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
     },
 ];
 
@@ -546,7 +564,18 @@ mod tests {
     fn lockfile_wheels_cover_numpy_and_requests_stack() {
         let dirs: Vec<&str> = WHEELS.iter().map(|w| w.dir).collect();
         for expected in [
-            "numpy", "pandas", "dateutil", "pytz", "requests", "urllib3", "certifi", "idna",
+            "numpy",
+            "pandas",
+            "dateutil",
+            "pytz",
+            "requests",
+            "urllib3",
+            "certifi",
+            "idna",
+            // beautifulsoup4 lands as `bs4`; soupsieve/typing_extensions are its dependencies.
+            "bs4",
+            "soupsieve",
+            "typing_extensions.py",
         ] {
             assert!(dirs.contains(&expected), "missing wheel {expected}");
         }
