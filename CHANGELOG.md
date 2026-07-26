@@ -13,6 +13,8 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-07-26
+
 ### Added
 
 - **beautifulsoup4 in the Python sandbox** — `mindfork-rs sandbox setup` now also
@@ -372,7 +374,8 @@ history is in the CLAUDE.md log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vshylov/mindfork-rs/compare/v0.9.0...v0.9.1
