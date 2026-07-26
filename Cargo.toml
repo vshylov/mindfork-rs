@@ -3,6 +3,7 @@ name = "mindfork-rs"
 version = "0.9.3"
 edition = "2024"
 license = "MIT"
+homepage = "https://mindfork.io"
 repository = "https://github.com/vshylov/mindfork-rs"
 
 [dependencies]

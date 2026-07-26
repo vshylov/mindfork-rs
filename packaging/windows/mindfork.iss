@@ -21,8 +21,12 @@ AppId={{A7E3F1C2-9B84-4D6E-8F1A-2C5B7D9E0463}
 AppName=mindfork-rs
 AppVersion={#AppVersion}
 AppPublisher=Vladimir Shylov
-AppPublisherURL=https://github.com/vshylov/mindfork-rs
-AppSupportURL=https://github.com/vshylov/mindfork-rs
+; The three URLs surface in Windows "Apps & features" (the ARP entry). The project
+; site is the publisher link; support/updates deliberately stay on GitHub — that is
+; where issues and release artifacts actually live.
+AppPublisherURL=https://mindfork.io
+AppSupportURL=https://github.com/vshylov/mindfork-rs/issues
+AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
 DefaultDirName={autopf}\mindfork-rs
 DefaultGroupName=mindfork-rs
 DisableProgramGroupPage=yes

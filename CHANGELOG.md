@@ -38,6 +38,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   assistant profiles can share one persona; not choosing one keeps the previous
   behaviour (a shared default text).
 
+### Changed
+
+- **The project site `mindfork.io`** is now carried by the package metadata as
+  well: the Windows installer shows it as the publisher link in "Apps &
+  features" (support and updates there now point at GitHub issues and releases
+  respectively), and the Linux packages use it for `Homepage:`/`URL:`. The site
+  itself is not up yet — the repository stays the live destination for issues
+  and downloads.
+
 ### Fixed
 
 - **A newly created profile is now selectable right away.** `Ctrl+N` in the

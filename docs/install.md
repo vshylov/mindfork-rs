@@ -1,5 +1,8 @@
 # Installing and running mindfork-rs
 
+Project site: [mindfork.io](https://mindfork.io) ·
+sources and releases: [GitHub](https://github.com/vshylov/mindfork-rs).
+
 A console (TUI) AI chat app. Platforms: **Windows** and **Linux**.
 By default all data lives **next to the binary** (portable): a separate folder/flash
 drive is self-contained. The storage mode can be changed (§2.1), and data can be

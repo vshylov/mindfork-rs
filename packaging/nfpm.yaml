@@ -19,7 +19,9 @@ section: utils
 priority: optional
 maintainer: "Vladimir Shylov <vladimir.shylov@outlook.com>"
 vendor: "Vladimir Shylov"
-homepage: "https://github.com/vshylov/mindfork-rs"
+# Becomes deb `Homepage:` / rpm `URL:` / pacman `url`. The project site; the
+# repository stays reachable from the shipped README in /usr/share/doc.
+homepage: "https://mindfork.io"
 license: "MIT"
 description: |
   Console (TUI) AI chat application.
