@@ -30,6 +30,17 @@
 //!   the generation*. Interrupting it leaves a consistent partial state, and the
 //!   next run resumes exactly where it stopped (S5).
 //!
+//! ## The similarity calibration
+//!
+//! The other per-model fact recorded here: the active model's measured
+//! similarity range ([`crate::shared::embed_calibration`]). It belongs beside
+//! the generation counter because it is produced on the same once-per-model
+//! path and answers the same question from the other side — the counter says
+//! *which* model the stored vectors came from, the calibration says what its
+//! cosines *mean*, so the project's bge-m3-tuned thresholds can be read in its
+//! scale. Absent means "never calibrated", and the thresholds are then used
+//! exactly as written.
+//!
 //! ## Scope
 //!
 //! The queue readers are deliberately **global** — across every profile and
@@ -41,6 +52,7 @@
 //! place, under the very partition key the row already carries.
 
 use super::*;
+use crate::shared::embed_calibration::{Calibration, SimilarityScale};
 
 // The queue half of this module (everything from [`ReembedRow`] down, minus the
 // pieces the model-change guard already calls) precedes its consumer: the job
@@ -158,6 +170,83 @@ impl Db {
         meta_set(&conn, KEY_EMBED_GEN, &next.to_string())?;
         Ok(next)
     }
+
+    // ---------- the similarity calibration ----------
+
+    /// The active model's measured similarity range. `None` — never calibrated,
+    /// so callers use [`SimilarityScale::identity`] and the thresholds keep the
+    /// values they are written with.
+    ///
+    /// A half-written or unparseable pair also reads as `None`, deliberately —
+    /// the same rule the canary follows: garbage in `meta` degrades to the
+    /// natural empty state, and here that state is "no correction", which is
+    /// always safe.
+    pub fn embed_calibration(&self) -> Result<Option<Calibration>> {
+        let conn = self.conn.lock().unwrap();
+        read_calibration(&conn)
+    }
+
+    /// Records the calibration of the model now in use, replacing any previous
+    /// one. Written on the same once-per-model path as the fingerprint.
+    pub fn set_embed_calibration(&self, c: &Calibration) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        meta_set(&conn, KEY_EMBED_CAL_UNRELATED, &c.unrelated.to_string())?;
+        meta_set(&conn, KEY_EMBED_CAL_PARAPHRASE, &c.paraphrase.to_string())
+    }
+
+    /// The scale the project's reference thresholds should be read in.
+    ///
+    /// Infallible on purpose: a threshold is needed on paths that have no way to
+    /// report a storage error, and every failure has the same right answer —
+    /// the identity, i.e. today's behaviour.
+    pub fn similarity_scale(&self) -> SimilarityScale {
+        self.embed_calibration()
+            .ok()
+            .flatten()
+            .map(SimilarityScale::from_calibration)
+            .unwrap_or_else(SimilarityScale::identity)
+    }
+}
+
+/// Reads the recorded calibration; both halves must be present and parse.
+///
+/// A free function for the same reason as [`current_embed_gen`]: `self.conn` is
+/// a non-reentrant [`std::sync::Mutex`], and the callers below run under a lock
+/// they already hold.
+fn read_calibration(conn: &Connection) -> Result<Option<Calibration>> {
+    let read = |key: &str| -> Result<Option<f32>> {
+        Ok(meta_get(conn, key)?.and_then(|v| v.parse::<f32>().ok()))
+    };
+    Ok(
+        match (
+            read(KEY_EMBED_CAL_UNRELATED)?,
+            read(KEY_EMBED_CAL_PARAPHRASE)?,
+        ) {
+            (Some(unrelated), Some(paraphrase)) => Some(Calibration {
+                unrelated,
+                paraphrase,
+            }),
+            _ => None,
+        },
+    )
+}
+
+/// Forgets the calibration, so the thresholds fall back to the values they are
+/// written with until the model is measured again.
+///
+/// Called by [`Db::reset_vectors`] — the "start over" primitive — which also
+/// clears the fingerprint: the two describe the same model, and leaving one
+/// behind would claim knowledge about vectors that no longer exist. The next
+/// launch records both together.
+///
+/// Deliberately **not** called by [`Db::drop_vector_tables`]: that one keeps the
+/// fingerprint precisely because the model is unchanged (or has already been
+/// recorded and calibrated by the guard that detected the change), so discarding
+/// its calibration would leave the gates uncorrected for the very model the job
+/// is re-embedding into.
+pub(super) fn clear_calibration(conn: &Connection) -> Result<()> {
+    meta_del(conn, KEY_EMBED_CAL_UNRELATED)?;
+    meta_del(conn, KEY_EMBED_CAL_PARAPHRASE)
 }
 
 // ---------- the re-embed work queue ----------
@@ -452,6 +541,97 @@ mod tests {
             },
             "every store reads as foreign after a bump"
         );
+    }
+
+    // ---------- the similarity calibration ----------
+
+    fn cal(unrelated: f32, paraphrase: f32) -> Calibration {
+        Calibration {
+            unrelated,
+            paraphrase,
+        }
+    }
+
+    #[test]
+    fn calibration_round_trips_and_replaces() {
+        let db = db();
+        assert_eq!(db.embed_calibration().unwrap(), None, "fresh DB");
+
+        let c = cal(0.7897, 0.9456);
+        db.set_embed_calibration(&c).unwrap();
+        assert_eq!(db.embed_calibration().unwrap(), Some(c));
+
+        // A second model overwrites rather than accumulating.
+        let other = cal(0.4128, 0.8176);
+        db.set_embed_calibration(&other).unwrap();
+        assert_eq!(db.embed_calibration().unwrap(), Some(other));
+    }
+
+    #[test]
+    fn calibration_survives_reopening_the_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.db");
+        let c = cal(0.7897, 0.9456);
+        Db::open(&path).unwrap().set_embed_calibration(&c).unwrap();
+        assert_eq!(
+            Db::open(&path).unwrap().embed_calibration().unwrap(),
+            Some(c)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_calibration_reads_as_absent() {
+        // Garbage in `meta` degrades to the natural empty state — and here that
+        // state is "no correction", so a hand-edited DB can only lose the
+        // calibration, never gain a wrong one.
+        let db = db();
+        db.set_embed_calibration(&cal(0.4, 0.8)).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            meta_set(&conn, KEY_EMBED_CAL_UNRELATED, "not a number").unwrap();
+        }
+        assert_eq!(db.embed_calibration().unwrap(), None);
+
+        // Half a pair is unusable too: the map needs both anchors.
+        let half = Db::open_in_memory().unwrap();
+        {
+            let conn = half.conn.lock().unwrap();
+            meta_set(&conn, KEY_EMBED_CAL_PARAPHRASE, "0.9456").unwrap();
+        }
+        assert_eq!(db.embed_calibration().unwrap(), None);
+    }
+
+    #[test]
+    fn similarity_scale_is_the_identity_until_something_is_recorded() {
+        // The state of every existing installation: thresholds untouched.
+        let db = db();
+        for t in [0.85, 0.72, 0.62] {
+            assert_eq!(db.similarity_scale().map(t), t);
+        }
+        // A measured model moves them (the e5 figures of research §8.2).
+        db.set_embed_calibration(&cal(0.7897, 0.9456)).unwrap();
+        assert!((db.similarity_scale().map(0.72) - 0.908).abs() < 0.002);
+    }
+
+    #[test]
+    fn reset_vectors_forgets_the_calibration_but_dropping_the_tables_keeps_it() {
+        // `reset_vectors` is "start over": it already discards the fingerprint,
+        // and the calibration describes the same model, so it goes with it.
+        let db = db();
+        db.set_embed_calibration(&cal(0.7897, 0.9456)).unwrap();
+        db.reset_vectors().unwrap();
+        assert_eq!(db.embed_calibration().unwrap(), None);
+        assert_eq!(db.similarity_scale().map(0.72), 0.72, "back to identity");
+
+        // `drop_vector_tables` is "keep the texts, re-embed them" — the re-embed
+        // job's own step, run *after* the guard has recorded and calibrated the
+        // new model. Clearing here would throw away a fresh, correct calibration
+        // and leave the gates uncorrected for the model being re-embedded into.
+        let kept = Db::open_in_memory().unwrap();
+        let c = cal(0.7897, 0.9456);
+        kept.set_embed_calibration(&c).unwrap();
+        kept.drop_vector_tables().unwrap();
+        assert_eq!(kept.embed_calibration().unwrap(), Some(c));
     }
 
     // ---------- NULL (pre-marker) rows count as foreign ----------

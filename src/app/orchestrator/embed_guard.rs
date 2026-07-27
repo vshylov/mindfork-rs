@@ -43,6 +43,16 @@
 //!
 //! The fingerprint is recorded **after** invalidation, so an interrupted run just
 //! redoes it on the next launch, and a healthy launch never re-invalidates.
+//!
+//! ## Calibration
+//!
+//! Recording a fingerprint also measures the model's **similarity range**
+//! ([`crate::shared::embed_calibration`], research §8.2), on the same
+//! once-per-model path. Cosine distributions differ sharply between models —
+//! e5-large-instruct's usable range is 2.6× narrower than bge-m3's — so the
+//! project's similarity gates are read as positions in a reference scale rather
+//! than as absolute numbers. Without this, a correct re-embedding would still
+//! leave every gate mistuned.
 
 use std::sync::Arc;
 
@@ -52,6 +62,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::events::AppEvent;
 use crate::shared::api::Embedder;
+use crate::shared::embed_calibration;
 use crate::shared::embed_identity::{CANARY_TEXT, EmbedFingerprint};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
@@ -164,7 +175,40 @@ impl EmbedGuard {
             // Non-fatal: the check simply repeats on the next launch.
             tracing::warn!(error = %err, "failed to record the embedding fingerprint");
         }
+        self.calibrate().await;
         Ok(())
+    }
+
+    /// Measures the model's similarity range so the project's thresholds can be
+    /// read in *its* scale rather than bge-m3's (research §8.2). Runs on the same
+    /// once-per-model path as the fingerprint, costing one extra request of 32
+    /// short strings.
+    ///
+    /// Entirely best-effort: any failure leaves the previous calibration (or
+    /// none) in place, and the absence of one means the thresholds are used
+    /// exactly as they are today. A failed calibration can therefore only leave
+    /// the gates as they were — never make them wilder.
+    async fn calibrate(&self) {
+        let probes = embed_calibration::probe_texts();
+        let vectors = match self.inner.embed(probes).await {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "similarity calibration skipped");
+                return;
+            }
+        };
+        let Some(calibration) = embed_calibration::measure(&vectors) else {
+            tracing::warn!("similarity calibration probe returned an unusable result");
+            return;
+        };
+        match self.storage.db().set_embed_calibration(&calibration) {
+            Ok(()) => tracing::info!(
+                unrelated = calibration.unrelated,
+                paraphrase = calibration.paraphrase,
+                "calibrated the similarity scale"
+            ),
+            Err(err) => tracing::warn!(error = %err, "failed to record the similarity calibration"),
+        }
     }
 
     /// Retires everything the previous model produced and records which knowledge
@@ -566,6 +610,113 @@ mod tests {
             matches!(f.rx.try_recv(), Ok(AppEvent::Error(_))),
             "the user must be told"
         );
+    }
+
+    /// The point of stage 3, on real models: the project's gates are tuned to
+    /// bge-m3, and e5-large-instruct's cosine range is 2.6× narrower, so the raw
+    /// constants land in the wrong place inside it (research §8.2). Asserts both
+    /// that bge-m3 keeps its numbers and that e5 gets corrected ones — and, the
+    /// part that actually matters, that an **unrelated** pair which the raw
+    /// constant would have accepted is correctly rejected by the calibrated one.
+    #[tokio::test]
+    #[ignore = "requires two live embedding servers (MINDFORK_EMBED_URL, MINDFORK_EMBED_URL_ALT)"]
+    async fn similarity_scale_follows_the_model_live() {
+        use crate::shared::embed_calibration::{REFERENCE_PARAPHRASE, REFERENCE_UNRELATED};
+
+        let (Ok(url_a), Ok(url_b)) = (
+            std::env::var("MINDFORK_EMBED_URL"),
+            std::env::var("MINDFORK_EMBED_URL_ALT"),
+        ) else {
+            eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
+            return;
+        };
+        let bge: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_a));
+        let e5: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_b));
+
+        // bge-m3 is the model the reference constants were measured on, so its
+        // calibration must come out as (near) identity — existing installations
+        // must not silently shift.
+        let f_bge = fixture();
+        guard(&f_bge, bge.clone(), "bge-m3")
+            .embed(vec!["warm up".into()])
+            .await
+            .unwrap();
+        let c = f_bge
+            .storage
+            .db()
+            .embed_calibration()
+            .unwrap()
+            .expect("bge-m3 must calibrate");
+        eprintln!("bge-m3 calibration: {c:?}");
+        assert!(
+            (c.unrelated - REFERENCE_UNRELATED).abs() < 0.05
+                && (c.paraphrase - REFERENCE_PARAPHRASE).abs() < 0.05,
+            "the reference constants must still describe bge-m3: {c:?}"
+        );
+        let scale_bge = f_bge.storage.db().similarity_scale();
+        for t in [0.85, 0.72, 0.62] {
+            assert!(
+                (scale_bge.map(t) - t).abs() < 0.05,
+                "bge-m3 must keep its thresholds: {t} -> {}",
+                scale_bge.map(t)
+            );
+        }
+
+        // e5 has a much narrower range, so its thresholds must move up.
+        let f_e5 = fixture();
+        guard(&f_e5, e5.clone(), "e5-large-instruct")
+            .embed(vec!["warm up".into()])
+            .await
+            .unwrap();
+        let scale_e5 = f_e5.storage.db().similarity_scale();
+        eprintln!(
+            "e5 calibration: {:?}; 0.72 -> {:.4}, 0.85 -> {:.4}",
+            f_e5.storage.db().embed_calibration().unwrap(),
+            scale_e5.map(0.72),
+            scale_e5.map(0.85)
+        );
+        assert!(
+            scale_e5.map(0.72) > 0.85,
+            "e5's trait gate must move well above the raw constant: {}",
+            scale_e5.map(0.72)
+        );
+
+        // The behavioural payoff: a pair with nothing in common. Under e5 it
+        // scores above the raw 0.72 — which is exactly how a correct re-embedding
+        // would still have left the trait gate firing on everything — and below
+        // the calibrated threshold.
+        let unrelated = e5
+            .embed(vec![
+                "the user values brevity in answers".into(),
+                "the train leaves from platform nine".into(),
+            ])
+            .await
+            .unwrap();
+        let s = cosine_for_test(&unrelated[0], &unrelated[1]);
+        eprintln!("e5 unrelated pair scores {s:.4}");
+        assert!(
+            s >= 0.72,
+            "this smoke is only meaningful while the raw constant misfires on e5 \
+             (measured 0.75); got {s:.4}"
+        );
+        assert!(
+            s < scale_e5.map(0.72),
+            "the calibrated trait gate must reject an unrelated pair: {s:.4} vs {:.4}",
+            scale_e5.map(0.72)
+        );
+    }
+
+    /// Cosine for the smoke above (the production ones are private to their own
+    /// modules, and this file is not one of them).
+    fn cosine_for_test(a: &[f32], b: &[f32]) -> f32 {
+        let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+        let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na == 0.0 || nb == 0.0 {
+            0.0
+        } else {
+            dot / (na * nb)
+        }
     }
 
     #[tokio::test]

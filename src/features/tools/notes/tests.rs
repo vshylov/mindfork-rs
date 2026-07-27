@@ -471,6 +471,150 @@ async fn self_consolidation_overview_covers_self_only() {
     assert!(ov.contains("Связи contradicts среди наблюдений: 1"));
 }
 
+// ---------- the gates are positions in a scale, not absolute cosines ----------
+
+/// Records `multilingual-e5-large-instruct`'s measured means (research §8.2) —
+/// the model whose usable range is 2.6× narrower than bge-m3's, which is why the
+/// raw constants would fire on unrelated pairs there.
+fn calibrate_e5(storage: &crate::shared::storage::Storage) {
+    storage
+        .db()
+        .set_embed_calibration(&crate::shared::embed_calibration::Calibration {
+            unrelated: 0.7897,
+            paraphrase: 0.9456,
+        })
+        .unwrap();
+}
+
+/// Two note pairs in orthogonal 2-d subspaces, so every cross pair is 0: one at
+/// cosine 0.90 (above the raw 0.85 gate, below its 0.958 e5 mapping) and one at
+/// 0.99 (above both). Hand-written vectors rather than embedded text — the point
+/// is where the similarities land, not what the mock embedder happens to produce.
+fn insert_two_pairs(storage: &crate::shared::storage::Storage, profile: Uuid, tags: Vec<String>) {
+    let vectors = [
+        vec![1.0, 0.0, 0.0, 0.0],
+        vec![0.9, 0.435_889_9, 0.0, 0.0], // cos = 0.90 with the previous
+        vec![0.0, 0.0, 1.0, 0.0],
+        vec![0.0, 0.0, 0.99, 0.141_067_3], // cos = 0.99 with the previous
+    ];
+    for (i, v) in vectors.iter().enumerate() {
+        let n = Note::new(profile, format!("note {i}"), tags.clone());
+        storage.db().note_insert(&n).unwrap();
+        storage.db().note_vector_upsert(n.id, profile, v).unwrap();
+    }
+}
+
+#[test]
+fn consolidation_overview_uses_the_calibrated_threshold() {
+    let profile = Uuid::new_v4();
+    let (_d, storage, _ctx) = ctx_with_storage(profile);
+    insert_two_pairs(&storage, profile, vec![]);
+
+    // Uncalibrated — the identity scale, i.e. exactly today's behaviour: both
+    // pairs are duplicates and the model is told the constant as written.
+    let ov = build_consolidation_overview(&storage, profile, ru());
+    assert!(ov.contains("близость ≥ 0.85): 2"), "{ov}");
+    assert!(ov.contains("- 0.99 (id="), "{ov}");
+    assert!(ov.contains("- 0.90 (id="), "{ov}");
+
+    // On a model whose range is 2.6× narrower, 0.85 means ~0.958 — so the 0.90
+    // pair is no longer a duplicate, while the 0.99 one still is.
+    calibrate_e5(&storage);
+    let ov = build_consolidation_overview(&storage, profile, ru());
+    assert!(ov.contains("- 0.99 (id="), "{ov}");
+    assert!(!ov.contains("- 0.90 (id="), "{ov}");
+    // ...and the number the model is shown is the one that actually selected the
+    // pairs — telling it "≥ 0.85" next to a list built at 0.958 would be a lie.
+    assert!(ov.contains("близость ≥ 0.96): 1"), "{ov}");
+}
+
+#[test]
+fn self_consolidation_overview_uses_the_calibrated_threshold() {
+    // The same gate over @self observations — its own call site, its own display.
+    let profile = Uuid::new_v4();
+    let (_d, storage, _ctx) = ctx_with_storage(profile);
+    insert_two_pairs(&storage, profile, vec![SELF_NOTE_TAG.to_string()]);
+
+    let ov = build_self_consolidation_overview(&storage, profile, ru()).unwrap();
+    assert!(ov.contains("близость ≥ 0.85): 2"), "{ov}");
+    assert!(ov.contains("- 0.90 (id="), "{ov}");
+
+    calibrate_e5(&storage);
+    let ov = build_self_consolidation_overview(&storage, profile, ru()).unwrap();
+    assert!(ov.contains("близость ≥ 0.96): 1"), "{ov}");
+    assert!(ov.contains("- 0.99 (id="), "{ov}");
+    assert!(!ov.contains("- 0.90 (id="), "{ov}");
+}
+
+/// A unit vector at exactly `cos` from `v`: an arbitrary direction made
+/// orthogonal to `v` (Gram-Schmidt), then `cos·v̂ + sin·û`. Lets a test place a
+/// stored vector at a chosen similarity to an *embedded* text, instead of hoping
+/// the mock embedder happens to land there.
+fn at_cosine(v: &[f32], cos: f32) -> Vec<f32> {
+    let norm = |x: &[f32]| x.iter().map(|a| a * a).sum::<f32>().sqrt();
+    let vn: Vec<f32> = v.iter().map(|a| a / norm(v)).collect();
+    // The coordinate where `v` is smallest is never parallel to it (a unit vector
+    // has some coordinate ≤ 1/√dim), so the projection below cannot degenerate.
+    let k = (0..vn.len())
+        .min_by(|&a, &b| vn[a].abs().total_cmp(&vn[b].abs()))
+        .expect("a non-empty vector");
+    let mut e = vec![0.0_f32; vn.len()];
+    e[k] = 1.0;
+    let dot: f32 = e.iter().zip(&vn).map(|(a, b)| a * b).sum();
+    let mut u: Vec<f32> = e.iter().zip(&vn).map(|(a, b)| a - dot * b).collect();
+    let un = norm(&u);
+    for x in &mut u {
+        *x /= un;
+    }
+    let sin = (1.0 - cos * cos).sqrt();
+    vn.iter().zip(&u).map(|(a, b)| cos * a + sin * b).collect()
+}
+
+#[tokio::test]
+async fn summary_obs_overlap_uses_the_calibrated_threshold() {
+    use crate::entities::self_model::SelfModel;
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+
+    let paragraph = "a".repeat(50);
+    let mut model = SelfModel::new(profile);
+    model.summary = paragraph.clone();
+    storage.db().self_model_upsert(&model).unwrap();
+    let pv = ctx
+        .embedder
+        .embed(vec![paragraph])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+
+    // An observation at cosine 0.80: above the raw 0.62 gate, below its 0.869 e5
+    // mapping.
+    let obs = Note::new(profile, "MARKER", vec![SELF_NOTE_TAG.to_string()]);
+    storage.db().note_insert(&obs).unwrap();
+    let set = |cos: f32| {
+        storage
+            .db()
+            .note_vector_upsert(obs.id, profile, &at_cosine(&pv, cos))
+            .unwrap()
+    };
+    set(0.80);
+
+    let overlaps = || summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru());
+    // Uncalibrated: matched, as today.
+    assert!(overlaps().await.is_some());
+
+    // Calibrated to the narrower model: the same pair no longer counts...
+    calibrate_e5(&storage);
+    assert!(overlaps().await.is_none());
+    // ...but one above the mapped threshold still does — the gate moved, it did
+    // not switch off.
+    set(0.95);
+    let out = overlaps().await.expect("0.95 clears the mapped threshold");
+    assert!(out.contains("MARKER"), "{out}");
+}
+
 #[tokio::test]
 async fn summary_obs_overlap_surfaces_match_not_unrelated() {
     // A2: a self-description (summary) paragraph matching an observation is

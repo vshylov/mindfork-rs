@@ -368,6 +368,15 @@ indexed manually — with commands right in the chat input box:
   background with a progress banner and is safe to interrupt: whatever it has
   already rebuilt stays rebuilt, and running it again continues from there. If
   the new model has a different vector size, that is handled by the same pass.
+- **Memory's similarity checks adapt to the model.** The gates that decide when
+  two notes, observations or traits say the same thing are cut-offs on a cosine
+  score, and every model rates similarity on its own scale — on
+  `multilingual-e5-large-instruct` the usable range is about 2.6× narrower than
+  on `bge-m3`, so a cut-off tuned for one lands in the wrong place on the other.
+  When the app first notices a model it measures that scale (one extra request
+  of 32 short strings, alongside the change check above) and shifts the cut-offs
+  to match. Nothing changes for a setup that hasn't changed models, and if the
+  measurement fails the previous behaviour is kept.
 - Indexing runs **in the background** with a progress indicator and spinner;
   re-adding the same file **replaces** its fragments instead of creating
   duplicates.

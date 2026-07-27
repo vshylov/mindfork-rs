@@ -715,9 +715,46 @@ banner as `/rag add`, and can be cancelled.
   foreign and takes the same path. They are recreated at the new width on the
   first write.
 
-Per-model similarity thresholds remain a later stage: the project's gates
-(`0.85`/`0.72`/`0.62`) are calibrated against bge-m3, and a different model's
-cosine distribution shifts them — see the research doc §6.
+**Thresholds follow the model.** Detecting a change and completing it are not
+enough on their own, because the gates that decide when two pieces of memory
+mean the same thing — the duplicate-pair threshold of the consolidation
+overviews (`0.85`), the related-trait gate of `update_user_model` (`0.72`,
+[§17.3](#173-tools)) and the summary↔observation overlap (`0.62`) — are absolute
+cosines derived from live runs against bge-m3, i.e. positions inside *that*
+model's distribution. Cosine distributions differ sharply: measured on a fixed
+probe corpus, `multilingual-e5-large-instruct`'s usable range between
+"unrelated" and "paraphrase" is **2.6× narrower** than bge-m3's, so used raw its
+gates would call unrelated traits duplicates. A correct reindex alone would trade
+a silent failure ("the gates never fire") for a loud wrong one ("the gates fire
+on everything").
+
+- **The constants keep their values and their meaning**; what changes is that
+  they are *read* as positions in a reference scale and mapped into the range
+  the active model actually has. The map is affine, anchored on the two
+  measured means of the reference model — so bge-m3 maps to itself.
+- **Calibration is automatic, not a table of known models.** A table would only
+  help models someone has already measured; an arbitrary local GGUF would still
+  be handed the reference numbers. Instead a fixed probe corpus — pairs of short
+  statements of the kind the gates actually judge, half meaning the same thing
+  and half unrelated — is embedded **once**, on the same once-per-model path
+  that records the fingerprint, and the two means are stored beside it in
+  `meta`. Cost: one extra request of 32 short strings per model change.
+- **The absence of a calibration is the identity**, and every failure degrades
+  to it: a probe that cannot be embedded or read back, a batch that does not
+  describe the corpus, or a measurement that is degenerate (non-finite, out of
+  range, or with a zero/inverted span) all leave the thresholds passing through
+  **unchanged**. So an installation that has not changed its embedding model is
+  unaffected, and a failed calibration can only leave the gates as they were —
+  never make them wilder. Calibration failure is logged, never fatal.
+- **Where a threshold is shown to the model** (the consolidation overviews print
+  the cut-off they selected pairs with), the **effective** value is shown, so
+  the number never contradicts the selection beside it.
+
+The probe corpus is a measurement fixture, not prose: it is deliberately
+bilingual and phrased in the register the gates operate in, and editing it
+invalidates the reference constants and every threshold derived from them. See
+[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)
+§6 and §8.2.
 
 ### 9.4. Enabling tools
 

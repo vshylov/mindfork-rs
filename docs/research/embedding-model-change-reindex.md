@@ -1,16 +1,20 @@
 # Research — reindexing the vector stores after an embedding-model change
 
-**Status:** decided and implemented, except stage 3. Forks R1–R7 (§7) —
-**user's decision, 2026-07-27: R1a–R7a**, all as recommended. **Stage 1 of §8
-(detection and honesty) is done** — canary fingerprint in `meta`, the check on
-first embedder use, per-store invalidation, `rag_search` refusing over a stale
-knowledge base (spec §9.3.4, `shared/embed_identity.rs` +
-`app/orchestrator/embed_guard.rs`). **Stage 2 (re-embed in place) is done** —
-embedding generations instead of deletion, plus the DB-global `/reindex` job
-that drains the queue they define (`shared/storage/db/embed_gen.rs`,
+**Status:** decided and implemented — **the track is complete (stages 1–3)**.
+Forks R1–R7 (§7) — **user's decision, 2026-07-27: R1a–R7a**, all as
+recommended. **Stage 1 (detection and honesty)** — canary fingerprint in
+`meta`, the check on first embedder use, per-store invalidation, `rag_search`
+refusing over a stale knowledge base (spec §9.3.4, `shared/embed_identity.rs` +
+`app/orchestrator/embed_guard.rs`). **Stage 2 (re-embed in place)** — embedding
+generations instead of deletion, plus the DB-global `/reindex` job that drains
+the queue they define (`shared/storage/db/embed_gen.rs`,
 `app/orchestrator/reembed.rs`, `features/reindex_command.rs`); its
-sub-decisions S1–S5 are recorded in §8.1 below. Stage 3 (per-model thresholds)
-is open — see [roadmap](../roadmap.md). Research date: 2026-07-27.
+sub-decisions S1–S5 are recorded in §8.1 below. **Stage 3 (per-model
+thresholds)** — the gates are read as positions in a reference scale, calibrated
+automatically per model on the same once-per-model path as the fingerprint
+(`shared/embed_calibration.rs` + `shared/embed_probes.json`); its sub-decisions
+S6–S10, the measurement they rest on and the validation table are in §8.2 below.
+Research date: 2026-07-27.
 
 **Question.** What happens to the stored vectors when the embedding model
 changes, and how should the application detect it and reindex?
@@ -352,6 +356,67 @@ foreign and takes the same path. One algorithm for both cases: *for each row
 whose generation is not current, embed its stored text, replace the vector,
 stamp the generation.* Interrupting it leaves a consistent partial state, and
 the stale marks from stage 1 keep search honest until it finishes.
+
+### 8.2. Stage 3 — sub-decisions, and the measurement they rest on
+
+Recorded before implementation. Stages 1–2 make a model swap detectable and
+completable; §6 is what still makes it *wrong*, because the gates are absolute
+constants tuned to one model.
+
+**The measurement.** A fixed probe corpus — 8 paraphrase pairs and 8 unrelated
+pairs, bilingual, phrased as the short trait/preference/observation statements
+the gates actually judge — run against both live servers (2026-07-27):
+
+| | bge-m3 | e5-large-instruct |
+|---|---|---|
+| paraphrase mean | **0.8176** (0.660–0.909) | **0.9456** (0.901–0.973) |
+| unrelated mean | **0.4128** (0.345–0.500) | **0.7897** (0.726–0.834) |
+| usable span | **0.4048** | **0.1559** |
+
+e5's usable dynamic range is **2.6× narrower**. That is the whole problem in one
+number: a constant tuned inside bge-m3's range lands in a completely different
+place inside e5's.
+
+**S6 — thresholds become positions in a reference scale, not absolutes.** The
+three constants keep their present values and meaning (they are calibrated
+against bge-m3 and were derived from live runs); what changes is that a
+`SimilarityScale` maps them into whatever range the active model actually has.
+Nothing about the gates' intent moves.
+
+**S7 — calibration is automatic, not a table.** R6a's "table keyed by
+fingerprint" only helps models someone has already measured; an arbitrary local
+GGUF would still get bge-m3's numbers. Instead the probe corpus is embedded once
+at the moment the canary fingerprint is recorded — one extra request of 32 short
+strings, on a path that already runs exactly once per model — and the two means
+are stored in `meta` beside the fingerprint.
+
+**S8 — an affine map anchored on two measured points:**
+`t' = u + (t − u_ref) · (p − u) / (p_ref − u_ref)`, with `u_ref = 0.4128` and
+`p_ref = 0.8176` (bge-m3, above). bge-m3 maps to itself, so nothing changes for
+the model the project is tuned on.
+
+**Validated on the corpus** — the mapped thresholds fire on the same pairs:
+
+| gate | bge-m3 | e5 (mapped) |
+|---|---|---|
+| consolidate (0.85 → 0.958) | 3/8 paraphrase, **0/8 unrelated** | 3/8 paraphrase, **0/8 unrelated** |
+| trait (0.72 → 0.908) | 6/8 paraphrase, **0/8 unrelated** | 7/8 paraphrase, **0/8 unrelated** |
+| summary↔obs (0.62 → 0.869) | 8/8 paraphrase, **0/8 unrelated** | 8/8 paraphrase, **0/8 unrelated** |
+
+Against the raw constants on e5, where the trait gate would fire on **8/8
+unrelated** pairs. The residual 6/8 vs 7/8 is real model difference, not
+calibration error — the map equalizes scale, it cannot equalize semantics.
+
+**S9 — degrade to identity.** No calibration recorded → the constants are used
+as they are today. So existing installations change nothing until a model
+actually changes, and a failed calibration can only leave the gates as they were,
+never make them wilder. Calibration failure is logged, never fatal.
+
+**S10 — the probe corpus is a fixture, not prose.** It lives in its own data file
+(`include_str!`) rather than in `.rs`, because it is deliberately bilingual and
+must never be edited casually: changing a probe invalidates `u_ref`/`p_ref` and
+therefore every mapped threshold. That earns it a deliberate entry in
+`tools/cyrillic_scan.py`'s allowlist, with the reason recorded there.
 
 ---
 

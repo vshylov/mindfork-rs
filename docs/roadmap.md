@@ -19,10 +19,10 @@ called out as the highest-payoff tracks (real user pain / direct savings):
    demand.
 
 ## Memory, self-model, knowledge
-The project's flagship track (self-model / notes / connectivity / RAG). The core
-and the **self-model consolidation** (A) and **RAG: sources and retrieval** (B)
-tracks are done (see "Recently closed" below and `docs/history/`). **Deferred**
-groundwork items remain:
+The project's flagship track (self-model / notes / connectivity / RAG). The
+core, the **self-model consolidation** (A), **RAG: sources and retrieval** (B)
+and **embedding-model change** tracks are done (see "Recently closed" below and
+`docs/history/`). **Deferred** groundwork remains:
 - **vec0 for notes and observations as their count grows** — cosine is
   currently computed brute-force in Rust (`db::cosine`, `note_search_semantic`);
   for tens–hundreds (and up to thousands) of notes this is cheap (single-digit
@@ -32,21 +32,15 @@ groundwork items remain:
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
-- **Per-model similarity thresholds (stage 3 of the embedding-model change
-  track)** — `CONSOLIDATE_SIMILARITY = 0.85`, `TRAIT_SIMILARITY = 0.72` and
-  `SUMMARY_OBS_SIMILARITY = 0.62` are calibrated on bge-m3, and another model's
-  cosine distribution shifts them: measured on
-  `multilingual-e5-large-instruct`, an *unrelated* trait pair scores 0.751
-  (above the 0.72 gate) and an antonym pair 0.887 (above 0.85). So even a
-  perfectly correct reindex would flip the gates from "silently never fire" to
-  "fire on everything" — trading a silent failure for a loud wrong one. Now the
-  **last** thing standing between the app and a supported model swap: stages 1–2
-  made a switch detectable and completable (`/reindex`), which is exactly what
-  makes this reachable in practice. Needs threshold profiles keyed by
-  fingerprint (with a calibration smoke), or an explicit statement that
-  thresholds are tuned for bge-m3. See
+- **Per-model input prefixes for embeddings** — the e5 family expects
+  `query:`/`passage:` markers, and adding them widened the retrieval margin on
+  the probe corpus from 0.155 to 0.186: a real, if modest, effect. The
+  `Embedder` contract has no notion of an input *role* today (a query and a
+  stored chunk go through the same call), so this needs a contract change plus
+  a per-model convention. Only relevant now that a model swap is actually
+  supported. See
   [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
-  §6.
+  §9.
 
 ## Context and tokens
 - **History compression / rolling summary** — right now the whole conversation
@@ -235,15 +229,17 @@ groundwork items remain:
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
-- **Embedding-model change — detection and re-embedding** (stages 1–2; stage 3,
-  per-model thresholds, is still open above): a swap is detected behaviourally
-  by a canary vector — dimensionality is *not* identity — and `/reindex`
-  re-embeds every stored vector in place from the text the DB already holds.
-  This also closed the older "re-indexing chat attachments after a model change"
-  item: its "needs a walk over all chats" premise was wrong for this purpose
-  (`attachment_documents.chunk_text` is in the DB, so a walk is only needed to
-  re-*chunk*), and attachment indexes now come back without re-attaching each
-  file. See
+- **Embedding-model change** (stages 1–3, complete): a swap is detected
+  behaviourally by a canary vector — dimensionality is *not* identity —
+  `/reindex` re-embeds every stored vector in place from the text the DB already
+  holds, and the memory similarity gates are read as positions in a reference
+  scale, calibrated automatically per model (so they follow the model instead of
+  one fixed calibration, and stay exactly as they are until a model actually
+  changes). This also closed the older "re-indexing chat attachments after a
+  model change" item: its "needs a walk over all chats" premise was wrong for
+  this purpose (`attachment_documents.chunk_text` is in the DB, so a walk is
+  only needed to re-*chunk*), and attachment indexes now come back without
+  re-attaching each file. See
   [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md),
   spec §9.3.4.
 - **English source** (prep for open source: all docs, comments and

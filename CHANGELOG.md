@@ -79,6 +79,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   outright, and the duplicate checks that keep memory from bloating stopped
   firing altogether. Knowledge-base search now refuses plainly, naming
   `/reindex`, instead of answering from vectors it cannot compare.
+- The checks that decide when two pieces of memory say the same thing — duplicate
+  notes and observations, near-identical traits — now follow the embedding model
+  in use instead of being tuned to one particular model. Every model rates
+  similarity on its own scale, so after a model change a fixed cut-off can drift
+  into "nothing is ever a duplicate" or, just as bad, "everything is": on one of
+  the models tested, memory would have been told that entirely unrelated traits
+  meant the same thing. The app now measures the new model's scale once, when it
+  first notices it, and shifts the cut-offs to match. Nothing changes for a setup
+  that has not changed models, and if the measurement fails the previous
+  behaviour is kept.
 - Knowledge-base search results (`rag_search`) are readable again: found
   fragments are numbered and set apart from one another, and their text is shown
   exactly as it is in the source. Previously a fragment several lines long ran

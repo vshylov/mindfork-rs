@@ -329,12 +329,22 @@ src/
    │  │  │                 RAG, reset together — spec §9.7)
    │  │  ├─ embed_gen.rs   embedding generations: the counter, the re-embed work
    │  │  │                 queue (global — one embedder invalidates every profile
-   │  │  │                 at once) and in-place vector replacement — spec §9.3.4
+   │  │  │                 at once) and in-place vector replacement; plus the active
+   │  │  │                 model's similarity calibration (same once-per-model fact:
+   │  │  │                 embed_calibration/set_embed_calibration, the infallible
+   │  │  │                 similarity_scale()) — spec §9.3.4
    │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ embed_identity.rs    identity of the embedding model that produced the stored
    │                       vectors: CANARY_TEXT/CANARY_MATCH + EmbedFingerprint
    │                       (canary vector + display name, matches()). See spec §9.3.4
+   ├─ embed_calibration.rs per-model calibration of the similarity gates: probe_texts/
+   │                       measure → Calibration (two means) → SimilarityScale (affine
+   │                       map anchored on the bge-m3 reference constants; identity when
+   │                       nothing is calibrated). Corpus — embed_probes.json, a fixed
+   │                       measurement fixture (include_str!, bilingual, DO NOT EDIT:
+   │                       it defines the reference constants; allowlisted in
+   │                       tools/cyrillic_scan.py). See spec §9.3.4
    ├─ config.rs            AppConfig and its sections (Engine/Embed/Tool/Interface/Impersonation…)
    ├─ credits.rs           app metadata for the "About" dialog (F1): brand name,
    │                       author, links, license text (MIT), components (name/version/
@@ -887,9 +897,22 @@ Storage invariants:
   embedding of a fixed string, the actual signal) and `embed_model_id` (its
   display name) — plus `rag_stale_profiles`, the knowledge bases a detected
   change invalidated. `EmbedGuard` compares the canary on the first embedding
-  call and acts on a mismatch (spec §9.3.4); `reset_vectors` clears all four
-  keys, since with no vectors left there is nothing to be stale relative to.
-  All are `meta` keys, so adding them needed no schema bump.
+  call and acts on a mismatch (spec §9.3.4); `reset_vectors` clears all four of
+  those keys, since with no vectors left there is nothing to be stale relative
+  to. All are `meta` keys, so adding them needed no schema bump.
+- **The model's similarity range** is recorded next to its identity, for the same
+  reason and on the same once-per-model path: the counter says *which* model the
+  stored vectors came from, the calibration (`embed_cal_unrelated`/
+  `embed_cal_paraphrase` — the two means of the fixed probe corpus, see
+  `shared/embed_calibration.rs`) says what its cosines *mean*. The project's
+  three memory gates are positions in the reference (bge-m3) scale, not absolute
+  numbers, and are read through `Db::similarity_scale()` — **infallible**, because
+  a threshold is needed on paths that cannot report a storage error and every
+  failure has the same right answer: the identity, i.e. today's behaviour. Either
+  half missing or unparseable reads as "never calibrated". `reset_vectors` clears
+  it with the fingerprint ("start over"); `drop_vector_tables` deliberately keeps
+  it, since by then the guard has already calibrated the model being re-embedded
+  into.
 - **Per-row `embed_gen`** records *which* model produced a given vector, against
   the monotonic `meta.embed_gen` counter the guard bumps on a detected change:
   one increment retires the whole DB without deleting a row, so the stored text
@@ -1332,7 +1355,7 @@ connectivity) and *a current snapshot + a scar in the narrative*.
 | `get_self_model` | read | `render_full` + a "Observation links" block (`render_self_read`) — the whole model, goals with `#id`, observations with a full id, **observation graph edges** (Tier 2), no truncation; when `summary` has grown too large — a hint to shrink it (the size gate, §9.1) |
 | `reflect` | read + rubric | the current model (+ links) + a **self-consolidation overview** (similar pairs / `contradicts` / unlinked, once there are ≥2 observations) + questions (manage goals by `#id`, merge, consolidate observations via note_revise/supersede, **link related observations via note_link**, **has the description grown too large** — event-driven content into observations) |
 | `update_self_model` | description + goals | `summary` — **integrate and shrink** (a snapshot, not a chronicle — §9.1); goals — lifecycle by `#id` (complete/abandon), not just add. **The echo is deltas** (stage 4): a summary size line + added/closed goals with `#id` + a count of folded ones, no full `render_full` |
-| `update_user_model` | interlocutor | lists — **merge** (add_/remove_, dedup); `note` → a **scar** as an @self note; a reminder is issued when removing traits **or replacing a non-empty dynamic** without a `note`; **related-trait gate** (Tier 2/C): a topically close trait already exists → shown, the model decides "a duplicate (merge)" or "a contradiction (add_insight)"; traits embedded on the fly, threshold 0.72 (calibrated on bge-m3), mirroring the `add_insight` gate. **The echo is deltas** (stage 4): compact final lists + a scar confirmation, no full `render_full` |
+| `update_user_model` | interlocutor | lists — **merge** (add_/remove_, dedup); `note` → a **scar** as an @self note; a reminder is issued when removing traits **or replacing a non-empty dynamic** without a `note`; **related-trait gate** (Tier 2/C): a topically close trait already exists → shown, the model decides "a duplicate (merge)" or "a contradiction (add_insight)"; traits embedded on the fly, threshold 0.72 — a position in the reference (bge-m3) scale, read through `Db::similarity_scale()` so it follows the active model (spec §9.3.4) — mirroring the `add_insight` gate. **The echo is deltas** (stage 4): compact final lists + a scar confirmation, no full `render_full` |
 | `add_insight` | observation | `create_note(@self)` + a **gate** (similar observations → rewrite via note_revise/supersede instead of creating a duplicate) |
 
 Observation notes are consolidated by **note tools** (`note_revise`/

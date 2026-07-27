@@ -298,8 +298,10 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 // embedding-model fingerprint the stored vectors were produced under
 // (`embed_canary`/`embed_model_id`, see [`crate::shared::embed_identity`]), the
 // generation counter those vectors are stamped with (`embed_gen`, see the
-// [`embed_gen`] module), and which profiles a model change invalidated
-// (`rag_stale_profiles`). Adding one is a key, not a schema bump.
+// [`embed_gen`] module), that model's measured similarity range
+// (`embed_cal_*`, see [`crate::shared::embed_calibration`]), and which profiles
+// a model change invalidated (`rag_stale_profiles`). Adding one is a key, not a
+// schema bump.
 
 /// Vector dimensionality shared by the RAG base and the attachment index.
 const KEY_RAG_DIM: &str = "rag_dim";
@@ -312,6 +314,15 @@ const KEY_EMBED_GEN: &str = "embed_gen";
 const KEY_EMBED_CANARY: &str = "embed_canary";
 /// Display name of that model (metadata for the message shown to the user).
 const KEY_EMBED_MODEL_ID: &str = "embed_model_id";
+/// The active model's mean cosine over the calibration corpus's **unrelated**
+/// pairs — the floor of its usable similarity range (see
+/// [`crate::shared::embed_calibration`]). Written together with
+/// [`KEY_EMBED_CAL_PARAPHRASE`]; either one missing means "never calibrated",
+/// and the project's thresholds are then used exactly as written.
+const KEY_EMBED_CAL_UNRELATED: &str = "embed_cal_unrelated";
+/// The same model's mean over the **paraphrase** pairs — the ceiling of that
+/// range.
+const KEY_EMBED_CAL_PARAPHRASE: &str = "embed_cal_paraphrase";
 /// Profiles whose RAG documents predate the current embedding model — a JSON
 /// array of uuid strings.
 const KEY_RAG_STALE_PROFILES: &str = "rag_stale_profiles";

@@ -153,7 +153,10 @@ Architecture — **Feature-Sliced Design (FSD)**.
   stored, so no source files are needed and nothing has to be re-attached. It
   runs in the background and is safe to interrupt: running it again continues
   from where it stopped. Until the knowledge base is done, search over it says
-  plainly that it can't compare its vectors instead of answering from them.
+  plainly that it can't compare its vectors instead of answering from them. The
+  checks that spot duplicate notes and near-identical traits **follow the model
+  too** — every model rates similarity on its own scale, so the app measures the
+  new one's scale once and shifts the cut-offs to match.
 - **Reading messages aloud (`/tts`):** `/tts` reads the last message, `/tts N` — the
   last N, `/tts all` — the whole conversation, `/tts stop` — stops it,
   `/tts pause`/`/tts resume` — pause and resume (handy for long text). Code,

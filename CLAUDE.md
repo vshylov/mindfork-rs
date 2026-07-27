@@ -124,8 +124,8 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1420 unit
-tests green, 64 `#[ignore]` smokes** (the largest count — log below; the current
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1440 unit
+tests green, 65 `#[ignore]` smokes** (the largest count — log below; the current
 track is the **embedding-model change** track
 ([docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)):
 stored vectors are only comparable to a query from the same model, and dimensionality
@@ -137,7 +137,11 @@ older vector reads as foreign — memory re-embeds itself on the next semantic p
 the knowledge base — the user's data — is marked stale and `rag_search` refuses until
 the new DB-global **`/reindex`** job re-embeds every stored vector **in place**, from
 the text the DB already holds (batched, cancellable, resumable — stage 2, "re-embed in
-place") — **stages 1–2 done, live runs GO** (stage 3 "per-model thresholds" is open);
+place"); and because cosine distributions differ sharply per model (e5's usable range
+is **2.6× narrower** than bge-m3's), the memory gates are no longer absolute constants
+but positions in a reference scale, **calibrated automatically per model** on the same
+once-per-model path and degrading to the identity when nothing is calibrated (stage 3,
+"per-model thresholds") — **complete, stages 1–3, live runs GO**;
 before that — **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
@@ -8776,6 +8780,135 @@ debounce was done as a separate PR, see below).
   trait pair scores 0.751 (above the 0.72 gate) and an antonym pair 0.887 (above
   0.85), so a perfectly correct reindex flips the gates from "silently never fire"
   to "fire on everything".
+
+### Post-M9: embedding-model change — stage 3 (per-model similarity thresholds) (done)
+- **The final stage of the track** (research
+  [docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)
+  §8.2, sub-decisions **S6–S10** recorded before implementation per AGENTS.md §1;
+  same branch `feat/embed-model-change-detection`). Stages 1–2 made a model swap
+  **detectable** and **completable**; §6 is what still made it *wrong*. The three
+  gates that decide when two pieces of memory mean the same thing —
+  `CONSOLIDATE_SIMILARITY = 0.85`, `TRAIT_SIMILARITY = 0.72`,
+  `SUMMARY_OBS_SIMILARITY = 0.62` — are absolute cosines derived from live runs
+  against **bge-m3**, i.e. positions inside *that* model's distribution, not
+  universal constants.
+- **The measurement, on a fixed probe corpus against both live servers**
+  (2026-07-27):
+
+  | | bge-m3 | e5-large-instruct |
+  |---|---|---|
+  | paraphrase mean | **0.8176** (0.660–0.909) | **0.9456** (0.901–0.973) |
+  | unrelated mean | **0.4128** (0.345–0.500) | **0.7897** (0.726–0.834) |
+  | usable span | **0.4048** | **0.1559** |
+
+  e5's usable range is **2.6× narrower** — the whole problem in one number: a
+  constant tuned inside bge-m3's range lands somewhere else entirely inside e5's.
+  Concretely, the trait gate would have fired on **8/8 unrelated** probe pairs.
+  Without this stage a *correct* re-embedding would have traded a silent failure
+  ("the gates never fire") for a loud wrong one ("the gates fire on everything").
+- **Calibration is automatic, not a table (S7).** R6a's "threshold profiles keyed
+  by fingerprint" only helps models someone has already measured — an arbitrary
+  local GGUF would still be handed bge-m3's numbers, which is the same failure the
+  stage exists to fix, just rarer. Instead the corpus is embedded **once**, on the
+  very path that already runs exactly once per model (`embed_guard.rs::calibrate`,
+  right where the canary fingerprint is recorded): one extra request of 32 short
+  strings, and the two means are stored in `meta` beside the fingerprint
+  (`embed_cal_unrelated`/`embed_cal_paraphrase` — keys, so **no schema bump, no
+  migration**, ADR 0006 F12).
+- **An affine map anchored on two measured points (S8)**:
+  `t' = u + (t − u_ref)·(p − u)/(p_ref − u_ref)`, with `u_ref = 0.4128` and
+  `p_ref = 0.8176` (`REFERENCE_UNRELATED`/`REFERENCE_PARAPHRASE` in
+  `shared/embed_calibration.rs`). **bge-m3 maps to itself**, so nothing moves for
+  the model the project is tuned on. The thresholds keep their present values and
+  meaning (S6) — what changes is only that they are *read* in whatever range the
+  active model actually has. The map equalizes **scale**; it cannot equalize
+  semantics, and is not meant to.
+- **Failure is always downhill (S9) — the property that makes this safe to ship.**
+  Nothing calibrated → `SimilarityScale::identity()`, whose `map(t)` returns `t`
+  **exactly** rather than through arithmetic that merely ought to cancel out. So
+  every existing installation is bit-for-bit unaffected until the model actually
+  changes. A calibration that cannot be measured, cannot be read back, or comes
+  out degenerate (non-finite, outside the cosine range, or `paraphrase <=
+  unrelated` — a zero span would collapse all three gates onto the unrelated mean,
+  i.e. make everything a duplicate) falls back to the same identity, and mapped
+  values are clamped to a sane cosine range as a backstop. A failed calibration
+  can therefore only leave the gates exactly as they are today — never make them
+  wilder. Calibration failure is logged, never fatal.
+- **The probe corpus is a fixture, not prose (S10)** — `shared/embed_probes.json`
+  (`include_str!`), 8 paraphrase pairs and 8 unrelated pairs, deliberately
+  **bilingual** (so is the application) and deliberately phrased as the short
+  trait/preference/observation statements the gates actually judge: calibrating on
+  encyclopaedic prose would measure a different distribution than the one the
+  thresholds operate in. It **must never be edited casually** — changing a probe
+  silently invalidates `u_ref`/`p_ref` and therefore every mapped threshold, and
+  would make already-calibrated installations disagree with freshly calibrated
+  ones. The reasoning is in the file's own `_comment` header, and it earns a
+  deliberate entry in `tools/cyrillic_scan.py`'s allowlist (measurement data, not
+  prose to translate). A malformed fixture degrades to an empty corpus rather than
+  panicking (this runs inside a TUI), with a test pinning that the shipped file
+  parses.
+- **Reading it back**: `Db::similarity_scale()` is **infallible** on purpose — a
+  threshold is needed on paths that have no way to report a storage error, and
+  every failure has the same right answer, the identity. Four gate sites read it
+  (`notes/overview.rs` ×2 — the user-notes and `@self` consolidation overviews;
+  `notes/overview.rs::summary_observation_overlaps`;
+  `self_model.rs::near_duplicate_traits`), each mapping **once**, outside the
+  nested loop it feeds. The two places that *show* the threshold to the model now
+  show the **effective** one, formatted `{:.2}` (`format_threshold`): fixed
+  precision earns two properties — an uncalibrated overview prints as it did before
+  calibration existed (`0.85`, byte-identical), and because rounding is monotonic
+  a listed pair (`s >= threshold`) can never *display* below the displayed
+  threshold, so the model is never shown a number that contradicts the selection
+  it is looking at.
+- **Lifecycle**: `reset_vectors` clears the calibration ("start over" — it already
+  discards the fingerprint, and the calibration describes the same model);
+  `drop_vector_tables` deliberately **keeps** it, because by the time the re-embed
+  job drops the tables the guard has already recorded and calibrated the *new*
+  model, and clearing there would throw away a fresh correct calibration and leave
+  the gates uncorrected for the very model being re-embedded into.
+- **Validated on the corpus** — the mapped thresholds fire on the same pairs:
+  consolidate **3/8 vs 3/8** paraphrase, trait **6/8 vs 7/8**, summary↔obs
+  **8/8 vs 8/8**, and **0/8 unrelated on both models** — against **8/8 unrelated**
+  with the raw constants on e5. The residual 6/8 vs 7/8 is real model difference,
+  not calibration error.
+- **Tests**: the fixture (shape and non-empty probes, a stable flattening order
+  `measure` reads back); `measure` refusing a batch that cannot describe the
+  corpus (wrong count, an empty vector, mixed widths — a scale guessed from a
+  mismatched batch would be a *wrong* scale, worse than none); the identity
+  passing thresholds through by **exact** equality; the reference calibration
+  coming out as the identity; e5 reproducing the §8.2 numbers (0.85→0.958,
+  0.72→0.908, 0.62→0.869) *and* the point of the exercise — e5's unrelated mean
+  sits above the raw 0.72 gate and below the mapped one; a narrower range moving
+  every gate up while keeping their order; every degeneracy falling back to the
+  identity; the clamp; DB round-trip, corrupt values reading as "never
+  calibrated", `reset_vectors` forgetting vs `drop_vector_tables` keeping; and the
+  four gate sites plus the two display sites. The gate wiring was
+  **mutation-tested**: reverting the four comparisons fails four tests
+  one-to-one, and reverting only the two display sites fails exactly the two
+  overview tests. **1440 unit tests green** (+20), **65 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt/`cyrillic_scan` clean.
+- **Live run — GO** (`similarity_scale_follows_the_model_live`, needs
+  `MINDFORK_EMBED_URL` + `MINDFORK_EMBED_URL_ALT`; real `llama-server` instances
+  holding `bge-m3-Q8_0` on :8001 and `multilingual-e5-large-instruct-q8_0` on
+  :8002): bge-m3 calibrated to **0.41277 / 0.81764** — matching the reference
+  constants to four decimals, i.e. **identity confirmed against a live server**,
+  not just against its own arithmetic; e5 to **0.78968 / 0.94561**, mapping
+  0.72 → **0.9080** and 0.85 → **0.9581**, exactly the designed values. The
+  behavioural payoff is the assertion that matters: an unrelated pair ("values
+  brevity" / "the train leaves from platform nine") scores **0.7479** on e5 —
+  **above** the raw 0.72, so the raw constant would have called it a duplicate,
+  and **below** the calibrated 0.9080, so the corrected gate rejects it.
+- **Regression — clean**: all **25** orchestrator e2e live smokes green (543 s)
+  on Gemma 4 31B q4_0 (external `llama-server`, `--jinja`) + bge-m3. Two of them
+  are the rewired gates themselves — `trait_gate_e2e_live` and
+  `summary_obs_overlap_e2e_live` — so the identity guarantee is confirmed end to
+  end through the orchestrator on a live model, not only in unit tests.
+- **The embedding-model change track is complete (stages 1–3)**: a swap is
+  detected behaviourally, nothing is deleted, `/reindex` re-embeds every stored
+  vector in place, and the memory gates follow the model instead of one fixed
+  calibration. Groundwork left in research §9: e5-style `query:`/`passage:` input
+  prefixes (the `Embedder` contract has no notion of input role), vec0 for notes,
+  and cross-model migration without re-embedding.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

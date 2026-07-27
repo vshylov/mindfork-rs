@@ -366,7 +366,10 @@ impl Db {
     /// fingerprint too: afterwards there are no vectors to be stale *relative to*,
     /// so the next launch has nothing to compare and records the current model as
     /// the new baseline. Leaving a fingerprint behind would report a model change
-    /// against vectors that no longer exist.
+    /// against vectors that no longer exist. The similarity calibration
+    /// ([`crate::shared::embed_calibration`]) goes with it for the same reason —
+    /// it describes the model the discarded vectors were produced by, and the next
+    /// launch measures both together.
     ///
     /// The attachment index is derived data: re-attaching the file rebuilds it,
     /// and `attachment_read` (the guaranteed path) is unaffected.
@@ -386,6 +389,7 @@ impl Db {
         meta_del(&conn, KEY_RAG_DIM)?;
         meta_del(&conn, KEY_EMBED_CANARY)?;
         meta_del(&conn, KEY_EMBED_MODEL_ID)?;
+        super::embed_gen::clear_calibration(&conn)?;
         meta_del(&conn, KEY_RAG_STALE_PROFILES)?;
         Ok(dropped as usize)
     }

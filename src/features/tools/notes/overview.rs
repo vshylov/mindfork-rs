@@ -4,6 +4,20 @@
 
 use super::*;
 
+/// A similarity threshold as the *model* is told it, at the same 2 decimals the
+/// pair lines below use (`{s:.2}`).
+///
+/// Two properties earn the fixed precision. The reference constants print exactly
+/// as they did before calibration existed (`0.85`), so an uncalibrated
+/// installation's overview is byte-identical; and because rounding is monotonic,
+/// a listed pair (`s >= threshold`) can never *display* below the displayed
+/// threshold — the model is never shown a number that contradicts the selection
+/// it is looking at. A raw `f32::to_string` of a mapped threshold would print
+/// like `0.95810324`.
+fn format_threshold(t: f32) -> String {
+    format!("{t:.2}")
+}
+
 /// Builds a knowledge-base overview for consolidation: similar pairs (possible
 /// duplicates by cosine), `contradicts` links, notes with no links. Data only (no
 /// rubric) — used by both the `consolidate_notes` tool and background auto-
@@ -32,12 +46,17 @@ pub(crate) fn build_consolidation_overview(
     with_vec.retain(|(n, _)| !is_self_note(n));
     let links = storage.db().note_links_all(profile_id).unwrap_or_default();
 
+    // The constant is a position in the reference (bge-m3) scale, so it has to be
+    // read in the active model's range (identity until the model actually
+    // changes). Once, not inside the O(n²) loop.
+    let threshold = storage.db().similarity_scale().map(CONSOLIDATE_SIMILARITY);
+
     // Similar pairs (possible duplicates) by cosine, descending by similarity.
     let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
     for i in 0..with_vec.len() {
         for j in (i + 1)..with_vec.len() {
             let s = cosine(&with_vec[i].1, &with_vec[j].1);
-            if s >= CONSOLIDATE_SIMILARITY {
+            if s >= threshold {
                 pairs.push((s, &with_vec[i].0, &with_vec[j].0));
             }
         }
@@ -65,10 +84,11 @@ pub(crate) fn build_consolidation_overview(
     );
 
     out.push('\n');
+    // The threshold that actually selected the pairs, not the reference constant.
     out.push_str(&loc.tf(
         "notes.overview.pairs",
         &[
-            ("sim", &CONSOLIDATE_SIMILARITY.to_string()),
+            ("sim", &format_threshold(threshold)),
             ("n", &pairs.len().to_string()),
         ],
     ));
@@ -138,12 +158,15 @@ pub(crate) fn build_self_consolidation_overview(
     with_vec.retain(|(n, _)| is_self_note(n));
     let links = storage.db().note_links_all(profile_id).unwrap_or_default();
 
+    // Read in the active model's range — see the sibling overview above.
+    let threshold = storage.db().similarity_scale().map(CONSOLIDATE_SIMILARITY);
+
     // Similar pairs (possible duplicate observations) by cosine, descending by similarity.
     let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
     for i in 0..with_vec.len() {
         for j in (i + 1)..with_vec.len() {
             let s = cosine(&with_vec[i].1, &with_vec[j].1);
-            if s >= CONSOLIDATE_SIMILARITY {
+            if s >= threshold {
                 pairs.push((s, &with_vec[i].0, &with_vec[j].0));
             }
         }
@@ -171,10 +194,11 @@ pub(crate) fn build_self_consolidation_overview(
         )
     );
     out.push('\n');
+    // The threshold that actually selected the pairs, not the reference constant.
     out.push_str(&loc.tf(
         "notes.overview.pairs",
         &[
-            ("sim", &CONSOLIDATE_SIMILARITY.to_string()),
+            ("sim", &format_threshold(threshold)),
             ("n", &pairs.len().to_string()),
         ],
     ));
@@ -209,15 +233,20 @@ pub(crate) fn build_self_consolidation_overview(
     Some(out.trim_end().to_string())
 }
 
-/// Cosine-similarity threshold above which a self-description (`summary`)
-/// paragraph counts as semantically matching an observation (`@self` note) — the
-/// A2 section of the self-consolidation overview. **Calibrated on live bge-m3**
+/// Similarity threshold above which a self-description (`summary`) paragraph
+/// counts as semantically matching an observation (`@self` note) — the A2 section
+/// of the self-consolidation overview. **Calibrated on live bge-m3**
 /// (like `TRAIT_SIMILARITY` in `self_model.rs`, the `summary_obs_calibration_e2e_live`
 /// smoke): "paragraph ↔ observation" paraphrases scored 0.69-0.80, unrelated pairs
 /// — 0.48-0.51; a clean gap 0.51→0.69. The 0.62 threshold (inside the gap, with
 /// margin on both sides) catches all paraphrases and filters out unrelated ones.
 /// Paragraphs are longer than short traits, so paraphrases score a bit lower than
 /// at the trait gate (0.73-0.83). See docs/history/self-model-consolidation.md §A2.
+///
+/// A position in the **reference (bge-m3) scale**, not an absolute cosine: what
+/// "0.62" means depends on the model's dynamic range, so it is read through
+/// [`crate::shared::embed_calibration::SimilarityScale`] before use. On a model
+/// whose range is 2.6× narrower the same intent sits at ~0.87 (research §8.2).
 const SUMMARY_OBS_SIMILARITY: f32 = 0.62;
 
 /// Minimum length of a `summary` paragraph (in characters) to participate in the
@@ -272,13 +301,15 @@ pub(crate) async fn summary_observation_overlaps(
     if vecs.len() != paragraphs.len() {
         return None;
     }
+    // Read in the active model's range, once — not inside the nested loop.
+    let threshold = storage.db().similarity_scale().map(SUMMARY_OBS_SIMILARITY);
     let mut lines: Vec<String> = Vec::new();
     for (p, pv) in paragraphs.iter().zip(&vecs) {
         // The closest observation above the threshold (one per paragraph — no noise).
         let mut best: Option<(f32, &Note)> = None;
         for (n, nv) in &obs {
             let s = cosine(pv, nv);
-            if s >= SUMMARY_OBS_SIMILARITY && best.map(|(bs, _)| s > bs).unwrap_or(true) {
+            if s >= threshold && best.map(|(bs, _)| s > bs).unwrap_or(true) {
                 best = Some((s, n));
             }
         }
