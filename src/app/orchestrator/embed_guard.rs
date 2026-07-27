@@ -61,9 +61,10 @@ use tokio::sync::OnceCell;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::events::AppEvent;
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::embed_calibration;
 use crate::shared::embed_identity::{CANARY_TEXT, EmbedFingerprint};
+use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 use crate::shared::storage::db::ReembedPending;
@@ -77,6 +78,10 @@ pub(super) struct EmbedGuard {
     storage: Arc<Storage>,
     /// Display name of the model now in use (settings-derived, may be absent).
     model_id: Option<String>,
+    /// The input-prefix convention in force. Recorded in the fingerprint as an
+    /// exact second trigger (research docs/research/embedding-input-prefixes.md
+    /// §4) and used to decide whether to hint at a better one.
+    convention: EmbedConvention,
     /// Interface language (axis B) — the notice goes to the user, not the model.
     loc: &'static Locale,
     evt_tx: UnboundedSender<AppEvent>,
@@ -115,6 +120,7 @@ impl EmbedGuard {
         inner: Arc<dyn Embedder>,
         storage: Arc<Storage>,
         model_id: Option<String>,
+        convention: EmbedConvention,
         loc: &'static Locale,
         evt_tx: UnboundedSender<AppEvent>,
     ) -> Self {
@@ -122,6 +128,7 @@ impl EmbedGuard {
             inner,
             storage,
             model_id,
+            convention,
             loc,
             evt_tx,
             checked: OnceCell::new(),
@@ -132,9 +139,14 @@ impl EmbedGuard {
     /// mismatch. Returns `Err` when the embedder is unavailable, so the check is
     /// retried on the next call instead of being cached as a verdict.
     async fn run_check(&self) -> Result<()> {
+        // Passage, deliberately: stored vectors are all passage-role, so the
+        // passage marker alone defines the space the database is in. A change to
+        // the *query* marker alters retrieval but leaves every stored vector
+        // valid, and must not force a reindex (research
+        // docs/research/embedding-input-prefixes.md §4).
         let fresh = self
             .inner
-            .embed(vec![CANARY_TEXT.to_string()])
+            .embed(vec![CANARY_TEXT.to_string()], EmbedRole::Passage)
             .await?
             .into_iter()
             .next()
@@ -142,11 +154,11 @@ impl EmbedGuard {
             .ok_or_else(|| anyhow!("embedder returned no canary vector"))?;
 
         let stored = self.storage.db().embed_fingerprint().unwrap_or(None);
-        let current = EmbedFingerprint::new(fresh, self.model_id.clone());
+        let current = EmbedFingerprint::new(fresh, self.model_id.clone(), self.convention.id());
 
         match stored {
-            // Same model — the common path, nothing to do.
-            Some(prev) if prev.matches(&current.canary) => return Ok(()),
+            // Same model and same input convention — the common path.
+            Some(prev) if prev.matches(&current) => return Ok(()),
             Some(prev) => {
                 let hit = self.invalidate();
                 tracing::warn!(
@@ -190,7 +202,11 @@ impl EmbedGuard {
     /// the gates as they were — never make them wilder.
     async fn calibrate(&self) {
         let probes = embed_calibration::probe_texts();
-        let vectors = match self.inner.embed(probes).await {
+        // Passage: every gate this calibrates is a passage-to-passage comparison
+        // (research §5.3), and going through the prefixer means a model's range
+        // is always measured in the same dressing its real text gets — which is
+        // what keeps the reference constants valid (§3).
+        let vectors = match self.inner.embed(probes, EmbedRole::Passage).await {
             Ok(v) => v,
             Err(err) => {
                 tracing::warn!(error = %err, "similarity calibration skipped");
@@ -276,18 +292,38 @@ impl EmbedGuard {
                 &[("n", &hit.stale_profiles.to_string())],
             ));
         }
+        if let Some(suggested) = self.suggested_convention() {
+            msg.push(' ');
+            msg.push_str(
+                &self
+                    .loc
+                    .tf("ui.embed.convention_hint", &[("name", suggested.id())]),
+            );
+        }
         let _ = self.evt_tx.send(AppEvent::Error(msg));
+    }
+
+    /// A convention the new model's name suggests but the settings do not use.
+    ///
+    /// Only ever a *hint* — never applied. A wrong convention is measurably
+    /// harmful (it costs bge-m3 a rank and 31% of its margin, research §2.1), so
+    /// the choice stays the user's; this just makes it discoverable at the one
+    /// moment it is relevant. `None` when the name suggests nothing, or suggests
+    /// what is already set.
+    fn suggested_convention(&self) -> Option<EmbedConvention> {
+        let suggested = EmbedConvention::suggested_for(self.model_id.as_deref()?)?;
+        (suggested != self.convention).then_some(suggested)
     }
 }
 
 #[async_trait::async_trait]
 impl Embedder for EmbedGuard {
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    async fn embed(&self, texts: Vec<String>, role: EmbedRole) -> Result<Vec<Vec<f32>>> {
         // Best-effort: a failed check (server still loading, embeddings not
         // configured) must never block real work — the call below reports the
         // real error itself, and the check retries next time.
         let _ = self.checked.get_or_try_init(|| self.run_check()).await;
-        self.inner.embed(texts).await
+        self.inner.embed(texts, role).await
     }
 }
 
@@ -310,7 +346,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Embedder for SaltedEmbedder {
-        async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        async fn embed(&self, texts: Vec<String>, _role: EmbedRole) -> Result<Vec<Vec<f32>>> {
             Ok(texts
                 .iter()
                 .map(|t| {
@@ -345,20 +381,196 @@ mod tests {
     }
 
     fn guard(f: &Fixture, inner: Arc<dyn Embedder>, model: &str) -> EmbedGuard {
+        guard_with(f, inner, model, EmbedConvention::None)
+    }
+
+    /// The guard as production builds it: wrapping the prefixer, so the canary
+    /// and the calibration probes go through the convention (research §3–§4).
+    fn guard_with(
+        f: &Fixture,
+        inner: Arc<dyn Embedder>,
+        model: &str,
+        convention: EmbedConvention,
+    ) -> EmbedGuard {
         EmbedGuard::new(
-            inner,
+            Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
+                inner, convention,
+            )),
             f.storage.clone(),
             Some(model.to_string()),
+            convention,
             locale(Lang::Ru),
             f.tx.clone(),
         )
+    }
+
+    // ---------- the prefixer sits inside the guard (research §3–§4) ----------
+
+    /// Records what actually reached the real embedder.
+    #[derive(Default)]
+    struct Recorder {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for Recorder {
+        async fn embed(&self, texts: Vec<String>, _role: EmbedRole) -> Result<Vec<Vec<f32>>> {
+            self.seen.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn the_canary_and_the_calibration_go_through_the_prefixer() {
+        // The ordering property both traps rest on. If the guard wrapped the raw
+        // embedder instead, the canary would be blind to a convention switch and
+        // the calibration would be measured in a dressing the real text never
+        // wears — silently invalidating the reference constants (research §3).
+        let f = fixture();
+        let rec = Arc::new(Recorder::default());
+        guard_with(&f, rec.clone(), "e5", EmbedConvention::E5)
+            .embed(vec!["настоящий текст".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
+
+        let seen = rec.seen.lock().unwrap();
+        assert!(
+            seen.iter().any(|t| t == &format!("passage: {CANARY_TEXT}")),
+            "the canary must carry the passage marker: {seen:?}"
+        );
+        assert!(
+            seen.iter().filter(|t| t.starts_with("passage: ")).count() > 30,
+            "the 32 calibration probes are prefixed too: {}",
+            seen.len()
+        );
+        assert!(
+            seen.iter().any(|t| t == "passage: настоящий текст"),
+            "and so is the real call: {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn turning_a_convention_on_reads_as_a_changed_vector_space() {
+        // Enabling prefixes genuinely re-embeds everything into a different
+        // space, so it must invalidate exactly like a model swap — otherwise the
+        // user would keep querying old vectors with newly-dressed queries.
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+        let note = Note::new(profile, "заметка", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &[1.0, 0.0])
+            .unwrap();
+        let embedder = Arc::new(MockEmbedder::new(16));
+
+        guard_with(&f, embedder.clone(), "e5", EmbedConvention::None)
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
+        let gen_before = f.storage.db().embed_generation().unwrap();
+        while f.rx.try_recv().is_ok() {}
+
+        // Same model, same everything — only the convention changes.
+        guard_with(&f, embedder, "e5", EmbedConvention::E5)
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
+
+        assert!(
+            f.storage.db().embed_generation().unwrap() > gen_before,
+            "the generation must be bumped, retiring the old vectors"
+        );
+        assert!(
+            f.rx.try_recv().is_ok(),
+            "and the user must be told, as for any model change"
+        );
+        // The note itself survives — nothing is ever deleted (research §8.1 S3).
+        assert!(f.storage.db().note_get(profile, note.id).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn the_model_change_notice_hints_at_a_matching_convention() {
+        // A hint, never an action: a wrong convention is measurably harmful, so
+        // the choice stays the user's (research §7 R3).
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+        let note = Note::new(profile, "заметка", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &[1.0, 0.0])
+            .unwrap();
+
+        guard(&f, Arc::new(SaltedEmbedder { salt: 0, dim: 16 }), "bge-m3")
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
+        while f.rx.try_recv().is_ok() {}
+
+        guard(
+            &f,
+            Arc::new(SaltedEmbedder { salt: 3, dim: 16 }),
+            "multilingual-e5-large-instruct-q8_0.gguf",
+        )
+        .embed(vec!["x".into()], EmbedRole::Passage)
+        .await
+        .unwrap();
+
+        let AppEvent::Error(msg) = f.rx.try_recv().expect("a notice") else {
+            panic!("expected an error event");
+        };
+        assert!(msg.contains("e5-instruct"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn no_hint_when_the_convention_already_matches() {
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+        let note = Note::new(profile, "заметка", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &[1.0, 0.0])
+            .unwrap();
+
+        guard_with(
+            &f,
+            Arc::new(SaltedEmbedder { salt: 0, dim: 16 }),
+            "bge-m3",
+            EmbedConvention::E5Instruct,
+        )
+        .embed(vec!["x".into()], EmbedRole::Passage)
+        .await
+        .unwrap();
+        while f.rx.try_recv().is_ok() {}
+
+        guard_with(
+            &f,
+            Arc::new(SaltedEmbedder { salt: 3, dim: 16 }),
+            "multilingual-e5-large-instruct-q8_0.gguf",
+            EmbedConvention::E5Instruct,
+        )
+        .embed(vec!["x".into()], EmbedRole::Passage)
+        .await
+        .unwrap();
+
+        let AppEvent::Error(msg) = f.rx.try_recv().expect("a notice") else {
+            panic!("expected an error event");
+        };
+        assert!(
+            !msg.contains("e5-instruct"),
+            "nothing to suggest when it is already set: {msg}"
+        );
     }
 
     #[tokio::test]
     async fn first_run_records_fingerprint_without_notifying() {
         let mut f = fixture();
         let g = guard(&f, Arc::new(MockEmbedder::new(16)), "model-a");
-        g.embed(vec!["hello".into()]).await.unwrap();
+        g.embed(vec!["hello".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
 
         assert!(
             f.storage.db().embed_fingerprint().unwrap().is_some(),
@@ -383,12 +595,12 @@ mod tests {
 
         // Two separate guards over the same model — as if the app were restarted.
         guard(&f, Arc::new(MockEmbedder::new(16)), "model-a")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
         let _ = f.rx.try_recv();
         guard(&f, Arc::new(MockEmbedder::new(16)), "model-a")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
 
@@ -416,14 +628,14 @@ mod tests {
 
         // Model A records the fingerprint.
         guard(&f, Arc::new(SaltedEmbedder { salt: 0, dim: 32 }), "model-a")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
         let _ = f.rx.try_recv();
 
         // Model B — same dimensionality, different vector space.
         guard(&f, Arc::new(SaltedEmbedder { salt: 3, dim: 32 }), "model-b")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
 
@@ -465,11 +677,11 @@ mod tests {
             .unwrap();
 
         guard(&f, Arc::new(SaltedEmbedder { salt: 0, dim: 32 }), "model-a")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
         guard(&f, Arc::new(SaltedEmbedder { salt: 3, dim: 32 }), "model-b")
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap();
 
@@ -488,15 +700,19 @@ mod tests {
     async fn detection_happens_once_per_instance() {
         let f = fixture();
         let g = guard(&f, Arc::new(MockEmbedder::new(16)), "model-a");
-        g.embed(vec!["a".into()]).await.unwrap();
+        g.embed(vec!["a".into()], EmbedRole::Passage).await.unwrap();
         let first = f.storage.db().embed_fingerprint().unwrap();
         // Corrupt the record; a second call on the same instance must not re-check
         // (and therefore must not rewrite it).
         f.storage
             .db()
-            .set_embed_fingerprint(&EmbedFingerprint::new(vec![9.0; 4], Some("junk".into())))
+            .set_embed_fingerprint(&EmbedFingerprint::new(
+                vec![9.0; 4],
+                Some("junk".into()),
+                EmbedConvention::None.id(),
+            ))
             .unwrap();
-        g.embed(vec!["b".into()]).await.unwrap();
+        g.embed(vec!["b".into()], EmbedRole::Passage).await.unwrap();
         assert_ne!(
             f.storage.db().embed_fingerprint().unwrap(),
             first,
@@ -536,7 +752,7 @@ mod tests {
         let note = Note::new(profile, "the user prefers concise answers", vec![]);
         f.storage.db().note_insert(&note).unwrap();
         let vec_a = model_a
-            .embed(vec![note.content.clone()])
+            .embed(vec![note.content.clone()], EmbedRole::Passage)
             .await
             .unwrap()
             .remove(0);
@@ -553,7 +769,7 @@ mod tests {
             .unwrap();
 
         guard(&f, model_a.clone(), "bge-m3")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
         assert!(f.storage.db().embed_fingerprint().unwrap().is_some());
@@ -564,7 +780,7 @@ mod tests {
         // nag the user on every single launch. Real servers are not obliged to be
         // bit-exact, so this has to be checked against one rather than a mock.
         guard(&f, model_a, "bge-m3")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
         assert!(
@@ -581,14 +797,18 @@ mod tests {
         );
 
         // Swap the model. Same dimensionality — the point of the test.
-        let dim_b = model_b.embed(vec!["x".into()]).await.unwrap()[0].len();
+        let dim_b = model_b
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap()[0]
+            .len();
         assert_eq!(
             dim_a, dim_b,
             "this smoke is only meaningful for two models of the SAME dimensionality \
              (that is the case no existing guard can catch)"
         );
         guard(&f, model_b, "multilingual-e5-large-instruct")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
 
@@ -638,7 +858,7 @@ mod tests {
         // must not silently shift.
         let f_bge = fixture();
         guard(&f_bge, bge.clone(), "bge-m3")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
         let c = f_bge
@@ -665,7 +885,7 @@ mod tests {
         // e5 has a much narrower range, so its thresholds must move up.
         let f_e5 = fixture();
         guard(&f_e5, e5.clone(), "e5-large-instruct")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
         let scale_e5 = f_e5.storage.db().similarity_scale();
@@ -686,10 +906,13 @@ mod tests {
         // would still have left the trait gate firing on everything — and below
         // the calibrated threshold.
         let unrelated = e5
-            .embed(vec![
-                "the user values brevity in answers".into(),
-                "the train leaves from platform nine".into(),
-            ])
+            .embed(
+                vec![
+                    "the user values brevity in answers".into(),
+                    "the train leaves from platform nine".into(),
+                ],
+                EmbedRole::Passage,
+            )
             .await
             .unwrap();
         let s = cosine_for_test(&unrelated[0], &unrelated[1]);
@@ -728,7 +951,7 @@ mod tests {
             "model-a",
         );
         assert!(
-            g.embed(vec!["x".into()]).await.is_err(),
+            g.embed(vec!["x".into()], EmbedRole::Passage).await.is_err(),
             "the real error surfaces"
         );
         assert!(

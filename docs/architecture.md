@@ -345,6 +345,11 @@ src/
    │                       measurement fixture (include_str!, bilingual, DO NOT EDIT:
    │                       it defines the reference constants; allowlisted in
    │                       tools/cyrillic_scan.py). See spec §9.3.4
+   ├─ embed_prefix.rs      per-model input prefixes: EmbedConvention (none/e5/e5-instruct)
+   │                       + PrefixedEmbedder, an Embedder decorator marking each text
+   │                       by its EmbedRole. Installed INSIDE EmbedGuard, so the canary
+   │                       and the calibration probes go through it. Default `none` —
+   │                       a no-op. See docs/research/embedding-input-prefixes.md
    ├─ config.rs            AppConfig and its sections (Engine/Embed/Tool/Interface/Impersonation…)
    ├─ credits.rs           app metadata for the "About" dialog (F1): brand name,
    │                       author, links, license text (MIT), components (name/version/
@@ -652,7 +657,11 @@ classDiagram
     }
     class Embedder {
         <<trait>>
-        +embed(texts) Vec~Vec~f32~~
+        +embed(texts, role) Vec~Vec~f32~~
+    }
+    class PrefixedEmbedder {
+        shared/embed_prefix.rs
+        marks input per EmbedConvention
     }
     class OpenAiClient {
         openai/: Chat Completions, reqwest + SSE
@@ -684,6 +693,7 @@ classDiagram
     EngineBackend <|.. MockBackend
     Embedder <|.. OpenAiClient
     Embedder <|.. UnavailableEmbedder
+    Embedder <|.. PrefixedEmbedder
 ```
 
 The provider is picked in settings via a single mode selector (`managed`/
@@ -913,6 +923,18 @@ Storage invariants:
   it with the fingerprint ("start over"); `drop_vector_tables` deliberately keeps
   it, since by then the guard has already calibrated the model being re-embedded
   into.
+- **The input convention** (`meta.embed_convention`) is the one **config-derived**
+  component of embedding identity, and the one exception to "identity is
+  behavioural". Marking input with `query:`/`passage:` genuinely changes the
+  vector space, and the canary does detect it — but by as little as 0.0025 on a
+  model whose passage marker barely moves the vector, so the id makes that exact.
+  It can only *add* detections, never mask one, which is what separates it from
+  the config-only fingerprint rejected in the earlier research. `EmbedGuard` runs
+  the canary and the calibration **through** `PrefixedEmbedder`, so both are
+  always measured in the same dressing real text gets; the canary carries
+  `EmbedRole::Passage`, because stored vectors are all passage-role and a change
+  to the *query* marker must therefore not force a reindex. See
+  docs/research/embedding-input-prefixes.md §3–§4.
 - **Per-row `embed_gen`** records *which* model produced a given vector, against
   the monotonic `meta.embed_gen` counter the guard bumps on a detected change:
   one increment retires the whole DB without deleting a row, so the stored text

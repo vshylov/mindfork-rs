@@ -24,6 +24,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::shared::embed_prefix::EmbedConvention;
+
 /// The canary text. **Never change this** without bumping the suffix: a new
 /// string produces a different vector, which would read as "the model changed"
 /// for every existing installation. Deliberately short (one embed call, cheap)
@@ -46,18 +48,47 @@ pub struct EmbedFingerprint {
     /// Display metadata only — never the trigger: a generic id (`"gpt"`) or an
     /// unchanged name after a file swap makes it unreliable on its own.
     pub model_id: Option<String>,
+    /// Id of the input-prefix convention the stored vectors were produced under
+    /// ([`crate::shared::embed_prefix::EmbedConvention::id`]).
+    ///
+    /// Unlike `model_id` this **is** a trigger, and it is the one exception to
+    /// "identity is behavioural". Changing the convention genuinely changes the
+    /// vector space, and the canary does detect it — but by as little as 0.0025
+    /// on a model whose passage marker barely moves the vector (research
+    /// docs/research/embedding-input-prefixes.md §4). A config component makes
+    /// that detection exact. It can only *add* detections, never mask one, which
+    /// is what separates it from a config-only fingerprint (rejected as D2 in
+    /// docs/research/embedding-model-change-reindex.md §4).
+    ///
+    /// `None` on a fingerprint written before this existed — treated as the
+    /// default convention, which is what those installations were using.
+    #[serde(default)]
+    pub convention: Option<String>,
 }
 
 impl EmbedFingerprint {
-    pub fn new(canary: Vec<f32>, model_id: Option<String>) -> Self {
-        Self { canary, model_id }
+    pub fn new(canary: Vec<f32>, model_id: Option<String>, convention: &str) -> Self {
+        Self {
+            canary,
+            model_id,
+            convention: Some(convention.to_string()),
+        }
     }
 
-    /// Whether `fresh` was produced by the same model as this fingerprint.
+    /// Whether `fresh` was produced the same way as this fingerprint: the same
+    /// model **and** the same input convention.
+    ///
     /// A different dimensionality is decisive on its own; otherwise the canary
-    /// cosine decides.
-    pub fn matches(&self, fresh: &[f32]) -> bool {
-        self.canary.len() == fresh.len() && cosine(&self.canary, fresh) >= CANARY_MATCH
+    /// cosine decides, with the convention as an exact second trigger. A stored
+    /// `None` convention means "recorded before conventions existed", i.e. the
+    /// default — so an installation that never changes it sees no difference.
+    pub fn matches(&self, fresh: &EmbedFingerprint) -> bool {
+        let default = EmbedConvention::default().id();
+        let stored = self.convention.as_deref().unwrap_or(default);
+        let current = fresh.convention.as_deref().unwrap_or(default);
+        stored == current
+            && self.canary.len() == fresh.canary.len()
+            && cosine(&self.canary, &fresh.canary) >= CANARY_MATCH
     }
 
     /// Model name for display, or a placeholder when settings carry none (an
@@ -88,14 +119,25 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 mod tests {
     use super::*;
 
+    /// A fingerprint under the default convention — the state of every
+    /// installation that never touches the setting.
     fn fp(v: &[f32]) -> EmbedFingerprint {
-        EmbedFingerprint::new(v.to_vec(), Some("test-model".into()))
+        EmbedFingerprint::new(
+            v.to_vec(),
+            Some("test-model".into()),
+            EmbedConvention::None.id(),
+        )
+    }
+
+    /// A fresh reading to compare against `fp`, same convention.
+    fn fresh(v: &[f32]) -> EmbedFingerprint {
+        fp(v)
     }
 
     #[test]
     fn identical_vector_matches() {
         let f = fp(&[1.0, 0.0, 0.0]);
-        assert!(f.matches(&[1.0, 0.0, 0.0]));
+        assert!(f.matches(&fresh(&[1.0, 0.0, 0.0])));
     }
 
     #[test]
@@ -104,14 +146,14 @@ mod tests {
         // (or normalizes differently between versions of the same model) must not
         // read as a model change.
         let f = fp(&[1.0, 2.0, 3.0]);
-        assert!(f.matches(&[2.0, 4.0, 6.0]));
+        assert!(f.matches(&fresh(&[2.0, 4.0, 6.0])));
     }
 
     #[test]
     fn tiny_numeric_noise_still_matches() {
         // Cloud providers are not bit-exact; the threshold must tolerate that.
         let f = fp(&[1.0, 0.0, 0.0]);
-        assert!(f.matches(&[0.9999, 0.001, 0.0]));
+        assert!(f.matches(&fresh(&[0.9999, 0.001, 0.0])));
     }
 
     #[test]
@@ -119,20 +161,72 @@ mod tests {
         // The real measured cross-model figure is ~0.369; anything near it must
         // read as a different model.
         let f = fp(&[1.0, 0.0, 0.0]);
-        assert!(!f.matches(&[0.369, 0.929, 0.0]));
+        assert!(!f.matches(&fresh(&[0.369, 0.929, 0.0])));
     }
 
     #[test]
     fn different_dimension_never_matches() {
         let f = fp(&[1.0, 0.0, 0.0]);
-        assert!(!f.matches(&[1.0, 0.0]));
-        assert!(!f.matches(&[]));
+        assert!(!f.matches(&fresh(&[1.0, 0.0])));
+        assert!(!f.matches(&fresh(&[])));
     }
 
     #[test]
     fn display_id_falls_back_to_placeholder() {
         assert_eq!(fp(&[1.0]).display_id(), "test-model");
-        assert_eq!(EmbedFingerprint::new(vec![1.0], None).display_id(), "?");
+        assert_eq!(
+            EmbedFingerprint::new(vec![1.0], None, "none").display_id(),
+            "?"
+        );
+    }
+
+    // ---------- the convention as a second, exact trigger (research §4) ----------
+
+    #[test]
+    fn a_changed_convention_is_a_changed_space_even_with_an_identical_canary() {
+        // The case the config component exists for: a model whose passage marker
+        // barely moves the vector (measured: 0.9965 on e5, only 0.0025 clear of
+        // the detector). The canary alone could wave that through; the id cannot.
+        let stored = EmbedFingerprint::new(vec![1.0, 0.0], Some("e5".into()), "none");
+        let current = EmbedFingerprint::new(vec![1.0, 0.0], Some("e5".into()), "e5-instruct");
+        assert!(!stored.matches(&current));
+        // ...and switching back is recognised just as exactly.
+        assert!(current.matches(&EmbedFingerprint::new(
+            vec![1.0, 0.0],
+            Some("e5".into()),
+            "e5-instruct"
+        )));
+    }
+
+    #[test]
+    fn a_fingerprint_predating_conventions_reads_as_the_default() {
+        // Every fingerprint already on disk has no convention field. Those
+        // installations were using the default, so reading `None` as anything
+        // else would report a spurious model change on the next launch.
+        let legacy = EmbedFingerprint {
+            canary: vec![1.0, 0.0],
+            model_id: Some("bge-m3".into()),
+            convention: None,
+        };
+        let current = EmbedFingerprint::new(vec![1.0, 0.0], Some("bge-m3".into()), "none");
+        assert!(legacy.matches(&current), "no spurious change on upgrade");
+        assert!(
+            !legacy.matches(&EmbedFingerprint::new(
+                vec![1.0, 0.0],
+                Some("bge-m3".into()),
+                "e5"
+            )),
+            "but turning a convention on is still a change"
+        );
+    }
+
+    #[test]
+    fn legacy_json_without_a_convention_deserializes() {
+        // `#[serde(default)]` — the same additive rule the rest of the project
+        // follows (ADR 0006 F12), so no migration is needed.
+        let json = r#"{"canary":[1.0,0.0],"model_id":"bge-m3"}"#;
+        let f: EmbedFingerprint = serde_json::from_str(json).unwrap();
+        assert_eq!(f.convention, None);
     }
 
     #[test]

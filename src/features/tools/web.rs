@@ -38,7 +38,7 @@ use reqwest::StatusCode;
 use scraper::{Html, Selector};
 
 use crate::entities::profile::ToolId;
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -281,19 +281,33 @@ async fn rerank_by_embeddings(
     if results.len() < 2 {
         return; // nothing to reorder
     }
-    let mut texts: Vec<String> = Vec::with_capacity(results.len() + 1);
-    texts.push(query.to_string());
-    texts.extend(results.iter().map(rerank_text));
-    let vecs = match embedder.embed(texts).await {
-        Ok(v) if v.len() == results.len() + 1 => v,
+    // Two requests, not one: this is genuine asymmetric retrieval, so the query
+    // and the page texts carry different roles (research §5.1/§5.2). One extra
+    // round trip on a path that already issues N parallel page fetches.
+    let query_vec = match embedder
+        .embed(vec![query.to_string()], EmbedRole::Query)
+        .await
+    {
+        Ok(mut v) if !v.is_empty() => v.remove(0),
+        Ok(_) => {
+            tracing::debug!("reranking skipped: the embedder returned no query vector");
+            return;
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "reranking skipped: the embedder is unavailable");
+            return;
+        }
+    };
+    let texts: Vec<String> = results.iter().map(rerank_text).collect();
+    let vecs = match embedder.embed(texts, EmbedRole::Passage).await {
+        Ok(v) if v.len() == results.len() => v,
         Ok(_) => return, // a mismatch — don't risk shuffling
         Err(err) => {
             tracing::debug!(error = %err, "web search: reranking unavailable, keeping the provider order");
             return;
         }
     };
-    let query_vec = &vecs[0];
-    let order = rerank_order(query_vec, &vecs[1..]);
+    let order = rerank_order(&query_vec, &vecs);
     *results = order.into_iter().map(|i| results[i].clone()).collect();
 }
 
@@ -944,6 +958,37 @@ mod tests {
         rerank_by_embeddings(&embedder, "rust язык программирования", &mut results).await;
         // The result relevant to the query rose to the top.
         assert_eq!(results[0].url, "https://e/rust");
+    }
+
+    #[tokio::test]
+    async fn rerank_splits_the_query_from_the_page_texts() {
+        // The only site in the codebase where one comparison needs both roles, so
+        // it is the only one that issues two requests. Pinned here because a
+        // regression would silently embed the query as a passage — invisible on
+        // bge-m3, quietly wrong on any model that uses input prefixes
+        // (docs/research/embedding-input-prefixes.md §5.1/§5.2).
+        use crate::features::tools::testkit::RoleRecorder;
+        let rec = RoleRecorder::new();
+        let mut results = vec![
+            SearchResult {
+                title: "Про погоду".into(),
+                url: "https://e/weather".into(),
+                snippet: "дождь".into(),
+                content: String::new(),
+            },
+            SearchResult {
+                title: "Язык Rust".into(),
+                url: "https://e/rust".into(),
+                snippet: "системный язык".into(),
+                content: String::new(),
+            },
+        ];
+        rerank_by_embeddings(&rec, "что такое rust?", &mut results).await;
+
+        assert_eq!(rec.roles(), vec![EmbedRole::Query, EmbedRole::Passage]);
+        let calls = rec.calls.lock().unwrap();
+        assert_eq!(calls[0].0, vec!["что такое rust?".to_string()]);
+        assert_eq!(calls[1].0.len(), 2, "one text per result, query excluded");
     }
 
     #[tokio::test]

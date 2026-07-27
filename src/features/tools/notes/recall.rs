@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// `note_recall` — searches the profile's notes by text/tags.
 pub struct NoteRecall;
@@ -193,7 +194,7 @@ pub(crate) async fn semantic_recall(
     ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
     let emb = ctx
         .embedder
-        .embed(vec![query.to_string()])
+        .embed(vec![query.to_string()], EmbedRole::Query)
         .await
         .ok()?
         .into_iter()

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::app::events::{AppEvent, RagProgress};
 use crate::features::tools::rag::ChunkParams;
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 
@@ -221,7 +221,10 @@ fn spawn_rag_ingest(task: RagIngest) {
         }
 
         // 2. Embedder precheck — a fast, clear refusal if RAG isn't configured.
-        if let Err(err) = embedder.embed(vec!["ping".into()]).await {
+        if let Err(err) = embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+        {
             send(RagProgress::Failed(loc.tf(
                 "ui.err.rag_embedder_unavailable",
                 &[("err", &err.to_string())],
@@ -364,7 +367,10 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         }
 
         // 3. Embedder precheck and determining the new dimensionality.
-        let new_dim = match embedder.embed(vec!["ping".into()]).await {
+        let new_dim = match embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+        {
             Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
             Err(err) => {
                 send(RagProgress::Failed(loc.tf(
@@ -594,7 +600,7 @@ async fn index_source(
     // large files).
     let mut done = 0usize;
     for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
-        let embeddings = embedder.embed(batch.to_vec()).await?;
+        let embeddings = embedder.embed(batch.to_vec(), EmbedRole::Passage).await?;
         if embeddings.len() != batch.len() {
             anyhow::bail!("{}", loc.t("ui.err.rag_wrong_vector_count"));
         }
@@ -775,7 +781,10 @@ mod tests {
         // Sub-batching didn't lose anything: all N chunks are written and found by
         // search (rag_search — the same DB primitive as the RagSearch tool).
         assert_eq!(storage.db().rag_count(profile_id).unwrap(), n);
-        let mut q = embedder.embed(vec!["предложение".into()]).await.unwrap();
+        let mut q = embedder
+            .embed(vec!["предложение".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
         let query = q.remove(0);
         let hits = storage.db().rag_search(profile_id, &query, 5).unwrap();
         assert!(!hits.is_empty(), "search finds the written chunks");

@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// The profile's fresh "notes about self" (the "self-model" narrative), newest
 /// first (`updated_at DESC`), up to `limit`. A separate read path for self-notes
@@ -37,7 +38,10 @@ pub(crate) async fn self_notes_relevant(
         return Vec::new();
     }
     ensure_note_vectors(storage, embedder, profile_id).await;
-    let Ok(vecs) = embedder.embed(vec![query.to_string()]).await else {
+    let Ok(vecs) = embedder
+        .embed(vec![query.to_string()], EmbedRole::Query)
+        .await
+    else {
         return Vec::new();
     };
     let Some(emb) = vecs.into_iter().next() else {

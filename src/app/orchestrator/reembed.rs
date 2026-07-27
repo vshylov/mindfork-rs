@@ -25,7 +25,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::events::{AppEvent, RagProgress};
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 use crate::shared::storage::db::{Db, ReembedPending, ReembedRow};
@@ -135,7 +135,10 @@ fn spawn_reembed(task: Reembed) {
         };
 
         // 1. Embedder precheck — also tells us the dimensionality we are moving to.
-        let dim = match embedder.embed(vec!["ping".into()]).await {
+        let dim = match embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+        {
             Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
             Err(err) => {
                 send(RagProgress::Failed(loc.tf(
@@ -260,7 +263,10 @@ async fn drain_store(
         }
 
         let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
-        let embeddings = match embedder.embed(texts).await {
+        // Passage, identical to what the original writers used (rag.rs,
+        // attachments.rs, notes/save.rs). Re-embedding under a different role
+        // would quietly re-create the mixed-space problem this job exists to fix.
+        let embeddings = match embedder.embed(texts, EmbedRole::Passage).await {
             Ok(v) if v.len() == rows.len() => v,
             // The embedding server died mid-job, or answered incoherently.
             // Retrying would spin on the same batch forever, so stop the job and
@@ -512,7 +518,10 @@ mod tests {
 
         // 1. Index the corpus and one note under model A.
         let vectors = model_a
-            .embed(corpus.iter().map(|s| s.to_string()).collect())
+            .embed(
+                corpus.iter().map(|s| s.to_string()).collect(),
+                EmbedRole::Passage,
+            )
             .await
             .unwrap();
         for (text, vector) in corpus.iter().zip(vectors) {
@@ -524,7 +533,7 @@ mod tests {
         let note = Note::new(profile, "the user prefers concise answers", vec![]);
         storage.db().note_insert(&note).unwrap();
         let note_vec = model_a
-            .embed(vec![note.content.clone()])
+            .embed(vec![note.content.clone()], EmbedRole::Passage)
             .await
             .unwrap()
             .remove(0);
@@ -540,16 +549,17 @@ mod tests {
                 inner,
                 storage.clone(),
                 Some(name.to_string()),
+                crate::shared::embed_prefix::EmbedConvention::None,
                 locale(Lang::Ru),
                 tx.clone(),
             )
         };
         guard(model_a, "bge-m3")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
         guard(model_b.clone(), "e5-large-instruct")
-            .embed(vec!["warm up".into()])
+            .embed(vec!["warm up".into()], EmbedRole::Passage)
             .await
             .unwrap();
 
@@ -583,7 +593,11 @@ mod tests {
 
         // 4. The payoff: a model-B query now retrieves the right chunk. Reporting
         //    success is not enough — retrieval itself has to work again.
-        let query_vec = model_b.embed(vec![QUERY.into()]).await.unwrap().remove(0);
+        let query_vec = model_b
+            .embed(vec![QUERY.into()], EmbedRole::Query)
+            .await
+            .unwrap()
+            .remove(0);
         let hits = storage.db().rag_search(profile, &query_vec, 3).unwrap();
         assert_eq!(
             hits.first().map(|h| h.chunk_text.as_str()),
@@ -592,7 +606,7 @@ mod tests {
         );
         // And the note is searchable under the new model as well.
         let note_query = model_b
-            .embed(vec!["how should I answer?".into()])
+            .embed(vec!["how should I answer?".into()], EmbedRole::Passage)
             .await
             .unwrap()
             .remove(0);

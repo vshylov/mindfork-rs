@@ -395,7 +395,9 @@ pub trait EngineBackend: Send + Sync {
         -> Result<BoxStream<'static, ChatChunk>>;
 
     /// Embeddings (RAG). May spin up a secondary server on demand (see 6.6).
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+    /// `role` says what the text *is* — a search query or a stored passage; some
+    /// model families expect their input marked accordingly (see 9.3.5).
+    async fn embed(&self, texts: Vec<String>, role: EmbedRole) -> Result<Vec<Vec<f32>>>;
 }
 
 pub struct ChatRequest {
@@ -755,6 +757,45 @@ bilingual and phrased in the register the gates operate in, and editing it
 invalidates the reference constants and every threshold derived from them. See
 [docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)
 §6 and §8.2.
+
+#### 9.3.5. Input prefixes (per-model input convention)
+
+Some embedding families expect each input marked with its **role**: base e5 wants
+`query: ` / `passage: `, the `-instruct` variants want an instruction-shaped
+query and a **bare** passage, and bge-m3 — the model the project is calibrated
+against — wants no marker at all. So a convention is a per-model choice of three,
+not a switch. Setting: "Input prefixes" in the Embeddings tab, default `none`.
+See
+[docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md).
+
+- **What it buys, measured.** On a 40-document / 14-query corpus the prefixes
+  changed **no ranking at all** on e5 (12/14 top-1 under every convention); what
+  improves is separation — the mean margin by 15% and the **smallest** margin
+  25×, from an arbitrary 0.0002 tie to 0.0056. Real robustness, not a correctness
+  fix, and the feature is documented as such rather than oversold.
+- **A wrong convention is worse than none**, which is why `none` is the default
+  and nothing is ever selected automatically: prefixing bge-m3 costs it a rank
+  (11/14 → 10/14) and 31% of its margin. When a model change is detected and the
+  new model's *name* suggests a convention, the notice says so — a hint, never an
+  action.
+- **The role is stated at every call site and has no default.** Only a search
+  query against a stored index is `Query`; everything stored, and everything
+  compared against something stored, is `Passage` — including the sites that read
+  like queries but feed the similarity gates (the `note_save` and `add_insight`
+  duplicate gates, the related-trait gate, the summary↔observation overlap). All
+  of those are symmetric comparisons, so both sides must be marked the same way;
+  a mismatched role on one side costs up to 17% of a compressed model's usable
+  range. Web-search reranking is the only genuinely mixed site and issues two
+  requests.
+- **Turning prefixes on is a change of vector space**, and is treated as exactly
+  that: the marker is applied by a decorator sitting *inside* the model-change
+  guard, so the canary and the calibration probes go through it. Switching the
+  convention therefore bumps the embedding generation and offers `/reindex`, just
+  like swapping the model (§9.3.4), and a model's similarity range is always
+  measured in the same dressing its real text gets. The canary carries the
+  passage role: stored vectors are all passage-role, so changing only the *query*
+  marker alters retrieval without invalidating anything and correctly forces no
+  reindex.
 
 ### 9.4. Enabling tools
 

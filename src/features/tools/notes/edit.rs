@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// `note_revise` — rewrites an existing note in place (a revision). The core of
 /// integration: the new content replaces the old rather than piling up as a
@@ -62,7 +63,10 @@ impl Tool for NoteRevise {
             ));
         }
         // Re-embedding (best-effort): semantic search must see the new content.
-        if let Ok(vecs) = ctx.embedder.embed(vec![content.clone()]).await
+        if let Ok(vecs) = ctx
+            .embedder
+            .embed(vec![content.clone()], EmbedRole::Passage)
+            .await
             && let Some(emb) = vecs.into_iter().next()
         {
             let _ = ctx

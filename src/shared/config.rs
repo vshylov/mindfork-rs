@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::SamplingConfig;
+use crate::shared::embed_prefix::EmbedConvention;
 
 /// Current config schema version.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -512,6 +513,12 @@ pub struct EmbedSettings {
     pub openai: CloudSettings,
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
+    /// How the active model expects its input to be marked (`query:`/`passage:`
+    /// and relatives). Independent of the mode — it is a property of the *model*,
+    /// not of where it runs. Default [`EmbedConvention::None`], and switching it
+    /// is a change of vector space: the guard detects it and offers `/reindex`
+    /// (docs/research/embedding-input-prefixes.md).
+    pub convention: EmbedConvention,
 }
 
 impl EmbedSettings {
@@ -1390,6 +1397,9 @@ mod tests {
         assert_eq!(c.engine.managed.port, 8000);
         assert_eq!(c.engine.managed.gpu_layers, DEFAULT_GPU_LAYERS);
         assert!(c.engine.managed.jinja);
+        // Input prefixes default to "none": the feature must be inert until the
+        // user opts in (docs/research/embedding-input-prefixes.md §7 R6).
+        assert_eq!(c.embed.convention, EmbedConvention::None);
         // New sections get filled with defaults when absent from the file.
         assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);

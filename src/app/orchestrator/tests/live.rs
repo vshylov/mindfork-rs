@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
 /// file the model finds the right place **by meaning in one `attachment_search`
@@ -1730,7 +1731,7 @@ async fn summary_obs_calibration_e2e_live() {
     let mut match_sum = 0.0f32;
     for (a, b) in should_match {
         let v = embedder
-            .embed(vec![a.to_string(), b.to_string()])
+            .embed(vec![a.to_string(), b.to_string()], EmbedRole::Passage)
             .await
             .unwrap();
         let c = cosine(&v[0], &v[1]);
@@ -1740,7 +1741,7 @@ async fn summary_obs_calibration_e2e_live() {
     let mut nonmatch_sum = 0.0f32;
     for (a, b) in should_not {
         let v = embedder
-            .embed(vec![a.to_string(), b.to_string()])
+            .embed(vec![a.to_string(), b.to_string()], EmbedRole::Passage)
             .await
             .unwrap();
         let c = cosine(&v[0], &v[1]);
@@ -1786,7 +1787,7 @@ async fn summary_obs_overlap_e2e_live() {
     let obs = Note::new(profile, obs_text, vec![SELF_NOTE_TAG.to_string()]);
     storage.db().note_insert(&obs).unwrap();
     let ov = embedder
-        .embed(vec![obs_text.to_string()])
+        .embed(vec![obs_text.to_string()], EmbedRole::Passage)
         .await
         .unwrap()
         .into_iter()
@@ -1799,7 +1800,7 @@ async fn summary_obs_overlap_e2e_live() {
 
     // The measured cosine (diagnostic for calibrating the threshold).
     let pv = embedder
-        .embed(vec![para.to_string()])
+        .embed(vec![para.to_string()], EmbedRole::Passage)
         .await
         .unwrap()
         .into_iter()

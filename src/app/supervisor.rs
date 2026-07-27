@@ -612,6 +612,7 @@ impl ServerSupervisor for MockSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::api::EmbedRole;
     use tokio::sync::mpsc::unbounded_channel;
 
     /// The reference (Russian) locale for displayed unavailability reasons:
@@ -881,7 +882,7 @@ mod tests {
         let err = LlamaSupervisor
             .apply_embed(&s, None)
             .embedder
-            .embed(vec!["x".into()])
+            .embed(vec!["x".into()], EmbedRole::Passage)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not configured"));
@@ -900,7 +901,11 @@ mod tests {
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_embed(&s, None);
-        let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
+        let err = setup
+            .embedder
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("not configured"));
     }
 
@@ -919,14 +924,22 @@ mod tests {
         // The embeddings source is configured (not UnavailableEmbedder).
         // Checked indirectly: embed against a "dead" URL returns a connection error,
         // while UnavailableEmbedder would return its fixed unavailability message.
-        let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
+        let err = setup
+            .embedder
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap_err();
         assert!(!err.to_string().contains("не настроен"), "{err}");
     }
 
     #[tokio::test]
     async fn embed_unconfigured_is_unavailable() {
         let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default(), None);
-        let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
+        let err = setup
+            .embedder
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("not configured"));
     }
 }

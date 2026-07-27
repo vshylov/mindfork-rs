@@ -352,6 +352,20 @@ impl SettingsScreen {
                         ))
                     }
                 }
+                // Independent of the mode: the input convention is a property of
+                // the *model*, not of where it runs (research
+                // docs/research/embedding-input-prefixes.md).
+                rows.extend(grouped(
+                    loc.t("ui.settings.group.embed_input"),
+                    vec![
+                        row(
+                            FieldId::EConvention,
+                            loc.t("ui.settings.field.embed_convention"),
+                            FieldKind::Choice(e.convention.id().to_string()),
+                        )
+                        .describe(loc.t("ui.settings.desc.embed_convention")),
+                    ],
+                ));
                 rows
             }
             ModelTab::Tts => {

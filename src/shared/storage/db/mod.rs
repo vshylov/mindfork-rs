@@ -314,6 +314,13 @@ const KEY_EMBED_GEN: &str = "embed_gen";
 const KEY_EMBED_CANARY: &str = "embed_canary";
 /// Display name of that model (metadata for the message shown to the user).
 const KEY_EMBED_MODEL_ID: &str = "embed_model_id";
+/// Id of the input-prefix convention the stored vectors were produced under
+/// ([`crate::shared::embed_prefix::EmbedConvention::id`]). Unlike the model name
+/// this **is** part of identity: switching it changes the vector space, and the
+/// canary alone can detect that by as little as 0.0025 (see
+/// docs/research/embedding-input-prefixes.md §4). Absent on a record written
+/// before conventions existed — read as the default one.
+const KEY_EMBED_CONVENTION: &str = "embed_convention";
 /// The active model's mean cosine over the calibration corpus's **unrelated**
 /// pairs — the floor of its usable similarity range (see
 /// [`crate::shared::embed_calibration`]). Written together with

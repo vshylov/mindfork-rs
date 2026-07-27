@@ -234,8 +234,12 @@ wrong one. This is a fork (R6), not a detail.
 Related, measured while checking e5: the e5 family expects `query:` /
 `passage:` prefixes. Adding them widened the retrieval margin from 0.155 to
 0.186 on the probe corpus — a real but modest effect, and a per-model input
-convention the `Embedder` contract has no place for today. Noted as
-groundwork, not proposed here.
+convention the `Embedder` contract has no place for today. Noted as groundwork,
+not proposed here. **Followed up in
+[embedding-input-prefixes.md](embedding-input-prefixes.md)**, which measured it
+on a larger corpus (no ranking changes, but a 25× wider minimum margin), found
+that the `-instruct` variant uses a *different* convention than the one measured
+here, and implemented it behind a default-off setting.
 
 ---
 
@@ -422,8 +426,10 @@ therefore every mapped threshold. That earns it a deliberate entry in
 
 ## 9. Out of scope / groundwork
 
-- e5-style per-model input prefixes (`query:`/`passage:`) — the `Embedder`
-  contract has no notion of input role today.
+- ~~e5-style per-model input prefixes (`query:`/`passage:`)~~ — **done**, in its
+  own research: [embedding-input-prefixes.md](embedding-input-prefixes.md). The
+  `Embedder` contract gained an input role, and switching the convention is
+  detected as the change of vector space it is.
 - vec0 for notes (existing roadmap item) — orthogonal; a fingerprint column
   would land naturally in the same schema step if both are done together.
 - Re-chunking attachments (needs the chat walk the roadmap describes) —

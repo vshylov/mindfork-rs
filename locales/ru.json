@@ -426,6 +426,9 @@
   "ui.feed.thoughts": "мысли",
   "ui.feed.thoughts_lines": " · {n} стр. · ",
 
+  "ui.settings.desc.embed_convention": "Как модель ожидает разметку входа: none — без маркеров (bge-m3 и большинство), e5 — «query: »/«passage: », e5-instruct — инструкция в запросе и голый фрагмент. Неверное значение ухудшает поиск, поэтому по умолчанию none. Смена — это смена векторного пространства: потребуется /reindex.",
+  "ui.settings.field.embed_convention": "Префиксы ввода",
+  "ui.settings.group.embed_input": "Разметка ввода",
   "ui.status.hotkey.help": "справка",
   "ui.status.hotkey.chats": "чаты",
   "ui.status.hotkey.new": "новый",
@@ -462,6 +465,7 @@
   "ui.embed.model_changed": "Сменилась embedding-модель ({old} -> {new}). Всё, что проиндексировано прежней, теперь непригодно.",
   "ui.embed.reindex_hint": "Выполните /reindex, чтобы пересобрать ({n} фрагментов) — память восстановится и сама по мере работы.",
   "ui.embed.rag_stale": "Поиск по базе знаний до этого отключён для профилей: {n}.",
+  "ui.embed.convention_hint": "По названию модели ей, похоже, подходит соглашение о префиксах «{name}» — его можно выбрать в настройках (Модель → Эмбеддинги).",
   "ui.rag.started": "найдено файлов: {total}, начинаю индексацию…",
   "ui.rag.from": " из {dir}",
   "ui.rag.indexing": "индексация {name}{location} ({index}/{total})",

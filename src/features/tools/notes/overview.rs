@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// A similarity threshold as the *model* is told it, at the same 2 decimals the
 /// pair lines below use (`{s:.2}`).
@@ -295,7 +296,10 @@ pub(crate) async fn summary_observation_overlaps(
     }
     // Embed the paragraphs in one request (summary has no stored vectors — on the fly).
     // Graceful degradation: an error/mismatched vector count → no section.
-    let Ok(vecs) = embedder.embed(paragraphs.clone()).await else {
+    // Passage: these paragraphs are compared against stored @self note vectors,
+    // and the comparison feeds SUMMARY_OBS_SIMILARITY -- one of the calibrated
+    // gates, all of which are passage-to-passage (research §5.3).
+    let Ok(vecs) = embedder.embed(paragraphs.clone(), EmbedRole::Passage).await else {
         return None;
     };
     if vecs.len() != paragraphs.len() {

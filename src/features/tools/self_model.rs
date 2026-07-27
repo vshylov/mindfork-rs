@@ -9,6 +9,7 @@ use chrono::Utc;
 
 use crate::entities::profile::ToolId;
 use crate::entities::self_model::{GoalMatch, GoalStatus, NarrativeSegment, SelfModel};
+use crate::shared::api::EmbedRole;
 use crate::shared::i18n::Locale;
 
 use super::{Tool, ToolContext, ToolOutcome, notes};
@@ -165,7 +166,11 @@ async fn near_duplicate_traits(
     }
     // One request: added ones first, then prior ones — to split by the boundary.
     let texts: Vec<String> = added.iter().chain(existing_before).cloned().collect();
-    let Ok(vecs) = ctx.embedder.embed(texts).await else {
+    // Passage on both sides: the comparison is symmetric (new traits against
+    // prior ones) and feeds TRAIT_SIMILARITY, which is calibrated on
+    // passage-role text. A mismatched role here would cost up to 17% of a
+    // compressed model's usable range (research §2.3).
+    let Ok(vecs) = ctx.embedder.embed(texts, EmbedRole::Passage).await else {
         return Vec::new();
     };
     if vecs.len() != added.len() + existing_before.len() {

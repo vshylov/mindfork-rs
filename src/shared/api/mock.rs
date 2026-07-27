@@ -6,7 +6,9 @@ use std::sync::Mutex;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use super::contract::{ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason};
+use super::contract::{
+    ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
+};
 
 /// A scripted engine: plays back preset fragments. Supports a **sequence** of
 /// scripts across calls (for agentic-loop rounds).
@@ -96,7 +98,9 @@ impl MockEmbedder {
 
 #[async_trait::async_trait]
 impl Embedder for MockEmbedder {
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    // Role-blind on purpose: the marker is applied above by `PrefixedEmbedder`,
+    // so a test that wires this directly sees exactly the text it passed in.
+    async fn embed(&self, texts: Vec<String>, _role: EmbedRole) -> Result<Vec<Vec<f32>>> {
         Ok(texts.iter().map(|t| embed_text(t, self.dim)).collect())
     }
 }
