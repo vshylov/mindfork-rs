@@ -1,13 +1,16 @@
 # Research — reindexing the vector stores after an embedding-model change
 
-**Status:** decided and partly implemented. Forks R1–R7 (§7) — **user's
-decision, 2026-07-27: R1a–R7a**, all as recommended. **Stage 1 of §8
+**Status:** decided and implemented, except stage 3. Forks R1–R7 (§7) —
+**user's decision, 2026-07-27: R1a–R7a**, all as recommended. **Stage 1 of §8
 (detection and honesty) is done** — canary fingerprint in `meta`, the check on
 first embedder use, per-store invalidation, `rag_search` refusing over a stale
 knowledge base (spec §9.3.4, `shared/embed_identity.rs` +
-`app/orchestrator/embed_guard.rs`). Stages 2 (re-embed in place) and 3
-(per-model thresholds) are open — see [roadmap](../roadmap.md). Research date:
-2026-07-27.
+`app/orchestrator/embed_guard.rs`). **Stage 2 (re-embed in place) is done** —
+embedding generations instead of deletion, plus the DB-global `/reindex` job
+that drains the queue they define (`shared/storage/db/embed_gen.rs`,
+`app/orchestrator/reembed.rs`, `features/reindex_command.rs`); its
+sub-decisions S1–S5 are recorded in §8.1 below. Stage 3 (per-model thresholds)
+is open — see [roadmap](../roadmap.md). Research date: 2026-07-27.
 
 **Question.** What happens to the stored vectors when the embedding model
 changes, and how should the application detect it and reindex?
@@ -298,6 +301,57 @@ used for this research are exactly the fixture needed: index under bge-m3,
 switch settings to e5, assert the stale state is detected, reindex, assert
 recall recovers. A same-dimension pair is the strongest possible test case
 precisely because no existing guard notices it.
+
+### 8.1. Stage 2 — sub-decisions left open by the plan
+
+Recorded before implementation (AGENTS.md §1). Stage 1 changed what stage 2 is
+*for*: notes and attachments already heal themselves, and `/rag rebuild`
+already repairs a knowledge base. What remains genuinely broken is narrower,
+and it is what stage 2 targets:
+
+- `/rag rebuild` **loses** sources whose stored text is absent and whose file
+  is gone (legacy rows) — it counts them as errors and drops them. Re-embedding
+  needs no source text, only the chunk text already in the DB (§3).
+- It is **per profile**, so a model change with several profiles means
+  switching into each one in turn.
+- Attachment indexes come back only when the user **re-attaches** each file.
+- Re-chunking is wasted work and churns chunk ids for what is only a vector
+  problem.
+
+**S1 — how the per-row marker is stored (R4a).** An `embed_gen INTEGER` column
+on `note_vectors`, `rag_documents` and `attachment_documents`, against
+`meta.embed_gen` bumped on each detected model change. A small integer, not a
+vector: identity already lives in the canary, and a row only needs to say
+*which generation* produced it. The two vec0 tables are deliberately **not**
+touched — a virtual table cannot take an `ALTER`, and both are joined by
+`rowid` to a plain table that can.
+
+**S2 — schema mechanism.** A guarded `ALTER TABLE ... ADD COLUMN` in
+`baseline_ddl`, **not** the first `DB_STEPS` bump. Adding a nullable column is
+additive and backward-compatible (every query names its columns explicitly, so
+an older binary ignores it), which is exactly the case ADR 0006 F12 says needs
+no bump; `CREATE TABLE IF NOT EXISTS` simply cannot express it. A bump would
+also force a pre-migration backup of `data.db` on every upgrade and would
+exercise never-before-run machinery for a change that does not need it.
+
+**S3 — invalidation becomes non-destructive.** With generations, stage 1's
+"delete every note vector" is replaced by leaving the rows in place and letting
+them read as foreign. Same healing (the backfill overwrites them), no data
+thrown away, and switching *back* to the previous model needs no work at all.
+
+**S4 — one DB-global command, `/reindex`.** Not a `/rag` subcommand: it spans
+notes, attachments and every profile's knowledge base, so filing it under the
+knowledge-base family would misdescribe it. `/rag rebuild` keeps its meaning
+(re-chunk one profile after a chunking-parameter change). The stage 1 notice is
+updated to name `/reindex` instead.
+
+**S5 — a dimension change is still incremental.** If the new model's
+dimensionality differs, the vec0 tables are dropped and recreated up front (a
+fixed-width table cannot hold both), after which every row simply reads as
+foreign and takes the same path. One algorithm for both cases: *for each row
+whose generation is not current, embed its stored text, replace the vector,
+stamp the generation.* Interrupting it leaves a consistent partial state, and
+the stale marks from stage 1 keep search honest until it finishes.
 
 ---
 

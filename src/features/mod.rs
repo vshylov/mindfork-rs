@@ -15,6 +15,7 @@ pub mod import;
 pub mod profiles;
 pub mod rag_command;
 pub mod rag_ingest;
+pub mod reindex_command;
 pub mod rename_chat;
 pub mod sandbox_setup;
 pub mod spellcheck;

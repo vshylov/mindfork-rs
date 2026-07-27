@@ -124,17 +124,20 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1387 unit
-tests green, 63 `#[ignore]` smokes** (the largest count — log below; the current
-track is **embedding-model change detection** (stage 1 of
-[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md):
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1420 unit
+tests green, 64 `#[ignore]` smokes** (the largest count — log below; the current
+track is the **embedding-model change** track
+([docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)):
 stored vectors are only comparable to a query from the same model, and dimensionality
 is **not** identity — `bge-m3` and `multilingual-e5-large-instruct` are both 1024-d and
 pass every guard while living in different vector spaces; identity is established
-**behaviourally** via a canary vector, and on a change note/attachment vectors are
-dropped to re-embed themselves, while the knowledge base — the user's data — is marked
-stale and `rag_search` refuses until `/rag rebuild`) — **stage 1 done, live run GO**
-(stages 2 "re-embed in place" and 3 "per-model thresholds" are open);
+**behaviourally** via a canary vector (stage 1, "detection and honesty"), and on a
+change **nothing is deleted**: a monotonic **embedding generation** is bumped, so every
+older vector reads as foreign — memory re-embeds itself on the next semantic path, while
+the knowledge base — the user's data — is marked stale and `rag_search` refuses until
+the new DB-global **`/reindex`** job re-embeds every stored vector **in place**, from
+the text the DB already holds (batched, cancellable, resumable — stage 2, "re-embed in
+place") — **stages 1–2 done, live runs GO** (stage 3 "per-model thresholds" is open);
 before that — **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
@@ -8609,6 +8612,170 @@ debounce was done as a separate PR, see below).
   gate) while an antonym pair scores 0.887 (above 0.85) — so even a perfectly
   correct reindex would flip the gates from "silently never fire" to "fire on
   everything", trading a silent failure for a loud wrong one.
+
+### Post-M9: embedding-model change — stage 2 (re-embedding in place) (done)
+- **Stage 2 of the same track** (research
+  [docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)
+  §8, sub-decisions **S1–S5 in §8.1**, recorded before implementation per
+  AGENTS.md §1; same branch `feat/embed-model-change-detection`): **re-embed in
+  place**, plus the mechanism that replaces stage 1's blunt deletion. Stage 1
+  changed what stage 2 is *for* — notes and attachments already heal
+  themselves, and `/rag rebuild` already repairs a knowledge base — so the
+  target is what stays genuinely broken: a rebuild **loses** legacy rows whose
+  stored text is absent and whose file is gone (it counts them as errors and
+  drops them), it is **per profile** (a model change means switching into each
+  one in turn), and attachment indexes come back only on **re-attach**.
+- **Embedding generations (S1, S3) — the core.** A monotonic `meta.embed_gen`
+  counter plus an `embed_gen INTEGER` column on the three **plain** tables a
+  vector belongs to (`note_vectors`, which holds its vectors itself, plus
+  `rag_documents`/`attachment_documents`). The two `vec0` virtual tables are
+  deliberately untouched — a virtual table cannot take an `ALTER`, and each
+  joins by `rowid` to one of those plain tables, which can. Identity
+  itself already lives in the canary; a *row* only needs to say **which
+  generation produced it**, so the marker is a small integer, not a vector.
+  Writers (`note_vector_upsert`/`rag_insert`/`attachment_insert`) stamp
+  themselves **under the lock they already hold** — an unstamped vector is
+  therefore impossible to write, and **not one of the ~10 call sites changed**.
+  Readers ignore foreign generations (`note_search_semantic`,
+  `notes_with_vectors`, `attachment_indexed_ids`, `attachment_search`), while
+  `notes_missing_vectors` **lists** foreign-generation notes, so the existing
+  `ensure_note_vectors` backfill re-embeds them with no new code at all.
+- **So stage 1 stopped deleting anything** (S3): the guard bumps the counter
+  instead — **one increment retires the whole database**. `note_vectors_clear_all`
+  and `attachment_index_clear_all` are gone. Keeping the rows is what makes
+  re-embedding possible at all (it works from the text they already hold), what
+  lets attachment indexes come back without re-attaching, and what makes
+  switching **back** to the previous model cost exactly nothing — a generation
+  the DB has already seen makes its vectors current again, with zero work.
+  `reset_vectors` deliberately leaves the counter alone: it is monotonic, and
+  reusing a number would make a surviving old row read as current.
+- **Schema (S2) — a guarded `ALTER`, not the first `DB_STEPS` bump.**
+  `ALTER TABLE … ADD COLUMN` in `baseline_ddl`, made idempotent by
+  `PRAGMA table_info` (`column_exists`/`add_column_if_missing`) rather than by
+  matching on the "duplicate column name" error string, which would also swallow
+  a genuinely different failure. **No `DB_SCHEMA` bump, no step, no migration, no
+  pre-migration backup**: a nullable column is additive and backward-compatible —
+  every query names its columns explicitly, so an older binary ignores it — which
+  is exactly the case ADR 0006 F12 says needs no bump, and `CREATE TABLE IF NOT
+  EXISTS` simply cannot express it. A bump would also force a backup of `data.db`
+  on every upgrade and exercise never-before-run machinery for a change that
+  doesn't need it.
+- **`NULL` must read as foreign, and that is the load-bearing detail**: every row
+  in a real user's database predates the marker. A plain `embed_gen = ?`/`<> ?`
+  evaluates to `NULL` — neither true nor false — and would silently skip exactly
+  the rows most in need of the work, so every predicate folds through
+  `IFNULL(embed_gen, NULL_EMBED_GEN)` against a `-1` sentinel that can never
+  collide (generations start at 1). A corrupt counter reads as the first
+  generation — the usual "garbage in `meta` degrades to the natural empty state"
+  rule, and the safe direction: rows stamped higher then read as foreign and get
+  re-embedded, rather than being served from a space nothing matches.
+- **`/reindex` (S4)** — a new top-level chat command
+  (`features/reindex_command.rs` + `app/orchestrator/reembed.rs`), **DB-global**.
+  Not a `/rag` subcommand: it spans notes, chat attachments and **every**
+  profile's knowledge base, so filing it under the knowledge-base family would
+  misdescribe its scope; `/rag rebuild` keeps its own meaning (re-chunk one
+  profile after a chunking-parameter change). The global scope is **not** a
+  breach of the `profile_id` isolation invariant (spec §9.5): the invariant
+  governs what one profile's *queries* may see, and the job serves no query — it
+  rewrites a row's vector under the partition key the row already carries.
+  Trailing arguments are **reported, not ignored** (unlike `/rag list` there's no
+  subcommand to disambiguate a typo from, so silence would hide it).
+- **Re-embedding is not re-chunking** (research §3) — the whole reason this is
+  its own operation. It needs no source text and no chunker, so it repairs legacy
+  rows whose file is gone, covers every profile in one run, brings attachment
+  indexes back without re-attaching, and **keeps chunk ids stable** so nothing
+  downstream is invalidated. One loop over the three stores: *for each row whose
+  generation is not current, embed its stored text, replace the vector, stamp the
+  generation.* Order within `Store::ALL` is cheapest-first (notes → attachments →
+  knowledge base): notes restore memory almost immediately, and the base is both
+  the largest and the one held back by a stale mark until the end anyway.
+- **Resumable by construction**: stamping a row removes it from the queue
+  (`ORDER BY rowid` + `LIMIT`, batches of `EMBED_BATCH_CHUNKS`=16), so an
+  interrupted run leaves a consistent partial state and a rerun continues exactly
+  where it stopped. Inside `set_vector` the step order is load-bearing:
+  `ensure_table` **first** (a dimensionality mismatch must fail before anything is
+  written, or the row would be stamped current while holding the old vector); then
+  skip a row that is gone or belongs to another partition (the user may delete a
+  source between the job reading a batch and writing it back — an ordinary race,
+  and inserting anyway would orphan a vector on a rowid sqlite later reuses);
+  then **vector, then stamp, never the reverse** (a crash between the two makes
+  the row look foreign and it is simply redone). Two loop guards: an embedder
+  failure or a mismatched vector count is **fatal** for the job (retrying would
+  spin on the same batch forever), and a batch that wrote **nothing** breaks that
+  store (the queue would otherwise return the same rows forever).
+- **The stale marks stay, and keep doing the honesty job**: `rag_search` still
+  refuses while a base is mixed. `/reindex` lifts them only when the queue is
+  **genuinely empty** — derived from `count_rows_to_reembed`, not from "the loop
+  ran" — so a cancelled or partly failed run correctly leaves search refused. The
+  stage 1 notice and the `rag_search` refusal now name `/reindex`.
+- **A dimensionality change needs no special case (S5)**: a `vec0` table is
+  fixed-width, so the job drops both up front via a new `drop_vector_tables` and
+  every row then reads as foreign and takes the same path. Deliberately distinct
+  from `reset_vectors`: this one keeps the document rows, the fingerprint and the
+  stale marks ("keep the texts, re-embed them"), while `reset_vectors` is the
+  "start over" primitive that additionally deletes the attachment rows and forgets
+  which model produced everything — losing that distinction would mean a
+  dimensionality change silently discarded every chat's index instead of
+  rebuilding it.
+- **Plumbing**: `AppCommand::Reindex`/`ChatIntent::Reindex`; a new terminal event
+  `RagProgress::Reembedded { rows, errors, cancelled }` whose cancelled wording
+  says a rerun continues rather than reading like a failure; progress reuses the
+  **RAG banner** and the single background-indexing slot (`reset_rag_cancel`), so
+  `/reindex` and the `/rag` commands are one-at-a-time by construction. `/reindex`
+  is in `HELP_COMMANDS` (`F1`), highlighted as a command in the input box and
+  skipped by spellcheck. i18n: 5 `ui.reindex.*` + 2 `ui.rag.reembedded*` +
+  `ui.embed.reindex_hint` + `ui.help.reindex` keys, both bundles.
+- **Tests**: the counter (starts at 1, increments, survives reopening, corrupt
+  reads low); **`NULL` reads as foreign everywhere** (queue readers list it, the
+  lazy backfill lists it, and no semantic path serves it); the queue (carries
+  partition/text, spans every profile and chat, stable batches with no repeats,
+  superseded notes excluded, the count agrees with the list); `set_vector`
+  (replaces without duplicating and keeps the rowid, skips a deleted/foreign row,
+  refuses a dimension mismatch **without stamping**, works at a new width after
+  the drop); `drop_vector_tables` keeps what `reset_vectors` would discard;
+  **switching back needs no work**; the guarded `ALTER` is idempotent and keeps
+  the previous run's stamps; the job (drains all stores and lifts the mark, "no
+  work" reports zero plainly, a dead embedder leaves the queue **and** the mark
+  untouched so a rerun redoes it, cancelled-before-start keeps search refused, a
+  dimension change handled in the same loop); the parser (bare/whitespace/case,
+  trailing args rejected, neighbours like `/rag rebuild` and `/reindexer` are not
+  it, per-locale errors); the screen (intercepted on Enter, a malformed one leaves
+  a note instead of going out to the model, recognized as a command) and the
+  `Reembedded` note (clean/errors/cancelled). **1420 unit tests green** (+33),
+  **64 `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan` clean.
+- **Live run — GO** (`reindex_restores_retrieval_after_a_model_swap_live`, needs
+  `MINDFORK_EMBED_URL` + `MINDFORK_EMBED_URL_ALT`; real `llama-server` instances
+  holding `bge-m3-Q8_0` on :8001 and `multilingual-e5-large-instruct-q8_0` on
+  :8002, **both 1024-d** — the case no dimension check can see): a corpus and a
+  note indexed under bge-m3, the swap detected and everything queued, `/reindex`
+  re-embedded 4 rows, the queue drained and the stale mark lifted. The payoff is
+  the assertion that matters — **retrieval actually recovered**: an e5 query ranks
+  the correct chunk first again and the note is found by semantic recall.
+  Reporting success was deliberately not enough for this test.
+- **Regression — clean**: all **25** orchestrator e2e live smokes green (501 s)
+  on Gemma 4 31B q4_0 (external `llama-server`, `--jinja`) + bge-m3. The full set
+  is the right scope here: four readers gained a generation predicate
+  (`note_search_semantic`, `notes_with_vectors`, `attachment_indexed_ids`,
+  `attachment_search`), **every** vector writer now stamps, and `baseline_ddl`
+  gained an `ALTER` that runs on every open — the blast radius is the whole
+  memory subsystem, not just the new code.
+- **A process trap worth recording** (cost ~20 min of false debugging): a
+  subagent building the crate in a *copy* of the tree poisoned the shared
+  `target/`, so `cargo test` ran artifacts compiled from other sources — seven
+  tests "failed", six with `Cargo.toml`/`Cargo.lock`/`artwork` **not found**
+  (`CARGO_MANIFEST_DIR` baked in from the copy) and one asserting against a
+  locale string it had never been compiled with. `cargo clean -p mindfork-rs`
+  restored a clean 1420/0. When delegating, keep subagents out of a second build
+  of the same crate — or treat a sudden cluster of path-not-found failures as a
+  build-artifact symptom, not a code one.
+- **Deliberately not in this stage**: per-model similarity thresholds (stage 3,
+  fork R6a) — and stages 1–2 make it the *last* thing standing between the app and
+  a supported model swap, since a switch is now both detectable and completable.
+  `CONSOLIDATE_SIMILARITY = 0.85`, `TRAIT_SIMILARITY = 0.72` and
+  `SUMMARY_OBS_SIMILARITY = 0.62` are calibrated on bge-m3; on e5 an *unrelated*
+  trait pair scores 0.751 (above the 0.72 gate) and an antonym pair 0.887 (above
+  0.85), so a perfectly correct reindex flips the gates from "silently never fire"
+  to "fire on everything".
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

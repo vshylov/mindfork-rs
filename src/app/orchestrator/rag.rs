@@ -150,7 +150,7 @@ impl Orchestrator {
 
     /// Cancels the previous background RAG task (if one was running) and starts a
     /// new token.
-    fn reset_rag_cancel(&mut self) -> CancellationToken {
+    pub(super) fn reset_rag_cancel(&mut self) -> CancellationToken {
         if let Some(token) = self.rag_cancel.take() {
             token.cancel();
         }
@@ -160,7 +160,7 @@ impl Orchestrator {
     }
 
     /// Sends a RAG-operation error to the UI (banner/note).
-    fn fail_rag(&self, msg: &str) {
+    pub(super) fn fail_rag(&self, msg: &str) {
         let _ = self
             .evt_tx
             .send(AppEvent::RagProgress(RagProgress::Failed(msg.to_string())));

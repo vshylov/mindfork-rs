@@ -28,18 +28,22 @@ impl Db {
 
     // ---------- RAG ----------
 
+    /// Writes one indexed chunk (vector + text). Stamped with the current
+    /// embedding generation (see the [`super::embed_gen`] module), read under the
+    /// lock we already hold — so an unstamped vector cannot be written.
     pub fn rag_insert(&self, doc: &RagDocument) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         ensure_vec_table(&conn, doc.embedding.len())?;
         conn.execute(
-            "INSERT INTO rag_documents(id, profile_id, source, chunk_text, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO rag_documents(id, profile_id, source, chunk_text, created_at, embed_gen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 doc.id.to_string(),
                 doc.profile_id.to_string(),
                 doc.source,
                 doc.chunk_text,
                 doc.created_at.to_rfc3339(),
+                current_embed_gen(&conn)?,
             ],
         )?;
         let rowid = conn.last_insert_rowid();
@@ -366,6 +370,10 @@ impl Db {
     ///
     /// The attachment index is derived data: re-attaching the file rebuilds it,
     /// and `attachment_read` (the guaranteed path) is unaffected.
+    ///
+    /// The embedding **generation** counter is deliberately left alone (see the
+    /// [`super::embed_gen`] module): it is monotonic, so reusing a number would
+    /// make any surviving row of an old generation read as current again.
     pub fn reset_vectors(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let dropped: i64 =

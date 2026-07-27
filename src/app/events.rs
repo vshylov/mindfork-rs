@@ -86,6 +86,13 @@ pub enum AppCommand {
     /// re-chunk and re-embed the stored sources. Runs as a background task;
     /// progress — via `RagProgress` events. See spec §9.3.
     RagRebuild,
+    /// Re-embed every stored vector with the current embedding model
+    /// (`/reindex`). Unlike `RagRebuild` this is **DB-global** and re-embeds
+    /// **in place**: no re-chunking, no source text needed, so it also repairs
+    /// legacy rows whose file is gone and attachment indexes that would
+    /// otherwise only come back on re-attach. See
+    /// docs/research/embedding-model-change-reindex.md §8.1.
+    Reindex,
     /// Attach a file to the active chat (the `/file attach <path>` command).
     /// Reading/extracting the text runs as a background task; the result arrives
     /// as a `FileProgress` event. See docs/file-attachments.md, spec §9.7.

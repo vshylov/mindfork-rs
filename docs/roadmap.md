@@ -32,36 +32,19 @@ groundwork items remain:
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
-- **Re-indexing chat attachments after an embedding-model change** — partly
-  superseded: a model change is now *detected* and the attachment index is
-  dropped automatically (spec §9.3.4), but nothing rebuilds it — it comes back
-  only when the file is re-attached. Still low priority: the index is derived
-  data and `attachment_read` (the guaranteed path) is unaffected. The earlier
-  "needs a walk over all chats" concern turned out to be wrong for this purpose:
-  `attachment_documents.chunk_text` is in the DB, so re-embedding is a plain
-  `SELECT` + embed + update; a walk is only needed to re-*chunk*. Folded into
-  the re-embedding stage below. See spec §9.7,
-  [file-attachments.md](file-attachments.md).
-- **Re-embedding in place after an embedding-model change (stage 2)** — today
-  the change is only detected and invalidated: notes and attachment indexes heal
-  lazily, but a knowledge base is marked stale and `rag_search` refuses over it
-  until the user runs `/rag rebuild` (which re-chunks, and so needs the source
-  text). Re-embedding is a **different operation** from re-chunking — it needs
-  only the chunk text, which all three stores already hold — so it can be one
-  DB-global, resumable job with per-row fingerprints, covering legacy RAG rows
-  whose source file is gone and keeping chunk ids stable. See
-  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
-  §3, §8.
-- **Per-model similarity thresholds (stage 3)** — `CONSOLIDATE_SIMILARITY =
-  0.85`, `TRAIT_SIMILARITY = 0.72` and `SUMMARY_OBS_SIMILARITY = 0.62` are
-  calibrated on bge-m3, and another model's cosine distribution shifts them:
-  measured on `multilingual-e5-large-instruct`, an *unrelated* trait pair scores
-  0.751 (above the 0.72 gate) and an antonym pair 0.887 (above 0.85). So even a
+- **Per-model similarity thresholds (stage 3 of the embedding-model change
+  track)** — `CONSOLIDATE_SIMILARITY = 0.85`, `TRAIT_SIMILARITY = 0.72` and
+  `SUMMARY_OBS_SIMILARITY = 0.62` are calibrated on bge-m3, and another model's
+  cosine distribution shifts them: measured on
+  `multilingual-e5-large-instruct`, an *unrelated* trait pair scores 0.751
+  (above the 0.72 gate) and an antonym pair 0.887 (above 0.85). So even a
   perfectly correct reindex would flip the gates from "silently never fire" to
-  "fire on everything" — trading a silent failure for a loud wrong one. Any
-  supported model swap needs threshold profiles keyed by fingerprint (with a
-  calibration smoke), or an explicit statement that thresholds are tuned for
-  bge-m3. See
+  "fire on everything" — trading a silent failure for a loud wrong one. Now the
+  **last** thing standing between the app and a supported model swap: stages 1–2
+  made a switch detectable and completable (`/reindex`), which is exactly what
+  makes this reachable in practice. Needs threshold profiles keyed by
+  fingerprint (with a calibration smoke), or an explicit statement that
+  thresholds are tuned for bge-m3. See
   [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
   §6.
 
@@ -252,6 +235,17 @@ groundwork items remain:
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **Embedding-model change — detection and re-embedding** (stages 1–2; stage 3,
+  per-model thresholds, is still open above): a swap is detected behaviourally
+  by a canary vector — dimensionality is *not* identity — and `/reindex`
+  re-embeds every stored vector in place from the text the DB already holds.
+  This also closed the older "re-indexing chat attachments after a model change"
+  item: its "needs a walk over all chats" premise was wrong for this purpose
+  (`attachment_documents.chunk_text` is in the DB, so a walk is only needed to
+  re-*chunk*), and attachment indexes now come back without re-attaching each
+  file. See
+  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md),
+  spec §9.3.4.
 - **English source** (prep for open source: all docs, comments and
   non-user-facing strings moved RU -> EN; the convention flipped and guarded in
   CI by `tools/cyrillic_scan.py`) —

@@ -241,6 +241,21 @@ impl ChatScreen {
                         }
                     };
                 }
+                // The re-embedding command (`/reindex`) — also not a message,
+                // and also background work. It takes no arguments; a malformed
+                // one leaves a hint instead of going out to the model. See
+                // docs/research/embedding-model-change-reindex.md §8.1.
+                if let Some(parsed) = crate::features::reindex_command::parse(&text, self.loc) {
+                    self.input.clear();
+                    self.mark_input_changed();
+                    return match parsed {
+                        Ok(()) => Some(ChatIntent::Reindex),
+                        Err(msg) => {
+                            self.push_note(&msg);
+                            None
+                        }
+                    };
+                }
                 // A file-attachment slash command (`/file …`) — not a message
                 // either; works during generation (reading happens in the
                 // background). See docs/file-attachments.md.
@@ -482,8 +497,9 @@ impl ChatScreen {
         true
     }
 
-    /// Whether the current input is a command (`/rag …`, `/tts …`). Such
-    /// text is highlighted yellow and isn't spellchecked. See spec §11.5.
+    /// Whether the current input is a command (`/rag …`, `/tts …`,
+    /// `/reindex`). Such text is highlighted yellow and isn't spellchecked. See
+    /// spec §11.5.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
     /// do we parse the full text (an allocation via `text()` + parsing). For
@@ -494,6 +510,7 @@ impl ChatScreen {
         }
         let text = self.input.text();
         crate::features::rag_command::parse(&text, self.loc).is_some()
+            || crate::features::reindex_command::parse(&text, self.loc).is_some()
             || crate::features::file_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
@@ -544,5 +561,62 @@ impl ChatScreen {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn type_str(s: &mut ChatScreen, text: &str) {
+        for c in text.chars() {
+            s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+    }
+
+    fn enter(s: &mut ChatScreen) -> Option<ChatIntent> {
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn reindex_command_intercepted_on_enter() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/reindex");
+        assert_eq!(enter(&mut s), Some(ChatIntent::Reindex));
+        assert!(s.input.is_empty(), "the field is cleared after the command");
+        assert!(
+            !s.feed.iter().any(|m| m.role == FeedRole::User),
+            "a command must not go out as a message"
+        );
+    }
+
+    #[test]
+    fn invalid_reindex_command_shows_note_and_does_not_send() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/reindex now");
+        assert_eq!(enter(&mut s), None, "a malformed command isn't sent");
+        assert!(
+            s.feed.iter().any(|m| m.role == FeedRole::Note),
+            "the syntax hint goes into the feed as a note"
+        );
+        assert!(!s.feed.iter().any(|m| m.role == FeedRole::User));
+    }
+
+    #[test]
+    fn reindex_input_is_recognized_as_command() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/reindex");
+        assert!(
+            s.input_is_command(),
+            "the input box highlights it and skips spellcheck"
+        );
+        // A malformed one is recognized too — it's still a command, not prose.
+        s.input.clear();
+        type_str(&mut s, "/reindex now");
+        assert!(s.input_is_command());
+        // Prose that merely mentions the word isn't.
+        s.input.clear();
+        type_str(&mut s, "please reindex the base");
+        assert!(!s.input_is_command());
     }
 }

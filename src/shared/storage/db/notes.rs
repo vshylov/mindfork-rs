@@ -110,6 +110,11 @@ impl Db {
     /// Saves/replaces a note's embedding (for semantic search). The vector is a
     /// JSON array of f32 in a side table (deliberately NOT vec0: there are only a
     /// few notes, cosine is computed in Rust — see [`Self::note_search_semantic`]).
+    ///
+    /// The current embedding generation is stamped here rather than passed in
+    /// (see the [`super::embed_gen`] module): the callers are ~10 sites that have
+    /// no business knowing about generations, and reading it under the lock we
+    /// already hold makes writing an unstamped vector impossible.
     pub fn note_vector_upsert(
         &self,
         note_id: Uuid,
@@ -118,14 +123,17 @@ impl Db {
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO note_vectors(note_id, profile_id, embedding) VALUES (?1, ?2, ?3)
+            "INSERT INTO note_vectors(note_id, profile_id, embedding, embed_gen)
+             VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(note_id) DO UPDATE SET
                  profile_id = excluded.profile_id,
-                 embedding = excluded.embedding",
+                 embedding = excluded.embedding,
+                 embed_gen = excluded.embed_gen",
             params![
                 note_id.to_string(),
                 profile_id.to_string(),
                 serde_json::to_string(embedding)?,
+                current_embed_gen(&conn)?,
             ],
         )?;
         Ok(())
@@ -135,6 +143,10 @@ impl Db {
     /// Brute-force in Rust (notes number in the tens–hundreds); notes without an
     /// embedding are skipped. Returns up to `k` pairs (note, similarity) in
     /// descending order. Isolation — `WHERE n.profile_id = ?`.
+    ///
+    /// Vectors from a previous embedding generation are skipped too: they were
+    /// produced by another model, so scoring them against this query would rank
+    /// noise (see the [`super::embed_gen`] module).
     pub fn note_search_semantic(
         &self,
         profile_id: Uuid,
@@ -147,15 +159,23 @@ impl Db {
              FROM notes n
              JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND IFNULL(v.embed_gen, ?2) = ?3",
         )?;
         let mut scored: Vec<(Note, f32)> = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                let note = row_to_note(r)?;
-                let emb: Vec<f32> =
-                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
-                Ok((note, emb))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| {
+                    let note = row_to_note(r)?;
+                    let emb: Vec<f32> =
+                        serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                    Ok((note, emb))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
             .map(|(note, emb)| {
@@ -168,37 +188,32 @@ impl Db {
         Ok(scored)
     }
 
-    /// Drops every stored note embedding, across **all profiles**. The note
-    /// content is untouched, so [`Self::notes_missing_vectors`] will list them
-    /// again and `ensure_note_vectors` re-embeds them lazily on the next semantic
-    /// path — the invalidation is self-healing and costs the user nothing.
-    /// Returns how many vectors were dropped.
-    ///
-    /// Global on purpose, and not a breach of the `profile_id` isolation
-    /// invariant (spec §10.3): the embedder is a single global server, so a model
-    /// change invalidates every profile's vectors at once. Scoping this per
-    /// profile would leave the others silently comparing a fresh query against
-    /// vectors from a different vector space.
-    pub fn note_vectors_clear_all(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute("DELETE FROM note_vectors", [])?)
-    }
-
-    /// A profile's notes that still have no embedding (for backfilling "old"
-    /// notes created before vector search, imported, or saved while the embedder
-    /// was unavailable at the time). Returns pairs (id, content).
+    /// A profile's notes that need embedding: those with **no** vector (old
+    /// notes created before vector search, imported ones, or ones saved while the
+    /// embedder was unavailable) **and** those whose vector predates the current
+    /// embedding generation — a foreign vector is worth no more than a missing
+    /// one, and listing it here is what makes a model change self-healing: the
+    /// existing `ensure_note_vectors` backfill re-embeds it on the next semantic
+    /// path, with no explicit job and no data thrown away (see the
+    /// [`super::embed_gen`] module). Returns pairs (id, content).
     pub fn notes_missing_vectors(&self, profile_id: Uuid) -> Result<Vec<(Uuid, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.id, n.content FROM notes n
              LEFT JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND v.note_id IS NULL AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND (v.note_id IS NULL OR IFNULL(v.embed_gen, ?2) <> ?3)",
         )?;
         let rows = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                Ok((parse_uuid(r.get::<_, String>(0)?), r.get::<_, String>(1)?))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| Ok((parse_uuid(r.get::<_, String>(0)?), r.get::<_, String>(1)?)),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -238,7 +253,9 @@ impl Db {
     }
 
     /// A profile's active notes with their embeddings (for consolidation: finding
-    /// duplicates via pairwise cosine). Superseded ones are excluded.
+    /// duplicates via pairwise cosine). Superseded ones are excluded, and so are
+    /// vectors from a previous embedding generation — a pairwise cosine across
+    /// two vector spaces is meaningless (see the [`super::embed_gen`] module).
     pub fn notes_with_vectors(&self, profile_id: Uuid) -> Result<Vec<(Note, Vec<f32>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -246,15 +263,23 @@ impl Db {
              FROM notes n
              JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND IFNULL(v.embed_gen, ?2) = ?3",
         )?;
         let rows = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                let note = row_to_note(r)?;
-                let emb: Vec<f32> =
-                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
-                Ok((note, emb))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| {
+                    let note = row_to_note(r)?;
+                    let emb: Vec<f32> =
+                        serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                    Ok((note, emb))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -420,50 +445,6 @@ mod tests {
             1
         );
         assert_eq!(db.note_list(p, None, &[], Some(1)).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn note_vectors_clear_all_keeps_notes_and_self_heals() {
-        // The invalidation used when the embedding model changes: the vectors are
-        // worthless in the new space, but the notes themselves are intact — so
-        // they must come back through the ordinary lazy-backfill path.
-        let db = db();
-        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
-        let n1 = Note::new(a, "n1", vec![]);
-        let n2 = Note::new(a, "n2", vec![]);
-        let nb = Note::new(b, "other profile", vec![]);
-        db.note_insert(&n1).unwrap();
-        db.note_insert(&n2).unwrap();
-        db.note_insert(&nb).unwrap();
-        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
-        db.note_vector_upsert(n2.id, a, &[0.0, 1.0]).unwrap();
-        db.note_vector_upsert(nb.id, b, &[1.0, 1.0]).unwrap();
-
-        // Global: the embedder is one server, so every profile is invalidated.
-        assert_eq!(db.note_vectors_clear_all().unwrap(), 3);
-
-        // The notes survive...
-        assert_eq!(db.note_list(a, None, &[], None).unwrap().len(), 2);
-        assert_eq!(db.note_list(b, None, &[], None).unwrap().len(), 1);
-        // ...semantic search finds nothing until they are re-embedded...
-        assert!(
-            db.note_search_semantic(a, &[1.0, 0.0], 5)
-                .unwrap()
-                .is_empty()
-        );
-        // ...and the backfill path lists them, which is what re-embeds them.
-        assert_eq!(db.notes_missing_vectors(a).unwrap().len(), 2);
-        assert_eq!(db.notes_missing_vectors(b).unwrap().len(), 1);
-
-        // Re-embedding restores search — the self-healing property.
-        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
-        assert_eq!(db.note_search_semantic(a, &[1.0, 0.0], 5).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn note_vectors_clear_all_is_safe_on_an_empty_db() {
-        let db = db();
-        assert_eq!(db.note_vectors_clear_all().unwrap(), 0);
     }
 
     #[test]

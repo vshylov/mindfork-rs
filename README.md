@@ -141,13 +141,19 @@ Architecture — **Feature-Sliced Design (FSD)**.
   in the background, with a progress indicator and spinner; re-adding a file
   **replaces** its chunks (no duplicates). Command input is highlighted yellow and
   skipped by spellcheck. **`/rag list`** shows the store's sources (chunk count,
-  date), **`/rag rebuild`** reindexes the store — after changing chunk size/overlap
-  (configurable in the "Tools" section) or after **any** change of the embedding
-  model. A model change is now detected automatically (the vector size alone
-  doesn't give it away — two different models can share one), and until you
-  rebuild, search over the store says plainly that it can't compare its vectors
-  instead of answering from them. Sources' original text is stored in the DB, so
-  reindexing doesn't need the source files on disk.
+  date), **`/rag rebuild`** reindexes the store after changing chunk size/overlap
+  (configurable in the "Tools" section). Sources' original text is stored in the
+  DB, so reindexing doesn't need the source files on disk.
+- **Changing the embedding model — `/reindex`:** a change is detected
+  automatically (the vector size alone doesn't give it away — two different
+  models can share one), and everything the previous model indexed is set aside
+  rather than thrown away. Memory rebuilds itself as you use it; **`/reindex`**
+  rebuilds the lot in one pass — memory, the search indexes of attached files
+  and **every** profile's knowledge base — by re-embedding the text already
+  stored, so no source files are needed and nothing has to be re-attached. It
+  runs in the background and is safe to interrupt: running it again continues
+  from where it stopped. Until the knowledge base is done, search over it says
+  plainly that it can't compare its vectors instead of answering from them.
 - **Reading messages aloud (`/tts`):** `/tts` reads the last message, `/tts N` — the
   last N, `/tts all` — the whole conversation, `/tts stop` — stops it,
   `/tts pause`/`/tts resume` — pause and resume (handy for long text). Code,
@@ -418,6 +424,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `/file remove <name\|#N>` · `/file list` | remove an attachment / show what is attached |
 | `/rag add <path> [-r]` | index a file/directory into RAG (an input-box command) |
 | `/rag remove <path>` | remove a file/directory from RAG (an input-box command) |
+| `/reindex` | re-embed everything with the current embedding model (an input-box command) |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | stop / pause / resume reading aloud |
 

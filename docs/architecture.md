@@ -150,8 +150,12 @@ src/
 │  │  ├─ engines.rs         EngineManager: server lifecycle, readiness,
 │  │  │                     apply_chat/embed/impersonation, backend_if_ready
 │  │  ├─ embed_guard.rs     EmbedGuard: Embedder decorator detecting an embedding-
-│  │  │                     model change (canary, lazy on first use) and invalidating
-│  │  │                     the vectors it orphans — see spec §9.3.4
+│  │  │                     model change (canary, lazy on first use) and retiring the
+│  │  │                     vectors it orphans — bumps the embedding generation, deletes
+│  │  │                     nothing — see spec §9.3.4
+│  │  ├─ reembed.rs         `/reindex`: DB-global background job re-embedding every
+│  │  │                     foreign-generation vector in place from the text already
+│  │  │                     stored (batched, cancellable, resumable) — spec §9.3.4
 │  │  ├─ save_queue.rs      SaveQueue: debounced queue for deferred chat saves
 │  │  ├─ restart_queue.rs   RestartQueue: debounces server (re)starts on engine
 │  │  │                     settings edits (a series of edits → one restart)
@@ -267,6 +271,8 @@ src/
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
+│  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
+│  │                        spans notes, attachments and every profile's base)
 │  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
 │  │                        (chat attachments, spec §9.7, docs/file-attachments.md)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
@@ -321,6 +327,9 @@ src/
    │  │  ├─ attachments.rs chat-scoped semantic index over `/file attach` files
    │  │  │                 (vec0 partitioned by chat_id; dimensionality shared with
    │  │  │                 RAG, reset together — spec §9.7)
+   │  │  ├─ embed_gen.rs   embedding generations: the counter, the re-embed work
+   │  │  │                 queue (global — one embedder invalidates every profile
+   │  │  │                 at once) and in-place vector replacement — spec §9.3.4
    │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ embed_identity.rs    identity of the embedding model that produced the stored
@@ -881,6 +890,25 @@ Storage invariants:
   call and acts on a mismatch (spec §9.3.4); `reset_vectors` clears all four
   keys, since with no vectors left there is nothing to be stale relative to.
   All are `meta` keys, so adding them needed no schema bump.
+- **Per-row `embed_gen`** records *which* model produced a given vector, against
+  the monotonic `meta.embed_gen` counter the guard bumps on a detected change:
+  one increment retires the whole DB without deleting a row, so the stored text
+  stays available to re-embed from. A row is stamped by its writer under the
+  lock it already holds, which makes an unstamped vector impossible to write;
+  readers ignore foreign generations, and the re-embed job (`/reindex`) drains
+  them. `reset_vectors` deliberately leaves the counter alone — it is monotonic,
+  and reusing a number would make a surviving old row read as current.
+  The column is on the three **plain** tables only (`note_vectors`,
+  `rag_documents`, `attachment_documents`): a `vec0` virtual table cannot take
+  an `ALTER`, and each joins by `rowid` to a plain table that can. Added by a
+  guarded `ALTER TABLE ... ADD COLUMN` in `baseline_ddl` (idempotent via
+  `PRAGMA table_info`), **not** a `DB_SCHEMA` bump: a nullable column is
+  additive and backward-compatible — every query names its columns explicitly,
+  so an older binary ignores it — which is exactly the case ADR 0006 F12 says
+  needs no bump, and a bump would force a pre-migration backup of `data.db` on
+  every upgrade. Pre-existing rows carry `NULL` and are folded to a sentinel so
+  they read as **foreign**, which matters because in a real user's database
+  every row is one.
 
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 

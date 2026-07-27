@@ -38,20 +38,37 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   with what the attachments actually cost per message.
 - **Changing the embedding model is now noticed and reported.** Vectors stored by
   one embedding model are meaningless to another, so on the first use of a new
-  one the app says so and puts the affected data in order: memory (notes and
-  self-observations) and the search indexes of attached files are dropped and
-  rebuild themselves on the next use, while the knowledge base — your own data —
-  is left untouched and only marked as needing a `/rag rebuild`. The check does
-  not rely on the vector size, so it also catches a swap between two models of
-  the same size and a model file replaced in place. On a first run there is
-  nothing to compare against, so nothing is reported and nothing is touched.
+  one the app says so and sets aside everything the previous model indexed —
+  without deleting any of it. Memory (notes and self-observations) rebuilds
+  itself as you keep using it; the search indexes of attached files and the
+  knowledge base — your own data — are restored by `/reindex`, and until the
+  knowledge base is rebuilt, search over it says plainly that it cannot compare
+  its vectors. The check does not rely on the vector size, so it also catches a
+  swap between two models of the same size and a model file replaced in place. On
+  a first run there is nothing to compare against, so nothing is reported and
+  nothing is touched.
+- **`/reindex`** — a new input-box command that rebuilds every stored vector with
+  the current embedding model in one pass: memory, the search indexes of attached
+  files and **every** profile's knowledge base (one embedding server serves them
+  all, so a model change affects them all at once). It re-embeds the text already
+  stored, so it needs no source files on disk, repairs old entries whose file is
+  long gone, and brings the search indexes of attached files back without
+  re-attaching each one. Runs in the background with a progress banner and is safe
+  to interrupt — whatever it has already rebuilt stays rebuilt, and running it
+  again continues from there. Listed in the "Commands" tab of the help dialog
+  (`F1`).
 
 ### Changed
 
+- A change of the embedding model no longer discards anything: memory and the
+  search indexes of attached files are set aside and re-embedded from the text
+  already stored, rather than being dropped and rebuilt from scratch. So nothing
+  has to be re-attached, and switching **back** to the previous model costs
+  nothing at all.
 - Switching to an embedding model with a different vector size (via
-  `/rag rebuild`) now also drops the search index of files attached to chats — it
-  was built by the previous model. Re-attaching a file rebuilds it; reading a
-  file page by page is unaffected.
+  `/rag rebuild`) still rebuilds the search index of files attached to chats from
+  scratch — it was built by the previous model. Re-attaching a file rebuilds it,
+  and so does `/reindex`; reading a file page by page is unaffected.
 
 ### Fixed
 
@@ -61,7 +78,7 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   model; with a model of a different vector size it returned arbitrary notes
   outright, and the duplicate checks that keep memory from bloating stopped
   firing altogether. Knowledge-base search now refuses plainly, naming
-  `/rag rebuild`, instead of answering from vectors it cannot compare.
+  `/reindex`, instead of answering from vectors it cannot compare.
 - Knowledge-base search results (`rag_search`) are readable again: found
   fragments are numbered and set apart from one another, and their text is shown
   exactly as it is in the source. Previously a fragment several lines long ran

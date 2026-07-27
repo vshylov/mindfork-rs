@@ -171,8 +171,8 @@ impl Tool for RagSearch {
         // vectors live in another vector space and searching them returns noise
         // with no error of its own (docs/research/embedding-model-change-reindex.md).
         // Refuse plainly instead — and say what fixes it, since only the user can
-        // run `/rag rebuild`. Unlike notes and attachments, RAG cannot be
-        // invalidated silently: it is the user's own data.
+        // run `/reindex`. Unlike notes and attachments, the knowledge base is
+        // never retired silently: it is the user's own data.
         if ctx
             .storage
             .db()
@@ -962,7 +962,7 @@ mod tests {
             stale.result
         );
         assert!(
-            stale.result.contains("/rag rebuild"),
+            stale.result.contains("/reindex"),
             "the refusal must name the fix: {}",
             stale.result
         );

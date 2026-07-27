@@ -332,7 +332,8 @@ indexed manually — with commands right in the chat input box:
 /rag remove d:\docs\file.txt    # remove a file from the base
 /rag remove d:\docs             # remove a whole folder (with everything under it)
 /rag list                       # sources in the base (chunk count, date)
-/rag rebuild                    # reindex the base (after changing settings/model)
+/rag rebuild                    # reindex the base (after changing the chunk settings)
+/reindex                        # re-embed everything (after an embedding-model change)
 ```
 
 - Only `*.txt` and `*.md` are supported so far. The path can be quoted if it
@@ -342,23 +343,31 @@ indexed manually — with commands right in the chat input box:
   characters).
 - **`/rag list`** shows the active profile's knowledge base sources — the fragment
   count and indexing date for each.
-- **`/rag rebuild`** reindexes the base from scratch with the current chunk sizes
-  and embedding model. Each source's original text is stored in the base, so
-  reindexing **doesn't require the source files on disk** (and if the text somehow
-  wasn't saved — e.g. the source was added by an older version — an attempt is made
-  to re-read the file by its path). Needed after changing the chunk sizes **or**
-  after **any** change of the embedding model. If several profiles share the base
-  and the vector dimensionality changed, reindexing needs to be run under each
-  profile (the dimensionality is shared by the whole base).
+- **`/rag rebuild`** reindexes the active profile's base from scratch with the
+  current chunk sizes — needed after changing them. Each source's original text is
+  stored in the base, so reindexing **doesn't require the source files on disk**
+  (and if the text somehow wasn't saved — e.g. the source was added by an older
+  version — an attempt is made to re-read the file by its path). After an
+  **embedding-model** change use `/reindex` instead (below): re-chunking is not
+  what a model change calls for.
 - **A change of the embedding model is detected automatically** — including a
   swap between two models of the *same* vector size, which nothing could see
   before. Vectors made by one model are meaningless to another, so on the first
-  use of a new one the app reports it and puts things in order: memory (notes and
-  self-observations) and the search indexes of attached files are dropped and
-  rebuild themselves on the next use, while the knowledge base is left untouched
-  and only marked as needing a `/rag rebuild`. Until you run it, `rag_search`
-  refuses over that base instead of answering from vectors it cannot compare.
-  On a first run there is nothing to compare against, so nothing is reported.
+  use of a new one the app reports it and sets aside everything the previous
+  model indexed — without deleting anything. Memory (notes and self-observations)
+  rebuilds itself as you use it; the search indexes of attached files and the
+  knowledge base wait for `/reindex`. Until the base is rebuilt, `rag_search`
+  refuses over it instead of answering from vectors it cannot compare. On a first
+  run there is nothing to compare against, so nothing is reported.
+- **`/reindex`** re-embeds every stored vector with the current model, in one
+  pass over the whole database — memory, the attached-file indexes and **every**
+  profile's knowledge base (the embedding server is global, so a model change
+  invalidates them all at once). It works from the text already stored, so it
+  needs no source files, repairs old entries whose file is long gone, and brings
+  attachment indexes back without re-attaching each file. It runs in the
+  background with a progress banner and is safe to interrupt: whatever it has
+  already rebuilt stays rebuilt, and running it again continues from there. If
+  the new model has a different vector size, that is handled by the same pass.
 - Indexing runs **in the background** with a progress indicator and spinner;
   re-adding the same file **replaces** its fragments instead of creating
   duplicates.

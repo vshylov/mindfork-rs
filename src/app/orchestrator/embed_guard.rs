@@ -19,20 +19,27 @@
 //!
 //! ## What happens on a detected change
 //!
-//! Each store is handled by the cheapest correct route, all of which already
-//! exist — the guard only invalidates, it never reindexes:
+//! **Nothing is deleted.** The guard bumps the embedding *generation*
+//! (`db::embed_gen`), after which every older vector reads as foreign. One
+//! counter increment retires the whole database, and each store then follows a
+//! route that already exists:
 //!
-//! - **notes** (`note_vectors`) — dropped. The note text is intact, so
-//!   `notes_missing_vectors` lists them again and the existing
+//! - **notes** (`note_vectors`) — foreign vectors are invisible to semantic
+//!   search, and `notes_missing_vectors` lists their notes, so the existing
 //!   `ensure_note_vectors` backfill re-embeds them on the next semantic path.
-//!   Effectively self-healing within one `note_recall`.
-//! - **chat attachments** — index dropped. Derived data: `attachment_search`
-//!   already degrades to its `not_indexed` answer pointing at `attachment_read`
-//!   (the guaranteed path), and re-attaching the file rebuilds it (spec §9.7).
-//! - **RAG** — cannot be re-embedded without the full ingest pipeline (stage 2),
-//!   and the knowledge base is the user's data, so it is *not* touched. The
-//!   affected profiles are recorded instead; `rag_search` refuses with a clear
-//!   message until `/rag rebuild` re-embeds that profile.
+//!   Self-healing within one `note_recall`.
+//! - **chat attachments** — `attachment_indexed_ids` ignores foreign rows, so
+//!   `attachment_search` degrades to its `not_indexed` answer pointing at
+//!   `attachment_read` (the guaranteed path, spec §9.7), and the rows stay
+//!   available for `/reindex` to rebuild without the user re-attaching anything.
+//! - **the knowledge base** — too large to heal on a read path, and it is the
+//!   user's own data, so the affected profiles are additionally marked stale and
+//!   `rag_search` refuses over them until `/reindex` (or `/rag rebuild`) rewrites
+//!   their vectors.
+//!
+//! Keeping the rows is what makes the re-embed job possible at all — it works
+//! from the text they already hold — and it makes switching *back* to the
+//! previous model free.
 //!
 //! The fingerprint is recorded **after** invalidation, so an interrupted run just
 //! redoes it on the next launch, and a healthy launch never re-invalidates.
@@ -48,6 +55,7 @@ use crate::shared::api::Embedder;
 use crate::shared::embed_identity::{CANARY_TEXT, EmbedFingerprint};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
+use crate::shared::storage::db::ReembedPending;
 
 /// Wraps the real embedder and verifies, once per instance, that the stored
 /// vectors were produced by the same model. Rebuilt whenever the embedding
@@ -66,18 +74,23 @@ pub(super) struct EmbedGuard {
     checked: OnceCell<()>,
 }
 
-/// What a detected model change invalidated.
+/// What a detected model change retired.
 #[derive(Debug, Default, PartialEq)]
 struct Invalidated {
-    /// Note embeddings dropped (they re-embed lazily).
-    notes: usize,
-    /// Attachment index chunks dropped (they rebuild on re-attach).
-    attachments: usize,
-    /// Profiles whose knowledge base still holds old-model vectors.
+    /// Vectors now awaiting re-embedding, per store. Notes rebuild themselves on
+    /// the next semantic path; attachments and the knowledge base wait for
+    /// `/reindex`.
+    pending: ReembedPending,
+    /// Profiles whose knowledge-base search is off until it is rebuilt.
     stale_profiles: usize,
 }
 
 impl Invalidated {
+    /// Total vectors awaiting re-embedding — what `/reindex` would do.
+    fn total(&self) -> usize {
+        self.pending.notes + self.pending.attachments + self.pending.rag
+    }
+
     /// Whether anything was actually affected. A DB with no vectors at all
     /// (a fresh install, or a user who never used RAG or memory) needs no notice
     /// — the fingerprint is simply recorded.
@@ -128,8 +141,9 @@ impl EmbedGuard {
                 tracing::warn!(
                     previous = prev.display_id(),
                     current = current.display_id(),
-                    notes = hit.notes,
-                    attachments = hit.attachments,
+                    notes = hit.pending.notes,
+                    attachments = hit.pending.attachments,
+                    rag = hit.pending.rag,
                     stale_profiles = hit.stale_profiles,
                     "embedding model changed: vectors from the previous model were invalidated"
                 );
@@ -153,20 +167,29 @@ impl EmbedGuard {
         Ok(())
     }
 
-    /// Drops what the previous model produced and records which knowledge bases
-    /// are left stale. Every step is best-effort: a failure is logged and the
-    /// rest still runs — a partial invalidation is strictly better than none,
+    /// Retires everything the previous model produced and records which knowledge
+    /// bases are left stale. Every step is best-effort: a failure is logged and
+    /// the rest still runs — a partial invalidation is strictly better than none,
     /// and the next launch retries whatever was missed.
+    ///
+    /// Nothing is deleted. Starting a new **generation** makes every older vector
+    /// read as foreign — invisible to search and listed as work for `/reindex`
+    /// (see the research doc §8.1, S3). Keeping the rows means the re-embed job
+    /// has their text to work from, attachment indexes come back without the user
+    /// re-attaching each file, and switching *back* to the previous model costs
+    /// nothing.
     fn invalidate(&self) -> Invalidated {
         let db = self.storage.db();
 
-        let notes = db.note_vectors_clear_all().unwrap_or_else(|err| {
-            tracing::warn!(error = %err, "failed to drop note embeddings");
-            0
-        });
-        let attachments = db.attachment_index_clear_all().unwrap_or_else(|err| {
-            tracing::warn!(error = %err, "failed to drop the attachment index");
-            0
+        if let Err(err) = db.bump_embed_generation() {
+            // Without a bump the old vectors would stay visible and be silently
+            // mixed with the new model's queries — the exact failure this guard
+            // exists to prevent. Say so loudly.
+            tracing::error!(error = %err, "failed to retire the previous model's vectors");
+        }
+        let pending = db.count_rows_to_reembed().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "failed to count vectors awaiting re-embedding");
+            Default::default()
         });
         let stale = db.profiles_with_rag_docs().unwrap_or_else(|err| {
             tracing::warn!(error = %err, "failed to list profiles with RAG documents");
@@ -179,15 +202,15 @@ impl EmbedGuard {
         }
 
         Invalidated {
-            notes,
-            attachments,
+            pending,
             stale_profiles: stale.len(),
         }
     }
 
-    /// Tells the user what happened, in the interface language. Two separate
-    /// notes: what healed itself, and what needs an explicit `/rag rebuild` —
-    /// only the latter asks anything of them.
+    /// Tells the user what happened, in the interface language: what was retired,
+    /// how to rebuild it all at once, and — only when it applies — that
+    /// knowledge-base search is off until they do. Nothing is said when nothing
+    /// was affected.
     fn notify(&self, prev: &EmbedFingerprint, current: &EmbedFingerprint, hit: &Invalidated) {
         if hit.is_empty() {
             return;
@@ -195,6 +218,12 @@ impl EmbedGuard {
         let mut msg = self.loc.tf(
             "ui.embed.model_changed",
             &[("old", prev.display_id()), ("new", current.display_id())],
+        );
+        msg.push(' ');
+        msg.push_str(
+            &self
+                .loc
+                .tf("ui.embed.reindex_hint", &[("n", &hit.total().to_string())]),
         );
         if hit.stale_profiles > 0 {
             msg.push(' ');
@@ -358,7 +387,7 @@ mod tests {
         assert_eq!(
             f.storage.db().notes_missing_vectors(profile).unwrap().len(),
             1,
-            "note vectors are dropped so the existing backfill re-embeds them"
+            "note vectors read as foreign, so the existing backfill re-embeds them"
         );
         assert_eq!(
             f.storage
@@ -522,7 +551,7 @@ mod tests {
         assert_eq!(
             f.storage.db().notes_missing_vectors(profile).unwrap().len(),
             1,
-            "the note's old-model vector must be dropped so the backfill re-embeds it"
+            "the note's old-model vector must read as foreign so the backfill re-embeds it"
         );
         assert!(
             f.storage.db().rag_is_stale(profile).unwrap(),

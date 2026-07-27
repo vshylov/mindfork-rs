@@ -87,6 +87,34 @@ impl ChatScreen {
                 }
                 self.push_note(&msg);
             }
+            // Re-embedding (`/reindex`) — the same shape as `Finished`: clear the
+            // banner and leave a summary note. Cancelling is safe and resumable
+            // (every rewritten row is stamped with the current generation), so the
+            // interrupted wording says so instead of reading like a failure.
+            RagProgress::Reembedded {
+                rows,
+                errors,
+                cancelled,
+            } => {
+                self.rag = None;
+                let mut msg = if cancelled {
+                    self.loc.tf(
+                        "ui.rag.reembedded_cancelled",
+                        &[("rows", &rows.to_string())],
+                    )
+                } else {
+                    self.loc
+                        .tf("ui.rag.reembedded", &[("rows", &rows.to_string())])
+                };
+                if errors > 0 {
+                    msg.push_str(
+                        &self
+                            .loc
+                            .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
+                    );
+                }
+                self.push_note(&msg);
+            }
             RagProgress::Removed { chunks } => {
                 let msg = if chunks == 0 {
                     self.loc.t("ui.rag.removed_none").to_string()
@@ -144,4 +172,71 @@ pub(super) fn format_rag_sources(
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The text of the last note in the feed (the default locale is ru, as in
+    /// the other chat-screen tests).
+    fn last_note(s: &ChatScreen) -> String {
+        let last = s.feed.last().expect("a note in the feed");
+        assert_eq!(last.role, FeedRole::Note);
+        last.text.clone()
+    }
+
+    #[test]
+    fn reembedded_progress_pushes_note() {
+        let mut s = ChatScreen::new();
+        s.set_rag_progress(RagProgress::Reembedded {
+            rows: 120,
+            errors: 0,
+            cancelled: false,
+        });
+        let note = last_note(&s);
+        assert!(note.contains("завершена"), "a clean finish: {note}");
+        assert!(note.contains("120"), "the row count: {note}");
+        assert!(
+            !note.contains("ошибками"),
+            "no error suffix without errors: {note}"
+        );
+        assert!(!s.is_rag_active(), "the banner is cleared");
+    }
+
+    #[test]
+    fn reembedded_progress_reports_errors() {
+        let mut s = ChatScreen::new();
+        s.set_rag_progress(RagProgress::Reembedded {
+            rows: 98,
+            errors: 3,
+            cancelled: false,
+        });
+        let note = last_note(&s);
+        assert!(note.contains("98"), "the row count: {note}");
+        assert!(note.contains("с ошибками: 3"), "the error suffix: {note}");
+    }
+
+    #[test]
+    fn reembedded_progress_cancelled_says_a_rerun_continues() {
+        let mut s = ChatScreen::new();
+        s.set_rag_progress(RagProgress::Reembedded {
+            rows: 40,
+            errors: 0,
+            cancelled: true,
+        });
+        let note = last_note(&s);
+        assert!(
+            note.contains("прервана"),
+            "distinct from a clean finish: {note}"
+        );
+        assert!(
+            note.contains("40"),
+            "the work done so far isn't lost: {note}"
+        );
+        assert!(
+            note.contains("/reindex"),
+            "cancelling is resumable — the note must say so: {note}"
+        );
+    }
 }

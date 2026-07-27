@@ -1,5 +1,5 @@
 //! An assistant note (memory about the user/context). Isolated per profile.
-//! See spec §5.1, §9.3, §10.3.
+//! See spec §5.1, §9.3, §9.5.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

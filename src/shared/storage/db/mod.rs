@@ -1,5 +1,5 @@
 //! SQLite storage of notes and RAG (with sqlite-vec). Isolation by `profile_id`
-//! is mandatory in every query (invariant, spec §10.3). See spec §5.2.
+//! is mandatory in every query (invariant, spec §9.5). See spec §5.2.
 //!
 //! The RAG vector is stored in a `vec0` virtual table with a **partition key**
 //! of `profile_id` — this guarantees correct per-profile kNN (rather than "top-k
@@ -233,6 +233,46 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_attachment_docs_att
              ON attachment_documents(chat_id, attachment_id);",
     )?;
+
+    // The embedding generation each vector was produced under (see the
+    // [`embed_gen`] module). A nullable column is additive and
+    // backward-compatible — every query names its columns explicitly, so an
+    // older binary simply ignores it — which is exactly the case ADR 0006 F12
+    // says needs no `DB_SCHEMA` bump. `CREATE TABLE IF NOT EXISTS` cannot
+    // express it, hence the guarded `ALTER` (research §8.1, S2).
+    //
+    // Deliberately **not** applied to the two `vec0` virtual tables: a virtual
+    // table cannot take an `ALTER`, and each is joined by `rowid` to one of the
+    // plain tables below (S1).
+    for table in ["note_vectors", "rag_documents", "attachment_documents"] {
+        add_column_if_missing(conn, table, "embed_gen", "INTEGER")?;
+    }
+    Ok(())
+}
+
+/// Whether a table already has a column. Used to make `ALTER TABLE ... ADD
+/// COLUMN` idempotent — [`baseline_ddl`] runs on every open. Checked rather
+/// than tolerating the "duplicate column name" error: matching on an error
+/// string would also swallow a genuinely different failure.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    // `PRAGMA table_info(x)` takes no bound parameter, so the name is formatted
+    // in — every caller passes a hardcoded table name, so injection is
+    // impossible.
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Adds a column when it is missing (idempotent — see [`column_exists`]).
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    if !column_exists(conn, table, column)? {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
     Ok(())
 }
 
@@ -256,12 +296,17 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 // A handful of small facts about the whole DB live here rather than in their own
 // tables: the vector dimensionality shared by both indexes (`rag_dim`), the
 // embedding-model fingerprint the stored vectors were produced under
-// (`embed_canary`/`embed_model_id`, see [`crate::shared::embed_identity`]), and
-// which profiles a model change invalidated (`rag_stale_profiles`). Adding one is
-// a key, not a schema bump.
+// (`embed_canary`/`embed_model_id`, see [`crate::shared::embed_identity`]), the
+// generation counter those vectors are stamped with (`embed_gen`, see the
+// [`embed_gen`] module), and which profiles a model change invalidated
+// (`rag_stale_profiles`). Adding one is a key, not a schema bump.
 
 /// Vector dimensionality shared by the RAG base and the attachment index.
 const KEY_RAG_DIM: &str = "rag_dim";
+/// The embedding generation now in force — a monotonic counter bumped on every
+/// detected model change. Absent means the first one (see
+/// [`current_embed_gen`]).
+const KEY_EMBED_GEN: &str = "embed_gen";
 /// Embedding of [`crate::shared::embed_identity::CANARY_TEXT`] under the model
 /// that produced the stored vectors — a JSON array of f32.
 const KEY_EMBED_CANARY: &str = "embed_canary";
@@ -296,6 +341,32 @@ fn meta_del(conn: &Connection, key: &str) -> Result<()> {
     conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
     Ok(())
 }
+
+/// The embedding generation currently in force. A free function rather than the
+/// public [`Db::embed_generation`] because `self.conn` is a non-reentrant
+/// [`std::sync::Mutex`]: every writer stamps its row **under the lock it already
+/// holds** (same reasoning as `read_stale_profiles`).
+///
+/// Absent — or unparseable, the usual "garbage in `meta` degrades to the natural
+/// empty state" rule — reads as generation 1. That errs in the safe direction:
+/// rows stamped with a higher generation then read as foreign and get
+/// re-embedded, rather than being served from a vector space nothing matches.
+fn current_embed_gen(conn: &Connection) -> Result<u32> {
+    Ok(meta_get(conn, KEY_EMBED_GEN)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(FIRST_EMBED_GEN))
+}
+
+/// The generation a DB that has never seen a model change is at.
+const FIRST_EMBED_GEN: u32 = 1;
+
+/// The sentinel a `NULL` generation is folded to for comparison. Rows written
+/// before the marker existed carry `NULL` — their true generation is unknown, so
+/// they must read as **foreign**, and a plain `embed_gen = ?`/`<> ?` would
+/// evaluate to `NULL` (neither true nor false) and silently skip exactly the
+/// rows most in need of the work. Generations start at [`FIRST_EMBED_GEN`], so
+/// this value can never collide with a real one.
+const NULL_EMBED_GEN: i64 = -1;
 
 /// The current RAG vector dimensionality (if the vector table already exists).
 fn vec_dim(conn: &Connection) -> Result<Option<usize>> {
@@ -388,10 +459,13 @@ fn parse_dt(s: String) -> DateTime<Utc> {
 // ---------- domain submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 5) ----------
 
 mod attachments;
+mod embed_gen;
 mod graph;
 mod notes;
 mod rag;
 mod self_model;
+
+pub use embed_gen::{ReembedPending, ReembedRow};
 
 #[cfg(test)]
 mod migrate_tests {

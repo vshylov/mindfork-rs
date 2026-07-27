@@ -645,37 +645,79 @@ through. See
   embedding-settings change — embeddings have no readiness probe (ADR 0002), so
   there is no startup moment when a managed server is known to be up. A failed
   check never blocks the actual work; it simply retries.
-- **Each store is handled by the cheapest correct route** — the guard only
-  *invalidates*, it never reindexes:
-  - **notes and `@self` observations** — the embeddings are dropped. The note
-    text is intact, so the existing lazy backfill re-embeds them on the next
-    semantic path: self-healing, and it costs the user nothing. This is the most
-    valuable half of the fix — nothing ever refreshed note vectors, so on a
-    dimension change semantic recall silently returned arbitrary notes and every
-    duplicate gate stopped firing.
-  - **chat attachment indexes** — dropped. Derived data (§9.7): re-attaching a
-    file rebuilds one, `attachment_search` degrades to its "nothing indexed"
-    answer, and `attachment_read` was never affected.
-  - **the knowledge base** — **never touched**. It is the user's own data, and
-    re-embedding it needs the full ingest pipeline. Instead the affected profiles
-    are recorded as stale and `rag_search` **refuses** over them, naming `/rag
-    rebuild` as the fix. Refusing rather than warning: the vectors are in a
-    different space, so results would be noise dressed up as answers.
+- **Nothing is deleted — a whole *generation* is retired.** Vectors are stamped
+  with the **embedding generation** they were produced under (a monotonic
+  counter in `meta`, mirrored by an `embed_gen` column on the rows those vectors
+  belong to); a detected change bumps the counter, so one increment retires
+  the entire database while every row stays where it is. Keeping the rows is
+  what makes re-embedding possible at all — it works from the text they already
+  hold — and it makes switching *back* to a previous model cost nothing. Rows
+  written before the marker existed carry no generation and read as foreign,
+  which is the correct default: every row in an existing installation is one.
+- **Each store then follows the cheapest correct route**, all of which already
+  existed:
+  - **notes and `@self` observations** — a foreign vector is invisible to
+    semantic search and its note is listed as needing one, so the existing lazy
+    backfill re-embeds it on the next semantic path: self-healing, and it costs
+    the user nothing. This is the most valuable half of the fix — nothing ever
+    refreshed note vectors, so on a dimension change semantic recall silently
+    returned arbitrary notes and every duplicate gate stopped firing.
+  - **chat attachment indexes** — a foreign index reads as absent (§9.7), so
+    `attachment_search` degrades to its "nothing indexed" answer and
+    `attachment_read`, the guaranteed page-by-page path, is unaffected.
+  - **the knowledge base** — too large to heal on a read path, and it is the
+    user's own data, so the affected profiles are additionally recorded as stale
+    and `rag_search` **refuses** over them, naming `/reindex` as the fix.
+    Refusing rather than warning: the vectors are in a different space, so
+    results would be noise dressed up as answers.
 - **Staleness is per profile**, because `/rag rebuild` is. The mark is lifted by
-  a rebuild (as soon as the old chunks are deleted, so it stays correct even if
-  the rebuild is cancelled or some sources fail — nothing old survives either
-  way), and by `/rag remove` once the base is empty, which closes the dead end
-  "removed everything, re-added under the new model, still refused".
-- **Honesty over noise.** The fingerprint is recorded **after** invalidation, so
-  an interrupted run redoes it and a healthy launch never re-invalidates. A first
-  run with nothing recorded is **silent** — with no prior fingerprint there is no
-  evidence anything is stale. The user is told only when something was actually
-  invalidated, and only the knowledge base asks anything of them.
+  `/reindex` once that base holds no old-model vectors at all, by a rebuild (as
+  soon as the old chunks are deleted, so it stays correct even if the rebuild is
+  cancelled or some sources fail — nothing old survives either way), and by
+  `/rag remove` once the base is empty, which closes the dead end "removed
+  everything, re-added under the new model, still refused".
+- **Honesty over noise.** The fingerprint is recorded **after** the generation is
+  retired, so an interrupted run redoes it and a healthy launch never
+  re-invalidates. A first run with nothing recorded is **silent** — with no prior
+  fingerprint there is no evidence anything is stale. The user is told only when
+  something was actually affected, and only the knowledge base asks anything of
+  them.
 
-Reindexing in place (rather than invalidating) is a later stage, as are
-per-model similarity thresholds: the project's gates (`0.85`/`0.72`/`0.62`) are
-calibrated against bge-m3, and a different model's cosine distribution shifts
-them — see the research doc §6.
+**Re-embedding: the `/reindex` command.** Retiring a generation defines a work
+queue — *every row whose generation is not the current one* — and `/reindex`
+drains it: for each such row, embed the text it already stores, replace the
+vector, stamp the generation. It runs in the background with the same progress
+banner as `/rag add`, and can be cancelled.
+
+- **Re-embedding is not re-chunking**, which is why this is a command of its own
+  rather than a wider `/rag rebuild`. It needs no source text and no chunker, so
+  it repairs legacy knowledge-base rows whose stored text is absent and whose
+  file is gone (a rebuild counts those as errors and drops them); it covers
+  **every** profile in one run instead of one switch per profile; it brings
+  attachment indexes back without the user re-attaching each file; and it keeps
+  chunk ids stable, so nothing downstream is invalidated. `/rag rebuild` keeps
+  its own meaning — re-chunk one profile after a chunking-parameter change.
+- **Top-level, not a `/rag` subcommand**, because it spans notes, chat
+  attachments and every profile's knowledge base: filing it under the
+  knowledge-base family would misdescribe its scope. That scope is not a breach
+  of the `profile_id` isolation invariant (§9.5) — the job serves no query, it
+  rewrites a row's vector under the partition key the row already carries.
+- **Resumable, and safe to interrupt.** Stamping a row removes it from the
+  queue, so an interrupted run leaves a consistent partial state and a rerun
+  continues exactly where it stopped. The vector is written before the stamp,
+  never the other way round, so a crash in between simply makes the row look
+  foreign and it is redone. Knowledge-base search stays refused meanwhile: the
+  stale marks are lifted only when the queue is genuinely empty, so a cancelled
+  or partly failed run correctly leaves them in place.
+- **A dimensionality change needs no special case.** The vector tables are
+  fixed-width, so they are dropped up front (keeping the document rows, the
+  fingerprint and the stale marks), after which every row simply reads as
+  foreign and takes the same path. They are recreated at the new width on the
+  first write.
+
+Per-model similarity thresholds remain a later stage: the project's gates
+(`0.85`/`0.72`/`0.62`) are calibrated against bge-m3, and a different model's
+cosine distribution shifts them — see the research doc §6.
 
 ### 9.4. Enabling tools
 
