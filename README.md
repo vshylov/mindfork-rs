@@ -142,8 +142,11 @@ Architecture — **Feature-Sliced Design (FSD)**.
   **replaces** its chunks (no duplicates). Command input is highlighted yellow and
   skipped by spellcheck. **`/rag list`** shows the store's sources (chunk count,
   date), **`/rag rebuild`** reindexes the store — after changing chunk size/overlap
-  (configurable in the "Tools" section) or switching to an embedding model with a
-  different dimensionality. Sources' original text is stored in the DB, so
+  (configurable in the "Tools" section) or after **any** change of the embedding
+  model. A model change is now detected automatically (the vector size alone
+  doesn't give it away — two different models can share one), and until you
+  rebuild, search over the store says plainly that it can't compare its vectors
+  instead of answering from them. Sources' original text is stored in the DB, so
   reindexing doesn't need the source files on disk.
 - **Reading messages aloud (`/tts`):** `/tts` reads the last message, `/tts N` — the
   last N, `/tts all` — the whole conversation, `/tts stop` — stops it,

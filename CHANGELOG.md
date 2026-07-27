@@ -36,6 +36,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   else keeps working. Budgets are in the settings "Memory" section
   ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip
   with what the attachments actually cost per message.
+- **Changing the embedding model is now noticed and reported.** Vectors stored by
+  one embedding model are meaningless to another, so on the first use of a new
+  one the app says so and puts the affected data in order: memory (notes and
+  self-observations) and the search indexes of attached files are dropped and
+  rebuild themselves on the next use, while the knowledge base — your own data —
+  is left untouched and only marked as needing a `/rag rebuild`. The check does
+  not rely on the vector size, so it also catches a swap between two models of
+  the same size and a model file replaced in place. On a first run there is
+  nothing to compare against, so nothing is reported and nothing is touched.
 
 ### Changed
 
@@ -46,6 +55,13 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- Search over memory, the knowledge base and attached files no longer degrades
+  in silence after the embedding model changes. Nothing ever re-embedded an
+  existing note, so recall kept matching new queries against vectors from the old
+  model; with a model of a different vector size it returned arbitrary notes
+  outright, and the duplicate checks that keep memory from bloating stopped
+  firing altogether. Knowledge-base search now refuses plainly, naming
+  `/rag rebuild`, instead of answering from vectors it cannot compare.
 - Knowledge-base search results (`rag_search`) are readable again: found
   fragments are numbered and set apart from one another, and their text is shown
   exactly as it is in the source. Previously a fragment several lines long ran

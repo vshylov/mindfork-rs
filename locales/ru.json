@@ -271,6 +271,7 @@
   "tool.rag_search.desc": "Найти релевантные фрагменты в базе знаний по смысловому запросу.",
   "tool.rag_search.err.query_empty": "ожидается непустое поле query",
   "tool.rag_search.err.no_query_vec": "эмбеддер не вернул вектор запроса",
+  "tool.rag_search.err.stale": "База знаний проиндексирована другой embedding-моделью, поэтому искать по её векторам нельзя. Попросите пользователя выполнить `/rag rebuild`, чтобы переиндексировать её.",
   "tool.rag_search.result.empty": "В базе знаний ничего не найдено.",
   "tool.rag_search.result.header": "Найдено фрагментов: {n}",
   "tool.rag_search.block.linked_notes": "Заметки со ссылкой на эти источники",
@@ -458,6 +459,8 @@
   "ui.export.args": "Аргументы: {args}",
   "ui.export.result": "Результат: {result}",
 
+  "ui.embed.model_changed": "Сменилась embedding-модель ({old} -> {new}). Векторы заметок и индекс вложений сброшены и восстановятся сами.",
+  "ui.embed.rag_stale": "База знаний проиндексирована прежней моделью — поиск по ней отключён для профилей: {n}. Выполните /rag rebuild.",
   "ui.rag.started": "найдено файлов: {total}, начинаю индексацию…",
   "ui.rag.from": " из {dir}",
   "ui.rag.indexing": "индексация {name}{location} ({index}/{total})",

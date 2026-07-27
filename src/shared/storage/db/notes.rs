@@ -168,6 +168,22 @@ impl Db {
         Ok(scored)
     }
 
+    /// Drops every stored note embedding, across **all profiles**. The note
+    /// content is untouched, so [`Self::notes_missing_vectors`] will list them
+    /// again and `ensure_note_vectors` re-embeds them lazily on the next semantic
+    /// path — the invalidation is self-healing and costs the user nothing.
+    /// Returns how many vectors were dropped.
+    ///
+    /// Global on purpose, and not a breach of the `profile_id` isolation
+    /// invariant (spec §10.3): the embedder is a single global server, so a model
+    /// change invalidates every profile's vectors at once. Scoping this per
+    /// profile would leave the others silently comparing a fresh query against
+    /// vectors from a different vector space.
+    pub fn note_vectors_clear_all(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute("DELETE FROM note_vectors", [])?)
+    }
+
     /// A profile's notes that still have no embedding (for backfilling "old"
     /// notes created before vector search, imported, or saved while the embedder
     /// was unavailable at the time). Returns pairs (id, content).
@@ -404,6 +420,50 @@ mod tests {
             1
         );
         assert_eq!(db.note_list(p, None, &[], Some(1)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn note_vectors_clear_all_keeps_notes_and_self_heals() {
+        // The invalidation used when the embedding model changes: the vectors are
+        // worthless in the new space, but the notes themselves are intact — so
+        // they must come back through the ordinary lazy-backfill path.
+        let db = db();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let n1 = Note::new(a, "n1", vec![]);
+        let n2 = Note::new(a, "n2", vec![]);
+        let nb = Note::new(b, "other profile", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_insert(&nb).unwrap();
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(n2.id, a, &[0.0, 1.0]).unwrap();
+        db.note_vector_upsert(nb.id, b, &[1.0, 1.0]).unwrap();
+
+        // Global: the embedder is one server, so every profile is invalidated.
+        assert_eq!(db.note_vectors_clear_all().unwrap(), 3);
+
+        // The notes survive...
+        assert_eq!(db.note_list(a, None, &[], None).unwrap().len(), 2);
+        assert_eq!(db.note_list(b, None, &[], None).unwrap().len(), 1);
+        // ...semantic search finds nothing until they are re-embedded...
+        assert!(
+            db.note_search_semantic(a, &[1.0, 0.0], 5)
+                .unwrap()
+                .is_empty()
+        );
+        // ...and the backfill path lists them, which is what re-embeds them.
+        assert_eq!(db.notes_missing_vectors(a).unwrap().len(), 2);
+        assert_eq!(db.notes_missing_vectors(b).unwrap().len(), 1);
+
+        // Re-embedding restores search — the self-healing property.
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        assert_eq!(db.note_search_semantic(a, &[1.0, 0.0], 5).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn note_vectors_clear_all_is_safe_on_an_empty_db() {
+        let db = db();
+        assert_eq!(db.note_vectors_clear_all().unwrap(), 0);
     }
 
     #[test]

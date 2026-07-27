@@ -27,6 +27,7 @@ mod attachments;
 mod background;
 mod chats;
 mod consolidation;
+mod embed_guard;
 mod engines;
 mod generation;
 mod impersonation;

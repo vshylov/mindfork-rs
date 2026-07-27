@@ -21,8 +21,8 @@ called out as the highest-payoff tracks (real user pain / direct savings):
 ## Memory, self-model, knowledge
 The project's flagship track (self-model / notes / connectivity / RAG). The core
 and the **self-model consolidation** (A) and **RAG: sources and retrieval** (B)
-tracks are done (see "Recently closed" below and `docs/history/`). One
-**deferred** groundwork item remains:
+tracks are done (see "Recently closed" below and `docs/history/`). **Deferred**
+groundwork items remain:
 - **vec0 for notes and observations as their count grows** — cosine is
   currently computed brute-force in Rust (`db::cosine`, `note_search_semantic`);
   for tens–hundreds (and up to thousands) of notes this is cheap (single-digit
@@ -32,14 +32,38 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
-- **Re-indexing chat attachments after an embedding-model change** — the
-  attachment index shares the vector dimensionality with RAG (`meta.rag_dim`), so
-  a `/rag rebuild` that switches models drops it; it only comes back when the file
-  is re-attached. The text snapshot lives in the chat file, so an automatic
-  re-index is possible, but it needs a walk over all chats. Low priority: the
-  index is derived data and `attachment_read` (the guaranteed path) is
-  unaffected. See spec §9.7,
+- **Re-indexing chat attachments after an embedding-model change** — partly
+  superseded: a model change is now *detected* and the attachment index is
+  dropped automatically (spec §9.3.4), but nothing rebuilds it — it comes back
+  only when the file is re-attached. Still low priority: the index is derived
+  data and `attachment_read` (the guaranteed path) is unaffected. The earlier
+  "needs a walk over all chats" concern turned out to be wrong for this purpose:
+  `attachment_documents.chunk_text` is in the DB, so re-embedding is a plain
+  `SELECT` + embed + update; a walk is only needed to re-*chunk*. Folded into
+  the re-embedding stage below. See spec §9.7,
   [file-attachments.md](file-attachments.md).
+- **Re-embedding in place after an embedding-model change (stage 2)** — today
+  the change is only detected and invalidated: notes and attachment indexes heal
+  lazily, but a knowledge base is marked stale and `rag_search` refuses over it
+  until the user runs `/rag rebuild` (which re-chunks, and so needs the source
+  text). Re-embedding is a **different operation** from re-chunking — it needs
+  only the chunk text, which all three stores already hold — so it can be one
+  DB-global, resumable job with per-row fingerprints, covering legacy RAG rows
+  whose source file is gone and keeping chunk ids stable. See
+  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
+  §3, §8.
+- **Per-model similarity thresholds (stage 3)** — `CONSOLIDATE_SIMILARITY =
+  0.85`, `TRAIT_SIMILARITY = 0.72` and `SUMMARY_OBS_SIMILARITY = 0.62` are
+  calibrated on bge-m3, and another model's cosine distribution shifts them:
+  measured on `multilingual-e5-large-instruct`, an *unrelated* trait pair scores
+  0.751 (above the 0.72 gate) and an antonym pair 0.887 (above 0.85). So even a
+  perfectly correct reindex would flip the gates from "silently never fire" to
+  "fire on everything" — trading a silent failure for a loud wrong one. Any
+  supported model swap needs threshold profiles keyed by fingerprint (with a
+  calibration smoke), or an explicit statement that thresholds are tuned for
+  bge-m3. See
+  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
+  §6.
 
 ## Context and tokens
 - **History compression / rolling summary** — right now the whole conversation

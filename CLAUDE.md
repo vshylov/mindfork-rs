@@ -124,9 +124,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1359 unit
-tests green, 62 `#[ignore]` smokes** (the largest count — log below; the current
-track is **chat file attachments** (`/file attach|remove|list`: the file's text is
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1387 unit
+tests green, 63 `#[ignore]` smokes** (the largest count — log below; the current
+track is **embedding-model change detection** (stage 1 of
+[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md):
+stored vectors are only comparable to a query from the same model, and dimensionality
+is **not** identity — `bge-m3` and `multilingual-e5-large-instruct` are both 1024-d and
+pass every guard while living in different vector spaces; identity is established
+**behaviourally** via a canary vector, and on a change note/attachment vectors are
+dropped to re-embed themselves, while the knowledge base — the user's data — is marked
+stale and `rag_search` refuses until `/rag rebuild`) — **stage 1 done, live run GO**
+(stages 2 "re-embed in place" and 3 "per-model thresholds" are open);
+before that — **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
 plan [docs/file-attachments.md](docs/file-attachments.md)) — **complete, stages 1–3**
@@ -8464,6 +8473,135 @@ debounce was done as a separate PR, see below).
   run needed: the change is to a result string's shape and to feed routing, both
   covered deterministically (and the underlying search behaviour was verified live
   in the attachment-index stage).
+
+### Post-M9: embedding-model change detection (stage 1) (done)
+- **Stage 1 of a new track** (research
+  [docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md),
+  forks R1–R7 accepted by the user as recommended — options "a" — 2026-07-27;
+  branch `feat/embed-model-change-detection`): **detect** that the embedding
+  model changed and **invalidate** the vectors it orphaned. No reindexing —
+  that is stage 2. ADR 0002 deferred "switching the model requires reindexing"
+  from the start; this converts the worst failure mode (silent) into a visible
+  one.
+- **The finding that drives everything: dimensionality is not identity.** It was
+  the *only* signal the app had, and `bge-m3` and
+  `multilingual-e5-large-instruct` are **both 1024-d** — so a swap between them
+  passed `ensure_dim`, passed `/rag rebuild`'s `dim_changed` check, and passed
+  every other guard, while turning retrieval into noise: the same text embedded
+  by both scores a cosine of **0.37**, and on a 4-document probe corpus the
+  retrieval margin collapsed 3x (0.449 → 0.149), with the *correct* hit after a
+  swap (0.315) scoring below an *irrelevant* hit in the healthy run (0.283).
+  Silent: no error, no warning, no mismatch.
+- **Notes were the worst case, in both directions** — and this is the single
+  most valuable fix here, since memory-about-self is the project's flagship
+  track. `note_vectors` was **never refreshed by anything**
+  (`notes_missing_vectors` returns only notes with *no* vector row, so
+  `ensure_note_vectors` backfilled but never refreshed; `/rag rebuild` never
+  touched the table). Same dimension → stale vectors silently mixed with fresh
+  queries. Different dimension → `db::cosine` returns `0.0` on a length
+  mismatch, so semantic recall scored **everything** at 0.0, sorted by a
+  constant, and returned **arbitrary** notes as "semantically relevant" while
+  every duplicate gate stopped firing. RAG in the same situation fails loudly on
+  insert; notes failed silently.
+- **Identity is established behaviourally** (`shared/embed_identity.rs`, pure):
+  embed a fixed `CANARY_TEXT`, store the vector, compare next time
+  (`EmbedFingerprint { canary, model_id }`, `matches()`/`display_id()`).
+  Measured on the live pair: same model **1.000000** (both on a repeat call and
+  inside a differently-sized batch), cross-model **0.368940** → a margin of
+  **0.63**, so `CANARY_MATCH = 0.999` only has to sit above a single provider's
+  numeric noise (a cloud provider is not bit-exact the way a local
+  `llama-server` is). A canary catches what a config fingerprint cannot: the
+  same GGUF path re-pointed at another file, a requantization, or a server
+  restarted with different pooling/normalization flags. `model_id` (from the new
+  `EmbedSettings::active_model_name()`) is **display metadata only, never the
+  trigger** — a generic id or an unchanged name after a file swap makes it
+  unreliable alone.
+- **A decorator, checked lazily** (`app/orchestrator/embed_guard.rs`):
+  `EmbedGuard` wraps `Embedder` and runs the check on the **first real embed
+  call** (`tokio::sync::OnceCell::get_or_try_init`). Embeddings are deliberately
+  lazy (ADR 0002 — `apply_embed` runs no probe), so there is no startup moment
+  when a managed embedding server is known to be up; the first real use is the
+  moment it has demonstrably answered. Wrapping also makes the check impossible
+  to forget at a call site. A **failed** check is never cached (it retries) and
+  never blocks the real call — the call below reports the real error itself.
+  Installed in `apply_embed_settings`, which runs at bootstrap and on every
+  embedding-settings change, so changing the model in settings re-arms it.
+- **Each store gets the cheapest correct route, all of which already existed**:
+  **notes** — `note_vectors` dropped; the note text is intact, so
+  `notes_missing_vectors` lists them and the existing `ensure_note_vectors`
+  backfill re-embeds them on the next semantic path (self-healing within one
+  `note_recall`, and it costs the user nothing). **Chat attachments** — index
+  dropped; derived data, so `attachment_search` degrades to its `not_indexed`
+  answer pointing at `attachment_read` (the guaranteed path) and re-attaching
+  rebuilds it. **RAG** — **never touched**: re-embedding it needs the full
+  ingest pipeline (stage 2), and it is the user's own data. The affected
+  profiles are recorded instead and `rag_search` **refuses** with a message
+  naming `/rag rebuild`. **Refusing rather than warning** is the point: the
+  vectors are in a different space, so results would be noise dressed up as
+  answers.
+- **Staleness is per profile, not global**, because `/rag rebuild` is
+  per-profile. `/rag rebuild` lifts the mark **right after it deletes the old
+  chunks**, not at the end — so it stays correct even if the rebuild is
+  cancelled or some sources fail, since nothing old survives either way.
+  `/rag remove` lifts it once the base is empty, closing the dead end "removed
+  everything, re-added under the new model, still refused" (the mark would
+  otherwise only be liftable by a rebuild, which needs sources to rebuild from).
+- **Honesty over noise**: the fingerprint is recorded **after** invalidation, so
+  an interrupted run redoes it and a healthy launch never re-invalidates; and a
+  first run with nothing recorded is **silent** — with no prior fingerprint
+  there is no evidence anything is stale, and claiming otherwise would cry wolf
+  on every first launch. The user is notified only when something was actually
+  invalidated, and only the knowledge base asks anything of them.
+- **Storage — three keys in the existing `meta` table**: `embed_canary` (a JSON
+  f32 array), `embed_model_id`, `rag_stale_profiles` (a JSON uuid array).
+  Purely additive → **no schema bump, no migration** (ADR 0006 F12). New `Db`
+  methods `embed_fingerprint`/`set_embed_fingerprint`, `profiles_with_rag_docs`,
+  `rag_stale_profiles`/`set_rag_stale_profiles`/`clear_rag_stale_profile`/
+  `rag_is_stale`, `note_vectors_clear_all`, `attachment_index_clear_all`; new
+  private `meta_get`/`meta_set`/`meta_del` helpers now back `vec_dim`/
+  `ensure_dim` too. `reset_vectors` clears all three new keys as well — it is
+  the "start completely fresh" primitive, and with no vectors left there is
+  nothing to be stale *relative to*, so a leftover fingerprint would report a
+  change against data that no longer exists. Corrupt `meta` values (a
+  hand-edited `data.db`, an empty canary) deliberately read as "nothing
+  recorded" rather than bricking startup; the next launch repairs the record.
+- **i18n**: `ui.embed.model_changed`/`ui.embed.rag_stale` (axis B — the notice
+  is for the user) and `tool.rag_search.err.stale` (axis A — the refusal is read
+  by the model), both bundles.
+- **Tests**: fingerprint matching (scaling and numeric noise still match, a
+  cross-model figure and any dimension change do not, the canary string is
+  pinned against a careless edit — changing it would report a model change for
+  every existing installation); the guard against a `SaltedEmbedder` fixture —
+  two instances standing for two models at the **same** dimensionality, the case
+  no dimension check can see (first run records silently; an unchanged model
+  invalidates nothing; a swap drops note vectors while the notes survive; RAG is
+  **marked, not deleted**; the check is cached per instance; an unavailable
+  embedder records nothing); DB round-trips, corrupt-value degradation, the
+  empty-list-removes-the-key invariant, `reset_vectors` forgetting the model;
+  `rag_search` refusing on a stale base, naming the fix, and healing after the
+  mark is cleared. **1387 unit tests green** (+28), **63 `#[ignore]`** (+1),
+  clippy `-D warnings`/fmt/`cyrillic_scan` clean.
+- **Live run — GO** (`same_dimension_model_swap_detected_live`, needs
+  `MINDFORK_EMBED_URL` + `MINDFORK_EMBED_URL_ALT`; real `llama-server` instances
+  holding `bge-m3-Q8_0` on :8001 and `multilingual-e5-large-instruct-q8_0` on
+  :8002): the same model twice stayed **silent** — the more important half, since
+  a false positive would wipe the note vectors and nag on every launch, and real
+  servers are not obliged to be bit-exact the way a mock is — and the
+  same-dimension swap was detected, dropped the note vectors, marked the
+  knowledge base stale, **left the base itself intact**, and notified the user.
+  The smoke also asserts both models report the same dimensionality, so it stays
+  meaningful only for the case no existing guard can catch.
+- **Deliberately not in this stage**: re-embedding in place and per-row
+  fingerprints (stage 2, fork R4a) — re-embedding is a *different operation*
+  from re-chunking (it needs only the chunk text, which all three stores already
+  hold), so it belongs in one DB-global resumable job rather than in
+  `/rag rebuild`; and per-model similarity thresholds (stage 3, fork R6a). Keep
+  the second-order finding visible: `CONSOLIDATE_SIMILARITY = 0.85`,
+  `TRAIT_SIMILARITY = 0.72` and `SUMMARY_OBS_SIMILARITY = 0.62` are calibrated
+  on bge-m3, and on e5 an **unrelated** trait pair scores 0.751 (above the 0.72
+  gate) while an antonym pair scores 0.887 (above 0.85) — so even a perfectly
+  correct reindex would flip the gates from "silently never fire" to "fire on
+  everything", trading a silent failure for a loud wrong one.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

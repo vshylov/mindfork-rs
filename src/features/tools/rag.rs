@@ -167,6 +167,21 @@ impl Tool for RagSearch {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_TOP_K);
 
+        // The knowledge base was indexed by a different embedding model, so its
+        // vectors live in another vector space and searching them returns noise
+        // with no error of its own (docs/research/embedding-model-change-reindex.md).
+        // Refuse plainly instead — and say what fixes it, since only the user can
+        // run `/rag rebuild`. Unlike notes and attachments, RAG cannot be
+        // invalidated silently: it is the user's own data.
+        if ctx
+            .storage
+            .db()
+            .rag_is_stale(ctx.profile_id)
+            .unwrap_or(false)
+        {
+            return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.err.stale")));
+        }
+
         let mut embeddings = ctx.embedder.embed(vec![query.to_string()]).await?;
         let query_vec = embeddings
             .pop()
@@ -910,6 +925,55 @@ mod tests {
             out.result
         );
         assert!(out.result.contains("факты"));
+    }
+
+    /// A knowledge base indexed by a previous embedding model cannot be searched:
+    /// its vectors are in another space, so kNN returns plausible-looking noise
+    /// with no error of its own. The tool must refuse and name the fix, rather
+    /// than hand the model garbage (docs/research/embedding-model-change-reindex.md).
+    #[tokio::test]
+    async fn search_refuses_on_a_stale_knowledge_base() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        RagAdd
+            .invoke(
+                &ctx,
+                serde_json::json!({"text": "кошки любят рыбу", "source": "факты"}),
+            )
+            .await
+            .unwrap();
+
+        // Healthy base — the passage is found.
+        let ok = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "кошки"}))
+            .await
+            .unwrap();
+        assert!(ok.result.contains("кошки любят рыбу"), "got: {}", ok.result);
+
+        // The embedding model changed (recorded by the guard).
+        storage.db().set_rag_stale_profiles(&[profile]).unwrap();
+        let stale = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "кошки"}))
+            .await
+            .unwrap();
+        assert!(
+            !stale.result.contains("кошки любят рыбу"),
+            "a stale base must not return passages: {}",
+            stale.result
+        );
+        assert!(
+            stale.result.contains("/rag rebuild"),
+            "the refusal must name the fix: {}",
+            stale.result
+        );
+
+        // Reindexing lifts the refusal.
+        storage.db().clear_rag_stale_profile(profile).unwrap();
+        let healed = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "кошки"}))
+            .await
+            .unwrap();
+        assert!(healed.result.contains("кошки любят рыбу"));
     }
 
     /// A passage is a whole chunk (or several stitched together) and is routinely

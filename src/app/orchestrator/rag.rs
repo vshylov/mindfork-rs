@@ -87,7 +87,20 @@ impl Orchestrator {
             path.clone()
         };
         let progress = match self.storage.db().rag_delete_under(profile_id, &needle) {
-            Ok(chunks) => RagProgress::Removed { chunks },
+            Ok(chunks) => {
+                // Emptying the base also clears any "indexed by a previous
+                // embedding model" mark — nothing stale is left to protect
+                // against. Without this, a user who removed everything and
+                // re-added it under the new model would still be refused by
+                // `rag_search` (the mark is otherwise only lifted by
+                // `/rag rebuild`, which needs sources to rebuild from).
+                if self.storage.db().rag_count(profile_id).unwrap_or(1) == 0
+                    && let Err(err) = self.storage.db().clear_rag_stale_profile(profile_id)
+                {
+                    tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
+                }
+                RagProgress::Removed { chunks }
+            }
             Err(err) => RagProgress::Failed(
                 self.ui_locale()
                     .tf("ui.err.rag_delete_failed", &[("err", &err.to_string())]),
@@ -397,6 +410,14 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
             ));
             return;
+        }
+        // From here on the base holds no chunks from a previous embedding model —
+        // every one that follows is written by the current one. So the "stale"
+        // mark is lifted here rather than at the end: it stays correct even if the
+        // rebuild is cancelled or some sources fail, since nothing old survives
+        // either way (see `embed_guard`).
+        if let Err(err) = storage.db().clear_rag_stale_profile(profile_id) {
+            tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
         }
         if dim_changed {
             // The dimensionality is shared with the chat attachment index

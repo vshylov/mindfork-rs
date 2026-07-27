@@ -534,6 +534,30 @@ impl EmbedSettings {
             &mut self.claude,
         )
     }
+
+    /// Active embedding model's name for the current mode — **display metadata**
+    /// for the "the embedding model changed" message (see
+    /// [`crate::shared::embed_identity`]). Mirrors
+    /// [`EngineSettings::active_model_name`]; managed embeddings have no
+    /// `model_name` field, so the name comes from the GGUF path.
+    ///
+    /// Never used to *decide* whether the model changed — the canary vector does
+    /// that. A name is too easy to leave stale: an external server picks the
+    /// model itself, and the same path can come to point at a different file.
+    pub fn active_model_name(&self) -> Option<String> {
+        match self.mode {
+            ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
+                let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+                let name = name.trim_end_matches(".gguf");
+                (!name.is_empty()).then(|| name.to_string())
+            }),
+            ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => self
+                .cloud()
+                .and_then(|c| c.model_name.clone())
+                .filter(|m| !m.is_empty()),
+        }
+    }
 }
 
 /// Default sub-agent response token limit (`call_subagent`, spec §9.3.2).

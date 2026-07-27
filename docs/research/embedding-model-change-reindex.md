@@ -1,7 +1,13 @@
 # Research — reindexing the vector stores after an embedding-model change
 
-**Status:** research, pre-decision. Forks R1–R7 below need the user's answer
-before any implementation. Date: 2026-07-27.
+**Status:** decided and partly implemented. Forks R1–R7 (§7) — **user's
+decision, 2026-07-27: R1a–R7a**, all as recommended. **Stage 1 of §8
+(detection and honesty) is done** — canary fingerprint in `meta`, the check on
+first embedder use, per-store invalidation, `rag_search` refusing over a stale
+knowledge base (spec §9.3.4, `shared/embed_identity.rs` +
+`app/orchestrator/embed_guard.rs`). Stages 2 (re-embed in place) and 3
+(per-model thresholds) are open — see [roadmap](../roadmap.md). Research date:
+2026-07-27.
 
 **Question.** What happens to the stored vectors when the embedding model
 changes, and how should the application detect it and reindex?

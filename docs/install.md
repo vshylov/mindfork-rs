@@ -346,11 +346,19 @@ indexed manually — with commands right in the chat input box:
   and embedding model. Each source's original text is stored in the base, so
   reindexing **doesn't require the source files on disk** (and if the text somehow
   wasn't saved — e.g. the source was added by an older version — an attempt is made
-  to re-read the file by its path). Needed after changing the chunk sizes **or** the
-  embedding model to one with a different vector dimensionality (which used to
-  require manual reindexing). If several profiles share the base and the
-  dimensionality changed, reindexing needs to be run under each profile (the vector
-  dimensionality is shared by the whole base).
+  to re-read the file by its path). Needed after changing the chunk sizes **or**
+  after **any** change of the embedding model. If several profiles share the base
+  and the vector dimensionality changed, reindexing needs to be run under each
+  profile (the dimensionality is shared by the whole base).
+- **A change of the embedding model is detected automatically** — including a
+  swap between two models of the *same* vector size, which nothing could see
+  before. Vectors made by one model are meaningless to another, so on the first
+  use of a new one the app reports it and puts things in order: memory (notes and
+  self-observations) and the search indexes of attached files are dropped and
+  rebuild themselves on the next use, while the knowledge base is left untouched
+  and only marked as needing a `/rag rebuild`. Until you run it, `rag_search`
+  refuses over that base instead of answering from vectors it cannot compare.
+  On a first run there is nothing to compare against, so nothing is reported.
 - Indexing runs **in the background** with a progress indicator and spinner;
   re-adding the same file **replaces** its fragments instead of creating
   duplicates.

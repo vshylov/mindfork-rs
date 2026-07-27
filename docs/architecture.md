@@ -149,6 +149,9 @@ src/
 │  │  │                     dispatcher, shared helpers (emitters, chat_mut, mark_dirty)
 │  │  ├─ engines.rs         EngineManager: server lifecycle, readiness,
 │  │  │                     apply_chat/embed/impersonation, backend_if_ready
+│  │  ├─ embed_guard.rs     EmbedGuard: Embedder decorator detecting an embedding-
+│  │  │                     model change (canary, lazy on first use) and invalidating
+│  │  │                     the vectors it orphans — see spec §9.3.4
 │  │  ├─ save_queue.rs      SaveQueue: debounced queue for deferred chat saves
 │  │  ├─ restart_queue.rs   RestartQueue: debounces server (re)starts on engine
 │  │  │                     settings edits (a series of edits → one restart)
@@ -320,6 +323,9 @@ src/
    │  │  │                 RAG, reset together — spec §9.7)
    │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
    │  └─ mod.rs             Storage facade (thread-safe)
+   ├─ embed_identity.rs    identity of the embedding model that produced the stored
+   │                       vectors: CANARY_TEXT/CANARY_MATCH + EmbedFingerprint
+   │                       (canary vector + display name, matches()). See spec §9.3.4
    ├─ config.rs            AppConfig and its sections (Engine/Embed/Tool/Interface/Impersonation…)
    ├─ credits.rs           app metadata for the "About" dialog (F1): brand name,
    │                       author, links, license text (MIT), components (name/version/
@@ -863,7 +869,18 @@ Storage invariants:
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.
 - **Embedding dimensionality** is fixed by the first `/v1/embeddings`
-  response and stored in the sqlite-vec schema (`meta.rag_dim`).
+  response and stored in the sqlite-vec schema (`meta.rag_dim`), shared by the
+  RAG base and the chat attachment index.
+- **Embedding-model identity** is tracked alongside it, because dimensionality
+  is *not* identity: two different 1024-d models pass every dimension check
+  while living in different vector spaces. So `meta` also holds a fingerprint of
+  the model the stored vectors were produced under — `embed_canary` (the
+  embedding of a fixed string, the actual signal) and `embed_model_id` (its
+  display name) — plus `rag_stale_profiles`, the knowledge bases a detected
+  change invalidated. `EmbedGuard` compares the canary on the first embedding
+  call and acts on a mismatch (spec §9.3.4); `reset_vectors` clears all four
+  keys, since with no vectors left there is nothing to be stale relative to.
+  All are `meta` keys, so adding them needed no schema bump.
 
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 

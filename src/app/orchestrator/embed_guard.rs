@@ -1,0 +1,559 @@
+//! Detection of an **embedding-model change** and invalidation of the vectors it
+//! orphans (stage 1 of docs/research/embedding-model-change-reindex.md).
+//!
+//! Stored vectors are only comparable to a query embedded by the same model.
+//! Dimensionality cannot establish that — `bge-m3` and
+//! `multilingual-e5-large-instruct` are both 1024-d, so a swap between them
+//! passes every existing guard while turning retrieval into noise (measured:
+//! the same text embedded by both scores ~0.37). The guard closes that hole
+//! behaviourally, via a canary vector ([`crate::shared::embed_identity`]).
+//!
+//! ## Why a decorator
+//!
+//! Embeddings are deliberately lazy (ADR 0002 — `apply_embed` runs no probe), so
+//! there is no moment at startup when the embedding server is known to be up: a
+//! managed one is still loading. Wrapping [`Embedder`] instead makes the check
+//! run at the first *real* use, when the server has demonstrably answered, and
+//! makes it impossible to forget at a call site. A failed check never blocks the
+//! actual work — it simply retries on the next call.
+//!
+//! ## What happens on a detected change
+//!
+//! Each store is handled by the cheapest correct route, all of which already
+//! exist — the guard only invalidates, it never reindexes:
+//!
+//! - **notes** (`note_vectors`) — dropped. The note text is intact, so
+//!   `notes_missing_vectors` lists them again and the existing
+//!   `ensure_note_vectors` backfill re-embeds them on the next semantic path.
+//!   Effectively self-healing within one `note_recall`.
+//! - **chat attachments** — index dropped. Derived data: `attachment_search`
+//!   already degrades to its `not_indexed` answer pointing at `attachment_read`
+//!   (the guaranteed path), and re-attaching the file rebuilds it (spec §9.7).
+//! - **RAG** — cannot be re-embedded without the full ingest pipeline (stage 2),
+//!   and the knowledge base is the user's data, so it is *not* touched. The
+//!   affected profiles are recorded instead; `rag_search` refuses with a clear
+//!   message until `/rag rebuild` re-embeds that profile.
+//!
+//! The fingerprint is recorded **after** invalidation, so an interrupted run just
+//! redoes it on the next launch, and a healthy launch never re-invalidates.
+
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+use tokio::sync::OnceCell;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::app::events::AppEvent;
+use crate::shared::api::Embedder;
+use crate::shared::embed_identity::{CANARY_TEXT, EmbedFingerprint};
+use crate::shared::i18n::Locale;
+use crate::shared::storage::Storage;
+
+/// Wraps the real embedder and verifies, once per instance, that the stored
+/// vectors were produced by the same model. Rebuilt whenever the embedding
+/// settings change (see `Orchestrator::apply_embed_settings`), so switching the
+/// model in settings re-arms the check.
+pub(super) struct EmbedGuard {
+    inner: Arc<dyn Embedder>,
+    storage: Arc<Storage>,
+    /// Display name of the model now in use (settings-derived, may be absent).
+    model_id: Option<String>,
+    /// Interface language (axis B) — the notice goes to the user, not the model.
+    loc: &'static Locale,
+    evt_tx: UnboundedSender<AppEvent>,
+    /// Holds the check's outcome; only set once it has actually succeeded, so a
+    /// still-loading server is retried rather than being taken for a verdict.
+    checked: OnceCell<()>,
+}
+
+/// What a detected model change invalidated.
+#[derive(Debug, Default, PartialEq)]
+struct Invalidated {
+    /// Note embeddings dropped (they re-embed lazily).
+    notes: usize,
+    /// Attachment index chunks dropped (they rebuild on re-attach).
+    attachments: usize,
+    /// Profiles whose knowledge base still holds old-model vectors.
+    stale_profiles: usize,
+}
+
+impl Invalidated {
+    /// Whether anything was actually affected. A DB with no vectors at all
+    /// (a fresh install, or a user who never used RAG or memory) needs no notice
+    /// — the fingerprint is simply recorded.
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl EmbedGuard {
+    pub(super) fn new(
+        inner: Arc<dyn Embedder>,
+        storage: Arc<Storage>,
+        model_id: Option<String>,
+        loc: &'static Locale,
+        evt_tx: UnboundedSender<AppEvent>,
+    ) -> Self {
+        Self {
+            inner,
+            storage,
+            model_id,
+            loc,
+            evt_tx,
+            checked: OnceCell::new(),
+        }
+    }
+
+    /// Embeds the canary and compares it with what the DB recorded, acting on a
+    /// mismatch. Returns `Err` when the embedder is unavailable, so the check is
+    /// retried on the next call instead of being cached as a verdict.
+    async fn run_check(&self) -> Result<()> {
+        let fresh = self
+            .inner
+            .embed(vec![CANARY_TEXT.to_string()])
+            .await?
+            .into_iter()
+            .next()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow!("embedder returned no canary vector"))?;
+
+        let stored = self.storage.db().embed_fingerprint().unwrap_or(None);
+        let current = EmbedFingerprint::new(fresh, self.model_id.clone());
+
+        match stored {
+            // Same model — the common path, nothing to do.
+            Some(prev) if prev.matches(&current.canary) => return Ok(()),
+            Some(prev) => {
+                let hit = self.invalidate();
+                tracing::warn!(
+                    previous = prev.display_id(),
+                    current = current.display_id(),
+                    notes = hit.notes,
+                    attachments = hit.attachments,
+                    stale_profiles = hit.stale_profiles,
+                    "embedding model changed: vectors from the previous model were invalidated"
+                );
+                self.notify(&prev, &current, &hit);
+            }
+            // Nothing recorded yet: a fresh DB, an installation predating this
+            // check, or a `/rag rebuild` that reset the vectors. Adopt the
+            // current model silently — with no prior fingerprint there is no
+            // evidence anything is stale, and claiming otherwise would cry wolf
+            // on every first launch.
+            None => tracing::info!(
+                model = current.display_id(),
+                "recorded the embedding model fingerprint"
+            ),
+        }
+
+        if let Err(err) = self.storage.db().set_embed_fingerprint(&current) {
+            // Non-fatal: the check simply repeats on the next launch.
+            tracing::warn!(error = %err, "failed to record the embedding fingerprint");
+        }
+        Ok(())
+    }
+
+    /// Drops what the previous model produced and records which knowledge bases
+    /// are left stale. Every step is best-effort: a failure is logged and the
+    /// rest still runs — a partial invalidation is strictly better than none,
+    /// and the next launch retries whatever was missed.
+    fn invalidate(&self) -> Invalidated {
+        let db = self.storage.db();
+
+        let notes = db.note_vectors_clear_all().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "failed to drop note embeddings");
+            0
+        });
+        let attachments = db.attachment_index_clear_all().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "failed to drop the attachment index");
+            0
+        });
+        let stale = db.profiles_with_rag_docs().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "failed to list profiles with RAG documents");
+            Vec::new()
+        });
+        if !stale.is_empty()
+            && let Err(err) = db.set_rag_stale_profiles(&stale)
+        {
+            tracing::warn!(error = %err, "failed to record stale knowledge bases");
+        }
+
+        Invalidated {
+            notes,
+            attachments,
+            stale_profiles: stale.len(),
+        }
+    }
+
+    /// Tells the user what happened, in the interface language. Two separate
+    /// notes: what healed itself, and what needs an explicit `/rag rebuild` —
+    /// only the latter asks anything of them.
+    fn notify(&self, prev: &EmbedFingerprint, current: &EmbedFingerprint, hit: &Invalidated) {
+        if hit.is_empty() {
+            return;
+        }
+        let mut msg = self.loc.tf(
+            "ui.embed.model_changed",
+            &[("old", prev.display_id()), ("new", current.display_id())],
+        );
+        if hit.stale_profiles > 0 {
+            msg.push(' ');
+            msg.push_str(&self.loc.tf(
+                "ui.embed.rag_stale",
+                &[("n", &hit.stale_profiles.to_string())],
+            ));
+        }
+        let _ = self.evt_tx.send(AppEvent::Error(msg));
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for EmbedGuard {
+    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        // Best-effort: a failed check (server still loading, embeddings not
+        // configured) must never block real work — the call below reports the
+        // real error itself, and the check retries next time.
+        let _ = self.checked.get_or_try_init(|| self.run_check()).await;
+        self.inner.embed(texts).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entities::note::Note;
+    use crate::shared::api::mock::MockEmbedder;
+    use crate::shared::i18n::{Lang, locale};
+    use crate::shared::paths::Paths;
+    use uuid::Uuid;
+
+    /// An embedder whose output depends on `salt`, so two instances stand for two
+    /// different models at the **same** dimensionality — the case dimensionality
+    /// checks cannot see, and the whole reason this guard exists.
+    struct SaltedEmbedder {
+        salt: usize,
+        dim: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for SaltedEmbedder {
+        async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut v = vec![0.0; self.dim];
+                    for (i, b) in t.bytes().enumerate() {
+                        v[(i + b as usize + self.salt * 7) % self.dim] += 1.0;
+                    }
+                    v[self.salt % self.dim] += 5.0; // pull the spaces apart
+                    v
+                })
+                .collect())
+        }
+    }
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        storage: Arc<Storage>,
+        rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+        tx: UnboundedSender<AppEvent>,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        Fixture {
+            _dir: dir,
+            storage,
+            rx,
+            tx,
+        }
+    }
+
+    fn guard(f: &Fixture, inner: Arc<dyn Embedder>, model: &str) -> EmbedGuard {
+        EmbedGuard::new(
+            inner,
+            f.storage.clone(),
+            Some(model.to_string()),
+            locale(Lang::Ru),
+            f.tx.clone(),
+        )
+    }
+
+    #[tokio::test]
+    async fn first_run_records_fingerprint_without_notifying() {
+        let mut f = fixture();
+        let g = guard(&f, Arc::new(MockEmbedder::new(16)), "model-a");
+        g.embed(vec!["hello".into()]).await.unwrap();
+
+        assert!(
+            f.storage.db().embed_fingerprint().unwrap().is_some(),
+            "the fingerprint is recorded on the first use"
+        );
+        assert!(
+            f.rx.try_recv().is_err(),
+            "a first launch must not claim anything changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_model_is_silent_and_keeps_vectors() {
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+        let note = Note::new(profile, "a note", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &[1.0, 0.0])
+            .unwrap();
+
+        // Two separate guards over the same model — as if the app were restarted.
+        guard(&f, Arc::new(MockEmbedder::new(16)), "model-a")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+        let _ = f.rx.try_recv();
+        guard(&f, Arc::new(MockEmbedder::new(16)), "model-a")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+
+        assert!(f.rx.try_recv().is_err(), "no notice for an unchanged model");
+        assert!(
+            f.storage
+                .db()
+                .notes_missing_vectors(profile)
+                .unwrap()
+                .is_empty(),
+            "an unchanged model must not invalidate anything"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_dimension_model_swap_is_detected_and_invalidates() {
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+        let note = Note::new(profile, "a note", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &[1.0, 0.0])
+            .unwrap();
+
+        // Model A records the fingerprint.
+        guard(&f, Arc::new(SaltedEmbedder { salt: 0, dim: 32 }), "model-a")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+        let _ = f.rx.try_recv();
+
+        // Model B — same dimensionality, different vector space.
+        guard(&f, Arc::new(SaltedEmbedder { salt: 3, dim: 32 }), "model-b")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+
+        // The note survives, its vector does not → the backfill will re-embed it.
+        assert_eq!(
+            f.storage.db().notes_missing_vectors(profile).unwrap().len(),
+            1,
+            "note vectors are dropped so the existing backfill re-embeds them"
+        );
+        assert_eq!(
+            f.storage
+                .db()
+                .note_list(profile, None, &[], None)
+                .unwrap()
+                .len(),
+            1,
+            "the note content itself is untouched"
+        );
+        match f.rx.try_recv() {
+            Ok(AppEvent::Error(msg)) => {
+                assert!(msg.contains("model-a") && msg.contains("model-b"), "{msg}");
+            }
+            other => panic!("expected a model-change notice, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rag_documents_are_marked_stale_not_deleted() {
+        let f = fixture();
+        let profile = Uuid::new_v4();
+        f.storage
+            .db()
+            .rag_insert(&crate::entities::rag::RagDocument::new(
+                profile,
+                "kb.txt",
+                "chunk",
+                vec![1.0; 32],
+            ))
+            .unwrap();
+
+        guard(&f, Arc::new(SaltedEmbedder { salt: 0, dim: 32 }), "model-a")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+        guard(&f, Arc::new(SaltedEmbedder { salt: 3, dim: 32 }), "model-b")
+            .embed(vec!["x".into()])
+            .await
+            .unwrap();
+
+        assert!(
+            f.storage.db().rag_is_stale(profile).unwrap(),
+            "the knowledge base is marked stale for the affected profile"
+        );
+        assert_eq!(
+            f.storage.db().rag_count(profile).unwrap(),
+            1,
+            "the user's knowledge base is never deleted — only marked"
+        );
+    }
+
+    #[tokio::test]
+    async fn detection_happens_once_per_instance() {
+        let f = fixture();
+        let g = guard(&f, Arc::new(MockEmbedder::new(16)), "model-a");
+        g.embed(vec!["a".into()]).await.unwrap();
+        let first = f.storage.db().embed_fingerprint().unwrap();
+        // Corrupt the record; a second call on the same instance must not re-check
+        // (and therefore must not rewrite it).
+        f.storage
+            .db()
+            .set_embed_fingerprint(&EmbedFingerprint::new(vec![9.0; 4], Some("junk".into())))
+            .unwrap();
+        g.embed(vec!["b".into()]).await.unwrap();
+        assert_ne!(
+            f.storage.db().embed_fingerprint().unwrap(),
+            first,
+            "the check is cached per instance, so the record stays as we left it"
+        );
+    }
+
+    /// The case the whole feature exists for, against real models: `bge-m3` and
+    /// `multilingual-e5-large-instruct` are **both 1024-d**, so no dimensionality
+    /// check can tell them apart, yet the same text embedded by both scores only
+    /// ~0.37 (docs/research/embedding-model-change-reindex.md §1). Needs two
+    /// embedding servers:
+    ///
+    /// ```text
+    /// llama-server -m bge-m3-Q8_0.gguf --port 8001 --embeddings
+    /// llama-server -m multilingual-e5-large-instruct-q8_0.gguf --port 8002 --embeddings
+    /// MINDFORK_EMBED_URL=http://127.0.0.1:8001/v1
+    /// MINDFORK_EMBED_URL_ALT=http://127.0.0.1:8002/v1
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires two live embedding servers (MINDFORK_EMBED_URL, MINDFORK_EMBED_URL_ALT)"]
+    async fn same_dimension_model_swap_detected_live() {
+        let (Ok(url_a), Ok(url_b)) = (
+            std::env::var("MINDFORK_EMBED_URL"),
+            std::env::var("MINDFORK_EMBED_URL_ALT"),
+        ) else {
+            eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
+            return;
+        };
+        let model_a: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_a));
+        let model_b: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_b));
+
+        let mut f = fixture();
+        let profile = Uuid::new_v4();
+
+        // Index a note and a knowledge-base chunk under model A.
+        let note = Note::new(profile, "the user prefers concise answers", vec![]);
+        f.storage.db().note_insert(&note).unwrap();
+        let vec_a = model_a
+            .embed(vec![note.content.clone()])
+            .await
+            .unwrap()
+            .remove(0);
+        let dim_a = vec_a.len();
+        f.storage
+            .db()
+            .note_vector_upsert(note.id, profile, &vec_a)
+            .unwrap();
+        f.storage
+            .db()
+            .rag_insert(&crate::entities::rag::RagDocument::new(
+                profile, "kb.txt", "a chunk", vec_a,
+            ))
+            .unwrap();
+
+        guard(&f, model_a.clone(), "bge-m3")
+            .embed(vec!["warm up".into()])
+            .await
+            .unwrap();
+        assert!(f.storage.db().embed_fingerprint().unwrap().is_some());
+        assert!(f.rx.try_recv().is_err(), "a first launch claims nothing");
+
+        // A second launch on the SAME server must stay silent. This is the more
+        // important half: a false positive here would wipe the note vectors and
+        // nag the user on every single launch. Real servers are not obliged to be
+        // bit-exact, so this has to be checked against one rather than a mock.
+        guard(&f, model_a, "bge-m3")
+            .embed(vec!["warm up".into()])
+            .await
+            .unwrap();
+        assert!(
+            f.rx.try_recv().is_err(),
+            "the same live model must not read as a change"
+        );
+        assert!(
+            f.storage
+                .db()
+                .notes_missing_vectors(profile)
+                .unwrap()
+                .is_empty(),
+            "the same live model must not invalidate anything"
+        );
+
+        // Swap the model. Same dimensionality — the point of the test.
+        let dim_b = model_b.embed(vec!["x".into()]).await.unwrap()[0].len();
+        assert_eq!(
+            dim_a, dim_b,
+            "this smoke is only meaningful for two models of the SAME dimensionality \
+             (that is the case no existing guard can catch)"
+        );
+        guard(&f, model_b, "multilingual-e5-large-instruct")
+            .embed(vec!["warm up".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            f.storage.db().notes_missing_vectors(profile).unwrap().len(),
+            1,
+            "the note's old-model vector must be dropped so the backfill re-embeds it"
+        );
+        assert!(
+            f.storage.db().rag_is_stale(profile).unwrap(),
+            "the knowledge base must be marked stale"
+        );
+        assert_eq!(
+            f.storage.db().rag_count(profile).unwrap(),
+            1,
+            "the knowledge base itself must be left intact"
+        );
+        assert!(
+            matches!(f.rx.try_recv(), Ok(AppEvent::Error(_))),
+            "the user must be told"
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_embedder_does_not_record_anything() {
+        let f = fixture();
+        let g = guard(
+            &f,
+            Arc::new(crate::shared::api::UnavailableEmbedder),
+            "model-a",
+        );
+        assert!(
+            g.embed(vec!["x".into()]).await.is_err(),
+            "the real error surfaces"
+        );
+        assert!(
+            f.storage.db().embed_fingerprint().unwrap().is_none(),
+            "a failed check must not be cached as a verdict"
+        );
+    }
+}

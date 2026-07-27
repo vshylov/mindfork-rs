@@ -251,14 +251,55 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(found.is_some())
 }
 
+// ---------- the `meta` key/value table ----------
+//
+// A handful of small facts about the whole DB live here rather than in their own
+// tables: the vector dimensionality shared by both indexes (`rag_dim`), the
+// embedding-model fingerprint the stored vectors were produced under
+// (`embed_canary`/`embed_model_id`, see [`crate::shared::embed_identity`]), and
+// which profiles a model change invalidated (`rag_stale_profiles`). Adding one is
+// a key, not a schema bump.
+
+/// Vector dimensionality shared by the RAG base and the attachment index.
+const KEY_RAG_DIM: &str = "rag_dim";
+/// Embedding of [`crate::shared::embed_identity::CANARY_TEXT`] under the model
+/// that produced the stored vectors — a JSON array of f32.
+const KEY_EMBED_CANARY: &str = "embed_canary";
+/// Display name of that model (metadata for the message shown to the user).
+const KEY_EMBED_MODEL_ID: &str = "embed_model_id";
+/// Profiles whose RAG documents predate the current embedding model — a JSON
+/// array of uuid strings.
+const KEY_RAG_STALE_PROFILES: &str = "rag_stale_profiles";
+
+/// Reads a `meta` value (`None` — the key has never been written).
+fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let value: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+        .optional()?;
+    Ok(value)
+}
+
+/// Writes a `meta` value, replacing any previous one.
+fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+/// Removes a `meta` key (a no-op when it is absent). Deleting is how a fact is
+/// unset — readers treat "no key" as the natural empty state, so a leftover
+/// `"[]"`/`""` value would only be a second way to say the same thing.
+fn meta_del(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
+    Ok(())
+}
+
 /// The current RAG vector dimensionality (if the vector table already exists).
 fn vec_dim(conn: &Connection) -> Result<Option<usize>> {
-    let dim: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'rag_dim'", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    Ok(dim.map(|d| d.parse().unwrap_or(0)))
+    Ok(meta_get(conn, KEY_RAG_DIM)?.map(|d| d.parse().unwrap_or(0)))
 }
 
 /// Registers the vector dimensionality for the whole DB. It is **shared** by the
@@ -273,13 +314,7 @@ fn ensure_dim(conn: &Connection, dim: usize) -> Result<()> {
     match vec_dim(conn)? {
         Some(existing) if existing == dim => Ok(()),
         Some(existing) => bail!("embedding dim mismatch: table is {existing}, got {dim}"),
-        None => {
-            conn.execute(
-                "INSERT INTO meta(key, value) VALUES ('rag_dim', ?1)",
-                params![dim.to_string()],
-            )?;
-            Ok(())
-        }
+        None => meta_set(conn, KEY_RAG_DIM, &dim.to_string()),
     }
 }
 

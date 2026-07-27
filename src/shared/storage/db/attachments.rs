@@ -123,6 +123,38 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         delete_attachment_rows(&conn, chat_id, |id| !keep.contains(&id))
     }
+
+    /// Drops the whole attachment index, across **all chats**: the chunk rows and
+    /// the vec0 table. Returns how many chunk rows were dropped.
+    ///
+    /// Cheap to lose: this is derived data — the extracted text lives in the chat
+    /// file, so re-attaching the file rebuilds the index, and `attachment_read`
+    /// (the guaranteed page-by-page path) never depended on it at all. Both are
+    /// dropped together because the rows are joined to the vectors by rowid, and
+    /// sqlite reuses rowids — orphaned rows would later join onto whatever landed
+    /// on theirs.
+    ///
+    /// Global on purpose (the same reasoning as
+    /// [`Db::note_vectors_clear_all`]): a model change invalidates every chat's
+    /// vectors at once, since the embedder is global. The `chat_id` scoping that
+    /// isolates search has nothing to isolate here — there is no surviving index.
+    ///
+    /// The shared dimensionality (`meta.rag_dim`) is deliberately **left alone**:
+    /// `rag_vectors` may still exist at that dimensionality, and forgetting it
+    /// would let a later insert at a different one hit a table built for the old
+    /// size. Resetting the dimensionality is [`Db::reset_vectors`]'s job.
+    pub fn attachment_index_clear_all(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let dropped: i64 =
+            conn.query_row("SELECT COUNT(*) FROM attachment_documents", [], |r| {
+                r.get(0)
+            })?;
+        // The vec0 table is created lazily (on the first insert), so it may not
+        // exist yet — `IF EXISTS`, as in `reset_vectors`.
+        conn.execute("DROP TABLE IF EXISTS attachment_vectors", [])?;
+        conn.execute("DELETE FROM attachment_documents", [])?;
+        Ok(dropped as usize)
+    }
 }
 
 /// Deletes a chat's attachment chunks matching the predicate (along with their
@@ -313,6 +345,49 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(db.rag_dimension().unwrap(), Some(3));
+    }
+
+    #[test]
+    fn clear_all_empties_the_index_across_chats() {
+        // The invalidation used when the embedding model changes. Global on
+        // purpose: one embedder, so every chat's vectors are worthless at once.
+        let db = db();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        db.attachment_insert(&chunk(a, Uuid::new_v4(), "a.txt", "x", vec![1.0, 0.0]))
+            .unwrap();
+        db.attachment_insert(&chunk(a, Uuid::new_v4(), "b.txt", "y", vec![0.0, 1.0]))
+            .unwrap();
+        db.attachment_insert(&chunk(b, Uuid::new_v4(), "c.txt", "z", vec![1.0, 1.0]))
+            .unwrap();
+
+        assert_eq!(db.attachment_index_clear_all().unwrap(), 3);
+        assert!(db.attachment_indexed_ids(a).unwrap().is_empty());
+        assert!(db.attachment_indexed_ids(b).unwrap().is_empty());
+        assert!(
+            db.attachment_search(a, &[1.0, 0.0], 5).unwrap().is_empty(),
+            "the vec0 table is gone, not just the rows"
+        );
+
+        // Derived data: re-attaching rebuilds the index at the same (still
+        // recorded) dimensionality.
+        assert_eq!(db.rag_dimension().unwrap(), Some(2));
+        let att = Uuid::new_v4();
+        db.attachment_insert(&chunk(a, att, "a.txt", "x", vec![1.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.attachment_indexed_ids(a).unwrap(), vec![att]);
+    }
+
+    #[test]
+    fn clear_all_is_safe_before_the_vec_table_exists() {
+        // The vec0 table is created lazily, so on a fresh DB there is nothing to
+        // drop — this must not error.
+        let db = db();
+        assert_eq!(db.attachment_index_clear_all().unwrap(), 0);
+        assert!(
+            db.attachment_search(Uuid::new_v4(), &[1.0, 0.0], 5)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

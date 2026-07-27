@@ -626,6 +626,57 @@ Unlike ordinary tools (which return a text result without touching the conversat
 
 Both are subject to `max_tool_rounds` (each call = one round) — a backstop against endless "extra messages"/"rewrites". UI signals — the `AppEvent::AssistantContinue`/`AssistantRewrite` events (the live feed matches a reload from history).
 
+#### 9.3.4. Changing the embedding model
+
+Stored vectors are only comparable to a query embedded by the **same** model, so
+swapping the embedding model silently invalidates everything already indexed.
+Dimensionality cannot establish identity — `bge-m3` and
+`multilingual-e5-large-instruct` are both 1024-d, yet the same text embedded by
+both scores a cosine of only ~0.37, and every existing guard waves the swap
+through. See
+[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md).
+
+- **Detection is behavioural, not config-based.** A fixed canary string is
+  embedded and stored (`meta`, together with the model's display name); on the
+  next run it is embedded again and compared. This also catches what a config
+  fingerprint cannot: the same GGUF path re-pointed at another file, a
+  requantization, or a server restarted with different pooling flags. The check
+  runs **lazily, on the first real embedding call** after launch or after an
+  embedding-settings change — embeddings have no readiness probe (ADR 0002), so
+  there is no startup moment when a managed server is known to be up. A failed
+  check never blocks the actual work; it simply retries.
+- **Each store is handled by the cheapest correct route** — the guard only
+  *invalidates*, it never reindexes:
+  - **notes and `@self` observations** — the embeddings are dropped. The note
+    text is intact, so the existing lazy backfill re-embeds them on the next
+    semantic path: self-healing, and it costs the user nothing. This is the most
+    valuable half of the fix — nothing ever refreshed note vectors, so on a
+    dimension change semantic recall silently returned arbitrary notes and every
+    duplicate gate stopped firing.
+  - **chat attachment indexes** — dropped. Derived data (§9.7): re-attaching a
+    file rebuilds one, `attachment_search` degrades to its "nothing indexed"
+    answer, and `attachment_read` was never affected.
+  - **the knowledge base** — **never touched**. It is the user's own data, and
+    re-embedding it needs the full ingest pipeline. Instead the affected profiles
+    are recorded as stale and `rag_search` **refuses** over them, naming `/rag
+    rebuild` as the fix. Refusing rather than warning: the vectors are in a
+    different space, so results would be noise dressed up as answers.
+- **Staleness is per profile**, because `/rag rebuild` is. The mark is lifted by
+  a rebuild (as soon as the old chunks are deleted, so it stays correct even if
+  the rebuild is cancelled or some sources fail — nothing old survives either
+  way), and by `/rag remove` once the base is empty, which closes the dead end
+  "removed everything, re-added under the new model, still refused".
+- **Honesty over noise.** The fingerprint is recorded **after** invalidation, so
+  an interrupted run redoes it and a healthy launch never re-invalidates. A first
+  run with nothing recorded is **silent** — with no prior fingerprint there is no
+  evidence anything is stale. The user is told only when something was actually
+  invalidated, and only the knowledge base asks anything of them.
+
+Reindexing in place (rather than invalidating) is a later stage, as are
+per-model similarity thresholds: the project's gates (`0.85`/`0.72`/`0.62`) are
+calibrated against bge-m3, and a different model's cosine distribution shifts
+them — see the research doc §6.
+
 ### 9.4. Enabling tools
 
 - `Profile.enabled_tools` — which tools are available in a given profile's chats (toggles in profile settings).
