@@ -19,10 +19,10 @@ called out as the highest-payoff tracks (real user pain / direct savings):
    demand.
 
 ## Memory, self-model, knowledge
-The project's flagship track (self-model / notes / connectivity / RAG). The core
-and the **self-model consolidation** (A) and **RAG: sources and retrieval** (B)
-tracks are done (see "Recently closed" below and `docs/history/`). One
-**deferred** groundwork item remains:
+The project's flagship track (self-model / notes / connectivity / RAG). The
+core, the **self-model consolidation** (A), **RAG: sources and retrieval** (B)
+and **embedding-model change** tracks are done (see "Recently closed" below and
+`docs/history/`). **Deferred** groundwork remains:
 - **vec0 for notes and observations as their count grows** — cosine is
   currently computed brute-force in Rust (`db::cosine`, `note_search_semantic`);
   for tens–hundreds (and up to thousands) of notes this is cheap (single-digit
@@ -32,14 +32,6 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
-- **Re-indexing chat attachments after an embedding-model change** — the
-  attachment index shares the vector dimensionality with RAG (`meta.rag_dim`), so
-  a `/rag rebuild` that switches models drops it; it only comes back when the file
-  is re-attached. The text snapshot lives in the chat file, so an automatic
-  re-index is possible, but it needs a walk over all chats. Low priority: the
-  index is derived data and `attachment_read` (the guaranteed path) is
-  unaffected. See spec §9.7,
-  [file-attachments.md](file-attachments.md).
 
 ## Context and tokens
 - **History compression / rolling summary** — right now the whole conversation
@@ -228,6 +220,19 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **Embedding-model change** (stages 1–3, complete): a swap is detected
+  behaviourally by a canary vector — dimensionality is *not* identity —
+  `/reindex` re-embeds every stored vector in place from the text the DB already
+  holds, and the memory similarity gates are read as positions in a reference
+  scale, calibrated automatically per model (so they follow the model instead of
+  one fixed calibration, and stay exactly as they are until a model actually
+  changes). This also closed the older "re-indexing chat attachments after a
+  model change" item: its "needs a walk over all chats" premise was wrong for
+  this purpose (`attachment_documents.chunk_text` is in the DB, so a walk is
+  only needed to re-*chunk*), and attachment indexes now come back without
+  re-attaching each file. See
+  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md),
+  spec §9.3.4.
 - **English source** (prep for open source: all docs, comments and
   non-user-facing strings moved RU -> EN; the convention flipped and guarded in
   CI by `tools/cyrillic_scan.py`) —

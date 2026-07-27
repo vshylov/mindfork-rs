@@ -4,6 +4,7 @@ use super::helpers::*;
 use super::*;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::{FlashAttn, PythonMode, SpecType};
+use crate::shared::embed_prefix::EmbedConvention;
 
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -213,6 +214,50 @@ fn model_section_shows_active_subsection_server_chip() {
     goto_section(&mut s, Section::Interface);
     let t = render_text(&mut s);
     assert!(!t.contains("готов") && !t.contains("подключение"));
+}
+
+#[test]
+fn embeddings_tab_has_the_input_convention_field() {
+    // The one control for per-model input prefixes. It lives in the Embeddings
+    // tab regardless of the server mode — the convention is a property of the
+    // model, not of where it runs (docs/research/embedding-input-prefixes.md).
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    s.model_sub = ModelTab::Embeddings;
+    assert!(
+        s.fields().iter().any(|f| f.id == FieldId::EConvention),
+        "the convention field is present in managed mode"
+    );
+    s.config.embed.mode = ServerMode::OpenAi;
+    assert!(
+        s.fields().iter().any(|f| f.id == FieldId::EConvention),
+        "and in a cloud mode too"
+    );
+    // It is not in the assistant's tab — that engine has no embeddings.
+    s.model_sub = ModelTab::Assistant;
+    assert!(!s.fields().iter().any(|f| f.id == FieldId::EConvention));
+}
+
+#[test]
+fn cycling_the_input_convention_saves_it() {
+    let mut s = screen();
+    assert_eq!(s.config.embed.convention, EmbedConvention::None, "default");
+    match s.cycle_field(FieldId::EConvention, 1) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.embed.convention, EmbedConvention::E5)
+        }
+        other => panic!("expected a config save, got {other:?}"),
+    }
+    // Described, since a wrong value measurably degrades retrieval.
+    let mut s2 = screen();
+    goto_section(&mut s2, Section::Model);
+    s2.model_sub = ModelTab::Embeddings;
+    let row = s2
+        .fields()
+        .into_iter()
+        .find(|f| f.id == FieldId::EConvention)
+        .unwrap();
+    assert!(row.description.is_some());
 }
 
 #[test]

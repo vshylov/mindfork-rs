@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::wire;
 use crate::shared::api::contract::{
-    ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, TokenUsage,
-    ToolCallDelta,
+    ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
+    TokenUsage, ToolCallDelta,
 };
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
@@ -206,7 +206,10 @@ impl EngineBackend for OpenAiClient {
 
 #[async_trait::async_trait]
 impl Embedder for OpenAiClient {
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    // The role carries no wire meaning: the OpenAI embeddings API takes plain
+    // text. Where a model wants its input marked, that is done above by
+    // `PrefixedEmbedder` (docs/research/embedding-input-prefixes.md §6.2).
+    async fn embed(&self, texts: Vec<String>, _role: EmbedRole) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url);
         let body = wire::EmbeddingRequest {
             model: self.model.clone(),

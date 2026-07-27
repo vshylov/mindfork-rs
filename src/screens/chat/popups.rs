@@ -212,6 +212,9 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
     ("/rag rebuild", "ui.help.rag_rebuild"),
+    // Sits next to the knowledge-base commands, but is deliberately top-level:
+    // it re-embeds notes, attachments and every profile's base at once.
+    ("/reindex", "ui.help.reindex"),
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
@@ -590,4 +593,57 @@ pub(super) fn render_confirm(
     .block(block)
     .wrap(Wrap { trim: true });
     frame.render_widget(body, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The "Commands" tab of the help dialog, rendered to text.
+    fn commands_tab_text() -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        s.help.as_mut().unwrap().tab = HelpTab::Commands;
+        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn reindex_is_listed_in_the_commands_tab() {
+        // The catalog carries it next to the knowledge-base commands (AGENTS.md
+        // §3 — a new command must be discoverable in `F1`).
+        let pos = HELP_COMMANDS
+            .iter()
+            .position(|(k, _)| *k == "/reindex")
+            .expect("/reindex is missing from HELP_COMMANDS");
+        let rebuild = HELP_COMMANDS
+            .iter()
+            .position(|(k, _)| *k == "/rag rebuild")
+            .expect("/rag rebuild is missing from HELP_COMMANDS");
+        assert_eq!(
+            pos,
+            rebuild + 1,
+            "/reindex belongs next to the /rag entries"
+        );
+
+        // …and it actually renders, description included.
+        let text = commands_tab_text();
+        assert!(text.contains("/reindex"), "the command label: {text}");
+        assert!(
+            text.contains("пересобрать все векторы"),
+            "the localized description: {text}"
+        );
+    }
 }

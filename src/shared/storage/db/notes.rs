@@ -110,6 +110,11 @@ impl Db {
     /// Saves/replaces a note's embedding (for semantic search). The vector is a
     /// JSON array of f32 in a side table (deliberately NOT vec0: there are only a
     /// few notes, cosine is computed in Rust — see [`Self::note_search_semantic`]).
+    ///
+    /// The current embedding generation is stamped here rather than passed in
+    /// (see the [`super::embed_gen`] module): the callers are ~10 sites that have
+    /// no business knowing about generations, and reading it under the lock we
+    /// already hold makes writing an unstamped vector impossible.
     pub fn note_vector_upsert(
         &self,
         note_id: Uuid,
@@ -118,14 +123,17 @@ impl Db {
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO note_vectors(note_id, profile_id, embedding) VALUES (?1, ?2, ?3)
+            "INSERT INTO note_vectors(note_id, profile_id, embedding, embed_gen)
+             VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(note_id) DO UPDATE SET
                  profile_id = excluded.profile_id,
-                 embedding = excluded.embedding",
+                 embedding = excluded.embedding,
+                 embed_gen = excluded.embed_gen",
             params![
                 note_id.to_string(),
                 profile_id.to_string(),
                 serde_json::to_string(embedding)?,
+                current_embed_gen(&conn)?,
             ],
         )?;
         Ok(())
@@ -135,6 +143,10 @@ impl Db {
     /// Brute-force in Rust (notes number in the tens–hundreds); notes without an
     /// embedding are skipped. Returns up to `k` pairs (note, similarity) in
     /// descending order. Isolation — `WHERE n.profile_id = ?`.
+    ///
+    /// Vectors from a previous embedding generation are skipped too: they were
+    /// produced by another model, so scoring them against this query would rank
+    /// noise (see the [`super::embed_gen`] module).
     pub fn note_search_semantic(
         &self,
         profile_id: Uuid,
@@ -147,15 +159,23 @@ impl Db {
              FROM notes n
              JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND IFNULL(v.embed_gen, ?2) = ?3",
         )?;
         let mut scored: Vec<(Note, f32)> = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                let note = row_to_note(r)?;
-                let emb: Vec<f32> =
-                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
-                Ok((note, emb))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| {
+                    let note = row_to_note(r)?;
+                    let emb: Vec<f32> =
+                        serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                    Ok((note, emb))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
             .map(|(note, emb)| {
@@ -168,21 +188,32 @@ impl Db {
         Ok(scored)
     }
 
-    /// A profile's notes that still have no embedding (for backfilling "old"
-    /// notes created before vector search, imported, or saved while the embedder
-    /// was unavailable at the time). Returns pairs (id, content).
+    /// A profile's notes that need embedding: those with **no** vector (old
+    /// notes created before vector search, imported ones, or ones saved while the
+    /// embedder was unavailable) **and** those whose vector predates the current
+    /// embedding generation — a foreign vector is worth no more than a missing
+    /// one, and listing it here is what makes a model change self-healing: the
+    /// existing `ensure_note_vectors` backfill re-embeds it on the next semantic
+    /// path, with no explicit job and no data thrown away (see the
+    /// [`super::embed_gen`] module). Returns pairs (id, content).
     pub fn notes_missing_vectors(&self, profile_id: Uuid) -> Result<Vec<(Uuid, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.id, n.content FROM notes n
              LEFT JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND v.note_id IS NULL AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND (v.note_id IS NULL OR IFNULL(v.embed_gen, ?2) <> ?3)",
         )?;
         let rows = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                Ok((parse_uuid(r.get::<_, String>(0)?), r.get::<_, String>(1)?))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| Ok((parse_uuid(r.get::<_, String>(0)?), r.get::<_, String>(1)?)),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -222,7 +253,9 @@ impl Db {
     }
 
     /// A profile's active notes with their embeddings (for consolidation: finding
-    /// duplicates via pairwise cosine). Superseded ones are excluded.
+    /// duplicates via pairwise cosine). Superseded ones are excluded, and so are
+    /// vectors from a previous embedding generation — a pairwise cosine across
+    /// two vector spaces is meaningless (see the [`super::embed_gen`] module).
     pub fn notes_with_vectors(&self, profile_id: Uuid) -> Result<Vec<(Note, Vec<f32>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -230,15 +263,23 @@ impl Db {
              FROM notes n
              JOIN note_vectors v ON v.note_id = n.id
              LEFT JOIN note_superseded s ON s.note_id = n.id
-             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL
+               AND IFNULL(v.embed_gen, ?2) = ?3",
         )?;
         let rows = stmt
-            .query_map(params![profile_id.to_string()], |r| {
-                let note = row_to_note(r)?;
-                let emb: Vec<f32> =
-                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
-                Ok((note, emb))
-            })?
+            .query_map(
+                params![
+                    profile_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| {
+                    let note = row_to_note(r)?;
+                    let emb: Vec<f32> =
+                        serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                    Ok((note, emb))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }

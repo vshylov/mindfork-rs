@@ -27,12 +27,14 @@ mod attachments;
 mod background;
 mod chats;
 mod consolidation;
+mod embed_guard;
 mod engines;
 mod generation;
 mod impersonation;
 mod mcp;
 mod profiles;
 mod rag;
+mod reembed;
 mod reflection;
 mod request;
 mod restart_queue;
@@ -475,6 +477,7 @@ impl Orchestrator {
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
+            AppCommand::Reindex => self.handle_reindex(),
             AppCommand::FileAttach { path } => self.handle_file_attach(path),
             AppCommand::FileRemove { target } => self.handle_file_remove(target),
             AppCommand::FileList => self.handle_file_list(),

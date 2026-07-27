@@ -13,7 +13,7 @@
 //! `/rag list|rebuild|remove` and cross-source dedup.
 //!
 //! **Isolation**: scoping is by `chat_id` (the vec0 partition key), which is
-//! strictly narrower than the `profile_id` isolation invariant (spec §10.3) — a
+//! strictly narrower than the `profile_id` isolation invariant (spec §9.5) — a
 //! chat belongs to exactly one profile, so the invariant holds a fortiori.
 //!
 //! **Dimensionality is shared with RAG** (`meta.rag_dim`, one per DB): switching
@@ -22,13 +22,16 @@
 use super::*;
 
 impl Db {
-    /// Writes one indexed fragment of an attachment (vector + text).
+    /// Writes one indexed fragment of an attachment (vector + text). Stamped
+    /// with the current embedding generation (see the [`super::embed_gen`]
+    /// module), read under the lock we already hold — so an unstamped vector
+    /// cannot be written.
     pub fn attachment_insert(&self, chunk: &AttachmentChunk) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         ensure_attachment_vec_table(&conn, chunk.embedding.len())?;
         conn.execute(
-            "INSERT INTO attachment_documents(id, chat_id, attachment_id, name, chunk_text, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO attachment_documents(id, chat_id, attachment_id, name, chunk_text, created_at, embed_gen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 chunk.id.to_string(),
                 chunk.chat_id.to_string(),
@@ -36,6 +39,7 @@ impl Db {
                 chunk.name,
                 chunk.text,
                 chunk.created_at.to_rfc3339(),
+                current_embed_gen(&conn)?,
             ],
         )?;
         let rowid = conn.last_insert_rowid();
@@ -52,6 +56,12 @@ impl Db {
 
     /// kNN search over one chat's attachments (isolation by `chat_id` via the
     /// partition key — the search never reaches another conversation's files).
+    ///
+    /// Fragments from a previous embedding generation are filtered out as belt
+    /// and braces: [`Self::attachment_indexed_ids`] is the real gate (the tool
+    /// answers "nothing indexed" and the pinned block stops advertising search),
+    /// but a vector from another model must never reach a result list even if
+    /// some future caller reaches this directly.
     pub fn attachment_search(
         &self,
         chat_id: Uuid,
@@ -67,6 +77,7 @@ impl Db {
              FROM attachment_vectors v
              JOIN attachment_documents d ON d.rowid = v.rowid
              WHERE v.chat_id = ?1 AND v.embedding MATCH ?2 AND k = ?3
+               AND IFNULL(d.embed_gen, ?4) = ?5
              ORDER BY v.distance",
         )?;
         let hits = stmt
@@ -74,7 +85,9 @@ impl Db {
                 params![
                     chat_id.to_string(),
                     bytemuck::cast_slice::<f32, u8>(query),
-                    k as i64
+                    k as i64,
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
                 ],
                 |r| {
                     Ok(AttachmentHit {
@@ -89,19 +102,32 @@ impl Db {
         Ok(hits)
     }
 
-    /// Which of a chat's attachments actually have an index. Drives two things:
-    /// the pinned block only points the model at `attachment_search` for files it
-    /// can really search, and the tool can tell "nothing indexed here" from "no
-    /// hits".
+    /// Which of a chat's attachments actually have a **usable** index. Drives two
+    /// things: the pinned block only points the model at `attachment_search` for
+    /// files it can really search, and the tool can tell "nothing indexed here"
+    /// from "no hits".
+    ///
+    /// Chunks from a previous embedding generation therefore do not count — they
+    /// are in another model's vector space, so searching them would return noise.
+    /// Reporting them as absent makes a model change degrade into exactly the
+    /// state the feature already handles (`attachment_read`, the guaranteed
+    /// page-by-page path, is unaffected), with no caller change at all — and the
+    /// chunks come back the moment the re-embed job stamps them.
     pub fn attachment_indexed_ids(&self, chat_id: Uuid) -> Result<Vec<Uuid>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT attachment_id FROM attachment_documents WHERE chat_id = ?1",
+            "SELECT DISTINCT attachment_id FROM attachment_documents
+             WHERE chat_id = ?1 AND IFNULL(embed_gen, ?2) = ?3",
         )?;
         let ids = stmt
-            .query_map(params![chat_id.to_string()], |r| {
-                Ok(parse_uuid(r.get::<_, String>(0)?))
-            })?
+            .query_map(
+                params![
+                    chat_id.to_string(),
+                    NULL_EMBED_GEN,
+                    current_embed_gen(&conn)?
+                ],
+                |r| Ok(parse_uuid(r.get::<_, String>(0)?)),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(ids)
     }

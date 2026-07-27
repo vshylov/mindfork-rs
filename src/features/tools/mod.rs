@@ -6,6 +6,9 @@
 //! orchestrator applies (sole owner of `Chat`, spec §4.4.2). Memory/knowledge tools
 //! must filter by `ctx.profile_id` (isolation, a repository invariant, spec §9.5).
 
+#[cfg(test)]
+mod embed_roles_tests;
+
 pub mod attachment;
 pub mod calc;
 pub mod control;
@@ -521,6 +524,7 @@ pub(crate) mod testkit {
     //! mock engine and a deterministic embedder.
 
     use super::*;
+    use crate::shared::api::EmbedRole;
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
 
@@ -578,6 +582,50 @@ pub(crate) mod testkit {
     /// contexts share one storage — e.g. profile isolation).
     pub fn ctx_with_deps(profile_id: Uuid, deps: ToolDeps) -> ToolContext {
         ToolContext::new(deps, test_params(), test_turn(profile_id))
+    }
+
+    /// An embedder that records the role every text was embedded under, on top of
+    /// the usual deterministic mock.
+    ///
+    /// The role is invisible in the result — a wrong one changes no return value,
+    /// only the quality of a comparison on a model that uses input prefixes — so
+    /// recording it is the only way a test can see it at all (research
+    /// docs/research/embedding-input-prefixes.md §2.3, §5).
+    pub struct RoleRecorder {
+        inner: MockEmbedder,
+        pub calls: std::sync::Mutex<Vec<(Vec<String>, EmbedRole)>>,
+    }
+
+    impl RoleRecorder {
+        pub fn new() -> Self {
+            Self {
+                inner: MockEmbedder::new(16),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Roles recorded so far, in call order.
+        pub fn roles(&self) -> Vec<EmbedRole> {
+            self.calls.lock().unwrap().iter().map(|(_, r)| *r).collect()
+        }
+
+        /// Whether every recorded call used `role` (and at least one happened).
+        pub fn all_were(&self, role: EmbedRole) -> bool {
+            let roles = self.roles();
+            !roles.is_empty() && roles.iter().all(|r| *r == role)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for RoleRecorder {
+        async fn embed(
+            &self,
+            texts: Vec<String>,
+            role: EmbedRole,
+        ) -> anyhow::Result<Vec<Vec<f32>>> {
+            self.calls.lock().unwrap().push((texts.clone(), role));
+            self.inner.embed(texts, role).await
+        }
     }
 
     /// Context of a tool with a custom engine/embedder (web/subagent/rag/fetch

@@ -9,6 +9,7 @@ use chrono::Utc;
 
 use crate::entities::profile::ToolId;
 use crate::entities::self_model::{GoalMatch, GoalStatus, NarrativeSegment, SelfModel};
+use crate::shared::api::EmbedRole;
 use crate::shared::i18n::Locale;
 
 use super::{Tool, ToolContext, ToolOutcome, notes};
@@ -137,6 +138,14 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
 /// worth surfacing so the model can decide **duplicate (merge) or contradiction
 /// (record as an observation)**. See docs/history/narrative-as-notes.md (Tier 2,
 /// Step C).
+///
+/// A position in the **reference (bge-m3) scale**, not an absolute cosine: the
+/// numbers above describe *that* model's distribution, and another model's can be
+/// far narrower — on `multilingual-e5-large-instruct` the unrelated mean is 0.79,
+/// i.e. above this constant, so used raw the gate would fire on everything
+/// (research §6). It is therefore read through
+/// [`crate::shared::embed_calibration::SimilarityScale`], which maps the same
+/// intent to ~0.91 there (research §8.2).
 const TRAIT_SIMILARITY: f32 = 0.72;
 
 /// The related-traits gate (Step C): for EVERY actually-added trait, looks for the
@@ -157,20 +166,28 @@ async fn near_duplicate_traits(
     }
     // One request: added ones first, then prior ones — to split by the boundary.
     let texts: Vec<String> = added.iter().chain(existing_before).cloned().collect();
-    let Ok(vecs) = ctx.embedder.embed(texts).await else {
+    // Passage on both sides: the comparison is symmetric (new traits against
+    // prior ones) and feeds TRAIT_SIMILARITY, which is calibrated on
+    // passage-role text. A mismatched role here would cost up to 17% of a
+    // compressed model's usable range (research §2.3).
+    let Ok(vecs) = ctx.embedder.embed(texts, EmbedRole::Passage).await else {
         return Vec::new();
     };
     if vecs.len() != added.len() + existing_before.len() {
         return Vec::new();
     }
     let (added_vecs, existing_vecs) = vecs.split_at(added.len());
+    // The constant is a position in the reference (bge-m3) scale, so it has to be
+    // read in the active model's range (identity until the model actually
+    // changes). Once, not inside the nested loop.
+    let threshold = ctx.storage.db().similarity_scale().map(TRAIT_SIMILARITY);
     let mut out = Vec::new();
     for (i, a) in added.iter().enumerate() {
         // Closest prior trait above the threshold (one per added trait — no noise).
         let mut best: Option<(f32, usize)> = None;
         for (j, _) in existing_before.iter().enumerate() {
             let s = notes::cosine(&added_vecs[i], &existing_vecs[j]);
-            if s >= TRAIT_SIMILARITY && best.map(|(bs, _)| s > bs).unwrap_or(true) {
+            if s >= threshold && best.map(|(bs, _)| s > bs).unwrap_or(true) {
                 best = Some((s, j));
             }
         }
@@ -1276,6 +1293,46 @@ mod tests {
         assert!(out.result.contains("aaab"));
         assert!(out.result.contains("aaaa bbbb"));
         assert!(out.result.contains("remove_traits"));
+    }
+
+    #[tokio::test]
+    async fn add_trait_gate_follows_the_calibrated_scale() {
+        // TRAIT_SIMILARITY is a position in bge-m3's scale, not an absolute
+        // cosine. On `multilingual-e5-large-instruct` (range 2.6× narrower,
+        // research §8.2) the same intent sits at ~0.908 — so a pair the raw
+        // constant calls related no longer is, while a closer one still is.
+        // MockEmbedder(16), a bag of characters: "aaaa bbbb" ↔ "aaab" = 0.894,
+        // "aaab" ↔ "aaaab" = 0.997.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .set_embed_calibration(&crate::shared::embed_calibration::Calibration {
+                unrelated: 0.7897,
+                paraphrase: 0.9456,
+            })
+            .unwrap();
+
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaaa bbbb"]}))
+            .await
+            .unwrap();
+        // 0.894 clears the raw 0.72 gate (that is what
+        // `add_trait_gate_surfaces_near_duplicate` pins, uncalibrated) but not
+        // the mapped 0.908 one.
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaab"]}))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("Родственные черты"), "{}", out.result);
+
+        // 0.997 clears it — the gate moved, it did not switch off.
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaaab"]}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Родственные черты"), "{}", out.result);
+        assert!(out.result.contains("aaab"), "{}", out.result);
     }
 
     #[tokio::test]

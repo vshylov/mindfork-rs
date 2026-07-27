@@ -25,7 +25,7 @@ use crate::entities::attachment::{
 };
 use crate::features::file_command::{FileProgress, resolve_target};
 use crate::features::tools::rag::ChunkParams;
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 
@@ -280,7 +280,11 @@ fn spawn_attachment_index(task: AttachIndexTask) {
         }
         // Precheck — a fast, clear answer when there's no embedder (the common
         // case: RAG isn't configured at all).
-        if embedder.embed(vec!["ping".into()]).await.is_err() {
+        if embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+            .is_err()
+        {
             skip(loc.t("ui.file.index_no_embedder").to_string());
             return;
         }
@@ -301,7 +305,7 @@ fn spawn_attachment_index(task: AttachIndexTask) {
         });
         let mut done = 0usize;
         for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
-            let embeddings = match embedder.embed(batch.to_vec()).await {
+            let embeddings = match embedder.embed(batch.to_vec(), EmbedRole::Passage).await {
                 Ok(v) if v.len() == batch.len() => v,
                 Ok(_) => {
                     skip(loc.t("ui.err.rag_wrong_vector_count").to_string());

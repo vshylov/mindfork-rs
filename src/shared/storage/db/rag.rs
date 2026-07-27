@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 5).
 
 use super::*;
+use crate::shared::embed_identity::EmbedFingerprint;
 
 impl Db {
     // ---------- linking notes to RAG sources (Tier 3, Path 3) ----------
@@ -27,18 +28,22 @@ impl Db {
 
     // ---------- RAG ----------
 
+    /// Writes one indexed chunk (vector + text). Stamped with the current
+    /// embedding generation (see the [`super::embed_gen`] module), read under the
+    /// lock we already hold — so an unstamped vector cannot be written.
     pub fn rag_insert(&self, doc: &RagDocument) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         ensure_vec_table(&conn, doc.embedding.len())?;
         conn.execute(
-            "INSERT INTO rag_documents(id, profile_id, source, chunk_text, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO rag_documents(id, profile_id, source, chunk_text, created_at, embed_gen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 doc.id.to_string(),
                 doc.profile_id.to_string(),
                 doc.source,
                 doc.chunk_text,
                 doc.created_at.to_rfc3339(),
+                current_embed_gen(&conn)?,
             ],
         )?;
         let rowid = conn.last_insert_rowid();
@@ -229,6 +234,117 @@ impl Db {
         vec_dim(&conn)
     }
 
+    // ---------- embedding-model identity ----------
+    //
+    // Dimensionality alone cannot tell two embedding models apart (`bge-m3` and
+    // `multilingual-e5-large-instruct` are both 1024-d yet embed the same text to
+    // a cosine of ~0.37), so identity is established behaviourally: the canary
+    // vector recorded here is compared against a fresh one on startup. See
+    // [`crate::shared::embed_identity`] and
+    // docs/research/embedding-model-change-reindex.md.
+
+    /// The embedding-model fingerprint the stored vectors were produced under.
+    /// `None` — nothing recorded yet (a fresh DB, or after [`Self::reset_vectors`]),
+    /// which the caller reads as "no basis to compare" rather than "the model
+    /// changed": there is nothing stale to invalidate either way.
+    ///
+    /// A stored value that does not parse also reads as `None` — deliberately, so
+    /// a hand-edited `data.db` cannot brick startup; recording the current model
+    /// repairs it.
+    pub fn embed_fingerprint(&self) -> Result<Option<EmbedFingerprint>> {
+        let conn = self.conn.lock().unwrap();
+        let Some(raw) = meta_get(&conn, KEY_EMBED_CANARY)? else {
+            return Ok(None);
+        };
+        // An empty vector is treated as absent too: it can never match anything
+        // (cosine is 0 for an empty vector), so keeping it would permanently
+        // report "the model changed" on every launch.
+        match serde_json::from_str::<Vec<f32>>(&raw) {
+            Ok(canary) if !canary.is_empty() => Ok(Some(EmbedFingerprint {
+                canary,
+                model_id: meta_get(&conn, KEY_EMBED_MODEL_ID)?,
+                // Absent on a fingerprint written before input conventions
+                // existed; `matches` reads that as the default convention, which
+                // is what those installations were using.
+                convention: meta_get(&conn, KEY_EMBED_CONVENTION)?,
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    /// Records the fingerprint of the model now in use, replacing any previous
+    /// one. Called after the stored vectors have been brought in line with it
+    /// (invalidated or reindexed) — writing it earlier would lose the fact that
+    /// the change ever happened.
+    pub fn set_embed_fingerprint(&self, fp: &EmbedFingerprint) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        meta_set(&conn, KEY_EMBED_CANARY, &serde_json::to_string(&fp.canary)?)?;
+        match &fp.convention {
+            Some(c) => meta_set(&conn, KEY_EMBED_CONVENTION, c)?,
+            None => meta_del(&conn, KEY_EMBED_CONVENTION)?,
+        }
+        match &fp.model_id {
+            Some(id) => meta_set(&conn, KEY_EMBED_MODEL_ID, id),
+            // Removed rather than blanked: a stale name from the previous model
+            // would otherwise be shown as if it belonged to this one.
+            None => meta_del(&conn, KEY_EMBED_MODEL_ID),
+        }
+    }
+
+    // ---------- RAG staleness after a model change ----------
+    //
+    // Note vectors and the attachment index can simply be dropped (both re-embed
+    // themselves lazily), but RAG chunks cannot: re-embedding them needs the full
+    // ingest pipeline, which the user drives with `/rag rebuild`. So instead of
+    // silently deleting a knowledge base — the user's own data — a model change
+    // **records** which profiles it invalidated, and `rag_search` refuses over
+    // those until they are rebuilt. Refusing rather than warning: the vectors are
+    // in a different space, so the results would be noise dressed up as answers.
+
+    /// Profiles that currently have RAG documents — the set a model change
+    /// invalidates, captured before the fingerprint is overwritten.
+    pub fn profiles_with_rag_docs(&self) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT profile_id FROM rag_documents")?;
+        let ids = stmt
+            .query_map([], |r| Ok(parse_uuid(r.get::<_, String>(0)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
+
+    /// Profiles whose RAG documents predate the current embedding model.
+    // The whole-list read: the hot path uses `rag_is_stale`, and the set is
+    // written wholesale by the guard — this is for a UI consumer ("these
+    // knowledge bases need rebuilding") that does not exist yet.
+    #[allow(dead_code)]
+    pub fn rag_stale_profiles(&self) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        read_stale_profiles(&conn)
+    }
+
+    /// Replaces the stale set. An empty slice clears the record entirely.
+    pub fn set_rag_stale_profiles(&self, profiles: &[Uuid]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        write_stale_profiles(&conn, profiles)
+    }
+
+    /// Marks one profile's knowledge base as reindexed (a successful `/rag
+    /// rebuild`) — its documents now match the current model again. A no-op when
+    /// the profile was not stale.
+    pub fn clear_rag_stale_profile(&self, profile_id: Uuid) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut stale = read_stale_profiles(&conn)?;
+        stale.retain(|p| *p != profile_id);
+        write_stale_profiles(&conn, &stale)
+    }
+
+    /// Whether this profile's knowledge base is stale. Sits on the search path,
+    /// so it is a single `meta` read rather than a scan.
+    pub fn rag_is_stale(&self, profile_id: Uuid) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(read_stale_profiles(&conn)?.contains(&profile_id))
+    }
+
     /// Whether **other** profiles (besides `profile_id`) have indexed documents.
     /// The vector dimensionality in sqlite-vec is one for the whole DB, so
     /// changing the embedding model (a different dimensionality) affects
@@ -245,16 +361,30 @@ impl Db {
     }
 
     /// Drops **both** vector tables (RAG and the chat attachment index) and
-    /// forgets the shared dimensionality — needed when switching to an embedding
-    /// model with a different one. Does **not** touch `rag_documents` (the caller
-    /// deletes/reindexes them itself), but **does** delete
-    /// `attachment_documents`: their vectors are gone, and leaving the rows would
-    /// dangle on rowids sqlite reuses. Returns how many attachment chunks were
-    /// dropped, so the caller can report the loss instead of hiding it. Safe to
-    /// call even if nothing has been indexed yet.
+    /// forgets everything recorded about the model that produced them: the shared
+    /// dimensionality, the fingerprint, and the stale-profile list. Needed when
+    /// switching to an embedding model with a different dimensionality. Does
+    /// **not** touch `rag_documents` (the caller deletes/reindexes them itself),
+    /// but **does** delete `attachment_documents`: their vectors are gone, and
+    /// leaving the rows would dangle on rowids sqlite reuses. Returns how many
+    /// attachment chunks were dropped, so the caller can report the loss instead
+    /// of hiding it. Safe to call even if nothing has been indexed yet.
+    ///
+    /// This is the "start completely fresh" primitive, hence clearing the
+    /// fingerprint too: afterwards there are no vectors to be stale *relative to*,
+    /// so the next launch has nothing to compare and records the current model as
+    /// the new baseline. Leaving a fingerprint behind would report a model change
+    /// against vectors that no longer exist. The similarity calibration
+    /// ([`crate::shared::embed_calibration`]) goes with it for the same reason —
+    /// it describes the model the discarded vectors were produced by, and the next
+    /// launch measures both together.
     ///
     /// The attachment index is derived data: re-attaching the file rebuilds it,
     /// and `attachment_read` (the guaranteed path) is unaffected.
+    ///
+    /// The embedding **generation** counter is deliberately left alone (see the
+    /// [`super::embed_gen`] module): it is monotonic, so reusing a number would
+    /// make any surviving row of an old generation read as current again.
     pub fn reset_vectors(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let dropped: i64 =
@@ -264,7 +394,12 @@ impl Db {
         conn.execute("DROP TABLE IF EXISTS rag_vectors", [])?;
         conn.execute("DROP TABLE IF EXISTS attachment_vectors", [])?;
         conn.execute("DELETE FROM attachment_documents", [])?;
-        conn.execute("DELETE FROM meta WHERE key = 'rag_dim'", [])?;
+        meta_del(&conn, KEY_RAG_DIM)?;
+        meta_del(&conn, KEY_EMBED_CANARY)?;
+        meta_del(&conn, KEY_EMBED_MODEL_ID)?;
+        meta_del(&conn, KEY_EMBED_CONVENTION)?;
+        super::embed_gen::clear_calibration(&conn)?;
+        meta_del(&conn, KEY_RAG_STALE_PROFILES)?;
         Ok(dropped as usize)
     }
 
@@ -275,6 +410,33 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         delete_matching(&conn, profile_id, |_| true)
     }
+}
+
+/// Reads the stale-profile list. Free functions (rather than calling the public
+/// methods) because `self.conn` is a non-reentrant [`std::sync::Mutex`]: a
+/// read-modify-write like [`Db::clear_rag_stale_profile`] must do both halves
+/// under one acquisition.
+///
+/// A value that does not parse reads as an empty list — same reasoning as the
+/// fingerprint: garbage in `meta` must degrade to "nothing recorded", never to a
+/// startup failure. Individual unparseable ids are skipped rather than mapped to
+/// a nil uuid, which would be a real profile id nothing matches.
+fn read_stale_profiles(conn: &Connection) -> Result<Vec<Uuid>> {
+    let Some(raw) = meta_get(conn, KEY_RAG_STALE_PROFILES)? else {
+        return Ok(Vec::new());
+    };
+    let ids: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
+    Ok(ids.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect())
+}
+
+/// Writes the stale-profile list, removing the key when the list is empty (see
+/// [`meta_del`] — "nothing is stale" is the absence of the key).
+fn write_stale_profiles(conn: &Connection, profiles: &[Uuid]) -> Result<()> {
+    if profiles.is_empty() {
+        return meta_del(conn, KEY_RAG_STALE_PROFILES);
+    }
+    let ids: Vec<String> = profiles.iter().map(|p| p.to_string()).collect();
+    meta_set(conn, KEY_RAG_STALE_PROFILES, &serde_json::to_string(&ids)?)
 }
 
 fn delete_sources_matching(
@@ -548,5 +710,195 @@ mod tests {
             .unwrap();
         let err = db.rag_insert(&RagDocument::new(p, "s", "t", vec![1.0, 0.0]));
         assert!(err.is_err());
+    }
+
+    // ---------- embedding-model identity ----------
+
+    #[test]
+    fn embed_fingerprint_round_trips() {
+        let db = db();
+        assert!(db.embed_fingerprint().unwrap().is_none(), "fresh DB");
+
+        let fp = EmbedFingerprint::new(vec![0.1, -0.2, 0.3], Some("bge-m3".into()), "none");
+        db.set_embed_fingerprint(&fp).unwrap();
+        assert_eq!(db.embed_fingerprint().unwrap(), Some(fp));
+
+        // A fingerprint without a model name round-trips too — an external server
+        // that reports nothing useful still gets a usable canary.
+        let anon = EmbedFingerprint::new(vec![1.0, 0.0], None, "none");
+        db.set_embed_fingerprint(&anon).unwrap();
+        assert_eq!(db.embed_fingerprint().unwrap(), Some(anon));
+    }
+
+    #[test]
+    fn embed_fingerprint_replaces_rather_than_duplicating() {
+        let db = db();
+        db.set_embed_fingerprint(&EmbedFingerprint::new(
+            vec![1.0, 0.0],
+            Some("old".into()),
+            "none",
+        ))
+        .unwrap();
+        let fresh = EmbedFingerprint::new(vec![0.0, 1.0], Some("new".into()), "none");
+        db.set_embed_fingerprint(&fresh).unwrap();
+        assert_eq!(db.embed_fingerprint().unwrap(), Some(fresh));
+
+        let conn = db.conn.lock().unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key = ?1",
+                [KEY_EMBED_CANARY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1, "one canary row, not an append-only log");
+    }
+
+    #[test]
+    fn embed_fingerprint_clears_stale_model_name() {
+        // Overwriting a named model with an anonymous one must not leave the old
+        // name behind — it would be shown as if it belonged to the new model.
+        let db = db();
+        db.set_embed_fingerprint(&EmbedFingerprint::new(
+            vec![1.0],
+            Some("bge-m3".into()),
+            "none",
+        ))
+        .unwrap();
+        db.set_embed_fingerprint(&EmbedFingerprint::new(vec![1.0], None, "none"))
+            .unwrap();
+        assert_eq!(db.embed_fingerprint().unwrap().unwrap().model_id, None);
+    }
+
+    #[test]
+    fn corrupt_fingerprint_reads_as_absent() {
+        // A hand-edited data.db must not brick startup: garbage degrades to
+        // "nothing recorded", and the next launch records the current model.
+        for bad in ["not json", "{}", "[\"a\"]", "[]"] {
+            let db = db();
+            {
+                let conn = db.conn.lock().unwrap();
+                meta_set(&conn, KEY_EMBED_CANARY, bad).unwrap();
+                meta_set(&conn, KEY_EMBED_MODEL_ID, "some-model").unwrap();
+            }
+            assert!(
+                db.embed_fingerprint().unwrap().is_none(),
+                "canary {bad:?} must read as absent"
+            );
+        }
+    }
+
+    // ---------- RAG staleness ----------
+
+    #[test]
+    fn profiles_with_rag_docs_lists_only_those_holding_documents() {
+        let db = db();
+        let (a, b, empty) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        db.rag_insert(&RagDocument::new(a, "s", "t", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(a, "s2", "t", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(b, "s", "t", vec![1.0, 1.0]))
+            .unwrap();
+        // `empty` has a stored source but no chunks — nothing to invalidate.
+        db.rag_source_upsert(empty, "s", "text", Utc::now())
+            .unwrap();
+
+        let mut found = db.profiles_with_rag_docs().unwrap();
+        found.sort();
+        let mut expected = vec![a, b];
+        expected.sort();
+        assert_eq!(
+            found, expected,
+            "deduplicated, and no profile without chunks"
+        );
+    }
+
+    #[test]
+    fn stale_profiles_round_trip_and_clear_one() {
+        let db = db();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert!(db.rag_stale_profiles().unwrap().is_empty(), "fresh DB");
+        assert!(!db.rag_is_stale(a).unwrap());
+
+        db.set_rag_stale_profiles(&[a, b]).unwrap();
+        assert_eq!(db.rag_stale_profiles().unwrap(), vec![a, b]);
+        assert!(db.rag_is_stale(a).unwrap());
+        assert!(db.rag_is_stale(b).unwrap());
+
+        // A successful /rag rebuild clears exactly one profile.
+        db.clear_rag_stale_profile(a).unwrap();
+        assert_eq!(db.rag_stale_profiles().unwrap(), vec![b]);
+        assert!(!db.rag_is_stale(a).unwrap());
+        assert!(db.rag_is_stale(b).unwrap());
+
+        // Clearing a profile that was never stale is a no-op.
+        db.clear_rag_stale_profile(Uuid::new_v4()).unwrap();
+        assert_eq!(db.rag_stale_profiles().unwrap(), vec![b]);
+    }
+
+    #[test]
+    fn empty_stale_list_removes_the_key() {
+        // Absence is the "nothing is stale" state — a stored "[]" would be a
+        // second way to say the same thing.
+        let db = db();
+        db.set_rag_stale_profiles(&[Uuid::new_v4()]).unwrap();
+        db.set_rag_stale_profiles(&[]).unwrap();
+        assert!(db.rag_stale_profiles().unwrap().is_empty());
+
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(meta_get(&conn, KEY_RAG_STALE_PROFILES).unwrap(), None);
+    }
+
+    #[test]
+    fn clearing_the_last_stale_profile_removes_the_key() {
+        let db = db();
+        let a = Uuid::new_v4();
+        db.set_rag_stale_profiles(&[a]).unwrap();
+        db.clear_rag_stale_profile(a).unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(meta_get(&conn, KEY_RAG_STALE_PROFILES).unwrap(), None);
+    }
+
+    #[test]
+    fn corrupt_stale_list_reads_as_empty() {
+        for bad in ["not json", "{}", "[\"not-a-uuid\"]"] {
+            let db = db();
+            {
+                let conn = db.conn.lock().unwrap();
+                meta_set(&conn, KEY_RAG_STALE_PROFILES, bad).unwrap();
+            }
+            assert!(
+                db.rag_stale_profiles().unwrap().is_empty(),
+                "stale list {bad:?} must read as empty"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_vectors_forgets_the_model_it_indexed_under() {
+        // "Start completely fresh": with no vectors left there is nothing to be
+        // stale relative to, so a leftover fingerprint would report a model change
+        // against data that no longer exists.
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "s", "t", vec![1.0, 0.0]))
+            .unwrap();
+        db.set_embed_fingerprint(&EmbedFingerprint::new(
+            vec![1.0, 0.0],
+            Some("bge-m3".into()),
+            "none",
+        ))
+        .unwrap();
+        db.set_rag_stale_profiles(&[p]).unwrap();
+
+        db.reset_vectors().unwrap();
+
+        assert_eq!(db.rag_dimension().unwrap(), None);
+        assert!(db.embed_fingerprint().unwrap().is_none());
+        assert!(db.rag_stale_profiles().unwrap().is_empty());
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(meta_get(&conn, KEY_EMBED_MODEL_ID).unwrap(), None);
     }
 }

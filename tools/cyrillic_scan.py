@@ -62,6 +62,13 @@ SKIP_FILES = {
     "docs/history/glossary-ru-en.md",
     # This detector necessarily spells out Cyrillic Unicode ranges.
     "tools/cyrillic_scan.py",
+    # A fixed measurement fixture, not prose to translate: the embedding
+    # calibration probes are deliberately bilingual, because the similarity
+    # range they measure is the one the gates operate in on a bilingual corpus.
+    # Editing it (translating a probe included) silently invalidates the
+    # reference constants in shared/embed_calibration.rs and therefore every
+    # threshold derived from them.
+    "src/shared/embed_probes.json",
     # This doc is *about* Cyrillic Mermaid rendering: its repro inputs (table
     # rows and a fenced diagram) must stay Cyrillic to demonstrate a
     # byte-offset-vs-char-offset bug that ASCII would not trigger. Inline

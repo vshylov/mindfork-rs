@@ -290,13 +290,51 @@ pub trait EngineBackend: Send + Sync {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream>;
 }
 
+/// What a text is being embedded *as*.
+///
+/// Some model families (e5 and relatives) expect the input to be marked with its
+/// role, and score noticeably worse without it; others (bge-m3) expect bare text
+/// and score *worse* with a marker. The marker itself is applied centrally by
+/// [`crate::shared::embed_prefix::PrefixedEmbedder`] — a call site's only job is
+/// to state, truthfully, which side of a comparison its text is on.
+///
+/// **There is deliberately no `Default`.** A silently defaulted role is the exact
+/// failure this type exists to prevent: it is invisible, and on a compressed
+/// model it costs up to 17% of the usable similarity range (see
+/// docs/research/embedding-input-prefixes.md §2.3).
+///
+/// The rule for choosing, in one line: **ask what the vector will be compared
+/// against.** Only a search query against a stored index is [`Query`]; anything
+/// stored, and anything compared against something stored, is [`Passage`] — even
+/// when it reads like a question. See the full per-site table in the research
+/// doc §5.
+///
+/// [`Query`]: EmbedRole::Query
+/// [`Passage`]: EmbedRole::Passage
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EmbedRole {
+    /// A search query, matched against stored passages. Asymmetric retrieval only.
+    Query,
+    /// Text that is stored as a vector, or is compared against stored vectors.
+    ///
+    /// This is also the role for every **symmetric** comparison (trait against
+    /// trait, observation against observation): both sides must be embedded the
+    /// same way, and the project's similarity gates are calibrated on
+    /// passage-role text.
+    Passage,
+}
+
 /// A source of embeddings for RAG. Per the M5 decision — a **dedicated** embedding server
 /// (a separate process/port), so it's split off from [`EngineBackend`] (chat).
 /// See docs/decisions/0002-embeddings-dedicated-server.md.
 #[async_trait::async_trait]
 pub trait Embedder: Send + Sync {
     /// Returns embeddings for each input text (in the same order).
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+    ///
+    /// Every text in one call shares `role`; a comparison between two roles
+    /// therefore takes two calls (deliberate — batches in this codebase are
+    /// homogeneous everywhere except web-search reranking).
+    async fn embed(&self, texts: Vec<String>, role: EmbedRole) -> Result<Vec<Vec<f32>>>;
 }
 
 /// A stub embedder: returns an error (the embedding server isn't configured). RAG is
@@ -305,7 +343,7 @@ pub struct UnavailableEmbedder;
 
 #[async_trait::async_trait]
 impl Embedder for UnavailableEmbedder {
-    async fn embed(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    async fn embed(&self, _texts: Vec<String>, _role: EmbedRole) -> Result<Vec<Vec<f32>>> {
         anyhow::bail!("embedding server is not configured — RAG unavailable")
     }
 }

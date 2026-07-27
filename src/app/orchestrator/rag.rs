@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::app::events::{AppEvent, RagProgress};
 use crate::features::tools::rag::ChunkParams;
-use crate::shared::api::Embedder;
+use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 
@@ -87,7 +87,20 @@ impl Orchestrator {
             path.clone()
         };
         let progress = match self.storage.db().rag_delete_under(profile_id, &needle) {
-            Ok(chunks) => RagProgress::Removed { chunks },
+            Ok(chunks) => {
+                // Emptying the base also clears any "indexed by a previous
+                // embedding model" mark — nothing stale is left to protect
+                // against. Without this, a user who removed everything and
+                // re-added it under the new model would still be refused by
+                // `rag_search` (the mark is otherwise only lifted by
+                // `/rag rebuild`, which needs sources to rebuild from).
+                if self.storage.db().rag_count(profile_id).unwrap_or(1) == 0
+                    && let Err(err) = self.storage.db().clear_rag_stale_profile(profile_id)
+                {
+                    tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
+                }
+                RagProgress::Removed { chunks }
+            }
             Err(err) => RagProgress::Failed(
                 self.ui_locale()
                     .tf("ui.err.rag_delete_failed", &[("err", &err.to_string())]),
@@ -137,7 +150,7 @@ impl Orchestrator {
 
     /// Cancels the previous background RAG task (if one was running) and starts a
     /// new token.
-    fn reset_rag_cancel(&mut self) -> CancellationToken {
+    pub(super) fn reset_rag_cancel(&mut self) -> CancellationToken {
         if let Some(token) = self.rag_cancel.take() {
             token.cancel();
         }
@@ -147,7 +160,7 @@ impl Orchestrator {
     }
 
     /// Sends a RAG-operation error to the UI (banner/note).
-    fn fail_rag(&self, msg: &str) {
+    pub(super) fn fail_rag(&self, msg: &str) {
         let _ = self
             .evt_tx
             .send(AppEvent::RagProgress(RagProgress::Failed(msg.to_string())));
@@ -208,7 +221,10 @@ fn spawn_rag_ingest(task: RagIngest) {
         }
 
         // 2. Embedder precheck — a fast, clear refusal if RAG isn't configured.
-        if let Err(err) = embedder.embed(vec!["ping".into()]).await {
+        if let Err(err) = embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+        {
             send(RagProgress::Failed(loc.tf(
                 "ui.err.rag_embedder_unavailable",
                 &[("err", &err.to_string())],
@@ -351,7 +367,10 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         }
 
         // 3. Embedder precheck and determining the new dimensionality.
-        let new_dim = match embedder.embed(vec!["ping".into()]).await {
+        let new_dim = match embedder
+            .embed(vec!["ping".into()], EmbedRole::Passage)
+            .await
+        {
             Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
             Err(err) => {
                 send(RagProgress::Failed(loc.tf(
@@ -397,6 +416,14 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
             ));
             return;
+        }
+        // From here on the base holds no chunks from a previous embedding model —
+        // every one that follows is written by the current one. So the "stale"
+        // mark is lifted here rather than at the end: it stays correct even if the
+        // rebuild is cancelled or some sources fail, since nothing old survives
+        // either way (see `embed_guard`).
+        if let Err(err) = storage.db().clear_rag_stale_profile(profile_id) {
+            tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
         }
         if dim_changed {
             // The dimensionality is shared with the chat attachment index
@@ -573,7 +600,7 @@ async fn index_source(
     // large files).
     let mut done = 0usize;
     for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
-        let embeddings = embedder.embed(batch.to_vec()).await?;
+        let embeddings = embedder.embed(batch.to_vec(), EmbedRole::Passage).await?;
         if embeddings.len() != batch.len() {
             anyhow::bail!("{}", loc.t("ui.err.rag_wrong_vector_count"));
         }
@@ -754,7 +781,10 @@ mod tests {
         // Sub-batching didn't lose anything: all N chunks are written and found by
         // search (rag_search — the same DB primitive as the RagSearch tool).
         assert_eq!(storage.db().rag_count(profile_id).unwrap(), n);
-        let mut q = embedder.embed(vec!["предложение".into()]).await.unwrap();
+        let mut q = embedder
+            .embed(vec!["предложение".into()], EmbedRole::Passage)
+            .await
+            .unwrap();
         let query = q.remove(0);
         let hits = storage.db().rag_search(profile_id, &query, 5).unwrap();
         assert!(!hits.is_empty(), "search finds the written chunks");

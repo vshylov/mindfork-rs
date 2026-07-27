@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Calibration probe corpus for the embedding-model similarity scale.",
+    "See docs/research/embedding-model-change-reindex.md §8.2 (S7, S8, S10).",
+    "",
+    "DO NOT EDIT. The reference constants in shared/embed_calibration.rs",
+    "(REFERENCE_UNRELATED / REFERENCE_PARAPHRASE) are the measured means of THIS",
+    "exact corpus on bge-m3. Changing, adding or removing a pair silently",
+    "invalidates them and therefore every threshold derived from them; it would",
+    "also make already-calibrated installations disagree with freshly calibrated",
+    "ones. If the corpus ever has to change, re-measure both constants on bge-m3",
+    "in the same run and update them together.",
+    "",
+    "Deliberately bilingual (the application is), and deliberately phrased as the",
+    "short trait / preference / observation statements the gates actually judge —",
+    "calibrating on encyclopaedic prose would measure a different distribution",
+    "than the one the thresholds operate in. This file is a measurement fixture,",
+    "not prose to translate, hence its entry in tools/cyrillic_scan.py."
+  ],
+  "paraphrase": [
+    ["the user values brevity in answers", "the user prefers concise replies"],
+    ["Пользователь ценит краткость в ответах", "Пользователь предпочитает лаконичные ответы"],
+    ["I tend to over-explain technical details", "I often give more technical detail than needed"],
+    ["Я склонен слишком подробно объяснять детали", "Я часто даю больше подробностей, чем нужно"],
+    ["the user works mostly in the evening", "the user is most active late in the day"],
+    ["Пользователь работает в основном вечером", "Пользователь активнее всего поздним днём"],
+    ["the user dislikes being interrupted mid-task", "the user prefers to finish a task before switching"],
+    ["Пользователь не любит, когда его прерывают", "Пользователь предпочитает доводить задачу до конца"]
+  ],
+  "unrelated": [
+    ["the user values brevity in answers", "it rained heavily in the city last night"],
+    ["Пользователь ценит краткость в ответах", "Вчера вечером в городе шёл сильный дождь"],
+    ["I tend to over-explain technical details", "the kitchen window faces the courtyard"],
+    ["Я склонен слишком подробно объяснять детали", "Окно кухни выходит во двор"],
+    ["the user works mostly in the evening", "cast iron pans need seasoning"],
+    ["Пользователь работает в основном вечером", "Чугунной сковороде нужна прокалка"],
+    ["the user dislikes being interrupted", "the train leaves from platform nine"],
+    ["Пользователь не любит, когда его прерывают", "Поезд отправляется с девятой платформы"]
+  ]
+}

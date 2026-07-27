@@ -395,7 +395,9 @@ pub trait EngineBackend: Send + Sync {
         -> Result<BoxStream<'static, ChatChunk>>;
 
     /// Embeddings (RAG). May spin up a secondary server on demand (see 6.6).
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+    /// `role` says what the text *is* — a search query or a stored passage; some
+    /// model families expect their input marked accordingly (see 9.3.5).
+    async fn embed(&self, texts: Vec<String>, role: EmbedRole) -> Result<Vec<Vec<f32>>>;
 }
 
 pub struct ChatRequest {
@@ -625,6 +627,175 @@ Unlike ordinary tools (which return a text result without touching the conversat
 - **`rewrite_current_message`** ("rewrite my current message"): if, partway through writing, the assistant realizes it answered incorrectly, it calls the tool — the current round's accumulated text is **discarded** (the UI clears the bubble to be rewritten), and the next round writes the message from scratch. During the rewrite round, the request **includes** the prior `assistant(partial + tool_call)` + the tool result (the model sees "you were asked to rewrite"); once done, the discarded assistant message and its tool message **move into `Chat.deleted`** (like `Ctrl+E`/`Ctrl+R`, §11.7) — no longer part of inference/the feed, but preserved for manual recovery via JSON editing.
 
 Both are subject to `max_tool_rounds` (each call = one round) — a backstop against endless "extra messages"/"rewrites". UI signals — the `AppEvent::AssistantContinue`/`AssistantRewrite` events (the live feed matches a reload from history).
+
+#### 9.3.4. Changing the embedding model
+
+Stored vectors are only comparable to a query embedded by the **same** model, so
+swapping the embedding model silently invalidates everything already indexed.
+Dimensionality cannot establish identity — `bge-m3` and
+`multilingual-e5-large-instruct` are both 1024-d, yet the same text embedded by
+both scores a cosine of only ~0.37, and every existing guard waves the swap
+through. See
+[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md).
+
+- **Detection is behavioural, not config-based.** A fixed canary string is
+  embedded and stored (`meta`, together with the model's display name); on the
+  next run it is embedded again and compared. This also catches what a config
+  fingerprint cannot: the same GGUF path re-pointed at another file, a
+  requantization, or a server restarted with different pooling flags. The check
+  runs **lazily, on the first real embedding call** after launch or after an
+  embedding-settings change — embeddings have no readiness probe (ADR 0002), so
+  there is no startup moment when a managed server is known to be up. A failed
+  check never blocks the actual work; it simply retries.
+- **Nothing is deleted — a whole *generation* is retired.** Vectors are stamped
+  with the **embedding generation** they were produced under (a monotonic
+  counter in `meta`, mirrored by an `embed_gen` column on the rows those vectors
+  belong to); a detected change bumps the counter, so one increment retires
+  the entire database while every row stays where it is. Keeping the rows is
+  what makes re-embedding possible at all — it works from the text they already
+  hold — and it makes switching *back* to a previous model cost nothing. Rows
+  written before the marker existed carry no generation and read as foreign,
+  which is the correct default: every row in an existing installation is one.
+- **Each store then follows the cheapest correct route**, all of which already
+  existed:
+  - **notes and `@self` observations** — a foreign vector is invisible to
+    semantic search and its note is listed as needing one, so the existing lazy
+    backfill re-embeds it on the next semantic path: self-healing, and it costs
+    the user nothing. This is the most valuable half of the fix — nothing ever
+    refreshed note vectors, so on a dimension change semantic recall silently
+    returned arbitrary notes and every duplicate gate stopped firing.
+  - **chat attachment indexes** — a foreign index reads as absent (§9.7), so
+    `attachment_search` degrades to its "nothing indexed" answer and
+    `attachment_read`, the guaranteed page-by-page path, is unaffected.
+  - **the knowledge base** — too large to heal on a read path, and it is the
+    user's own data, so the affected profiles are additionally recorded as stale
+    and `rag_search` **refuses** over them, naming `/reindex` as the fix.
+    Refusing rather than warning: the vectors are in a different space, so
+    results would be noise dressed up as answers.
+- **Staleness is per profile**, because `/rag rebuild` is. The mark is lifted by
+  `/reindex` once that base holds no old-model vectors at all, by a rebuild (as
+  soon as the old chunks are deleted, so it stays correct even if the rebuild is
+  cancelled or some sources fail — nothing old survives either way), and by
+  `/rag remove` once the base is empty, which closes the dead end "removed
+  everything, re-added under the new model, still refused".
+- **Honesty over noise.** The fingerprint is recorded **after** the generation is
+  retired, so an interrupted run redoes it and a healthy launch never
+  re-invalidates. A first run with nothing recorded is **silent** — with no prior
+  fingerprint there is no evidence anything is stale. The user is told only when
+  something was actually affected, and only the knowledge base asks anything of
+  them.
+
+**Re-embedding: the `/reindex` command.** Retiring a generation defines a work
+queue — *every row whose generation is not the current one* — and `/reindex`
+drains it: for each such row, embed the text it already stores, replace the
+vector, stamp the generation. It runs in the background with the same progress
+banner as `/rag add`, and can be cancelled.
+
+- **Re-embedding is not re-chunking**, which is why this is a command of its own
+  rather than a wider `/rag rebuild`. It needs no source text and no chunker, so
+  it repairs legacy knowledge-base rows whose stored text is absent and whose
+  file is gone (a rebuild counts those as errors and drops them); it covers
+  **every** profile in one run instead of one switch per profile; it brings
+  attachment indexes back without the user re-attaching each file; and it keeps
+  chunk ids stable, so nothing downstream is invalidated. `/rag rebuild` keeps
+  its own meaning — re-chunk one profile after a chunking-parameter change.
+- **Top-level, not a `/rag` subcommand**, because it spans notes, chat
+  attachments and every profile's knowledge base: filing it under the
+  knowledge-base family would misdescribe its scope. That scope is not a breach
+  of the `profile_id` isolation invariant (§9.5) — the job serves no query, it
+  rewrites a row's vector under the partition key the row already carries.
+- **Resumable, and safe to interrupt.** Stamping a row removes it from the
+  queue, so an interrupted run leaves a consistent partial state and a rerun
+  continues exactly where it stopped. The vector is written before the stamp,
+  never the other way round, so a crash in between simply makes the row look
+  foreign and it is redone. Knowledge-base search stays refused meanwhile: the
+  stale marks are lifted only when the queue is genuinely empty, so a cancelled
+  or partly failed run correctly leaves them in place.
+- **A dimensionality change needs no special case.** The vector tables are
+  fixed-width, so they are dropped up front (keeping the document rows, the
+  fingerprint and the stale marks), after which every row simply reads as
+  foreign and takes the same path. They are recreated at the new width on the
+  first write.
+
+**Thresholds follow the model.** Detecting a change and completing it are not
+enough on their own, because the gates that decide when two pieces of memory
+mean the same thing — the duplicate-pair threshold of the consolidation
+overviews (`0.85`), the related-trait gate of `update_user_model` (`0.72`,
+[§17.3](#173-tools)) and the summary↔observation overlap (`0.62`) — are absolute
+cosines derived from live runs against bge-m3, i.e. positions inside *that*
+model's distribution. Cosine distributions differ sharply: measured on a fixed
+probe corpus, `multilingual-e5-large-instruct`'s usable range between
+"unrelated" and "paraphrase" is **2.6× narrower** than bge-m3's, so used raw its
+gates would call unrelated traits duplicates. A correct reindex alone would trade
+a silent failure ("the gates never fire") for a loud wrong one ("the gates fire
+on everything").
+
+- **The constants keep their values and their meaning**; what changes is that
+  they are *read* as positions in a reference scale and mapped into the range
+  the active model actually has. The map is affine, anchored on the two
+  measured means of the reference model — so bge-m3 maps to itself.
+- **Calibration is automatic, not a table of known models.** A table would only
+  help models someone has already measured; an arbitrary local GGUF would still
+  be handed the reference numbers. Instead a fixed probe corpus — pairs of short
+  statements of the kind the gates actually judge, half meaning the same thing
+  and half unrelated — is embedded **once**, on the same once-per-model path
+  that records the fingerprint, and the two means are stored beside it in
+  `meta`. Cost: one extra request of 32 short strings per model change.
+- **The absence of a calibration is the identity**, and every failure degrades
+  to it: a probe that cannot be embedded or read back, a batch that does not
+  describe the corpus, or a measurement that is degenerate (non-finite, out of
+  range, or with a zero/inverted span) all leave the thresholds passing through
+  **unchanged**. So an installation that has not changed its embedding model is
+  unaffected, and a failed calibration can only leave the gates as they were —
+  never make them wilder. Calibration failure is logged, never fatal.
+- **Where a threshold is shown to the model** (the consolidation overviews print
+  the cut-off they selected pairs with), the **effective** value is shown, so
+  the number never contradicts the selection beside it.
+
+The probe corpus is a measurement fixture, not prose: it is deliberately
+bilingual and phrased in the register the gates operate in, and editing it
+invalidates the reference constants and every threshold derived from them. See
+[docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)
+§6 and §8.2.
+
+#### 9.3.5. Input prefixes (per-model input convention)
+
+Some embedding families expect each input marked with its **role**: base e5 wants
+`query: ` / `passage: `, the `-instruct` variants want an instruction-shaped
+query and a **bare** passage, and bge-m3 — the model the project is calibrated
+against — wants no marker at all. So a convention is a per-model choice of three,
+not a switch. Setting: "Input prefixes" in the Embeddings tab, default `none`.
+See
+[docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md).
+
+- **What it buys, measured.** On a 40-document / 14-query corpus the prefixes
+  changed **no ranking at all** on e5 (12/14 top-1 under every convention); what
+  improves is separation — the mean margin by 15% and the **smallest** margin
+  25×, from an arbitrary 0.0002 tie to 0.0056. Real robustness, not a correctness
+  fix, and the feature is documented as such rather than oversold.
+- **A wrong convention is worse than none**, which is why `none` is the default
+  and nothing is ever selected automatically: prefixing bge-m3 costs it a rank
+  (11/14 → 10/14) and 31% of its margin. When a model change is detected and the
+  new model's *name* suggests a convention, the notice says so — a hint, never an
+  action.
+- **The role is stated at every call site and has no default.** Only a search
+  query against a stored index is `Query`; everything stored, and everything
+  compared against something stored, is `Passage` — including the sites that read
+  like queries but feed the similarity gates (the `note_save` and `add_insight`
+  duplicate gates, the related-trait gate, the summary↔observation overlap). All
+  of those are symmetric comparisons, so both sides must be marked the same way;
+  a mismatched role on one side costs up to 17% of a compressed model's usable
+  range. Web-search reranking is the only genuinely mixed site and issues two
+  requests.
+- **Turning prefixes on is a change of vector space**, and is treated as exactly
+  that: the marker is applied by a decorator sitting *inside* the model-change
+  guard, so the canary and the calibration probes go through it. Switching the
+  convention therefore bumps the embedding generation and offers `/reindex`, just
+  like swapping the model (§9.3.4), and a model's similarity range is always
+  measured in the same dressing its real text gets. The canary carries the
+  passage role: stored vectors are all passage-role, so changing only the *query*
+  marker alters retrieval without invalidating anything and correctly forces no
+  reindex.
 
 ### 9.4. Enabling tools
 

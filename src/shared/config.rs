@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::SamplingConfig;
+use crate::shared::embed_prefix::EmbedConvention;
 
 /// Current config schema version.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -512,6 +513,12 @@ pub struct EmbedSettings {
     pub openai: CloudSettings,
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
+    /// How the active model expects its input to be marked (`query:`/`passage:`
+    /// and relatives). Independent of the mode — it is a property of the *model*,
+    /// not of where it runs. Default [`EmbedConvention::None`], and switching it
+    /// is a change of vector space: the guard detects it and offers `/reindex`
+    /// (docs/research/embedding-input-prefixes.md).
+    pub convention: EmbedConvention,
 }
 
 impl EmbedSettings {
@@ -533,6 +540,30 @@ impl EmbedSettings {
             &mut self.gemini,
             &mut self.claude,
         )
+    }
+
+    /// Active embedding model's name for the current mode — **display metadata**
+    /// for the "the embedding model changed" message (see
+    /// [`crate::shared::embed_identity`]). Mirrors
+    /// [`EngineSettings::active_model_name`]; managed embeddings have no
+    /// `model_name` field, so the name comes from the GGUF path.
+    ///
+    /// Never used to *decide* whether the model changed — the canary vector does
+    /// that. A name is too easy to leave stale: an external server picks the
+    /// model itself, and the same path can come to point at a different file.
+    pub fn active_model_name(&self) -> Option<String> {
+        match self.mode {
+            ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
+                let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+                let name = name.trim_end_matches(".gguf");
+                (!name.is_empty()).then(|| name.to_string())
+            }),
+            ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => self
+                .cloud()
+                .and_then(|c| c.model_name.clone())
+                .filter(|m| !m.is_empty()),
+        }
     }
 }
 
@@ -1366,6 +1397,9 @@ mod tests {
         assert_eq!(c.engine.managed.port, 8000);
         assert_eq!(c.engine.managed.gpu_layers, DEFAULT_GPU_LAYERS);
         assert!(c.engine.managed.jinja);
+        // Input prefixes default to "none": the feature must be inert until the
+        // user opts in (docs/research/embedding-input-prefixes.md §7 R6).
+        assert_eq!(c.embed.convention, EmbedConvention::None);
         // New sections get filled with defaults when absent from the file.
         assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);

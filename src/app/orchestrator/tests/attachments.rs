@@ -6,6 +6,7 @@ use super::*;
 use crate::app::events::FileProgress;
 use crate::entities::attachment::AttachMode;
 use crate::shared::api::ChatRequest;
+use crate::shared::api::EmbedRole;
 use crate::shared::api::contract::ChatStream;
 use crate::shared::config::AttachmentSettings;
 use std::sync::Mutex;
@@ -334,7 +335,7 @@ async fn a_by_reference_file_is_indexed_and_searchable_within_the_chat() {
     // the orchestrator used).
     let embedder = crate::shared::api::mock::MockEmbedder::new(16);
     let query = embedder
-        .embed(vec!["борщ со свёклой".into()])
+        .embed(vec!["борщ со свёклой".into()], EmbedRole::Passage)
         .await
         .unwrap()
         .remove(0);

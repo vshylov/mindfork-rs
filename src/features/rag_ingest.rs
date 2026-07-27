@@ -44,6 +44,15 @@ pub enum RagProgress {
         errors: usize,
         cancelled: bool,
     },
+    /// Re-embedding finished (`/reindex`): `rows` vectors rewritten with the
+    /// current model, `errors` rows skipped. `cancelled` — interrupted, which is
+    /// safe: every rewritten row is stamped with the current generation, so a
+    /// rerun picks up exactly where this one stopped.
+    Reembedded {
+        rows: usize,
+        errors: usize,
+        cancelled: bool,
+    },
     /// Deletion from the base finished (`/rag remove`): removed `chunks` fragments
     /// (0 — nothing found at the given path).
     Removed { chunks: usize },

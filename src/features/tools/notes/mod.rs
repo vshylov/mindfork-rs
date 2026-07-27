@@ -23,9 +23,16 @@ pub const CONSOLIDATE_NOTES_ID: &str = "consolidate_notes";
 /// A note's link to a RAG source (Tier 3, Path 3 — linking the memory organs).
 pub const NOTE_CITE_SOURCE_ID: &str = "note_cite_source";
 
-/// Cosine-similarity threshold above which two notes count as a possible
-/// duplicate (for the consolidation overview). Chosen empirically — pairs above
+/// Similarity threshold above which two notes count as a possible duplicate (for
+/// the consolidation overview). Chosen empirically against bge-m3 — pairs above
 /// it are worth considering.
+///
+/// A position in the **reference (bge-m3) scale**, not an absolute cosine: on a
+/// model with a narrower range the same intent sits elsewhere (~0.96 on
+/// `multilingual-e5-large-instruct`, where used raw it would call antonyms
+/// duplicates — research §6). Read through
+/// [`crate::shared::embed_calibration::SimilarityScale`] before use; that map is
+/// the identity until a model change is actually recorded.
 const CONSOLIDATE_SIMILARITY: f32 = 0.85;
 /// Max number of items to show in each section of the consolidation overview.
 const CONSOLIDATE_LIST_CAP: usize = 8;

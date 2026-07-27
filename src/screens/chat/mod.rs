@@ -99,6 +99,11 @@ pub enum ChatIntent {
     RagList,
     /// Reindex the knowledge base (command `/rag rebuild`).
     RagRebuild,
+    /// Re-embed every stored vector with the current embedding model (command
+    /// `/reindex`). Top-level, not a `/rag` subcommand: it spans notes, chat
+    /// attachments and every profile's knowledge base. See
+    /// docs/research/embedding-model-change-reindex.md §8.1.
+    Reindex,
     /// Attach a file to the chat (command `/file attach <path>`). See
     /// docs/file-attachments.md.
     FileAttach {

@@ -15,6 +15,18 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Input prefixes for the embedding model** — a new "Input prefixes" setting in
+  the Embeddings tab (Model section): `none` (default), `e5`, `e5-instruct`. Some
+  embedding families expect each input marked with its role (`query: ` /
+  `passage: `); others, including the default bge-m3, expect bare text and score
+  *worse* with a marker — so nothing is applied unless you select it, and when a
+  model change is detected whose name looks like an e5, the notice simply says
+  which convention it suggests. On a 40-document test the prefixes changed no
+  ranking on e5 but widened the gap between a relevant and an irrelevant
+  passage — most noticeably in the near-tie cases. Switching the setting counts
+  as a change of embedding model: memory rebuilds itself, and `/reindex` is
+  offered for the knowledge base.
+
 - **Attaching text files to a chat** — three new input-box commands:
   `/file attach <path>` adds a file to the current chat, `/file remove <name|#N>`
   takes it away, `/file list` shows what is attached (they head the "Commands"
@@ -36,16 +48,59 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   else keeps working. Budgets are in the settings "Memory" section
   ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip
   with what the attachments actually cost per message.
+- **Changing the embedding model is now noticed and reported.** Vectors stored by
+  one embedding model are meaningless to another, so on the first use of a new
+  one the app says so and sets aside everything the previous model indexed —
+  without deleting any of it. Memory (notes and self-observations) rebuilds
+  itself as you keep using it; the search indexes of attached files and the
+  knowledge base — your own data — are restored by `/reindex`, and until the
+  knowledge base is rebuilt, search over it says plainly that it cannot compare
+  its vectors. The check does not rely on the vector size, so it also catches a
+  swap between two models of the same size and a model file replaced in place. On
+  a first run there is nothing to compare against, so nothing is reported and
+  nothing is touched.
+- **`/reindex`** — a new input-box command that rebuilds every stored vector with
+  the current embedding model in one pass: memory, the search indexes of attached
+  files and **every** profile's knowledge base (one embedding server serves them
+  all, so a model change affects them all at once). It re-embeds the text already
+  stored, so it needs no source files on disk, repairs old entries whose file is
+  long gone, and brings the search indexes of attached files back without
+  re-attaching each one. Runs in the background with a progress banner and is safe
+  to interrupt — whatever it has already rebuilt stays rebuilt, and running it
+  again continues from there. Listed in the "Commands" tab of the help dialog
+  (`F1`).
 
 ### Changed
 
+- A change of the embedding model no longer discards anything: memory and the
+  search indexes of attached files are set aside and re-embedded from the text
+  already stored, rather than being dropped and rebuilt from scratch. So nothing
+  has to be re-attached, and switching **back** to the previous model costs
+  nothing at all.
 - Switching to an embedding model with a different vector size (via
-  `/rag rebuild`) now also drops the search index of files attached to chats — it
-  was built by the previous model. Re-attaching a file rebuilds it; reading a
-  file page by page is unaffected.
+  `/rag rebuild`) still rebuilds the search index of files attached to chats from
+  scratch — it was built by the previous model. Re-attaching a file rebuilds it,
+  and so does `/reindex`; reading a file page by page is unaffected.
 
 ### Fixed
 
+- Search over memory, the knowledge base and attached files no longer degrades
+  in silence after the embedding model changes. Nothing ever re-embedded an
+  existing note, so recall kept matching new queries against vectors from the old
+  model; with a model of a different vector size it returned arbitrary notes
+  outright, and the duplicate checks that keep memory from bloating stopped
+  firing altogether. Knowledge-base search now refuses plainly, naming
+  `/reindex`, instead of answering from vectors it cannot compare.
+- The checks that decide when two pieces of memory say the same thing — duplicate
+  notes and observations, near-identical traits — now follow the embedding model
+  in use instead of being tuned to one particular model. Every model rates
+  similarity on its own scale, so after a model change a fixed cut-off can drift
+  into "nothing is ever a duplicate" or, just as bad, "everything is": on one of
+  the models tested, memory would have been told that entirely unrelated traits
+  meant the same thing. The app now measures the new model's scale once, when it
+  first notices it, and shifts the cut-offs to match. Nothing changes for a setup
+  that has not changed models, and if the measurement fails the previous
+  behaviour is kept.
 - Knowledge-base search results (`rag_search`) are readable again: found
   fragments are numbered and set apart from one another, and their text is shown
   exactly as it is in the source. Previously a fragment several lines long ran

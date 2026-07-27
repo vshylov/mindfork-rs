@@ -235,6 +235,7 @@ pub(super) fn dispatch(
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
+        ChatIntent::Reindex => AppCommand::Reindex,
         ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,
