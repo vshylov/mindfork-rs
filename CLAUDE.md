@@ -8591,6 +8591,13 @@ debounce was done as a separate PR, see below).
   knowledge base stale, **left the base itself intact**, and notified the user.
   The smoke also asserts both models report the same dimensionality, so it stays
   meaningful only for the case no existing guard can catch.
+- **Regression — clean**: all **25** orchestrator e2e live smokes green (530 s)
+  on Gemma 4 31B q4_0 (external `llama-server`, `--jinja`) + bge-m3 — memory/
+  self-model/notes/graph/cross-organ links/RAG/attachments/control tools/i18n/
+  MCP. Worth the full set here: **every** embedder call now goes through the
+  guard, `rag_search` gained a pre-query check, and `vec_dim`/`ensure_dim` were
+  rerouted through the new `meta` helpers — so the blast radius is the whole
+  memory subsystem, not just the new code.
 - **Deliberately not in this stage**: re-embedding in place and per-row
   fingerprints (stage 2, fork R4a) — re-embedding is a *different operation*
   from re-chunking (it needs only the chunk text, which all three stores already
