@@ -425,6 +425,9 @@
   "ui.feed.thoughts": "thinking",
   "ui.feed.thoughts_lines": " · {n} lines · ",
 
+  "ui.settings.desc.embed_convention": "How the model expects its input marked: none — no markers (bge-m3 and most others), e5 — \"query: \"/\"passage: \", e5-instruct — an instruction on the query and a bare passage. A wrong value makes retrieval worse, hence none by default. Changing it changes the vector space: /reindex is needed.",
+  "ui.settings.field.embed_convention": "Input prefixes",
+  "ui.settings.group.embed_input": "Input marking",
   "ui.status.hotkey.help": "help",
   "ui.status.hotkey.chats": "chats",
   "ui.status.hotkey.new": "new",
@@ -461,6 +464,7 @@
   "ui.embed.model_changed": "The embedding model changed ({old} -> {new}). Everything indexed by the previous one is unusable now.",
   "ui.embed.reindex_hint": "Run /reindex to rebuild it ({n} fragments) — memory also rebuilds itself as you use it.",
   "ui.embed.rag_stale": "Knowledge-base search is off for {n} profile(s) until then.",
+  "ui.embed.convention_hint": "Judging by its name this model expects the \"{name}\" input-prefix convention — you can select it in settings (Model → Embeddings).",
   "ui.rag.started": "files found: {total}, starting indexing…",
   "ui.rag.from": " from {dir}",
   "ui.rag.indexing": "indexing {name}{location} ({index}/{total})",

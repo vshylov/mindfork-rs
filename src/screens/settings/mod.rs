@@ -26,6 +26,7 @@ use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
     PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
 };
+use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
@@ -485,6 +486,10 @@ enum FieldId {
     /// The cloud API key for the embedding server (see [`FieldId::XApiKey`]).
     EApiKey,
     EPort,
+    /// How the embedding model expects its input to be marked
+    /// (`query:`/`passage:` and relatives). Independent of the mode — a property
+    /// of the model. See docs/research/embedding-input-prefixes.md.
+    EConvention,
     // Speech (TTS, the "Speech" tab of the "Model" section). See spec §11.9.
     TtsMode,
     TtsModelName,

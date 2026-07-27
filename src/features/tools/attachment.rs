@@ -21,6 +21,7 @@
 use anyhow::Result;
 
 use crate::entities::profile::ToolId;
+use crate::shared::api::EmbedRole;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -180,7 +181,11 @@ impl Tool for AttachmentSearch {
         }
         // The embedder may have gone away since indexing — degrade to the same
         // clear answer rather than failing the turn (ADR 0002).
-        let Ok(mut embeddings) = ctx.embedder.embed(vec![query.to_string()]).await else {
+        let Ok(mut embeddings) = ctx
+            .embedder
+            .embed(vec![query.to_string()], EmbedRole::Query)
+            .await
+        else {
             return Ok(ToolOutcome::text(
                 ctx.loc.t("tool.attachment_search.not_indexed"),
             ));
@@ -377,7 +382,11 @@ mod tests {
     /// context's own embedder (so a query embedded the same way can match).
     async fn index(ctx: &ToolContext, att: &Attachment, fragments: &[&str]) {
         let texts: Vec<String> = fragments.iter().map(|s| s.to_string()).collect();
-        let vectors = ctx.embedder.embed(texts.clone()).await.unwrap();
+        let vectors = ctx
+            .embedder
+            .embed(texts.clone(), EmbedRole::Passage)
+            .await
+            .unwrap();
         for (text, embedding) in texts.iter().zip(vectors) {
             let chunk = crate::entities::attachment::AttachmentChunk::new(
                 ctx.chat_id,
@@ -493,7 +502,11 @@ mod tests {
         struct Dead;
         #[async_trait::async_trait]
         impl crate::shared::api::Embedder for Dead {
-            async fn embed(&self, _texts: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
+            async fn embed(
+                &self,
+                _texts: Vec<String>,
+                _role: EmbedRole,
+            ) -> anyhow::Result<Vec<Vec<f32>>> {
                 anyhow::bail!("embedder unavailable")
             }
         }

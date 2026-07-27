@@ -32,15 +32,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
-- **Per-model input prefixes for embeddings** — the e5 family expects
-  `query:`/`passage:` markers, and adding them widened the retrieval margin on
-  the probe corpus from 0.155 to 0.186: a real, if modest, effect. The
-  `Embedder` contract has no notion of an input *role* today (a query and a
-  stored chunk go through the same call), so this needs a contract change plus
-  a per-model convention. Only relevant now that a model swap is actually
-  supported. See
-  [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)
-  §9.
 
 ## Context and tokens
 - **History compression / rolling summary** — right now the whole conversation

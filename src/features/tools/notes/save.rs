@@ -3,6 +3,7 @@
 //! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 /// `note_save` — saves a profile note. Returns its id.
 pub struct NoteSave;
@@ -53,7 +54,12 @@ impl Tool for NoteSave {
         // existing notes, so the model can rewrite a duplicate via note_revise
         // instead of accumulating a near-copy. Without an embedder — softly skip
         // (like RAG reranking), the note is saved either way.
-        if let Ok(vecs) = ctx.embedder.embed(vec![note.content.clone()]).await
+        // Passage: this vector is stored, and the gate below compares it against
+        // other stored notes — both sides of that comparison are passages.
+        if let Ok(vecs) = ctx
+            .embedder
+            .embed(vec![note.content.clone()], EmbedRole::Passage)
+            .await
             && let Some(emb) = vecs.into_iter().next()
         {
             let _ = ctx
@@ -100,7 +106,10 @@ pub(crate) async fn create_note(
     let note = Note::new(ctx.profile_id, content, tags);
     let id = note.id;
     ctx.storage.db().note_insert(&note)?;
-    if let Ok(vecs) = ctx.embedder.embed(vec![note.content.clone()]).await
+    if let Ok(vecs) = ctx
+        .embedder
+        .embed(vec![note.content.clone()], EmbedRole::Passage)
+        .await
         && let Some(emb) = vecs.into_iter().next()
     {
         let _ = ctx
@@ -121,7 +130,14 @@ pub(crate) async fn self_note_similar(
     exclude: Uuid,
 ) -> Vec<Note> {
     ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
-    let Ok(vecs) = ctx.embedder.embed(vec![content.to_string()]).await else {
+    // Passage, despite reading like a query: the other side of this comparison
+    // is the stored @self notes, and the `add_insight` gate it feeds is one of
+    // the calibrated thresholds (docs/research/embedding-input-prefixes.md §5.3).
+    let Ok(vecs) = ctx
+        .embedder
+        .embed(vec![content.to_string()], EmbedRole::Passage)
+        .await
+    else {
         return Vec::new();
     };
     let Some(emb) = vecs.into_iter().next() else {
@@ -159,7 +175,7 @@ pub(crate) async fn ensure_note_vectors(
     };
     for chunk in missing.chunks(NOTE_BACKFILL_BATCH) {
         let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
-        let Ok(vecs) = embedder.embed(texts).await else {
+        let Ok(vecs) = embedder.embed(texts, EmbedRole::Passage).await else {
             return; // the embedder is unavailable — no point continuing
         };
         for ((id, _), emb) in chunk.iter().zip(vecs) {

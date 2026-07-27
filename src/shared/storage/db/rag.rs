@@ -260,10 +260,14 @@ impl Db {
         // (cosine is 0 for an empty vector), so keeping it would permanently
         // report "the model changed" on every launch.
         match serde_json::from_str::<Vec<f32>>(&raw) {
-            Ok(canary) if !canary.is_empty() => Ok(Some(EmbedFingerprint::new(
+            Ok(canary) if !canary.is_empty() => Ok(Some(EmbedFingerprint {
                 canary,
-                meta_get(&conn, KEY_EMBED_MODEL_ID)?,
-            ))),
+                model_id: meta_get(&conn, KEY_EMBED_MODEL_ID)?,
+                // Absent on a fingerprint written before input conventions
+                // existed; `matches` reads that as the default convention, which
+                // is what those installations were using.
+                convention: meta_get(&conn, KEY_EMBED_CONVENTION)?,
+            })),
             _ => Ok(None),
         }
     }
@@ -275,6 +279,10 @@ impl Db {
     pub fn set_embed_fingerprint(&self, fp: &EmbedFingerprint) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         meta_set(&conn, KEY_EMBED_CANARY, &serde_json::to_string(&fp.canary)?)?;
+        match &fp.convention {
+            Some(c) => meta_set(&conn, KEY_EMBED_CONVENTION, c)?,
+            None => meta_del(&conn, KEY_EMBED_CONVENTION)?,
+        }
         match &fp.model_id {
             Some(id) => meta_set(&conn, KEY_EMBED_MODEL_ID, id),
             // Removed rather than blanked: a stale name from the previous model
@@ -389,6 +397,7 @@ impl Db {
         meta_del(&conn, KEY_RAG_DIM)?;
         meta_del(&conn, KEY_EMBED_CANARY)?;
         meta_del(&conn, KEY_EMBED_MODEL_ID)?;
+        meta_del(&conn, KEY_EMBED_CONVENTION)?;
         super::embed_gen::clear_calibration(&conn)?;
         meta_del(&conn, KEY_RAG_STALE_PROFILES)?;
         Ok(dropped as usize)
@@ -710,13 +719,13 @@ mod tests {
         let db = db();
         assert!(db.embed_fingerprint().unwrap().is_none(), "fresh DB");
 
-        let fp = EmbedFingerprint::new(vec![0.1, -0.2, 0.3], Some("bge-m3".into()));
+        let fp = EmbedFingerprint::new(vec![0.1, -0.2, 0.3], Some("bge-m3".into()), "none");
         db.set_embed_fingerprint(&fp).unwrap();
         assert_eq!(db.embed_fingerprint().unwrap(), Some(fp));
 
         // A fingerprint without a model name round-trips too — an external server
         // that reports nothing useful still gets a usable canary.
-        let anon = EmbedFingerprint::new(vec![1.0, 0.0], None);
+        let anon = EmbedFingerprint::new(vec![1.0, 0.0], None, "none");
         db.set_embed_fingerprint(&anon).unwrap();
         assert_eq!(db.embed_fingerprint().unwrap(), Some(anon));
     }
@@ -724,9 +733,13 @@ mod tests {
     #[test]
     fn embed_fingerprint_replaces_rather_than_duplicating() {
         let db = db();
-        db.set_embed_fingerprint(&EmbedFingerprint::new(vec![1.0, 0.0], Some("old".into())))
-            .unwrap();
-        let fresh = EmbedFingerprint::new(vec![0.0, 1.0], Some("new".into()));
+        db.set_embed_fingerprint(&EmbedFingerprint::new(
+            vec![1.0, 0.0],
+            Some("old".into()),
+            "none",
+        ))
+        .unwrap();
+        let fresh = EmbedFingerprint::new(vec![0.0, 1.0], Some("new".into()), "none");
         db.set_embed_fingerprint(&fresh).unwrap();
         assert_eq!(db.embed_fingerprint().unwrap(), Some(fresh));
 
@@ -746,9 +759,13 @@ mod tests {
         // Overwriting a named model with an anonymous one must not leave the old
         // name behind — it would be shown as if it belonged to the new model.
         let db = db();
-        db.set_embed_fingerprint(&EmbedFingerprint::new(vec![1.0], Some("bge-m3".into())))
-            .unwrap();
-        db.set_embed_fingerprint(&EmbedFingerprint::new(vec![1.0], None))
+        db.set_embed_fingerprint(&EmbedFingerprint::new(
+            vec![1.0],
+            Some("bge-m3".into()),
+            "none",
+        ))
+        .unwrap();
+        db.set_embed_fingerprint(&EmbedFingerprint::new(vec![1.0], None, "none"))
             .unwrap();
         assert_eq!(db.embed_fingerprint().unwrap().unwrap().model_id, None);
     }
@@ -871,6 +888,7 @@ mod tests {
         db.set_embed_fingerprint(&EmbedFingerprint::new(
             vec![1.0, 0.0],
             Some("bge-m3".into()),
+            "none",
         ))
         .unwrap();
         db.set_rag_stale_profiles(&[p]).unwrap();

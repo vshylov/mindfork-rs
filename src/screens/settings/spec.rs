@@ -97,6 +97,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, dir| c.embed.mode = cycle_mode(c.embed.mode, dir),
             |c, _loc| index_menu(&SERVER_MODES, c.embed.mode, mode_label),
         ),
+        EConvention => choice(
+            |c, dir| c.embed.convention = c.embed.convention.cycle(dir),
+            |c, _loc| {
+                index_menu(&EmbedConvention::ALL, c.embed.convention, |x| {
+                    x.id().to_string()
+                })
+            },
+        ),
         IxMode => choice(
             |c, dir| c.impersonation_engine.mode = cycle_imp_mode(c.impersonation_engine.mode, dir),
             |c, _loc| index_menu(&IMP_MODES, c.impersonation_engine.mode, imp_mode_label),

@@ -955,6 +955,7 @@ mod tests {
         let fp = crate::shared::embed_identity::EmbedFingerprint::new(
             vec![1.0, 0.0],
             Some("bge-m3".into()),
+            "none",
         );
         db.set_embed_fingerprint(&fp).unwrap();
         db.set_rag_stale_profiles(&[p]).unwrap();

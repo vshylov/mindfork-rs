@@ -124,9 +124,21 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1440 unit
-tests green, 65 `#[ignore]` smokes** (the largest count — log below; the current
-track is the **embedding-model change** track
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1466 unit
+tests green, 66 `#[ignore]` smokes** (the largest count — log below; the current
+track is **per-model input prefixes for embeddings**
+([docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md)) —
+the last groundwork item of the one below it: `Embedder::embed` gained an input
+**role** (`Query`/`Passage`, no `Default` — a silent role is the failure the type
+prevents), and a `PrefixedEmbedder` decorator sitting **inside** the model-change
+guard marks each text per the model's convention (`none` by default / `e5` /
+`e5-instruct`), so the canary and the calibration probes go through it and
+switching the convention self-detects as the change of vector space it is.
+Measured rather than assumed: on 40 documents the prefixes change **no ranking**
+on e5 (the gain is a 25× wider *minimum* margin), and the **wrong** convention
+costs bge-m3 a rank — hence the default off and no auto-selection, only a hint —
+**done, live run GO**; before that —
+the **embedding-model change** track
 ([docs/research/embedding-model-change-reindex.md](docs/research/embedding-model-change-reindex.md)):
 stored vectors are only comparable to a query from the same model, and dimensionality
 is **not** identity — `bge-m3` and `multilingual-e5-large-instruct` are both 1024-d and
@@ -8909,6 +8921,120 @@ debounce was done as a separate PR, see below).
   calibration. Groundwork left in research §9: e5-style `query:`/`passage:` input
   prefixes (the `Embedder` contract has no notion of input role), vec0 for notes,
   and cross-model migration without re-embedding.
+
+### Post-M9: per-model input prefixes for embeddings (done)
+- **The last groundwork item of the embedding-model change track**
+  ([docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md),
+  forks **R1–R6 accepted by the user as recommended — options "a" — 2026-07-27**;
+  branch `feat/embed-input-prefixes`). The e5 family expects each input marked
+  with its role (`query:`/`passage:`); the `Embedder` contract had no notion of
+  an input role — a query and a stored chunk went through the same call. Only
+  relevant now that a model swap is actually supported (stages 1–3 of the
+  previous track).
+- **The measurement came first, and it reshaped the recommendation.** The
+  roadmap justified this with one number on a small corpus (margin 0.155 →
+  0.186). Re-measured on **40 documents / 14 queries** in the register the app
+  actually indexes (notes, `@self` observations, knowledge-base chunks,
+  bilingual, with deliberate near-neighbours): on e5 the prefixes changed **no
+  ranking at all** — 12/14 top-1 under every convention, MRR moving by 0.001.
+  The entire benefit is separation: mean margin +15%, and the **minimum** margin
+  **25×** (0.0002 → 0.0056). A 0.0002 margin is an arbitrary tie-break, so that
+  part is real robustness — but it is not a correctness fix, and the docs say so
+  rather than overselling it. R6 was therefore offered as a genuine "don't
+  implement" option; the user chose to implement with the default **off**, so
+  existing installations are bit-identical until they opt in.
+- **A convention is a 3-way per-family choice, not a boolean.**
+  `multilingual-e5-large-instruct` — the model the earlier figure was measured on
+  — does **not** use `query:`/`passage:`; the `-instruct` variants want
+  `Instruct: <task>` + `Query: ` and a **bare** passage. So that number was
+  measured with the wrong convention for that model and still improved. And the
+  wrong convention is measurably **harmful**: on bge-m3 (which wants bare text)
+  `e5-instruct` costs a rank (11/14 → 10/14) and 31% of the mean margin. Hence
+  `EmbedConvention::None` is the default, and the convention is **never** applied
+  automatically — when a model change is detected and the new name looks like an
+  e5, the notice merely says which convention it suggests (R3a: a hint, never an
+  action).
+- **The role lives on the call (R1a)**: `Embedder::embed(texts, role)` with
+  `EmbedRole { Query, Passage }` — deliberately **no `Default`**, since a
+  silently defaulted role is exactly the failure the type exists to prevent. One
+  method, 5 impls, and every batch in the codebase is homogeneous except
+  web-search reranking, which now issues two requests (a path that already does N
+  parallel page fetches).
+- **The prefix is applied by a decorator, and its position is load-bearing
+  (R2a)**: `EmbedGuard { PrefixedEmbedder { real embedder } }`, built in
+  `apply_embed_settings`. The guard's canary and calibration probes therefore go
+  **through** the prefixer, which is what makes both traps self-solving rather
+  than merely documented:
+  - **calibration** — prefixing bge-m3 moves the corpus's unrelated mean +0.097
+    and narrows its span 16%, which would silently invalidate
+    `REFERENCE_UNRELATED`/`REFERENCE_PARAPHRASE`. Measuring through the same path
+    means bge-m3 stays on `none` (constants valid by construction) and e5
+    measures its own means under its own convention. The live calibration smoke
+    still reproduces 0.41277 / 0.81764 exactly;
+  - **detection** — a prefixed canary scores 0.78–0.9965 against a bare one, all
+    below the 0.999 detector, so turning prefixes on reads as the change of
+    vector space it really is: the generation is bumped, memory re-embeds itself,
+    `/reindex` is offered. Verified, not assumed.
+- **Two refinements the measurement argued for.** The canary carries
+  **`Passage`**: stored vectors are all passage-role, so the passage marker alone
+  defines the space the database is in — a change to the *query* marker alters
+  retrieval but leaves every stored vector valid and must **not** force a
+  reindex, and tracking the passage role gets that granularity right for free.
+  And since e5's passage margin to the threshold is only **0.0025**, the
+  convention id joins `EmbedFingerprint` as an **exact second trigger** (R5a) —
+  it can only *add* detections, never mask one, which is what separates it from
+  the config-only fingerprint rejected as D2 in the previous track. A fingerprint
+  written before this exists has no convention field and reads as the default, so
+  no installation reports a spurious change on upgrade.
+- **Role assignment is the specification, not bookkeeping (R4a).** Research §5 is
+  a 20-site table, and its load-bearing finding is that **all four calibrated
+  gate sites are symmetric passage↔passage** — `self_note_similar` (the
+  `add_insight` gate), the `note_save` duplicate gate,
+  `summary_observation_overlaps`, `near_duplicate_traits`. They *read* like
+  queries but must be passages, which is also why the calibration corpus is
+  passage-role. Mismatching one side costs −0.027 on e5 = **17% of its entire
+  usable range**. `/reindex` must use the identical role to the original writers,
+  or it would quietly re-create the mixed-space problem the previous track exists
+  to kill.
+- **Wiring**: `EmbedConvention` + `PrefixedEmbedder` in a new
+  `shared/embed_prefix.rs`; `EmbedSettings.convention` (`#[serde(default)]` → **no
+  schema bump, no migration**, ADR 0006 F12); `meta.embed_convention` beside the
+  canary; an "Input prefixes" Choice field in the Embeddings tab (independent of
+  the mode — the convention is a property of the *model*, not of where it runs);
+  i18n for the field, its description and the hint, both bundles.
+- **Tests**: a new `features/tools/embed_roles_tests.rs` — the executable form of
+  the §5 table, using a `RoleRecorder` embedder, because a wrong role is
+  otherwise **invisible** (it changes no return value and no other assertion);
+  the decorator order (a canary embedded through the guard carries the passage
+  marker, and so do the 32 calibration probes); a convention switch bumping the
+  generation while **keeping** the note; the hint appearing only when it differs
+  from what is set; `web.rs` issuing exactly `[Query, Passage]` with the query
+  excluded from the page batch; the default convention passing text through
+  **byte for byte**; `suggested_for` recognising the family and nothing else; the
+  settings field and the config default. **1466 unit tests green** (+26), **66
+  `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/i18n gates clean.
+- **A real bug caught by the existing suite**: splitting `web.rs` into two
+  requests left the old `results.len() + 1` length check and the `vecs[0]`
+  indexing that assumed the query still rode in the same batch — reranking
+  silently returned the provider order. `rerank_reorders_results_by_query` failed
+  immediately, which is exactly what that test is for.
+- **Live run — GO** (`conventions_behave_as_measured_live`, real bge-m3 :8001 +
+  e5-large-instruct :8002): e5's own convention widened the relevant/irrelevant
+  gap **0.1213 → 0.1789**, and the wrong convention narrowed bge-m3's **0.4406 →
+  0.3317** — both directions confirmed on live models, matching the research
+  spike. The smoke deliberately asserts on the **margin**, not on top-1: the
+  research measured that prefixes change no ranking, so asserting a recovered
+  rank would assert something that was never true.
+- **Regression — clean**: the three two-server smokes of the previous track (swap
+  detection, `/reindex` restoring retrieval, the calibration scale) and all **25**
+  orchestrator e2e live smokes green (584 s) on Gemma 4 31B q4_0 + bge-m3. The
+  full set is the right scope: **every** embedding call site changed signature,
+  and the guard's canary/calibration path was rewired.
+- **Groundwork** (research §9): tuning the `-instruct` task string; other
+  families' conventions (BGE-v1.5's retrieval instruction, Nomic's
+  `search_query:`/`search_document:`) — the design is a table, so a row is cheap;
+  per-role calibration is explicitly **not** needed, since all four gate sites are
+  passage↔passage.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

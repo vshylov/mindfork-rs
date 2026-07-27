@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::shared::api::EmbedRole;
 
 #[test]
 fn inject_self_model_respects_flag_and_emptiness() {
@@ -250,7 +251,7 @@ async fn injection_recent_surfaces_relevant_over_fresh() {
         };
         storage.db().note_insert(&note).unwrap();
         let emb = embedder
-            .embed(vec![content.clone()])
+            .embed(vec![content.clone()], EmbedRole::Passage)
             .await
             .unwrap()
             .into_iter()

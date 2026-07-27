@@ -2,6 +2,7 @@
 
 use super::super::testkit::ctx_with_storage;
 use super::*;
+use crate::shared::api::EmbedRole;
 use uuid::Uuid;
 
 /// The reference locale (ru) — direct overview calls in tests pin the ru bundle.
@@ -582,7 +583,7 @@ async fn summary_obs_overlap_uses_the_calibrated_threshold() {
     storage.db().self_model_upsert(&model).unwrap();
     let pv = ctx
         .embedder
-        .embed(vec![paragraph])
+        .embed(vec![paragraph], EmbedRole::Passage)
         .await
         .unwrap()
         .into_iter()
@@ -637,7 +638,7 @@ async fn summary_obs_overlap_surfaces_match_not_unrelated() {
     // The observation matching P_match: its vector = P_match's embedding (cosine = 1.0).
     let match_vec = ctx
         .embedder
-        .embed(vec![p_match.clone()])
+        .embed(vec![p_match.clone()], EmbedRole::Passage)
         .await
         .unwrap()
         .into_iter()
@@ -694,7 +695,7 @@ async fn summary_obs_overlap_soft_degrades() {
     // Add an observation with a vector — now there's something to compare.
     let match_vec = ctx
         .embedder
-        .embed(vec!["a".repeat(50)])
+        .embed(vec!["a".repeat(50)], EmbedRole::Passage)
         .await
         .unwrap()
         .into_iter()
@@ -711,7 +712,11 @@ async fn summary_obs_overlap_soft_degrades() {
     struct BadCountEmbedder;
     #[async_trait::async_trait]
     impl crate::shared::api::Embedder for BadCountEmbedder {
-        async fn embed(&self, _texts: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
+        async fn embed(
+            &self,
+            _texts: Vec<String>,
+            _role: EmbedRole,
+        ) -> anyhow::Result<Vec<Vec<f32>>> {
             Ok(Vec::new()) // 0 vectors for any input — a mismatch
         }
     }

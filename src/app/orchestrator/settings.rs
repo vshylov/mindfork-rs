@@ -171,16 +171,32 @@ impl Orchestrator {
     pub(super) fn apply_embed_settings(&mut self) {
         self.engines
             .apply_embed(&self.config.embed, &self.config.api_keys);
-        // Wrap the fresh embedder in the model-change guard: stored vectors are
-        // only comparable to a query from the same model, and dimensionality
-        // cannot establish that (see `embed_guard`). Rebuilding it here re-arms
-        // the check whenever the embedding settings change — which is exactly
-        // when the model is most likely to have been swapped. The check itself
-        // is lazy (embeddings have no readiness probe, ADR 0002).
-        self.engines.embedder = std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
+        // Two decorators, and the order is load-bearing:
+        //
+        //   EmbedGuard { PrefixedEmbedder { real embedder } }
+        //
+        // The prefixer applies the model's input convention (`query:`/`passage:`
+        // and relatives). It goes *inside* the guard so the guard's own canary
+        // and calibration probes pass through it: that is what makes a
+        // convention switch read as the change of vector space it really is, and
+        // what keeps the similarity calibration measured in the same dressing
+        // the real text gets (docs/research/embedding-input-prefixes.md §3–§4).
+        //
+        // The guard itself: stored vectors are only comparable to a query from
+        // the same model, and dimensionality cannot establish that (see
+        // `embed_guard`). Rebuilding both here re-arms the check whenever the
+        // embedding settings change — exactly when the model is most likely to
+        // have been swapped. The check is lazy (embeddings have no readiness
+        // probe, ADR 0002).
+        let prefixed = std::sync::Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
             self.engines.embedder.clone(),
+            self.config.embed.convention,
+        ));
+        self.engines.embedder = std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
+            prefixed,
             self.storage.clone(),
             self.config.embed.active_model_name(),
+            self.config.embed.convention,
             self.ui_locale(),
             self.evt_tx.clone(),
         ));

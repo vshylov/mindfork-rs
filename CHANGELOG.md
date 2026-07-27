@@ -15,6 +15,18 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Input prefixes for the embedding model** — a new "Input prefixes" setting in
+  the Embeddings tab (Model section): `none` (default), `e5`, `e5-instruct`. Some
+  embedding families expect each input marked with its role (`query: ` /
+  `passage: `); others, including the default bge-m3, expect bare text and score
+  *worse* with a marker — so nothing is applied unless you select it, and when a
+  model change is detected whose name looks like an e5, the notice simply says
+  which convention it suggests. On a 40-document test the prefixes changed no
+  ranking on e5 but widened the gap between a relevant and an irrelevant
+  passage — most noticeably in the near-tie cases. Switching the setting counts
+  as a change of embedding model: memory rebuilds itself, and `/reindex` is
+  offered for the knowledge base.
+
 - **Attaching text files to a chat** — three new input-box commands:
   `/file attach <path>` adds a file to the current chat, `/file remove <name|#N>`
   takes it away, `/file list` shows what is attached (they head the "Commands"
