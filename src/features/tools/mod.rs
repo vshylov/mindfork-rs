@@ -46,8 +46,8 @@ pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
 #[derive(Clone)]
 pub struct ToolContext {
     pub profile_id: Uuid,
-    /// Id of the current chat (part of the turn snapshot; available to tools).
-    #[allow(dead_code)]
+    /// Id of the current chat (part of the turn snapshot). Scopes the attachment
+    /// index — `attachment_search` never reaches another conversation's files.
     pub chat_id: Uuid,
     /// Snapshot of `Chat.system_message` at the start of the turn.
     pub system_message: String,
@@ -434,9 +434,10 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
-    // Reading files the user attached to the chat (`/file attach`). Not gated:
-    // unlike fs_read it can only reach what the user explicitly attached.
+    // Reading/searching files the user attached to the chat (`/file attach`). Not
+    // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));
+    reg.register(Arc::new(attachment::AttachmentSearch));
     // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));

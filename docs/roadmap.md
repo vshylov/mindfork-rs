@@ -32,6 +32,14 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
   stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
   count actually grows into the thousands**. Plan ready:
   [notes-vec0](notes-vec0.md).
+- **Re-indexing chat attachments after an embedding-model change** — the
+  attachment index shares the vector dimensionality with RAG (`meta.rag_dim`), so
+  a `/rag rebuild` that switches models drops it; it only comes back when the file
+  is re-attached. The text snapshot lives in the chat file, so an automatic
+  re-index is possible, but it needs a walk over all chats. Low priority: the
+  index is derived data and `attachment_read` (the guaranteed path) is
+  unaffected. See spec §9.7,
+  [file-attachments.md](file-attachments.md).
 
 ## Context and tokens
 - **History compression / rolling summary** — right now the whole conversation

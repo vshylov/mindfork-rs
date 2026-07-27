@@ -741,12 +741,34 @@ Attachments are **chat-scoped**, need **no embedder**, and are delivered
 - **Formats**: any valid UTF-8 (source code, configs, logs) plus html/pdf/docx
   through the same extractors RAG uses. Undecodable content is refused with a
   clear message.
-- **UI**: a feed note per command, a `§ files: N (~tokens)` status-bar chip
+- **Finding a place by meaning — `attachment_search(query)`.** A by-reference
+  file is additionally indexed into a **chat-scoped** semantic index in the
+  background (chunking, embedding and vec0 as in RAG). The two tools are
+  complementary, not redundant: search answers *where* to look in a file of
+  hundreds of pages, `attachment_read` guarantees *everything* can be read. Only
+  by-reference files are indexed — an inline one is already in the prompt in
+  full, so search would return duplicates of what the model can see. Search
+  results are filtered by the turn's attachment snapshot, so a file the user
+  removed can never surface.
+- **The index is a separate store, not the RAG base**: its own
+  `attachment_documents` plus a vec0 table partitioned by `chat_id` (the `k`
+  constraint applies **inside** a vec0 partition, so filtering a profile-wide
+  search by chat afterwards would silently return fewer than `k` hits). The
+  user's curated knowledge base stays clean of per-chat data. The **vector
+  dimensionality is shared** with RAG (`meta.rag_dim`, one per DB): a `/rag
+  rebuild` that changes the embedding model drops the attachment index too (it is
+  derived data — re-attaching the file rebuilds it, and `attachment_read` is
+  unaffected).
+- **Indexing is best-effort** (the ADR 0002 pattern): with no embedder
+  configured it is skipped with a clear note, and the block, `attachment_read`
+  and everything else keep working in full. The feature never *depends* on RAG
+  being set up. Accordingly, the block only offers `attachment_search` for files
+  that actually have an index, and the tool distinguishes "nothing indexed here"
+  from "no hits", pointing at page reading in both cases.
+- **UI**: a feed note per command, a background-indexing banner with a spinner
+  (the same slot RAG indexing uses), a `§ files: N (~tokens)` status-bar chip
   (attachments cost tokens on every turn — the standing cost has to be visible),
   and budget fields in the settings "Memory" section.
-- Next stage of the track: a chat-scoped semantic index over attachments
-  (`attachment_search`) — finding *where* to look in a large file, which paging
-  alone makes slow.
 
 ---
 

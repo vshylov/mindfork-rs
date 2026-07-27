@@ -127,7 +127,12 @@ Architecture — **Feature-Sliced Design (FSD)**.
   budget isn't refused — it is attached "by reference": the prompt gets its name,
   size and beginning, and the model reads the rest **page by page** on demand
   (`attachment_read`), so even a multi-megabyte file can be worked through without
-  flooding the context. Budgets live in settings ("Memory" → "Attachments"); the
+  flooding the context. Such a file is also **indexed for semantic search** in the
+  background, so the model can jump straight to the right place
+  (`attachment_search`) instead of paging through hundreds of pages — the index is
+  scoped to that one chat and never mixes with the profile's knowledge base. If no
+  embedding server is configured, indexing is simply skipped and everything else
+  keeps working. Budgets live in settings ("Memory" → "Attachments"); the
   status bar shows a `§ files: N (~tokens)` chip with what the attachments
   actually cost per message.
 - **Loading files into RAG from the input box:** `/rag add <path> [-r]` commands

@@ -28,9 +28,21 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   A large file is **not refused**: it is attached "by reference" — the prompt
   gets its name, size and the beginning, and the model reads the rest page by
   page on demand, so even a multi-megabyte file can be worked through without
-  flooding the context. Budgets are in the settings "Memory" section
+  flooding the context. Such a large file is also indexed for **semantic search**
+  in the background, so instead of paging through hundreds of pages the model can
+  jump straight to the place it needs — the index belongs to that one chat and
+  never mixes with the profile's knowledge base (`/rag add`). Indexing needs an
+  embedding server; without one it is simply skipped, with a note, and everything
+  else keeps working. Budgets are in the settings "Memory" section
   ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip
   with what the attachments actually cost per message.
+
+### Changed
+
+- Switching to an embedding model with a different vector size (via
+  `/rag rebuild`) now also drops the search index of files attached to chats — it
+  was built by the previous model. Re-attaching a file rebuilds it; reading a
+  file page by page is unaffected.
 
 ## [0.9.4] — 2026-07-26
 

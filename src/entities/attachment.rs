@@ -123,6 +123,52 @@ impl Attachment {
     }
 }
 
+/// One indexed fragment of a by-reference attachment — the chat-scoped semantic
+/// index (stage 3, docs/file-attachments.md §4.5). Mirrors
+/// [`RagDocument`](crate::entities::rag::RagDocument), but scoped by **chat**
+/// instead of profile: an attachment belongs to exactly one conversation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachmentChunk {
+    pub id: Uuid,
+    pub chat_id: Uuid,
+    pub attachment_id: Uuid,
+    /// Display name of the source attachment. Denormalized on purpose: the DB
+    /// knows nothing about chats, and search output has to name the file.
+    pub name: String,
+    pub text: String,
+    pub embedding: Vec<f32>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl AttachmentChunk {
+    pub fn new(
+        chat_id: Uuid,
+        attachment_id: Uuid,
+        name: impl Into<String>,
+        text: impl Into<String>,
+        embedding: Vec<f32>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            chat_id,
+            attachment_id,
+            name: name.into(),
+            text: text.into(),
+            embedding,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+/// A hit from the chat's attachment index (`attachment_search`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachmentHit {
+    pub attachment_id: Uuid,
+    pub name: String,
+    pub text: String,
+    pub distance: f32,
+}
+
 /// An attachment card for the UI (`/file list`, the status-bar chip).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentInfo {

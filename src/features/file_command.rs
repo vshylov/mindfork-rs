@@ -38,6 +38,18 @@ pub enum FileProgress {
     Removed { name: String },
     /// The chat's attachment list (`/file list`); empty — nothing attached.
     Listed { items: Vec<AttachmentInfo> },
+    /// Building the semantic index over a by-reference file is under way
+    /// (a banner with a spinner; `done`/`total` are chunks).
+    Indexing {
+        name: String,
+        done: usize,
+        total: usize,
+    },
+    /// The semantic index for a file is ready — `attachment_search` can reach it.
+    Indexed { name: String, chunks: usize },
+    /// No index was built (no embedder configured, or a write failed). Not an
+    /// error: the pinned block and `attachment_read` keep working in full.
+    IndexSkipped { name: String, reason: String },
     /// The command failed (no such file, undecodable content, no active chat…).
     Failed(String),
 }

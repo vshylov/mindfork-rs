@@ -37,6 +37,41 @@ impl ChatScreen {
                 let text = format_attachments(&items, self.loc);
                 self.push_note(&text);
             }
+            FileProgress::Indexing { name, done, total } => {
+                // Reuses the background-indexing banner slot (see the `rag`
+                // field): both are "a background index is being built", and they
+                // don't overlap in practice.
+                let text = self.loc.tf(
+                    "ui.file.indexing",
+                    &[
+                        ("name", &name),
+                        ("done", &done.to_string()),
+                        ("total", &total.to_string()),
+                    ],
+                );
+                match &mut self.rag {
+                    Some(banner) => banner.text = text,
+                    None => self.rag = Some(RagBanner { text, tick: 0 }),
+                }
+            }
+            FileProgress::Indexed { name, chunks } => {
+                self.rag = None;
+                let msg = self.loc.tf(
+                    "ui.file.indexed",
+                    &[("name", &name), ("chunks", &chunks.to_string())],
+                );
+                self.push_note(&msg);
+            }
+            FileProgress::IndexSkipped { name, reason } => {
+                self.rag = None;
+                // A note, not an error: reading the file page by page still
+                // works, only search is unavailable.
+                let msg = self.loc.tf(
+                    "ui.file.index_skipped",
+                    &[("name", &name), ("reason", &reason)],
+                );
+                self.push_note(&msg);
+            }
             FileProgress::Failed(err) => {
                 self.push_error(&self.loc.tf("ui.file.failed", &[("err", &err)]));
             }

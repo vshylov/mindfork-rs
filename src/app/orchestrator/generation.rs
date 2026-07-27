@@ -217,6 +217,17 @@ impl Orchestrator {
         // Copied out before the `chat_mut` borrow below (config can't be read
         // while `Chat` is mutably borrowed). `AttachmentSettings` is `Copy`.
         let attach_cfg = self.config.attachments;
+        // Which attached files have a semantic index — the pinned block only
+        // offers `attachment_search` for those (spec §9.7). One indexed lookup,
+        // and only when the chat has attachments at all.
+        let indexed: Vec<Uuid> = if chat_ref.attachments.is_empty() {
+            Vec::new()
+        } else {
+            self.storage
+                .db()
+                .attachment_indexed_ids(active_id)
+                .unwrap_or_default()
+        };
 
         // The profile's "self-model" at the start of the turn. Injection into the
         // system prompt happens only if the profile enabled get_self_model (opt-in);
@@ -249,7 +260,14 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            request = build_request(chat, sampling.clone(), schemas, &attach_cfg, profile_loc);
+            request = build_request(
+                chat,
+                sampling.clone(),
+                schemas,
+                &attach_cfg,
+                &indexed,
+                profile_loc,
+            );
             last_user = chat
                 .messages
                 .iter()

@@ -306,7 +306,9 @@ $env:MINDFORK_PORT      = "8000"   # opt.
 Embeddings for RAG — a **dedicated** server (ADR 0002):
 `MINDFORK_EMBED_URL` (external) or `MINDFORK_EMBED_BIN` + `MINDFORK_EMBED_MODEL`
 + `MINDFORK_EMBED_PORT` (managed). If not configured — RAG returns an error, but the
-app doesn't crash.
+app doesn't crash. The same server also powers **search inside large files
+attached to a chat** (`/file attach`, spec §9.7): with no embedder those files are
+simply not indexed (a note says so) and are still read page by page.
 
 > **Embedder physical batch size.** Embedding models are non-causal: the whole input
 > must fit into a single **physical batch** (`n_ubatch`). By default llama-server's

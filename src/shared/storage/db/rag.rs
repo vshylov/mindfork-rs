@@ -57,7 +57,10 @@ impl Db {
     /// a partition key).
     pub fn rag_search(&self, profile_id: Uuid, query: &[f32], k: usize) -> Result<Vec<RagHit>> {
         let conn = self.conn.lock().unwrap();
-        if vec_dim(&conn)?.is_none() {
+        // The table (not the recorded dimensionality): `meta.rag_dim` is shared
+        // with the attachment index, so it may already be set while nothing has
+        // been indexed into RAG yet.
+        if !table_exists(&conn, "rag_vectors")? {
             return Ok(Vec::new()); // nothing indexed yet
         }
         let mut stmt = conn.prepare(
@@ -241,15 +244,28 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// Drops the vector table entirely (drop + forget the dimensionality): needed
-    /// when switching to an embedding model with a different dimensionality.
-    /// Does **not** touch documents (`rag_documents`) — the caller deletes/
-    /// reindexes them itself. Safe to call even if the table doesn't exist yet.
-    pub fn rag_reset_vectors(&self) -> Result<()> {
+    /// Drops **both** vector tables (RAG and the chat attachment index) and
+    /// forgets the shared dimensionality — needed when switching to an embedding
+    /// model with a different one. Does **not** touch `rag_documents` (the caller
+    /// deletes/reindexes them itself), but **does** delete
+    /// `attachment_documents`: their vectors are gone, and leaving the rows would
+    /// dangle on rowids sqlite reuses. Returns how many attachment chunks were
+    /// dropped, so the caller can report the loss instead of hiding it. Safe to
+    /// call even if nothing has been indexed yet.
+    ///
+    /// The attachment index is derived data: re-attaching the file rebuilds it,
+    /// and `attachment_read` (the guaranteed path) is unaffected.
+    pub fn reset_vectors(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let dropped: i64 =
+            conn.query_row("SELECT COUNT(*) FROM attachment_documents", [], |r| {
+                r.get(0)
+            })?;
         conn.execute("DROP TABLE IF EXISTS rag_vectors", [])?;
+        conn.execute("DROP TABLE IF EXISTS attachment_vectors", [])?;
+        conn.execute("DELETE FROM attachment_documents", [])?;
         conn.execute("DELETE FROM meta WHERE key = 'rag_dim'", [])?;
-        Ok(())
+        Ok(dropped as usize)
     }
 
     /// Deletes all of a profile's chunks (and vectors); keeps sources
@@ -305,7 +321,7 @@ fn delete_matching(
     }
     // The vector table only exists after the first insert; there's nothing to
     // delete without it.
-    let has_vectors = vec_dim(conn)?.is_some();
+    let has_vectors = table_exists(conn, "rag_vectors")?;
     for rowid in &victims {
         if has_vectors {
             conn.execute("DELETE FROM rag_vectors WHERE rowid = ?1", params![rowid])?;
@@ -503,7 +519,7 @@ mod tests {
         // Reset the vectors and clear the profile's documents, then index at the
         // new dimensionality.
         db.rag_delete_all_for_profile(p).unwrap();
-        db.rag_reset_vectors().unwrap();
+        db.reset_vectors().unwrap();
         assert_eq!(db.rag_dimension().unwrap(), None);
         db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
             .unwrap();

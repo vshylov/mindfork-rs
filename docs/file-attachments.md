@@ -5,14 +5,18 @@ design plan per [AGENTS.md §1](../AGENTS.md): stages, scope, and forks. Forks
 **F1–F10 were confirmed by the user on 2026-07-27**, as was **F11** (a separate
 chat-scoped index) on the same day; **F12–F14** follow the recommendations below.
 
-**Status: stages 1–2 done.** Stage 1 (`feat/file-attachments`) — entity, commands,
-extraction, the pinned block, modes/budgets, UI; **live GO** (the baseline chat
-didn't know the invented build code, the chat with the file attached answered it
-exactly). Stage 2 (`feat/attachment-read`) — `attachment_read(name, page)`,
-prompted by a live in-app run where a 1.6 MB file went by reference and the model,
-having no reader, flailed into `fs_read`/`web_search`; **live GO** (the model
-walked five pages and found the answer planted on the last one). Stage 3 (the
-chat-scoped semantic index) is next.
+**Status: the track is complete (stages 1–3).** Stage 1
+(`feat/file-attachments`) — entity, commands, extraction, the pinned block,
+modes/budgets, UI; **live GO** (the baseline chat didn't know the invented build
+code, the chat with the file attached answered it exactly). Stage 2
+(`feat/attachment-read`) — `attachment_read(name, page)`, prompted by a live
+in-app run where a 1.6 MB file went by reference and the model, having no reader,
+flailed into `fs_read`/`web_search`; **live GO** (the model walked five pages and
+found the answer planted on the last one). Stage 3 (`feat/attachment-index`) —
+the chat-scoped semantic index (fork F11(a)) with background indexing,
+`attachment_search`, and graceful degradation with no embedder; **live GO** (on a
+240-item document the model found the payload buried at item 121 with a **single**
+`attachment_search` call, ~9 s).
 
 Related: spec [§6.2](../spec.md) (building the request), [§6.6](../spec.md) (KV
 cache and prefix caching), [§9.3](../spec.md) (tool roster / RAG),
@@ -231,7 +235,7 @@ Each page is returned with a `page N/M` header.
   access — it can only read what the user explicitly attached, never the
   filesystem.
 
-### 4.5. The semantic index over attachments (**F11 — open**)
+### 4.5. The semantic index over attachments (**F11 — adopted: (a)**)
 
 Chat scoping is now mandatory, and where the vectors live is a real decision.
 `rag_vectors` is a vec0 virtual table partitioned by `profile_id`, with the
@@ -260,6 +264,23 @@ on RAG being configured.
 Cleanup: `/file remove` drops the chunks; a soft-deleted chat's chunks are never
 matched anyway (search is scoped to the *current* chat), which is consistent with
 the project's soft-delete-everywhere invariant.
+
+**As built (stage 3)**, two details differ from the sketch above and are worth
+recording:
+
+- **No cancellation machinery.** The race "an indexing task finishes *after* its
+  file was removed" is closed at read time instead: `attachment_search` filters
+  hits by the **turn's attachment snapshot**, so a removed file can never
+  surface, and `attachment_prune(chat, keep)` (run on attach and on remove)
+  collects the leftover rows. That replaced a token map plus lifecycle
+  bookkeeping with one DB primitive.
+- **The reset is one method, not two calls.** `rag_reset_vectors` became
+  `reset_vectors`: it drops both vec0 tables, forgets the shared dimensionality,
+  **and** deletes `attachment_documents` — their vectors are gone and sqlite
+  reuses rowids, so surviving rows would join onto whatever lands there next.
+  Splitting it into two adjacent calls at the rebuild site would have made the
+  pair forgettable, and forgetting it is silent corruption. It returns the number
+  of chunks dropped so the loss is logged rather than hidden.
 
 ### 4.6. Budgets
 
@@ -357,7 +378,7 @@ binary that fails to decode is refused with a clear message.
 
 | # | Fork | Options | Recommendation |
 |---|---|---|---|
-| F11 | Where attachment vectors live | (a) own chat-scoped index + `attachment_search`; (b) `rag_documents` + `chat_id` column; (c) source-prefix post-filter | **(a)** — §4.5 |
+| F11 | Where attachment vectors live | (a) own chat-scoped index + `attachment_search`; (b) `rag_documents` + `chat_id` column; (c) source-prefix post-filter | **(a)** — §4.5. **Adopted in stage 3** (user, 2026-07-27); confirmed live |
 | F12 | `attachment_read` addressing | (a) pages of `page_tokens`; (b) character offset/limit | **(a)** — enumerable ⇒ the model can know it read everything. **Adopted in stage 2**; confirmed live (the model walked five pages to a late answer) |
 | F13 | Are inline files indexed too? | (a) no; (b) yes | **(a)** — they're already fully in the prompt |
 | F14 | Force-index flag `/file attach --index` | (a) not needed (mode is automatic); (b) keep it as an override | **(a)** for now |
@@ -383,7 +404,22 @@ green, with the whole scope committed to up front:
 - **Stage 3 — `feat/attachment-index`.** The chat-scoped semantic index (F11),
   background indexing with progress, `attachment_search`, graceful degradation
   with no embedder. Live criterion: on a large file, the model finds the right
-  place by meaning in one call instead of paging through.
+  place by meaning in one call instead of paging through. **Done, live GO**
+  (Gemma 4 31B q4_0 + bge-m3): a 240-item document, the payload at item 121, one
+  `attachment_search` call, correct answer in ~9 s.
+
+Stage 3 also changed **stage 2's** live behaviour, which is worth recording: once
+the file is indexed, the model stops walking pages and reaches the answer with a
+single search call (its smoke's `attachment_read`-only assertion started failing
+with the answer still correct). That smoke now runs two turns — the outcome plus
+"stayed inside the attachment tools" (the actual stage-1 regression), and a
+specific-page question that search cannot answer, which keeps the guaranteed path
+covered live.
+
+Left as groundwork by stage 3 (roadmap): after `/rag rebuild` changes the
+embedding model's vector size the attachment index is dropped and only comes back
+when the file is re-attached — the snapshot lives in the chat file, so an
+automatic re-index is possible but needs a walk over all chats.
 
 ## 7. Tests
 
