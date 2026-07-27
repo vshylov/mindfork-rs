@@ -21,10 +21,19 @@ const BIG_ARG_CHARS: usize = 100;
 /// Ceiling on the header-suffix length (characters) — a long value is truncated with "…".
 const HEADER_MAX_CHARS: usize = 100;
 
-/// Tools whose result is structured prose (URLs, passages, notes):
+/// Tools whose result is structured prose (URLs, summaries, notes):
 /// render it as markdown, not as flat text. Plain confirmations
 /// ("Note saved") aren't included here — they stay muted `Plain`.
-const PROSE_RESULT_TOOLS: &[&str] = &["web_search", "fetch_url", "rag_search", "note_recall"];
+///
+/// `rag_search` and `attachment_search` are deliberately **absent**: their payload
+/// is verbatim fragments of the user's files, i.e. arbitrary text rather than
+/// prose we authored. Markdown-parsing it lets a block construct *inside* a
+/// fragment escape its list item — a `## Heading` on any line after the first
+/// breaks the fragment in two and renders as a document heading in the middle of
+/// the result (verified against the real renderer). Since `chunk_markdown`
+/// deliberately prepends a section heading to every `*.md` chunk, that was the
+/// common case, not a corner one. File fragments render verbatim.
+const PROSE_RESULT_TOOLS: &[&str] = &["web_search", "fetch_url", "note_recall"];
 
 /// A content block of a tool card (an argument or a result).
 #[derive(Debug, Clone, PartialEq)]
@@ -435,6 +444,32 @@ mod tests {
         assert!(p.args.is_empty());
         // web_search is "prose" → a markdown result.
         assert_eq!(p.result, vec![ToolBlock::Markdown("результаты".into())]);
+    }
+
+    /// Regression: file-fragment results must render **verbatim**, not as
+    /// markdown. Parsing them let a block construct inside a fragment escape its
+    /// list item — a heading on any line after the first split the fragment and
+    /// rendered as a document heading mid-result, and `chunk_markdown` prepends a
+    /// heading to every `*.md` chunk, so that was the common case.
+    #[test]
+    fn file_fragment_results_are_not_parsed_as_markdown() {
+        for tool in ["rag_search", "attachment_search"] {
+            let p = present(tool, r#"{"query":"x"}"#, "1. [notes.md]\n## Раздел\nтекст");
+            assert!(
+                matches!(p.result.as_slice(), [ToolBlock::Plain(_)]),
+                "{tool} must render its fragments verbatim, got {:?}",
+                p.result
+            );
+        }
+        // Tools whose result is prose we authored keep markdown rendering.
+        for tool in ["web_search", "fetch_url", "note_recall"] {
+            let p = present(tool, r#"{"query":"x"}"#, "**итог**");
+            assert!(
+                matches!(p.result.as_slice(), [ToolBlock::Markdown(_)]),
+                "{tool} should stay markdown, got {:?}",
+                p.result
+            );
+        }
     }
 
     #[test]

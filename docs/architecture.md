@@ -997,8 +997,13 @@ Implementation notes:
   header suffix + `Code`/`Console`/`Markdown`/`Plain` blocks). `python_exec` —
   code as a highlighted Python block + a console (stdout/stderr/exit code in
   separate colors); `fs_read`/`fs_write` — content highlighted by the path's
-  extension; prose tools (`web_search`/`fetch_url`/`rag_search`/
-  `note_recall`) — markdown; short arguments — `name(value)` /
+  extension; prose tools (`web_search`/`fetch_url`/`note_recall`) — markdown,
+  while the **fragment** tools (`rag_search`/`attachment_search`) deliberately
+  stay `Plain`: their payload is verbatim pieces of the user's files, and
+  markdown-parsing it let a block construct inside a fragment escape its list
+  item (a heading on any line after the first split the fragment and rendered as
+  a document heading mid-result — the common case, since `chunk_markdown`
+  prepends a heading to every `*.md` chunk); short arguments — `name(value)` /
   `name(k=v, …)`. Tool-specific knowledge lives here (the tools layer); the
   `message_feed` widget stays generic and renders the blocks, reusing
   `markdown::highlight_code`. See spec §11.3–11.4.

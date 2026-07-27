@@ -181,16 +181,20 @@ impl Tool for RagSearch {
         // sources (a repeat of the same content), so the model isn't fed a
         // duplicate; ranking order is preserved (see [`dedup_passages`]).
         let passages = dedup_passages(stitch_hits(hits));
-        let mut out = format!(
-            "{}\n",
-            ctx.loc.tf(
-                "tool.rag_search.result.header",
-                &[("n", &passages.len().to_string())]
-            )
+        let mut out = ctx.loc.tf(
+            "tool.rag_search.result.header",
+            &[("n", &passages.len().to_string())],
         );
-        for p in &passages {
-            out.push_str(&format!("- [{}] {}\n", p.source, p.text));
+        // Numbered, each on its own line, separated by a blank one — a passage is
+        // a whole chunk (or several stitched together) and is routinely
+        // multi-line, so a single leading `- [source] ` marker left its
+        // continuation unmarked and passages ran together. The number separates,
+        // it doesn't address: no tool takes a passage index (notes below carry
+        // real ids, which is why they stay a plain `-` list).
+        for (i, p) in passages.iter().enumerate() {
+            out.push_str(&format!("\n\n{}. [{}]\n{}", i + 1, p.source, p.text));
         }
+        out.push('\n');
         // The reverse direction (Tier 3, Path 3): notes/observations citing the
         // found sources — "search through both organs". Self-observations are
         // marked [about self] (the organs stay distinguishable). Dedup notes by id.
@@ -906,6 +910,42 @@ mod tests {
             out.result
         );
         assert!(out.result.contains("факты"));
+    }
+
+    /// A passage is a whole chunk (or several stitched together) and is routinely
+    /// multi-line, so the result has to keep the boundaries visible — otherwise
+    /// passages run together and neither the reader nor the model can tell where
+    /// one ends.
+    #[tokio::test]
+    async fn search_numbers_passages_and_separates_them() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        for (text, source) in [
+            ("кошки любят рыбу\nи спят на солнце", "про-кошек"),
+            ("собаки любят кости\nи гулять во дворе", "про-собак"),
+        ] {
+            RagAdd
+                .invoke(&ctx, serde_json::json!({"text": text, "source": source}))
+                .await
+                .unwrap();
+        }
+
+        let out = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "любят", "top_k": 5}))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("1. ["), "{out}");
+        assert!(out.contains("2. ["), "{out}");
+        // The passage text starts on its own line, and passages are set apart by
+        // a blank line.
+        assert!(
+            out.contains("]\nкошки любят рыбу") || out.contains("]\nсобаки любят кости"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\n\n2. ["),
+            "passages must be separated by a blank line: {out}"
+        );
     }
 
     #[tokio::test]

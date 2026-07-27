@@ -44,6 +44,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   was built by the previous model. Re-attaching a file rebuilds it; reading a
   file page by page is unaffected.
 
+### Fixed
+
+- Knowledge-base search results (`rag_search`) are readable again: found
+  fragments are numbered and set apart from one another, and their text is shown
+  exactly as it is in the source. Previously a fragment several lines long ran
+  into the next one, and a heading inside a fragment was rendered as a heading of
+  the reply itself, tearing the result apart — which happened with practically
+  every `.md` file, since each of its fragments starts with its section heading.
+
 ## [0.9.4] — 2026-07-26
 
 ### Added

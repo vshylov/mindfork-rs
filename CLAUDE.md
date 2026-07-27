@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1357 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1359 unit
 tests green, 62 `#[ignore]` smokes** (the largest count — log below; the current
 track is **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
@@ -8428,6 +8428,42 @@ debounce was done as a separate PR, see below).
   entry — the feature itself is still in `[Unreleased]`, so this is polish on
   something nobody has seen released. **1357 unit tests** (+1), gates clean; a
   pure formatting change, no live run needed.
+
+### Post-M9: rag_search — the same fragment separation, and a rendering defect it uncovered (done)
+- **Asked for as "do the same for `rag_search`"** (numbering the fragments, after
+  the same fix landed for `attachment_search`). Porting it blindly would have
+  made things **worse**, so the format was checked against the real renderer
+  first — three probes, and each overturned an assumption:
+  1. `rag_search` results go through `present.rs`'s **markdown** path
+     (`PROSE_RESULT_TOOLS`), unlike `attachment_search`, which is `Plain`. So in
+     the feed markdown collapses a multi-line fragment into one item line anyway
+     — the numbering alone would have changed `-` into `1.` and nothing else.
+  2. Worse: putting the fragment's text on its own line lets a **block construct
+     inside the fragment escape its list item**. A `## Heading` renders as a
+     document heading in the middle of the tool result and splits the fragment in
+     two — and `chunk_markdown` **deliberately prepends a section heading to every
+     `*.md` chunk**, so this is the common case, not a corner one.
+  3. And the probe showed the defect **already exists today**: a heading on any
+     line after the first breaks out of the current `- [source] …` bullet just the
+     same. A pre-existing bug, not one the change would have introduced.
+- **So the fix is the one `attachment_search` already had**: `rag_search` leaves
+  `PROSE_RESULT_TOOLS` and renders `Plain`, and its passages get the same
+  numbering (`1. [source]
+<text>`, blank line between). Both halves are needed —
+  numbering without plain rendering is invisible, plain rendering without
+  numbering leaves the boundaries unmarked. Fragments of the user's files are
+  **data, rendered verbatim**; that markdown was ever applied to them was the
+  actual mistake.
+- **`web_search`/`fetch_url`/`note_recall` keep markdown**: their payload is prose
+  (summaries, the user's own notes), not verbatim file content. The "linked notes"
+  block inside `rag_search`'s result also stays a plain `-` list — notes carry
+  real ids for addressing, so numbering them would add a second, fake handle.
+- **Tests**: `rag_search` numbers passages and separates them; a `present.rs`
+  regression test pinning both directions — the fragment tools render verbatim,
+  the prose tools stay markdown. **1359 unit tests** (+2), gates clean. No live
+  run needed: the change is to a result string's shape and to feed routing, both
+  covered deterministically (and the underlying search behaviour was verified live
+  in the attachment-index stage).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
