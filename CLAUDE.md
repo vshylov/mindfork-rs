@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1356 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1357 unit
 tests green, 62 `#[ignore]` smokes** (the largest count — log below; the current
 track is **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
@@ -8411,6 +8411,23 @@ debounce was done as a separate PR, see below).
   links/control tools/i18n. Worth the full set here: `build_request` gained an
   argument, `rag_search`/`delete_matching` changed their "is anything indexed?"
   guard, and `reset_vectors` was renamed and widened.
+- **Follow-up after the merge — numbering the search fragments.** A live in-app
+  run (GPT-5.6 over a real 1.6 MB collection, 1441 fragments indexed) showed the
+  feature working end to end — including the epistemics we were after: the model
+  answered *and* volunteered that "the file is 281 pages, so this is a choice
+  among the candidates I found, not the result of reading the whole collection".
+  But the **result format didn't survive real data**: a fragment is a whole chunk
+  (~800 chars) and is routinely multi-line, while `- [name] ` marked only its
+  first line — ten fragments ran together into one wall of text, boundaries lost
+  both for the reader in the feed and for the model parsing the result. Now each
+  fragment is numbered, its text starts on its own line, and a blank line
+  separates them (`1. [name]\n<text>`). The number separates, it doesn't address —
+  no tool takes a fragment index, and the comment says so. Deliberately **not**
+  routed through `present.rs`'s markdown path: file fragments are arbitrary text,
+  and markdown would turn a leading `#`/`- ` into headings and lists. No CHANGELOG
+  entry — the feature itself is still in `[Unreleased]`, so this is polish on
+  something nobody has seen released. **1357 unit tests** (+1), gates clean; a
+  pure formatting change, no live run needed.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
