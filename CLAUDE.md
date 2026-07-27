@@ -129,8 +129,9 @@ tests green, 60 `#[ignore]` smokes** (the largest count — log below; the curre
 track is **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
-plan [docs/file-attachments.md](docs/file-attachments.md)) — **stage 1 done, live
-run GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
+plan [docs/file-attachments.md](docs/file-attachments.md)) — **stages 1–2 done**
+(stage 2 — `attachment_read`: a by-reference file is read page by page, the model
+walks `1..M` and knows it read everything), **live runs GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
 also serves as the project homepage in the Windows installer, the Linux packages,
 `Cargo.toml`, the README, `install.md` and the release-notes footer; every actionable
 link stays on GitHub while the site is not up) — **done**, released as **0.9.4**;
@@ -8233,6 +8234,73 @@ debounce was done as a separate PR, see below).
   Worth running in full here because `build_request` sits on **every** generation
   path and its signature changed. Client-level smokes (`OpenAiClient`) were not
   re-run — that layer is untouched.
+
+### Post-M9: chat file attachments — stage 2 (`attachment_read`) (done)
+- **Triggered by a live in-app run of stage 1** (user, GPT-5.6): a small PDF
+  (131 KB, ~3.5k tokens, inline) worked perfectly — the model read the article
+  and reviewed it. A 1.6 MB / ~418k-token TXT went **by reference** (correct —
+  inlining would have destroyed the context), but the model **could not read
+  it**: it had the excerpt and no reader, so it improvised — `fs_list`,
+  `fs_read` (into the sandbox error), four `web_search` calls — and ended with
+  "send a few pages or reload the file", which the user cannot do. Six wasted
+  tool rounds and an impossible suggestion.
+- **Two defects, not one.** The missing tool is stage 2 by design; but the
+  by-reference block **not telling the model what is and isn't possible** was a
+  stage-1 wording bug of mine. The entry now states the page range, names
+  `attachment_read`, and says the file is unreachable by other means — pinned by
+  a regression test (`by_reference_entry_tells_the_model_how_to_read_the_rest`).
+- **`attachment_read(name, page)`** (`features/tools/attachment.rs`): returns one
+  page of the stored snapshot with a `name — page N of M` header. **Pages, not
+  character offsets** (fork F12): discrete and enumerable, so the model can walk
+  `1..M` and *know* it read everything — the guarantee retrieval cannot give.
+  Failure paths answer usefully instead of erroring: an unknown name **lists what
+  is attached**, an out-of-range page **reports the real count** — so the retry
+  can succeed. No gate, enabled by default: unlike `fs_read` this **narrows**
+  access (only what the user explicitly attached, never the filesystem).
+- **Plumbing**: `TurnInfo.attachments`/`ToolContext.attachments` as
+  `Arc<[Attachment]>` — the turn snapshot pattern already used for
+  `system_message`; `Arc` because `ToolContext` is `Clone` and texts can be
+  hundreds of KB. Background loops (reflection/consolidation) pass an empty
+  snapshot — they run outside a chat turn. `page_tokens` rides `ToolParams` from
+  config, with a settings field next to the other attachment budgets.
+- **Token accounting corrected** (also from the screenshot): the chip showed
+  a cost of `~0` for a by-reference file. Technically it carried no inline text, but
+  its excerpt **is** re-sent every turn, so "free" was a lie. New
+  `Attachment::prompt_tokens` — inline: the whole file, by reference: the
+  excerpt — and the chip/`/file list` report that. The **budget** still counts
+  inline text only (that is what `max_total_tokens` governs); the two figures are
+  deliberately different and documented as such.
+- **A real pagination bug caught by its own test**: the cut landed *before* the
+  separator, so a line break started the next page instead of ending the current
+  one, shaving a word off every page (pages came out as `["line", " one\nlin",
+  "e two\nlin", …]` — every page starting with the previous one's separator). Fixed to
+  cut *after* the separator, with a quarter-budget floor so a boundary near the
+  start doesn't waste the page. Pagination is lossless (`pages.concat() == text`)
+  and never splits a character — both pinned by tests.
+- **Tests**: entity (pagination is lossless / prefers line breaks / never splits
+  a character; a short or empty text is one page and `page 1` always exists;
+  by-reference cost is the excerpt, non-zero); tool (walking `1..M` reassembles
+  the file byte for byte; `page` defaults to 1; unknown name lists attachments;
+  out-of-range reports the count; per-locale description gate); injection (the
+  by-reference entry names the tool and the range, an inline one doesn't);
+  orchestrator (the turn snapshot actually carries the chat's attachments, and
+  the tool is registered under its wire name). **1341 unit tests green** (+11),
+  **61 `#[ignore]`** (+1), clippy `-D warnings`/fmt/i18n gates/`cyrillic_scan`
+  clean.
+- **Live run — GO** (Gemma 4 31B q4_0): `attachment_read_e2e_live` — a file
+  forced by reference (1454 tokens, `prompt_tokens: 59` — the excerpt only), the
+  answer planted on the **last** page. The model called `attachment_read` **five
+  times**, walked the pages and answered `ZARYA-8823`. Exactly the behaviour the
+  live stage-1 run lacked. **Regression — clean**: all **23** orchestrator live
+  e2e smokes green (718 s), the turn snapshot/`ToolParams` changes touching every
+  tool path.
+- **Along the way**, `excerpt` and `paginate` were deduplicated onto a shared
+  `cut_point` — they had grown two independent "back off to a character, then a
+  word boundary" implementations that had already drifted (half- vs
+  quarter-budget floor, and one kept the separator while the other dropped it).
+  One visible consequence: an excerpt now **ends with** its separator, like a
+  page (harmless — a newline follows it in the prompt). Both attachment live
+  smokes were re-run after the refactor.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

@@ -252,6 +252,8 @@ src/
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
+│  │  ├─ attachment.rs      attachment_read: one page of a file attached to the chat
+│  │  │                     (`/file attach`; reads the snapshot, not the disk — spec §9.7)
 │  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)

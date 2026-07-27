@@ -129,6 +129,8 @@ impl Orchestrator {
                 system_message,
                 effective_sampling: SamplingConfig::default(),
                 last_user_message_at: last_user,
+                // A background task runs outside a chat turn — no attachments.
+                attachments: std::sync::Arc::from(Vec::new()),
                 lang,
                 cancel: cancel.clone(),
             },

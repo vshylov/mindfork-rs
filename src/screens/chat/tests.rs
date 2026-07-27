@@ -1421,6 +1421,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
             name: "a.md".into(),
             bytes: 4096,
             est_tokens: 1200,
+            prompt_tokens: 1200,
             mode: AttachMode::Inline,
         },
         // A by-reference file contributes only its excerpt, so it must not be
@@ -1429,15 +1430,19 @@ fn attachment_chip_shows_count_and_standing_cost() {
             name: "big.log".into(),
             bytes: 900_000,
             est_tokens: 200_000,
+            // Only the excerpt is actually re-sent every turn.
+            prompt_tokens: 300,
             mode: AttachMode::ByReference,
         },
     ]);
     let hint = s.attachments_hint().expect("a chip with attachments");
     assert!(hint.contains('2'), "the count of files: {hint}");
-    assert!(hint.contains("1.2k"), "the inline cost only: {hint}");
+    // The real per-request cost: the inline file in full (1200) plus the
+    // by-reference excerpt (300) — not its whole 200k, and not zero either.
+    assert!(hint.contains("1.5k"), "the standing cost: {hint}");
     assert!(
         !hint.contains("200k"),
-        "by-reference weight must not be counted: {hint}"
+        "a by-reference file must not be counted at full weight: {hint}"
     );
 }
 
@@ -1451,6 +1456,7 @@ fn file_list_note_numbers_items_for_removal() {
             name: "notes.md".into(),
             bytes: 2048,
             est_tokens: 400,
+            prompt_tokens: 400,
             mode: AttachMode::Inline,
         }],
     });

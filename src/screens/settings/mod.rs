@@ -507,6 +507,7 @@ enum FieldId {
     AttachMaxFile,
     AttachMaxTotal,
     AttachExcerpt,
+    AttachPage,
     // Self-model (narrative, prompt injection)
     SmMaxNarrative,
     SmNarrativeInPrompt,

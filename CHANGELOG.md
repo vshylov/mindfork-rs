@@ -25,11 +25,12 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   plus `.html`, `.pdf` and `.docx`, whose text is extracted the same way `/rag
   add` does it. A file's content is snapshotted when attached, so the
   conversation stays coherent even if the file later changes or is deleted.
-  A large file is **not refused**: it is attached "by reference" — the model
-  gets its name, size and the beginning instead of the whole text (reading it in
-  full arrives in the next stage). Budgets are in the settings "Memory" section
-  ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip,
-  since attachments cost tokens on every turn.
+  A large file is **not refused**: it is attached "by reference" — the prompt
+  gets its name, size and the beginning, and the model reads the rest page by
+  page on demand, so even a multi-megabyte file can be worked through without
+  flooding the context. Budgets are in the settings "Memory" section
+  ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip
+  with what the attachments actually cost per message.
 
 ## [0.9.4] — 2026-07-26
 

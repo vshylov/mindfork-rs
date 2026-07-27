@@ -104,6 +104,39 @@ fn inline_carries_full_text_by_reference_only_an_excerpt() {
     assert!(out.contains("ДАННЫЕ"), "{out}");
 }
 
+/// Regression for a defect seen on a live run: the by-reference entry showed an
+/// excerpt but never said **how to read the rest**, so the model improvised with
+/// the wrong tools (`fs_read` into the sandbox, then `web_search`) and ended up
+/// asking the user for the impossible. The entry must name `attachment_read`,
+/// state the page range, and say the file is unreachable by other means.
+#[test]
+fn by_reference_entry_tells_the_model_how_to_read_the_rest() {
+    let cfg = AttachmentSettings {
+        excerpt_tokens: 5,
+        page_tokens: 10,
+        ..Default::default()
+    };
+    let long = "слово ".repeat(200);
+    let items = vec![att("big.txt", &long, AttachMode::ByReference)];
+    let out = inject_attachments(None, &items, &cfg, ru()).unwrap();
+
+    assert!(
+        out.contains("attachment_read"),
+        "the model must be told which tool reads the rest: {out}"
+    );
+    let pages = items[0].page_count(cfg.page_tokens);
+    assert!(pages > 1, "the fixture must span several pages");
+    assert!(
+        out.contains(&pages.to_string()),
+        "the page range must be stated ({pages} pages): {out}"
+    );
+
+    // An inline file needs no such pointer — it is already there in full.
+    let inline = vec![att("small.txt", "коротко", AttachMode::Inline)];
+    let out = inject_attachments(None, &inline, &cfg, ru()).unwrap();
+    assert!(!out.contains("attachment_read"), "{out}");
+}
+
 #[test]
 fn fence_widens_so_a_file_cannot_close_its_own_section() {
     // A file quoting the default fence must not be able to end its section and

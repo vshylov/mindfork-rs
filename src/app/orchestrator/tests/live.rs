@@ -3,6 +3,85 @@
 
 use super::*;
 
+/// Chat attachments, stage 2 go/no-go (docs/file-attachments.md): a file too big
+/// to inline is attached **by reference**, and the model reaches the part it
+/// needs through `attachment_read` — the answer sits on a **late** page, so an
+/// excerpt alone cannot produce it. This is the direct regression for the
+/// behaviour seen on a live run of stage 1, where the model had no reader tool
+/// and flailed into `fs_read`/`web_search` instead.
+/// `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn attachment_read_e2e_live() {
+    use crate::shared::config::AttachmentSettings;
+    const CODE: &str = "ZARYA-8823";
+    let config = AppConfig {
+        attachments: AttachmentSettings {
+            // Force by-reference, and page the file into a handful of pages.
+            max_file_tokens: 100,
+            excerpt_tokens: 60,
+            page_tokens: 300,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Filler first, the payload last — the excerpt shows only the beginning.
+    let mut body = String::from("Технические заметки проекта.\n\n");
+    for i in 1..=45 {
+        body.push_str(&format!(
+            "Заметка {i}: рутинная запись без особого содержания, строка для объёма.\n"
+        ));
+    }
+    body.push_str(&format!("\nВНУТРЕННИЙ КОД СБОРКИ: {CODE}\n"));
+    let path = dir.path().join("notes-big.txt");
+    std::fs::write(&path, &body).unwrap();
+
+    cmd_tx
+        .send(AppCommand::FileAttach {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let attached = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::FileProgress(_)))
+        .await
+        .unwrap();
+    eprintln!("attach: {attached:?}");
+
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "В прикреплённом файле notes-big.txt указан внутренний код сборки. \
+         Прочитай файл и назови этот код.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "tool calls: {:#?}",
+        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    eprintln!("reply: {answer}");
+    assert!(
+        calls
+            .iter()
+            .any(|(n, _)| n == crate::features::tools::attachment::ATTACHMENT_READ_ID),
+        "the model must reach the file through attachment_read, called: {:?}",
+        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        answer.contains(CODE),
+        "the answer sits on a late page and must be found: {answer}"
+    );
+}
+
 /// Chat attachments (docs/file-attachments.md, stage 1 go/no-go): a file attached
 /// with `/file attach` actually reaches the model through the real wire path and
 /// is used to answer. Two phases in two chats: a **baseline** (no attachment —

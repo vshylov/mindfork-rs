@@ -683,6 +683,9 @@ pub const DEFAULT_ATTACH_MAX_FILE_TOKENS: usize = 4000;
 pub const DEFAULT_ATTACH_MAX_TOTAL_TOKENS: usize = 8000;
 /// Default excerpt size shown for a by-reference attachment, in estimated tokens.
 pub const DEFAULT_ATTACH_EXCERPT_TOKENS: usize = 300;
+/// Default page size for `attachment_read`, in estimated tokens. Big enough to be
+/// worth a round trip, small enough that a few pages don't blow an 8k context.
+pub const DEFAULT_ATTACH_PAGE_TOKENS: usize = 1500;
 
 /// Chat file-attachment settings (`/file attach`, docs/file-attachments.md).
 /// Budgets are in **estimated tokens** (`shared::tokens`) — characters mislead
@@ -697,6 +700,9 @@ pub struct AttachmentSettings {
     pub max_total_tokens: usize,
     /// How much of a by-reference file's head to show in the pinned block.
     pub excerpt_tokens: usize,
+    /// Page size for the `attachment_read` tool — how much of a by-reference
+    /// file one call returns.
+    pub page_tokens: usize,
 }
 
 impl Default for AttachmentSettings {
@@ -705,6 +711,7 @@ impl Default for AttachmentSettings {
             max_file_tokens: DEFAULT_ATTACH_MAX_FILE_TOKENS,
             max_total_tokens: DEFAULT_ATTACH_MAX_TOTAL_TOKENS,
             excerpt_tokens: DEFAULT_ATTACH_EXCERPT_TOKENS,
+            page_tokens: DEFAULT_ATTACH_PAGE_TOKENS,
         }
     }
 }

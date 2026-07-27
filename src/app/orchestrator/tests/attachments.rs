@@ -210,6 +210,59 @@ async fn reattaching_the_same_file_replaces_the_previous_snapshot() {
     }
 }
 
+/// The turn snapshot must carry the chat's attachments, otherwise
+/// `attachment_read` would see nothing (the tool can't reach `Chat` — the
+/// orchestrator owns it).
+#[tokio::test]
+async fn attachment_read_sees_the_chat_files_through_the_turn_snapshot() {
+    use crate::features::tools::attachment::{ATTACHMENT_READ_ID, AttachmentRead};
+    use crate::features::tools::{Tool, ToolParams, TurnInfo};
+
+    let (dir, mut orch) = bare_orch();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "t");
+    let body = "страница один и её содержимое\n".repeat(20);
+    chat.attachments
+        .push(crate::entities::attachment::Attachment::new(
+            "doc.txt",
+            "/tmp/doc.txt",
+            body.clone(),
+            body.len(),
+            AttachMode::ByReference,
+        ));
+    let chat_id = chat.id;
+    orch.profiles.push(profile.clone());
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    // The same snapshot `start_generation` builds for the turn.
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    let ctx = crate::features::tools::ToolContext::new(
+        orch.tool_deps(Arc::new(MockBackend::scripted(vec![]))),
+        ToolParams::from_config(&orch.config),
+        TurnInfo {
+            profile_id: profile.id,
+            chat_id,
+            system_message: chat.system_message.clone(),
+            effective_sampling: Default::default(),
+            last_user_message_at: None,
+            attachments: Arc::from(chat.attachments.clone()),
+            lang: crate::shared::i18n::Lang::Ru,
+            cancel: tokio_util::sync::CancellationToken::new(),
+        },
+    );
+
+    let out = AttachmentRead
+        .invoke(&ctx, serde_json::json!({"name": "doc.txt", "page": 1}))
+        .await
+        .unwrap()
+        .result;
+    assert!(out.contains("страница один"), "{out}");
+    // And the tool is actually registered under its wire name.
+    assert!(orch.registry.get(ATTACHMENT_READ_ID).is_some());
+    drop(dir);
+}
+
 #[tokio::test]
 async fn attaching_a_missing_file_reports_an_error() {
     let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);

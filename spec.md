@@ -724,14 +724,29 @@ Attachments are **chat-scoped**, need **no embedder**, and are delivered
   to **by reference**: the block carries its metadata and the head excerpt.
   Attaching therefore **never fails because of size**; a refusal only happens for
   a missing file or content that doesn't decode.
+- **Reading a by-reference file — `attachment_read(name, page)`.** Pages
+  (`page_tokens`) rather than character offsets: they are discrete and
+  enumerable, so the model can walk `1..M` and *know* it has read everything —
+  the guarantee retrieval cannot give. The tool reads the stored snapshot, so it
+  **narrows** access compared with `fs_read` (only what the user attached, never
+  the filesystem) — hence no gate and enabled by default. The by-reference entry
+  in the block **states the page range and names the tool**, and says the file is
+  unreachable by other means: without that the model improvises with the wrong
+  tools (observed live: `fs_read` into the sandbox, then `web_search`) and ends
+  up asking the user for the impossible.
+- **The displayed cost is what is actually re-sent**: an inline file counts in
+  full, a by-reference one counts its excerpt (not its whole size, and not zero).
+  The **budget**, separately, is measured against inline text only — that is what
+  `max_total_tokens` governs.
 - **Formats**: any valid UTF-8 (source code, configs, logs) plus html/pdf/docx
   through the same extractors RAG uses. Undecodable content is refused with a
   clear message.
 - **UI**: a feed note per command, a `§ files: N (~tokens)` status-bar chip
   (attachments cost tokens on every turn — the standing cost has to be visible),
   and budget fields in the settings "Memory" section.
-- Next stages of the track: exhaustive reading of a by-reference file
-  (`attachment_read`) and a chat-scoped semantic index over attachments.
+- Next stage of the track: a chat-scoped semantic index over attachments
+  (`attachment_search`) — finding *where* to look in a large file, which paging
+  alone makes slow.
 
 ---
 

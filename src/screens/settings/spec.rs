@@ -416,6 +416,11 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.attachments.excerpt_tokens = v;
             }
         }),
+        AttachPage => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.attachments.page_tokens = v;
+            }
+        }),
         SmMaxNarrative => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.self_model.max_narrative = v;
