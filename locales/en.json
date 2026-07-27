@@ -10,6 +10,7 @@
   "prompt.attachments.begin_full": "{open} file: {name} ({size}) {close}",
   "prompt.attachments.begin_excerpt": "{open} file: {name} ({size}, ~{tokens} tokens, {pages} pages — only the beginning is shown below) {close}",
   "prompt.attachments.end_excerpt": "{open} to read the rest of {name}, call attachment_read(name, page) for pages 1..{pages}; this file is not reachable through any other tool {close}",
+  "prompt.attachments.end_excerpt_search": "{open} to find a place in {name} by meaning, call attachment_search(query); to read a specific page, attachment_read(name, page) for pages 1..{pages}; this file is not reachable through any other tool {close}",
   "prompt.attachments.end": "{open} end: {name} {close}",
 
   "prompt.title.system": [
@@ -481,7 +482,16 @@
   "tool.attachment_read.none": "No files are attached to this chat.",
   "tool.attachment_read.unknown": "File \"{name}\" is not attached to this chat. Attached: {names}.",
   "tool.attachment_read.bad_page": "There is no page {page}: file \"{name}\" has {total} pages.",
+  "tool.attachment_search.desc": "Searches by meaning inside the files the user attached to this chat and returns the matching fragments. Use it on a large file marked \"only the beginning is shown\": it is far faster than walking pages with attachment_read, which stays available for reading a specific page or the whole file.",
+  "tool.attachment_search.param.query": "What to look for, in your own words — the search is semantic, not by exact substring.",
+  "tool.attachment_search.param.top_k": "How many fragments to return. Defaults to 5.",
+  "tool.attachment_search.err.query_empty": "The `query` argument must be a non-empty string.",
+  "tool.attachment_search.not_indexed": "The files of this chat cannot be searched (no search index was built). Read them with attachment_read(name, page) — page 1 first, then onwards.",
+  "tool.attachment_search.result.header": "Fragments found: {n}.",
+  "tool.attachment_search.result.empty": "Nothing was found for that query. Try different wording, or read the pages with attachment_read(name, page).",
+  "tool.attachment_search.result.hint": "These are fragments, not whole pages: to read the surrounding text, use attachment_read(name, page).",
   "ui.tool.label.attachment_read": "read an attachment",
+  "ui.tool.label.attachment_search": "search attachments",
 
   "ui.file.usage": "usage: /file attach <path> · /file remove <name|#N> · /file list",
   "ui.file.err.missing_subcommand": "specify a subcommand. {usage}",
@@ -497,6 +507,10 @@
   "ui.file.list_item": "\n• #{i} {name} — {size}, ~{tokens} tok. ({mode})",
   "ui.file.failed": "Files: {err}",
   "ui.file.chip": "files: {n} (~{tokens})",
+  "ui.file.indexing": "Files: building the search index for {name} — fragments {done}/{total}",
+  "ui.file.indexed": "Files: {name} is searchable — {chunks} fragments indexed",
+  "ui.file.index_skipped": "Files: no search index for {name} ({reason}). Reading the file page by page still works.",
+  "ui.file.index_no_embedder": "the embedding server is not configured",
 
   "ui.help.title": "About",
   "ui.help.footer.tabs": " Tab/←→ tabs · ↑↓ scroll · Esc — close ",

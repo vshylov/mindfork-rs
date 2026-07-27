@@ -124,14 +124,16 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1330 unit
-tests green, 60 `#[ignore]` smokes** (the largest count — log below; the current
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1356 unit
+tests green, 62 `#[ignore]` smokes** (the largest count — log below; the current
 track is **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
-plan [docs/file-attachments.md](docs/file-attachments.md)) — **stages 1–2 done**
+plan [docs/file-attachments.md](docs/file-attachments.md)) — **complete, stages 1–3**
 (stage 2 — `attachment_read`: a by-reference file is read page by page, the model
-walks `1..M` and knows it read everything), **live runs GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
+walks `1..M` and knows it read everything; stage 3 — `attachment_search` over a
+chat-scoped semantic index: finding the right place by meaning in a big file, with
+graceful degradation when no embedder is configured), **live runs GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
 also serves as the project homepage in the Windows installer, the Linux packages,
 `Cargo.toml`, the README, `install.md` and the release-notes footer; every actionable
 link stays on GitHub while the site is not up) — **done**, released as **0.9.4**;
@@ -8302,6 +8304,114 @@ debounce was done as a separate PR, see below).
   page (harmless — a newline follows it in the prompt). Both attachment live
   smokes were re-run after the refactor.
 
+### Post-M9: chat file attachments — stage 3 (`attachment_search`) (done)
+- **Completes the track** ([docs/file-attachments.md](docs/file-attachments.md)).
+  Stage 2 made a big by-reference file **readable** (`attachment_read` walks
+  pages `1..M`), but it did not make it **searchable**: on the user's real 1.6 MB
+  file (~280 pages), finding a specific place by paging is hopeless — a dozen-plus
+  rounds, and `max_tool_rounds` runs out first. Stage 3 adds a **chat-scoped
+  semantic index** and `attachment_search`. The two are complementary, not
+  redundant: search answers *where* to look, `attachment_read` guarantees
+  *everything* can be read.
+- **Fork F11(a) — a separate index, not a `chat_id` column on `rag_documents`**
+  (confirmed by the user 2026-07-27). Three technical reasons, in order of weight:
+  (1) `rag_vectors` is a vec0 table partitioned by `profile_id` and the `k`
+  constraint applies **inside** the partition — a `WHERE chat_id` in the join
+  would filter *after* kNN and silently return fewer than `k` hits; (2) the column
+  doesn't exist and `CREATE TABLE IF NOT EXISTS` can't add one → a guarded `ALTER`
+  or the first real `DB_STEPS` bump; (3) the user's profile knowledge base is
+  **curated** — one chat's attachments would pollute `/rag list|rebuild|remove`
+  and cross-source dedup. New `shared/storage/db/attachments.rs`:
+  `attachment_documents` + a vec0 `attachment_vectors` partitioned by **`chat_id`**.
+  Scoping by chat is **strictly narrower** than the `profile_id` isolation
+  invariant (spec §10.3) — a chat belongs to exactly one profile, so it holds a
+  fortiori (documented in the module doc). Purely **additive** DDL
+  (`CREATE TABLE IF NOT EXISTS` in `baseline_ddl`) → **no `DB_STEPS` bump, no
+  migration** (ADR 0006 F12); the table rides the existing backup as part of
+  `data.db`.
+- **A shared dimensionality, and the trap it opened.** Per F11 the vector size
+  stays one per DB (`meta.rag_dim`): mixing vectors from two embedding models is
+  meaningless anyway. `ensure_vec_table` was split into `ensure_dim` (registers
+  the shared size, errors on a mismatch) + a per-table `CREATE VIRTUAL TABLE IF
+  NOT EXISTS`. That exposed a latent read bug: `rag_search` and `delete_matching`
+  used "is a dimension recorded?" as a proxy for "does `rag_vectors` exist?" —
+  true before, false now (an attachment can register the size first, leaving RAG's
+  table absent → a SQL error on a table that isn't there). Both switched to a real
+  `table_exists` check, pinned by a regression test.
+- **`rag_reset_vectors` → `reset_vectors`, and it now drops both.** A dimension
+  change (`/rag rebuild` with a new model) must drop `attachment_vectors` too,
+  **and** delete `attachment_documents`: their vectors are gone and sqlite reuses
+  rowids, so surviving rows would join onto whatever lands on those rowids next —
+  stale text at wrong distances. Keeping this in one method was deliberate:
+  splitting it into two calls at the call site would make the pair forgettable,
+  and forgetting it is silent corruption. It returns the number of chunks dropped
+  so the rebuild task can `warn` about the loss instead of hiding it. The
+  attachment index is **derived** data (the text snapshot lives in the chat file),
+  so re-attaching rebuilds it — recorded as roadmap groundwork.
+- **Indexing is a background task** (`spawn_attachment_index` in
+  `orchestrator/attachments.rs`, the `spawn_rag_ingest` pattern): chunking via
+  RAG's own `chunk_text`/`chunk_markdown` (`ChunkParams` from `config.rag` — no
+  new settings), sub-batched embedding (`EMBED_BATCH_CHUNKS`, both made
+  `pub(super)`), progress through the **same banner slot** the RAG banner uses
+  (`RagBanner` — both are "an index is being built in the background", and they
+  don't overlap in practice; the field's doc says so, and `is_rag_active` already
+  gates the spinner). Only **by-reference** files are indexed (fork F13): an
+  inline one is already in the prompt in full, so search would return duplicates
+  of what the model can see.
+- **Graceful degradation is the load-bearing property** (ADR 0002 pattern): with
+  no embedder the index is skipped with a note (`IndexSkipped`), and the block,
+  `attachment_read` and everything else keep working. The feature never *depends*
+  on RAG being configured — which is the whole reason attachments exist as a
+  separate mechanism (§3 of the plan).
+- **The block only advertises what exists.** `inject_attachments` gained an
+  `indexed: &[Uuid]` argument (one `attachment_indexed_ids` query per turn, and
+  only when the chat has attachments): a by-reference entry names
+  `attachment_search` **only** for a file that really has an index — promising
+  search over an unindexed file is exactly the "sent down a dead end" failure
+  stage 2 was created to fix. The tool likewise distinguishes "nothing indexed
+  here" from "no hits", pointing at page reading in both cases.
+- **No cancellation machinery, by design.** The obvious race — an indexing task
+  finishing *after* its file was removed — is closed where it actually matters:
+  `attachment_search` filters hits by the **turn's attachment snapshot**, so a
+  removed file can never surface, and `attachment_prune(chat, keep)` (called on
+  attach and on remove) collects the leftover rows. That replaced a
+  `HashMap<Uuid, CancellationToken>` + lifecycle bookkeeping with one DB
+  primitive. Along the way `ToolContext.chat_id` finally got a real consumer (its
+  `#[allow(dead_code)]` is gone).
+- **Tests**: db (chat isolation on kNN — chat B's identical vector must not leak
+  into A; delete/prune scoped to one chat; re-index replaces; the shared dimension
+  + `reset_vectors` clearing both; the `rag_search`-without-its-table regression);
+  tool (finds by meaning and names the file; **hides files no longer attached**;
+  reports "nothing indexed" and degrades when the embedder is gone — both pointing
+  at `attachment_read`; empty query); injection (search offered only for an
+  indexed file, page reading either way); orchestrator through the real `run` loop
+  (a by-reference file is indexed and searchable, another chat sees nothing of it;
+  an inline file is **not** indexed; `/file remove` drops its index). **1356 unit
+  tests green** (+15), **62 `#[ignore]`** (+1), clippy `-D warnings`/fmt/i18n
+  gates/`cyrillic_scan` clean.
+- **Live run — GO on the first attempt** (`attachment_search_e2e_live`, Gemma 4
+  31B q4_0 + real bge-m3): a 240-item document with the payload buried at item
+  121, indexed into 29 fragments; the model made **one** `attachment_search` call
+  and answered `ZARYA-4417` in ~9 s. That is exactly the stage's criterion —
+  "finds the right place by meaning in one call instead of paging through".
+- **The regression run turned up the stage's most interesting finding — in the
+  stage-2 smoke.** `attachment_read_e2e_live` failed: with an embedder configured
+  the by-reference file is now indexed too, and the model **stopped walking pages
+  entirely** — one `attachment_search` call, correct answer (`ZARYA-8823`). Not a
+  defect: it is the feature working, and the narrow "must call `attachment_read`"
+  assertion had simply become wrong. Rewritten as two turns: turn 1 keeps the real
+  stage-1 regression (the answer is found **and** the model stays inside the
+  attachment tools — no `fs_read`/`web_search` improvising), turn 2 asks for a
+  specific page, which search cannot answer, keeping the guaranteed path covered
+  live. Both green (turn 2 quoted page 1's first line). Worth remembering as a
+  pattern: a new capability can invalidate an older smoke's *assertion* while
+  improving its *outcome*.
+- **Regression — clean otherwise**: the remaining **23** orchestrator live e2e
+  smokes green (571 s) — memory/self-model/notes/RAG/graph/cross-organ
+  links/control tools/i18n. Worth the full set here: `build_request` gained an
+  argument, `rag_search`/`delete_matching` changed their "is anything indexed?"
+  guard, and `reset_vectors` was renamed and widened.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.
@@ -8323,6 +8433,7 @@ debounce was done as a separate PR, see below).
   via `q`/`Esc`/`Ctrl+C` is checked by the `map_key` unit tests. Live verification needs
   a real terminal.
 - Pointwise `#[allow(dead_code)]` (with a comment) on deliberate ahead-of-consumer
-  API: `ToolContext.chat_id`, `ApiRole::System`, `Db::note_delete/rag_count`,
-  `ToolRegistry::get`. The crate-wide allow was removed at M9.
+  API: `ApiRole::System`, `Db::note_delete/rag_count`, `ToolRegistry::get`. The
+  crate-wide allow was removed at M9. (`ToolContext.chat_id` left this list in the
+  attachment-index stage — it now scopes `attachment_search`.)
 - The app's data is portable: it lives next to the binary (in dev — `target/debug/`).

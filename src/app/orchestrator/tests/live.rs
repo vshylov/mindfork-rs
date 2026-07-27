@@ -3,12 +3,124 @@
 
 use super::*;
 
+/// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
+/// file the model finds the right place **by meaning in one `attachment_search`
+/// call**, instead of walking pages. The payload sits deliberately deep — around
+/// page 20 of ~25 — so paging to it would take a dozen-plus rounds and blow past
+/// `max_tool_rounds`, while search reaches it immediately.
+/// Needs both servers: `MINDFORK_ENGINE_URL` **and** `MINDFORK_EMBED_URL` (with no
+/// embedder the index isn't built and the smoke has nothing to test).
+/// `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL) and embedder (MINDFORK_EMBED_URL)"]
+async fn attachment_search_e2e_live() {
+    use crate::app::events::FileProgress;
+    use crate::shared::config::AttachmentSettings;
+    const CODE: &str = "ZARYA-4417";
+    if std::env::var("MINDFORK_EMBED_URL").is_err() {
+        eprintln!("skip: MINDFORK_EMBED_URL not set (the index needs a real embedder)");
+        return;
+    }
+    let config = AppConfig {
+        attachments: AttachmentSettings {
+            max_file_tokens: 100, // force by reference
+            excerpt_tokens: 60,
+            page_tokens: 300,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Filler around one topically distinctive paragraph: nothing but semantic
+    // similarity can single it out.
+    let mut body = String::from("Протоколы совещаний отдела эксплуатации.\n\n");
+    for i in 1..=120 {
+        body.push_str(&format!(
+            "Пункт {i}: обсудили график дежурств и порядок передачи смены, решений не приняли.\n"
+        ));
+    }
+    body.push_str(&format!(
+        "\nПункт 121: по итогам проверки холодильной установки заменён компрессор; \
+         инвентарный код запасной части: {CODE}.\n"
+    ));
+    for i in 122..=240 {
+        body.push_str(&format!(
+            "Пункт {i}: рассмотрели заявки на канцелярию и мелкий ремонт, замечаний нет.\n"
+        ));
+    }
+    let path = dir.path().join("protocols.txt");
+    std::fs::write(&path, &body).unwrap();
+
+    cmd_tx
+        .send(AppCommand::FileAttach {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    // Wait for indexing to finish (it runs in the background after the attach).
+    let indexed = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::Indexed { .. })
+                | AppEvent::FileProgress(FileProgress::IndexSkipped { .. })
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("index: {indexed:?}");
+    assert!(
+        matches!(
+            indexed,
+            AppEvent::FileProgress(FileProgress::Indexed { .. })
+        ),
+        "the smoke needs a real embedder: {indexed:?}"
+    );
+
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "В прикреплённом файле protocols.txt где-то упомянута замена компрессора \
+         холодильной установки. Найди это место и назови инвентарный код запасной части.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let names: Vec<&String> = calls.iter().map(|(n, _)| n).collect();
+    eprintln!("tool calls: {names:#?}");
+    eprintln!("reply: {answer}");
+    assert!(
+        calls
+            .iter()
+            .any(|(n, _)| n == crate::features::tools::attachment::ATTACHMENT_SEARCH_ID),
+        "the model must find the place by meaning, called: {names:?}"
+    );
+    assert!(
+        answer.contains(CODE),
+        "the code sits deep in the file and must be found: {answer}"
+    );
+}
+
 /// Chat attachments, stage 2 go/no-go (docs/file-attachments.md): a file too big
 /// to inline is attached **by reference**, and the model reaches the part it
-/// needs through `attachment_read` — the answer sits on a **late** page, so an
-/// excerpt alone cannot produce it. This is the direct regression for the
-/// behaviour seen on a live run of stage 1, where the model had no reader tool
-/// and flailed into `fs_read`/`web_search` instead.
+/// needs — the answer sits on a **late** page, so the excerpt alone cannot
+/// produce it. This is the direct regression for the behaviour seen on a live run
+/// of stage 1, where the model had no reader tool at all and flailed into
+/// `fs_read`/`web_search` instead.
+///
+/// Two turns, because stage 3 changed what "reaching it" looks like: with an
+/// embedder configured the file is also indexed, and the model now legitimately
+/// prefers **one** `attachment_search` call over walking pages (observed live —
+/// the earlier, `attachment_read`-only assertion started failing on exactly that,
+/// with the answer still correct). So turn 1 asserts the outcome and that the
+/// model stayed within the attachment tools, and turn 2 asks for a specific page
+/// to keep `attachment_read` itself covered live.
 /// `#[ignore]`, manual against a live model.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -61,24 +173,46 @@ async fn attachment_read_e2e_live() {
          Прочитай файл и назови этот код.",
     )
     .await;
-    cmd_tx.send(AppCommand::Quit).unwrap();
-    handle.await.unwrap();
-
-    eprintln!(
-        "tool calls: {:#?}",
-        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
-    );
-    eprintln!("reply: {answer}");
-    assert!(
-        calls
-            .iter()
-            .any(|(n, _)| n == crate::features::tools::attachment::ATTACHMENT_READ_ID),
-        "the model must reach the file through attachment_read, called: {:?}",
-        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
-    );
+    let names: Vec<&String> = calls.iter().map(|(n, _)| n).collect();
+    eprintln!("turn 1 tool calls: {names:#?}");
+    eprintln!("turn 1 reply: {answer}");
     assert!(
         answer.contains(CODE),
         "the answer sits on a late page and must be found: {answer}"
+    );
+    // The stage-1 defect, precisely: the model must reach the file through the
+    // attachment tools rather than improvising with the filesystem or the web.
+    let attachment_tools = [
+        crate::features::tools::attachment::ATTACHMENT_READ_ID,
+        crate::features::tools::attachment::ATTACHMENT_SEARCH_ID,
+    ];
+    assert!(
+        !calls.is_empty()
+            && calls
+                .iter()
+                .all(|(n, _)| attachment_tools.contains(&n.as_str())),
+        "the file must be reached through the attachment tools only, called: {names:?}"
+    );
+
+    // Turn 2: a specific page keeps the guaranteed path covered live — search
+    // cannot answer "what is on page N".
+    let (answer2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Открой страницу 1 файла notes-big.txt и процитируй её первую строку.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let names2: Vec<&String> = calls2.iter().map(|(n, _)| n).collect();
+    eprintln!("turn 2 tool calls: {names2:#?}");
+    eprintln!("turn 2 reply: {answer2}");
+    assert!(
+        calls2
+            .iter()
+            .any(|(n, _)| n == crate::features::tools::attachment::ATTACHMENT_READ_ID),
+        "asking for a specific page must go through attachment_read, called: {names2:?}"
     );
 }
 

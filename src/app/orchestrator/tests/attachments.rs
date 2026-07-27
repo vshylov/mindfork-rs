@@ -263,6 +263,151 @@ async fn attachment_read_sees_the_chat_files_through_the_turn_snapshot() {
     drop(dir);
 }
 
+// ---------- the chat-scoped semantic index (stage 3) ----------
+
+/// A config whose budget forces a by-reference attachment and chunks the text
+/// finely enough that a short fixture yields several fragments.
+fn indexing_config() -> AppConfig {
+    AppConfig {
+        attachments: AttachmentSettings {
+            max_file_tokens: 10, // ≈40 bytes → anything real goes by reference
+            excerpt_tokens: 5,
+            ..Default::default()
+        },
+        rag: crate::shared::config::RagSettings {
+            chunk_target_chars: 60,
+            chunk_overlap_chars: 10,
+            chunk_max_chars: 120,
+        },
+        ..Default::default()
+    }
+}
+
+/// Waits for the outcome of background indexing: `Ok(chunks)` when the index was
+/// built, `Err(reason)` when it was skipped.
+async fn wait_indexed(rx: &mut UnboundedReceiver<AppEvent>) -> Result<usize, String> {
+    let ev = wait_for(rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::Indexed { .. })
+                | AppEvent::FileProgress(FileProgress::IndexSkipped { .. })
+        )
+    })
+    .await
+    .expect("an indexing outcome");
+    match ev {
+        AppEvent::FileProgress(FileProgress::Indexed { chunks, .. }) => Ok(chunks),
+        AppEvent::FileProgress(FileProgress::IndexSkipped { reason, .. }) => Err(reason),
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn a_by_reference_file_is_indexed_and_searchable_within_the_chat() {
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(None, indexing_config());
+    // A distinctive fragment in the middle: it is past the excerpt, so only the
+    // index (or page reading) can reach it.
+    let body = format!(
+        "{}\nрецепт борща со свёклой и капустой\n{}",
+        "наполнитель наполнитель ".repeat(20),
+        "прочий текст прочий текст ".repeat(20)
+    );
+    let path = write_file(&dir, "book.txt", &body);
+
+    cmd_tx.send(AppCommand::FileAttach { path }).unwrap();
+    let info = wait_attached(&mut evt_rx).await;
+    assert_eq!(info.mode, AttachMode::ByReference);
+    let chunks = wait_indexed(&mut evt_rx).await.expect("an index was built");
+    assert!(chunks > 1, "the fixture must produce several fragments");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let storage = crate::shared::storage::Storage::open(Paths::with_root(dir.path())).unwrap();
+    let chat = &storage.json().load_chats().unwrap()[0];
+    let attachment = &chat.attachments[0];
+    assert_eq!(
+        storage.db().attachment_indexed_ids(chat.id).unwrap(),
+        vec![attachment.id]
+    );
+    // And the index actually answers by meaning (the same deterministic embedder
+    // the orchestrator used).
+    let embedder = crate::shared::api::mock::MockEmbedder::new(16);
+    let query = embedder
+        .embed(vec!["борщ со свёклой".into()])
+        .await
+        .unwrap()
+        .remove(0);
+    let hits = storage.db().attachment_search(chat.id, &query, 3).unwrap();
+    assert!(
+        hits.iter().any(|h| h.text.contains("рецепт борща")),
+        "the index must find the fragment: {hits:?}"
+    );
+    // Another chat sees nothing of it (chat scoping, fork F11).
+    assert!(
+        storage
+            .db()
+            .attachment_search(Uuid::new_v4(), &query, 3)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn an_inline_file_is_not_indexed() {
+    // Fork F13: an inline file is already in the prompt in full — indexing it
+    // would only return duplicates of what the model can see.
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let path = write_file(&dir, "small.txt", "короткая заметка");
+    cmd_tx.send(AppCommand::FileAttach { path }).unwrap();
+    assert_eq!(wait_attached(&mut evt_rx).await.mode, AttachMode::Inline);
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let storage = crate::shared::storage::Storage::open(Paths::with_root(dir.path())).unwrap();
+    let chat = &storage.json().load_chats().unwrap()[0];
+    assert!(
+        storage
+            .db()
+            .attachment_indexed_ids(chat.id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn removing_an_attachment_drops_its_index() {
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(None, indexing_config());
+    let path = write_file(&dir, "book.txt", &"текст документа ".repeat(40));
+    cmd_tx.send(AppCommand::FileAttach { path }).unwrap();
+    wait_attached(&mut evt_rx).await;
+    wait_indexed(&mut evt_rx).await.expect("an index was built");
+
+    cmd_tx
+        .send(AppCommand::FileRemove {
+            target: "book.txt".into(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::FileProgress(FileProgress::Removed { .. }))
+    })
+    .await
+    .unwrap();
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let storage = crate::shared::storage::Storage::open(Paths::with_root(dir.path())).unwrap();
+    let chat = &storage.json().load_chats().unwrap()[0];
+    assert!(
+        storage
+            .db()
+            .attachment_indexed_ids(chat.id)
+            .unwrap()
+            .is_empty(),
+        "the removed file's fragments must go with it"
+    );
+}
+
 #[tokio::test]
 async fn attaching_a_missing_file_reports_an_error() {
     let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);

@@ -21,7 +21,7 @@ use super::Orchestrator;
 /// progress as chunks become ready (the banner moves *during* embedding of a large
 /// file). A file with ≤16 chunks is still embedded in one request (as before) —
 /// behavior for small files is unchanged.
-const EMBED_BATCH_CHUNKS: usize = 16;
+pub(super) const EMBED_BATCH_CHUNKS: usize = 16;
 
 impl Orchestrator {
     /// The active chat's profile (RAG is isolated by `profile_id`, §9.5). `None` —
@@ -398,12 +398,26 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             ));
             return;
         }
-        if dim_changed && let Err(err) = storage.db().rag_reset_vectors() {
-            send(RagProgress::Failed(loc.tf(
-                "ui.err.rag_reset_vectors",
-                &[("err", &err.to_string())],
-            )));
-            return;
+        if dim_changed {
+            // The dimensionality is shared with the chat attachment index
+            // (`meta.rag_dim`), so its chunks go too — they were embedded by the
+            // old model and their vectors are dropped with the table. Derived
+            // data: re-attaching the file rebuilds it, and `attachment_read`
+            // (the guaranteed path) is unaffected. See spec §9.7.
+            match storage.db().reset_vectors() {
+                Ok(0) => {}
+                Ok(dropped) => tracing::warn!(
+                    dropped,
+                    "embedding dimensionality changed: the chat attachment index was dropped too"
+                ),
+                Err(err) => {
+                    send(RagProgress::Failed(loc.tf(
+                        "ui.err.rag_reset_vectors",
+                        &[("err", &err.to_string())],
+                    )));
+                    return;
+                }
+            }
         }
 
         let total = sources.len();
@@ -574,7 +588,8 @@ async fn index_source(
 }
 
 /// Is the source markdown (chunked by headings)? Decided by the `*.md` extension.
-fn is_markdown_source(source: &str) -> bool {
+/// Shared with the chat attachment index (see [`super::attachments`]).
+pub(super) fn is_markdown_source(source: &str) -> bool {
     std::path::Path::new(source)
         .extension()
         .and_then(|e| e.to_str())

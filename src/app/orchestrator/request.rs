@@ -60,6 +60,7 @@ pub(super) fn build_request(
     sampling: SamplingConfig,
     tools: Vec<crate::shared::api::ToolSchema>,
     attachments: &AttachmentSettings,
+    indexed: &[uuid::Uuid],
     loc: &Locale,
 ) -> ChatRequest {
     let system = if chat.system_message.trim().is_empty() {
@@ -68,7 +69,7 @@ pub(super) fn build_request(
         Some(chat.system_message.clone())
     };
     ChatRequest {
-        system: inject_attachments(system, &chat.attachments, attachments, loc),
+        system: inject_attachments(system, &chat.attachments, attachments, indexed, loc),
         messages: chat.messages.iter().filter_map(message_to_api).collect(),
         sampling,
         tools,
@@ -87,10 +88,16 @@ pub(super) fn build_request(
 /// An inline attachment contributes its full text; a by-reference one
 /// contributes metadata plus the head excerpt. Returns `system` unchanged when
 /// nothing is attached.
+///
+/// `indexed` — attachments that actually have a semantic index (from the DB, see
+/// [`Db::attachment_indexed_ids`](crate::shared::storage::db::Db::attachment_indexed_ids)).
+/// A by-reference entry only points the model at `attachment_search` for those:
+/// promising search over a file that has none would send it down a dead end.
 pub(super) fn inject_attachments(
     system: Option<String>,
     attachments: &[Attachment],
     cfg: &AttachmentSettings,
+    indexed: &[uuid::Uuid],
     loc: &Locale,
 ) -> Option<String> {
     if attachments.is_empty() {
@@ -127,6 +134,14 @@ pub(super) fn inject_attachments(
             ),
             AttachMode::ByReference => {
                 let pages = a.page_count(cfg.page_tokens).to_string();
+                // With an index there are two ways in — search says *where* to
+                // look, page reading guarantees *everything* can be read; without
+                // one, only the pages.
+                let tail = if indexed.contains(&a.id) {
+                    "prompt.attachments.end_excerpt_search"
+                } else {
+                    "prompt.attachments.end_excerpt"
+                };
                 (
                     loc.tf(
                         "prompt.attachments.begin_excerpt",
@@ -141,7 +156,7 @@ pub(super) fn inject_attachments(
                     ),
                     a.excerpt(cfg.excerpt_tokens),
                     loc.tf(
-                        "prompt.attachments.end_excerpt",
+                        tail,
                         &[
                             ("open", &open),
                             ("name", &a.name),

@@ -160,7 +160,9 @@ src/
 │  │  ├─ impersonation.rs   "on behalf of the user" reply (background task)
 │  │  ├─ rag.rs             indexing/removing files in the knowledge base
 │  │  ├─ attachments.rs     chat file attachments (`/file attach`): background
-│  │  │                     read/extract → mode by budget → the chat (spec §9.7)
+│  │  │                     read/extract → mode by budget → the chat; background
+│  │  │                     indexing of a by-reference file into the chat-scoped
+│  │  │                     semantic index (best-effort, spec §9.7)
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
 │  │  │                     synth/playback pipeline, stop points (§11.9)
 │  │  ├─ mcp.rs             McpManager: MCP server lifecycle (spawn/status/
@@ -252,8 +254,9 @@ src/
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
-│  │  ├─ attachment.rs      attachment_read: one page of a file attached to the chat
-│  │  │                     (`/file attach`; reads the snapshot, not the disk — spec §9.7)
+│  │  ├─ attachment.rs      attachment_read (one page of an attached file) +
+│  │  │                     attachment_search (by meaning, chat-scoped index);
+│  │  │                     both read the snapshot/index, never the disk — spec §9.7
 │  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
@@ -277,7 +280,8 @@ src/
 │
 ├─ entities/                domain types (no I/O); serde-serializable
 │  ├─ attachment.rs         Attachment/AttachMode/AttachmentInfo — a file attached
-│  │                        to a chat (text snapshot, budget in estimated tokens)
+│  │                        to a chat (text snapshot, budget in estimated tokens);
+│  │                        AttachmentChunk/AttachmentHit — its semantic index
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
@@ -305,11 +309,15 @@ src/
    │  │  │                 stage 5; `impl Db` — several blocks, schema/helpers in mod.rs;
    │  │  │                 domain tests — in that submodule's `mod tests`, local `db()`):
    │  │  ├─ mod.rs         struct Db, open/from_conn, version-aware migrate() (baseline_ddl
-   │  │  │                 every time + user_version + DB_STEPS inside transactions), ensure_vec_table/
-   │  │  │                 vec_dim, shared helpers (row_to_note/parse_uuid/parse_dt/cosine)
+   │  │  │                 every time + user_version + DB_STEPS inside transactions), ensure_dim
+   │  │  │                 (shared by both vec0 tables)/ensure_*_vec_table/vec_dim/table_exists,
+   │  │  │                 shared helpers (row_to_note/parse_uuid/parse_dt/cosine)
    │  │  ├─ notes.rs       notes: insert/list/edit/delete + embeddings/semantics
    │  │  ├─ graph.rs       link graph + supersession + source citation
    │  │  ├─ self_model.rs  self-model: get/upsert/atomic update
+   │  │  ├─ attachments.rs chat-scoped semantic index over `/file attach` files
+   │  │  │                 (vec0 partitioned by chat_id; dimensionality shared with
+   │  │  │                 RAG, reset together — spec §9.7)
    │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ config.rs            AppConfig and its sections (Engine/Embed/Tool/Interface/Impersonation…)
@@ -974,7 +982,7 @@ by `ToolGroup` (`Ord`).
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
-| Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox |
+| Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke` |

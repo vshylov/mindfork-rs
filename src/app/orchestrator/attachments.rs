@@ -8,14 +8,29 @@
 //!
 //! Where the text then goes: `request::inject_attachments` puts it into the
 //! request's system prompt on every turn (spec §9.7).
+//!
+//! A file attached **by reference** is additionally indexed into the chat-scoped
+//! semantic index (stage 3): another background task chunks and embeds it, so
+//! `attachment_search` can find the right place by meaning instead of walking
+//! pages. Indexing is **best-effort** — with no embedder configured it is simply
+//! skipped and everything else keeps working (the ADR 0002 degradation pattern).
+
+use std::sync::Arc;
 
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
-use crate::entities::attachment::{AttachMode, Attachment, inline_tokens, prompt_tokens};
+use crate::entities::attachment::{
+    AttachMode, Attachment, AttachmentChunk, inline_tokens, prompt_tokens,
+};
 use crate::features::file_command::{FileProgress, resolve_target};
+use crate::features::tools::rag::ChunkParams;
+use crate::shared::api::Embedder;
+use crate::shared::i18n::Locale;
+use crate::shared::storage::Storage;
 
 use super::Orchestrator;
+use super::rag::{EMBED_BATCH_CHUNKS, is_markdown_source};
 
 /// Hard ceiling on the size of a file we will even read (before extraction).
 /// Attachments live in memory and in the chat file; anything of this order is a
@@ -90,17 +105,57 @@ impl Orchestrator {
         };
         let attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
         let info = attachment.info(cfg.excerpt_tokens);
+        // Only a by-reference file is indexed (fork F13): an inline one is
+        // already in the prompt in full, so search would return duplicates of
+        // what the model can see anyway.
+        let index = (mode == AttachMode::ByReference).then(|| AttachIndex {
+            chat_id: res.chat_id,
+            attachment_id: attachment.id,
+            name: attachment.name.clone(),
+            source: attachment.source.clone(),
+            text: attachment.text.clone(),
+        });
         chat.attachments.push(attachment);
         // What the chat's attachments now cost per request — inline text in full
         // plus by-reference excerpts (which are NOT free, see `prompt_tokens`).
         let total = prompt_tokens(&chat.attachments, cfg.excerpt_tokens);
+        let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
 
         self.mark_dirty(res.chat_id);
+        self.prune_attachment_index(res.chat_id, &keep);
         self.emit_file_progress(FileProgress::Attached {
             info,
             total_tokens: total,
         });
         self.emit_attachments();
+        if let Some(task) = index {
+            self.spawn_attachment_index(task);
+        }
+    }
+
+    /// Starts background indexing of a by-reference attachment. Fire-and-forget:
+    /// the task is bounded (one file), and correctness against a removal that
+    /// races it is enforced where it matters — `attachment_search` only shows
+    /// hits for files still in the turn's snapshot, and
+    /// [`Self::prune_attachment_index`] collects the leftovers.
+    fn spawn_attachment_index(&self, task: AttachIndex) {
+        spawn_attachment_index(AttachIndexTask {
+            embedder: self.engines.embedder(),
+            storage: self.storage.clone(),
+            params: ChunkParams::from_settings(&self.config.rag),
+            loc: self.ui_locale(),
+            evt_tx: self.evt_tx.clone(),
+            index: task,
+        });
+    }
+
+    /// Drops index chunks of files that are no longer attached to the chat.
+    /// Errors are logged, not surfaced: the index is derived data and the user's
+    /// command already succeeded.
+    fn prune_attachment_index(&self, chat_id: Uuid, keep: &[Uuid]) {
+        if let Err(err) = self.storage.db().attachment_prune(chat_id, keep) {
+            tracing::warn!(error = %err, "attachments: failed to prune the search index");
+        }
     }
 
     /// Removes an attachment by name/path/`#N` (`/file remove <target>`).
@@ -120,7 +175,11 @@ impl Orchestrator {
             return;
         };
         let removed = chat.attachments.remove(idx);
+        let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
         self.mark_dirty(chat_id);
+        // The removed file's index chunks go with it — otherwise the model could
+        // still find fragments of a file the user took out of the conversation.
+        self.prune_attachment_index(chat_id, &keep);
         self.emit_file_progress(FileProgress::Removed { name: removed.name });
         self.emit_attachments();
     }
@@ -159,6 +218,128 @@ impl Orchestrator {
     fn fail_file(&self, msg: &str) {
         self.emit_file_progress(FileProgress::Failed(msg.to_string()));
     }
+}
+
+/// What to index: the attachment's identity and its text snapshot.
+struct AttachIndex {
+    chat_id: Uuid,
+    attachment_id: Uuid,
+    name: String,
+    /// The canonical path — only to pick the chunker (markdown by headings).
+    source: String,
+    text: String,
+}
+
+/// Parameters of the background attachment-indexing task.
+struct AttachIndexTask {
+    embedder: Arc<dyn Embedder>,
+    storage: Arc<Storage>,
+    params: ChunkParams,
+    /// The interface language (axis B) — the progress/outcome notes are the user's.
+    loc: &'static Locale,
+    evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    index: AttachIndex,
+}
+
+/// Chunks, embeds, and writes one attachment into the chat-scoped index. Reuses
+/// RAG's chunking (`chunk_text`/`chunk_markdown`) and its sub-batched embedding,
+/// so progress moves while a large file is being embedded.
+///
+/// **Graceful degradation** (ADR 0002): if the embedder isn't configured or the
+/// dimensionality doesn't match the DB, indexing is skipped with a clear note —
+/// the pinned block and `attachment_read` keep working in full. The feature never
+/// *depends* on RAG being set up.
+fn spawn_attachment_index(task: AttachIndexTask) {
+    let AttachIndexTask {
+        embedder,
+        storage,
+        params,
+        loc,
+        evt_tx,
+        index,
+    } = task;
+
+    tokio::spawn(async move {
+        let send = |p: FileProgress| {
+            let _ = evt_tx.send(AppEvent::FileProgress(p));
+        };
+        let skip = |reason: String| {
+            let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::IndexSkipped {
+                name: index.name.clone(),
+                reason,
+            }));
+        };
+
+        let chunks = if is_markdown_source(&index.source) {
+            crate::features::tools::rag::chunk_markdown(&index.text, params)
+        } else {
+            crate::features::tools::rag::chunk_text(&index.text, params)
+        };
+        if chunks.is_empty() {
+            return;
+        }
+        // Precheck — a fast, clear answer when there's no embedder (the common
+        // case: RAG isn't configured at all).
+        if embedder.embed(vec!["ping".into()]).await.is_err() {
+            skip(loc.t("ui.file.index_no_embedder").to_string());
+            return;
+        }
+        // Re-indexing replaces the previous run's chunks instead of duplicating them.
+        if let Err(err) = storage
+            .db()
+            .attachment_delete(index.chat_id, index.attachment_id)
+        {
+            skip(err.to_string());
+            return;
+        }
+
+        let total = chunks.len();
+        send(FileProgress::Indexing {
+            name: index.name.clone(),
+            done: 0,
+            total,
+        });
+        let mut done = 0usize;
+        for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
+            let embeddings = match embedder.embed(batch.to_vec()).await {
+                Ok(v) if v.len() == batch.len() => v,
+                Ok(_) => {
+                    skip(loc.t("ui.err.rag_wrong_vector_count").to_string());
+                    return;
+                }
+                Err(err) => {
+                    skip(err.to_string());
+                    return;
+                }
+            };
+            for (chunk, embedding) in batch.iter().zip(embeddings) {
+                let doc = AttachmentChunk::new(
+                    index.chat_id,
+                    index.attachment_id,
+                    &index.name,
+                    chunk,
+                    embedding,
+                );
+                if let Err(err) = storage.db().attachment_insert(&doc) {
+                    // A dimensionality mismatch with the RAG base lands here —
+                    // an honest note beats a half-built index.
+                    tracing::warn!(error = %err, name = %index.name, "attachments: indexing failed");
+                    skip(err.to_string());
+                    return;
+                }
+            }
+            done += batch.len();
+            send(FileProgress::Indexing {
+                name: index.name.clone(),
+                done,
+                total,
+            });
+        }
+        send(FileProgress::Indexed {
+            name: index.name,
+            chunks: total,
+        });
+    });
 }
 
 /// Reads a file and extracts plain text from it (blocking — runs on the blocking

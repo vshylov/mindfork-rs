@@ -276,9 +276,11 @@ struct ImpersonationState {
     done: bool,
 }
 
-/// The progress banner for background RAG indexing (`/rag add`). Lives while
-/// indexing is in progress; completion/error clear the banner and leave a note
-/// in the feed.
+/// The progress banner for background indexing — RAG (`/rag add`) and the chat
+/// attachment index (`/file attach`) share this one slot: both are "an index is
+/// being built in the background", and in practice they don't overlap. Lives
+/// while indexing is in progress; completion/error clear the banner and leave a
+/// note in the feed.
 struct RagBanner {
     /// The indicator's current text (without the spinner).
     text: String,

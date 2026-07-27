@@ -10,6 +10,7 @@
   "prompt.attachments.begin_full": "{open} файл: {name} ({size}) {close}",
   "prompt.attachments.begin_excerpt": "{open} файл: {name} ({size}, ~{tokens} токенов, страниц: {pages} — ниже показано только начало) {close}",
   "prompt.attachments.end_excerpt": "{open} чтобы прочитать остальное {name}, вызывай attachment_read(name, page) для страниц 1..{pages}; другими инструментами этот файл недоступен {close}",
+  "prompt.attachments.end_excerpt_search": "{open} чтобы найти нужное место в {name} по смыслу, вызывай attachment_search(query); чтобы прочитать конкретную страницу — attachment_read(name, page) для страниц 1..{pages}; другими инструментами этот файл недоступен {close}",
   "prompt.attachments.end": "{open} конец: {name} {close}",
 
   "prompt.title.system": [
@@ -482,7 +483,16 @@
   "tool.attachment_read.none": "К этому чату не прикреплено ни одного файла.",
   "tool.attachment_read.unknown": "Файл «{name}» к чату не прикреплён. Прикреплены: {names}.",
   "tool.attachment_read.bad_page": "Страницы {page} нет: в файле «{name}» страниц {total}.",
+  "tool.attachment_search.desc": "Ищет по смыслу внутри файлов, прикреплённых пользователем к этому чату, и возвращает подходящие фрагменты. Используй для большого файла, помеченного «показано только начало»: это гораздо быстрее, чем перебирать страницы через attachment_read, который остаётся для чтения конкретной страницы или файла целиком.",
+  "tool.attachment_search.param.query": "Что искать, своими словами — поиск семантический, а не по точной подстроке.",
+  "tool.attachment_search.param.top_k": "Сколько фрагментов вернуть. По умолчанию 5.",
+  "tool.attachment_search.err.query_empty": "Аргумент `query` должен быть непустой строкой.",
+  "tool.attachment_search.not_indexed": "По файлам этого чата поиск недоступен (поисковый индекс не построен). Читай их через attachment_read(name, page) — сначала страницу 1, затем дальше.",
+  "tool.attachment_search.result.header": "Найдено фрагментов: {n}.",
+  "tool.attachment_search.result.empty": "По этому запросу ничего не нашлось. Попробуй другую формулировку или читай страницы через attachment_read(name, page).",
+  "tool.attachment_search.result.hint": "Это фрагменты, а не целые страницы: чтобы прочитать окружающий текст, используй attachment_read(name, page).",
   "ui.tool.label.attachment_read": "прочитать вложение",
+  "ui.tool.label.attachment_search": "поиск по вложениям",
 
   "ui.file.usage": "использование: /file attach <путь> · /file remove <имя|#N> · /file list",
   "ui.file.err.missing_subcommand": "укажите подкоманду. {usage}",
@@ -498,6 +508,10 @@
   "ui.file.list_item": "\n• #{i} {name} — {size}, ~{tokens} ток. ({mode})",
   "ui.file.failed": "Файлы: {err}",
   "ui.file.chip": "файлы: {n} (~{tokens})",
+  "ui.file.indexing": "Файлы: строится поисковый индекс для {name} — фрагменты {done}/{total}",
+  "ui.file.indexed": "Файлы: по {name} доступен поиск — проиндексировано фрагментов: {chunks}",
+  "ui.file.index_skipped": "Файлы: поисковый индекс для {name} не построен ({reason}). Постраничное чтение файла работает.",
+  "ui.file.index_no_embedder": "сервер эмбеддингов не настроен",
 
   "ui.help.title": "О программе",
   "ui.help.footer.tabs": " Tab/←→ вкладки · ↑↓ прокрутка · Esc — закрыть ",

@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
+use crate::entities::attachment::{AttachmentChunk, AttachmentHit};
 use crate::entities::note::Note;
 use crate::entities::rag::{RagDocument, RagHit, RagSourceInfo, RagStoredSource};
 use crate::entities::self_model::SelfModel;
@@ -217,9 +218,37 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
              PRIMARY KEY (profile_id, note_id, source)
          );
          CREATE INDEX IF NOT EXISTS idx_note_rag_note ON note_rag_links(profile_id, note_id);
-         CREATE INDEX IF NOT EXISTS idx_note_rag_source ON note_rag_links(profile_id, source);",
+         CREATE INDEX IF NOT EXISTS idx_note_rag_source ON note_rag_links(profile_id, source);
+
+         CREATE TABLE IF NOT EXISTS attachment_documents (
+             rowid          INTEGER PRIMARY KEY,
+             id             TEXT NOT NULL UNIQUE,
+             chat_id        TEXT NOT NULL,
+             attachment_id  TEXT NOT NULL,
+             name           TEXT NOT NULL,
+             chunk_text     TEXT NOT NULL,
+             created_at     TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_attachment_docs_chat ON attachment_documents(chat_id);
+         CREATE INDEX IF NOT EXISTS idx_attachment_docs_att
+             ON attachment_documents(chat_id, attachment_id);",
     )?;
     Ok(())
+}
+
+/// Whether a table exists. The vector tables are created lazily (on the first
+/// insert), so readers must check for the table rather than for the recorded
+/// dimensionality — the two indexes share `meta.rag_dim`, and either one may have
+/// registered it first.
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some())
 }
 
 /// The current RAG vector dimensionality (if the vector table already exists).
@@ -232,8 +261,12 @@ fn vec_dim(conn: &Connection) -> Result<Option<usize>> {
     Ok(dim.map(|d| d.parse().unwrap_or(0)))
 }
 
-/// Creates the virtual vector table for the needed dimensionality (once).
-fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<()> {
+/// Registers the vector dimensionality for the whole DB. It is **shared** by the
+/// RAG base and the chat attachment index (`meta.rag_dim`): sqlite-vec fixes the
+/// dimension per table, and mixing vectors from different embedding models is
+/// meaningless anyway. A mismatch is an error — switching the embedding model
+/// goes through `/rag rebuild`, which resets both indexes ([`Db::reset_vectors`]).
+fn ensure_dim(conn: &Connection, dim: usize) -> Result<()> {
     if dim == 0 {
         bail!("refusing to index an empty embedding");
     }
@@ -242,21 +275,44 @@ fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<()> {
         Some(existing) => bail!("embedding dim mismatch: table is {existing}, got {dim}"),
         None => {
             conn.execute(
-                &format!(
-                    "CREATE VIRTUAL TABLE rag_vectors USING vec0(
-                         profile_id TEXT partition key,
-                         embedding float[{dim}]
-                     )"
-                ),
-                [],
-            )?;
-            conn.execute(
                 "INSERT INTO meta(key, value) VALUES ('rag_dim', ?1)",
                 params![dim.to_string()],
             )?;
             Ok(())
         }
     }
+}
+
+/// Creates the RAG virtual vector table for the needed dimensionality (once).
+fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<()> {
+    ensure_dim(conn, dim)?;
+    conn.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS rag_vectors USING vec0(
+                 profile_id TEXT partition key,
+                 embedding float[{dim}]
+             )"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+/// Creates the attachment-index virtual vector table (once). Partitioned by
+/// **`chat_id`**, so kNN is computed inside the chat rather than filtered after
+/// the fact (see the [`attachments`] module doc).
+fn ensure_attachment_vec_table(conn: &Connection, dim: usize) -> Result<()> {
+    ensure_dim(conn, dim)?;
+    conn.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS attachment_vectors USING vec0(
+                 chat_id TEXT partition key,
+                 embedding float[{dim}]
+             )"
+        ),
+        [],
+    )?;
+    Ok(())
 }
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
@@ -296,6 +352,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
 
 // ---------- domain submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 5) ----------
 
+mod attachments;
 mod graph;
 mod notes;
 mod rag;
@@ -306,14 +363,7 @@ mod migrate_tests {
     use super::*;
 
     fn table_exists(conn: &Connection, name: &str) -> bool {
-        conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-            [name],
-            |_| Ok(()),
-        )
-        .optional()
-        .unwrap()
-        .is_some()
+        super::table_exists(conn, name).unwrap()
     }
 
     #[test]
