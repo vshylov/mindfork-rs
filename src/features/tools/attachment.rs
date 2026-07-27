@@ -223,12 +223,19 @@ impl Tool for AttachmentSearch {
             "tool.attachment_search.result.header",
             &[("n", &passages.len().to_string())],
         );
-        for p in &passages {
-            out.push_str(&format!("\n- [{}] {}", p.source, p.text));
+        // Numbered, each on its own line, separated by a blank one. A fragment is
+        // a whole chunk (~800 characters), so it is routinely multi-line: with a
+        // single leading `- [name] ` marker its continuation carried no marker at
+        // all and ten fragments ran together into one wall of text — boundaries
+        // lost for the reader in the feed *and* for the model parsing the result
+        // (seen on a live run over a 1.6 MB collection). The number is there to
+        // separate, not to address: no tool takes a fragment index.
+        for (i, p) in passages.iter().enumerate() {
+            out.push_str(&format!("\n\n{}. [{}]\n{}", i + 1, p.source, p.text));
         }
         // Search says *where* to look; the page reader guarantees the rest can be
         // read. Reminding the model of that keeps the two complementary.
-        out.push('\n');
+        out.push_str("\n\n");
         out.push_str(ctx.loc.t("tool.attachment_search.result.hint"));
         Ok(ToolOutcome::text(out))
     }
@@ -406,6 +413,41 @@ mod tests {
         assert!(out.contains("doc.txt"), "the file must be named: {out}");
         // Search says *where*; the page reader stays the guaranteed path.
         assert!(out.contains("attachment_read"), "{out}");
+    }
+
+    /// A fragment is a whole chunk and is routinely multi-line, so the result has
+    /// to keep the boundaries visible — otherwise ten fragments read as one wall
+    /// of text (observed live on a 1.6 MB collection).
+    #[tokio::test]
+    async fn search_numbers_fragments_and_separates_them() {
+        let doc = att("doc.txt", "неважно");
+        let (_d, ctx) = ctx_with(vec![doc.clone()]);
+        index(
+            &ctx,
+            &doc,
+            &[
+                "первая строка первого фрагмента\nвторая строка первого фрагмента",
+                "совсем другое содержимое\nв несколько строк",
+            ],
+        )
+        .await;
+
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "строка"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            out.contains("1. [doc.txt]") && out.contains("2. [doc.txt]"),
+            "{out}"
+        );
+        // Each fragment's text starts on its own line, and fragments are set
+        // apart by a blank line.
+        assert!(out.contains("[doc.txt]\nпервая строка"), "{out}");
+        assert!(
+            out.contains("\n\n2. ["),
+            "fragments must be separated by a blank line: {out}"
+        );
     }
 
     /// An indexing task can finish **after** its file was removed from the chat.
