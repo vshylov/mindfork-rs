@@ -800,7 +800,9 @@ mod tests {
         // now — the WHOLE of axis A (`tool.`/`selfmodel.`/`notes.`/`prompt.`/…).
         // Dynamic keys (`format!`) aren't literals, covered separately (meta.rs).
         // File names sharing a bundle prefix are whitelisted.
-        const NON_KEY: &[&str] = &["defaults.json", "python.webc"];
+        // `notes.md` — a sample attachment file name in tests, colliding with the
+        // `notes.` prefix of the notes tools' keys.
+        const NON_KEY: &[&str] = &["defaults.json", "python.webc", "notes.md"];
         let prefixes = bundle_prefixes();
         let ru = locale(Lang::Ru);
         let missing: Vec<String> = dotted_literals_in_src()

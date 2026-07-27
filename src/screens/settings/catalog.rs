@@ -691,6 +691,29 @@ impl SettingsScreen {
             ],
         );
         rows.extend(grouped(
+            loc.t("ui.settings.group.attachments"),
+            vec![
+                row(
+                    FieldId::AttachMaxFile,
+                    loc.t("ui.settings.field.attach_max_file"),
+                    FieldKind::Text(self.config.attachments.max_file_tokens.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.attach_max_file")),
+                row(
+                    FieldId::AttachMaxTotal,
+                    loc.t("ui.settings.field.attach_max_total"),
+                    FieldKind::Text(self.config.attachments.max_total_tokens.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.attach_max_total")),
+                row(
+                    FieldId::AttachExcerpt,
+                    loc.t("ui.settings.field.attach_excerpt"),
+                    FieldKind::Text(self.config.attachments.excerpt_tokens.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.attach_excerpt")),
+            ],
+        ));
+        rows.extend(grouped(
             loc.t("ui.settings.group.notes"),
             vec![
                 row(

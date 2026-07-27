@@ -1,5 +1,6 @@
 //! The `entities` layer (FSD): domain types with no I/O. See spec §4.2, §5.1.
 
+pub mod attachment;
 pub mod chat;
 pub mod message;
 pub mod note;

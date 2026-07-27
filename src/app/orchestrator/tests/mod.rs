@@ -128,6 +128,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        // The bare orchestrator has no loop draining this channel; attachment
+        // tests go through `spawn_orch` (the real `run` loop) end to end.
+        attach_tx: unbounded_channel().0,
         bg: std::collections::HashMap::new(),
         bg_done_tx: unbounded_channel().0,
         consolidate_counts: std::collections::HashMap::new(),
@@ -346,6 +349,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 
 // ---------- test submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 3) ----------
 
+mod attachments;
 mod chats;
 mod generation;
 mod impersonation;

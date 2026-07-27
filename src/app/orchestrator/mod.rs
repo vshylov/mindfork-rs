@@ -23,6 +23,7 @@
 //! - [`tts`] — speaking chat messages (the `/tts` command);
 //! - [`request`] — mapping domain messages to the engine's format.
 
+mod attachments;
 mod background;
 mod chats;
 mod consolidation;
@@ -64,6 +65,7 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::{AppConfig, CloudProvider};
 use crate::shared::storage::Storage;
 
+use self::attachments::AttachResult;
 use self::background::BgSlot;
 use self::engines::EngineManager;
 use self::generation::GenResult;
@@ -136,6 +138,9 @@ pub async fn run(deps: OrchestratorDeps) {
     let (tts_done_tx, mut tts_done_rx) = unbounded_channel::<Uuid>();
     // Internal channel for MCP-server events (spawn/monitor background tasks).
     let (mcp_evt_tx, mut mcp_evt_rx) = unbounded_channel::<McpEvent>();
+    // Internal channel for reading/extracting an attached file (`/file attach`):
+    // a blocking task sends back the extracted text, the loop inserts it into the chat.
+    let (attach_tx, mut attach_rx) = unbounded_channel::<AttachResult>();
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
         evt_tx,
@@ -154,6 +159,7 @@ pub async fn run(deps: OrchestratorDeps) {
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        attach_tx,
         tts_cancel: None,
         tts_gen: None,
         tts_playback: None,
@@ -230,6 +236,11 @@ pub async fn run(deps: OrchestratorDeps) {
             evt = mcp_evt_rx.recv() => {
                 if let Some(evt) = evt {
                     orch.handle_mcp_event(evt);
+                }
+            }
+            res = attach_rx.recv() => {
+                if let Some(res) = res {
+                    orch.handle_attach_result(res);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -309,6 +320,9 @@ struct Orchestrator {
     /// Cancellation token for the current background RAG indexing (`/rag add`);
     /// `None` — not running. Replaced/cancelled on new indexing and on shutdown.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
+    /// Channel for results of reading/extracting an attached file (`/file attach`,
+    /// a blocking task → the loop). See [`attachments`].
+    attach_tx: UnboundedSender<AttachResult>,
     /// Cancellation token for the current speech (`/tts`) and its generation
     /// (`None` — not running). Stop points are collected in
     /// [`Orchestrator::stop_tts`] (see [`tts`]).
@@ -461,6 +475,9 @@ impl Orchestrator {
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
+            AppCommand::FileAttach { path } => self.handle_file_attach(path),
+            AppCommand::FileRemove { target } => self.handle_file_remove(target),
+            AppCommand::FileList => self.handle_file_list(),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),
             AppCommand::TtsPause => self.handle_tts_pause(),
@@ -739,6 +756,7 @@ impl Orchestrator {
             draft: chat.draft.clone(),
         });
         self.emit_character_names();
+        self.emit_attachments();
         self.remember_active_chat(id);
     }
 

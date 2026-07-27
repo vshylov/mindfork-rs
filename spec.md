@@ -694,6 +694,45 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   `notifications/tools/list_changed`, per-call confirmation of destructive calls,
   deferred schemas, a server-editor UI — see docs/roadmap.md.
 
+### 9.7. Chat file attachments (`/file attach`)
+
+The user attaches a text file to a chat, and the model sees it for the whole
+conversation. Deliberately **not** the same thing as `/rag add` (§9.3): that
+indexes into the **profile's** knowledge base, needs a configured embedding
+server, and retrieval only ever returns the fragments matching a query.
+Attachments are **chat-scoped**, need **no embedder**, and are delivered
+**in full** — see [docs/file-attachments.md](docs/file-attachments.md).
+
+- **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
+  `/file remove <name|#N>`, `/file list`. As with RAG, the removal subcommand is
+  only `remove` — never `delete` (it takes nothing off disk).
+- **Storage**: `Chat.attachments` — the **extracted text snapshot** plus the
+  name, source path, size and estimated token count. The snapshot means the
+  conversation stays coherent if the file later changes or disappears, building a
+  request does no I/O, and the chat file stays self-contained for backup/export.
+  An additive field — old chat files read without migration.
+- **Delivery**: `request::inject_attachments` appends a block of attachments to
+  the request's `system` on every turn. Placing it at the front of the prefix
+  keeps the rest of the conversation prefix-cached (§6.6); it is re-prefilled
+  only when the attachment set changes — the same trade-off already accepted for
+  the self-model injection (§17.4). The block header is in the **profile**
+  language (axis A) and marks the content as **data, not instructions** (a
+  prompt-injection mitigation, §13.4); section fences widen so a file cannot
+  close its own section.
+- **Two modes.** Within the budget (`config.attachments`, in estimated tokens) a
+  file is **inline** — its full text is in the block. Above it, the file switches
+  to **by reference**: the block carries its metadata and the head excerpt.
+  Attaching therefore **never fails because of size**; a refusal only happens for
+  a missing file or content that doesn't decode.
+- **Formats**: any valid UTF-8 (source code, configs, logs) plus html/pdf/docx
+  through the same extractors RAG uses. Undecodable content is refused with a
+  clear message.
+- **UI**: a feed note per command, a `§ files: N (~tokens)` status-bar chip
+  (attachments cost tokens on every turn — the standing cost has to be visible),
+  and budget fields in the settings "Memory" section.
+- Next stages of the track: exhaustive reading of a by-reference file
+  (`attachment_read`) and a chat-scoped semantic index over attachments.
+
 ---
 
 ## 10. AI-companion profiles

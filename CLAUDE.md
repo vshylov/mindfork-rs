@@ -123,10 +123,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-26, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1294 unit
-tests green, 59 `#[ignore]` smokes** (the largest count — log below; the current
-track is the **`mindfork.io` site URL in project metadata** (the registered domain now
+## Status (as of 2026-07-27, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1330 unit
+tests green, 60 `#[ignore]` smokes** (the largest count — log below; the current
+track is **chat file attachments** (`/file attach|remove|list`: the file's text is
+injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
+in full; a file over the budget switches to "by reference" instead of being refused;
+plan [docs/file-attachments.md](docs/file-attachments.md)) — **stage 1 done, live
+run GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
 also serves as the project homepage in the Windows installer, the Linux packages,
 `Cargo.toml`, the README, `install.md` and the release-notes footer; every actionable
 link stays on GitHub while the site is not up) — **done**, released as **0.9.4**;
@@ -8126,6 +8130,109 @@ debounce was done as a separate PR, see below).
 - Applies to `pull_request` only. On `push` the trimmed Linux-only run from the
   previous commit is already just 4 minutes, and the `before`-SHA edge cases
   (branch creation, force push) would add real risk for very little gain.
+
+### Post-M9: chat file attachments — stage 1 (`/file attach`) (done)
+- **A new track** (user request): attach text files to a chat via `/file attach`/
+  `/file remove`, with the commands at the top of the help popup's command list.
+  Research + plan — [docs/file-attachments.md](docs/file-attachments.md); forks
+  **F1–F10 confirmed by the user 2026-07-27**. Branch `feat/file-attachments`
+  (stacked on `docs/file-attachments`, the precedent being `feat/generic-import`
+  over `docs/plugins-research`).
+- **The central question was "inline vs RAG", and RAG loses on three counts** (§3
+  of the plan): it **hard-depends on the embedding server** (ADR 0002 — often
+  unconfigured, so the feature would simply not work), it is **profile-scoped**
+  (a file attached in one chat would surface in every other chat of the profile),
+  and — decisively — **retrieval ≠ guaranteed reading**: top-k fragments are the
+  wrong model for "summarize this document"/"review this file", and nothing tells
+  the model it missed something. Plus `/rag add` **already is** the RAG path, so
+  a `/file attach` that indexed into the knowledge base would be a second name
+  for an existing command. **The key observation for the user's question "how do
+  we make the model read everything it needs": a model doesn't search a store it
+  doesn't know exists** — any RAG-backed variant still needs a pointer in the
+  prompt. Once a prompt-side block is required anyway, the honest design puts the
+  *content* there when it fits.
+- **Decision (F1d+F5b): the hybrid in full** — inline block **plus**
+  `attachment_read` **plus** a chat-scoped semantic index, delivered as three
+  PRs. This stage is the first: entity + commands + extraction + the block +
+  modes/budgets + UI. **F11 (where attachment vectors live) — a separate
+  chat-scoped index, agreed**: `rag_vectors` is a vec0 table partitioned by
+  `profile_id` and applies `k` **inside** the partition, so a `WHERE chat_id`
+  join would filter *after* kNN and silently return fewer than `k`; and
+  `rag_documents` has no `chat_id` column (`CREATE TABLE IF NOT EXISTS` doesn't
+  add columns → a guarded `ALTER` or the first real `DB_STEPS` bump). Reusing the
+  profile base would also pollute `/rag list|rebuild|remove` and cross-source
+  dedup with per-chat data.
+- **Domain**: `Chat.attachments: Vec<Attachment>` (`#[serde(default,
+  skip_serializing_if)]` → old chat files read without migration, no schema bump,
+  ADR 0006 F12). The **extracted text is a snapshot** stored in the chat file
+  (F3): the conversation stays coherent if the file later changes/disappears,
+  `build_request` stays synchronous with no I/O, and the chat is self-contained
+  for backup/export — the same reasoning behind RAG's `rag_sources`. Sizes are in
+  **estimated tokens** (F6, `shared::tokens`) — characters mislead across scripts
+  (Cyrillic ≈2 chars/token vs ≈4 for Latin).
+- **Delivery**: `request::inject_attachments` (pure, testable) appends the block
+  to `ChatRequest.system` (F2) — one code path, no per-provider wire risk
+  (Anthropic top-level `system` / Gemini `systemInstruction` / OpenAI
+  `instructions` are all already handled), precedent `inject_self_model`, and a
+  position at the front of the prefix so the conversation after it stays
+  prefix-cached (spec §6.6); re-prefilled only when the attachment set changes.
+  The header is in the **profile** language (axis A) and marks the content as
+  **DATA, not instructions** (prompt injection, spec §13); **section fences widen**
+  (`fence_width`) so a file quoting `>>>` can't close its own section — covered by
+  a test.
+- **Two modes, and nothing is ever refused for size** (a better story than the
+  original "refuse above the budget"): within `max_file_tokens` **and** the chat's
+  remaining `max_total_tokens` → **inline** (full text); otherwise → **by
+  reference** (metadata + head excerpt; exhaustive reading arrives in stage 2).
+  Refusal is reserved for a missing file, a directory, >32 MB, undecodable
+  content, or empty content.
+- **Formats (F8): any valid UTF-8** plus html/pdf/docx via the extractors RAG
+  already uses — RAG's extension allowlist is wrong here, since the most obvious
+  attachment is a source file (`main.rs`, `config.toml`, a log). Extraction reuses
+  `orchestrator/rag.rs::read_source_text` (promoted to `pub(super)`), which stays
+  in `app` because it reaches into `features/tools/web` — a sideways import
+  `features → features/tools` is forbidden by FSD (the documented precedent from
+  the RAG html/pdf/docx work).
+- **Reading runs in a background task** (`spawn_blocking` + an internal
+  `attach_tx` channel, mirroring `title_tx`): a large PDF must not block the
+  orchestrator's command loop. The orchestrator — the sole owner of `Chat` —
+  decides the mode against the budget and inserts the attachment; re-attaching the
+  same path **replaces** the previous snapshot (idempotent, like re-adding a RAG
+  source).
+- **UI**: `/file attach|remove|list` parsed by `features/file_command.rs` (a
+  direct sibling of `rag_command.rs`, **`remove` and never `delete`** — the same
+  wording decision RAG made); a feed note per outcome; a quiet status-bar chip
+  `§ files: N (~tokens)` — attachments cost tokens on **every** turn, so the
+  standing cost must be visible (the `§` glyph is WGL4 and one column wide, so it
+  needs no compat replacement and doesn't shift the hotkey grid — the `♪`
+  precedent; an emoji paperclip would). `/file` entries head `HELP_COMMANDS` as
+  requested. Budgets — three fields in the settings "Memory" section
+  ("Attachments" group).
+- **Tests**: entity (token estimate, name/path matching, excerpt on a word
+  boundary and never splitting a character, `format_bytes`, serde); parser
+  (subcommands, quoted paths, `#N`/name/path resolution, the per-locale error
+  gate); injection (no-op when empty, inline vs excerpt, **fence widening**,
+  standalone block, per-locale); orchestrator integration through the real `run`
+  loop with a capturing backend (the text reaches `system` and the conversation
+  stays clean, persistence to the chat file, `/file remove` takes it back out of
+  the request, over-budget → by reference + `#N` addressing, re-attach doesn't
+  duplicate, a missing file reports an error); screen (the commands aren't sent as
+  messages, an invalid one leaves a note, the chip counts only inline weight,
+  `/file` first in the help popup). **1330 unit tests green** (+36), **60
+  `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/i18n gates clean.
+- **Live run — GO** (Gemma 4 31B q4_0 + bge-m3, external `llama-server`,
+  `--jinja`): `file_attachment_e2e_live` — the **baseline** chat (nothing
+  attached) answered "couldn't find any information regarding an internal build
+  code", while the chat with the file attached answered exactly `ZARYA-7719`;
+  the attachment came back `Inline`, 139 B / ~35 tokens. So the block reaches the
+  model through the real wire path and is actually used. The mirror half — that
+  `/file remove` takes the text back out of the request — is deterministic and
+  covered by a unit test with a capturing backend, so it needs no model.
+- **Regression — clean**: all **22** orchestrator live e2e smokes green (598 s) —
+  memory/self-model/notes/RAG/graph/cross-organ links/control tools/i18n/TTS.
+  Worth running in full here because `build_request` sits on **every** generation
+  path and its signature changed. Client-level smokes (`OpenAiClient`) were not
+  re-run — that layer is untouched.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

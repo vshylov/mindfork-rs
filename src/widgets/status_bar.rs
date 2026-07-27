@@ -46,10 +46,19 @@ pub struct StatusModel<'a> {
     pub background: Option<&'a str>,
     /// Speech synthesis is running (`/tts`) — a quiet "speaking" chip. See spec §11.9.
     pub speaking: bool,
+    /// Files attached to the chat (`/file attach`) — a quiet chip with their
+    /// count and standing token cost; `None` — nothing attached. See
+    /// docs/file-attachments.md.
+    pub attachments: Option<&'a str>,
 }
 
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
 const SPEAKING_GLYPH: char = '♪';
+
+/// The attached-files glyph. Like `♪` it is WGL4 and one column wide, so it needs
+/// no compat-mode replacement (an emoji paperclip would be two columns and would
+/// shift the hotkey grid on legacy terminals).
+const ATTACH_GLYPH: char = '§';
 
 /// Draws the status line in `area`. When hotkeys don't fit by width, they
 /// wrap onto the next lines as a neat grid (like in the chat-list overlay);
@@ -208,6 +217,12 @@ fn lines(
             format!("{SPEAKING_GLYPH} {}", loc.t("ui.status.speaking")),
             muted,
         ));
+    }
+    // Attached files (`/file attach`): a quiet chip — they are re-sent on every
+    // turn, so their standing cost must be visible without opening anything.
+    if let Some(files) = model.attachments {
+        state.push(sep());
+        state.push(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
     }
     let state_w = spans_width(&state);
 
@@ -455,6 +470,7 @@ mod tests {
             mouse_scroll,
             background: None,
             speaking: false,
+            attachments: None,
         }
     }
 
@@ -559,6 +575,7 @@ mod tests {
                 mouse_scroll: false,
                 background: Some("рефлексия"),
                 speaking: false,
+                attachments: None,
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -662,6 +679,7 @@ mod tests {
                 mouse_scroll: false,
                 background: None,
                 speaking: false,
+                attachments: None,
             };
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -813,6 +831,7 @@ mod tests {
             mouse_scroll: true,
             background: Some("рефлексия"),
             speaking: true,
+            attachments: Some("файлы: 2 (~3.1k)"),
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();

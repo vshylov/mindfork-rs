@@ -20,6 +20,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
+use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
@@ -98,6 +99,17 @@ pub enum ChatIntent {
     RagList,
     /// Reindex the knowledge base (command `/rag rebuild`).
     RagRebuild,
+    /// Attach a file to the chat (command `/file attach <path>`). See
+    /// docs/file-attachments.md.
+    FileAttach {
+        path: String,
+    },
+    /// Remove an attachment (command `/file remove <name|#N>`).
+    FileRemove {
+        target: String,
+    },
+    /// Show the chat's attachments (command `/file list`).
+    FileList,
     /// Speak the chat's messages (command `/tts`, `/tts N`, `/tts all`). See spec §11.9.
     Tts(crate::features::tts_command::TtsScope),
     /// Stop speech (command `/tts stop`).
@@ -376,6 +388,10 @@ pub struct ChatScreen {
     /// The background RAG-indexing indicator (`/rag add`); `None` — no
     /// indexing in progress.
     rag: Option<RagBanner>,
+    /// Cards for the active chat's attached files (`/file attach`) — for the
+    /// status-bar chip. Updated by `AppEvent::Attachments`. See
+    /// docs/file-attachments.md.
+    attachments: Vec<AttachmentInfo>,
     /// Impersonation state (`Ctrl+U`); `None` — not running. See spec §11.8.
     impersonation: Option<ImpersonationState>,
     /// Whether a tool was called after the last text chunk of the streaming
@@ -436,6 +452,7 @@ impl ChatScreen {
             self_consolidating: false,
             speaking: false,
             rag: None,
+            attachments: Vec::new(),
             impersonation: None,
             pending_text_sep: false,
             pending_thoughts_sep: false,
@@ -594,6 +611,7 @@ impl ChatScreen {
 
 // ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 2) ----------
 
+mod attachments;
 mod feed;
 mod impersonation;
 mod input;

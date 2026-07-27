@@ -674,6 +674,41 @@ impl Default for RagSettings {
     }
 }
 
+/// Default per-file inline budget for chat attachments, in estimated tokens.
+/// Above it the file switches to by-reference mode (metadata + excerpt) instead
+/// of being refused. Conservative on purpose: silently overflowing an 8k local
+/// model's context is a far worse failure than showing an excerpt.
+pub const DEFAULT_ATTACH_MAX_FILE_TOKENS: usize = 4000;
+/// Default total inline budget for one chat's attachments, in estimated tokens.
+pub const DEFAULT_ATTACH_MAX_TOTAL_TOKENS: usize = 8000;
+/// Default excerpt size shown for a by-reference attachment, in estimated tokens.
+pub const DEFAULT_ATTACH_EXCERPT_TOKENS: usize = 300;
+
+/// Chat file-attachment settings (`/file attach`, docs/file-attachments.md).
+/// Budgets are in **estimated tokens** (`shared::tokens`) — characters mislead
+/// across scripts, and tokens are what the status bar shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AttachmentSettings {
+    /// Per-file inline budget: a bigger file goes by reference.
+    pub max_file_tokens: usize,
+    /// Total inline budget for one chat: once it is used up, further files go
+    /// by reference (already-attached ones are never demoted).
+    pub max_total_tokens: usize,
+    /// How much of a by-reference file's head to show in the pinned block.
+    pub excerpt_tokens: usize,
+}
+
+impl Default for AttachmentSettings {
+    fn default() -> Self {
+        Self {
+            max_file_tokens: DEFAULT_ATTACH_MAX_FILE_TOKENS,
+            max_total_tokens: DEFAULT_ATTACH_MAX_TOTAL_TOKENS,
+            excerpt_tokens: DEFAULT_ATTACH_EXCERPT_TOKENS,
+        }
+    }
+}
+
 /// Default storage ceiling for the self-model narrative (insights).
 pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
 /// Default number of fresh insights to inject into the system prompt.
@@ -1157,6 +1192,8 @@ pub struct AppConfig {
     pub tools: ToolSettings,
     /// Knowledge-base (RAG) chunking settings.
     pub rag: RagSettings,
+    /// Chat file-attachment budgets (`/file attach`).
+    pub attachments: AttachmentSettings,
     /// Self-model settings (narrative, prompt-injection volume).
     pub self_model: SelfModelSettings,
     /// Notes settings (auto-consolidation "sleep").
@@ -1206,6 +1243,7 @@ impl Default for AppConfig {
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
             rag: RagSettings::default(),
+            attachments: AttachmentSettings::default(),
             self_model: SelfModelSettings::default(),
             notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),

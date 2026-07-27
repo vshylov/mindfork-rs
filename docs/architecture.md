@@ -159,6 +159,8 @@ src/
 │  │  ├─ title.rs           chat auto-title (background task)
 │  │  ├─ impersonation.rs   "on behalf of the user" reply (background task)
 │  │  ├─ rag.rs             indexing/removing files in the knowledge base
+│  │  ├─ attachments.rs     chat file attachments (`/file attach`): background
+│  │  │                     read/extract → mode by budget → the chat (spec §9.7)
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
 │  │  │                     synth/playback pipeline, stop points (§11.9)
 │  │  ├─ mcp.rs             McpManager: MCP server lifecycle (spawn/status/
@@ -257,6 +259,8 @@ src/
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
+│  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
+│  │                        (chat attachments, spec §9.7, docs/file-attachments.md)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
@@ -270,6 +274,8 @@ src/
 │                           converters, idempotent (UUIDv5 from keys)
 │
 ├─ entities/                domain types (no I/O); serde-serializable
+│  ├─ attachment.rs         Attachment/AttachMode/AttachmentInfo — a file attached
+│  │                        to a chat (text snapshot, budget in estimated tokens)
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
@@ -387,7 +393,8 @@ flowchart LR
 `RegenerateLast`, `DeleteLastExchange`, `Cancel`, `Impersonate`/
 `CancelImpersonation`, `NewChat`, `SwitchChat`, `RenameChat`/`AutoRenameChat`,
 `CloneChat`, `CopyChat`, `DeleteChat`, `CreateProfile`/`DeleteProfile`,
-`UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`, `Tts`/`TtsStop`, `Quit`.
+`UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`,
+`FileAttach`/`FileRemove`/`FileList`, `Tts`/`TtsStop`, `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
@@ -396,7 +403,9 @@ feed's headers — sent on activation and after a profile edit, §10 of the spec
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
 (conversation control tools — §8), `Finished`,
-`Impersonation{Started,Chunk,Finished}`, `RagProgress`, `SelfModelView`,
+`Impersonation{Started,Chunk,Finished}`, `RagProgress`, `FileProgress`
+(the outcome of a `/file` command) and `Attachments` (the active chat's
+attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`,
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
 screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
 status-bar indicator for background reflection/consolidation), `TtsActive`

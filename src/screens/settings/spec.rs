@@ -401,6 +401,21 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.rag.chunk_max_chars = v;
             }
         }),
+        AttachMaxFile => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.attachments.max_file_tokens = v;
+            }
+        }),
+        AttachMaxTotal => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.attachments.max_total_tokens = v;
+            }
+        }),
+        AttachExcerpt => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.attachments.excerpt_tokens = v;
+            }
+        }),
         SmMaxNarrative => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.self_model.max_narrative = v;

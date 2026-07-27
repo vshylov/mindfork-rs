@@ -241,6 +241,25 @@ impl ChatScreen {
                         }
                     };
                 }
+                // A file-attachment slash command (`/file …`) — not a message
+                // either; works during generation (reading happens in the
+                // background). See docs/file-attachments.md.
+                if let Some(parsed) = crate::features::file_command::parse(&text, self.loc) {
+                    use crate::features::file_command::FileCommand;
+                    self.input.clear();
+                    self.mark_input_changed();
+                    return match parsed {
+                        Ok(FileCommand::Attach { path }) => Some(ChatIntent::FileAttach { path }),
+                        Ok(FileCommand::Remove { target }) => {
+                            Some(ChatIntent::FileRemove { target })
+                        }
+                        Ok(FileCommand::List) => Some(ChatIntent::FileList),
+                        Err(msg) => {
+                            self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
+                            None
+                        }
+                    };
+                }
                 // A speech slash command (`/tts …`) — also not a message, and
                 // it also works during generation (a snapshot gets spoken).
                 // See spec §11.9.
@@ -475,6 +494,7 @@ impl ChatScreen {
         }
         let text = self.input.text();
         crate::features::rag_command::parse(&text, self.loc).is_some()
+            || crate::features::file_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
 

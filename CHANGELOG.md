@@ -13,6 +13,24 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Added
+
+- **Attaching text files to a chat** — three new input-box commands:
+  `/file attach <path>` adds a file to the current chat, `/file remove <name|#N>`
+  takes it away, `/file list` shows what is attached (they head the "Commands"
+  tab of the help dialog, `F1`). An attached file's text is passed to the model
+  with every message of that chat, so it can be asked about at any point in the
+  conversation — and removing it genuinely takes it out of what the model sees.
+  Attachable: any text file (source code, configs, logs — anything valid UTF-8),
+  plus `.html`, `.pdf` and `.docx`, whose text is extracted the same way `/rag
+  add` does it. A file's content is snapshotted when attached, so the
+  conversation stays coherent even if the file later changes or is deleted.
+  A large file is **not refused**: it is attached "by reference" — the model
+  gets its name, size and the beginning instead of the whole text (reading it in
+  full arrives in the next stage). Budgets are in the settings "Memory" section
+  ("Attachments" group), and the status bar shows a `§ files: N (~tokens)` chip,
+  since attachments cost tokens on every turn.
+
 ## [0.9.4] — 2026-07-26
 
 ### Added

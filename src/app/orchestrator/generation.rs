@@ -212,9 +212,11 @@ impl Orchestrator {
             self.config.mcp.enabled,
             self.config.engine.mode.cloud_provider(),
         );
-        let schemas = self
-            .registry
-            .schemas_for(&allowed, crate::shared::i18n::locale(profile_lang));
+        let profile_loc = crate::shared::i18n::locale(profile_lang);
+        let schemas = self.registry.schemas_for(&allowed, profile_loc);
+        // Copied out before the `chat_mut` borrow below (config can't be read
+        // while `Chat` is mutably borrowed). `AttachmentSettings` is `Copy`.
+        let attach_cfg = self.config.attachments;
 
         // The profile's "self-model" at the start of the turn. Injection into the
         // system prompt happens only if the profile enabled get_self_model (opt-in);
@@ -247,7 +249,7 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            request = build_request(chat, sampling.clone(), schemas);
+            request = build_request(chat, sampling.clone(), schemas, &attach_cfg, profile_loc);
             last_user = chat
                 .messages
                 .iter()
