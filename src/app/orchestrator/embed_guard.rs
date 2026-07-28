@@ -10,12 +10,14 @@
 //!
 //! ## Why a decorator
 //!
-//! Embeddings are deliberately lazy (ADR 0002 — `apply_embed` runs no probe), so
-//! there is no moment at startup when the embedding server is known to be up: a
-//! managed one is still loading. Wrapping [`Embedder`] instead makes the check
-//! run at the first *real* use, when the server has demonstrably answered, and
-//! makes it impossible to forget at a call site. A failed check never blocks the
-//! actual work — it simply retries on the next call.
+//! Embeddings are deliberately lazy (ADR 0002): the embedder itself is untouched
+//! until a real call. `apply_embed` does spawn a `/health` probe, but that only
+//! reports the *server* is up — it says nothing about which model answers, which
+//! is exactly what the canary establishes; and the cloud has no probe at all.
+//! Wrapping [`Embedder`] instead makes the check run at the first *real* use,
+//! when the server has demonstrably answered, and makes it impossible to forget
+//! at a call site. A failed check never blocks the actual work — it simply
+//! retries on the next call.
 //!
 //! ## What happens on a detected change
 //!

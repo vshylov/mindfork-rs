@@ -129,6 +129,8 @@ pub async fn run(deps: OrchestratorDeps) {
     let (title_tx, mut title_rx) = unbounded_channel::<TitleResult>();
     // Internal status channel for the impersonation server (a background probe).
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
+    // Internal status channel for the embedding server (a background probe).
+    let (embed_status_tx, mut embed_status_rx) = unbounded_channel::<ServerStatus>();
     // Internal "impersonation finished" channel (background task → loop).
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
     // A single outcome channel for "silent" background tasks (auto-reflection/
@@ -146,7 +148,7 @@ pub async fn run(deps: OrchestratorDeps) {
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
         evt_tx,
-        engines: EngineManager::new(supervisor, status_tx, imp_status_tx),
+        engines: EngineManager::new(supervisor, status_tx, imp_status_tx, embed_status_tx),
         mcp: McpManager::new(mcp_evt_tx),
         imp_cancel: None,
         imp_gen: None,
@@ -217,6 +219,12 @@ pub async fn run(deps: OrchestratorDeps) {
             status = imp_status_rx.recv() => {
                 if let Some(s) = status {
                     orch.engines.set_imp_status(s);
+                    orch.emit_server_status();
+                }
+            }
+            status = embed_status_rx.recv() => {
+                if let Some(s) = status {
+                    orch.engines.set_embed_status(s);
                     orch.emit_server_status();
                 }
             }

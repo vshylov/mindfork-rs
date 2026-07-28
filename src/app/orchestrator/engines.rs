@@ -48,13 +48,17 @@ pub(super) struct EngineManager {
     /// The impersonation-server status (for managed/external; in `shared` —
     /// `NotConfigured`, the chip in the status line is hidden).
     imp_status: ServerStatus,
-    /// The embedding-server status. There's no probe yet (RAG is lazy) — a two-value status:
-    /// `Ready` (the embedder is configured) / `NotConfigured` (`UnavailableEmbedder`).
+    /// The embedding-server status: `NotConfigured` (`UnavailableEmbedder`, the chip is
+    /// hidden) or, for a configured one, `Connecting` → `Ready`/`Disconnected` from the
+    /// background probe (the cloud is `Ready` at once). Doesn't gate anything — RAG is
+    /// lazy (ADR 0002), the status is informational.
     embed_status: ServerStatus,
     /// The chat-server status channel for the supervisor's background probe.
     status_tx: UnboundedSender<ServerStatus>,
     /// The impersonation-server status channel (background probe).
     imp_status_tx: UnboundedSender<ServerStatus>,
+    /// The embedding-server status channel (background probe).
+    embed_status_tx: UnboundedSender<ServerStatus>,
     /// The invalidation token for the current chat server's background probe: a mode/model
     /// change marks the previous probe stale, so its late result (e.g. a timeout of an
     /// intermediate external server while flipping through managed→external→openai) doesn't
@@ -62,6 +66,8 @@ pub(super) struct EngineManager {
     chat_probe_cancel: Option<CancellationToken>,
     /// The invalidation token for the impersonation server's background probe (analogous).
     imp_probe_cancel: Option<CancellationToken>,
+    /// The invalidation token for the embedding server's background probe (analogous).
+    embed_probe_cancel: Option<CancellationToken>,
     /// The embeddings source for RAG (a dedicated server — ADR 0002).
     pub(super) embedder: Arc<dyn Embedder>,
 }
@@ -73,6 +79,7 @@ impl EngineManager {
         supervisor: Arc<dyn ServerSupervisor>,
         status_tx: UnboundedSender<ServerStatus>,
         imp_status_tx: UnboundedSender<ServerStatus>,
+        embed_status_tx: UnboundedSender<ServerStatus>,
     ) -> Self {
         Self {
             supervisor,
@@ -86,8 +93,10 @@ impl EngineManager {
             embed_status: ServerStatus::NotConfigured,
             status_tx,
             imp_status_tx,
+            embed_status_tx,
             chat_probe_cancel: None,
             imp_probe_cancel: None,
+            embed_probe_cancel: None,
             embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         }
     }
@@ -122,11 +131,29 @@ impl EngineManager {
         self.server_status = setup.status;
     }
 
-    /// (Re-)raises the embedding server from settings.
-    pub(super) fn apply_embed(&mut self, settings: &EmbedSettings, api_keys: &[ApiKeyEntry]) {
-        self.embed_handle = None;
+    /// (Re-)raises the embedding server from settings. Like [`Self::apply_chat`]: the
+    /// previous managed process is dropped, the previous probe is invalidated, and the
+    /// immediate status is stored (real readiness arrives via `embed_status_tx`).
+    pub(super) fn apply_embed(
+        &mut self,
+        settings: &EmbedSettings,
+        api_keys: &[ApiKeyEntry],
+        loc: &'static Locale,
+    ) {
+        self.embed_handle = None; // drop the old managed process (kill_on_drop)
+        if let Some(tok) = self.embed_probe_cancel.take() {
+            tok.cancel();
+        }
+        let cancel = CancellationToken::new();
+        self.embed_probe_cancel = Some(cancel.clone());
         let key = stored_key(api_keys, settings.mode.cloud_provider());
-        let setup = self.supervisor.apply_embed(settings, key.as_deref());
+        let setup = self.supervisor.apply_embed(
+            settings,
+            key.as_deref(),
+            cancel,
+            self.embed_status_tx.clone(),
+            loc,
+        );
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
         self.embed_status = setup.status;
@@ -176,6 +203,11 @@ impl EngineManager {
     /// Updates the impersonation-server status (from the background probe).
     pub(super) fn set_imp_status(&mut self, status: ServerStatus) {
         self.imp_status = status;
+    }
+
+    /// Updates the embedding-server status (from the background probe).
+    pub(super) fn set_embed_status(&mut self, status: ServerStatus) {
+        self.embed_status = status;
     }
 
     /// A snapshot of all server statuses for the status bar (chat always, embeddings/

@@ -89,6 +89,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
     let (status_tx, _status_rx) = unbounded_channel();
     let (title_tx, _title_rx) = unbounded_channel();
     let (imp_status_tx, _imp_status_rx) = unbounded_channel();
+    let (embed_status_tx, _embed_status_rx) = unbounded_channel();
     let (imp_done_tx, _imp_done_rx) = unbounded_channel();
     let config = AppConfig {
         default_sampling: SamplingConfig {
@@ -104,6 +105,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         Arc::new(MockSupervisor::with_backend(None)),
         status_tx,
         imp_status_tx,
+        embed_status_tx,
     );
     engines.server_status = ServerStatus::Ready;
     engines.embedder = test_embedder();

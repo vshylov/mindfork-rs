@@ -123,10 +123,15 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-27, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1466 unit
-tests green, 66 `#[ignore]` smokes** (the largest count — log below; the current
-track is **per-model input prefixes for embeddings**
+## Status (as of 2026-07-28, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1472 unit
+tests green, 67 `#[ignore]` smokes** (the largest count — log below; the current
+track is a **readiness probe for the embedding server** (its status came from the
+configuration alone, so a configured-but-unreachable server reported itself ready —
+now all three servers are probed alike: an immediate `Connecting` + a background
+`/health` probe, the cloud stays `Ready` with no probe) — **done, live check of
+`/health` on a real `--embeddings` server pending**; before that —
+**per-model input prefixes for embeddings**
 ([docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md)) —
 the last groundwork item of the one below it: `Embedder::embed` gained an input
 **role** (`Query`/`Passage`, no `Default` — a silent role is the failure the type
@@ -9035,6 +9040,68 @@ debounce was done as a separate PR, see below).
   `search_query:`/`search_document:`) — the design is a table, so a row is cheap;
   per-role calibration is explicitly **not** needed, since all four gate sites are
   passage↔passage.
+
+### Post-M9: readiness probe for the embedding server (done)
+- **Symptom** (user report, with a screenshot): the machine hosting the embedding
+  server was off (`ping 192.168.1.20` — "Destination host unreachable"), yet the
+  chip read **`● embeddings: ready`** (green). **Cause**: the status was derived from the
+  configuration, never from the network — in `external` mode the entire "check"
+  was a non-empty URL → `ServerStatus::Ready` ([supervisor.rs](src/app/supervisor.rs)),
+  and `embed_status` was written exactly once, in `EngineManager::apply_embed`,
+  with no channel to update it later. Deliberate at the time (ADR 0002 — RAG is
+  lazy) and documented on `EmbedSetup`, with "a real probe is groundwork" recorded
+  in the journal; this closes that item. Branch `fix/embed-server-probe`.
+- **Fix — the embedding server is now probed exactly like the chat server**:
+  `ServerSupervisor::apply_embed` gained `cancel`/`status_tx`/`loc` and returns an
+  **immediate** `Connecting`, while a background `/health` probe (the existing
+  shared `spawn_probe`) posts the real status. Managed passes `handle.exited()`, so
+  a process that dies *while loading* (corrupt GGUF/OOM) is reported at once
+  instead of after `MANAGED_READY_TIMEOUT`; external gets `EXTERNAL_READY_TIMEOUT`.
+  `EngineManager` gained `embed_status_tx` + `embed_probe_cancel` +
+  `set_embed_status` (a stale probe can't overwrite a newer server's status — the
+  invariant the chat/impersonation servers already had), and `run` gained a fifth
+  `select!` arm → `emit_server_status`.
+- **The cloud deliberately keeps `Ready` with no probe** (mirroring
+  `cloud_chat_setup`): there's nothing to load and no `/health`. Pinned by a test
+  that asserts the channel stays *silent* — otherwise a future refactor could
+  quietly start probing an endpoint that doesn't exist.
+- **A launch failure is no longer disguised as "not configured"**: managed
+  `ServerHandle::launch` failing (e.g. a missing model file) now yields
+  `Disconnected(reason)` instead of `unavailable_embed()`. The settings-window chip
+  shows the reason (the status-bar chip stays compact, by design). This also let
+  the "`apply_embed` has no `loc`, pass the reference locale, the text is log-only"
+  workaround go — the reason is now displayed, so it's localized properly (axis B).
+- **Nothing gates on the new status** — RAG stays lazy and degrades through the
+  error from the call itself; the status is informational. Two doc comments that
+  had justified themselves with "there is no probe" were corrected rather than
+  deleted: `EmbedGuard`'s reasoning survives intact but for a sharper reason — a
+  probe says the *server* answers, never *which model* does, which is precisely
+  what the canary exists to establish (and the cloud has no probe at all).
+- **A testing trap worth recording**: the natural negative test (probe a dead port,
+  expect `Disconnected`) ran **63 s**. Measured rather than guessed — a single
+  `probe()` against a closed local port costs **~2.0 s** on Windows (SYN retry),
+  and the probe retries until its timeout: 30 × 2 s. `start_paused` was already
+  working (the sleeps were virtual); the connect was the whole cost. Fixed by
+  making the stub *listen*: a throwaway `TcpListener` that accepts and either
+  answers `200` or hangs up — failure is then immediate and the retry sleeps stay
+  virtual. 63 s → **2 s**, and the test now covers the happy path end to end as
+  well. Second trap inside it: writing the response without first draining the
+  request makes the close an RST that discards the response — the healthy stub has
+  to `read` before it writes.
+- **Tests**: `Connecting` (not `Ready`) for a configured external server — the
+  direct regression; the probe posting `Ready` against a live-ish stub and
+  `Disconnected` against a silent one; a stale probe sending nothing; a managed
+  launch failure surfacing as `Disconnected`; the cloud `Ready` **without** a probe.
+  **1472 unit tests green** (+6), **67 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
+  `cyrillic_scan` clean.
+- **Live run — pending** (the user's embedding host is down — that's what produced
+  the report). One question genuinely needs a live stack: whether a real
+  `llama-server --embeddings` serves `/health`, since a probe that misjudges a
+  *working* embedder would be worse than the bug it fixes. Smoke
+  `embed_probe_reaches_ready_on_live_server` (`MINDFORK_EMBED_URL`, silently
+  skipped) is in place for it. The risk is bounded by `probe()` already treating
+  `404` as alive, so a server without `/health` reads as ready either way — but
+  it should be confirmed, not assumed.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

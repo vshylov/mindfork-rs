@@ -39,9 +39,10 @@ pub struct ChatSetup {
 }
 
 /// The result of setting up the embedding server: the embeddings source, a handle to
-/// the process, and status. There's no embeddings probe yet (RAG is lazy), so the
-/// status is binary: `Ready` — the embedder is configured, `NotConfigured` —
-/// `UnavailableEmbedder` (the chip is hidden).
+/// the process, and status. Like [`ChatSetup`], the status is immediate
+/// (`Connecting`/`NotConfigured`) for managed/external — real readiness arrives from
+/// a background `/health` probe; the cloud is `Ready` at once (nothing to load),
+/// `NotConfigured` — `UnavailableEmbedder` (the chip is hidden).
 pub struct EmbedSetup {
     pub embedder: Arc<dyn Embedder>,
     pub handle: Option<ServerHandle>,
@@ -71,8 +72,23 @@ pub trait ServerSupervisor: Send + Sync {
         loc: &'static Locale,
     ) -> ChatSetup;
 
-    /// (Re)connects to the embedding server (RAG is lazy — no probe).
-    fn apply_embed(&self, settings: &EmbedSettings, stored_key: Option<&str>) -> EmbedSetup;
+    /// (Re)connects to/launches the embedding server. Returns the embeddings source and
+    /// an immediate status; managed/external readiness is sent to `status_tx` by a
+    /// background `/health` probe (`cancel` invalidates a stale one — as on
+    /// [`Self::apply_chat`]).
+    ///
+    /// The probe doesn't make embeddings eager: it's a `/health` GET, the embedder
+    /// itself is still touched only on a real call (ADR 0002). Without it the status
+    /// would be derived from configuration alone and would read `Ready` for an
+    /// unreachable host — the failure would surface only on the first `rag_search`.
+    fn apply_embed(
+        &self,
+        settings: &EmbedSettings,
+        stored_key: Option<&str>,
+        cancel: CancellationToken,
+        status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
+    ) -> EmbedSetup;
 
     /// (Re)connects to/launches the impersonation server for the `managed`/
     /// `external` modes. For `shared` it is NOT called by the orchestrator (it reuses
@@ -163,11 +179,18 @@ impl ServerSupervisor for LlamaSupervisor {
         }
     }
 
-    fn apply_embed(&self, settings: &EmbedSettings, stored_key: Option<&str>) -> EmbedSetup {
+    fn apply_embed(
+        &self,
+        settings: &EmbedSettings,
+        stored_key: Option<&str>,
+        cancel: CancellationToken,
+        status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
+    ) -> EmbedSetup {
         match settings.mode {
             ServerMode::External => match settings.external.url.as_deref() {
-                Some(url) if !url.is_empty() => EmbedSetup {
-                    embedder: Arc::new(
+                Some(url) if !url.is_empty() => {
+                    let client = Arc::new(
                         OpenAiClient::new(url).with_api_key(
                             settings
                                 .external
@@ -175,10 +198,21 @@ impl ServerSupervisor for LlamaSupervisor {
                                 .as_deref()
                                 .and_then(|e| resolve_api_key(None, Some(e)).ok()),
                         ),
-                    ),
-                    handle: None,
-                    status: ServerStatus::Ready,
-                },
+                    );
+                    spawn_probe(
+                        client.clone(),
+                        EXTERNAL_READY_TIMEOUT,
+                        None,
+                        cancel,
+                        status_tx,
+                        loc,
+                    );
+                    EmbedSetup {
+                        embedder: client,
+                        handle: None,
+                        status: ServerStatus::Connecting,
+                    }
+                }
                 _ => unavailable_embed(),
             },
             ServerMode::Managed => match settings.managed.binary.as_deref() {
@@ -205,22 +239,36 @@ impl ServerSupervisor for LlamaSupervisor {
                         port: m.port,
                         extra_args: vec![],
                     };
-                    // The embedding server has no UI locale (`apply_embed` has no
-                    // `loc`) and its error goes only into the log (RAG unavailable,
-                    // not a status chip) — we pass the reference locale (ru), the text
-                    // stays log-only.
-                    match ServerHandle::launch(
-                        &cfg,
-                        crate::shared::i18n::locale(crate::shared::i18n::Lang::default()),
-                    ) {
-                        Ok(handle) => EmbedSetup {
-                            embedder: Arc::new(OpenAiClient::new(handle.base_url())),
-                            handle: Some(handle),
-                            status: ServerStatus::Ready,
-                        },
+                    match ServerHandle::launch(&cfg, loc) {
+                        Ok(handle) => {
+                            let client = Arc::new(OpenAiClient::new(handle.base_url()));
+                            // A large GGUF loads for seconds; the probe accounts for an
+                            // early process exit (corrupt model/OOM) instead of waiting
+                            // out the timeout — as for the chat server.
+                            spawn_probe(
+                                client.clone(),
+                                MANAGED_READY_TIMEOUT,
+                                Some(handle.exited()),
+                                cancel,
+                                status_tx,
+                                loc,
+                            );
+                            EmbedSetup {
+                                embedder: client,
+                                handle: Some(handle),
+                                status: ServerStatus::Connecting,
+                            }
+                        }
                         Err(err) => {
                             tracing::warn!(error = %err, "failed to launch the embedding server; RAG unavailable");
-                            unavailable_embed()
+                            // The launch error is displayable (a missing model file and
+                            // the like) — surface it in the chip, don't hide it behind
+                            // "not configured".
+                            EmbedSetup {
+                                embedder: Arc::new(UnavailableEmbedder),
+                                handle: None,
+                                status: ServerStatus::Disconnected(err.to_string()),
+                            }
                         }
                     }
                 }
@@ -597,10 +645,19 @@ impl ServerSupervisor for MockSupervisor {
         }
     }
 
-    fn apply_embed(&self, _settings: &EmbedSettings, _stored_key: Option<&str>) -> EmbedSetup {
+    fn apply_embed(
+        &self,
+        _settings: &EmbedSettings,
+        _stored_key: Option<&str>,
+        _cancel: CancellationToken,
+        _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
+    ) -> EmbedSetup {
         let embedder = self.embedder.clone().unwrap_or_else(|| {
             Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim))
         });
+        // Ready right away, no async probe — same reasoning as `apply_chat`: tests
+        // must not depend on a status race.
         EmbedSetup {
             embedder,
             handle: None,
@@ -619,6 +676,55 @@ mod tests {
     /// assertions on Russian substrings are pinned byte-for-byte.
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
+    /// Spawns a throwaway local server on an ephemeral port and returns its base URL.
+    ///
+    /// `healthy` — answer `200` (the probe reads that as ready) or accept and hang up
+    /// (the probe fails). We hang up rather than pointing at a *closed* port on
+    /// purpose: connecting to a closed port costs ~2s per attempt on Windows, and the
+    /// probe retries until its timeout — which turned this test into a minute.
+    async fn spawn_stub_server(healthy: bool) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    // Drain the request first: closing a socket with unread data
+                    // pending sends an RST, and the client then loses the response.
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    if healthy {
+                        let _ = sock
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                            .await;
+                        let _ = sock.shutdown().await;
+                    }
+                    // Otherwise: drop the socket — the client sees the connection close.
+                });
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    /// `apply_embed` with the probe plumbing defaulted — for tests that only care
+    /// about the embedder/the immediate status. Dropping the receiver is harmless:
+    /// a probe that can't deliver its status just fails the send.
+    fn embed_setup(s: &EmbedSettings) -> EmbedSetup {
+        let (tx, _rx) = unbounded_channel();
+        LlamaSupervisor.apply_embed(s, None, CancellationToken::new(), tx, ru())
+    }
+
+    fn embed_external(url: &str) -> EmbedSettings {
+        EmbedSettings {
+            mode: ServerMode::External,
+            external: crate::shared::config::ExternalSettings {
+                url: Some(url.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     fn external(url: Option<&str>) -> EngineSettings {
@@ -879,8 +985,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let err = LlamaSupervisor
-            .apply_embed(&s, None)
+        let err = embed_setup(&s)
             .embedder
             .embed(vec!["x".into()], EmbedRole::Passage)
             .await
@@ -900,7 +1005,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_embed(&s, None);
+        let setup = embed_setup(&s);
         let err = setup
             .embedder
             .embed(vec!["x".into()], EmbedRole::Passage)
@@ -909,17 +1014,146 @@ mod tests {
         assert!(err.to_string().contains("not configured"));
     }
 
+    /// The regression: a configured embedding server must not report `Ready` on the
+    /// strength of a non-empty URL alone. Before the probe, a configured-but-
+    /// unreachable host showed a green chip, and the failure only surfaced on the
+    /// first `rag_search`.
     #[tokio::test]
-    async fn embed_external_url_is_available() {
+    async fn embed_external_is_connecting_not_ready() {
+        let setup = embed_setup(&embed_external("http://127.0.0.1:9/v1"));
+        assert_eq!(setup.status, ServerStatus::Connecting);
+    }
+
+    /// …and the probe actually reports through the channel — here, the happy path:
+    /// a local listener answers `/health` with `200`, so `Ready` arrives.
+    #[tokio::test]
+    async fn embed_probe_reports_ready_when_server_answers() {
+        let url = spawn_stub_server(true).await;
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(setup.status, ServerStatus::Connecting);
+        assert_eq!(rx.recv().await, Some(ServerStatus::Ready));
+    }
+
+    /// The other half: a server that accepts and hangs up answers nothing, and the
+    /// probe reports `Disconnected` rather than leaving the chip green. Time is paused
+    /// so the retry sleeps are virtual; the connection itself fails fast because the
+    /// port *is* listening (a connect to a closed port costs seconds on Windows).
+    #[tokio::test(start_paused = true)]
+    async fn embed_probe_reports_disconnected_when_server_is_silent() {
+        let url = spawn_stub_server(false).await;
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(setup.status, ServerStatus::Connecting);
+        match rx.recv().await {
+            Some(ServerStatus::Disconnected(_)) => {}
+            other => panic!("expected Disconnected from the probe, got {other:?}"),
+        }
+    }
+
+    /// A stale embeddings probe doesn't overwrite the new server's status — the same
+    /// invalidation the chat server has (a quick sequence of settings edits).
+    #[tokio::test(start_paused = true)]
+    async fn embed_superseded_probe_sends_no_status() {
+        let (tx, mut rx) = unbounded_channel();
+        let cancel = CancellationToken::new();
+        cancel.cancel(); // already stale before the background task starts
+        let setup = LlamaSupervisor.apply_embed(
+            &embed_external("http://127.0.0.1:9/v1"),
+            None,
+            cancel,
+            tx,
+            ru(),
+        );
+        assert_eq!(setup.status, ServerStatus::Connecting);
+        tokio::time::sleep(Duration::from_secs(60)).await; // well past the probe timeout
+        assert!(rx.try_recv().is_err(), "a stale probe sent a status");
+    }
+
+    /// A managed embedding server that can't even be launched (a missing model file)
+    /// reports the reason instead of masquerading as "not configured".
+    #[tokio::test]
+    async fn embed_managed_with_missing_model_is_disconnected() {
         let s = EmbedSettings {
-            mode: ServerMode::External,
-            external: crate::shared::config::ExternalSettings {
-                url: Some("http://127.0.0.1:9/v1".into()),
+            mode: ServerMode::Managed,
+            managed: crate::shared::config::ManagedEmbedSettings {
+                binary: Some("llama-server".into()),
+                model_path: Some("no/such/model.gguf".into()),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_embed(&s, None);
+        match embed_setup(&s).status {
+            ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+    }
+
+    /// The cloud has nothing to load and no `/health` — it stays `Ready` right away,
+    /// with no probe (as for the chat server).
+    #[tokio::test(start_paused = true)]
+    async fn cloud_embed_configured_is_ready_without_probe() {
+        let (tx, mut rx) = unbounded_channel();
+        let s = EmbedSettings {
+            mode: ServerMode::OpenAi,
+            openai: crate::shared::config::CloudSettings {
+                model_name: Some("text-embedding-3-small".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_embed(&s, None, CancellationToken::new(), tx, ru());
+        assert_eq!(setup.status, ServerStatus::Ready);
+        assert!(setup.handle.is_none(), "the cloud has no child process");
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert!(rx.try_recv().is_err(), "the cloud shouldn't be probed");
+    }
+
+    /// The one thing unit tests can't settle: that a **real** `llama-server
+    /// --embeddings` answers the `/health` endpoint the probe relies on. If it
+    /// didn't, the probe would mark a perfectly working embedder as unavailable —
+    /// a worse failure than the green-chip bug it fixes. (`probe` treats `404` as
+    /// alive, so a server without `/health` is fine too; this pins the real one.)
+    ///
+    ///     MINDFORK_EMBED_URL=http://127.0.0.1:8001/v1 \
+    ///       cargo test embed_probe_reaches_ready_on_live_server -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a live embedding server (MINDFORK_EMBED_URL)"]
+    async fn embed_probe_reaches_ready_on_live_server() {
+        let Ok(url) = std::env::var("MINDFORK_EMBED_URL") else {
+            eprintln!("skip: MINDFORK_EMBED_URL not set");
+            return;
+        };
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(setup.status, ServerStatus::Connecting);
+        let status = rx.recv().await;
+        println!("live embedding server {url} probed as: {status:?}");
+        assert_eq!(status, Some(ServerStatus::Ready));
+    }
+
+    #[tokio::test]
+    async fn embed_external_url_is_available() {
+        let setup = embed_setup(&embed_external("http://127.0.0.1:9/v1"));
         assert!(setup.handle.is_none());
         // The embeddings source is configured (not UnavailableEmbedder).
         // Checked indirectly: embed against a "dead" URL returns a connection error,
@@ -934,7 +1168,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_unconfigured_is_unavailable() {
-        let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default(), None);
+        let setup = embed_setup(&EmbedSettings::default());
         let err = setup
             .embedder
             .embed(vec!["x".into()], EmbedRole::Passage)

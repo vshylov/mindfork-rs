@@ -139,7 +139,7 @@ impl Orchestrator {
         }
         if embed {
             self.engines
-                .apply_embed(&self.config.embed, &self.config.api_keys);
+                .apply_embed(&self.config.embed, &self.config.api_keys, loc);
         }
         if imp {
             self.engines.apply_impersonation(
@@ -169,8 +169,9 @@ impl Orchestrator {
     /// (Re-)raises the embedding server from `config.embed` and emits a status snapshot
     /// (the embeddings chip in the status line appears/disappears based on the setting).
     pub(super) fn apply_embed_settings(&mut self) {
+        let loc = self.ui_locale();
         self.engines
-            .apply_embed(&self.config.embed, &self.config.api_keys);
+            .apply_embed(&self.config.embed, &self.config.api_keys, loc);
         // Two decorators, and the order is load-bearing:
         //
         //   EmbedGuard { PrefixedEmbedder { real embedder } }
