@@ -29,6 +29,16 @@ const MANAGED_READY_TIMEOUT: Duration = Duration::from_secs(600);
 /// A short readiness timeout for the external server (it should already be up).
 const EXTERNAL_READY_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Health re-check cadence while the server looks healthy. Deliberately slow: the
+/// poll buys little here, since a failure would be reported by the next real request
+/// anyway (docs/server-health-monitoring.md, F2).
+const HEALTHY_POLL: Duration = Duration::from_secs(60);
+/// Cadence while the server is down — or while a failure streak is pending. Here the
+/// poll *is* the recovery mechanism: until it succeeds, generation stays blocked.
+const RECHECK_POLL: Duration = Duration::from_secs(5);
+/// Consecutive failed probes before a healthy server is declared unavailable.
+const FAILURES_TO_UNHEALTHY: u32 = 3;
+
 /// The result of setting up the chat server: the engine, a handle to the process
 /// (managed), and status.
 pub struct ChatSetup {
@@ -517,10 +527,67 @@ fn unavailable_embed() -> EmbedSetup {
     }
 }
 
-/// A background readiness probe: sends `Ready`/`Disconnected` on completion. If the
-/// probe is marked stale (`cancel`) — it aborts without sending a status: otherwise a
-/// late result from the previous server (e.g. a timeout of an intermediate external
-/// while flipping between modes) would overwrite the new server's status.
+/// The health-state machine of one monitored server, factored out so the transition
+/// rules are testable without a server or a clock.
+///
+/// Asymmetric by design (see docs/server-health-monitoring.md, F3): going *down*
+/// takes [`FAILURES_TO_UNHEALTHY`] consecutive failures, going *up* takes one
+/// success. A single missed poll isn't evidence a server is down — it can be one
+/// dropped packet or a slot-contention `503` on some builds — and a chip that
+/// flickers red teaches the user to ignore it. A success needs no corroboration:
+/// the server answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Health {
+    healthy: bool,
+    failures: u32,
+}
+
+impl Health {
+    fn new(healthy: bool) -> Self {
+        Self {
+            healthy,
+            failures: 0,
+        }
+    }
+
+    /// How long to wait before the next poll. Fast whenever something might be
+    /// wrong — while down the poll *is* the recovery mechanism, and mid-streak it
+    /// decides a pending verdict; otherwise slow, since a healthy server's failure
+    /// would be reported by the next real request anyway.
+    fn poll_delay(&self) -> Duration {
+        if self.healthy && self.failures == 0 {
+            HEALTHY_POLL
+        } else {
+            RECHECK_POLL
+        }
+    }
+
+    /// Records one probe outcome. Returns `Some(healthy)` when the verdict actually
+    /// flipped — the caller only publishes a status on a flip, so a steady server
+    /// doesn't wake the UI every minute.
+    fn record(&mut self, ok: bool) -> Option<bool> {
+        if ok {
+            self.failures = 0;
+            return (!std::mem::replace(&mut self.healthy, true)).then_some(true);
+        }
+        self.failures += 1;
+        (self.healthy && self.failures >= FAILURES_TO_UNHEALTHY).then(|| {
+            self.healthy = false;
+            false
+        })
+    }
+}
+
+/// A background health monitor for one server: reports the first verdict, then keeps
+/// watching so the status can't go stale. If the monitor is marked stale (`cancel`)
+/// it stops without sending anything: otherwise a late result from the previous
+/// server (e.g. a timeout of an intermediate external while flipping between modes)
+/// would overwrite the new server's status.
+///
+/// Two things it is *not*: it doesn't gate anything (the chat gate reads the last
+/// published status, exactly as before), and it doesn't relaunch anything — a dead
+/// managed child is the orchestrator's business (it owns the handle), see
+/// `Orchestrator::relaunch_dead_managed_servers`.
 fn spawn_probe(
     client: Arc<OpenAiClient>,
     timeout: Duration,
@@ -530,10 +597,13 @@ fn spawn_probe(
     loc: &'static Locale,
 ) {
     tokio::spawn(async move {
+        // Phase 1 — the first verdict. A managed GGUF can load for minutes, so this
+        // keeps its own generous retry loop; the steady-state cadence below is a
+        // different question and starts only once we know where we stand.
         let status = tokio::select! {
             biased;
             _ = cancel.cancelled() => return,
-            res = wait_until_ready(&client, timeout, exited, loc) => match res {
+            res = wait_until_ready(&client, timeout, exited.clone(), loc) => match res {
                 Ok(()) => ServerStatus::Ready,
                 Err(err) => ServerStatus::Disconnected(err.to_string()),
             },
@@ -542,8 +612,57 @@ fn spawn_probe(
         if cancel.is_cancelled() {
             return;
         }
-        let _ = status_tx.send(status);
+        let mut health = Health::new(matches!(status, ServerStatus::Ready));
+        if status_tx.send(status).is_err() {
+            return; // the orchestrator is gone
+        }
+
+        // Phase 2 — keep watching. Without this the status would describe the moment
+        // the server was configured rather than the present: a host that went down
+        // would stay green, and — the half users actually feel — a server that came
+        // up *after* the app would stay unusable, since the chat gate reads this
+        // status (see docs/server-health-monitoring.md §3).
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                // A managed child that exited will never answer again: report at once
+                // instead of waiting out a probe, and stop — reviving it means
+                // relaunching the process, which the orchestrator does.
+                _ = wait_for_exit(&exited) => {
+                    let _ = status_tx.send(ServerStatus::Disconnected(
+                        loc.t("ui.err.managed.early_exit").to_string(),
+                    ));
+                    return;
+                }
+                _ = tokio::time::sleep(health.poll_delay()) => {}
+            }
+            if cancel.is_cancelled() {
+                return;
+            }
+            let outcome = client.probe().await;
+            let reason = outcome.as_ref().err().map(|e| e.to_string());
+            if let Some(healthy) = health.record(outcome.is_ok()) {
+                let next = if healthy {
+                    ServerStatus::Ready
+                } else {
+                    ServerStatus::Disconnected(reason.unwrap_or_default())
+                };
+                if status_tx.send(next).is_err() {
+                    return;
+                }
+            }
+        }
     });
+}
+
+/// Waits for a managed child's exit signal; for a server we don't own (external)
+/// there is none, so this never resolves and simply never wins its `select!` arm.
+async fn wait_for_exit(exited: &Option<CancellationToken>) {
+    match exited {
+        Some(token) => token.cancelled().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// A mock supervisor for orchestrator tests: hands back a given chat backend and a
@@ -670,6 +789,7 @@ impl ServerSupervisor for MockSupervisor {
 mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::mpsc::unbounded_channel;
 
     /// The reference (Russian) locale for displayed unavailability reasons:
@@ -678,24 +798,30 @@ mod tests {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// Spawns a throwaway local server on an ephemeral port and returns its base URL.
+    /// Spawns a throwaway local server on an ephemeral port and returns its base URL
+    /// plus a switch: while it's `true` the server answers `/health` with `200`,
+    /// while it's `false` it accepts the connection and hangs up (the probe fails).
+    /// Flipping the switch mid-test is how a server "goes down" and "comes back".
     ///
-    /// `healthy` — answer `200` (the probe reads that as ready) or accept and hang up
-    /// (the probe fails). We hang up rather than pointing at a *closed* port on
-    /// purpose: connecting to a closed port costs ~2s per attempt on Windows, and the
-    /// probe retries until its timeout — which turned this test into a minute.
-    async fn spawn_stub_server(healthy: bool) -> String {
+    /// It hangs up rather than the test pointing at a *closed* port on purpose:
+    /// connecting to a closed port costs ~2s per attempt on Windows and the probe
+    /// retries until its timeout — which turned an early version of this into a
+    /// minute-long test.
+    async fn spawn_stub_server(healthy: bool) -> (String, Arc<AtomicBool>) {
+        let switch = Arc::new(AtomicBool::new(healthy));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let flag = switch.clone();
         tokio::spawn(async move {
             while let Ok((mut sock, _)) = listener.accept().await {
+                let flag = flag.clone();
                 tokio::spawn(async move {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     // Drain the request first: closing a socket with unread data
                     // pending sends an RST, and the client then loses the response.
                     let mut buf = [0u8; 1024];
                     let _ = sock.read(&mut buf).await;
-                    if healthy {
+                    if flag.load(Ordering::SeqCst) {
                         let _ = sock
                             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
                             .await;
@@ -705,7 +831,7 @@ mod tests {
                 });
             }
         });
-        format!("http://{addr}/v1")
+        (format!("http://{addr}/v1"), switch)
     }
 
     /// `apply_embed` with the probe plumbing defaulted — for tests that only care
@@ -1014,6 +1140,123 @@ mod tests {
         assert!(err.to_string().contains("not configured"));
     }
 
+    /// Going down needs corroboration; coming up doesn't. `FAILURES_TO_UNHEALTHY - 1`
+    /// failures must **not** flip the verdict — that's the whole point of hysteresis,
+    /// and it's the assertion that fails if someone "simplifies" the counter away.
+    #[test]
+    fn health_flips_down_only_after_a_streak_and_up_at_once() {
+        let mut h = Health::new(true);
+        for _ in 0..FAILURES_TO_UNHEALTHY - 1 {
+            assert_eq!(h.record(false), None, "flipped before the streak completed");
+        }
+        assert_eq!(
+            h.record(false),
+            Some(false),
+            "the streak should flip it down"
+        );
+        assert_eq!(
+            h.record(true),
+            Some(true),
+            "one success should bring it back"
+        );
+    }
+
+    /// A success mid-streak clears it: three failures spread across a healthy day
+    /// aren't a streak.
+    #[test]
+    fn health_success_resets_the_streak() {
+        let mut h = Health::new(true);
+        h.record(false);
+        assert_eq!(h.record(true), None, "still healthy — nothing to publish");
+        for _ in 0..FAILURES_TO_UNHEALTHY - 1 {
+            assert_eq!(h.record(false), None);
+        }
+        assert_eq!(h.record(false), Some(false));
+    }
+
+    /// A steady server publishes nothing — otherwise it would wake the UI every
+    /// minute forever.
+    #[test]
+    fn health_publishes_only_on_a_flip() {
+        let mut h = Health::new(true);
+        assert_eq!(h.record(true), None);
+        let mut down = Health::new(false);
+        assert_eq!(down.record(false), None);
+    }
+
+    /// The cadence follows suspicion, not just state: a pending streak polls fast, so
+    /// hysteresis costs ~10s of detection latency rather than ~3 minutes.
+    #[test]
+    fn health_polls_fast_while_anything_looks_wrong() {
+        assert_eq!(Health::new(true).poll_delay(), HEALTHY_POLL);
+        assert_eq!(Health::new(false).poll_delay(), RECHECK_POLL);
+        let mut pending = Health::new(true);
+        pending.record(false);
+        assert_eq!(
+            pending.poll_delay(),
+            RECHECK_POLL,
+            "a pending failure streak must not wait a full healthy interval"
+        );
+    }
+
+    /// The whole point of the feature, end to end: a server that was `Ready` goes
+    /// away, the monitor notices *on its own* (nobody asked it to), and when the
+    /// server comes back it recovers *on its own* too — no restart, no settings edit.
+    /// Time is paused, so the 60s/5s intervals cost nothing; the stub hangs up rather
+    /// than closing the port, so a failing probe is instant.
+    #[tokio::test(start_paused = true)]
+    async fn monitor_notices_a_server_going_down_and_coming_back() {
+        let (url, switch) = spawn_stub_server(true).await;
+        let (tx, mut rx) = unbounded_channel();
+        LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(
+            rx.recv().await,
+            Some(ServerStatus::Ready),
+            "initial verdict"
+        );
+
+        switch.store(false, Ordering::SeqCst); // the server goes away
+        match rx.recv().await {
+            Some(ServerStatus::Disconnected(_)) => {}
+            other => panic!("expected the monitor to notice the outage, got {other:?}"),
+        }
+
+        switch.store(true, Ordering::SeqCst); // …and comes back
+        assert_eq!(
+            rx.recv().await,
+            Some(ServerStatus::Ready),
+            "the monitor should recover without a restart"
+        );
+    }
+
+    /// A steady server publishes nothing after its first verdict — the monitor must
+    /// not wake the UI on every poll. (Paused time makes "a while" free: 10 minutes of
+    /// virtual time is ~10 healthy polls.)
+    #[tokio::test(start_paused = true)]
+    async fn monitor_stays_quiet_while_the_server_is_steady() {
+        let (url, _switch) = spawn_stub_server(true).await;
+        let (tx, mut rx) = unbounded_channel();
+        LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(rx.recv().await, Some(ServerStatus::Ready));
+        tokio::time::sleep(HEALTHY_POLL * 10).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "a steady server should publish nothing after its first verdict"
+        );
+    }
+
     /// The regression: a configured embedding server must not report `Ready` on the
     /// strength of a non-empty URL alone. Before the probe, a configured-but-
     /// unreachable host showed a green chip, and the failure only surfaced on the
@@ -1028,7 +1271,7 @@ mod tests {
     /// a local listener answers `/health` with `200`, so `Ready` arrives.
     #[tokio::test]
     async fn embed_probe_reports_ready_when_server_answers() {
-        let url = spawn_stub_server(true).await;
+        let (url, _switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
         let setup = LlamaSupervisor.apply_embed(
             &embed_external(&url),
@@ -1047,7 +1290,7 @@ mod tests {
     /// port *is* listening (a connect to a closed port costs seconds on Windows).
     #[tokio::test(start_paused = true)]
     async fn embed_probe_reports_disconnected_when_server_is_silent() {
-        let url = spawn_stub_server(false).await;
+        let (url, _switch) = spawn_stub_server(false).await;
         let (tx, mut rx) = unbounded_channel();
         let setup = LlamaSupervisor.apply_embed(
             &embed_external(&url),
@@ -1130,6 +1373,115 @@ mod tests {
     ///
     ///     MINDFORK_EMBED_URL=http://127.0.0.1:8001/v1 \
     ///       cargo test embed_probe_reaches_ready_on_live_server -- --ignored --nocapture
+    /// The PID listening on `port`, via `netstat` (Windows). `None` if nothing is.
+    #[cfg(windows)]
+    fn pid_on_port(port: u16) -> Option<u32> {
+        let out = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.lines()
+            .filter(|l| l.contains("LISTENING") && l.contains(&format!(":{port} ")))
+            .find_map(|l| l.split_whitespace().last()?.parse().ok())
+    }
+
+    /// A **real** managed child that dies on its own must be noticed at once — from
+    /// the exit signal, not by waiting out a probe. That's the entire reason the
+    /// monitor watches `exited` alongside its timer.
+    ///
+    /// It's killed from *outside* deliberately: dropping the handle would be **us**
+    /// stopping the server, which the process monitor treats differently (and
+    /// rightly so — that's what a re-`apply` does, and it must stay silent). An
+    /// earlier version of this test dropped the handle and measured 76 s: the exit
+    /// signal never fired and the monitor found out by probing (60 s healthy poll +
+    /// 3 × 5 s recheck). Wrong premise, right code — but worth keeping written down.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_EMBED_MODEL=.../bge-m3.gguf \
+    ///       cargo test managed_child_death_is_noticed_at_once -- --ignored --nocapture
+    #[tokio::test]
+    #[cfg(windows)]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_EMBED_MODEL)"]
+    async fn managed_child_death_is_noticed_at_once() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_EMBED_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_EMBED_MODEL not set");
+            return;
+        };
+        const PORT: u16 = 18099;
+        let s = EmbedSettings {
+            mode: ServerMode::Managed,
+            managed: crate::shared::config::ManagedEmbedSettings {
+                binary: Some(bin),
+                model_path: Some(model),
+                port: PORT,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_embed(&s, None, CancellationToken::new(), tx, ru());
+        let _handle = setup.handle.expect("a managed server owns its child");
+        assert_eq!(rx.recv().await, Some(ServerStatus::Ready), "model loaded");
+
+        let pid = pid_on_port(PORT).expect("the server should be listening");
+        let killed = std::time::Instant::now();
+        std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()
+            .expect("taskkill");
+        let status = rx.recv().await;
+        let noticed = killed.elapsed();
+        println!("child death noticed in {noticed:?}: {status:?}");
+        assert!(
+            matches!(status, Some(ServerStatus::Disconnected(_))),
+            "a dead child must be reported, got {status:?}"
+        );
+        assert!(
+            noticed < Duration::from_secs(10),
+            "should come from the exit signal, not a probe — took {noticed:?}"
+        );
+    }
+
+    /// Against a **real** server over a **real** network. The unit tests use a stub
+    /// that answers instantly and never hiccups, so they can't speak to the failure
+    /// mode that actually matters in the field: a status that flaps for no reason and
+    /// teaches the user to ignore the chip. Runs in real time across a full healthy
+    /// interval — slow by design.
+    ///
+    ///     MINDFORK_EMBED_URL=http://127.0.0.1:8001/v1 \
+    ///       cargo test monitor_does_not_flap_against_a_live_server -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a live embedding server (MINDFORK_EMBED_URL); takes ~70s"]
+    async fn monitor_does_not_flap_against_a_live_server() {
+        let Ok(url) = std::env::var("MINDFORK_EMBED_URL") else {
+            eprintln!("skip: MINDFORK_EMBED_URL not set");
+            return;
+        };
+        let (tx, mut rx) = unbounded_channel();
+        LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(
+            rx.recv().await,
+            Some(ServerStatus::Ready),
+            "initial verdict"
+        );
+        let watch = HEALTHY_POLL + Duration::from_secs(10);
+        println!("watching {url} for {watch:?} — any status published here is a flap");
+        tokio::time::sleep(watch).await;
+        match rx.try_recv() {
+            Err(_) => println!("no flap: the monitor stayed quiet"),
+            Ok(s) => panic!("the monitor flapped against a healthy server: {s:?}"),
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires a live embedding server (MINDFORK_EMBED_URL)"]
     async fn embed_probe_reaches_ready_on_live_server() {

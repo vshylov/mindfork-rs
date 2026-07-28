@@ -124,12 +124,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-28, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1472 unit
-tests green, 67 `#[ignore]` smokes** (the largest count — log below; the current
-track is a **readiness probe for the embedding server** (its status came from the
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1484 unit
+tests green, 69 `#[ignore]` smokes** (the largest count — log below; the current
+track is **periodic server health monitoring**
+([docs/server-health-monitoring.md](docs/server-health-monitoring.md)) — the probe
+stopped being one-shot: 60 s while healthy / 5 s while down, three consecutive
+failures to go red and one success to come back, a dead managed child reported from
+its exit signal in ~150 ms and relaunched under a crash-loop budget. The half users
+feel is **recovery**: a server started after the app now becomes usable on its own,
+where before generation stayed blocked until a restart — **done, live run GO**;
+before that — a **readiness probe for the embedding server** (its status came from the
 configuration alone, so a configured-but-unreachable server reported itself ready —
-now all three servers are probed alike: an immediate `Connecting` + a background
-`/health` probe, the cloud stays `Ready` with no probe) — **done, live run GO**;
+now all three servers are monitored alike) — **done, live run GO**;
 before that —
 **per-model input prefixes for embeddings**
 ([docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md)) —
@@ -9108,6 +9114,75 @@ debounce was done as a separate PR, see below).
   The full set is the right scope: `apply_embed` builds the embedder every memory
   path then uses, so "the status is now honest" had to be shown not to have cost
   anything downstream.
+
+### Post-M9: periodic server health monitoring (done)
+- **The other half of the previous entry** (user request; design doc
+  [docs/server-health-monitoring.md](docs/server-health-monitoring.md), forks
+  **F1–F6 confirmed 2026-07-28** — F2/F4 put to the user explicitly, the rest taken
+  by recommendation). Branch `feat/server-health-monitoring`, stacked on
+  `fix/embed-server-probe`.
+- **The framing that shaped the design**: the obvious symptom is a stale chip, but
+  the same one-shot probe had a sharper consequence nobody had named — **a server
+  that isn't up when the app starts stays unusable until the user intervenes**. The
+  initial probe fails → `Disconnected` → `backend_if_ready` refuses → nothing ever
+  re-probes, so starting the app before `llama-server` (the ordinary order for a
+  local setup) left generation blocked even after the server came up. So the
+  feature is really **recovery**, and that's the half users feel; the honest chip is
+  the by-product. This drove F2: the interesting question isn't "how fast do we
+  notice a failure" (the failing request answers that immediately, with a better
+  message) but "how fast do we notice a *fix*".
+- **`spawn_probe` became a monitor** (`supervisor.rs`): phase 1 is the existing
+  `wait_until_ready` (a managed GGUF loads for minutes), phase 2 keeps watching.
+  Cadence `HEALTHY_POLL=60s` / `RECHECK_POLL=5s`, the fast one used while down
+  **or** while a failure streak is pending — without that second condition,
+  confirming a failure at N=3 would take ~3 minutes instead of ~15 s. Hysteresis
+  (`FAILURES_TO_UNHEALTHY=3` down, one success up) lives in a small pure `Health`
+  type, so the transition rules are testable without a server or a clock; only a
+  **flip** is published, so a steady server never wakes the UI.
+- **Managed relaunch** (F4a): a dead child leaves a port no amount of probing will
+  revive, so `Orchestrator::relaunch_dead_managed_servers` re-`apply`s it under a
+  `RestartBudget` (≤3 per 5 min, cleared on reaching `Ready` — the budget guards a
+  crash *loop*, not a machine's lifetime outages). Deliberately a second small
+  implementation rather than sharing `McpManager::allow_restart`: unifying them is a
+  mechanical refactor and doesn't belong in a behavior change (AGENTS.md §2).
+  A launch that fails **synchronously** (the missing-model preflight) publishes no
+  status and so never reaches this path — retrying it would be pointless until the
+  settings change, and that's also what keeps the relaunch from looping.
+- **External/cloud are never relaunched** — we don't own the process; their monitor
+  recovers them by itself. Cloud isn't even monitored (F1a): the only way to check
+  it is a real API call, which costs money and quota to answer a question the next
+  real request answers for free.
+- **Live measurements decided three things, none of them guessed**: (1) `/health`
+  answers **200 during active generation** on this llama.cpp build (5 probes while a
+  600-token completion streamed) → the monitor needn't pause during generation,
+  though hysteresis covers builds that answer `503` under load; (2) a **real managed
+  child killed externally is reported in ~150 ms** from the exit signal; (3) the
+  same process going away *without* the exit signal takes **76 s** (one healthy poll
+  + the streak) — which is exactly the gap that justifies watching `exited`.
+- **A test that failed for the right reason, worth recording**: the first version of
+  the managed smoke killed the child by **dropping the handle** and asserted <10 s.
+  It measured 76 s and reported a *probe* error rather than the exit message —
+  because dropping the handle is **us** stopping the server deliberately, which the
+  process monitor treats differently (and must: that's what a re-`apply` does, and
+  it has to stay silent). Wrong premise, right code; the fix was to kill the process
+  from outside (`taskkill` on the PID from `netstat`), which then reported in 148 ms.
+- **Tests**: pure `Health` (a streak of N−1 does **not** flip — the assertion that
+  fails if someone simplifies the counter away; a success mid-streak resets; a steady
+  server publishes nothing; the cadence follows suspicion, not just state);
+  `RestartBudget` (cap, window pruning, cleared on recovery, independent per server);
+  the monitor end to end against a **toggleable** stub listener — `Ready` → the
+  server goes away → `Disconnected` → it comes back → `Ready`, all with paused time;
+  a steady server stays quiet over 10 virtual polls; the orchestrator relaunching a
+  dead managed server until the budget stops it, and never relaunching an external
+  one. **1484 unit tests green** (+12), **69 `#[ignore]`** (+2), clippy
+  `-D warnings`/fmt/`cyrillic_scan` clean.
+- **Live run — GO** (Gemma 4 31B q4_0 + bge-m3, external `llama-server`; plus a
+  local `llama-server` + bge-m3 for the managed case):
+  `monitor_does_not_flap_against_a_live_server` — the realistic failure mode the stub
+  can't speak to is a status that flaps against a *real* server on a *real* network;
+  watched for a full healthy interval + margin, **not one spurious status**.
+  `managed_child_death_is_noticed_at_once` — **148 ms** (see above).
+  **Regression — clean**: all 25 orchestrator e2e live smokes green.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

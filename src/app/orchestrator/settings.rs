@@ -2,9 +2,11 @@
 //! [`ServerSupervisor`]. The orchestrator is the sole writer of `settings.json`.
 
 use crate::app::events::AppEvent;
-use crate::shared::config::{AppConfig, CloudProvider};
+use crate::shared::config::{AppConfig, CloudProvider, ImpersonationMode, ServerMode};
+use crate::shared::server::ServerStatus;
 
 use super::Orchestrator;
+use super::engines::Server;
 
 impl Orchestrator {
     /// Applies configuration edits: saves, restarts the server/registry if
@@ -202,6 +204,74 @@ impl Orchestrator {
             self.evt_tx.clone(),
         ));
         self.emit_server_status();
+    }
+
+    /// Revives a **managed** server whose process is gone.
+    ///
+    /// Only managed servers are relaunched: we own the process, and a dead child
+    /// leaves a port that no amount of probing will revive. An external or cloud
+    /// server is someone else's to restart — its monitor keeps polling and picks the
+    /// recovery up on its own.
+    ///
+    /// Called after every status update, so a relaunch that fails simply produces the
+    /// next `Disconnected` and the next attempt, until [`RestartBudget`] stops it. A
+    /// launch that fails *synchronously* (a missing model file — the preflight check)
+    /// posts no status at all and therefore never reaches this path: retrying it would
+    /// be pointless until the settings change. See docs/server-health-monitoring.md, F4.
+    ///
+    /// [`RestartBudget`]: super::engines::RestartBudget
+    pub(super) fn relaunch_dead_managed_servers(&mut self) {
+        let loc = self.ui_locale();
+        let now = std::time::Instant::now();
+        let mut relaunched = false;
+
+        let chat_managed = self.config.engine.mode == ServerMode::Managed;
+        if chat_managed && self.needs_relaunch(Server::Chat, now) {
+            tracing::warn!("managed chat server is down — relaunching");
+            self.engines
+                .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+            relaunched = true;
+        }
+        if self.config.embed.mode == ServerMode::Managed && self.needs_relaunch(Server::Embed, now)
+        {
+            tracing::warn!("managed embedding server is down — relaunching");
+            self.engines
+                .apply_embed(&self.config.embed, &self.config.api_keys, loc);
+            relaunched = true;
+        }
+        if self.config.impersonation_engine.mode == ImpersonationMode::Managed
+            && self.needs_relaunch(Server::Impersonation, now)
+        {
+            tracing::warn!("managed impersonation server is down — relaunching");
+            self.engines.apply_impersonation(
+                &self.config.impersonation_engine,
+                &self.config.api_keys,
+                loc,
+            );
+            relaunched = true;
+        }
+        if relaunched {
+            self.emit_server_status(); // the chip returns to "connecting…"
+        }
+    }
+
+    /// Whether `server` is down and its crash-loop budget still allows a relaunch.
+    /// Consumes a budget slot when it answers `true`.
+    fn needs_relaunch(&mut self, server: Server, now: std::time::Instant) -> bool {
+        if !matches!(
+            self.engines.status_of(server),
+            ServerStatus::Disconnected(_)
+        ) {
+            return false;
+        }
+        if self.engines.allow_relaunch(server, now) {
+            return true;
+        }
+        tracing::warn!(
+            ?server,
+            "relaunch budget exhausted — leaving it disconnected"
+        );
+        false
     }
 
     /// (Re-)raises the impersonation server from `config.impersonation_engine`. In

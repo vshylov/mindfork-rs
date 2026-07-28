@@ -807,12 +807,35 @@ crashing).
 
 All three servers are probed the same way: `apply_*` returns an **immediate**
 status (`Connecting`, or `Disconnected` when the launch itself fails) and a
-background `/health` probe posts the real one to its own channel — the
-orchestrator's `run` loop translates each into `AppEvent::ServerStatus`. Stale
-probes are invalidated by a per-server `CancellationToken` (a quick sequence of
-settings edits mustn't let the previous server's late verdict overwrite the new
-one's). The **cloud** has nothing to load and no `/health` — it's `Ready` at
-once, with no probe.
+background monitor posts the real one to its own channel — the orchestrator's
+`run` loop translates each into `AppEvent::ServerStatus`. Stale monitors are
+invalidated by a per-server `CancellationToken` (a quick sequence of settings
+edits mustn't let the previous server's late verdict overwrite the new one's).
+The **cloud** has nothing to load and no `/health` — it's `Ready` at once, with
+no monitor.
+
+The monitor doesn't stop at the first verdict — it keeps watching, so a status
+describes the present rather than the moment the server was configured
+(docs/server-health-monitoring.md):
+
+- **Cadence** — `HEALTHY_POLL` 60 s while healthy, `RECHECK_POLL` 5 s while down
+  *or* while a failure streak is pending. Asymmetric because the stakes are: while
+  healthy a poll buys little (the next real request would reveal a failure anyway),
+  while down the poll **is** the recovery mechanism.
+- **Hysteresis** — `Ready` → `Disconnected` takes `FAILURES_TO_UNHEALTHY` = 3
+  consecutive failures; the way back takes one success. A single missed poll isn't
+  evidence, and a chip that flickers teaches the user to ignore it; a success is
+  self-proving. Only a *flip* is published, so a steady server never wakes the UI.
+- **Managed child death** — the monitor also watches the `exited` token, so a
+  crashed child is reported in ~150 ms instead of after a poll (measured).
+- **Recovery** — this is the half users feel: before it, a server that wasn't up
+  when the app started stayed unusable (the chat gate reads this status) until a
+  restart or a settings edit.
+- **Relaunch** — a dead *managed* child can only be revived by launching a new
+  process, so `Orchestrator::relaunch_dead_managed_servers` re-`apply`s it under a
+  crash-loop budget (`RestartBudget`: ≤3 per 5 min, reset on reaching `Ready`),
+  mirroring `McpManager`. External/cloud servers are never relaunched — we don't
+  own the process, and their monitor recovers them by itself.
 
 The embeddings probe **doesn't** make RAG eager (ADR 0002): it's a `/health`
 GET, and the embedder itself is still first touched on a real call. Without it

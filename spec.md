@@ -1001,13 +1001,23 @@ Two main screens + overlays (modals):
   the chip is hidden), with no reason text (compact; details are in the logs/settings).
   A snapshot of all statuses (`ServerStatuses`) is emitted by the orchestrator
   (`AppEvent::ServerStatus`) on any change to any of them. **All three servers are
-  probed alike**: a configured one starts at `Connecting`, and a background `/health`
-  probe resolves it to `Ready`/`Disconnected` (the cloud has nothing to load →
-  `Ready` at once). The embeddings probe doesn't make RAG eager — it's a `/health`
-  GET, the embedder itself is still touched only on a real call (ADR 0002) — and it
-  gates nothing: it exists so a configured-but-unreachable embedding server can't
-  report itself ready (before it, the status came from the settings alone and the
-  failure surfaced only on the first `rag_search`).
+  monitored alike**: a configured one starts at `Connecting`, and a background
+  `/health` probe resolves it to `Ready`/`Disconnected` (the cloud has nothing to
+  load → `Ready` at once, no monitor). The embeddings probe doesn't make RAG eager —
+  it's a `/health` GET, the embedder itself is still touched only on a real call
+  (ADR 0002) — and it gates nothing: it exists so a configured-but-unreachable
+  embedding server can't report itself ready (before it, the status came from the
+  settings alone and the failure surfaced only on the first `rag_search`).
+- **The status keeps up to date**, rather than describing the moment the server was
+  configured: the monitor re-checks every 60 s while healthy and every 5 s while
+  down, flips to unavailable only after 3 consecutive failures (one success
+  restores it), and publishes only on a change. A **managed** child that dies is
+  reported at once from its exit signal and relaunched under a crash-loop budget
+  (≤3 per 5 min); external/cloud servers are never relaunched by us — their
+  monitor simply picks the recovery up. This also means a server started *after*
+  the app now becomes usable on its own: previously the chat gate kept generation
+  blocked until a restart or a settings edit. See
+  docs/server-health-monitoring.md.
 
 ### 11.2. The chat list (an overlay)
 

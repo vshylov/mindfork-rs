@@ -119,15 +119,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   computer").
 - **Retry/backoff on cloud provider network errors** — clients currently
   surface the error body but don't retry (transient 429/5xx/timeouts).
-- **Periodic re-probing of servers.** Every server's `/health` probe is
-  **one-shot**: it runs after `apply_*` and stops at the first verdict. So a
-  host that goes down *after* connecting keeps a green chip until the settings
-  change or the app restarts — the second half of the problem that the
-  embeddings probe fixed for startup (a status that lies is worse than no
-  status). Needs a timer plus care with status races (the per-server
-  `CancellationToken` is already in place) and a deliberate decision on what a
-  transient blip should look like — flapping the chip on one missed poll would
-  be its own kind of lie.
+- **Configurable health-check cadence.** The monitor's intervals
+  (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
+  relaunch budget (≤3 per 5 min) are constants. Nothing has asked for them to be
+  settings yet; if a setup appears where they're wrong (a very slow link, a
+  deliberately flaky server), they'd go in the "Model" section next to the
+  engine fields.
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
 - **Multimodality support** (images) — if the model/`llama-server` supports
