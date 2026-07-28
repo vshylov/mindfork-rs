@@ -42,9 +42,10 @@ gated**, `"gated": false`):
 | `ggml-org/bge-m3-Q8_0-GGUF` | `bge-m3-q8_0.gguf` | ~0.6 GB |
 
 > Correction to the premise in the request: **a Hugging Face token is not
-> required** — neither repo is gated. A token is still worth setting
-> (`HF_TOKEN`) because anonymous downloads are rate-limited and slower, but it
-> is a convenience, not a gate.
+> required to download them** — neither repo is gated. For a rented pod a token
+> is a convenience (anonymous downloads are rate-limited), not a gate. It becomes
+> *required* only if HF Inference Endpoints is chosen (§3.1), where it is the
+> management and auth credential rather than a download key.
 
 **VRAM.** 17.65 GB of weights + KV cache for 16k ctx + compute buffers on a 24 GB
 card is tight but probably fits; adding bge-m3 (~1 GB resident) and a second
@@ -62,21 +63,94 @@ to squeeze into 24 GB. (Prices move; treat as of 2026-07.)
 
 ## 3. Candidate platforms
 
-| Option | llama.cpp fidelity | Cleanup guarantee | Cost per ~30 min run | Verdict |
-|---|---|---|---|---|
-| **RunPod Pods** | full (any container) | **none native** — must be built (§5) | ~$0.22 (A40) | **Recommended**, with the layered switch |
-| **Modal** | full (official llama.cpp example) | **platform-enforced** — containers scale to zero, `timeout` is a hard cap | ~$1.00 (L40S) | Best answer to the cleanup question; 4–5× the price, and see the auth caveat |
-| RunPod Serverless | ✗ — the stock worker is vLLM; llama.cpp needs a custom worker | platform-enforced | low | Loses the point: the smokes test **llama.cpp-specific** paths |
-| Vast.ai | full | none native, plus interruptible hosts | ~$0.10–0.18 | Cheapest, least reliable; same switch needed |
-| Lambda / Hyperstack / bare VMs | full | none native | higher | No advantage over RunPod here |
-| Cloud APIs (OpenAI/Gemini/Claude) | ✗ | n/a | n/a | Already covered by separate key-gated smokes |
-| **Self-hosted GitHub runner on the dev box** | full | **n/a — nothing is rented** | **$0** | Genuinely the simplest option; see §8 |
+| Option | llama.cpp fidelity | Cleanup guarantee | Infra we own | Cost per ~30 min run | Verdict |
+|---|---|---|---|---|---|
+| **HF Inference Endpoints** | **first-class** — HF's own llama.cpp engine | **platform-bounded** — auto scale-to-zero, `pause`/`delete` API | almost none | ~$0.90 (L40S 48 GB) | **Recommended** — see §3.1 |
+| **RunPod Pods** | full (any container) | **none native** — must be built (§6) | pod bootstrap, SSH, downloads, switch | ~$0.22 (A40 48 GB) | Cheapest; you own the cleanup logic |
+| Modal | full (official llama.cpp example) | platform-enforced (`scaledown_window`, `timeout`) | a Python app file | ~$1.00 (L40S) | Good guarantee, more code than HF |
+| Google Cloud Run + GPU | full (any container) | platform-enforced (scale-to-zero, per-second) | GCP project, Artifact Registry, IAM, image with the model | ~$0.35 (L4 24 GB) | Works, but the most setup; L4 24 GB only |
+| RunPod / other Serverless | ✗ — stock workers are vLLM; llama.cpp needs a custom worker | platform-enforced | a custom worker | low | Loses the point (see below) |
+| Vast.ai | full | none native, plus interruptible hosts | same as RunPod | ~$0.10–0.18 | Cheapest, least reliable |
+| Lambda / Hyperstack / bare VMs | full | none native | most | higher | No advantage over RunPod here |
+| Cloud APIs (OpenAI/Gemini/Claude) | ✗ | n/a | none | n/a | Already covered by separate key-gated smokes |
+| **Self-hosted GitHub runner on the dev box** | full | **n/a — nothing is rented** | a runner service | **$0** | Simplest of all; see §8 |
 
 **Why llama.cpp fidelity is non-negotiable:** the smokes exercise llama.cpp
 request-body extensions (`dynatemp_*`, `dry_*`, `xtc_*`, `mirostat`, `samplers`),
 `--jinja` tool calling, `reasoning_format`/`reasoning_budget` "thoughts", the
 `/health` readiness probe and its `503 Loading model`, and the `-ub/-b` embedding
 batch behaviour. Any vLLM-based serverless endpoint would exercise none of it.
+
+### 3.1 Hugging Face Inference Endpoints — llama.cpp as a managed service
+
+This is the "more convenient service" the survey was looking for, and it changes
+the recommendation. **HF Inference Endpoints has a first-class llama.cpp
+engine**: point an endpoint at a GGUF repo and HF deploys the actual
+`llama-server` (image built from llama.cpp `master`) with an OpenAI-compatible
+API. No pod bootstrap, no SSH, no model download step — the model already lives
+in HF's own storage.
+
+What it gives us:
+
+- **Real `llama-server`**, so the llama.cpp-specific paths above are genuinely
+  exercised.
+- **Lifecycle by API**: `huggingface_hub.create_inference_endpoint(...)` →
+  `.wait(timeout=…)` → `.pause()` / `.delete()`; CLI equivalents
+  `hf endpoints deploy|describe|pause|scale-to-zero|delete`. The whole
+  create-run-destroy cycle is ~15 lines, not a bootstrap script.
+- **Billing by the minute**; a **paused or scaled-to-zero endpoint costs
+  nothing**.
+- **Auto scale-to-zero after idle** (1 hour by default) — this is the important
+  one for §6: it is a *platform-provided* upper bound on a leak. A crashed run
+  that never deletes its endpoint wastes at most one idle hour and then goes to
+  $0 by itself.
+- Hardware: T4 14 GB $0.50 · L4 24 GB $0.80 (GCP $0.70) · A10G 24 GB $1.00 ·
+  **L40S 48 GB $1.80** · A100 80 GB $2.50 · H200 $5.00 (AWS). For a 17.65 GB
+  model the L40S is the comfortable choice; the 24 GB tiers are the same tight
+  fit as elsewhere.
+
+Configuration, and its limits (verified against the docs):
+
+- Settings are `LLAMA_ARG_*` environment variables. **`LLAMA_ARG_JINJA` is
+  available** — tool calling works. So does `LLAMA_ARG_THINK`
+  (`--reasoning-format`) and `LLAMA_ARG_BATCH`/`LLAMA_ARG_UBATCH`.
+- **Reserved (cannot be set):** `LLAMA_ARG_MODEL`, `LLAMA_ARG_N_GPU_LAYERS`,
+  `LLAMA_ARG_CTX_SIZE`, `LLAMA_ARG_N_PARALLEL`, `LLAMA_ARG_EMBEDDINGS`,
+  `LLAMA_ARG_NO_MMAP`, host/port/threads/metrics. Context size is set indirectly
+  through the endpoint's *Max Tokens* × *Max Concurrent Requests* settings.
+- Because `LLAMA_ARG_EMBEDDINGS` is reserved, **do not try to serve bge-m3 GGUF
+  through the llama.cpp engine** — HF decides that flag. Use HF's own **TEI**
+  engine with `BAAI/bge-m3` instead: it exposes an OpenAI-compatible
+  `/v1/embeddings`, which is all `OpenAiClient` needs, and bge-m3 is 568M
+  params so a T4 ($0.50/hr) or even CPU tier suffices. The app's embedding path
+  is provider-agnostic; the llama.cpp `-ub/-b` batch behaviour is a *managed
+  mode* concern covered by other tests.
+- If total control is required, `custom_image` + `container_command` /
+  `container_args` accept an arbitrary image (e.g.
+  `ghcr.io/ggml-org/llama.cpp:server-cuda`) with explicit flags — at the cost of
+  handling the model yourself.
+
+Costs of this choice: the llama.cpp build is **whatever `master` is that day**
+(unpinned — good for catching upstream drift, bad for reproducibility), the GPU
+menu is fixed (no cheap 48 GB), and an HF account with a payment method is
+required. Note also that scaled-to-zero endpoints still consume endpoint
+*quota* — to release quota you must `pause` or `delete`.
+
+### 3.2 What was checked and rejected
+
+- **HF Spaces (Docker + GPU)** can run `llama-server` and has a *sleep time*
+  setting, but paid GPU Spaces "stay running until you pause them" and the sleep
+  window is coarse; it is a demo-hosting product, not a job runner. Inference
+  Endpoints is the same company's answer to this use case and strictly better
+  here.
+- **HF Inference Providers / serverless Inference API** routes to third-party
+  providers (Together, Fireworks, …). Not llama.cpp, no control over flags.
+- **GitHub-hosted GPU runners**: still not a generally available product with a
+  card big enough for a 17.65 GB model. Not an option today.
+- **RunPod Serverless, Beam, Koyeb, Cerebrium, Baseten, Replicate**: all solve
+  scale-to-zero well, but each expects you to write a worker/handler in their own
+  framework. For "run an existing OpenAI-compatible server binary", that is more
+  work than either HF or a plain pod, with no added fidelity.
 
 ## 4. RunPod mechanics (verified)
 
@@ -116,30 +190,52 @@ batch behaviour. Any vLLM-based serverless endpoint would exercise none of it.
 
 ## 5. Transport: how the runner reaches the servers
 
-Three options, and the harness constraint from §2 decides:
+The harness constraint from §2 — `OpenAiClient::new(url)` sends no
+`Authorization` header — shapes this, but it is worth naming the fix first:
 
-| | Public exposure | Auth | 100 s limit | Code change |
+> **The enabling change.** Teaching `live_backend()`/`live_embedder()` an
+> optional `MINDFORK_ENGINE_KEY` / `MINDFORK_EMBED_KEY` that routes through the
+> already-existing `OpenAiClient::with_api_key` is **~10 lines**. It unlocks
+> every managed option and is a genuine improvement on its own (the smokes could
+> then run against *any* authenticated OpenAI-compatible server). Treating the
+> missing header as a hard blocker would be over-weighting it.
+
+| | Public exposure | Auth | 100 s proxy limit | Needs the enabling change |
 |---|---|---|---|---|
-| HTTP proxy | yes, guessable URL | none available (no header support) | **yes** | — |
-| TCP direct | yes, plaintext | none available | no | — |
-| **SSH tunnel** (`ssh -L 8000:127.0.0.1:8000 …`) | **none** | SSH key | no | **none** |
+| **HF endpoint, `protected`** | URL only; token required | `Authorization: Bearer hf_…` | no | **yes** |
+| HF endpoint, `public` | **yes, unauthenticated** | none | no | no |
+| **RunPod SSH tunnel** (`ssh -L 8000:127.0.0.1:8000 …`) | **none** | SSH key | no | no |
+| RunPod HTTP proxy | yes, guessable URL | `llama-server --api-key` | **yes** | yes |
+| RunPod TCP direct | yes, plaintext | `llama-server --api-key` (key in cleartext) | no | yes |
 
-With `OpenAiClient::new(url)` sending no `Authorization` header, both public
-options would leave an **unauthenticated LLM endpoint on the open internet** for
-the duration of the run. The SSH tunnel is not just nicer — it is the only option
-that is both secure and needs no code change: `llama-server` binds `127.0.0.1`
-inside the pod, nothing is published, and the tests use
-`MINDFORK_ENGINE_URL=http://127.0.0.1:8000/v1` exactly as they do today.
+Two clean answers, one per platform:
 
-(If a public endpoint is ever wanted, the minimal change is to teach
-`live_backend()`/`live_embedder()` an optional `MINDFORK_ENGINE_KEY` →
-`OpenAiClient::with_api_key`, paired with `llama-server --api-key`. Not needed
-for the tunnel design.)
+- **HF → `type="protected"` + the enabling change.** Standard bearer auth, TLS,
+  nothing bespoke.
+- **RunPod → SSH tunnel, no change at all.** `llama-server` binds `127.0.0.1`
+  inside the pod, nothing is published, and the tests keep using
+  `MINDFORK_ENGINE_URL=http://127.0.0.1:8000/v1` exactly as they do today. Also
+  sidesteps the Cloudflare 100 s cap.
+
+Creating an HF endpoint as `public` would work with no code change, but leaves an
+**unauthenticated LLM endpoint on the open internet** for the duration of the
+run. Not recommended when the alternative costs ten lines.
 
 ## 6. **The cleanup guarantee** — the central question
 
 Short answer: **no rented-pod provider gives you one; you build it, and the only
-layer that truly guarantees it is inside the pod.**
+layer that truly guarantees it is inside the pod. A managed service moves the
+guarantee into the platform — which is the strongest argument for HF over
+RunPod.**
+
+**On a managed endpoint (HF, Modal, Cloud Run) most of what follows is
+unnecessary.** Idle auto-scale-to-zero is itself the dead-man's switch: the worst
+case is not "a GPU runs until someone notices" but "one idle window is wasted,
+then it costs nothing". On HF with the default 1-hour window that ceiling is
+**~$1.80** on an L40S, with no code of ours involved — and a scheduled sweeper
+calling `hf endpoints ls` + `delete` reduces it further and reclaims quota. The
+rest of this section is what a **rented pod** requires to reach a comparable
+position.
 
 Every external watchdog shares one failure mode: it is a *different* machine that
 can also fail. `if: always()` in GitHub Actions does **not** run when the runner
@@ -183,22 +279,32 @@ at $0. Optionally lower the account spend cap from the $80/hr default.
 Ordering matters: **L0 first**. A design that only has L2 + L3 is the common
 mistake — it works until the day the runner is OOM-killed mid-run.
 
-**Modal removes L0–L3 entirely**, which is the honest argument for it: containers
-are billed only while alive, scale to zero after `scaledown_window`, and
-`timeout` is a hard platform-enforced cap. There is nothing to leak. Its caveat
-here is auth: Modal's `requires_proxy_auth=True` uses `Modal-Key`/`Modal-Secret`
-headers, which the harness cannot send (§2) — so it would be either an
-unauthenticated `.modal.run` URL (protected only by obscurity, though unauthorized
-requests are rejected before a container starts, so the *cost* risk is bounded)
-or a small code change.
+**Modal and Cloud Run remove L0–L3 the same way**: containers are billed only
+while alive, scale to zero when idle, and Modal's `timeout` is a hard cap.
+Modal's caveat is auth — `requires_proxy_auth=True` uses `Modal-Key`/
+`Modal-Secret` headers, which the harness cannot send even with the §5 enabling
+change (that adds `Authorization: Bearer`, not arbitrary headers). Unauthorized
+requests are rejected before a container starts, so the *cost* risk is bounded
+either way.
 
 ## 7. Cost
 
-Per run, A40 48 GB @ ~$0.44/hr, assuming pod boot ~1 min + model pull ~2–4 min +
-load ~1–2 min + tests ~15–20 min ≈ **25–30 min → ~$0.20–0.25**. Ten runs a month
-is under $3. Modal on an L40S is ~4× that and still trivial. **Cost is not the
-constraint here; the leak risk is** — one forgotten pod running for a weekend on
-an A40 is ~$21, which is 100 runs' worth.
+| | GPU | $/hr | per ~30 min run | 10 runs/mo |
+|---|---|---|---|---|
+| HF Inference Endpoints | L40S 48 GB | 1.80 | **~$0.90** | ~$9 |
+| HF, chat on L4 24 GB | L4 | 0.80 | ~$0.40 | ~$4 |
+| HF embeddings (TEI, bge-m3) | T4 | 0.50 | ~$0.25 | ~$2.5 |
+| RunPod pod | A40 48 GB | 0.44 | **~$0.22** | ~$2 |
+| Modal | L40S | 1.95 | ~$1.00 | ~$10 |
+| Self-hosted runner | own | — | **$0** | $0 |
+
+A run is ~25–30 min: boot/deploy + model load + ~15–20 min of tests (on RunPod,
+plus a 2–4 min model pull; on HF the model is already in HF storage).
+
+**Cost is not the constraint at this volume — the leak risk is.** One forgotten
+RunPod pod running over a weekend on an A40 is ~$21, i.e. a hundred runs' worth.
+The HF/RunPod price gap (~$0.70 per run) buys away the entire class of problem in
+§6; at ten runs a month that is ~$7, which is the wrong thing to optimise.
 
 ## 8. The alternative worth considering first
 
@@ -218,29 +324,35 @@ omission.
 ## 9. Forks for decision
 
 - **R1 — platform.**
-  (a) **RunPod pods + layered switch** — cheapest, full control, we own the
-  cleanup logic. *(recommended)*
-  (b) Modal — platform-guaranteed cleanup, ~4× cost, auth caveat.
-  (c) Self-hosted runner on the dev box — $0, no leak risk, needs the box up.
-  (d) Both (a) and (c): self-hosted for the routine gate, rented for portability.
+  (a) **HF Inference Endpoints** — llama.cpp as a managed service, cleanup
+  bounded by the platform, least infrastructure of our own. *(recommended)*
+  (b) RunPod pods + the layered switch — ~4× cheaper per run, but we own the
+  bootstrap, the tunnel and the entire cleanup guarantee.
+  (c) Modal — comparable guarantee to (a), more of our own code than (a).
+  (d) Self-hosted runner on the dev box — $0, no leak risk, needs the box up.
+  (e) (a) or (b) **plus** (d): self-hosted for the routine gate, rented for
+  portability and for machines without a GPU.
 
-- **R2 — transport.**
-  (a) **SSH tunnel, nothing published** *(recommended — the only option needing
-  no code change, see §5)*
-  (b) RunPod HTTP proxy + a new `MINDFORK_ENGINE_KEY` and `--api-key`.
-  (c) TCP direct + `--api-key` (plaintext key on the wire).
+- **R2 — transport / auth.** *(follows from R1)*
+  (a) **HF `protected` + the ~10-line `MINDFORK_ENGINE_KEY` change**
+  *(recommended with R1a — see §5)*
+  (b) RunPod SSH tunnel, nothing published, no code change *(the answer if R1b)*
+  (c) HF `public` — no code change, but an unauthenticated endpoint while the run
+  lasts. Not recommended.
 
-- **R3 — how much of the switch to build now.**
-  (a) **L0 + L2 + L3 + L4** *(recommended — L0 is the guarantee, L3 covers the
-  lost-id leak)*
+- **R3 — how much of the switch to build now.** *(only meaningful for R1b)*
+  (a) **L0 + L2 + L3 + L4** *(recommended for a pod — L0 is the guarantee, L3
+  covers the lost-id leak)*
   (b) all five including the heartbeat (L1).
   (c) L0 + L2 only (accept up to one wasted pod-hour in rare cases).
+  With R1a this reduces to: a `finally`-style `delete` plus a scheduled sweeper.
 
 - **R4 — GPU / hardware.**
-  (a) **A40 48 GB Community** *(recommended — cheaper and roomier than a 4090)*
-  (b) RTX 4090 24 GB (as originally proposed).
-  (c) Secure Cloud (stable IPs, ~2× price).
-  Also: `interruptible` (spot) is **not** recommended — a preempted pod mid-suite
+  With R1a: (a) **L40S 48 GB $1.80/hr** *(recommended — no VRAM question)* ·
+  (b) L4/A10G 24 GB (~$0.80–1.00, tight fit, needs measuring).
+  With R1b: (a) **A40 48 GB Community $0.44/hr** *(recommended — cheaper **and**
+  roomier than a 4090)* · (b) RTX 4090 24 GB · (c) Secure Cloud (stable IPs, ~2×).
+  `interruptible`/spot is **not** recommended either way — a preemption mid-suite
   is a false failure.
 
 - **R5 — trigger.**
@@ -257,18 +369,43 @@ omission.
   prefix smokes run too — one more server, ~1 GB, a little more VRAM.
   (c) everything except the cloud-key and sandbox smokes.
 
-- **R7 — model caching.**
+- **R7 — model caching.** *(only meaningful for R1b — on HF the model is already
+  in HF storage)*
   (a) **none — pull from HF each run** *(recommended: ~2–4 min, no monthly cost,
   no datacenter pinning)*
   (b) a RunPod network volume (~$1.40/mo for 20 GB, pins the datacenter).
 
-- **R8 — secrets.** `RUNPOD_API_KEY` (required) and `HF_TOKEN` (optional, §2) as
-  GitHub **repository secrets** (`gh secret set`). Scope the RunPod key as
-  narrowly as its permission model allows and keep it separate from any key used
-  interactively. Confirm: repository secrets, or an environment with required
-  reviewers for the live job?
+- **R8 — secrets.** GitHub **repository secrets** (`gh secret set`):
+  with **R1a** → `HF_TOKEN` only (one credential: it both manages the endpoints
+  and authenticates the requests — issue a fine-grained token scoped to Inference
+  Endpoints, separate from any interactive token);
+  with **R1b** → `RUNPOD_API_KEY` (required) + `SSH_PRIVATE_KEY` + `HF_TOKEN`
+  (optional — the models are public, §2; a token only lifts download rate limits).
+  Confirm: plain repository secrets, or a GitHub *environment* with required
+  reviewers gating the live job?
 
-## 10. Sketch of the implementation (if R1a + R2a are chosen)
+## 10. Sketch of the implementation
+
+### 10.a If R1a (HF Inference Endpoints) is chosen
+
+1. The ~10-line enabling change (§5): `MINDFORK_ENGINE_KEY` / `MINDFORK_EMBED_KEY`
+   → `OpenAiClient::with_api_key`. Ships as its own small PR with a unit test.
+2. `scripts/e2e-hf.py` (huggingface_hub) — one entry point for CI and local use:
+   - `create_inference_endpoint(name=f"e2e-chat-{run_id}", repository=
+     "google/gemma-4-31B-it-qat-q4_0-gguf", …, type="protected",
+     instance_type="nvidia-l40s", env={"LLAMA_ARG_JINJA": "1"})`, plus a second
+     endpoint for `BAAI/bge-m3` on the TEI engine;
+   - `.wait(timeout=…)` on both, then `GET /health`;
+   - `MINDFORK_ENGINE_URL=<url>/v1`, `MINDFORK_EMBED_URL=<url>/v1`,
+     `MINDFORK_ENGINE_KEY=$HF_TOKEN` → `cargo test -- --ignored --test-threads=1`;
+   - `finally:` `.delete()` on both — and assert they are gone.
+3. `.github/workflows/e2e-live.yml` — `workflow_dispatch`, plus a sweeper
+   (`hf endpoints ls` → delete anything named `e2e-*` older than the max
+   lifetime). The sweeper also reclaims endpoint quota, which scale-to-zero
+   alone does not.
+4. Docs: `docs/install.md`, a CLAUDE.md journal entry.
+
+### 10.b If R1b (RunPod) is chosen
 
 1. `scripts/e2e-gpu.sh` (or a small workflow) — single entry point, so it works
    the same locally and in CI.
@@ -296,7 +433,14 @@ omission.
 ## 11. Open questions / risks
 
 - **Does 17.65 GB + 16k ctx actually fit in 24 GB?** Not measured. Sidestepped by
-  R4a (48 GB).
+  R4a (48 GB) on either platform.
+- **HF-specific, unverified:** that the llama.cpp engine accepts
+  `google/gemma-4-31B-it-qat-q4_0-gguf` cleanly when the repo also contains an
+  mmproj file (file selection is a deploy-time choice — should be fine, but
+  untested); what context size the *Max Tokens* × *Max Concurrent Requests*
+  settings actually produce; and whether the **unpinned `master`** llama.cpp
+  build introduces day-to-day variance in the smokes. All three are cheap to
+  settle with one throwaway endpoint before committing to R1a.
 - **Community-cloud host quality varies** (download speed, disk, occasional bad
   hosts). A retry-once policy on pod creation may be warranted.
 - **Non-hermetic smokes** (`web_search`, `fetch_url`, MCP `npx` download) will
@@ -309,6 +453,17 @@ omission.
 
 ## Sources
 
+**Hugging Face**
+- [Inference Endpoints: llama.cpp engine](https://huggingface.co/docs/inference-endpoints/en/engines/llama_cpp) ·
+  [Autoscaling / scale to zero](https://huggingface.co/docs/inference-endpoints/en/guides/autoscaling) ·
+  [Pricing](https://huggingface.co/docs/inference-endpoints/en/pricing) ·
+  [Managing endpoints with `huggingface_hub`](https://huggingface.co/docs/huggingface_hub/en/guides/inference_endpoints)
+- ["Inference Endpoints now supports GGUF out of the box"](https://github.com/ggml-org/llama.cpp/discussions/9669)
+- [Text Embeddings Inference (TEI)](https://github.com/huggingface/text-embeddings-inference) ·
+  [Using GPU Spaces](https://huggingface.co/docs/hub/en/spaces-gpus)
+- [llama-server env vars (`LLAMA_ARG_*`)](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+
+**RunPod and others**
 - [RunPod REST API OpenAPI spec](https://rest.runpod.io/v1/openapi.json)
 - [Manage Pods (docs)](https://docs.runpod.io/pods/manage-pods) ·
   [Expose ports](https://docs.runpod.io/pods/configuration/expose-ports) ·
@@ -328,6 +483,8 @@ omission.
   [Scaling out](https://modal.com/docs/guide/scale) ·
   [llama.cpp on Modal](https://github.com/modal-labs/modal-examples/blob/main/06_gpu_and_ml/llm-serving/llama_cpp.py)
 - [llama.cpp Docker images](https://github.com/ggml-org/llama.cpp/blob/master/docs/docker.md)
+- [Cloud Run: GPU support for services](https://docs.cloud.google.com/run/docs/configuring/services/gpu) ·
+  [Cloud Run GPUs generally available](https://cloud.google.com/blog/products/serverless/cloud-run-gpus-are-now-generally-available)
 - [google/gemma-4-31B-it-qat-q4_0-gguf](https://huggingface.co/google/gemma-4-31B-it-qat-q4_0-gguf) ·
   [ggml-org/bge-m3-Q8_0-GGUF](https://huggingface.co/ggml-org/bge-m3-Q8_0-GGUF)
 </content>
