@@ -458,12 +458,25 @@ mod tests {
         {
             return (None, Some(dir.clone()));
         }
-        // The app's directory only counts when it is already provisioned.
-        if named.is_none()
-            && let Ok(paths) = crate::shared::paths::Paths::resolve()
-            && locate_wasmer(&paths.sandbox_dir()).is_some()
-        {
-            return (None, Some(paths.sandbox_dir()));
+        // Read-only candidates: use one if it is already provisioned, never
+        // write to it. The second entry matters more than it looks — a test
+        // binary lives in `target/<profile>/deps/`, so resolving from
+        // `current_exe()` looks for `deps/data/sandbox` and misses the real
+        // `target/<profile>/data/sandbox` the app itself uses. That is why this
+        // smoke used to fail on a machine that *did* have a sandbox installed.
+        if named.is_none() {
+            let mut candidates = Vec::new();
+            if let Ok(paths) = crate::shared::paths::Paths::resolve() {
+                candidates.push(paths.sandbox_dir());
+            }
+            if let Ok(exe) = std::env::current_exe()
+                && let Some(profile_dir) = exe.parent().and_then(|deps| deps.parent())
+            {
+                candidates.push(profile_dir.join("data").join("sandbox"));
+            }
+            if let Some(found) = candidates.into_iter().find(|d| locate_wasmer(d).is_some()) {
+                return (None, Some(found));
+            }
         }
 
         let (guard, dir) = match named {
@@ -478,7 +491,8 @@ mod tests {
         crate::features::sandbox_setup::setup(
             &dir,
             &crate::features::sandbox_setup::SetupOptions::default(),
-            crate::shared::i18n::locale(crate::shared::i18n::Lang::default()),
+            // English: this is developer-facing progress in a test log.
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
             |line| eprintln!("  {line}"),
         )
         .await
