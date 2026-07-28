@@ -64,7 +64,8 @@ WHOAMI = "https://huggingface.co/api/whoami-v2"
 
 CHAT_REPO = "google/gemma-4-31B-it-qat-q4_0-gguf"
 CHAT_GGUF = "gemma-4-31B_q4_0-it.gguf"  # the 17.65 GB one; the other is mmproj
-EMBED_REPO = "BAAI/bge-m3"
+EMBED_REPO = "ggml-org/bge-m3-Q8_0-GGUF"  # the exact model the gates were calibrated on
+EMBED_GGUF = "bge-m3-q8_0.gguf"
 EMBED_DIM = 1024
 
 # Endpoints created by this process, deleted on any exit path. Names are printed
@@ -234,7 +235,7 @@ def chat_payload(name, args):
     """
     return {
         "name": name,
-        "type": "protected",
+        "type": args.endpoint_type,
         "provider": {"vendor": args.vendor, "region": args.region},
         "compute": {
             "accelerator": "gpu",
@@ -250,9 +251,26 @@ def chat_payload(name, args):
         },
         "model": {
             "repository": CHAT_REPO,
-            "framework": "pytorch",
-            "task": "text-generation",
-            "image": {"llamacpp": {"ggufFile": args.gguf}},
+            "framework": "llamacpp",
+            # U1/U2, answered by successive 422s from the API itself
+            # (2026-07-28): the field is `modelPath` (not any name one would
+            # guess), and `ctxSize` is set *here* — so the context is explicit
+            # after all, not an indirect consequence of the Max Tokens x Max
+            # Concurrent Requests settings the docs describe.
+            # `nParallel` splits ctxSize between slots in llama.cpp, and the
+            # suite runs --test-threads=1, so 1 keeps the whole context.
+            # `mmprojModelPath` is deliberately omitted: the repo's second file
+            # is a vision projector we do not want, and it is an optional field
+            # rather than something the engine picks up on its own.
+            "image": {
+                "llamacpp": {
+                    "modelPath": args.gguf,
+                    "ctxSize": args.ctx,
+                    "nParallel": args.parallel,
+                    "threadsHttp": args.threads_http,
+                    "url": args.image,
+                }
+            },
             "env": {"LLAMA_ARG_JINJA": "1"},
         },
     }
@@ -261,7 +279,7 @@ def chat_payload(name, args):
 def embed_payload(name, args):
     return {
         "name": name,
-        "type": "protected",
+        "type": args.endpoint_type,
         "provider": {"vendor": args.vendor, "region": args.region},
         "compute": {
             "accelerator": "gpu",
@@ -273,11 +291,27 @@ def embed_payload(name, args):
                 "scaleToZeroTimeout": args.scale_to_zero,
             },
         },
+        # The llama.cpp engine serves embeddings too — `LlamacppMode` has an
+        # `embeddings` value (found in the OpenAPI schema, 2026-07-28). That is
+        # better than TEI here: it is the *same* GGUF and quantization as the
+        # local runs, and the memory gates' similarity thresholds were
+        # calibrated against exactly that (docs/research/
+        # embedding-model-change-reindex.md). `pooling` is left unset on
+        # purpose, so llama.cpp reads it from the GGUF metadata exactly as it
+        # does locally, where the user passes no --pooling either.
         "model": {
             "repository": EMBED_REPO,
-            "framework": "pytorch",
-            "task": "sentence-embeddings",
-            "image": {"tei": {}},
+            "framework": "llamacpp",
+            "image": {
+                "llamacpp": {
+                    "modelPath": args.embed_gguf,
+                    "ctxSize": args.embed_ctx,
+                    "nParallel": args.parallel,
+                    "threadsHttp": args.threads_http,
+                    "mode": "embeddings",
+                    "url": args.image,
+                }
+            },
         },
     }
 
@@ -309,6 +343,14 @@ def create(payload, dry_run):
     CREATED.append(name)
     status, body = http("POST", f"{API}/{NAMESPACE}", payload)
     show(status, body)
+    if ok(status) and isinstance(body, dict):
+        # The API coerces an unknown `type` instead of rejecting it: sending the
+        # older "protected" silently produced a `private` (PrivateLink-only)
+        # endpoint that no CI runner could reach. Never trust the echo.
+        got, want = body.get("type"), payload.get("type")
+        if got != want:
+            print(f"  -> REFUSING: asked for type={want!r}, got {got!r}. Deleting.")
+            return None
     if not ok(status):
         # Creation failed, so there is probably nothing to delete — but keep the
         # name registered anyway; a verified 404 at cleanup costs nothing and a
@@ -635,6 +677,16 @@ def main():
     p.add_argument("--embed-instance", default="nvidia-t4")
     p.add_argument("--instance-size", default="x1")
     p.add_argument("--gguf", default=CHAT_GGUF)
+    p.add_argument("--ctx", type=int, default=16384, help="llama.cpp context (matches the local runs)")
+    p.add_argument("--parallel", type=int, default=1, help="llama.cpp slots; ctx is split between them")
+    p.add_argument("--threads-http", type=int, default=8)
+    # `url` is required by BaseContainer and has no catalog default, so the
+    # llama.cpp build is ours to pick -- and can be pinned to a tag, which
+    # removes the "unpinned master" caveat from docs/remote-e2e-hf.md.
+    p.add_argument("--image", default="ghcr.io/ggml-org/llama.cpp:server-cuda")
+    p.add_argument("--endpoint-type", default="authenticated", choices=["public", "authenticated", "private"])
+    p.add_argument("--embed-gguf", default=EMBED_GGUF)
+    p.add_argument("--embed-ctx", type=int, default=8192, help="bge-m3 tops out at 8192")
     p.add_argument("--scale-to-zero", type=int, default=15, help="idle minutes (the leak ceiling)")
     p.add_argument("--timeout", type=int, default=1500, help="seconds to wait for 'running'")
     p.add_argument("--chat-only", action="store_true")
