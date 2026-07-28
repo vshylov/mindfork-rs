@@ -9405,6 +9405,53 @@ debounce was done as a separate PR, see below).
   CHANGELOG entry (§4: purely internal tests/tooling). Convention recorded in
   **AGENTS.md §3**.
 
+### Post-M9: what the first real CI run of the remote gate found (done)
+- The gate's first `workflow_dispatch` on GitHub (run 30396557877) is the run
+  that mattered: the pipeline worked end to end — build → three endpoints →
+  health gating → suite → cleanup, ~24 min inside a 45-min timeout, **62
+  passed** — and everything it got wrong was invisible from a developer machine.
+  Branch `fix/e2e-gate-ci-findings`.
+- **A false `CLEANUP FAILED`, and it is the serious one.** The DELETE returned
+  200 and the verification GET **~400 ms** later still saw the endpoint: HF
+  acknowledges the delete and the endpoint disappears a moment afterwards. Only
+  the *last* endpoint hits it — cleanup sends every DELETE before verifying any
+  (the ~7.5 s SIGKILL window), so the earlier ones get incidental delay for free.
+  Two consequences, the second worse than the first: the loudest signal in the
+  system cried wolf over an endpoint it had genuinely deleted, and **exit 3
+  masked the four real test failures**. The fix rests on a distinction worth
+  keeping: **the DELETE is the action, the GET is only the proof**, so only the
+  proof may wait — `verify_gone` now polls for ~10 s, which is safe on every path
+  precisely because the meter is already stopped. A real leak still exits 3
+  (pinned by a test).
+- **The alternate embedder scaled to zero mid-suite** → the smoke that woke it
+  got a `503`. Systematic, not a flake: `embed_guard` uses it early and
+  `embed_prefix` some twenty minutes later, past the 15-minute idle window. The
+  local stage-3 run could not have caught this — `--filter embed` packed all four
+  smokes into 78 s. The obvious fix (widen the window) was the wrong one:
+  **that window *is* the leak ceiling**, the thing that bounds a crashed run and
+  the reason this platform beat a rented pod. One knob was doing two jobs. A
+  keep-alive daemon thread now issues a real inference request every 5 minutes
+  while the suite runs, keeping `lastUsedAt` fresh and leaving the guarantee
+  intact (user's decision, 2026-07-29); pings are best-effort and can never fail
+  the run.
+- **Two smokes cannot run on a GitHub runner at all**, and were failing for
+  environment facts rather than regressions: `plays_generated_tone_live` needs a
+  sound card (ALSA finds none on a headless runner), and
+  `live_search_returns_results` needs an IP that search engines do not throttle —
+  a datacenter one is throttled far harder than a home one. Both now **skip** on
+  the condition, as the sandbox and cloud-key smokes already do; a gate that is
+  permanently red for an environment fact stops being read. The web one matches
+  the **bundle key** rather than the prose, so it survives the locale, and leans
+  on a distinction the tool already drew between "throttled" and "broken".
+- **Left alone**: `simple_generation` returned an empty response once. The same
+  model and stack passed it forty minutes earlier locally, so it is a flake until
+  it recurs — worth naming rather than silently hardening around.
+- **Verified in the environment that produced the failures** (a second dispatch
+  on the fix branch), since three of the four are invisible anywhere else.
+  Gates green: **1486 unit tests**, 69 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan` clean. No CHANGELOG entry — dev infrastructure and tests
+  (AGENTS.md §4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.

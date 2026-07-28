@@ -256,6 +256,19 @@ earning its keep:
 - **Cleanup sends every DELETE before verifying any of them.** A cancelled CI job
   gives the handler ~7.5 s before SIGKILL; the calls that actually stop the meter
   must not queue behind a confirmation round-trip for the previous endpoint.
+- **The DELETE is the action; the GET is only the proof — so only the proof may
+  wait.** Deletion is not instantaneous: HF acknowledges with a 200 and the
+  endpoint disappears a moment later, which made the first CI run cry
+  `CLEANUP FAILED` over an endpoint it had in fact deleted (and, worse, masked
+  four real test failures behind exit 3). Verification therefore polls for ~10 s.
+  That is safe on every path precisely because the meter is already stopped.
+- **A keep-alive thread holds the endpoints out of scale-to-zero** while the
+  suite runs. The suite legitimately leaves the alternate embedder untouched for
+  longer than the idle window — `embed_guard` uses it early, `embed_prefix` some
+  twenty minutes later — and the request that wakes it gets a `503`. Widening the
+  window was the obvious fix and the wrong one: **that window is the leak
+  ceiling**, the thing that bounds a crashed run and the reason this platform beat
+  a rented pod. One knob was doing two jobs; the keep-alive separates them.
 
 Design points that are decisions, not details:
 
