@@ -35,6 +35,15 @@ jobs:
   changes:
     name: Changed paths
     runs-on: ubuntu-latest
+    # Reading the PR's file list needs `pull-requests: read`, which the default
+    # GITHUB_TOKEN does not carry. Without this the API call 403s, the fail-safe
+    # below runs the tests, and the whole optimization is silently inert — which
+    # is exactly what happened until PR #230, the first genuinely docs-only PR,
+    # made it visible. This job checks out nothing, so `contents: read` is all
+    # it needs besides.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
@@ -46,19 +55,29 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
-          # Fail-safe helper: any doubt at all -> run the tests.
-          run_tests() { echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Fail-safe helper: any doubt at all -> run the tests. It says *why*,
+          # because a silent fallback is indistinguishable from a working
+          # optimization: a missing `pull-requests: read` made this 403 and run
+          # the tests every single time, and nothing said so until someone
+          # opened a docs-only PR and wondered why the matrix still ran.
+          run_tests() {
+            echo "-> running the tests: ${1:-no reason given}"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
 
-          [ "${{ github.event_name }}" = "pull_request" ] || run_tests
+          [ "${{ github.event_name }}" = "pull_request" ] || run_tests "not a pull request (${{ github.event_name }})"
 
-          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename') || run_tests
-          [ -n "$files" ] || run_tests
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename') \
+            || run_tests "cannot read the PR file list (permissions? API error?)"
+          [ -n "$files" ] || run_tests "the PR file list came back empty"
 
           # Guard against a truncated listing: the API caps the file list, and a
           # partial page could hide a source file and wrongly look docs-only.
-          expected=$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files') || run_tests
+          expected=$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files') \
+            || run_tests "cannot read the PR's changed_files count"
           actual=$(printf '%s\n' "$files" | wc -l)
-          [ "$expected" = "$actual" ] || run_tests
+          [ "$expected" = "$actual" ] || run_tests "listing truncated ($actual of $expected files)"
 
           echo "Changed files ($actual):"
           printf '  %s\n' $files
