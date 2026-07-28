@@ -1,0 +1,96 @@
+# The live e2e gate: the `#[ignore]` smokes against a real llama.cpp server,
+# rented for the duration of the run as an HF Inference Endpoint.
+#
+# `workflow_dispatch` only, deliberately (research R5a): a live run is a
+# considered act (AGENTS.md §3), it costs about $1 and ~25 minutes, and some of
+# the smokes touch the real internet, so running it on every push would buy
+# flakes rather than signal. It is also, by that same trigger, restricted to
+# people with write access — which is why HF_TOKEN is a plain repository secret
+# rather than an environment with reviewers (R8).
+#
+# Everything except the trigger lives in tools/e2e_hf.py, so the same command
+# runs here and on a developer's machine. See docs/remote-e2e-hf.md §6.
+name: Live e2e (HF Inference Endpoints)
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "cargo test name filter (empty = the whole suite)"
+        required: false
+        default: ""
+      chat_instance:
+        description: "GPU for the chat endpoint"
+        required: false
+        default: nvidia-l40s
+        type: choice
+        options: [nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100]
+      no_embed:
+        description: "Skip the embedding endpoint (the memory smokes then skip too)"
+        required: false
+        default: false
+        type: boolean
+
+# One live run at a time — but never cancel one in flight: a cancelled run is a
+# wasted deploy, and the endpoints it is holding are real money.
+concurrency:
+  group: e2e-live
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: Live smokes
+    runs-on: ubuntu-latest
+    # Budget: build (a few minutes cold, seconds cached), ~1-2 min deploy,
+    # ~17 min suite. The number itself is load-bearing in one direction: it must
+    # stay **below the sweeper's 90-minute threshold**, or the sweeper could
+    # delete the endpoints of a run that is still using them. On timeout the job
+    # is signalled, so the runner still deletes its own endpoints; the 15-minute
+    # scale-to-zero window is what bounds the cost if even that fails.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: System dependencies (ALSA — speech playback /tts)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      # The two MCP smokes spawn `npx @modelcontextprotocol/server-filesystem`.
+      # Its first run on a cold npm cache can exceed the 120 s readiness timeout
+      # (recorded in the CLAUDE.md journal), so warm it here rather than letting
+      # it fail inside the suite while the GPU bills.
+      - name: Warm the npm cache (MCP smokes)
+        run: |
+          node --version && npx --version
+          npx --yes @modelcontextprotocol/server-filesystem --help >/dev/null 2>&1 || true
+
+      # Inputs go through the environment, never interpolated into the script:
+      # `${{ inputs.filter }}` inside a `run:` is a shell-injection shape, and
+      # "only people with write access can dispatch it" is not the layer that
+      # should be holding that.
+      - name: Run the suite against fresh endpoints
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          FILTER: ${{ inputs.filter }}
+          CHAT_INSTANCE: ${{ inputs.chat_instance }}
+          NO_EMBED: ${{ inputs.no_embed }}
+        run: |
+          args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --chat-instance "$CHAT_INSTANCE")
+          if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
+          if [ "$NO_EMBED" = "true" ]; then args+=(--no-embed); fi
+          python3 tools/e2e_hf.py "${args[@]}"
+
+      # Evidence, not cleanup: the runner deletes its own endpoints from
+      # `finally` and from its SIGTERM handler. This prints what actually
+      # survived — including after a cancellation, which is the case worth
+      # seeing. Anything left here is the sweeper's job.
+      - name: Endpoints still alive
+        if: always()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python3 tools/e2e_hf.py list

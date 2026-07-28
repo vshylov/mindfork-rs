@@ -458,8 +458,16 @@ silently skipped without the required env var):
 ```powershell
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"   # chat server (URL includes /v1)
 $env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"   # embedder (memory/RAG smokes)
+$env:MINDFORK_ENGINE_KEY = "..."                        # opt.: Bearer key, if the server wants one
+$env:MINDFORK_EMBED_KEY  = "..."                        # opt.: same for the embedder
 cargo test -- --ignored --nocapture --test-threads=1
 ```
+
+No local GPU? The same suite runs against a rented one — `python tools/e2e_hf.py run`
+creates a pair of ephemeral Hugging Face Inference Endpoints (a real `llama-server`
+with the same model and quantization), runs the smokes, and deletes them, verifying
+the deletion. Also available in CI as the **Live e2e** workflow
+(`workflow_dispatch`). See [docs/install.md §7.2](docs/install.md).
 
 They cover streaming/finish, anti-self-cutoff on the EOS text (`<|im_end|>` for Qwen
 and `<end_of_turn>` for Gemma), tool-calling, "thoughts", sampling extensions, and

@@ -131,10 +131,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   vision; passing images from clipboard/file.
 
 ## Testing, CI, quality
-- **Live `#[ignore]` smokes in CI** — currently 50 smokes (engine/network/
-  live model) are silently skipped without env vars. Run them on a schedule
-  against a managed model or the cloud by key (a separate workflow, doesn't
-  block the PR).
+- **Live `#[ignore]` smokes in CI** — **largely closed**: `tools/e2e_hf.py` +
+  the `workflow_dispatch` **Live e2e** workflow run the llama.cpp set against
+  ephemeral HF Inference Endpoints, so the gate no longer needs the one
+  GPU machine ([remote-e2e-hf.md](remote-e2e-hf.md)). Still open: a *scheduled*
+  run (deliberately not wired — R5a; every run costs ~$1 and the non-hermetic
+  smokes would flake unattended), and the cloud-key and Python-sandbox smokes,
+  which need different credentials and assets.
+- **Remote gate: the second embedder** — 4 smokes
+  (`embed_guard` ×2, `reembed`, `embed_prefix`) need `MINDFORK_EMBED_URL_ALT`,
+  i.e. a *different* embedding model, and currently skip while reporting ok.
+  A third llama.cpp endpoint (e5-large-instruct GGUF, `mode: embeddings`) on a
+  T4 costs ~$0.05 — [remote-e2e-hf.md §7](remote-e2e-hf.md).
 - **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
   wrapping, brute-force memory cosine — a performance regression detector.
 

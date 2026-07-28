@@ -1,6 +1,6 @@
 # Design plan: the live e2e gate on HF Inference Endpoints
 
-**Status:** plan, awaiting stage 0.
+**Status:** stages 0–2 done (the gate runs); stage 3 optional, open.
 **Research and decision:** [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md)
 (forks R1–R8, all resolved to the recommended option — *user's decision,
 2026-07-28*).
@@ -27,12 +27,15 @@ remotely at all (§4).
 
 Four stages, three of them PRs. Each is a separate branch (AGENTS.md §2).
 
-| # | Branch | What | Live run |
-|---|---|---|---|
-| 0 | `spike/hf-endpoint-probe` | Settle the unknowns against one throwaway endpoint (`tools/hf_probe.py`) | it *is* the live run |
-| 1 | `feat/live-smoke-api-key` | The enabling change: an optional Bearer key for the live-smoke helpers | local, regression only |
-| 2 | `feat/e2e-hf-runner` | The runner script, the workflow, the sweeper, docs | the full remote gate |
-| 3 | `feat/e2e-hf-alt-embedder` *(optional)* | A second embedding endpoint so the model-change smokes run too | those 4 smokes |
+| # | Branch | What | Live run | Status |
+|---|---|---|---|---|
+| 0 | `spike/hf-endpoint-probe` | Settle the unknowns against one throwaway endpoint (`tools/hf_probe.py`) | it *is* the live run | **done — GO** |
+| 1 | (same branch) | The enabling change: an optional Bearer key for the live-smoke helpers | local, regression only | **done** |
+| 2 | `feat/e2e-hf-runner` | The runner script, the workflow, the sweeper, docs | the full remote gate | **done** |
+| 3 | `feat/e2e-hf-alt-embedder` *(optional)* | A second embedding endpoint so the model-change smokes run too | those 4 smokes | open |
+
+Stage 1 shipped on the stage-0 branch rather than its own: it is ~10 lines plus
+tests, and the probe needed it to run the suite at all.
 
 Stage 0 gates the rest: it is cheap (~$2, an hour of L40S) and answers questions
 that would otherwise be guessed at inside a PR.
@@ -238,6 +241,21 @@ quantization as the local stack** — which matters, because the memory gates'
 similarity thresholds were calibrated against exactly that model
 (docs/research/embedding-model-change-reindex.md §8.2).
 
+**As built** (2026-07-28), with three departures from the sketch above, each
+earning its keep:
+
+- **`tools/hf_api.py`** — the client (HTTP, create payloads, wait/delete/verify,
+  cleanup) was **extracted and shared** with `tools/hf_probe.py` rather than
+  copied into the runner. Two copies of the create payload would drift the
+  moment the schema moved, and two copies of the cleanup would mean two places
+  where a bug leaks a billing GPU.
+- **The tests are compiled before the GPU exists.** `cargo test --no-run` runs
+  first (`--no-prebuild` opts out), so a cold CI runner does not spend minutes of
+  billed L40S time linking, and a build error costs nothing at all.
+- **Cleanup sends every DELETE before verifying any of them.** A cancelled CI job
+  gives the handler ~7.5 s before SIGKILL; the calls that actually stop the meter
+  must not queue behind a confirmation round-trip for the previous endpoint.
+
 Design points that are decisions, not details:
 
 - **`finally`, and a **verified** delete.** Reporting "deleted" without checking
@@ -246,15 +264,19 @@ Design points that are decisions, not details:
 - **Deterministic names** (`e2e-chat-<run-id>`, `e2e-embed-<run-id>`) written to
   the log *before* the create call, so an orphan is identifiable even if the
   create response is lost.
-- **`--keep` flag** for debugging a red run, and `--reuse <name>` to attach to an
-  existing endpoint (iterating on a smoke without paying a deploy each time).
+- **`--keep` flag** for debugging a red run, and `--reuse-chat` / `--reuse-embed`
+  to attach to existing endpoints (iterating on a smoke without paying a deploy
+  each time). A reused endpoint is never deleted — it is not this run's to free.
 - **Named after the runner, not the platform**, so a RunPod backend could be
   added later without renaming anything.
 
 **`.github/workflows/e2e-live.yml`** — `workflow_dispatch` only (R5a), with
-inputs for the test filter and the instance type. Needs `HF_TOKEN`, and `npx`
-for the MCP smokes. Sets a job `timeout-minutes` well under the endpoint's idle
-window so the sweeper is a backstop, not the primary mechanism.
+inputs for the test filter, the GPU and whether to skip the embedder. Needs
+`HF_TOKEN`, and `npx` for the MCP smokes (whose npm cache the job warms *before*
+the GPU exists, since a cold `npx` can outlast the smoke's 120 s readiness
+timeout). Its `timeout-minutes` (45) matters in one direction only: it must stay
+**below the sweeper's threshold** (90 min), or the sweeper would delete the
+endpoints of a run still using them.
 
 **`.github/workflows/e2e-sweeper.yml`** — hourly `cron` + `workflow_dispatch`:
 list endpoints, delete anything named `e2e-*` older than the max lifetime. This
@@ -294,10 +316,13 @@ chosen over a rented pod.
   green; `python tools/cyrillic_scan.py` clean.
 - Stage 1: unit tests as in §5; local live regression showing the unset-key path
   is unchanged.
-- Stage 2: one **full green remote run**, recorded in the journal in the
-  "Smoke — GO" form with the stack (model, instance type, counts, wall clock) —
-  and a deliberate **failure drill**: kill the run mid-suite and confirm the
-  endpoints are gone (via the sweeper if the `finally` never ran).
+- Stage 2 — **met, 2026-07-28**: **69 passed / 0 failed** (41 of them actually
+  against the endpoints) on `gemma-4-31B_q4_0-it.gguf` (nvidia-l40s x1) +
+  `bge-m3-q8_0.gguf` (nvidia-t4 x1), ready in 41 s, suite 929 s, total 970 s,
+  ≈ $0.62, both endpoints deleted and verified. **Failure drill**: signalled
+  58 s into a live suite → the handler deleted and verified both, exit 130, a
+  separate process confirmed none remained. The drill also found a real leak
+  first — see the journal entry.
 - Docs updated per AGENTS.md §4; commits carry the model trailer; the PR body
   follows the template with a "Models" section.
 - On completion of the track this plan moves to `docs/history/` and the
