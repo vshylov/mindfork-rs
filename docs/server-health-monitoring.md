@@ -7,7 +7,7 @@
 
 ## 1. What the user asked for
 
-> «Сделай периодическую перепроверку статусов серверов.»
+> Add periodic re-checking of the servers' statuses.
 
 Variant 2 from the diagnosis of the green-embeddings-chip report: every server's
 `/health` probe is currently **one-shot**, so the status reflects the moment the
