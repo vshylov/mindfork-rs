@@ -1662,16 +1662,20 @@ async fn note_cite_source_e2e_live() {
     handle.await.unwrap();
 
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    // The source name both prompts above ask the model to use. Bound once so the
+    // two lookups and the log cannot drift apart — and so the log line stays a
+    // pure English label with the (Russian) source name interpolated as data.
+    const SOURCE: &str = "факты";
     // Mechanism: the source is in the knowledge base.
     assert!(
-        reopened.db().rag_source_exists(pid, "факты").unwrap(),
+        reopened.db().rag_source_exists(pid, SOURCE).unwrap(),
         "expected the source to be in the knowledge base"
     );
     // Note↔source link (the reverse path): notes citing the source.
-    let citing = reopened.db().notes_citing_source(pid, "факты").unwrap();
+    let citing = reopened.db().notes_citing_source(pid, SOURCE).unwrap();
     let cited = calls2.iter().any(|(n, _)| n == "note_cite_source");
     eprintln!(
-        "model called note_cite_source: {cited}; notes citing «факты»: {} — {:?}",
+        "model called note_cite_source: {cited}; notes citing {SOURCE:?}: {} — {:?}",
         citing.len(),
         citing.iter().map(|n| n.content.clone()).collect::<Vec<_>>()
     );
@@ -1736,7 +1740,7 @@ async fn summary_obs_calibration_e2e_live() {
             .unwrap();
         let c = cosine(&v[0], &v[1]);
         match_sum += c;
-        eprintln!("MATCH?  cos={c:.2}  {a:?} ~ {b:?}");
+        eprintln!("MATCH?      cos={c:.2}  {a:?} ~ {b:?}");
     }
     let mut nonmatch_sum = 0.0f32;
     for (a, b) in should_not {
@@ -1746,7 +1750,7 @@ async fn summary_obs_calibration_e2e_live() {
             .unwrap();
         let c = cosine(&v[0], &v[1]);
         nonmatch_sum += c;
-        eprintln!("MATCH?  cos={c:.2}  {a:?} ~ {b:?}");
+        eprintln!("NON-MATCH?  cos={c:.2}  {a:?} ~ {b:?}");
     }
     let m = match_sum / should_match.len() as f32;
     let n = nonmatch_sum / should_not.len() as f32;
