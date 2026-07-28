@@ -56,6 +56,52 @@ It uses the raw REST API rather than `huggingface_hub` deliberately: full
 control over the payload, and the server's 4xx bodies are printed verbatim, so a
 rejected payload *teaches us the schema* (`--set a.b.c=value` iterates on it).
 
+**Stage 0 verdict: GO** — every unknown resolved, 2026-07-28, against
+`nvidia-l40s` x1 (chat) and `nvidia-t4` x1 (embeddings), aws us-east-1. Total
+spend for the whole stage ≈ **$0.17**. Nothing was left running (`list` empty).
+
+| | Answer |
+|---|---|
+| **U1** | `model.image.llamacpp.modelPath` — loaded `/repository/gemma-4-31B_q4_0-it.gguf`, the right file. `mmprojModelPath` is a separate optional field, so the repo's second file is a non-issue. |
+| **U2** | `ctxSize` is an **explicit payload field** — asked for 16384, `/props` reports `n_ctx=16384`. The Max Tokens × Max Concurrent Requests story in the docs does not apply to the API path. |
+| **U3** | `LLAMA_ARG_JINJA=1` works: `finish_reason=tool_calls`. |
+| **U4** | SSE fine through the router: **ttfb 0.7 s, 495 events, 14.7 s** for a 600-token generation. No truncation. |
+| **U6** | `authenticated` endpoints reject an unauthenticated request with **401**. |
+| **U5** | Embeddings served by the **llama.cpp engine itself** (`mode: "embeddings"`): `/v1/embeddings` returns the OpenAI shape, 2 vectors, **dim 1024**. |
+| **U5b** | `/health` **is** reachable (200) — better than feared, so the two supervisor smokes keep their meaning once `probe()` sends the header (§5). |
+| **U7** | `aws` / `us-east-1` / `nvidia-l40s` / `x1`, 48 GB, $1.80/hr; `nvidia-t4` $0.50/hr. Quota (`/v2/provider/quotas/{ns}`): L40S 16, T4 30 — the zeros in `/v2/provider` are per-compute placeholders, not the account quota. |
+
+Two findings that change the design, both for the better:
+
+- **`LlamacppMode` has an `embeddings` value**, so bge-m3 is served by the
+  llama.cpp engine itself — the *same GGUF and quantization* the similarity
+  gates were calibrated on — instead of TEI. §3.1 of the research said the
+  opposite; it reasoned from the reserved `LLAMA_ARG_EMBEDDINGS` env var, but
+  the mode is a first-class payload field.
+- **The container `url` is ours to supply** (no catalog route, no default), so
+  the llama.cpp build can be **pinned to a tag** instead of tracking `master`.
+  That retires the reproducibility risk in §10.
+
+And one trap worth remembering: `EndpointType` is `public | authenticated |
+private`, and the API **silently coerces** an unknown value rather than
+rejecting it. Sending the older wording `protected` produced a `private`
+(PrivateLink-only) endpoint that no CI runner could reach — with a 200 and a
+healthy-looking response. The probe now refuses to continue when the echoed
+type differs from the requested one.
+
+Deploy time was **21 s** to `running` for the 17.65 GB model (84 s for the
+embedder) — HF serves the weights from its own storage, so there is no
+multi-minute model pull to budget for.
+
+**A third finding, and a requirement on the runner.** The first run failed U5
+with a `503`, and the cause was ours: HF's `running` state only means the
+container is up, while `llama-server` still answers `503 Loading model` until
+the weights are in — the very distinction `OpenAiClient::probe()` exists to
+draw. The chat checks happened to begin with `/health` and survived; the
+embedding checks fired straight at `/v1/embeddings`. So **the runner must gate
+on `/health`, not on the endpoint state**, or the suite's first request fails.
+Encoded as `wait_healthy()`; re-checked and green.
+
 Unknowns, in the order that matters:
 
 - **U1 — GGUF file selection via the API.** The UI asks which `.gguf` to serve;
@@ -103,12 +149,13 @@ From R6a — the llama.cpp set, ~55 of the 69 `#[ignore]` smokes:
 | `embed_guard.rs`, `reembed.rs`, `embed_prefix.rs` | 4 | **no** — need `MINDFORK_EMBED_URL_ALT` (stage 3) |
 | Cloud (Anthropic/Gemini/OpenAI/TTS), Python sandbox | ~11 | no — different credentials/assets |
 
-**The honest caveat on the two supervisor smokes.** `monitor_does_not_flap_…`
+**The two supervisor smokes — caveat lifted by the probe.** `monitor_does_not_flap_…`
 and `embed_probe_reaches_ready_…` drive `OpenAiClient::probe()`, which bails only
-on `503`. Behind HF's router a `401` or `404` on `/health` reads as "ready", so
-these two would pass *for the wrong reason*. They are designed for a direct
-`llama-server`; the local run stays authoritative for them, and the plan notes it
-rather than pretending otherwise.
+on `503`. The worry was that behind HF's router a `401`/`404` on `/health` would
+read as "ready", so they would pass for the wrong reason. Measured: `/health`
+**is** proxied through and returns a real `200`/`503` (that is exactly how the
+loading state was caught, §3). Once stage 1 makes `probe()` send the header,
+these two keep their meaning remotely.
 
 ## 5. Stage 1 — the enabling change
 
@@ -146,13 +193,21 @@ keeps its Python helpers). Grown from `tools/hf_probe.py`, whose lifecycle and
 cleanup code it inherits.
 
 ```
-create chat endpoint   (llama.cpp engine, L40S, protected, LLAMA_ARG_JINJA=1)
-create embed endpoint  (TEI, BAAI/bge-m3, T4, protected)
-  → .wait(timeout)  → warm-up request to each (proves the model is loaded,
-                       not merely that the status says "running")
+create chat endpoint   (llamacpp, gemma-4-31B q4_0, L40S, authenticated,
+                        ctxSize 16384, nParallel 1, LLAMA_ARG_JINJA=1)
+create embed endpoint  (llamacpp mode=embeddings, bge-m3 Q8_0, T4,
+                        authenticated, ctxSize 8192)
+  → poll the endpoint state to `running`
+  → then poll /health until 200 — `running` is not loaded (§3)
   → cargo test -- --ignored --test-threads=1   with the four env vars
 finally: delete both, then verify they are gone; a failed delete fails the run
 ```
+
+Both endpoints run **the same llama.cpp build we pin ourselves**
+(`model.image.llamacpp.url`), and the embedder serves **the same GGUF and
+quantization as the local stack** — which matters, because the memory gates'
+similarity thresholds were calibrated against exactly that model
+(docs/research/embedding-model-change-reindex.md §8.2).
 
 Design points that are decisions, not details:
 
@@ -187,9 +242,10 @@ infrastructure with no user-visible effect (AGENTS.md §4).
 Four smokes (`embed_guard` ×2, `reembed`, `embed_prefix`) need a *second,
 different* embedding model via `MINDFORK_EMBED_URL_ALT` — they are the guards for
 the embedding-model-change track, i.e. exactly the memory-critical ones. A third
-TEI endpoint with `intfloat/multilingual-e5-large-instruct` on a T4 costs ~$0.05
-for the few minutes they take. Deferred only to keep stage 2 focused; it is a
-flag on the script plus two env vars.
+llama.cpp endpoint (`mode: "embeddings"`) with an
+`multilingual-e5-large-instruct` GGUF on a T4 costs ~$0.05 for the few minutes
+they take. Deferred only to keep stage 2 focused; it is a flag on the script plus
+two env vars.
 
 ## 8. Cost and the guarantee
 
@@ -220,12 +276,12 @@ chosen over a rented pod.
 
 ## 10. Risks
 
-- **U1 (GGUF selection) is the one that can force a redesign** — the
-  `custom_image` fallback exists, but it moves model handling back to us and
-  makes stage 2 noticeably bigger. This is why stage 0 comes first.
-- **Unpinned llama.cpp `master`**: accepted knowingly (user builds `master`
-  regularly, breakage is rare). Consequence to keep in mind: a red remote run is
-  not automatically our regression — check the local run before believing it.
+- ~~**U1 (GGUF selection) can force a redesign**~~ — **resolved in stage 0**:
+  `modelPath` is an explicit field, no `custom_image` fallback needed.
+- ~~**Unpinned llama.cpp `master`**~~ — **retired in stage 0**: the container
+  `url` is ours, so the build is pinned to a tag. Keep the tag current
+  deliberately (a bump is a one-line PR), and remember that a *newly pinned*
+  build turning a smoke red may be upstream drift rather than our regression.
 - **Non-hermetic smokes** (`web_search`, `fetch_url`, MCP's first `npx`) flake
   independently of the GPU; the MCP readiness timeout on a cold npm cache is
   already recorded in the journal.

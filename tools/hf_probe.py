@@ -584,7 +584,7 @@ def probe_embed(url, checks):
             dim = len(data[0].get("embedding") or [])
     checks.record(
         "U5",
-        "TEI /v1/embeddings (OpenAI shape)",
+        "llama.cpp /v1/embeddings (OpenAI shape)",
         count == 2 and dim == EMBED_DIM,
         f"vectors={count}, dim={dim}" if count else f"HTTP {status}",
     )

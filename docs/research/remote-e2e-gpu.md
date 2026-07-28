@@ -118,6 +118,20 @@ What it gives us:
   model the L40S is the comfortable choice; the 24 GB tiers are the same tight
   fit as elsewhere.
 
+> **Corrections from the stage-0 probe, 2026-07-28** (measured, not read):
+> the paragraph below reasons from the documented `LLAMA_ARG_*` env vars, and
+> the API tells a different and better story. Via `POST /v2/endpoint/{ns}` the
+> `llamacpp` container takes explicit fields — `modelPath`, **`ctxSize`**,
+> `nParallel`, `threadsHttp`, `url`, plus optional `mmprojModelPath`, `mode`
+> and `pooling` — so context size is set directly (asked 16384, got
+> `n_ctx=16384`), the unwanted mmproj file is simply a field left unset, and
+> **the container image is ours to choose, so the llama.cpp build can be
+> pinned** instead of tracking `master`. `LLAMA_ARG_JINJA=1` does work as an
+> env var (`finish_reason=tool_calls`). The endpoint type is
+> `public|authenticated|private` — **not** `protected`, and an unknown value is
+> silently coerced to `private`. Deploy took **21 s** for the 17.65 GB model.
+> Details: [docs/remote-e2e-hf.md §3](../remote-e2e-hf.md).
+
 Configuration, and its limits (verified against the docs):
 
 - Settings are `LLAMA_ARG_*` environment variables. **`LLAMA_ARG_JINJA` is
@@ -127,13 +141,15 @@ Configuration, and its limits (verified against the docs):
   `LLAMA_ARG_CTX_SIZE`, `LLAMA_ARG_N_PARALLEL`, `LLAMA_ARG_EMBEDDINGS`,
   `LLAMA_ARG_NO_MMAP`, host/port/threads/metrics. Context size is set indirectly
   through the endpoint's *Max Tokens* × *Max Concurrent Requests* settings.
-- Because `LLAMA_ARG_EMBEDDINGS` is reserved, **do not try to serve bge-m3 GGUF
-  through the llama.cpp engine** — HF decides that flag. Use HF's own **TEI**
-  engine with `BAAI/bge-m3` instead: it exposes an OpenAI-compatible
-  `/v1/embeddings`, which is all `OpenAiClient` needs, and bge-m3 is 568M
-  params so a T4 ($0.50/hr) or even CPU tier suffices. The app's embedding path
-  is provider-agnostic; the llama.cpp `-ub/-b` batch behaviour is a *managed
-  mode* concern covered by other tests.
+- ~~Because `LLAMA_ARG_EMBEDDINGS` is reserved, do not try to serve bge-m3 GGUF
+  through the llama.cpp engine; use TEI with `BAAI/bge-m3` instead.~~
+  **Wrong — corrected by the probe.** `LlamacppMode` has an `embeddings` value,
+  so `model.image.llamacpp.mode: "embeddings"` serves the GGUF directly
+  (measured: `/v1/embeddings`, OpenAI shape, dim 1024, on a T4). That is
+  strictly better than TEI here: it is the *same GGUF and quantization as the
+  local stack*, and the memory gates' similarity thresholds were calibrated
+  against exactly that model. `pooling` is best left unset, so llama.cpp reads
+  it from the GGUF metadata as it does locally.
 - If total control is required, `custom_image` + `container_command` /
   `container_args` accept an arbitrary image (e.g.
   `ghcr.io/ggml-org/llama.cpp:server-cuda`) with explicit flags — at the cost of
