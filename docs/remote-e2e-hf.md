@@ -29,7 +29,7 @@ Four stages, three of them PRs. Each is a separate branch (AGENTS.md §2).
 
 | # | Branch | What | Live run |
 |---|---|---|---|
-| 0 | `spike/hf-endpoint-probe` | Settle the unknowns against one throwaway endpoint. No repo code. | it *is* the live run |
+| 0 | `spike/hf-endpoint-probe` | Settle the unknowns against one throwaway endpoint (`tools/hf_probe.py`) | it *is* the live run |
 | 1 | `feat/live-smoke-api-key` | The enabling change: an optional Bearer key for the live-smoke helpers | local, regression only |
 | 2 | `feat/e2e-hf-runner` | The runner script, the workflow, the sweeper, docs | the full remote gate |
 | 3 | `feat/e2e-hf-alt-embedder` *(optional)* | A second embedding endpoint so the model-change smokes run too | those 4 smokes |
@@ -39,8 +39,22 @@ that would otherwise be guessed at inside a PR.
 
 ## 3. Stage 0 — probe (go/no-go)
 
-Deploy **one** endpoint by hand from the UI, poke it, delete it. Nothing is
-committed except the answers, which land in the research doc.
+Driven by **[`tools/hf_probe.py`](../tools/hf_probe.py)** (stdlib only, no
+`pip install`; `HF_TOKEN` never leaves the machine it runs on). It creates a
+throwaway endpoint, answers the questions below, and deletes it — verifying the
+deletion, with a failure to delete reported louder (exit 3) than a failed check.
+Nothing is committed except the answers, which land in the research doc.
+
+```
+python tools/hf_probe.py hardware        # U7
+python tools/hf_probe.py run --dry-run   # review the payloads first
+python tools/hf_probe.py run             # create, check, delete
+python tools/hf_probe.py inspect <name>  # the U1 fallback: read what the UI built
+```
+
+It uses the raw REST API rather than `huggingface_hub` deliberately: full
+control over the payload, and the server's 4xx bodies are printed verbatim, so a
+rejected payload *teaches us the schema* (`--set a.b.c=value` iterates on it).
 
 Unknowns, in the order that matters:
 
@@ -126,9 +140,10 @@ unchanged (the authenticated path is proven in stage 2).
 
 ## 6. Stage 2 — the runner
 
-**`scripts/e2e_hf.py`** — one entry point, identical locally and in CI (the
-precedent is `packaging/linux/build-packages.sh`). Python because
-`huggingface_hub` is the API.
+**`tools/e2e_hf.py`** — one entry point, identical locally and in CI (the
+precedent is `packaging/linux/build-packages.sh`; `tools/` is where this repo
+keeps its Python helpers). Grown from `tools/hf_probe.py`, whose lifecycle and
+cleanup code it inherits.
 
 ```
 create chat endpoint   (llama.cpp engine, L40S, protected, LLAMA_ARG_JINJA=1)
