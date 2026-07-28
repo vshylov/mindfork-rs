@@ -1,6 +1,7 @@
 # Design plan: the live e2e gate on HF Inference Endpoints
 
-**Status:** stages 0–2 done (the gate runs); stage 3 optional, open.
+**Status:** **complete** — stages 0–3 done, the gate runs and covers the whole
+llama.cpp smoke set.
 **Research and decision:** [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md)
 (forks R1–R8, all resolved to the recommended option — *user's decision,
 2026-07-28*).
@@ -32,7 +33,7 @@ Four stages, three of them PRs. Each is a separate branch (AGENTS.md §2).
 | 0 | `spike/hf-endpoint-probe` | Settle the unknowns against one throwaway endpoint (`tools/hf_probe.py`) | it *is* the live run | **done — GO** |
 | 1 | (same branch) | The enabling change: an optional Bearer key for the live-smoke helpers | local, regression only | **done** |
 | 2 | `feat/e2e-hf-runner` | The runner script, the workflow, the sweeper, docs | the full remote gate | **done** |
-| 3 | `feat/e2e-hf-alt-embedder` *(optional)* | A second embedding endpoint so the model-change smokes run too | those 4 smokes | open |
+| 3 | `feat/e2e-hf-alt-embedder` | A second embedding endpoint so the model-change smokes run too | those 4 smokes | **done** |
 
 Stage 1 shipped on the stage-0 branch rather than its own: it is ~10 lines plus
 tests, and the probe needed it to run the suite at all.
@@ -288,15 +289,32 @@ endpoint quota, which scale-to-zero does not.
 CLAUDE.md journal entry, `README.md` env table. **No CHANGELOG entry** — dev
 infrastructure with no user-visible effect (AGENTS.md §4).
 
-## 7. Stage 3 — the second embedder (optional)
+## 7. Stage 3 — the second embedder (done)
 
 Four smokes (`embed_guard` ×2, `reembed`, `embed_prefix`) need a *second,
 different* embedding model via `MINDFORK_EMBED_URL_ALT` — they are the guards for
-the embedding-model-change track, i.e. exactly the memory-critical ones. A third
-llama.cpp endpoint (`mode: "embeddings"`) with an
-`multilingual-e5-large-instruct` GGUF on a T4 costs ~$0.05 for the few minutes
-they take. Deferred only to keep stage 2 focused; it is a flag on the script plus
-two env vars.
+the embedding-model-change track, i.e. exactly the memory-critical ones.
+
+**As built**: a third llama.cpp endpoint (`mode: "embeddings"`) on a T4 serving
+`Ralriki/multilingual-e5-large-instruct-GGUF` / `…-q8_0.gguf` — the same
+quantization as the local stand, because the calibration figures
+(`REFERENCE_UNRELATED` / `REFERENCE_PARAPHRASE`) were measured against that file.
+`MINDFORK_EMBED_URL_ALT` + `MINDFORK_EMBED_KEY_ALT` are set from it; **no Rust
+change was needed** — stage 1 had already routed those smokes through
+`live_client`, key variable included.
+
+Two decisions worth recording:
+
+- **On by default** (`--no-alt-embed` opts out), against the plan's original
+  "optional". Off by default would leave the four smokes skipping *while
+  reporting ok*, which is the exact failure a gate exists to prevent; ~$0.13 of a
+  ~$1 run is the wrong thing to optimise. It is bound to the primary embedder —
+  a second model needs the first to be compared against.
+- **The context is shared with the primary embedder** rather than clamped to
+  e5's `n_ctx_train` of 514. llama.cpp accepts a larger context (the local stand
+  runs this model on the default 4096), and what actually breaks embeddings is
+  too *small* a physical batch, not too large a context — the "chunks: 0" bug
+  the journal records.
 
 ## 8. Cost and the guarantee
 

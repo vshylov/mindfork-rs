@@ -582,16 +582,19 @@ cargo test -- --ignored --nocapture --test-threads=1
 
 `tools/e2e_hf.py` runs the same suite against **ephemeral Hugging Face Inference
 Endpoints**, so the live gate no longer requires a machine with a GPU. It rents
-a real `llama-server` (HF's llama.cpp engine, the model on an L40S) plus an
-embedding endpoint (the same engine in `embeddings` mode, bge-m3 Q8_0 on a T4) —
-deliberately the same GGUF and quantization as the local stack, because the
-memory gates' similarity thresholds are calibrated against exactly that model.
+three: a real `llama-server` (HF's llama.cpp engine, the model on an L40S), an
+embedding endpoint (the same engine in `embeddings` mode, bge-m3 Q8_0 on a T4),
+and a *second, different* embedding model (multilingual-e5-large-instruct q8_0)
+for the smokes that guard against an embedding-model change. All deliberately
+the same GGUFs and quantizations as the local stack, because the memory gates'
+similarity thresholds are calibrated against exactly those models.
 
 ```powershell
 $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
 python tools/e2e_hf.py run        # create, run the suite, delete
 python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
 python tools/e2e_hf.py run --filter e2e_live  # a subset
+python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
 python tools/e2e_hf.py list                   # what is running right now
 python tools/e2e_hf.py sweep --dry-run        # what the sweeper would remove
 ```
@@ -603,8 +606,8 @@ fails after the meter has started. `python tools/hf_probe.py doctor` reports
 which one is missing, and distinguishes that from the other causes of a 403 (no
 payment method on the account, or an org token pending approval).
 
-**Cost and the guarantee.** A run is ~25 minutes and ~$1 (L40S $1.80/hr + T4
-$0.50/hr, billed by the minute). The endpoints are deleted from `finally`, from
+**Cost and the guarantee.** A run is ~25 minutes and ~$1 (L40S $1.80/hr + two
+T4s at $0.50/hr, billed by the minute). The endpoints are deleted from `finally`, from
 `atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
 a failed delete exits non-zero even when the tests passed. If the process is
 killed outright, the endpoints scale to zero after their idle window (15 min, so
@@ -620,4 +623,5 @@ sweeper** runs hourly as the backstop. Design and decisions:
 Two smoke groups still need the local machine and are **not** covered remotely:
 the managed-server smoke (`MINDFORK_LLAMA_BIN` — it needs a child process of
 our own) and the Python sandbox smokes (they need a provisioned `wasmer`
-sidecar).
+sidecar). The cloud-provider smokes (Anthropic / Gemini / OpenAI / TTS) need
+their own keys and are unrelated to the GPU.

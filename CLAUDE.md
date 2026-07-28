@@ -132,7 +132,7 @@ track is the **remote live e2e gate**
 `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints' llama.cpp
 engine) plus a bge-m3 embedding endpoint, runs the `#[ignore]` suite against
 them and deletes them — verifying the deletion, since a leaked endpoint is the
-one outcome that costs money — **done, stages 0–2, live run GO**;
+one outcome that costs money — **done, stages 0–3, live run GO**;
 before that — **periodic server health monitoring**
 ([docs/server-health-monitoring.md](docs/server-health-monitoring.md)) — the probe
 stopped being one-shot: 60 s while healthy / 5 s while down, three consecutive
@@ -9191,7 +9191,7 @@ debounce was done as a separate PR, see below).
   `managed_child_death_is_noticed_at_once` — **148 ms** (see above).
   **Regression — clean**: all 25 orchestrator e2e live smokes green.
 
-### Post-M9: the remote live e2e gate on HF Inference Endpoints (stages 0–2, done)
+### Post-M9: the remote live e2e gate on HF Inference Endpoints (stages 0–3, done)
 - **The mandatory live gate stopped depending on one machine.** AGENTS.md §3
   requires a live run for anything touching engine / memory / tools, and until
   now that meant `run_all_tests.bat` → `http://192.168.1.20:8000/v1`: not
@@ -9308,10 +9308,42 @@ debounce was done as a separate PR, see below).
   is which signal arrives (SIGBREAK on Windows, SIGINT there) — the handler and
   cleanup path are the same, and SIGBREAK is registered precisely so the drill
   can be run on a dev box.
-- **Deliberately not done**: stage 3, the second embedder
-  (`MINDFORK_EMBED_URL_ALT` — 4 memory-critical smokes currently skip while
-  reporting ok); a *scheduled* live run; and the managed-server smoke, which
-  needs a child process of our own and so cannot run remotely at all.
+- **Stage 3 — the second embedder (done).** Four smokes (`embed_guard` ×2,
+  `reembed`, `embed_prefix`) guard the embedding-model-change track and need a
+  *second, different* model via `MINDFORK_EMBED_URL_ALT`; without it they skipped
+  **while reporting ok**, which is the exact failure a gate exists to prevent. A
+  third llama.cpp endpoint on a T4 now serves
+  `Ralriki/multilingual-e5-large-instruct-GGUF` / `…-q8_0.gguf` — the same
+  quantization as the local stand, since the calibration constants were measured
+  against that file, and deliberately a model that is **also 1024-d**, because
+  the whole point of `same_dimension_model_swap_detected_live` is that no
+  dimensionality check can tell the two apart. **No Rust change was needed**:
+  stage 1 had already routed those smokes through `live_client`, key variable
+  (`MINDFORK_EMBED_KEY_ALT`) included. **On by default** (`--no-alt-embed` opts
+  out) against the plan's "optional" — ~$0.13 of a ~$1 run is the wrong thing to
+  optimise when the alternative is four memory-critical smokes silently not
+  running.
+- **Smoke — GO (stage 3)**, and the interesting part is *how* green: the rented
+  endpoints **reproduce the LAN stand's measurements to 3–5 decimals**, which is
+  the evidence that matters when swapping the infrastructure under
+  calibration-sensitive tests. bge-m3 calibrated to **0.41317 / 0.81843**
+  against the reference constants 0.4128 / 0.8176; e5 to **0.78967 / 0.94557**
+  against the journal's earlier live figure of 0.78968 / 0.94561 — identical to
+  four decimals — mapping 0.72 → 0.9080 and 0.85 → 0.9580 exactly as designed;
+  the prefix margins came out `e5 0.1223 → 0.1791` and `bge 0.4417 → 0.3330`
+  against 0.1213 → 0.1789 and 0.4406 → 0.3317 measured locally. **5 passed, 0
+  failed** (the 4 model-change smokes + the embedding readiness probe), ready in
+  108 s, suite 78 s, total 187 s, ≈ $0.15; all three endpoints deleted and
+  verified.
+- **Still deliberately not done**: a *scheduled* live run; the managed-server
+  smoke, which needs a child process of our own and so cannot run remotely at
+  all; and the cloud-provider smokes, which need their own keys.
+- **Merged in on the way**: `refactor/live-test-log-english` (the live-smoke log
+  translation and the print-macro lint that closes the gap by position rather
+  than by discipline). Not scope creep — the branches collide by construction:
+  both edit `orchestrator/tests/live.rs`, and the stricter `cyrillic_scan.py`
+  flagged 47 lines here without the translation, so CI's lint would have gone
+  red whichever side landed first.
 ### Post-M9: live-smoke diagnostic log in English (done)
 - **The developer-facing log of the live smokes was half-Russian** — 31 lines of
   `eprintln!` labels across `orchestrator/tests/live.rs` (29) and `tests/mcp.rs` (2)

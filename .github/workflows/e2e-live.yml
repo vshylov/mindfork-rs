@@ -26,7 +26,12 @@ on:
         type: choice
         options: [nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100]
       no_embed:
-        description: "Skip the embedding endpoint (the memory smokes then skip too)"
+        description: "Skip the embedding endpoints (the memory smokes then skip too)"
+        required: false
+        default: false
+        type: boolean
+      no_alt_embed:
+        description: "Skip the second embedding model (the 4 model-change smokes then skip)"
         required: false
         default: false
         type: boolean
@@ -79,10 +84,12 @@ jobs:
           FILTER: ${{ inputs.filter }}
           CHAT_INSTANCE: ${{ inputs.chat_instance }}
           NO_EMBED: ${{ inputs.no_embed }}
+          NO_ALT_EMBED: ${{ inputs.no_alt_embed }}
         run: |
           args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --chat-instance "$CHAT_INSTANCE")
           if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
           if [ "$NO_EMBED" = "true" ]; then args+=(--no-embed); fi
+          if [ "$NO_ALT_EMBED" = "true" ]; then args+=(--no-alt-embed); fi
           python3 tools/e2e_hf.py "${args[@]}"
 
       # Evidence, not cleanup: the runner deletes its own endpoints from

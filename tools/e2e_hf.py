@@ -6,10 +6,16 @@ The client (HTTP, payloads, lifecycle, cleanup) is shared with the stage-0
 probe: tools/hf_api.py.
 
 One entry point, identical locally and in CI (the precedent is
-`packaging/linux/build-packages.sh`). It creates a chat endpoint (llama.cpp,
-gemma-4-31B q4_0, L40S) and an embedding endpoint (the same engine in
-`embeddings` mode, bge-m3 Q8_0, T4), waits for both, runs the `#[ignore]`
-suite against them, and deletes them — verifying the deletion.
+`packaging/linux/build-packages.sh`). It creates three endpoints — chat
+(llama.cpp, gemma-4-31B q4_0, L40S), embeddings (the same engine in
+`embeddings` mode, bge-m3 Q8_0, T4) and a *second, different* embedding model
+(multilingual-e5-large-instruct q8_0, T4) for the smokes that guard the
+embedding-model-change track — waits for all of them, runs the `#[ignore]`
+suite against them, and deletes them, verifying the deletion.
+
+The alternate embedder is on by default and costs ~$0.13 of the ~$1 run. That
+is the point: without it four memory-critical smokes skip *while reporting ok*,
+which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
 
     set HF_TOKEN=hf_...
     python tools/e2e_hf.py run                  # the full remote gate
@@ -91,7 +97,7 @@ def prebuild(args):
     return code
 
 
-def run_suite(command, chat_url, embed_url):
+def run_suite(command, chat_url, embed_url, alt_embed_url):
     """Run the suite with the endpoint env set.
 
     The lifecycle stays inside this process on purpose: creating the endpoints
@@ -101,23 +107,33 @@ def run_suite(command, chat_url, embed_url):
     env = dict(os.environ)
     env["MINDFORK_ENGINE_URL"] = f"{chat_url}/v1"
     env["MINDFORK_ENGINE_KEY"] = hf.TOKEN
-    if embed_url:
-        env["MINDFORK_EMBED_URL"] = f"{embed_url}/v1"
-        env["MINDFORK_EMBED_KEY"] = hf.TOKEN
-    else:
-        # A stale value from the shell would point the memory smokes at a server
-        # this run does not control.
-        env.pop("MINDFORK_EMBED_URL", None)
-        env.pop("MINDFORK_EMBED_KEY", None)
+    for url, url_var, key_var in (
+        (embed_url, "MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY"),
+        (alt_embed_url, "MINDFORK_EMBED_URL_ALT", "MINDFORK_EMBED_KEY_ALT"),
+    ):
+        if url:
+            env[url_var] = f"{url}/v1"
+            env[key_var] = hf.TOKEN
+        else:
+            # A stale value from the shell would point the memory smokes at a
+            # server this run does not control.
+            env.pop(url_var, None)
+            env.pop(key_var, None)
     print("\n=== suite ===", flush=True)
     print(f"  MINDFORK_ENGINE_URL={env['MINDFORK_ENGINE_URL']}")
     print(f"  MINDFORK_EMBED_URL={env.get('MINDFORK_EMBED_URL', '(unset — memory smokes will skip)')}")
+    print(f"  MINDFORK_EMBED_URL_ALT={env.get('MINDFORK_EMBED_URL_ALT', '(unset — model-change smokes will skip)')}")
     print(f"  $ {command}\n", flush=True)
     started = time.time()
     code = subprocess.run(command, shell=True, env=env).returncode
     elapsed = time.time() - started
     print(f"\n  suite exit={code} after {elapsed:.0f}s", flush=True)
     return code, elapsed
+
+
+def alt_payload(name, args):
+    """The alternate embedding endpoint: same engine and flags, other weights."""
+    return hf.embed_payload(name, args, repo=hf.ALT_EMBED_REPO, gguf=hf.ALT_EMBED_GGUF)
 
 
 def bring_up(kind, name, args):
@@ -136,19 +152,28 @@ def cmd_run(args):
     ident = args.run_id or run_id()
     chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{ident}")
     embed_name = args.reuse_embed or hf.safe_name(f"e2e-embed-{ident}")
+    alt_name = args.reuse_alt_embed or hf.safe_name(f"e2e-alt-{ident}")
     want_embed = not args.no_embed
+    # The alternate embedder is a *second* model, so it needs the first one to
+    # compare against — every smoke that reads MINDFORK_EMBED_URL_ALT also reads
+    # MINDFORK_EMBED_URL.
+    want_alt = want_embed and not args.no_alt_embed
 
     # Printed before anything is created: this is the trail an orphan is found by.
     print(f"\nrun id: {ident}")
     print(f"  chat  endpoint: {chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if want_embed:
         print(f"  embed endpoint: {embed_name}{'  (reused)' if args.reuse_embed else ''}")
+    if want_alt:
+        print(f"  alt   endpoint: {alt_name}{'  (reused)' if args.reuse_alt_embed else ''}")
     print(f"  command: {cargo_command(args)}", flush=True)
 
     if args.dry_run:
         hf.create(hf.apply_overrides(hf.chat_payload(chat_name, args), args.set), True)
         if want_embed:
             hf.create(hf.apply_overrides(hf.embed_payload(embed_name, args), args.set), True)
+        if want_alt:
+            hf.create(hf.apply_overrides(alt_payload(alt_name, args), args.set), True)
         print(f"\n--dry-run: nothing created. Would run:\n  $ {cargo_command(args)}")
         return hf.EXIT_OK
 
@@ -166,6 +191,9 @@ def cmd_run(args):
         payload = hf.apply_overrides(hf.embed_payload(embed_name, args), args.set)
         if hf.create(payload) is None:
             return hf.EXIT_FAILED
+    if want_alt and not args.reuse_alt_embed:
+        if hf.create(hf.apply_overrides(alt_payload(alt_name, args), args.set)) is None:
+            return hf.EXIT_FAILED
 
     chat_url = bring_up("chat", chat_name, args)
     if not chat_url:
@@ -175,14 +203,20 @@ def cmd_run(args):
         embed_url = bring_up("embed", embed_name, args)
         if not embed_url:
             return hf.EXIT_FAILED
+    alt_embed_url = None
+    if want_alt:
+        alt_embed_url = bring_up("alt embed", alt_name, args)
+        if not alt_embed_url:
+            return hf.EXIT_FAILED
     ready = time.time()
-    print(f"\n  both endpoints ready after {ready - started:.0f}s", flush=True)
+    print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
-    code, suite_time = run_suite(cargo_command(args), chat_url, embed_url)
+    code, suite_time = run_suite(cargo_command(args), chat_url, embed_url, alt_embed_url)
 
     print("\n=== summary ===")
     print(f"  chat  {chat_name}  {chat_url}")
     print(f"  embed {embed_name}  {embed_url or '(none)'}")
+    print(f"  alt   {alt_name}  {alt_embed_url or '(none)'}")
     print(f"  ready in {ready - started:.0f}s, suite {suite_time:.0f}s, total {time.time() - started:.0f}s")
     print(f"  suite exit={code}")
     if args.keep:
@@ -279,8 +313,14 @@ def main():
     p.add_argument("--command", default="", help="run this instead of the composed cargo command")
     p.add_argument("--no-prebuild", action="store_true", help="do not `cargo test --no-run` before deploying")
     p.add_argument("--no-embed", action="store_true", help="chat endpoint only (memory smokes then skip)")
+    p.add_argument(
+        "--no-alt-embed",
+        action="store_true",
+        help="skip the second embedding model (the 4 model-change smokes then skip)",
+    )
     p.add_argument("--reuse-chat", default="", help="attach to an existing chat endpoint (not created, not deleted)")
     p.add_argument("--reuse-embed", default="", help="attach to an existing embedding endpoint")
+    p.add_argument("--reuse-alt-embed", default="", help="attach to an existing alternate embedding endpoint")
     p.add_argument("--health-timeout", type=int, default=900, help="seconds to wait for /health after `running`")
     p.set_defaults(fn=cmd_run)
 

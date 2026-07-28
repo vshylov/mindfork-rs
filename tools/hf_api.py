@@ -46,6 +46,17 @@ EMBED_REPO = "ggml-org/bge-m3-Q8_0-GGUF"  # the exact model the gates were calib
 EMBED_GGUF = "bge-m3-q8_0.gguf"
 EMBED_DIM = 1024
 
+# The *second* embedding model, for the four smokes that guard the
+# embedding-model-change track (`MINDFORK_EMBED_URL_ALT`). It has to be a
+# genuinely different vector space **at the same dimensionality**: bge-m3 and
+# multilingual-e5-large-instruct are both 1024-d, yet the same text embedded by
+# both scores ~0.37 — which is exactly why no dimensionality check can catch a
+# swap, and why those smokes exist (docs/research/
+# embedding-model-change-reindex.md §1). q8_0 deliberately matches the local
+# stand, because the calibration figures were measured against that file.
+ALT_EMBED_REPO = "Ralriki/multilingual-e5-large-instruct-GGUF"
+ALT_EMBED_GGUF = "multilingual-e5-large-instruct-q8_0.gguf"
+
 # "Must only contain lowercase alphanumeric characters or '-' and have a length
 # of 32 characters maximum" (the API's own description of Endpoint.name).
 NAME_MAX = 32
@@ -229,7 +240,7 @@ def chat_payload(name, args):
     }
 
 
-def embed_payload(name, args):
+def embed_payload(name, args, repo=None, gguf=None):
     """The same engine in embedding mode.
 
     `LlamacppMode` has an `embeddings` value, so bge-m3 is served by llama.cpp
@@ -239,7 +250,18 @@ def embed_payload(name, args):
     embedding-model-change-reindex.md §8.2). `pooling` is left unset on purpose,
     so llama.cpp reads it from the GGUF metadata exactly as it does locally,
     where the user passes no --pooling either.
+
+    `repo`/`gguf` override the model, which is how the *alternate* embedder
+    (ALT_EMBED_*) is deployed — same engine, same flags, different weights.
+    `ctxSize` is shared with the primary embedder on purpose: e5-large's
+    `n_ctx_train` is only 514, but llama.cpp accepts a larger context (the local
+    stand runs it on the default 4096), and what actually breaks embeddings is
+    too *small* a physical batch, not too large a context.
     """
+    # Falling back to the flag, not to the constant: `--embed-gguf` must keep
+    # working for the primary embedder.
+    repo = repo or EMBED_REPO
+    gguf = gguf or args.embed_gguf
     return {
         "name": name,
         "type": args.endpoint_type,
@@ -255,11 +277,11 @@ def embed_payload(name, args):
             },
         },
         "model": {
-            "repository": EMBED_REPO,
+            "repository": repo,
             "framework": "llamacpp",
             "image": {
                 "llamacpp": {
-                    "modelPath": args.embed_gguf,
+                    "modelPath": gguf,
                     "ctxSize": args.embed_ctx,
                     "nParallel": args.parallel,
                     "threadsHttp": args.threads_http,
