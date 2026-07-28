@@ -570,7 +570,7 @@ async fn followup_tool_e2e_live() {
     let new_bubbles = chat.messages.iter().filter(|m| m.new_bubble).count();
     eprintln!(
         "followup e2e: saw_continue={saw_continue}, new_bubble={new_bubbles}, \
-         сообщений={}",
+         messages={}",
         chat.messages.len()
     );
     for (i, m) in chat.messages.iter().enumerate() {
@@ -629,7 +629,7 @@ async fn rewrite_tool_e2e_live() {
         .next()
         .unwrap();
     eprintln!(
-        "rewrite e2e: saw_rewrite={saw_rewrite}, deleted={}, сообщений={}",
+        "rewrite e2e: saw_rewrite={saw_rewrite}, deleted={}, messages={}",
         chat.deleted.len(),
         chat.messages.len()
     );
@@ -673,7 +673,7 @@ async fn self_model_e2e_live() {
          (краткое описание себя и цель — помогать мне кратко и по делу).",
     )
     .await;
-    eprintln!("сессия 1: инструменты={s1_tools:?}\nтекст={s1_text:?}\n");
+    eprintln!("session 1: tools={s1_tools:?}\ntext={s1_text:?}\n");
 
     // --- Session 2: a new chat of the same profile, check recall. ---
     cmd_tx
@@ -687,7 +687,7 @@ async fn self_model_e2e_live() {
         "Что ты обо мне помнишь и какие у тебя цели в общении со мной?",
     )
     .await;
-    eprintln!("сессия 2: инструменты={s2_tools:?}\nтекст={s2_text:?}\n");
+    eprintln!("session 2: tools={s2_tools:?}\ntext={s2_text:?}\n");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -695,7 +695,7 @@ async fn self_model_e2e_live() {
     // Mechanism: after session 1 the profile's self-model is non-empty and saved to disk.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let model = reopened.db().self_model_get(pid).unwrap();
-    eprintln!("self_model в БД: {model:#?}");
+    eprintln!("self_model in DB: {model:#?}");
     let model = model.expect("expected a saved self-model after session 1");
     assert!(
         !model.is_empty(),
@@ -733,7 +733,7 @@ async fn self_model_insight_e2e_live() {
          с коротким описанием этого противоречия.",
     )
     .await;
-    eprintln!("insight: инструменты={tools:?}\nтекст={text:?}\n");
+    eprintln!("insight: tools={tools:?}\ntext={text:?}\n");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -744,7 +744,7 @@ async fn self_model_insight_e2e_live() {
         .db()
         .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
         .unwrap();
-    eprintln!("self-заметки (наблюдения) в БД: {self_notes:#?}");
+    eprintln!("self-notes (observations) in DB: {self_notes:#?}");
     assert!(
         !self_notes.is_empty(),
         "expected at least one self-note (@self) — an observation from add_insight"
@@ -806,7 +806,7 @@ async fn auto_reflect_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    eprintln!("auto-reflect: self_model={model:#?}\nself-заметки={self_notes:#?}");
+    eprintln!("auto-reflect: self_model={model:#?}\nself-notes={self_notes:#?}");
     let blob_nonempty = model.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
     assert!(
         blob_nonempty || !self_notes.is_empty(),
@@ -866,7 +866,7 @@ async fn self_consolidation_e2e_live() {
          краткие ответы. Просто запиши, оба оставь.",
     )
     .await;
-    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+    eprintln!("observations: {tools1:?} + {tools2:?}");
 
     // After the second reply, observations ≥ 2 → the self-model's background "sleep" should
     // kick off and possibly merge duplicates. Poll the DB up to ~90s: count self-notes.
@@ -903,7 +903,7 @@ async fn self_consolidation_e2e_live() {
     handle.await.unwrap();
 
     eprintln!(
-        "self-заметок: до={before}, после={after} (сведение дублей «сном»: {})",
+        "self-notes: before={before}, after={after} (sleep merged duplicates: {})",
         after < before
     );
     // Mechanism: observation notes are created (add_insight ran).
@@ -943,7 +943,7 @@ async fn self_model_gate_e2e_live() {
         "Запиши в свои наблюдения (вызови add_insight): я склонен просить краткие ответы.",
     )
     .await;
-    eprintln!("сессия 1: инструменты={tools1:?}");
+    eprintln!("session 1: tools={tools1:?}");
 
     // Session 2: a near-duplicate — the add_insight gate should show observation #1.
     let (t2, calls2) = run_turn_capture(
@@ -955,7 +955,7 @@ async fn self_model_gate_e2e_live() {
          оставить оба.",
     )
     .await;
-    eprintln!("сессия 2: текст={t2:?}\nвызовы={calls2:#?}");
+    eprintln!("session 2: text={t2:?}\ncalls={calls2:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -971,7 +971,7 @@ async fn self_model_gate_e2e_live() {
         .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
         .unwrap();
     eprintln!(
-        "self-заметок в БД: {} — {:#?}",
+        "self-notes in DB: {} — {:#?}",
         self_notes.len(),
         self_notes
             .iter()
@@ -1004,8 +1004,8 @@ async fn self_model_gate_e2e_live() {
         .iter()
         .any(|(n, _)| n == "note_revise" || n == "note_supersede" || n == "note_merge");
     eprintln!(
-        "ворота показали похожее: {gate_fired} (реальный эмбеддер: {real_embedder}); \
-         модель интегрировала (note_revise/supersede/merge): {integrated}"
+        "gate showed a similar observation: {gate_fired} (real embedder: {real_embedder}); \
+         model integrated (note_revise/supersede/merge): {integrated}"
     );
     // The model must have touched the observations somehow (otherwise the hypothesis isn't tested).
     assert!(
@@ -1153,7 +1153,7 @@ async fn summary_gate_e2e_live() {
          выводы вынеси в наблюдения (add_insight).",
     )
     .await;
-    eprintln!("текст={t:?}\nвызовы={calls:#?}");
+    eprintln!("text={t:?}\ncalls={calls:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1182,8 +1182,8 @@ async fn summary_gate_e2e_live() {
     let shrank = final_len < bloated_len;
     let wrote_insight = calls.iter().any(|(n, _)| n == "add_insight");
     eprintln!(
-        "ворота показали подсказку: {gate_fired}; описание {bloated_len} → {final_len} \
-         (сократилось: {shrank}); вынесено в наблюдения: {wrote_insight}"
+        "gate showed the hint: {gate_fired}; description {bloated_len} → {final_len} \
+         (shrank: {shrank}); moved into observations: {wrote_insight}"
     );
     // The model must have touched the self-model somehow (otherwise the hypothesis isn't tested).
     assert!(
@@ -1225,7 +1225,7 @@ async fn self_model_graph_e2e_live() {
         "Запиши ещё одно наблюдение (add_insight): но иногда я даю слишком многословные ответы.",
     )
     .await;
-    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+    eprintln!("observations: {tools1:?} + {tools2:?}");
 
     // Ask it to inspect the self-model and link the contradicting observations.
     let (t3, calls3) = run_turn_capture(
@@ -1235,7 +1235,7 @@ async fn self_model_graph_e2e_live() {
          другу — свяжи их инструментом note_link (relation=contradicts) по полному id.",
     )
     .await;
-    eprintln!("связывание: текст={t3:?}\nвызовы={calls3:#?}");
+    eprintln!("linking: text={t3:?}\ncalls={calls3:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1247,7 +1247,7 @@ async fn self_model_graph_e2e_live() {
         .unwrap();
     let links = reopened.db().note_links_all(pid).unwrap();
     eprintln!(
-        "self-заметок: {}; связей в графе наблюдений: {} — {links:?}",
+        "self-notes: {}; links in the observation graph: {} — {links:?}",
         self_notes.len(),
         links.len()
     );
@@ -1256,7 +1256,7 @@ async fn self_model_graph_e2e_live() {
     assert!(self_notes.len() >= 2, "expected ≥2 observation notes");
     let linked = calls3.iter().any(|(n, _)| n == "note_link");
     eprintln!(
-        "модель вызвала note_link: {linked}; связей появилось: {}",
+        "model called note_link: {linked}; links now: {}",
         links.len()
     );
     // The model must have inspected itself and/or linked (otherwise the graph isn't tested).
@@ -1303,7 +1303,7 @@ async fn self_consolidation_overview_e2e_live() {
          краткие ответы. Даже если инструмент покажет похожее — на этот раз оставь оба.",
     )
     .await;
-    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+    eprintln!("observations: {tools1:?} + {tools2:?}");
 
     // Ask it to reflect and merge duplicates — reflect carries the self-consolidation overview.
     let (t3, calls3) = run_turn_capture(
@@ -1313,7 +1313,7 @@ async fn self_consolidation_overview_e2e_live() {
          наблюдений есть похожие дубли — сведи их (note_merge или note_supersede).",
     )
     .await;
-    eprintln!("рефлексия: текст={t3:?}\nвызовы={calls3:#?}");
+    eprintln!("reflection: text={t3:?}\ncalls={calls3:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1324,7 +1324,7 @@ async fn self_consolidation_overview_e2e_live() {
         .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
         .unwrap();
     eprintln!(
-        "self-заметок в БД: {} — {:#?}",
+        "self-notes in DB: {} — {:#?}",
         self_notes.len(),
         self_notes
             .iter()
@@ -1343,7 +1343,7 @@ async fn self_consolidation_overview_e2e_live() {
     // If the model already merged duplicates in session 2, observations < 2 and there's no overview — fine.
     if let Some((_, result)) = calls3.iter().find(|(n, _)| n == "reflect") {
         let has_overview = result.contains("Обзор наблюдений");
-        eprintln!("reflect вернул обзор self-консолидации: {has_overview}");
+        eprintln!("reflect returned the self-consolidation overview: {has_overview}");
         if self_notes.len() >= 2 {
             assert!(
                 has_overview,
@@ -1355,7 +1355,7 @@ async fn self_consolidation_overview_e2e_live() {
     let consolidated = calls3
         .iter()
         .any(|(n, _)| n == "note_merge" || n == "note_supersede" || n == "note_revise");
-    eprintln!("модель свела дубли (note_merge/supersede/revise): {consolidated}");
+    eprintln!("model merged duplicates (note_merge/supersede/revise): {consolidated}");
     // The model must have reflected and/or touched the observations.
     assert!(
         calls3.iter().any(|(n, _)| {
@@ -1393,7 +1393,7 @@ async fn trait_gate_e2e_live() {
          — «ценит краткость в ответах».",
     )
     .await;
-    eprintln!("сессия 1: инструменты={tools1:?}");
+    eprintln!("session 1: tools={tools1:?}");
 
     // Session 2: a very similar trait — the add_traits gate should warn about a duplicate.
     let (t2, calls2) = run_turn_capture(
@@ -1404,7 +1404,7 @@ async fn trait_gate_e2e_live() {
          почти-дубле — реши сам, объединить ли их через remove_traits.",
     )
     .await;
-    eprintln!("сессия 2: текст={t2:?}\nвызовы={calls2:#?}");
+    eprintln!("session 2: text={t2:?}\ncalls={calls2:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1423,7 +1423,7 @@ async fn trait_gate_e2e_live() {
         .as_ref()
         .map(|m| m.user_model.perceived_traits.clone())
         .unwrap_or_default();
-    eprintln!("черты собеседника в БД: {traits:?}");
+    eprintln!("interlocutor traits in DB: {traits:?}");
     assert!(
         !traits.is_empty(),
         "expected ≥1 trait in user_model from update_user_model"
@@ -1438,8 +1438,8 @@ async fn trait_gate_e2e_live() {
     // Integrating the near-duplicate: the model merged the paraphrases into one trait (didn't keep both).
     let integrated = traits.len() <= 1;
     eprintln!(
-        "ворота предупредили о похожей черте: {gate_fired}; \
-         модель свела к одной черте (не копит перефразы): {integrated}"
+        "gate warned about a related trait: {gate_fired}; \
+         model merged them into one trait (no paraphrase pile-up): {integrated}"
     );
 
     // The model must have touched the interlocutor model again (otherwise the gate isn't tested).
@@ -1481,7 +1481,7 @@ async fn cross_organ_link_e2e_live() {
         "Запиши наблюдение о себе (add_insight): я склонен давать многословные ответы.",
     )
     .await;
-    eprintln!("сохранение: {tools1:?} + {tools2:?}");
+    eprintln!("saving: {tools1:?} + {tools2:?}");
 
     // Ask it to link the observation "about itself" with the fact "about the interlocutor" (cross-organ).
     let (t3, calls3) = run_turn_capture(
@@ -1492,7 +1492,7 @@ async fn cross_organ_link_e2e_live() {
          (relation=contradicts) по их id.",
     )
     .await;
-    eprintln!("связывание: текст={t3:?}\nвызовы={calls3:#?}");
+    eprintln!("linking: text={t3:?}\ncalls={calls3:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1525,7 +1525,7 @@ async fn cross_organ_link_e2e_live() {
         })
         .count();
     eprintln!(
-        "self-заметок: {}; всего связей: {}; кросс-органных: {cross} — {links:?}",
+        "self-notes: {}; links total: {}; cross-organ: {cross} — {links:?}",
         self_notes.len(),
         links.len()
     );
@@ -1541,7 +1541,7 @@ async fn cross_organ_link_e2e_live() {
         "expected a user note from note_save"
     );
     let linked = calls3.iter().any(|(n, _)| n == "note_link");
-    eprintln!("модель вызвала note_link: {linked}; кросс-органных рёбер: {cross}");
+    eprintln!("model called note_link: {linked}; cross-organ edges: {cross}");
     // The model must have inspected the organs and/or linked (otherwise the cross-link isn't tested).
     assert!(
         calls3
@@ -1606,7 +1606,7 @@ async fn recall_includes_self_e2e_live() {
         "Поищи в заметках (note_recall) всё про краткость и многословие — что там есть?",
     )
     .await;
-    eprintln!("recall: текст={t3:?}\nвызовы={calls3:#?}");
+    eprintln!("recall: text={t3:?}\ncalls={calls3:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1615,7 +1615,7 @@ async fn recall_includes_self_e2e_live() {
     let self_marked = calls3
         .iter()
         .any(|(n, r)| n == "note_recall" && r.contains("[о себе]"));
-    eprintln!("note_recall показал наблюдение «о себе» с пометкой: {self_marked}");
+    eprintln!("note_recall showed the self-observation with its marker: {self_marked}");
     assert!(
         calls3.iter().any(|(n, _)| n == "note_recall"),
         "expected a note_recall call"
@@ -1656,7 +1656,7 @@ async fn note_cite_source_e2e_live() {
          note_cite_source (источник называется «факты»).",
     )
     .await;
-    eprintln!("цитирование: текст={t2:?}\nвызовы={calls2:#?}");
+    eprintln!("citing: text={t2:?}\ncalls={calls2:#?}");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1671,7 +1671,7 @@ async fn note_cite_source_e2e_live() {
     let citing = reopened.db().notes_citing_source(pid, "факты").unwrap();
     let cited = calls2.iter().any(|(n, _)| n == "note_cite_source");
     eprintln!(
-        "модель вызвала note_cite_source: {cited}; заметок со ссылкой на «факты»: {} — {:?}",
+        "model called note_cite_source: {cited}; notes citing «факты»: {} — {:?}",
         citing.len(),
         citing.iter().map(|n| n.content.clone()).collect::<Vec<_>>()
     );
@@ -1750,7 +1750,7 @@ async fn summary_obs_calibration_e2e_live() {
     }
     let m = match_sum / should_match.len() as f32;
     let n = nonmatch_sum / should_not.len() as f32;
-    eprintln!("среднее: совпадения={m:.2}  не-совпадения={n:.2}  (порог между ними)");
+    eprintln!("mean: matches={m:.2}  non-matches={n:.2}  (the threshold sits between them)");
     assert!(
         m > n,
         "paraphrases should be on average closer than unrelated pairs: {m:.2} vs {n:.2}"
@@ -1807,12 +1807,12 @@ async fn summary_obs_overlap_e2e_live() {
         .next()
         .unwrap();
     eprintln!(
-        "измеренный cos(абзац summary, наблюдение) = {:.2}",
+        "measured cos(summary paragraph, observation) = {:.2}",
         cosine(&pv, &ov)
     );
 
     let out = summary_observation_overlaps(&storage, embedder.as_ref(), profile, loc).await;
-    eprintln!("секция summary↔наблюдения: {out:?}");
+    eprintln!("summary↔observation section: {out:?}");
     let out = out.expect("expected a summary↔observation overlap section");
     assert!(
         out.contains(&obs.id.to_string()),
@@ -1843,7 +1843,7 @@ async fn tts_speaks_chat_e2e_live() {
         config.tts.mode = TtsMode::Gemini;
         config.tts.gemini.api_key_env = Some("MINDFORK_GEMINI_KEY".into());
     } else {
-        eprintln!("skip: ни MINDFORK_OPENAI_KEY, ни MINDFORK_GEMINI_KEY не заданы");
+        eprintln!("skip: neither MINDFORK_OPENAI_KEY nor MINDFORK_GEMINI_KEY is set");
         return;
     }
     // Speak roles too — this also checks prefixes in the profile's language.
@@ -1882,7 +1882,7 @@ async fn tts_speaks_chat_e2e_live() {
     match done {
         Some(AppEvent::Error(msg)) => panic!("speech finished with an error: {msg}"),
         Some(AppEvent::TtsActive(false)) => {
-            eprintln!("озвучено за {:?}", started.elapsed());
+            eprintln!("spoken in {:?}", started.elapsed());
         }
         other => panic!("unexpected outcome: {other:?}"),
     }

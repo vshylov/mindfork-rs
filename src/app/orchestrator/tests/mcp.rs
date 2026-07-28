@@ -219,7 +219,7 @@ async fn mcp_filesystem_e2e_live() {
     let AppEvent::Settings { mcp, .. } = settings else {
         unreachable!()
     };
-    eprintln!("MCP-инструментов в каталоге: {}", mcp.tools.len());
+    eprintln!("MCP tools in the catalog: {}", mcp.tools.len());
     assert!(mcp.tools.iter().all(|t| t.id.starts_with("mcp__fs__")));
 
     // The profile enables MCP tools (double opt-in: the master gate is already on).
@@ -245,7 +245,7 @@ async fn mcp_filesystem_e2e_live() {
         ),
     )
     .await;
-    eprintln!("вызовы: {tools:?}\nответ: {out}");
+    eprintln!("calls: {tools:?}\nreply: {out}");
     assert!(
         tools.iter().any(|t| t.starts_with("mcp__fs__")),
         "the model didn't call the MCP tool: {tools:?}"

@@ -9184,6 +9184,46 @@ debounce was done as a separate PR, see below).
   `managed_child_death_is_noticed_at_once` — **148 ms** (see above).
   **Regression — clean**: all 25 orchestrator e2e live smokes green.
 
+### Post-M9: live-smoke diagnostic log in English (done)
+- **The developer-facing log of the live smokes was half-Russian** — 31 lines of
+  `eprintln!` labels across `orchestrator/tests/live.rs` (29) and `tests/mcp.rs` (2)
+  ("session 1: tools=…", "self-notes (observations) in DB: …", "gate showed a similar
+  observation: …" were all Russian). Now English, matching the convention flipped by
+  the english-source migration — and the precedent set there for provisioning progress:
+  "it is a developer-facing test log". Branch `refactor/live-test-log-english`.
+- **Why it survived the migration**: `tools/cyrillic_scan.py` allowlists test files
+  **wholesale** (`path.endswith("tests.rs") or "/tests/" in path`) — a deliberate
+  allowance, since these files legitimately hold Cyrillic fixture data and `ru`-locale
+  assertions, and the scanner cannot tell a label from a fixture. So the gate was never
+  going to catch it; it only became visible once the live suite started running in CI.
+- **The scope line is what matters here** — only label text inside print macros moved.
+  Untouched: the prompts sent to the model, the `ru`-locale substrings the gate
+  assertions match (the `r.contains(…)` checks in `self_model_gate_e2e_live`,
+  `summary_gate_e2e_live`, `trait_gate_e2e_live`,
+  `self_consolidation_overview_e2e_live` and `recall_includes_self_e2e_live`),
+  note/document fixture bodies, the A2 calibration probe pairs, and the TTS
+  config/prompt strings. Translating any of those would have quietly stopped the tests
+  testing what they test.
+- **One Cyrillic token deliberately kept inside a print macro**
+  ([live.rs:1674](src/app/orchestrator/tests/live.rs:1674)): the line reports how many
+  notes cite the RAG source, and names that source by its literal (Russian) key — the
+  same string asserted two lines above via `rag_source_exists`. It is a data value, not
+  a label; naming it verbatim is what makes the line useful, and the `{:?}` beside it
+  prints Russian note contents regardless, because that is what the model wrote.
+- **Verification was mechanical, not by eye**: a scan that tracks paren depth from each
+  `println!`/`eprintln!` (so multi-line format strings count as "inside a macro") reports
+  exactly that one intentional hit; `git diff` filtered to lines outside print macros
+  comes back empty — the four lines it does show are `\`-continuation lines of
+  multi-line `eprintln!` blocks.
+- **No live run needed** (AGENTS.md §3): these are log strings — no behavior change, no
+  engine/memory/tool path touched, and the changed lines only execute under `--ignored`.
+  **1484 unit tests green** (count unchanged — string-only), 69 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan` clean. No CHANGELOG entry (§4: purely internal
+  tests). **Left alone, out of scope**: both loops of the A2 calibration smoke print the
+  label `MATCH?` ([live.rs:1739](src/app/orchestrator/tests/live.rs:1739) and
+  [1749](src/app/orchestrator/tests/live.rs:1749)) — the second is the *non*-match loop,
+  so that log is mislabeled in English already.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.
