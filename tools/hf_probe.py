@@ -450,9 +450,27 @@ class Checks:
             print(f"  {'PASS' if passed else 'FAIL'}  {uid:<3} {name}{': ' + detail if detail else ''}")
 
 
+def wait_healthy(url, timeout=600, poll=5):
+    """HF's `running` state only means the container is up; llama.cpp still
+    answers `503 Loading model` until the weights are in. This is the same
+    distinction OpenAiClient::probe() draws, and the runner needs it too --
+    starting the suite on `running` alone would fail the first request."""
+    print(f"  waiting for /health (timeout {timeout}s)")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        status, _ = http("GET", f"{url}/health", timeout=30)
+        if status == 200:
+            print("  -> healthy")
+            return True
+        time.sleep(poll)
+    print(f"  -> not healthy within {timeout}s (last HTTP {status})")
+    return False
+
+
 def probe_chat(url, checks):
     """U1 (which file got loaded), U2 (context), U3 (jinja), U4 (SSE), U6 (auth)."""
     print(f"\n=== chat checks against {url} ===")
+    wait_healthy(url)
 
     # U6 — protected really means protected. Without the header this must not be
     # a 200; a public endpoint would silently pass every other check.
@@ -547,8 +565,11 @@ def probe_chat(url, checks):
 
 
 def probe_embed(url, checks):
-    """U5 — TEI shape and dimension."""
+    """U5 — embedding endpoint: OpenAI shape and dimension."""
     print(f"\n=== embedding checks against {url} ===")
+    if not wait_healthy(url):
+        checks.record("U5", "embedding endpoint healthy", False, "never returned 200 on /health")
+        return
     status, body = http(
         "POST",
         f"{url}/v1/embeddings",
@@ -610,6 +631,18 @@ def cmd_run(args):
     stamp = time.strftime("%m%d-%H%M%S")
     checks = Checks()
     started = time.time()
+
+    if args.embed_only:
+        name = f"e2e-probe-embed-{stamp}"
+        if create(apply_overrides(embed_payload(name, args), args.set), args.dry_run) is None:
+            return 0 if args.dry_run else 2
+        url = wait_running(name, args.timeout)
+        if url:
+            probe_embed(url, checks)
+        else:
+            checks.record("U5", "TEI endpoint reached running", False, "see above")
+        checks.summary()
+        return 2 if checks.failed() else 0
 
     chat_name = f"e2e-probe-chat-{stamp}"
     payload = apply_overrides(chat_payload(chat_name, args), args.set)
@@ -690,6 +723,7 @@ def main():
     p.add_argument("--scale-to-zero", type=int, default=15, help="idle minutes (the leak ceiling)")
     p.add_argument("--timeout", type=int, default=1500, help="seconds to wait for 'running'")
     p.add_argument("--chat-only", action="store_true")
+    p.add_argument("--embed-only", action="store_true")
     p.add_argument("--keep", action="store_true", help="do not delete (debugging; costs money)")
     p.add_argument("--dry-run", action="store_true", help="print payloads, send nothing")
     p.add_argument("--set", action="append", metavar="a.b.c=json", help="override a payload field")
