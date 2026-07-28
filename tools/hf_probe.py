@@ -134,10 +134,36 @@ def resolve_namespace(explicit):
 # token editor (https://huggingface.co/settings/tokens). "Manage" covers
 # create/list/delete; "Make calls" is what a `protected` endpoint checks on every
 # inference request — the probe needs both, and so will the CI job.
+# Wire names observed on a working token (2026-07-28); the UI label is what the
+# user has to tick. Both are required: `write` alone creates an endpoint that
+# then 403s on every request — i.e. it fails *after* the meter has started.
 NEEDED_PERMISSIONS = [
-    ("Manage Inference Endpoints", "create / list / delete via api.endpoints.huggingface.cloud"),
-    ("Make calls to Inference Endpoints", "POST /v1/chat/completions against a protected endpoint"),
+    # (exact wire name, distinctive fragment, UI label, what it buys)
+    # The fragments must not cross-match: "endpoints.write" is absent from
+    # "inference.endpoints.infer.write", so holding only `infer` cannot be
+    # mistaken for holding `manage`.
+    (
+        "inference.endpoints.write",
+        "endpoints.write",
+        "Manage Inference Endpoints",
+        "create / list / delete via api.endpoints.huggingface.cloud",
+    ),
+    (
+        "inference.endpoints.infer.write",
+        "endpoints.infer",
+        "Make calls to Inference Endpoints",
+        "POST /v1/chat/completions against a protected endpoint",
+    ),
 ]
+
+
+def held_permissions(granted):
+    """Which of NEEDED_PERMISSIONS the token has. Returns [(label, what, held)]."""
+    out = []
+    for wire, frag, label, what in NEEDED_PERMISSIONS:
+        held = wire in granted or any(frag in p for p in granted)
+        out.append((label, what, held, wire))
+    return out
 
 
 def cmd_doctor(args):
@@ -160,16 +186,18 @@ def cmd_doctor(args):
     print(f"\n  user: {body.get('name')} ({body.get('type')})   token role: {role}")
     print(f"  granted permissions: {granted or '(none reported)'}")
 
+    missing = []
     if role == "fineGrained":
-        # Match on a substring: the wire names of these scopes are not documented
-        # and have changed before, so require the concept, not an exact string.
-        has_endpoint_scope = any("endpoint" in p.lower() for p in granted)
-        if not has_endpoint_scope:
-            print("\n  -> no Inference-Endpoints permission on this token. Enable, in")
-            print("     https://huggingface.co/settings/tokens -> your token -> Edit,")
-            print("     under User Permissions -> Inference:")
-            for name, what in NEEDED_PERMISSIONS:
-                print(f"       [x] {name:<34} ({what})")
+        print()
+        for label, what, held, wire in held_permissions(granted):
+            print(f"  [{'ok     ' if held else 'MISSING'}] {label:<34} ({wire})")
+            if not held:
+                missing.append((label, what))
+        if missing:
+            print("\n  -> tick these in https://huggingface.co/settings/tokens -> your token")
+            print("     -> Edit -> User Permissions -> Inference (or use the `Inference` preset):")
+            for label, what in missing:
+                print(f"       [x] {label:<34} ({what})")
     elif role in ("read",):
         print("  -> a `read` token cannot manage endpoints. Use fine-grained (preferred) or `write`.")
 
@@ -190,9 +218,12 @@ def cmd_doctor(args):
         print("  -> 401: the token is not being accepted at all by this API.")
         return 2
     if ok(status):
-        print("  -> management API OK. If `run` still 403s, it is the *inference* call:")
-        print("     enable 'Make calls to Inference Endpoints' too.")
-    return 0 if ok(status) else 2
+        if missing:
+            print("  -> management API OK, but a permission above is missing: `run` will")
+            print("     create the endpoint and then 403 on the inference calls.")
+        else:
+            print("  -> management API OK and both permissions present. Ready for `run`.")
+    return 0 if ok(status) and not missing else 2
 
 
 def chat_payload(name, args):
