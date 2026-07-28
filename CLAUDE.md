@@ -129,8 +129,8 @@ tests green, 67 `#[ignore]` smokes** (the largest count — log below; the curre
 track is a **readiness probe for the embedding server** (its status came from the
 configuration alone, so a configured-but-unreachable server reported itself ready —
 now all three servers are probed alike: an immediate `Connecting` + a background
-`/health` probe, the cloud stays `Ready` with no probe) — **done, live check of
-`/health` on a real `--embeddings` server pending**; before that —
+`/health` probe, the cloud stays `Ready` with no probe) — **done, live run GO**;
+before that —
 **per-model input prefixes for embeddings**
 ([docs/research/embedding-input-prefixes.md](docs/research/embedding-input-prefixes.md)) —
 the last groundwork item of the one below it: `Embedder::embed` gained an input
@@ -9094,14 +9094,20 @@ debounce was done as a separate PR, see below).
   launch failure surfacing as `Disconnected`; the cloud `Ready` **without** a probe.
   **1472 unit tests green** (+6), **67 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
   `cyrillic_scan` clean.
-- **Live run — pending** (the user's embedding host is down — that's what produced
-  the report). One question genuinely needs a live stack: whether a real
-  `llama-server --embeddings` serves `/health`, since a probe that misjudges a
-  *working* embedder would be worse than the bug it fixes. Smoke
-  `embed_probe_reaches_ready_on_live_server` (`MINDFORK_EMBED_URL`, silently
-  skipped) is in place for it. The risk is bounded by `probe()` already treating
-  `404` as alive, so a server without `/health` reads as ready either way — but
-  it should be confirmed, not assumed.
+- **Live run — GO** (bge-m3 on a real external `llama-server --embeddings`,
+  `MINDFORK_EMBED_URL`): `embed_probe_reaches_ready_on_live_server` — the one
+  question unit tests can't settle is whether a real `--embeddings` server serves
+  the `/health` the probe relies on, since a probe that misjudges a *working*
+  embedder would be worse than the bug it fixes. It does: `Connecting` →
+  **`Ready`**. (The risk was bounded anyway — `probe()` treats `404` as alive, so a
+  server without `/health` reads as ready either way — but it needed confirming,
+  not assuming.)
+- **Regression — clean**: all **25** orchestrator e2e live smokes green (507 s) on
+  Gemma 4 31B q4_0 + bge-m3 (external `llama-server`, `--jinja`) — memory/
+  self-model/notes/graph/cross-organ links/RAG/attachments/control tools/i18n/MCP.
+  The full set is the right scope: `apply_embed` builds the embedder every memory
+  path then uses, so "the status is now honest" had to be shown not to have cost
+  anything downstream.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
