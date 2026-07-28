@@ -131,14 +131,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   vision; passing images from clipboard/file.
 
 ## Testing, CI, quality
-- **Live `#[ignore]` smokes in CI** — **closed for the llama.cpp set**:
-  `tools/e2e_hf.py` + the `workflow_dispatch` **Live e2e** workflow run it
-  against ephemeral HF Inference Endpoints (chat + two embedding models), so the
-  gate no longer needs the one GPU machine
-  ([history/remote-e2e-hf.md](history/remote-e2e-hf.md)). Still open: a *scheduled* run
-  (deliberately not wired — R5a; every run costs ~$1 and the non-hermetic smokes
-  would flake unattended), and the cloud-key and Python-sandbox smokes, which
-  need different credentials and assets.
+- **Live `#[ignore]` smokes in CI** — the llama.cpp set is covered (see
+  "Recently closed"). What is left is deliberate or out of reach: a *scheduled*
+  run is **not** wired (R5a — every run costs ~$1, and the non-hermetic smokes
+  would flake unattended, which is how a nightly gate stops being read); the
+  cloud-key smokes need their own credentials; the Python-sandbox and
+  managed-server ones need local assets and a child process of our own, so they
+  cannot run remotely at all.
 - **Remote gate: chat-free runs** — `run` always creates the L40S chat endpoint,
   even for a filter that only exercises the embedders (~$0.10 wasted per such
   iteration). The probe has `--embed-only`; the runner has no `--no-chat`.
@@ -234,6 +233,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **Remote live e2e gate** (stages 0–3, complete): the mandatory live gate
+  (AGENTS.md §3) stopped depending on one machine at one LAN address.
+  `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'
+  llama.cpp engine) plus **two** embedding models, runs the `#[ignore]` suite
+  against them, and deletes them — **verifying** the deletion, since a leaked
+  endpoint is the one outcome that costs money. In CI as a
+  `workflow_dispatch` job with an hourly sweeper as the backstop; two
+  consecutive green runs (66 passed / 0 failed). The platform was chosen for
+  its *cleanup guarantee* rather than its price — idle scale-to-zero is a
+  dead-man's switch no rented pod offers. See
+  [remote-e2e-hf.md](history/remote-e2e-hf.md), research
+  [remote-e2e-gpu.md](research/remote-e2e-gpu.md).
 - **Embedding-model change** (stages 1–3, complete): a swap is detected
   behaviourally by a canary vector — dimensionality is *not* identity —
   `/reindex` re-embeds every stored vector in place from the text the DB already
