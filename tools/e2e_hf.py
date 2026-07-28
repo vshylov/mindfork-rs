@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -97,7 +98,7 @@ def prebuild(args):
     return code
 
 
-def run_suite(command, chat_url, embed_url, alt_embed_url):
+def run_suite(command, chat_url, embed_url, alt_embed_url, keepalive_every):
     """Run the suite with the endpoint env set.
 
     The lifecycle stays inside this process on purpose: creating the endpoints
@@ -125,10 +126,72 @@ def run_suite(command, chat_url, embed_url, alt_embed_url):
     print(f"  MINDFORK_EMBED_URL_ALT={env.get('MINDFORK_EMBED_URL_ALT', '(unset — model-change smokes will skip)')}")
     print(f"  $ {command}\n", flush=True)
     started = time.time()
-    code = subprocess.run(command, shell=True, env=env).returncode
+    with KeepAlive(chat_url, [embed_url, alt_embed_url], every=keepalive_every):
+        code = subprocess.run(command, shell=True, env=env).returncode
     elapsed = time.time() - started
-    print(f"\n  suite exit={code} after {elapsed:.0f}s", flush=True)
+    print(f"  suite exit={code} after {elapsed:.0f}s", flush=True)
     return code, elapsed
+
+
+class KeepAlive:
+    """Keep the endpoints out of scale-to-zero for as long as the suite runs.
+
+    HF scales an endpoint to zero once it is idle for `--scale-to-zero` minutes,
+    and the suite legitimately leaves one untouched for longer than that: the
+    alternate embedder is used by `embed_guard` early and by `embed_prefix` some
+    twenty minutes later. Waking is not free to the caller — the request that
+    wakes it gets a `503`, which is exactly what turned CI run 30396557877 red.
+
+    The alternative was to widen the idle window, but that window *is* the leak
+    ceiling: it is what bounds the cost of a run that dies without cleaning up,
+    and it is the reason this platform was chosen over a rented pod. A real
+    inference request every few minutes keeps `lastUsedAt` fresh and leaves that
+    guarantee untouched (user's decision, 2026-07-29).
+
+    Deliberately a daemon thread: it must never keep the process alive, and it
+    must never be able to fail the run — every ping is best-effort.
+    """
+
+    def __init__(self, chat_url, embed_urls, every=300):
+        self.chat_url = chat_url
+        self.embed_urls = [u for u in embed_urls if u]
+        self.every = every
+        self.stop = threading.Event()
+        self.thread = None
+        self.pings = 0
+
+    def _ping_once(self):
+        for url in self.embed_urls:
+            hf.http("POST", f"{url}/v1/embeddings", {"input": ["keepalive"]}, timeout=120)
+        if self.chat_url:
+            hf.http(
+                "POST",
+                f"{self.chat_url}/v1/chat/completions",
+                {"messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                timeout=120,
+            )
+
+    def _loop(self):
+        # `wait` rather than `sleep`, so stopping is immediate at the end of the
+        # suite instead of up to `every` seconds later.
+        while not self.stop.wait(self.every):
+            try:
+                self._ping_once()
+                self.pings += 1
+            except Exception as e:  # a ping must never fail the run
+                print(f"  keepalive: ping failed ({type(e).__name__}: {e})", flush=True)
+
+    def __enter__(self):
+        self.thread = threading.Thread(target=self._loop, daemon=True, name="keepalive")
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        if self.thread:
+            self.thread.join(timeout=10)
+        print(f"  keepalive: {self.pings} round(s) of pings", flush=True)
+        return False
 
 
 def alt_payload(name, args):
@@ -211,7 +274,9 @@ def cmd_run(args):
     ready = time.time()
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
-    code, suite_time = run_suite(cargo_command(args), chat_url, embed_url, alt_embed_url)
+    code, suite_time = run_suite(
+        cargo_command(args), chat_url, embed_url, alt_embed_url, args.keepalive_seconds
+    )
 
     print("\n=== summary ===")
     print(f"  chat  {chat_name}  {chat_url}")
@@ -322,6 +387,12 @@ def main():
     p.add_argument("--reuse-embed", default="", help="attach to an existing embedding endpoint")
     p.add_argument("--reuse-alt-embed", default="", help="attach to an existing alternate embedding endpoint")
     p.add_argument("--health-timeout", type=int, default=900, help="seconds to wait for /health after `running`")
+    p.add_argument(
+        "--keepalive-seconds",
+        type=int,
+        default=300,
+        help="ping the endpoints this often during the suite, so none scales to zero mid-run",
+    )
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("sweep", help="delete orphaned e2e-* endpoints older than the limit")
