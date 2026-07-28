@@ -50,6 +50,7 @@ import atexit
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 import urllib.error
@@ -450,6 +451,30 @@ class Checks:
             print(f"  {'PASS' if passed else 'FAIL'}  {uid:<3} {name}{': ' + detail if detail else ''}")
 
 
+def run_suite(command, chat_url, embed_url):
+    """Run the test suite against the live endpoints, then let cleanup happen.
+
+    The lifecycle stays inside this process on purpose: creating the endpoints
+    in one command and running cargo in another would leak them if anything
+    died in between (docs/remote-e2e-hf.md §6).
+    """
+    env = dict(os.environ)
+    env["MINDFORK_ENGINE_URL"] = f"{chat_url}/v1"
+    env["MINDFORK_ENGINE_KEY"] = TOKEN
+    if embed_url:
+        env["MINDFORK_EMBED_URL"] = f"{embed_url}/v1"
+        env["MINDFORK_EMBED_KEY"] = TOKEN
+    print("\n=== suite ===")
+    print(f"  MINDFORK_ENGINE_URL={env['MINDFORK_ENGINE_URL']}")
+    if embed_url:
+        print(f"  MINDFORK_EMBED_URL={env['MINDFORK_EMBED_URL']}")
+    print(f"  $ {command}\n", flush=True)
+    started = time.time()
+    code = subprocess.run(command, shell=True, env=env).returncode
+    print(f"\n  suite exit={code} after {time.time() - started:.0f}s", flush=True)
+    return code
+
+
 def wait_healthy(url, timeout=600, poll=5):
     """HF's `running` state only means the container is up; llama.cpp still
     answers `503 Loading model` until the weights are in. This is the same
@@ -666,6 +691,7 @@ def cmd_run(args):
     else:
         checks.record("U1", "endpoint reached running", False, "see the state/message above")
 
+    embed_url = None
     if not args.chat_only:
         embed_name = f"e2e-probe-embed-{stamp}"
         if create(apply_overrides(embed_payload(embed_name, args), args.set), False) is not None:
@@ -673,15 +699,19 @@ def cmd_run(args):
             if embed_url:
                 probe_embed(embed_url, checks)
             else:
-                checks.record("U5", "TEI endpoint reached running", False, "see above")
+                checks.record("U5", "embedding endpoint reached running", False, "see above")
+
+    suite_code = 0
+    if args.suite and chat_url:
+        suite_code = run_suite(args.suite, chat_url, embed_url)
 
     checks.summary()
     print(f"\nelapsed {time.time() - started:.0f}s")
-    if chat_url:
+    if chat_url and not args.suite:
         print("\nTo run the suite against this endpoint before it is deleted, use --keep and:")
         print(f'  MINDFORK_ENGINE_URL={chat_url}/v1  MINDFORK_ENGINE_KEY=$HF_TOKEN \\')
         print("  cargo test -- --ignored --test-threads=1")
-    return 2 if checks.failed() else 0
+    return 2 if (checks.failed() or suite_code) else 0
 
 
 def main():
@@ -724,6 +754,12 @@ def main():
     p.add_argument("--timeout", type=int, default=1500, help="seconds to wait for 'running'")
     p.add_argument("--chat-only", action="store_true")
     p.add_argument("--embed-only", action="store_true")
+    p.add_argument(
+        "--suite",
+        nargs="?",
+        const="cargo test -- --ignored --test-threads=1",
+        help="run this command with the endpoint env set, then clean up",
+    )
     p.add_argument("--keep", action="store_true", help="do not delete (debugging; costs money)")
     p.add_argument("--dry-run", action="store_true", help="print payloads, send nothing")
     p.add_argument("--set", action="append", metavar="a.b.c=json", help="override a payload field")
