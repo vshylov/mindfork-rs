@@ -9312,6 +9312,66 @@ debounce was done as a separate PR, see below).
   (`MINDFORK_EMBED_URL_ALT` — 4 memory-critical smokes currently skip while
   reporting ok); a *scheduled* live run; and the managed-server smoke, which
   needs a child process of our own and so cannot run remotely at all.
+### Post-M9: live-smoke diagnostic log in English (done)
+- **The developer-facing log of the live smokes was half-Russian** — 31 lines of
+  `eprintln!` labels across `orchestrator/tests/live.rs` (29) and `tests/mcp.rs` (2)
+  ("session 1: tools=…", "self-notes (observations) in DB: …", "gate showed a similar
+  observation: …" were all Russian). Now English, matching the convention flipped by
+  the english-source migration — and the precedent set there for provisioning progress:
+  "it is a developer-facing test log". Branch `refactor/live-test-log-english`.
+- **Why it survived the migration**: `tools/cyrillic_scan.py` allowlists test files
+  **wholesale** (`path.endswith("tests.rs") or "/tests/" in path`) — a deliberate
+  allowance, since these files legitimately hold Cyrillic fixture data and `ru`-locale
+  assertions, and the scanner cannot tell a label from a fixture. So the gate was never
+  going to catch it; it only became visible once the live suite started running in CI.
+- **The scope line is what matters here** — only label text inside print macros moved.
+  Untouched: the prompts sent to the model, the `ru`-locale substrings the gate
+  assertions match (the `r.contains(…)` checks in `self_model_gate_e2e_live`,
+  `summary_gate_e2e_live`, `trait_gate_e2e_live`,
+  `self_consolidation_overview_e2e_live` and `recall_includes_self_e2e_live`),
+  note/document fixture bodies, the A2 calibration probe pairs, and the TTS
+  config/prompt strings. Translating any of those would have quietly stopped the tests
+  testing what they test.
+- **The one line that named a Russian value in its label** — how many notes cite the
+  RAG source — was **not** solved with an opt-out marker but by binding that (Russian)
+  source name once to a `const SOURCE` and interpolating it (`notes citing
+  {SOURCE:?}`). That deduplicates a literal that had been repeated three times in code
+  positions (two DB lookups + the log, where a typo in one would have failed
+  confusingly), keeps the log naming the actual source, and leaves the **label** pure
+  English. Values are data; labels are prose — interpolation is what separates them,
+  and it is now the documented escape hatch.
+- **A mislabel fixed in the same log** (the A2 calibration smoke, spotted while
+  translating): both loops printed `MATCH?`, but the second is the *non*-match loop —
+  so the log was already wrong in English. Now `MATCH?`/`NON-MATCH?`, padded to a
+  common width, since the point of that smoke is eyeballing the two groups' cosines to
+  place a threshold between them, and misreading which group a row belongs to is
+  exactly the error it invites.
+- **The gap is now closed by the gate, not by discipline** (`tools/cyrillic_scan.py`):
+  test files stay allowlisted wholesale — the scanner cannot tell a fixture from a
+  label **by file** — but it now can **by position**. A new `print_fmt_spans` tracks
+  the format string of `print!`/`println!`/`eprint!`/`eprintln!` across lines (the
+  string routinely opens on the `eprintln!(` line and carries its text on
+  `\`-continuation lines), and Cyrillic inside that span translates even in a test.
+  Deliberately narrow: **only the first literal**, so a value argument like
+  `eprintln!("gate: {}", r.contains("<ru string>"))` is untouched; and
+  **`assert!`/`panic!` are excluded**, because their *condition* sits in the same macro
+  call as the message and flagging them would hit precisely the ru-locale assertion
+  data that must stay. `write!`/`writeln!` too — in tests they usually build an
+  expected-value buffer.
+- **Mutation-tested in both directions** (a throwaway probe file, since the rule is
+  cross-line state that a single-line reading can't confirm): it flags a single-line
+  Russian label, a label on a **continuation line**, and one whose format string opens
+  on the line *after* the macro; it does not flag ru-locale assertion data, fixture
+  prompts, a Cyrillic literal in a value argument, an interpolated value, or a line
+  carrying the `cyrillic-ok` opt-out. Repo-wide the rule has a **clean baseline** — a
+  survey before writing it found exactly one candidate line, the one now interpolated.
+- **No live run needed** (AGENTS.md §3): these are log strings and a lint — no behavior
+  change, no engine/memory/tool path touched, and the changed lines only execute under
+  `--ignored`. `--all-targets` compiles the ignored tests, so the `const`/interpolation
+  change is still compile-verified. **1484 unit tests green** (count unchanged —
+  string-only), 69 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan` clean. No
+  CHANGELOG entry (§4: purely internal tests/tooling). Convention recorded in
+  **AGENTS.md §3**.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
