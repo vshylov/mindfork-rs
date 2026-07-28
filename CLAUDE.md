@@ -494,7 +494,7 @@ as text graphics, a hard fallback to the source), **self/interlocutor "self-mode
 
 ### M9 — Gemma check (done)
 - **Gemma 4 E4B-it verified** against a live `llama-server` (llama.cpp). Added/
-  extended `#[ignore]` smokes in [client.rs](src/shared/api/client.rs):
+  extended `#[ignore]` smokes in [client.rs](src/shared/api/openai/client.rs):
   anti-self-cutoff for both families (`<|im_end|>` + `<end_of_turn>`), tool calling
   (`finish_reason=tool_calls` + parsing `delta.tool_calls`), "thoughts"
   (`reasoning_content` → `Thoughts`). All green. Nuance: Gemma reasoning "thinks"
@@ -9460,6 +9460,45 @@ debounce was done as a separate PR, see below).
 - Gates green: **1486 unit tests**, 69 `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan` clean. No CHANGELOG entry — dev infrastructure and tests
   (AGENTS.md §4).
+
+### Post-M9: broken documentation links, and a gate that stops them recurring (done)
+- **28 relative links in the docs pointed at nothing**, and had for a while.
+  Nobody noticed because a stale link is *valid Markdown*: `cargo`, `clippy` and
+  `cyrillic_scan` all pass, and it only 404s when someone clicks it on GitHub.
+  Branch `fix/markdown-links`.
+- **The cause is procedural, not careless.** AGENTS.md §4 says a finished track's
+  plan moves to `docs/history/` — the file gains a directory level, and every
+  relative link *inside* it silently breaks (`../src/foo.rs` starts resolving to
+  `docs/src/foo.rs`). Links **to** the plan are the obvious half and do get
+  updated; links **inside** it are the half that gets missed.
+  `refactoring-solid.md` alone carried 23, because it cites source files
+  heavily. One more was a different cause: CLAUDE.md still pointed at
+  `src/shared/api/client.rs`, which moved to `openai/client.rs` in the ADR 0004
+  Phase 2 split.
+- **`tools/link_check.py`** (stdlib, the `cyrillic_scan.py` pattern: tracked
+  files, `--list`, non-zero exit) now runs in CI's `lint` job — before the
+  toolchain setup, since it needs neither Rust nor ALSA. It is **deliberately
+  narrow**, so a green run means something: relative links only (checking the
+  network would be slow and flaky), the file part only (heading slugs are a
+  rendering detail, and chasing them would fail on every heading edit), and
+  **code is skipped**.
+- **Skipping code is what removes the need for an exception list.** A first,
+  naive scan reported 32 hits, three of which were `[t](u)`, `√[n](x)` and
+  `[text](url)` — all inside backticks, i.e. *examples* of links rather than
+  links. Blanking fenced blocks and inline spans drops them by construction; the
+  real count was **28**, not the 29 I had estimated by eye. Worth the note: the
+  tool corrected its author before it corrected the docs.
+- **Mutation-tested in both directions**, because a link checker that passes is
+  indistinguishable from one that does nothing: re-breaking a single link the way
+  a history move does turns it red; a file containing *only* code-span links
+  stays green; adding one real link to that same file turns it red again.
+- **The gate is placed where the bug is.** The `lint` job runs on every PR
+  including a docs-only one (which skips the `test` job), which is exactly when
+  links break. AGENTS.md §1 and the §4 table now name the trap and the tool.
+- **No live run needed** (AGENTS.md §3): documentation, one CI step and a
+  standalone script — no engine, memory or tool path touched. **1486 unit tests
+  green**, 69 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
+  clean. No CHANGELOG entry — internal docs and tooling (§4).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

@@ -4,7 +4,7 @@
 > `Ctrl+C`→`Ctrl+Q`/`F10`), **C** (undo/redo), and **D** (mouse: click → cursor,
 > drag → selection) — **all done** (see the CLAUDE.md changelog). The track is complete.
 > **Context:** follows the `widgets/input_box.rs` audit (custom multiline input,
-> [ADR 0001](decisions/0001-ui-crates-ratatui-030.md)). Audit items 1-7 are done
+> [ADR 0001](../decisions/0001-ui-crates-ratatui-030.md)). Audit items 1-7 are done
 > (see the CLAUDE.md changelog, "InputBox refinements" + "wrap cache"). Here are the
 > three remaining major gaps versus "big editors":
 > **8** text selection (+ copy/cut), **9** undo/redo,

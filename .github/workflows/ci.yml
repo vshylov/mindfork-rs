@@ -1,4 +1,5 @@
-# CI: lints (source language + fmt + clippy) on Linux + tests on Linux and Windows.
+# CI: lints (source language + doc links + fmt + clippy) on Linux + tests on
+# Linux and Windows.
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
@@ -83,6 +84,13 @@ jobs:
       # Runs before the Rust setup — it needs neither the toolchain nor ALSA.
       - name: Source language (no untranslated Russian)
         run: python3 tools/cyrillic_scan.py
+      # A stale relative link is valid Markdown, so nothing else notices it —
+      # it only 404s when someone clicks it on GitHub. The dominant cause is
+      # procedural: AGENTS.md §4 moves a finished plan into docs/history/, the
+      # file gains a directory level, and every relative link inside it breaks
+      # (one archived plan had 23). Also needs no toolchain, so it runs here.
+      - name: Documentation links resolve
+        run: python3 tools/link_check.py --list
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
