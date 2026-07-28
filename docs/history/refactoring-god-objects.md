@@ -5,7 +5,7 @@ moving to `docs/history/` (like refinements.md and others).
 
 **Progress:** all seven stages done and merged into one branch `refactor/god-object-split`
 (originally each was a separate branch from `main`). Summary table and details — §6;
-full per-stage log — in [CLAUDE.md](../CLAUDE.md).
+full per-stage log — in [CLAUDE.md](../../CLAUDE.md).
 
 ## 1. Context and diagnosis
 
@@ -354,7 +354,7 @@ clean.
 ### Stages 2–7 (done)
 
 All remaining stages were done with the same playbook (§2). The full
-per-stage breakdown is in the [CLAUDE.md](../CLAUDE.md) log ("God-object
+per-stage breakdown is in the [CLAUDE.md](../../CLAUDE.md) log ("God-object
 refactor — stage N" entries); here — a "before → largest file after" summary
 and where things landed.
 

@@ -53,7 +53,10 @@ Design doc rules:
   after go.
 - Track stages get separate branches/PRs. A finished track: the plan moves to
   `docs/history/` in a dedicated docs branch, references to it in
-  CLAUDE.md/architecture.md get updated.
+  CLAUDE.md/architecture.md get updated. **Mind the plan's own links**: the file
+  gains a directory level, so every relative link *inside* it needs one more
+  `../`. Easy to miss (the links to it are the obvious half) — `python
+  tools/link_check.py` catches both, and CI runs it.
 
 ## 2. Branch (before the first commit)
 
@@ -119,7 +122,7 @@ Before the PR, update the docs per the table (this is part of the task, not
 | Install, run, env, engine | **docs/install.md** |
 | An architectural decision was adopted | new ADR in `docs/decisions/` + links from CLAUDE.md and architecture.md |
 | A groundwork item was closed / a new one appeared | **docs/roadmap.md** |
-| A track with a design plan finished | plan → `docs/history/`, references updated (§1) |
+| A track with a design plan finished | plan → `docs/history/`, references updated **and the plan's own relative links re-pointed** — `python tools/link_check.py` (§1) |
 
 If a row in the table isn't affected — don't invent anything; but the
 CLAUDE.md journal is updated **always** (except pure documentation PRs —

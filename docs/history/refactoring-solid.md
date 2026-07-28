@@ -60,15 +60,15 @@ helpers without changing behavior**):
 
 ### Current state
 
-`ToolContext` — 11 flat fields ([tools/mod.rs:43-69](../src/features/tools/mod.rs)):
+`ToolContext` — 11 flat fields ([tools/mod.rs:43-69](../../src/features/tools/mod.rs)):
 turn identity (`profile_id`, `chat_id`), a chat snapshot (`system_message`,
 `effective_sampling`, `last_user_message_at`), shared dependencies
 (`storage`, `engine`, `embedder`), and config parameters (`chunk_params`,
 `self_model_params`, `recall_includes_self`). Assembled as a **raw literal**:
 
-- production: [generation.rs:231](../src/app/orchestrator/generation.rs),
-  [reflection.rs:238](../src/app/orchestrator/reflection.rs),
-  [consolidation.rs:125](../src/app/orchestrator/consolidation.rs);
+- production: [generation.rs:231](../../src/app/orchestrator/generation.rs),
+  [reflection.rs:238](../../src/app/orchestrator/reflection.rs),
+  [consolidation.rs:125](../../src/app/orchestrator/consolidation.rs);
 - tests: `tools/mod.rs:390` (testkit), `web.rs:952`, `subagent.rs:181`,
   `rag.rs:789`, `fetch.rs:261`.
 
@@ -178,17 +178,17 @@ The family of "silent" background tasks (a UI-less mini agentic loop:
 reflection + consolidation, sharing the `tool_loop::spawn_silent_loop`
 runner) is served by **lifecycle copy-paste**:
 
-- `Orchestrator` fields ([mod.rs:232-280](../src/app/orchestrator/mod.rs)):
+- `Orchestrator` fields ([mod.rs:232-280](../../src/app/orchestrator/mod.rs)):
   `reflect_cancel`/`reflect_done_tx`/`reflect_failures` +
   `consolidate_cancel`/`consolidate_done_tx`/`consolidate_failures` (6 total);
 - two channels (`reflect_done`, `consolidate_done`) and two `select!`
-  branches in `run()` ([mod.rs:186-195](../src/app/orchestrator/mod.rs));
+  branches in `run()` ([mod.rs:186-195](../../src/app/orchestrator/mod.rs));
 - the `Quit` branch manually enumerates every cancellation token
-  ([mod.rs:341-357](../src/app/orchestrator/mod.rs));
+  ([mod.rs:341-357](../../src/app/orchestrator/mod.rs));
 - near-identical handlers `handle_reflect_done`
-  ([reflection.rs:290-310](../src/app/orchestrator/reflection.rs)) and
+  ([reflection.rs:290-310](../../src/app/orchestrator/reflection.rs)) and
   `handle_consolidate_done`
-  ([consolidation.rs:175-192](../src/app/orchestrator/consolidation.rs)):
+  ([consolidation.rs:175-192](../../src/app/orchestrator/consolidation.rs)):
   drop the cancel token → clear the indicator → on `Ok` reset the failure
   streak (+`SelfModelChanged` for reflection) → on `Err` bump the streak and
   fire one error at the `BACKGROUND_FAILURE_ALERT` threshold.
@@ -234,7 +234,7 @@ fn kind_label(kind: BackgroundKind) -> &'static str {
 - `run()`: two channels and two `select!` branches → one channel and one
   branch (`orch.handle_bg_done(kind, res)`).
 - `SilentLoop` gains a `kind: BackgroundKind` field; `done_tx` sends
-  `(kind, outcome)` ([tool_loop.rs:49](../src/app/orchestrator/tool_loop.rs)).
+  `(kind, outcome)` ([tool_loop.rs:49](../../src/app/orchestrator/tool_loop.rs)).
 - Kind-specific logic lives **in one place** (`handle_bg_done`): `Reflection`
   on `Ok` additionally sends `SelfModelChanged`; `Consolidation` does not
   (current behavior, see the comment at consolidation.rs:173).
@@ -286,10 +286,10 @@ renames. **808 tests green**, clippy/fmt clean.
 
 The biggest shotgun-surgery node: adding one settings field today touches up
 to **five match sites in four files** — the catalog row
-([catalog.rs](../src/screens/settings/catalog.rs)), `apply_text` (~50 arms,
-[apply.rs:415-633](../src/screens/settings/apply.rs)) or
+([catalog.rs](../../src/screens/settings/catalog.rs)), `apply_text` (~50 arms,
+[apply.rs:415-633](../../src/screens/settings/apply.rs)) or
 `toggle_field`/`cycle_field` (apply.rs:256-387), `field_description` (~40
-arms, [helpers.rs:21-208](../src/screens/settings/helpers.rs)), validation
+arms, [helpers.rs:21-208](../../src/screens/settings/helpers.rs)), validation
 (`field_num_kind`), plus a default for `Del` reset and the `•` marker via
 `default_fields`.
 
@@ -303,7 +303,7 @@ them.
 An important precedent on this very screen: **sampling is already built
 descriptor-style** — `SamplingParam` carries `label`/`field_name`/
 `num_kind`/`group`/`description`
-([settings/mod.rs:247-427](../src/screens/settings/mod.rs)), values flow
+([settings/mod.rs:247-427](../../src/screens/settings/mod.rs)), values flow
 through shared `sampling_row`/`apply_sampling_text` (helpers.rs). 28
 parameters × 2 subsections are served by one table — the pattern is proven
 in the codebase.
@@ -318,8 +318,8 @@ in the codebase.
   string automatically covers both `FieldId`s of the pair (currently
   duplicated across arms like `XNoMmap | IxNoMmap => …`); sampling —
   `sampling_row` supplies `p.description()` (source untouched).
-- Consumers: the bottom panel ([render.rs](../src/screens/settings/render.rs))
-  and the search index ([search.rs](../src/screens/settings/search.rs)) read
+- Consumers: the bottom panel ([render.rs](../../src/screens/settings/render.rs))
+  and the search index ([search.rs](../../src/screens/settings/search.rs)) read
   `row.description` instead of calling `field_description(id)`; the
   190-line match is removed.
 - Tests calling `field_description` directly switch to reading the catalog
@@ -385,7 +385,7 @@ Consumers after this step:
 - catalog builders → `spec_row(&self.config, id)` (label/description/value
   from the spec), order and **mode-driven visibility stay imperative** in
   catalog.rs — that's deliberate display logic, not a field property;
-- the Choice popup ([choice.rs](../src/screens/settings/choice.rs)) →
+- the Choice popup ([choice.rs](../../src/screens/settings/choice.rs)) →
   `options` from the spec (step 3.3, can be split off).
 
 **Scope boundaries (important for staying mechanical):**
@@ -452,7 +452,7 @@ Four independent mini-fixes; 4a+4b — one PR, 4c/4d — optional.
 
 `status_bar::render`/`height` carry **10 arguments**
 (`#[allow(clippy::too_many_arguments)]`,
-[status_bar.rs:36-89](../src/widgets/status_bar.rs)); every new indicator
+[status_bar.rs:36-89](../../src/widgets/status_bar.rs)); every new indicator
 (the last were the reflection/consolidation `background` chips) extends both
 signatures and every call site.
 
@@ -485,19 +485,19 @@ itself (`app/runtime/mod.rs`, next to the enum):
 
 - `ActiveScreen::set_palette(&mut self, palette: Palette)` — folds the
   named palette block
-  [dispatch.rs:62-77](../src/app/runtime/dispatch.rs) (the `Settings` arm
+  [dispatch.rs:62-77](../../src/app/runtime/dispatch.rs) (the `Settings` arm
   keeps its own `refresh` — its semantics are broader than palette);
 - `ActiveScreen::handle_paste(&mut self, chat: &mut ChatScreen, text: &str)`
-  — folds the paste routing [input.rs:166-175](../src/app/runtime/input.rs);
+  — folds the paste routing [input.rs:166-175](../../src/app/runtime/input.rs);
 - a local `enum AnyIntent { Chat(..), List(..), Settings(..), SelfModel(..) }`
   + one `dispatch_any(intent, cmd_tx, screen, active) -> bool` — replacing
   "pull 4 Options + 4 near-identical if blocks"
-  ([input.rs:180-209](../src/app/runtime/input.rs); the current shape is a
+  ([input.rs:180-209](../../src/app/runtime/input.rs); the current shape is a
   workaround for a borrow conflict, `dispatch_any` resolves it with single
   ownership);
 - and, folded into the same PR, 4d: moving the clipboard side effect out of
   `apply_event`
-  ([dispatch.rs:43-58](../src/app/runtime/dispatch.rs)) into a private
+  ([dispatch.rs:43-58](../../src/app/runtime/dispatch.rs)) into a private
   helper `deliver_clipboard(screen, active, clipboard, text)` — `apply_event`
   no longer knows about `arboard`.
 
@@ -507,7 +507,7 @@ dispatch is idiomatic here), but a new screen adds branches in
 
 ### 4c. (Optional) grouping `ChatScreen` fields
 
-~40 fields ([chat/mod.rs:174-249](../src/screens/chat/mod.rs)) — the
+~40 fields ([chat/mod.rs:174-249](../../src/screens/chat/mod.rs)) — the
 implementation is already split across submodules, but the state is one
 struct. Following the orchestrator Phase 3 precedent
 (`EngineManager`/`SaveQueue`), group two cohesive trios:

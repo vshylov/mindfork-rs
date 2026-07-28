@@ -4,7 +4,7 @@
 > all six stages done as separate commits. See the CLAUDE.md journal,
 > "Post-M9: markdown-render refinements."
 > **Context:** based on an analysis of `src/shared/markdown/` (an own renderer,
-> [ADR 0003](decisions/0003-own-markdown-renderer.md)) and its call from
+> [ADR 0003](../decisions/0003-own-markdown-renderer.md)) and its call from
 > `widgets/message_feed.rs`. Problems found — event-walker defects, gaps in the
 > LaTeX unicode approximation on real LLM output, false positives of the
 > math extension, and no render cache in the feed.
