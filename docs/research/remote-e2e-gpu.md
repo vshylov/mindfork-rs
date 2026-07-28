@@ -1,7 +1,16 @@
 # Research: running the live e2e smokes on a rented GPU
 
-**Status:** research, pre-decision. Forks **R1–R8** in §9 need the user's answer
-before any implementation (AGENTS.md §1).
+**Status:** **decided.** Forks R1–R8 (§9) resolved to the recommended option
+throughout — *user's decision, 2026-07-28*: **R1a** HF Inference Endpoints ·
+**R2a** `protected` + the `MINDFORK_ENGINE_KEY` enabling change · **R3**
+reduced form (`delete` + sweeper) · **R4a** L40S 48 GB · **R5a**
+`workflow_dispatch` only · **R6a** the llama.cpp smoke set · **R7** n/a ·
+**R8** `HF_TOKEN` as a plain repository secret (the `workflow_dispatch`-only
+trigger already restricts the live job to users with write access, so a gated
+environment adds no protection).
+The unpinned llama.cpp `master` build (§3.1) was accepted knowingly — the user
+builds `master` regularly and sees breakage very rarely.
+Implementation plan: **[docs/remote-e2e-hf.md](../remote-e2e-hf.md)**.
 **Date:** 2026-07-28.
 
 ## 1. Why
