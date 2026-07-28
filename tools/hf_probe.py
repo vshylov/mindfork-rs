@@ -19,8 +19,16 @@ takes a few minutes. Cleanup is wired to `finally`, `atexit` and SIGINT/SIGTERM,
 verifies deletion, and a failure to delete is a **louder** error than a failed
 check (exit code 3) — a leaked endpoint is the one outcome that costs money.
 
+The token needs two boxes ticked in the fine-grained token editor, under
+User Permissions -> Inference: **Manage Inference Endpoints** (create/list/
+delete) and **Make calls to Inference Endpoints** (the inference requests
+themselves, which a `protected` endpoint checks). `doctor` reports which of
+those is missing, and distinguishes that from the other two causes of a 403 —
+no payment method on the account, or an org token still pending approval.
+
 Usage:
     set HF_TOKEN=hf_...                      # fine-grained, Inference Endpoints
+    python tools/hf_probe.py doctor          # diagnose a 401/403
     python tools/hf_probe.py hardware        # U7: vendors/regions/instance types
     python tools/hf_probe.py run             # the full probe (creates + deletes)
     python tools/hf_probe.py run --chat-only
@@ -114,8 +122,77 @@ def resolve_namespace(explicit):
         return explicit
     status, body = http("GET", WHOAMI)
     if not ok(status) or not isinstance(body, dict):
-        die(1, f"cannot resolve the namespace from whoami (HTTP {status}). Pass --namespace.")
+        die(
+            1,
+            f"cannot resolve the namespace from whoami (HTTP {status}).\n"
+            "       Run `python tools/hf_probe.py doctor` to see what the token is missing.",
+        )
     return body.get("name") or die(1, "whoami returned no user name; pass --namespace")
+
+
+# The two checkboxes under User Permissions -> Inference in the fine-grained
+# token editor (https://huggingface.co/settings/tokens). "Manage" covers
+# create/list/delete; "Make calls" is what a `protected` endpoint checks on every
+# inference request — the probe needs both, and so will the CI job.
+NEEDED_PERMISSIONS = [
+    ("Manage Inference Endpoints", "create / list / delete via api.endpoints.huggingface.cloud"),
+    ("Make calls to Inference Endpoints", "POST /v1/chat/completions against a protected endpoint"),
+]
+
+
+def cmd_doctor(args):
+    """Pinpoint a 403: token role, granted permissions, and the management API."""
+    print("\n=== 1. whoami ===")
+    status, body = http("GET", WHOAMI)
+    show(status, body if not isinstance(body, dict) else {k: v for k, v in body.items() if k != "orgs"}, limit=3000)
+    if status in (401, 403):
+        print("  -> the token itself is rejected: wrong value, deleted, or revoked.")
+        return 2
+    if not ok(status):
+        return 2
+
+    auth = (body.get("auth") or {}).get("accessToken") or {}
+    role = auth.get("role", "?")
+    fine = auth.get("fineGrained") or {}
+    granted = list(fine.get("global") or [])
+    for scope in fine.get("scoped") or []:
+        granted += list(scope.get("permissions") or [])
+    print(f"\n  user: {body.get('name')} ({body.get('type')})   token role: {role}")
+    print(f"  granted permissions: {granted or '(none reported)'}")
+
+    if role == "fineGrained":
+        # Match on a substring: the wire names of these scopes are not documented
+        # and have changed before, so require the concept, not an exact string.
+        has_endpoint_scope = any("endpoint" in p.lower() for p in granted)
+        if not has_endpoint_scope:
+            print("\n  -> no Inference-Endpoints permission on this token. Enable, in")
+            print("     https://huggingface.co/settings/tokens -> your token -> Edit,")
+            print("     under User Permissions -> Inference:")
+            for name, what in NEEDED_PERMISSIONS:
+                print(f"       [x] {name:<34} ({what})")
+    elif role in ("read",):
+        print("  -> a `read` token cannot manage endpoints. Use fine-grained (preferred) or `write`.")
+
+    print("\n=== 2. management API ===")
+    ns = args.namespace or body.get("name")
+    status, listing = http("GET", f"{API}/{ns}")
+    show(status, listing, limit=1500)
+    if status == 403:
+        print("\n  -> 403 from the management API. In order of likelihood:")
+        print("     1. the token lacks 'Manage Inference Endpoints' (see above);")
+        print("     2. no payment method on the account that owns the namespace —")
+        print("        Inference Endpoints requires a card on file, and Hub credits")
+        print("        do not substitute for one. Check https://huggingface.co/settings/billing;")
+        print(f"     3. `{ns}` is an org and the token is not approved for it")
+        print("        (org policies can hold a fine-grained token in Pending).")
+        return 2
+    if status == 401:
+        print("  -> 401: the token is not being accepted at all by this API.")
+        return 2
+    if ok(status):
+        print("  -> management API OK. If `run` still 403s, it is the *inference* call:")
+        print("     enable 'Make calls to Inference Endpoints' too.")
+    return 0 if ok(status) else 2
 
 
 def chat_payload(name, args):
@@ -508,6 +585,9 @@ def main():
     parser.add_argument("--namespace", default="", help="HF user or org (default: whoami)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    sub.add_parser("doctor", help="diagnose a 401/403: token role, permissions, API access").set_defaults(
+        fn=cmd_doctor
+    )
     sub.add_parser("hardware", help="U7: list vendors/regions/instance types").set_defaults(fn=cmd_hardware)
     sub.add_parser("list", help="list your endpoints").set_defaults(fn=cmd_list)
     p = sub.add_parser("inspect", help="dump one endpoint's raw JSON (the U1 answer)")
@@ -538,8 +618,13 @@ def main():
     if not TOKEN:
         die(1, "set HF_TOKEN (a fine-grained token with Inference Endpoints access)")
     KEEP = getattr(args, "keep", False)
-    NAMESPACE = resolve_namespace(args.namespace)
-    print(f"namespace: {NAMESPACE}")
+    if args.cmd == "doctor":
+        # `doctor` diagnoses the very call that resolution depends on, so it must
+        # not die inside it.
+        NAMESPACE = args.namespace
+    else:
+        NAMESPACE = resolve_namespace(args.namespace)
+        print(f"namespace: {NAMESPACE}")
 
     signal.signal(signal.SIGINT, on_signal)
     with contextlib_suppress():
