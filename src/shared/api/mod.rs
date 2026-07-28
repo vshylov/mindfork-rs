@@ -23,3 +23,17 @@ pub use contract::{
 pub use gemini::GeminiClient;
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};
 pub use openai::{OpenAiClient, ResponsesClient};
+
+/// A client to a live OpenAI-compatible server for the `#[ignore]` smokes,
+/// named by a pair of env variables: the URL and an **optional** Bearer key.
+///
+/// `None` when the URL variable is unset — the smoke skips, as before. An unset
+/// or empty key variable sends no `Authorization` header, i.e. byte-for-byte the
+/// previous behaviour against a local `llama-server`; setting it lets the same
+/// smokes run against an authenticated server (a hosted endpoint, a proxy). See
+/// [docs/remote-e2e-hf.md](../../../docs/remote-e2e-hf.md) §5.
+#[cfg(test)]
+pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> {
+    let url = std::env::var(url_var).ok()?;
+    Some(OpenAiClient::new(url).with_api_key(std::env::var(key_var).ok()))
+}

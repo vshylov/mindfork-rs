@@ -942,7 +942,6 @@ mod tests {
 mod ignored_smoke {
     use super::*;
     use crate::entities::sampling::SamplingConfig;
-    use crate::shared::api::OpenAiClient;
     use crate::shared::api::contract::{
         ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason, ToolCallAccumulator,
         ToolSchema,
@@ -981,11 +980,12 @@ mod ignored_smoke {
     #[tokio::test]
     #[ignore = "requires MINDFORK_ENGINE_URL + npx (real filesystem MCP server)"]
     async fn gemma_reads_file_via_mcp_filesystem_server() {
-        let Some(url) = std::env::var("MINDFORK_ENGINE_URL").ok() else {
+        let Some(engine) =
+            crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
+        else {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
-        let engine = OpenAiClient::new(url);
 
         // A secret in a file inside the allowed directory.
         let dir = tempfile::tempdir().unwrap();

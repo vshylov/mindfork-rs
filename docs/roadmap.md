@@ -131,10 +131,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   vision; passing images from clipboard/file.
 
 ## Testing, CI, quality
-- **Live `#[ignore]` smokes in CI** — currently 50 smokes (engine/network/
-  live model) are silently skipped without env vars. Run them on a schedule
-  against a managed model or the cloud by key (a separate workflow, doesn't
-  block the PR).
+- **Live `#[ignore]` smokes in CI** — **closed for the llama.cpp set**:
+  `tools/e2e_hf.py` + the `workflow_dispatch` **Live e2e** workflow run it
+  against ephemeral HF Inference Endpoints (chat + two embedding models), so the
+  gate no longer needs the one GPU machine
+  ([remote-e2e-hf.md](remote-e2e-hf.md)). Still open: a *scheduled* run
+  (deliberately not wired — R5a; every run costs ~$1 and the non-hermetic smokes
+  would flake unattended), and the cloud-key and Python-sandbox smokes, which
+  need different credentials and assets.
+- **Remote gate: chat-free runs** — `run` always creates the L40S chat endpoint,
+  even for a filter that only exercises the embedders (~$0.10 wasted per such
+  iteration). The probe has `--embed-only`; the runner has no `--no-chat`.
+  Minor, and the full gate always needs chat.
 - **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
   wrapping, brute-force memory cosine — a performance regression detector.
 

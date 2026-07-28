@@ -78,9 +78,13 @@ impl OpenAiClient {
     /// (a server without `/health`) — treated as "alive and not loading" (ready).
     pub async fn probe(&self) -> Result<()> {
         let url = health_url(&self.base_url);
+        // The key matters here: an authenticated server answers `/health` with
+        // 401 without it, and 401 is not 503, so the probe would report "ready"
+        // no matter what the key was — the supervisor smokes would pass even
+        // with a broken one. No key set (a local `llama-server`) → no header,
+        // exactly as before.
         let resp = self
-            .http
-            .get(&url)
+            .auth(self.http.get(&url))
             .send()
             .await
             .with_context(|| format!("probing {url}"))?;
@@ -254,6 +258,67 @@ fn health_url(base_url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A var that is always set (so the URL/key resolve) vs one that never is.
+    /// Deliberately reads existing variables instead of setting any: `set_var` is
+    /// `unsafe` in edition 2024, and mutating the environment races every other
+    /// test in the binary. Same trick as the supervisor's `api_key_env` tests.
+    const SET: &str = "PATH";
+    const UNSET: &str = "MINDFORK_DEFINITELY_UNSET_VAR_LIVE_CLIENT";
+
+    #[test]
+    fn live_client_needs_a_url_and_takes_the_key_only_when_set() {
+        use crate::shared::api::live_client;
+
+        assert!(
+            live_client(UNSET, SET).is_none(),
+            "no URL -> the smoke skips"
+        );
+
+        let no_key = live_client(SET, UNSET).expect("URL is set");
+        assert!(
+            no_key.api_key.is_none(),
+            "an unset key must send no Authorization header — this is the local \
+             llama-server path and it must stay byte-for-byte as before"
+        );
+
+        let with_key = live_client(SET, SET).expect("URL is set");
+        assert!(with_key.api_key.is_some(), "a set key is carried");
+    }
+
+    /// `probe()` must carry the key: an authenticated server answers `/health`
+    /// with 401 without it, and 401 is not 503, so the probe would report ready
+    /// regardless of the key — the supervisor smokes would pass with a broken one.
+    #[tokio::test]
+    async fn probe_sends_the_authorization_header_when_a_key_is_set() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = sock.read(&mut buf).unwrap();
+            // Drain the request before answering: writing first turns the close
+            // into an RST that discards the response.
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase()
+        });
+
+        OpenAiClient::new(format!("http://{addr}/v1"))
+            .with_api_key(Some("s3cret".into()))
+            .probe()
+            .await
+            .expect("stub answers 200");
+
+        let request = seen.join().unwrap();
+        assert!(
+            request.contains("authorization: bearer s3cret"),
+            "probe must authenticate; got:\n{request}"
+        );
+        assert!(request.contains("get /health"), "and hit /health");
+    }
+
     #[test]
     fn health_url_strips_v1_suffix() {
         assert_eq!(
@@ -286,9 +351,7 @@ mod ignored_smoke {
     use futures_util::StreamExt;
 
     fn client_from_env() -> Option<OpenAiClient> {
-        std::env::var("MINDFORK_ENGINE_URL")
-            .ok()
-            .map(OpenAiClient::new)
+        crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
     }
 
     async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {

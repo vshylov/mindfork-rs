@@ -92,7 +92,11 @@ additions:
   features → entities → shared`); `screens`/`widgets` don't import `app`.
 - New config/entity fields — `#[serde(default)]` (old JSON reads without
   migration); SQLite schema — `CREATE TABLE IF NOT EXISTS`.
-- Comments and docs — **in English**; reference spec/architecture sections.
+- Comments and docs — **in English**; reference spec/architecture sections. So
+  is the **developer-facing test log**: `println!`/`eprintln!` format strings are
+  English even inside tests, where fixture data and `ru`-locale assertion strings
+  legitimately stay Cyrillic — interpolate a value (`{SOURCE:?}`) instead of
+  spelling it into the label. `tools/cyrillic_scan.py` enforces both rules in CI.
 - Errors: `anyhow` in application layers, `thiserror` in `shared`. Logs —
   file only (`logs/`), no `println!` (stdout is taken by the TUI).
 - New keys/commands — go straight into the help overlay (`F1`/`?`,

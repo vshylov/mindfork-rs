@@ -3,8 +3,17 @@
 
 Reports every tracked file that still contains Russian text that should have
 been translated, applying an allowlist for content that legitimately stays
-Russian (the `ru` locale bundle, Hunspell dictionaries, in-test assertion
-strings, intentional `[ru]` desktop/installer localization, binary blobs).
+Russian (the `ru` locale bundle, Hunspell dictionaries, in-test fixture and
+assertion strings, intentional `[ru]` desktop/installer localization, binary
+blobs).
+
+Test files are allowlisted wholesale, because they legitimately hold Cyrillic
+fixture data and ru-locale assertions and the scanner cannot tell those from
+prose *by file*. It can, however, tell them **by position**: a print-macro
+format string is the developer-facing test log, which AGENTS.md §3 says is
+English. So that one position is carved back out of the test allowlist — see
+`print_fmt_spans`. Values are exempt by construction: interpolate them
+(`eprintln!("... {SOURCE:?}", ...)`) instead of spelling them into the label.
 
 Exit code is non-zero when non-allowlisted Cyrillic remains, so this doubles as
 the migration acceptance gate and (post-migration) a CI lint that prevents
@@ -19,6 +28,16 @@ import subprocess, re, sys, os, collections
 
 CYR = re.compile(r"[Ѐ-ӿ]")
 TEST_MARKER = re.compile(r"#\[cfg\(test\)\]|mod tests|#\[test\]|#\[tokio::test")
+
+# Print macros whose format string is developer-facing log output. Deliberately
+# only these four:
+#   * `assert!`/`panic!` are excluded because the *condition* sits in the same
+#     macro call as the message (`assert!(r.contains("<ru string>"), "msg")`) —
+#     flagging them would hit exactly the ru-locale assertion data that
+#     legitimately stays;
+#   * `write!`/`writeln!` are excluded because in tests they usually build an
+#     expected-value buffer, which is fixture data, not a log.
+PRINT_MACRO = re.compile(r"\b(?:e?println|e?print)!\s*\(")
 
 # Physical-key data (always kept): a modifier + a single Cyrillic letter (the
 # char crossterm reports under a Cyrillic layout, e.g. `Ctrl+и`), and single
@@ -52,6 +71,63 @@ def code_part(line: str) -> str:
             return line[:i]
     return line
 
+def print_fmt_spans(line: str, state: str | None) -> tuple[list[tuple[int, int]], str | None]:
+    """Character spans of `line` that sit inside a print-macro format string.
+
+    A small cross-line state machine, because the format string routinely opens
+    on the `eprintln!(` line and continues over several `\\`-continuation lines.
+    `state` is threaded by the caller from line to line:
+
+        None    outside any print macro
+        "seek"  the macro's `(` was seen, looking for the opening quote
+        "in"    inside the format string literal
+
+    Only the **first** literal is tracked: once it closes we stop, so the
+    macro's value arguments (which may legitimately mention ru-locale data,
+    e.g. `eprintln!("gate: {}", r.contains("<ru string>"))`) are not covered.
+    Anything that is not a plain `"` literal (a raw string, a variable) makes
+    the tracker bail out rather than guess.
+    """
+    spans: list[tuple[int, int]] = []
+    i = 0
+    # Outside a string literal `//` starts a comment; inside one it is text.
+    limit = len(line) if state == "in" else len(code_part(line))
+    start = 0  # a literal continued from the previous line starts at column 0
+    while True:
+        if state is None:
+            m = PRINT_MACRO.search(line, i, limit) if i < limit else None
+            if not m:
+                break
+            i, state = m.end(), "seek"
+        elif state == "seek":
+            while i < limit and line[i].isspace():
+                i += 1
+            if i >= limit:
+                break  # the format string opens on a later line
+            if line[i] == '"':
+                i, state, start = i + 1, "in", i + 1
+            else:
+                state = None  # not a plain literal -> stop tracking this call
+        else:  # inside the format string: find its unescaped closing quote
+            j, esc = i, False
+            while j < len(line):
+                c = line[j]
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    break
+                j += 1
+            if j < len(line):
+                spans.append((start, j))
+                i, state = j + 1, None
+            else:
+                spans.append((start, len(line)))  # continues on the next line
+                break
+    return spans, state
+
+
 # Whole files that legitimately keep Cyrillic and are skipped entirely.
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {
@@ -81,6 +157,12 @@ SKIP_FILES = {
 # Russian homographs used to evaluate speech stress). Markers are HTML comments,
 # so they are invisible in rendered Markdown and keep the intent next to the
 # content instead of hidden in this script.
+#
+# Note for a print-macro format string that must keep Cyrillic: a same-line
+# `// cyrillic-ok` works only on the line that *opens* the literal, since a
+# continuation line sits inside the string and cannot carry a comment. There,
+# either wrap the call in the block markers or — usually better — bind the
+# value to a `const` and interpolate it, which keeps the label English.
 OK_LINE = "cyrillic-ok"           # same-line marker
 OK_START = "cyrillic-ok:start"    # begin an allowed block
 OK_END = "cyrillic-ok:end"        # end an allowed block
@@ -93,7 +175,7 @@ def is_skipped(path: str) -> bool:
     return path.endswith(SKIP_EXT)
 
 
-def allowed_line(path: str, line: str, in_test: bool) -> bool:
+def allowed_line(path: str, line: str, in_test: bool, in_print_fmt: bool = False) -> bool:
     """True when this Cyrillic line is intentionally kept."""
     # Physical-key data (modifier+Cyrillic, single-char literals) always stays.
     if not CYR.search(strip_key_data(line)):
@@ -106,6 +188,15 @@ def allowed_line(path: str, line: str, in_test: bool) -> bool:
         code = code_part(line)
         if not CYR.search(code):
             return False  # Cyrillic only in a trailing comment -> translate
+        # A print-macro format string is the developer-facing test log, which
+        # the convention says is English (AGENTS.md §3) — so it translates even
+        # inside tests, where the blanket allowance below would otherwise cover
+        # it. This is the one thing the wholesale test allowlist got wrong: the
+        # scanner cannot tell a label from a fixture by file, but it can by
+        # position. Values stay data — interpolate them (`{SOURCE:?}`) instead
+        # of spelling them into the label.
+        if in_print_fmt:
+            return False
         # Cyrillic in code position: inside tests that is fixture/assertion data
         # and stays (Rust has no Cyrillic identifiers here). This deliberately
         # covers multi-line string literals, whose opening quote sits on an
@@ -155,8 +246,15 @@ def main() -> int:
         # `mod.rs`, not in the file itself.
         in_test = path.endswith("tests.rs") or "/tests/" in path
         ok_block = False
+        fmt_state: str | None = None
         hits: list[tuple[int, str]] = []
         for i, line in enumerate(data.split("\n"), 1):
+            # Advance the print-macro tracker on *every* line, before any of the
+            # early exits below: a format string that opens on one line and
+            # carries the Cyrillic on the next is exactly the case this catches.
+            spans: list[tuple[int, int]] = []
+            if path.endswith(".rs"):
+                spans, fmt_state = print_fmt_spans(line, fmt_state)
             if path.endswith(".rs") and TEST_MARKER.search(line):
                 in_test = True
             if OK_START in line:
@@ -167,7 +265,8 @@ def main() -> int:
                 continue
             if ok_block or OK_LINE in line:
                 continue
-            if allowed_line(path, line, in_test):
+            in_print_fmt = any(CYR.search(line[s:e]) for s, e in spans)
+            if allowed_line(path, line, in_test, in_print_fmt):
                 continue
             hits.append((i, line.strip()[:100]))
         if hits:

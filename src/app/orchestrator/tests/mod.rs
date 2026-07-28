@@ -173,15 +173,15 @@ async fn enable_all_tools(
 /// The real chat engine from `MINDFORK_ENGINE_URL` (for end-to-end smokes against a live
 /// model). `None` — the variable isn't set (the test is skipped).
 fn live_backend() -> Option<Arc<dyn EngineBackend>> {
-    let url = std::env::var("MINDFORK_ENGINE_URL").ok()?;
-    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
+    let client = crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")?;
+    Some(Arc::new(client) as Arc<dyn EngineBackend>)
 }
 
 /// The real embedder from `MINDFORK_EMBED_URL` (for live smokes — bge-m3 etc.);
 /// `None` when unset → the live smoke falls back to the test `MockEmbedder`.
 fn live_embedder() -> Option<Arc<dyn Embedder>> {
-    let url = std::env::var("MINDFORK_EMBED_URL").ok()?;
-    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn Embedder>)
+    let client = crate::shared::api::live_client("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY")?;
+    Some(Arc::new(client) as Arc<dyn Embedder>)
 }
 
 /// The tuple of a spun-up orchestrator (like [`spawn_orch`]): the data directory,
@@ -203,8 +203,36 @@ fn spawn_orch_live() -> Option<OrchHandle> {
 /// Like [`spawn_orch_live`], but with an explicit config (e.g. an MCP host enabled
 /// with a real server for an e2e smoke).
 fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
+    spawn_orch_live_with(config, true)
+}
+
+/// Like [`spawn_orch_live_cfg`], but deliberately **without** an embedder, even
+/// when `MINDFORK_EMBED_URL` is set.
+///
+/// For smokes that must exercise a path the model would otherwise be able to
+/// shortcut. With an embedder present a by-reference attachment gets indexed,
+/// and `attachment_search` becomes a legitimate — often better — route, so
+/// "the model paged through the file" stops being a property of the code and
+/// becomes a property of the model's mood that day. Removing the embedder
+/// removes the alternative instead of hoping it is not taken.
+///
+/// Note `MockSupervisor::with_backend_no_embedder`: passing `None` as the
+/// embedder is **not** enough, since the mock then falls back to a
+/// `MockEmbedder` and the attachment still gets indexed.
+fn spawn_orch_live_no_embed(config: AppConfig) -> Option<OrchHandle> {
+    spawn_orch_live_with(config, false)
+}
+
+fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHandle> {
     let backend = live_backend()?;
-    let embedder = live_embedder();
+    let supervisor: Arc<dyn crate::app::supervisor::ServerSupervisor> = if with_embedder {
+        Arc::new(MockSupervisor::with_backend_and_embedder(
+            Some(backend),
+            live_embedder(),
+        ))
+    } else {
+        Arc::new(MockSupervisor::with_backend_no_embedder(Some(backend)))
+    };
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
     let (cmd_tx, cmd_rx) = unbounded_channel();
@@ -214,10 +242,7 @@ fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
         evt_tx,
         storage,
         config,
-        supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
-            Some(backend),
-            embedder,
-        )),
+        supervisor,
         default_language: crate::shared::i18n::Lang::default(),
     };
     let handle = tokio::spawn(run(deps));

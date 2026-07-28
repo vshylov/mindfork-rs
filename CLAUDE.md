@@ -124,9 +124,16 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-28, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1484 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1486 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the current
-track is **periodic server health monitoring**
+track is the **remote live e2e gate**
+([docs/remote-e2e-hf.md](docs/remote-e2e-hf.md)) — the mandatory live gate
+(AGENTS.md §3) stopped requiring one particular machine on one LAN address:
+`tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints' llama.cpp
+engine) plus a bge-m3 embedding endpoint, runs the `#[ignore]` suite against
+them and deletes them — verifying the deletion, since a leaked endpoint is the
+one outcome that costs money — **done, stages 0–3, live run GO**;
+before that — **periodic server health monitoring**
 ([docs/server-health-monitoring.md](docs/server-health-monitoring.md)) — the probe
 stopped being one-shot: 60 s while healthy / 5 s while down, three consecutive
 failures to go red and one success to come back, a dead managed child reported from
@@ -9183,6 +9190,220 @@ debounce was done as a separate PR, see below).
   watched for a full healthy interval + margin, **not one spurious status**.
   `managed_child_death_is_noticed_at_once` — **148 ms** (see above).
   **Regression — clean**: all 25 orchestrator e2e live smokes green.
+
+### Post-M9: the remote live e2e gate on HF Inference Endpoints (stages 0–3, done)
+- **The mandatory live gate stopped depending on one machine.** AGENTS.md §3
+  requires a live run for anything touching engine / memory / tools, and until
+  now that meant `run_all_tests.bat` → `http://192.168.1.20:8000/v1`: not
+  reproducible by anyone else, not runnable in CI, and a llama.cpp regression
+  catchable only by hand. Research
+  [docs/research/remote-e2e-gpu.md](docs/research/remote-e2e-gpu.md) (forks
+  **R1–R8 accepted by the user as recommended, 2026-07-28**), plan
+  [docs/remote-e2e-hf.md](docs/remote-e2e-hf.md). Branches
+  `spike/hf-endpoint-probe` (stages 0–1) and `feat/e2e-hf-runner` (stage 2).
+- **Why HF Inference Endpoints and not a rented pod** (R1a): the survey's real
+  question was not price but *"can we guarantee the GPU is released when the run
+  crashes"*. No rented-pod provider gives one — you build it, and every external
+  watchdog is another machine that can also fail. A managed endpoint moves the
+  guarantee into the platform: idle auto-scale-to-zero **is** the dead-man's
+  switch, so the worst case is one wasted idle window rather than a GPU running
+  until someone notices. RunPod is ~4× cheaper per run; at ten runs a month that
+  gap buys away an entire class of problem for ~$7. HF also runs **its own
+  llama.cpp engine** — a real `llama-server`, so the llama.cpp-specific paths
+  (request-body extensions, `--jinja` tool calling, `/health` + `503 Loading
+  model`, embedding batch behaviour) are genuinely exercised, which no
+  vLLM-backed serverless option would do.
+- **Stage 0 — the probe (`tools/hf_probe.py`), verdict GO.** Seven unknowns, all
+  settled against real throwaway endpoints for ≈ $0.17, mostly by reading the
+  API's own 422 bodies (the script uses raw REST rather than `huggingface_hub`
+  precisely so a rejected payload *teaches* the schema). Two findings improved
+  the design: **`LlamacppMode` has an `embeddings` value**, so bge-m3 is served
+  by the llama.cpp engine itself — the *same GGUF and quantization the
+  similarity gates were calibrated on* — instead of TEI as §3.1 of the research
+  had reasoned; and **the container `url` is ours to supply**, so the build can
+  be pinned to a tag instead of tracking `master`, retiring the reproducibility
+  caveat. Also: `ctxSize` is an explicit field (asked 16384, got `n_ctx=16384`),
+  not the indirect Max Tokens × Max Concurrent Requests story in the docs, and
+  deploy took **21 s** for a 17.65 GB model, because HF serves the weights from
+  its own storage.
+- **The trap worth remembering:** `EndpointType` is `public | authenticated |
+  private`, and the API **silently coerces** an unknown value instead of
+  rejecting it. The older wording `protected` produced a `private`
+  (PrivateLink-only) endpoint no CI runner could reach — with a 200 and a
+  healthy-looking response. The client now refuses to continue when the echoed
+  type differs from the requested one.
+- **Stage 1 — the enabling change** (~10 lines, useful on its own):
+  `shared/api::live_client(url_var, key_var)` replaced six hand-rolled
+  `OpenAiClient::new(env)` sites, and `probe()` now sends the key too. An unset
+  or empty key sends no header — byte-for-byte the previous behaviour against a
+  local `llama-server` — so this only *adds* the ability to point the same
+  smokes at any authenticated OpenAI-compatible server. The `probe()` half is
+  load-bearing rather than cosmetic: without it an authenticated `/health`
+  answers 401, and 401 is not 503, so the probe reported "ready" whatever the
+  key was and the two supervisor smokes would have passed for the wrong reason.
+- **Stage 2 — the runner.** `tools/e2e_hf.py`: create both endpoints → wait for
+  `running` → **wait for `/health`** → run the suite → delete and verify. Three
+  departures from the plan's sketch, each earning its keep:
+  - **`tools/hf_api.py` — the client was extracted and shared** with the probe
+    rather than copied. Two copies of the create payload would drift the moment
+    the schema moved, and two copies of the cleanup would mean two places where
+    a bug leaks a billing GPU.
+  - **The tests are compiled before the GPU exists** (`cargo test --no-run`), so
+    a cold runner does not spend minutes of billed L40S time linking, and a
+    build error costs nothing at all.
+  - **Cleanup sends every DELETE before verifying any of them.** A cancelled CI
+    job gives the handler ~7.5 s before SIGKILL; the calls that stop the meter
+    must not queue behind a confirmation round-trip for the previous endpoint.
+- **`running` is not loaded** — encoded as `wait_healthy()`, and it is the same
+  distinction `OpenAiClient::probe()` exists to draw: HF's `running` means the
+  container is up while `llama-server` still answers `503 Loading model`.
+  Gating on the endpoint state alone fails the suite's first request.
+- **The failure drill found a real leak — not the one it was designed to find.**
+  The drill script itself crashed on a cp1252 encode error while echoing the
+  runner's output; that broke the runner's stdout pipe, and **both endpoints
+  leaked**. Root cause: `cleanup()` emptied the name list *before* its first
+  `print`, that `print` raised `BrokenPipeError`, and the `atexit` re-entry then
+  found nothing to do. Two fixes, both about not depending on being able to
+  talk: prints inside cleanup go through a `say()` that swallows I/O errors, and
+  **a name leaves the list only once its endpoint is proven gone**, so a
+  cleanup that dies partway is retryable instead of amnesiac. Verified against a
+  stubbed HTTP layer (deletes with a dead stdout; a crash mid-cleanup leaves the
+  rest retryable; DELETEs all precede the verifications).
+- **The sweeper fails safe towards keeping.** `e2e-*` endpoints older than 90
+  minutes are deleted hourly, but an endpoint whose `createdAt` cannot be parsed
+  is **kept and reported loudly**: deleting one could kill a run still using it,
+  destroying real work for a false red, whereas a leak is already money-bounded
+  by scale-to-zero. The 90-minute threshold must stay above the live job's
+  45-minute timeout, or the backstop becomes a saboteur.
+- **A checked assumption that was wrong.** The sweeper's decision logic was
+  exercised against a fabricated listing before spending anything, and that
+  caught a genuine bug: the fractional-second truncation in the timestamp parser
+  also ate the digits of the timezone offset. The live API emits exactly
+  `"2026-07-28T17:01:14.686Z"`, so this was on the main path, not a corner —
+  every endpoint would have read as "age unknown" and never been swept.
+- **Workflows:** `e2e-live.yml` (`workflow_dispatch` only — R5a: a live run is a
+  considered act, ~$1 and ~25 min, and the non-hermetic smokes would flake
+  unattended) and `e2e-sweeper.yml` (hourly `cron`, active only once on the
+  default branch). Inputs reach the shell through the environment, never
+  interpolated into a `run:` script. The job warms the npm cache before the GPU
+  exists, since a cold `npx` can outlast the MCP smoke's 120 s readiness
+  timeout.
+- **No Rust changed in stage 2** — **1486 unit tests green** (the +2 over the
+  previous entry are stage 1's), 69 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan` clean. **No CHANGELOG entry**: dev infrastructure with no
+  user-visible effect (AGENTS.md §4).
+- **Smoke — GO** (2026-07-28, `gemma-4-31B_q4_0-it.gguf` on **nvidia-l40s** x1 +
+  `bge-m3-q8_0.gguf` on **nvidia-t4** x1, aws us-east-1, llama.cpp
+  `server-cuda`, `authenticated`, ctx 16384): **69 passed, 0 failed** —
+  `cargo test -- --ignored --nocapture --test-threads=1`, both endpoints ready
+  in **41 s**, suite **929 s**, total **970 s**, ≈ **$0.62**. Of the 69, **41
+  actually exercised the endpoints**; 28 skipped for want of local assets or
+  other credentials (11 Python sandbox, 12 cloud keys, 4 `MINDFORK_EMBED_URL_ALT`
+  — stage 3, 1 managed `MINDFORK_LLAMA_BIN`). Both endpoints deleted and
+  verified gone; `list` empty. This is the first fully green remote run — stage
+  0's was 67/2, and both failures were fixed on that branch beforehand.
+- **Failure drill — GO**: the runner was signalled **58 s into a live suite**;
+  the handler deleted and verified both endpoints, exited 130, and a *separate*
+  process confirmed none remained. The only difference from a cancelled CI job
+  is which signal arrives (SIGBREAK on Windows, SIGINT there) — the handler and
+  cleanup path are the same, and SIGBREAK is registered precisely so the drill
+  can be run on a dev box.
+- **Stage 3 — the second embedder (done).** Four smokes (`embed_guard` ×2,
+  `reembed`, `embed_prefix`) guard the embedding-model-change track and need a
+  *second, different* model via `MINDFORK_EMBED_URL_ALT`; without it they skipped
+  **while reporting ok**, which is the exact failure a gate exists to prevent. A
+  third llama.cpp endpoint on a T4 now serves
+  `Ralriki/multilingual-e5-large-instruct-GGUF` / `…-q8_0.gguf` — the same
+  quantization as the local stand, since the calibration constants were measured
+  against that file, and deliberately a model that is **also 1024-d**, because
+  the whole point of `same_dimension_model_swap_detected_live` is that no
+  dimensionality check can tell the two apart. **No Rust change was needed**:
+  stage 1 had already routed those smokes through `live_client`, key variable
+  (`MINDFORK_EMBED_KEY_ALT`) included. **On by default** (`--no-alt-embed` opts
+  out) against the plan's "optional" — ~$0.13 of a ~$1 run is the wrong thing to
+  optimise when the alternative is four memory-critical smokes silently not
+  running.
+- **Smoke — GO (stage 3)**, and the interesting part is *how* green: the rented
+  endpoints **reproduce the LAN stand's measurements to 3–5 decimals**, which is
+  the evidence that matters when swapping the infrastructure under
+  calibration-sensitive tests. bge-m3 calibrated to **0.41317 / 0.81843**
+  against the reference constants 0.4128 / 0.8176; e5 to **0.78967 / 0.94557**
+  against the journal's earlier live figure of 0.78968 / 0.94561 — identical to
+  four decimals — mapping 0.72 → 0.9080 and 0.85 → 0.9580 exactly as designed;
+  the prefix margins came out `e5 0.1223 → 0.1791` and `bge 0.4417 → 0.3330`
+  against 0.1213 → 0.1789 and 0.4406 → 0.3317 measured locally. **5 passed, 0
+  failed** (the 4 model-change smokes + the embedding readiness probe), ready in
+  108 s, suite 78 s, total 187 s, ≈ $0.15; all three endpoints deleted and
+  verified.
+- **Still deliberately not done**: a *scheduled* live run; the managed-server
+  smoke, which needs a child process of our own and so cannot run remotely at
+  all; and the cloud-provider smokes, which need their own keys.
+- **Merged in on the way**: `refactor/live-test-log-english` (the live-smoke log
+  translation and the print-macro lint that closes the gap by position rather
+  than by discipline). Not scope creep — the branches collide by construction:
+  both edit `orchestrator/tests/live.rs`, and the stricter `cyrillic_scan.py`
+  flagged 47 lines here without the translation, so CI's lint would have gone
+  red whichever side landed first.
+### Post-M9: live-smoke diagnostic log in English (done)
+- **The developer-facing log of the live smokes was half-Russian** — 31 lines of
+  `eprintln!` labels across `orchestrator/tests/live.rs` (29) and `tests/mcp.rs` (2)
+  ("session 1: tools=…", "self-notes (observations) in DB: …", "gate showed a similar
+  observation: …" were all Russian). Now English, matching the convention flipped by
+  the english-source migration — and the precedent set there for provisioning progress:
+  "it is a developer-facing test log". Branch `refactor/live-test-log-english`.
+- **Why it survived the migration**: `tools/cyrillic_scan.py` allowlists test files
+  **wholesale** (`path.endswith("tests.rs") or "/tests/" in path`) — a deliberate
+  allowance, since these files legitimately hold Cyrillic fixture data and `ru`-locale
+  assertions, and the scanner cannot tell a label from a fixture. So the gate was never
+  going to catch it; it only became visible once the live suite started running in CI.
+- **The scope line is what matters here** — only label text inside print macros moved.
+  Untouched: the prompts sent to the model, the `ru`-locale substrings the gate
+  assertions match (the `r.contains(…)` checks in `self_model_gate_e2e_live`,
+  `summary_gate_e2e_live`, `trait_gate_e2e_live`,
+  `self_consolidation_overview_e2e_live` and `recall_includes_self_e2e_live`),
+  note/document fixture bodies, the A2 calibration probe pairs, and the TTS
+  config/prompt strings. Translating any of those would have quietly stopped the tests
+  testing what they test.
+- **The one line that named a Russian value in its label** — how many notes cite the
+  RAG source — was **not** solved with an opt-out marker but by binding that (Russian)
+  source name once to a `const SOURCE` and interpolating it (`notes citing
+  {SOURCE:?}`). That deduplicates a literal that had been repeated three times in code
+  positions (two DB lookups + the log, where a typo in one would have failed
+  confusingly), keeps the log naming the actual source, and leaves the **label** pure
+  English. Values are data; labels are prose — interpolation is what separates them,
+  and it is now the documented escape hatch.
+- **A mislabel fixed in the same log** (the A2 calibration smoke, spotted while
+  translating): both loops printed `MATCH?`, but the second is the *non*-match loop —
+  so the log was already wrong in English. Now `MATCH?`/`NON-MATCH?`, padded to a
+  common width, since the point of that smoke is eyeballing the two groups' cosines to
+  place a threshold between them, and misreading which group a row belongs to is
+  exactly the error it invites.
+- **The gap is now closed by the gate, not by discipline** (`tools/cyrillic_scan.py`):
+  test files stay allowlisted wholesale — the scanner cannot tell a fixture from a
+  label **by file** — but it now can **by position**. A new `print_fmt_spans` tracks
+  the format string of `print!`/`println!`/`eprint!`/`eprintln!` across lines (the
+  string routinely opens on the `eprintln!(` line and carries its text on
+  `\`-continuation lines), and Cyrillic inside that span translates even in a test.
+  Deliberately narrow: **only the first literal**, so a value argument like
+  `eprintln!("gate: {}", r.contains("<ru string>"))` is untouched; and
+  **`assert!`/`panic!` are excluded**, because their *condition* sits in the same macro
+  call as the message and flagging them would hit precisely the ru-locale assertion
+  data that must stay. `write!`/`writeln!` too — in tests they usually build an
+  expected-value buffer.
+- **Mutation-tested in both directions** (a throwaway probe file, since the rule is
+  cross-line state that a single-line reading can't confirm): it flags a single-line
+  Russian label, a label on a **continuation line**, and one whose format string opens
+  on the line *after* the macro; it does not flag ru-locale assertion data, fixture
+  prompts, a Cyrillic literal in a value argument, an interpolated value, or a line
+  carrying the `cyrillic-ok` opt-out. Repo-wide the rule has a **clean baseline** — a
+  survey before writing it found exactly one candidate line, the one now interpolated.
+- **No live run needed** (AGENTS.md §3): these are log strings and a lint — no behavior
+  change, no engine/memory/tool path touched, and the changed lines only execute under
+  `--ignored`. `--all-targets` compiles the ignored tests, so the `const`/interpolation
+  change is still compile-verified. **1484 unit tests green** (count unchanged —
+  string-only), 69 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan` clean. No
+  CHANGELOG entry (§4: purely internal tests/tooling). Convention recorded in
+  **AGENTS.md §3**.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

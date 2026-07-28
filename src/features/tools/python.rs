@@ -400,19 +400,21 @@ mod tests {
     /// (env `MINDFORK_SANDBOX_WASMER` or a binary in `data/sandbox/`) and network for the
     /// first download of `python/python`. `cargo test -- --ignored`.
     ///
-    /// Unlike the `provisioned()` smokes below, this **fails** instead of
-    /// skipping when the sidecar is missing — deliberate (2026-07-24): a
-    /// sandbox that is supposed to be installed should be loud when it isn't,
-    /// not quietly green. Don't "harmonize" it into a skip.
+    /// Still **not** a skip when the sidecar is absent (the 2026-07-24 decision):
+    /// it provisions one instead. That preserves the point of that decision —
+    /// this smoke always really runs the sandbox — while removing the part that
+    /// was only ever a nuisance, failing on a machine that simply never ran
+    /// `mindfork sandbox setup`. A provisioning failure is still loud.
     #[tokio::test]
-    #[ignore = "requires a bundled wasmer sidecar (MINDFORK_SANDBOX_WASMER)"]
+    #[ignore = "runs the real wasmer sidecar; provisions one (~250 MB) if absent"]
     async fn runs_real_python_in_sandbox() {
         use crate::shared::sandbox::WasmerSandbox;
+        let (_guard, dir) = ensure_sandbox().await;
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let tool = PythonExec::new(
             PythonMode::Wasmer,
             None,
-            Arc::new(WasmerSandbox::new(None)),
+            Arc::new(WasmerSandbox::new(dir)),
             false,
             Duration::from_secs(120),
         );
@@ -421,6 +423,81 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("hello sandbox"), "got: {}", out.result);
+    }
+
+    /// A usable sandbox directory for [`runs_real_python_in_sandbox`], provisioning
+    /// one if the machine has none. Returns the temp-dir guard (dropped → deleted)
+    /// and the directory to hand to [`WasmerSandbox::new`].
+    ///
+    /// Order, cheapest first:
+    /// 1. `MINDFORK_SANDBOX_WASMER` — an explicit binary; `WasmerSandbox` finds it
+    ///    on its own, so nothing to provision and nothing to clean up.
+    /// 2. `MINDFORK_SANDBOX_DIR` — the user named a location, so it doubles as a
+    ///    cache: provision into it if empty, and **keep** it for the next run.
+    /// 3. The app's own `data/sandbox`, **read-only**: used when it already holds
+    ///    a `wasmer`, never written to. Running a test must not leave 250 MB in
+    ///    the working data directory as a side effect.
+    /// 4. Otherwise download into a temp directory and delete it afterwards.
+    ///
+    /// Note the cost of (4): ~250 MB and a warmup compile, every run. Setting
+    /// `MINDFORK_SANDBOX_DIR` (or running `mindfork sandbox setup` once) turns
+    /// this smoke back into a few seconds.
+    async fn ensure_sandbox() -> (Option<tempfile::TempDir>, Option<std::path::PathBuf>) {
+        use crate::shared::sandbox::locate_wasmer;
+
+        if std::env::var_os("MINDFORK_SANDBOX_WASMER").is_some_and(|v| !v.is_empty()) {
+            return (None, None);
+        }
+
+        let named = std::env::var("MINDFORK_SANDBOX_DIR")
+            .ok()
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from);
+        if let Some(dir) = &named
+            && locate_wasmer(dir).is_some()
+        {
+            return (None, Some(dir.clone()));
+        }
+        // Read-only candidates: use one if it is already provisioned, never
+        // write to it. The second entry matters more than it looks — a test
+        // binary lives in `target/<profile>/deps/`, so resolving from
+        // `current_exe()` looks for `deps/data/sandbox` and misses the real
+        // `target/<profile>/data/sandbox` the app itself uses. That is why this
+        // smoke used to fail on a machine that *did* have a sandbox installed.
+        if named.is_none() {
+            let mut candidates = Vec::new();
+            if let Ok(paths) = crate::shared::paths::Paths::resolve() {
+                candidates.push(paths.sandbox_dir());
+            }
+            if let Ok(exe) = std::env::current_exe()
+                && let Some(profile_dir) = exe.parent().and_then(|deps| deps.parent())
+            {
+                candidates.push(profile_dir.join("data").join("sandbox"));
+            }
+            if let Some(found) = candidates.into_iter().find(|d| locate_wasmer(d).is_some()) {
+                return (None, Some(found));
+            }
+        }
+
+        let (guard, dir) = match named {
+            Some(dir) => (None, dir),
+            None => {
+                let tmp = tempfile::tempdir().unwrap();
+                let dir = tmp.path().to_path_buf();
+                (Some(tmp), dir)
+            }
+        };
+        eprintln!("provisioning a sandbox into {} (~250 MB)…", dir.display());
+        crate::features::sandbox_setup::setup(
+            &dir,
+            &crate::features::sandbox_setup::SetupOptions::default(),
+            // English: this is developer-facing progress in a test log.
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
+            |line| eprintln!("  {line}"),
+        )
+        .await
+        .expect("provisioning the sandbox for the smoke");
+        (guard, Some(dir))
     }
 
     /// The provisioned sandbox directory (`mindfork sandbox setup`) from env

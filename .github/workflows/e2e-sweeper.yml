@@ -1,0 +1,53 @@
+# Backstop for the live e2e gate: delete orphaned `e2e-*` Inference Endpoints.
+#
+# The runner (tools/e2e_hf.py) deletes its own endpoints from `finally`, from
+# `atexit` and from its SIGINT/SIGTERM handler, and verifies the deletion. This
+# workflow catches the one leak that cannot: a create that succeeded while its
+# response was lost, so no name was ever recorded on the runner's side.
+#
+# HF's auto scale-to-zero already bounds the *money* at one idle window; the
+# sweeper bounds the *time* and reclaims endpoint quota, which scale-to-zero
+# does not (docs/remote-e2e-hf.md §6, research §6).
+#
+# Note: a `schedule` trigger only fires on the default branch, so this becomes
+# active once the branch is merged — until then, run it by hand.
+name: Live e2e sweeper
+
+on:
+  schedule:
+    # Hourly, off the top of the hour (that minute is the busiest on the
+    # shared cron scheduler, and a delayed sweep is a delayed backstop).
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_age_minutes:
+        description: "Delete e2e-* endpoints older than this (must stay above the live job's 45 min timeout)"
+        required: false
+        default: "90"
+      dry_run:
+        description: "Only report what would be deleted"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: e2e-sweeper
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep orphaned endpoints
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      # Inputs through the environment, not interpolated into the script.
+      - name: Sweep
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MAX_AGE: ${{ inputs.max_age_minutes }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(sweep --max-age-minutes "${MAX_AGE:-90}")
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          python3 tools/e2e_hf.py "${args[@]}"

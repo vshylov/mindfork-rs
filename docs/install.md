@@ -559,3 +559,69 @@ Covers: streaming/finish, **anti-self-termination on EOS text** (Qwen's
 (`finish_reason=tool_calls` + `delta.tool_calls` parsing), and **"thoughts"**
 (`reasoning_content` → `Thoughts`). Verified green on
 `google_gemma-4-E4B-it-Q4_1.gguf` via `llama-server`.
+
+The full set (memory, self-model, notes, RAG, attachments, MCP) additionally
+needs an embedding server in `MINDFORK_EMBED_URL`; smokes whose variable is
+unset are silently skipped.
+
+### 7.1. Against an authenticated server (`MINDFORK_ENGINE_KEY`)
+
+The URL variables have optional key companions — `MINDFORK_ENGINE_KEY` and
+`MINDFORK_EMBED_KEY` — sent as `Authorization: Bearer`. Unset or empty means no
+header at all, i.e. exactly the behaviour above against a local `llama-server`.
+Setting them points the same smokes at **any** authenticated OpenAI-compatible
+server (a hosted endpoint, a proxy):
+
+```powershell
+$env:MINDFORK_ENGINE_URL = "https://<endpoint>/v1"
+$env:MINDFORK_ENGINE_KEY = "<token>"
+cargo test -- --ignored --nocapture --test-threads=1
+```
+
+### 7.2. The remote gate (rented GPU, no local stack)
+
+`tools/e2e_hf.py` runs the same suite against **ephemeral Hugging Face Inference
+Endpoints**, so the live gate no longer requires a machine with a GPU. It rents
+three: a real `llama-server` (HF's llama.cpp engine, the model on an L40S), an
+embedding endpoint (the same engine in `embeddings` mode, bge-m3 Q8_0 on a T4),
+and a *second, different* embedding model (multilingual-e5-large-instruct q8_0)
+for the smokes that guard against an embedding-model change. All deliberately
+the same GGUFs and quantizations as the local stack, because the memory gates'
+similarity thresholds are calibrated against exactly those models.
+
+```powershell
+$env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
+python tools/e2e_hf.py run        # create, run the suite, delete
+python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
+python tools/e2e_hf.py run --filter e2e_live  # a subset
+python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
+python tools/e2e_hf.py list                   # what is running right now
+python tools/e2e_hf.py sweep --dry-run        # what the sweeper would remove
+```
+
+The token needs **two** boxes ticked under User Permissions → Inference:
+*Manage Inference Endpoints* and *Make calls to Inference Endpoints*. Holding
+only the first creates an endpoint that then rejects every request — i.e. it
+fails after the meter has started. `python tools/hf_probe.py doctor` reports
+which one is missing, and distinguishes that from the other causes of a 403 (no
+payment method on the account, or an org token pending approval).
+
+**Cost and the guarantee.** A run is ~25 minutes and ~$1 (L40S $1.80/hr + two
+T4s at $0.50/hr, billed by the minute). The endpoints are deleted from `finally`, from
+`atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
+a failed delete exits non-zero even when the tests passed. If the process is
+killed outright, the endpoints scale to zero after their idle window (15 min, so
+≈ $0.57 worst case) and the hourly sweeper removes them, which also reclaims
+endpoint quota. Use `--keep` only when debugging, and delete by hand afterwards.
+
+In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with a
+test-filter and GPU input; it needs the `HF_TOKEN` repository secret. **Live e2e
+sweeper** runs hourly as the backstop. Design and decisions:
+[docs/remote-e2e-hf.md](remote-e2e-hf.md),
+[docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).
+
+Two smoke groups still need the local machine and are **not** covered remotely:
+the managed-server smoke (`MINDFORK_LLAMA_BIN` — it needs a child process of
+our own) and the Python sandbox smokes (they need a provisioned `wasmer`
+sidecar). The cloud-provider smokes (Anthropic / Gemini / OpenAI / TTS) need
+their own keys and are unrelated to the GPU.

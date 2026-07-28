@@ -337,13 +337,14 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires two live embedding servers (MINDFORK_EMBED_URL, MINDFORK_EMBED_URL_ALT)"]
     async fn conventions_behave_as_measured_live() {
-        let (Ok(bge_url), Ok(e5_url)) = (
-            std::env::var("MINDFORK_EMBED_URL"),
-            std::env::var("MINDFORK_EMBED_URL_ALT"),
-        ) else {
+        const BGE: (&str, &str) = ("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY");
+        const E5: (&str, &str) = ("MINDFORK_EMBED_URL_ALT", "MINDFORK_EMBED_KEY_ALT");
+        if crate::shared::api::live_client(BGE.0, BGE.1).is_none()
+            || crate::shared::api::live_client(E5.0, E5.1).is_none()
+        {
             eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
             return;
-        };
+        }
 
         const QUERY: &str = "какой внутренний код сборки проекта?";
         const RELEVANT: &str =
@@ -351,9 +352,9 @@ mod tests {
         const IRRELEVANT: &str = "Чугунной сковороде нужна прокалка перед первым использованием.";
 
         /// Cosine gap between the relevant and the irrelevant passage.
-        async fn margin(url: &str, c: EmbedConvention) -> f32 {
+        async fn margin(server: (&str, &str), c: EmbedConvention) -> f32 {
             let raw: Arc<dyn Embedder> =
-                Arc::new(crate::shared::api::OpenAiClient::new(url.to_string()));
+                Arc::new(crate::shared::api::live_client(server.0, server.1).unwrap());
             let e = PrefixedEmbedder::new(raw, c);
             let q = e
                 .embed(vec![QUERY.into()], EmbedRole::Query)
@@ -374,10 +375,10 @@ mod tests {
             dot / (na * nb)
         }
 
-        let e5_none = margin(&e5_url, EmbedConvention::None).await;
-        let e5_own = margin(&e5_url, EmbedConvention::E5Instruct).await;
-        let bge_none = margin(&bge_url, EmbedConvention::None).await;
-        let bge_wrong = margin(&bge_url, EmbedConvention::E5Instruct).await;
+        let e5_none = margin(E5, EmbedConvention::None).await;
+        let e5_own = margin(E5, EmbedConvention::E5Instruct).await;
+        let bge_none = margin(BGE, EmbedConvention::None).await;
+        let bge_wrong = margin(BGE, EmbedConvention::E5Instruct).await;
         eprintln!(
             "e5: none={e5_none:.4} own={e5_own:.4} | bge: none={bge_none:.4} wrong={bge_wrong:.4}"
         );

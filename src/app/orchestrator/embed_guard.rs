@@ -737,15 +737,15 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires two live embedding servers (MINDFORK_EMBED_URL, MINDFORK_EMBED_URL_ALT)"]
     async fn same_dimension_model_swap_detected_live() {
-        let (Ok(url_a), Ok(url_b)) = (
-            std::env::var("MINDFORK_EMBED_URL"),
-            std::env::var("MINDFORK_EMBED_URL_ALT"),
+        let (Some(a), Some(b)) = (
+            crate::shared::api::live_client("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY"),
+            crate::shared::api::live_client("MINDFORK_EMBED_URL_ALT", "MINDFORK_EMBED_KEY_ALT"),
         ) else {
             eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
             return;
         };
-        let model_a: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_a));
-        let model_b: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_b));
+        let model_a: Arc<dyn Embedder> = Arc::new(a);
+        let model_b: Arc<dyn Embedder> = Arc::new(b);
 
         let mut f = fixture();
         let profile = Uuid::new_v4();
@@ -845,15 +845,15 @@ mod tests {
     async fn similarity_scale_follows_the_model_live() {
         use crate::shared::embed_calibration::{REFERENCE_PARAPHRASE, REFERENCE_UNRELATED};
 
-        let (Ok(url_a), Ok(url_b)) = (
-            std::env::var("MINDFORK_EMBED_URL"),
-            std::env::var("MINDFORK_EMBED_URL_ALT"),
+        let (Some(a), Some(b)) = (
+            crate::shared::api::live_client("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY"),
+            crate::shared::api::live_client("MINDFORK_EMBED_URL_ALT", "MINDFORK_EMBED_KEY_ALT"),
         ) else {
             eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
             return;
         };
-        let bge: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_a));
-        let e5: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_b));
+        let bge: Arc<dyn Embedder> = Arc::new(a);
+        let e5: Arc<dyn Embedder> = Arc::new(b);
 
         // bge-m3 is the model the reference constants were measured on, so its
         // calibration must come out as (near) identity — existing installations
