@@ -84,6 +84,17 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- The embeddings indicator no longer reports "ready" for a server that cannot be
+  reached. Its status was derived from the settings alone — a filled-in address
+  was enough to light the chip green — so an embedding server on a machine that
+  was switched off, or simply not running, still looked healthy, and the problem
+  only surfaced later as an error from the first search over memory or the
+  knowledge base. The app now checks the server the same way it already checked
+  the chat server: the chip shows "connecting…" while the check runs, then either
+  "ready" or the reason it is unavailable (the settings window spells the reason
+  out). A cloud embedding provider has nothing to wait for and stays ready
+  immediately, as before.
+
 - Search over memory, the knowledge base and attached files no longer degrades
   in silence after the embedding model changes. Nothing ever re-embedded an
   existing note, so recall kept matching new queries against vectors from the old

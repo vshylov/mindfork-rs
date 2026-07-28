@@ -784,7 +784,7 @@ flowchart TB
     SUP["ServerSupervisor (LlamaSupervisor)"]
     CFG --> SUP
     SUP -->|apply_chat| CHAT["chat backend + ServerHandle + status<br/>background probe → status_tx"]
-    SUP -->|apply_embed| EMB["embedder + ServerHandle (RAG is lazy, no probe)"]
+    SUP -->|apply_embed| EMB["embedder + ServerHandle + status<br/>background probe → embed_status_tx"]
     SUP -->|apply_impersonation| IMP["managed/external impersonation server<br/>(shared → reuses the chat server)"]
 ```
 
@@ -804,6 +804,24 @@ no debounce.
 process/port, with the `Embedder` trait split off from `EngineBackend`. Not
 configured → `UnavailableEmbedder` (RAG returns a clear error instead of
 crashing).
+
+All three servers are probed the same way: `apply_*` returns an **immediate**
+status (`Connecting`, or `Disconnected` when the launch itself fails) and a
+background `/health` probe posts the real one to its own channel — the
+orchestrator's `run` loop translates each into `AppEvent::ServerStatus`. Stale
+probes are invalidated by a per-server `CancellationToken` (a quick sequence of
+settings edits mustn't let the previous server's late verdict overwrite the new
+one's). The **cloud** has nothing to load and no `/health` — it's `Ready` at
+once, with no probe.
+
+The embeddings probe **doesn't** make RAG eager (ADR 0002): it's a `/health`
+GET, and the embedder itself is still first touched on a real call. Without it
+the status was derived from configuration alone and read `Ready` for an
+unreachable host, so the failure only surfaced on the first `rag_search`. Unlike
+the chat status, it **gates nothing** — it's informational (the chip in the
+status bar and in the settings "Model" section); RAG's real degradation path is
+still the error from the call itself. A probe also can't tell *which model*
+answers — that's the canary's job (`embed_guard.rs`, spec §9.3.4).
 
 ---
 

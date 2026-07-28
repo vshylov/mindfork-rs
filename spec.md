@@ -1000,8 +1000,14 @@ Two main screens + overlays (modals):
   **only when configured** (`NotConfigured`, incl. impersonation in `shared` mode →
   the chip is hidden), with no reason text (compact; details are in the logs/settings).
   A snapshot of all statuses (`ServerStatuses`) is emitted by the orchestrator
-  (`AppEvent::ServerStatus`) on any change to any of them. There's no probe for
-  embeddings yet (RAG is lazy) — its chip is binary: configured (green) / hidden.
+  (`AppEvent::ServerStatus`) on any change to any of them. **All three servers are
+  probed alike**: a configured one starts at `Connecting`, and a background `/health`
+  probe resolves it to `Ready`/`Disconnected` (the cloud has nothing to load →
+  `Ready` at once). The embeddings probe doesn't make RAG eager — it's a `/health`
+  GET, the embedder itself is still touched only on a real call (ADR 0002) — and it
+  gates nothing: it exists so a configured-but-unreachable embedding server can't
+  report itself ready (before it, the status came from the settings alone and the
+  failure surfaced only on the first `rag_search`).
 
 ### 11.2. The chat list (an overlay)
 
