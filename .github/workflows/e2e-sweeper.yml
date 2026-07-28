@@ -7,7 +7,7 @@
 #
 # HF's auto scale-to-zero already bounds the *money* at one idle window; the
 # sweeper bounds the *time* and reclaims endpoint quota, which scale-to-zero
-# does not (docs/remote-e2e-hf.md §6, research §6).
+# does not (docs/history/remote-e2e-hf.md §6, research §6).
 #
 # Note: a `schedule` trigger only fires on the default branch, so this becomes
 # active once the branch is merged — until then, run it by hand.

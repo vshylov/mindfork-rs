@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the live e2e smokes against ephemeral HF Inference Endpoints.
 
-Plan: docs/remote-e2e-hf.md §6. Research: docs/research/remote-e2e-gpu.md.
+Plan: docs/history/remote-e2e-hf.md §6. Research: docs/research/remote-e2e-gpu.md.
 The client (HTTP, payloads, lifecycle, cleanup) is shared with the stage-0
 probe: tools/hf_api.py.
 
@@ -103,7 +103,7 @@ def run_suite(command, chat_url, embed_url, alt_embed_url, keepalive_every):
 
     The lifecycle stays inside this process on purpose: creating the endpoints
     in one command and running cargo in another would leak them if anything
-    died in between (docs/remote-e2e-hf.md §6).
+    died in between (docs/history/remote-e2e-hf.md §6).
     """
     env = dict(os.environ)
     env["MINDFORK_ENGINE_URL"] = f"{chat_url}/v1"
@@ -314,7 +314,7 @@ def cmd_sweep(args):
     This catches the one leak the runner's own `finally` cannot: a create that
     succeeded while its response was lost, so nothing ever knew the name. It
     also reclaims endpoint *quota*, which scale-to-zero does not
-    (docs/remote-e2e-hf.md §6).
+    (docs/history/remote-e2e-hf.md §6).
     """
     items = hf.list_endpoints()
     if items is None:

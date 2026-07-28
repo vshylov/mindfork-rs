@@ -617,7 +617,7 @@ endpoint quota. Use `--keep` only when debugging, and delete by hand afterwards.
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with a
 test-filter and GPU input; it needs the `HF_TOKEN` repository secret. **Live e2e
 sweeper** runs hourly as the backstop. Design and decisions:
-[docs/remote-e2e-hf.md](remote-e2e-hf.md),
+[docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),
 [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).
 
 Two smoke groups still need the local machine and are **not** covered remotely:

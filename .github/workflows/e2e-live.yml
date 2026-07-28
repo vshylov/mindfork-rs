@@ -9,7 +9,7 @@
 # rather than an environment with reviewers (R8).
 #
 # Everything except the trigger lives in tools/e2e_hf.py, so the same command
-# runs here and on a developer's machine. See docs/remote-e2e-hf.md §6.
+# runs here and on a developer's machine. See docs/history/remote-e2e-hf.md §6.
 name: Live e2e (HF Inference Endpoints)
 
 on:

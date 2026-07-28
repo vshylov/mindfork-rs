@@ -31,7 +31,7 @@ pub use openai::{OpenAiClient, ResponsesClient};
 /// or empty key variable sends no `Authorization` header, i.e. byte-for-byte the
 /// previous behaviour against a local `llama-server`; setting it lets the same
 /// smokes run against an authenticated server (a hosted endpoint, a proxy). See
-/// [docs/remote-e2e-hf.md](../../../docs/remote-e2e-hf.md) §5.
+/// [docs/history/remote-e2e-hf.md](../../../docs/history/remote-e2e-hf.md) §5.
 #[cfg(test)]
 pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> {
     let url = std::env::var(url_var).ok()?;

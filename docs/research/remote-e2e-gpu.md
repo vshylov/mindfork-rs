@@ -1,6 +1,11 @@
 # Research: running the live e2e smokes on a rented GPU
 
-**Status:** **decided.** Forks R1–R8 (§9) resolved to the recommended option
+**Status:** **decided and shipped** — the track closed 2026-07-29; the plan it
+produced is archived at [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md).
+Note that two of the conclusions below were **overturned by the stage-0 probe**
+and are marked inline: embeddings are served by llama.cpp itself rather than TEI
+(§3.1), and the endpoint type is `authenticated`, not `protected` (§5).
+Forks R1–R8 (§9) resolved to the recommended option
 throughout — *user's decision, 2026-07-28*: **R1a** HF Inference Endpoints ·
 **R2a** `protected` + the `MINDFORK_ENGINE_KEY` enabling change · **R3**
 reduced form (`delete` + sweeper) · **R4a** L40S 48 GB · **R5a**
@@ -10,7 +15,7 @@ trigger already restricts the live job to users with write access, so a gated
 environment adds no protection).
 The unpinned llama.cpp `master` build (§3.1) was accepted knowingly — the user
 builds `master` regularly and sees breakage very rarely.
-Implementation plan: **[docs/remote-e2e-hf.md](../remote-e2e-hf.md)**.
+Implementation plan: **[docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md)**.
 **Date:** 2026-07-28.
 
 ## 1. Why
@@ -130,7 +135,7 @@ What it gives us:
 > env var (`finish_reason=tool_calls`). The endpoint type is
 > `public|authenticated|private` — **not** `protected`, and an unknown value is
 > silently coerced to `private`. Deploy took **21 s** for the 17.65 GB model.
-> Details: [docs/remote-e2e-hf.md §3](../remote-e2e-hf.md).
+> Details: [docs/remote-e2e-hf.md §3](../history/remote-e2e-hf.md).
 
 Configuration, and its limits (verified against the docs):
 
@@ -227,7 +232,7 @@ The harness constraint from §2 — `OpenAiClient::new(url)` sends no
 
 | | Public exposure | Auth | 100 s proxy limit | Needs the enabling change |
 |---|---|---|---|---|
-| **HF endpoint, `protected`** | URL only; token required | `Authorization: Bearer hf_…` | no | **yes** |
+| **HF endpoint, `authenticated`**<br>(written `protected` below — the wrong value, see §3.1) | URL only; token required | `Authorization: Bearer hf_…` | no | **yes** |
 | HF endpoint, `public` | **yes, unauthenticated** | none | no | no |
 | **RunPod SSH tunnel** (`ssh -L 8000:127.0.0.1:8000 …`) | **none** | SSH key | no | no |
 | RunPod HTTP proxy | yes, guessable URL | `llama-server --api-key` | **yes** | yes |
@@ -235,7 +240,7 @@ The harness constraint from §2 — `OpenAiClient::new(url)` sends no
 
 Two clean answers, one per platform:
 
-- **HF → `type="protected"` + the enabling change.** Standard bearer auth, TLS,
+- **HF → `type="authenticated"` + the enabling change.** Standard bearer auth, TLS,
   nothing bespoke.
 - **RunPod → SSH tunnel, no change at all.** `llama-server` binds `127.0.0.1`
   inside the pod, nothing is published, and the tests keep using
@@ -417,7 +422,7 @@ omission.
    → `OpenAiClient::with_api_key`. Ships as its own small PR with a unit test.
 2. `scripts/e2e-hf.py` (huggingface_hub) — one entry point for CI and local use:
    - `create_inference_endpoint(name=f"e2e-chat-{run_id}", repository=
-     "google/gemma-4-31B-it-qat-q4_0-gguf", …, type="protected",
+     "google/gemma-4-31B-it-qat-q4_0-gguf", …, type="authenticated",
      instance_type="nvidia-l40s", env={"LLAMA_ARG_JINJA": "1"})`, plus a second
      endpoint for `BAAI/bge-m3` on the TEI engine;
    - `.wait(timeout=…)` on both, then `GET /health`;
