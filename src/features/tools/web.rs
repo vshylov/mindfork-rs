@@ -1024,13 +1024,31 @@ mod tests {
             std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),
             std::sync::Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
         );
-        let out = tool
+        let out = match tool
             .invoke(
                 &ctx,
                 serde_json::json!({"query": "rust language", "max_results": 3}),
             )
             .await
-            .unwrap();
+        {
+            Ok(out) => out,
+            Err(e) => {
+                // Every provider throttling at once is an infrastructure
+                // condition, not a regression -- and a datacenter IP (a CI
+                // runner) is throttled far harder than a home one, which is how
+                // this smoke first went red remotely. The tool already draws
+                // that distinction, so skip on it and fail on anything else.
+                // Matched by the bundle key rather than by prose, so it holds
+                // whatever locale the profile is in.
+                if e.to_string()
+                    .contains(ctx.loc.t("tool.web_search.err.throttled"))
+                {
+                    eprintln!("skip: every search provider is throttling this IP");
+                    return;
+                }
+                panic!("web search failed: {e:#}");
+            }
+        };
         assert!(out.result.contains("http"), "got: {}", out.result);
     }
 }

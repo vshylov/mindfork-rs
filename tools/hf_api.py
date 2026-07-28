@@ -432,11 +432,30 @@ def request_delete(name):
     return http("DELETE", f"{API}/{NAMESPACE}/{name}")
 
 
-def verify_gone(name):
-    """Re-read and require a 404. Reporting "deleted" without checking is how
-    leaks start. Returns (gone, status)."""
-    check, _ = http("GET", f"{API}/{NAMESPACE}/{name}")
-    return check == 404, check
+def verify_gone(name, attempts=6, delay=2.0):
+    """Re-read until the endpoint is a 404. Reporting "deleted" without checking
+    is how leaks start — but so is checking too eagerly.
+
+    Deletion is not instantaneous: HF acknowledges the DELETE with a 200 and the
+    endpoint disappears a moment later. CI run 30396557877 verified ~400 ms after
+    its DELETE, saw a 200, and cried CLEANUP FAILED (exit 3) over an endpoint
+    that was in fact deleted — which also masked four genuine test failures
+    behind the wrong exit code. Only the *last* endpoint hits it, because
+    `cleanup` sends every DELETE before verifying any, so the earlier ones get
+    incidental delay for free.
+
+    Retrying is safe on every path: the DELETE has already been sent, so the
+    meter is stopped whatever happens next — this waits on the *proof*, not on
+    the action. Returns (gone, last_status).
+    """
+    check = 0
+    for attempt in range(attempts):
+        check, _ = http("GET", f"{API}/{NAMESPACE}/{name}")
+        if check == 404:
+            return True, check
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    return False, check
 
 
 def delete_one(name):

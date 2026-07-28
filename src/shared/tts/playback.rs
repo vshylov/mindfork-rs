@@ -155,7 +155,15 @@ mod tests {
             bytes.extend_from_slice(&((amp * i16::MAX as f32) as i16).to_le_bytes());
         }
 
-        let playback = Playback::open().expect("a sound card is required");
+        // A headless machine -- a CI runner above all -- has no sound card, and
+        // `open` already reports that as a graceful degradation rather than a
+        // panic (the app keeps working without audio). Skip on it, as every
+        // other smoke skips when its prerequisite is absent; failing would make
+        // the remote gate permanently red for an environment fact.
+        let Ok(playback) = Playback::open() else {
+            eprintln!("skip: no audio device available");
+            return;
+        };
         let started = std::time::Instant::now();
         playback
             .enqueue(AudioClip::Pcm {
