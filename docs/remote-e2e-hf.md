@@ -93,6 +93,35 @@ Deploy time was **21 s** to `running` for the 17.65 GB model (84 s for the
 embedder) — HF serves the weights from its own storage, so there is no
 multi-minute model pull to budget for.
 
+**The full suite, run against the endpoints — 2026-07-28.** `cargo test --
+--ignored --test-threads=1`, 1016 s: **67 passed, 2 failed** of 69. Of those, 36
+actually exercised the endpoints (**35 green**); 4 skipped for want of
+`MINDFORK_EMBED_URL_ALT` (stage 3), 15 for want of cloud keys, 13 for want of a
+provisioned Python sandbox. Cost ≈ $0.75, both endpoints deleted and verified.
+
+Neither failure is infrastructural:
+
+- `runs_real_python_in_sandbox` — no `wasmer` on this machine; it fails rather
+  than skips by design.
+- `attachment_read_e2e_live` — **a brittle assertion the remote run exposed**,
+  confirmed by running the same test against the LAN stand:
+
+  | | turn 1 | turn 2 | |
+  |---|---|---|---|
+  | LAN | `attachment_search` | `attachment_read` | pass |
+  | HF | `attachment_search` + `attachment_read` ×5 | — (answered from history) | fail |
+
+  Same model, quantization, context and flags. On HF the model was *more*
+  thorough — it searched and then read five pages anyway — so page 1 was already
+  in the conversation and turn 2 legitimately needed no tool. Turn 2's assertion
+  ("asking for a specific page must go through `attachment_read`") therefore
+  holds only when turn 1 happens not to have read that page, which the test does
+  not control. This is the second time this test's assertion has been invalidated
+  by the model finding a better route (the first was when `attachment_search`
+  arrived). Proposed fix: cover the guaranteed path **deterministically** by
+  running this smoke with no embedder configured, so paging is the only way in —
+  search is already covered by `attachment_search_e2e_live`.
+
 **A third finding, and a requirement on the runner.** The first run failed U5
 with a `503`, and the cause was ours: HF's `running` state only means the
 container is up, while `llama-server` still answers `503 Loading model` until
