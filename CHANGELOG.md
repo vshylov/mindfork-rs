@@ -84,6 +84,27 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **A server that starts after the app is now picked up on its own.** The
+  readiness check ran once and then stopped, so starting the app before
+  `llama-server` — the ordinary order of things for a local setup — left
+  generation refused even after the server had finished coming up, until the app
+  was restarted or an engine setting was touched. Servers are now re-checked
+  continuously: every minute while healthy, every five seconds while unavailable,
+  so a server that comes back is noticed within seconds and simply starts working.
+  The same applies in reverse — a machine that goes down no longer keeps a green
+  indicator. To avoid a nervous indicator, an available server is only reported as
+  unavailable after three checks in a row fail, while a single successful check
+  restores it immediately.
+
+- **A managed server whose process dies is now reported instantly and restarted.**
+  When the app launches `llama-server` itself and that process dies (a corrupt
+  model file, out of memory), this is now noticed in a fraction of a second rather
+  than on the next check, and the server is relaunched automatically — up to three
+  times in five minutes, after which it is left alone and reported as unavailable,
+  so a model that cannot load doesn't spin in an endless restart loop. A server
+  running elsewhere is never restarted by the app — it isn't ours to restart — but
+  it is watched, and it recovers by itself once it comes back.
+
 - The embeddings indicator no longer reports "ready" for a server that cannot be
   reached. Its status was derived from the settings alone — a filled-in address
   was enough to light the chip green — so an embedding server on a machine that

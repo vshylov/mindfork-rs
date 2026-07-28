@@ -6,6 +6,7 @@
 //! remains the sole owner of `Chat`; here — only servers, no domain state.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
@@ -25,6 +26,53 @@ use crate::shared::secrets::ApiKeyEntry;
 /// to know the secret-storage format (`shared::secrets`). See docs/research/api-key-storage.md.
 fn stored_key(api_keys: &[ApiKeyEntry], provider: Option<CloudProvider>) -> Option<String> {
     crate::shared::secrets::stored_key(api_keys, provider?.key())
+}
+
+/// Max relaunches of one managed server within [`RESTART_WINDOW`]; beyond that it
+/// stays `Disconnected` until manual intervention (editing settings re-applies it).
+pub(super) const RESTART_BUDGET: usize = 3;
+/// The restart budget's window.
+const RESTART_WINDOW: Duration = Duration::from_secs(300);
+
+/// Which managed server a relaunch budget belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Server {
+    Chat,
+    Embed,
+    Impersonation,
+}
+
+/// A crash-loop guard for relaunching a managed server: a dead child can only be
+/// revived by launching a new process, and a server that dies *because* of its
+/// configuration (a corrupt GGUF, an OOM) would otherwise be respawned forever.
+///
+/// The same shape as `McpManager::allow_restart` — deliberately a second small
+/// implementation rather than a shared one: unifying them is a mechanical refactor
+/// and shouldn't ride along with a behavior change (AGENTS.md §2).
+#[derive(Default)]
+struct RestartBudget {
+    marks: Vec<Instant>,
+}
+
+impl RestartBudget {
+    /// Whether one more relaunch is allowed now: prunes marks older than the window,
+    /// records this attempt if there's room.
+    fn allow(&mut self, now: Instant) -> bool {
+        self.marks
+            .retain(|t| now.duration_since(*t) < RESTART_WINDOW);
+        if self.marks.len() < RESTART_BUDGET {
+            self.marks.push(now);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A server that came up healthy again starts with a clean budget — otherwise a
+    /// machine that goes down once a week would eventually exhaust it.
+    fn reset(&mut self) {
+        self.marks.clear();
+    }
 }
 
 pub(super) struct EngineManager {
@@ -68,6 +116,8 @@ pub(super) struct EngineManager {
     imp_probe_cancel: Option<CancellationToken>,
     /// The invalidation token for the embedding server's background probe (analogous).
     embed_probe_cancel: Option<CancellationToken>,
+    /// Relaunch budgets for the managed servers (chat/embed/impersonation).
+    restarts: [RestartBudget; 3],
     /// The embeddings source for RAG (a dedicated server — ADR 0002).
     pub(super) embedder: Arc<dyn Embedder>,
 }
@@ -97,6 +147,7 @@ impl EngineManager {
             chat_probe_cancel: None,
             imp_probe_cancel: None,
             embed_probe_cancel: None,
+            restarts: Default::default(),
             embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         }
     }
@@ -195,19 +246,44 @@ impl EngineManager {
         }
     }
 
-    /// Updates the chat-server status (from the background probe).
+    /// Updates the chat-server status (from the background monitor).
     pub(super) fn set_chat_status(&mut self, status: ServerStatus) {
+        self.note_recovery(Server::Chat, &status);
         self.server_status = status;
     }
 
-    /// Updates the impersonation-server status (from the background probe).
+    /// Updates the impersonation-server status (from the background monitor).
     pub(super) fn set_imp_status(&mut self, status: ServerStatus) {
+        self.note_recovery(Server::Impersonation, &status);
         self.imp_status = status;
     }
 
-    /// Updates the embedding-server status (from the background probe).
+    /// Updates the embedding-server status (from the background monitor).
     pub(super) fn set_embed_status(&mut self, status: ServerStatus) {
+        self.note_recovery(Server::Embed, &status);
         self.embed_status = status;
+    }
+
+    /// A server that reached `Ready` gets a clean relaunch budget: the budget exists
+    /// to stop a crash *loop*, not to count a machine's lifetime outages.
+    fn note_recovery(&mut self, server: Server, status: &ServerStatus) {
+        if matches!(status, ServerStatus::Ready) {
+            self.restarts[server as usize].reset();
+        }
+    }
+
+    /// Whether a dead managed `server` may be relaunched right now (crash-loop guard).
+    pub(super) fn allow_relaunch(&mut self, server: Server, now: Instant) -> bool {
+        self.restarts[server as usize].allow(now)
+    }
+
+    /// The last published status of `server` — for deciding whether it needs reviving.
+    pub(super) fn status_of(&self, server: Server) -> &ServerStatus {
+        match server {
+            Server::Chat => &self.server_status,
+            Server::Embed => &self.embed_status,
+            Server::Impersonation => &self.imp_status,
+        }
     }
 
     /// A snapshot of all server statuses for the status bar (chat always, embeddings/
@@ -269,5 +345,80 @@ impl EngineManager {
     /// A clone of the embeddings source for RAG background tasks / the tool context.
     pub(super) fn embedder(&self) -> Arc<dyn Embedder> {
         self.embedder.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guard's whole job: allow a few relaunches, then stop. Without the cap, a
+    /// server that dies *because* of its configuration would be respawned forever.
+    #[test]
+    fn budget_allows_up_to_the_cap_then_refuses() {
+        let mut b = RestartBudget::default();
+        let now = Instant::now();
+        for i in 0..RESTART_BUDGET {
+            assert!(b.allow(now), "relaunch {i} should be allowed");
+        }
+        assert!(!b.allow(now), "the cap should stop the crash loop");
+    }
+
+    /// The cap is per window, not per lifetime: an outage a week later starts fresh.
+    #[test]
+    fn budget_forgets_marks_older_than_the_window() {
+        let mut b = RestartBudget::default();
+        let now = Instant::now();
+        for _ in 0..RESTART_BUDGET {
+            b.allow(now);
+        }
+        assert!(!b.allow(now));
+        assert!(
+            b.allow(now + RESTART_WINDOW + Duration::from_secs(1)),
+            "marks older than the window should be pruned"
+        );
+    }
+
+    /// Reaching `Ready` clears the budget — otherwise a machine that reboots once a
+    /// month would eventually exhaust it and stop recovering.
+    #[test]
+    fn reaching_ready_clears_the_budget() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+        let (tx3, _rx3) = tokio::sync::mpsc::unbounded_channel();
+        let mut m = EngineManager::new(
+            Arc::new(crate::app::supervisor::MockSupervisor::with_backend(None)),
+            tx,
+            tx2,
+            tx3,
+        );
+        let now = Instant::now();
+        for _ in 0..RESTART_BUDGET {
+            assert!(m.allow_relaunch(Server::Chat, now));
+        }
+        assert!(!m.allow_relaunch(Server::Chat, now));
+        m.set_chat_status(ServerStatus::Ready);
+        assert!(
+            m.allow_relaunch(Server::Chat, now),
+            "a recovered server should get a clean budget"
+        );
+    }
+
+    /// Budgets are per server: a flapping embedding server mustn't spend the chat
+    /// server's allowance.
+    #[test]
+    fn budgets_are_independent_per_server() {
+        let mut m = EngineManager::new(
+            Arc::new(crate::app::supervisor::MockSupervisor::with_backend(None)),
+            tokio::sync::mpsc::unbounded_channel().0,
+            tokio::sync::mpsc::unbounded_channel().0,
+            tokio::sync::mpsc::unbounded_channel().0,
+        );
+        let now = Instant::now();
+        for _ in 0..RESTART_BUDGET {
+            m.allow_relaunch(Server::Embed, now);
+        }
+        assert!(!m.allow_relaunch(Server::Embed, now));
+        assert!(m.allow_relaunch(Server::Chat, now));
     }
 }

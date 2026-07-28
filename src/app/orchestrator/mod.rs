@@ -209,6 +209,7 @@ pub async fn run(deps: OrchestratorDeps) {
                 if let Some(s) = status {
                     orch.engines.set_chat_status(s);
                     orch.emit_server_status();
+                    orch.relaunch_dead_managed_servers();
                 }
             }
             title = title_rx.recv() => {
@@ -220,12 +221,14 @@ pub async fn run(deps: OrchestratorDeps) {
                 if let Some(s) = status {
                     orch.engines.set_imp_status(s);
                     orch.emit_server_status();
+                    orch.relaunch_dead_managed_servers();
                 }
             }
             status = embed_status_rx.recv() => {
                 if let Some(s) = status {
                     orch.engines.set_embed_status(s);
                     orch.emit_server_status();
+                    orch.relaunch_dead_managed_servers();
                 }
             }
             done = imp_done_rx.recv() => {

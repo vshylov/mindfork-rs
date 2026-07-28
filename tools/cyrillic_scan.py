@@ -125,7 +125,20 @@ def allowed_line(path: str, line: str, in_test: bool) -> bool:
 
 def main() -> int:
     list_mode = "--list" in sys.argv
-    files = [f for f in subprocess.check_output(["git", "ls-files"]).decode().split("\n") if f]
+    # Tracked files **and** new ones not yet added (`--others`, honouring
+    # .gitignore). A plain `git ls-files` sees only tracked files, so a brand-new
+    # file's violations stayed invisible locally and first surfaced in CI, after
+    # the commit — which is exactly how one slipped through. In CI there are no
+    # untracked files, so this changes nothing there.
+    files = [
+        f
+        for f in subprocess.check_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"]
+        )
+        .decode()
+        .split("\n")
+        if f
+    ]
     offenders: dict[str, list[tuple[int, str]]] = collections.OrderedDict()
     total = 0
     for path in files:

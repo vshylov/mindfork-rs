@@ -3,7 +3,9 @@
 
 use super::*;
 
-use crate::shared::config::CloudProvider;
+use crate::app::orchestrator::engines::{RESTART_BUDGET, Server};
+use crate::shared::config::{CloudProvider, ServerMode};
+use crate::shared::server::ServerStatus;
 
 #[tokio::test]
 async fn bootstrap_emits_settings_snapshot() {
@@ -335,4 +337,56 @@ async fn settings_snapshot_carries_flags_not_secrets() {
     }
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+}
+
+/// A managed server whose process is gone can only be revived by launching a new
+/// one — so the orchestrator relaunches it, but a bounded number of times: a server
+/// that dies *because* of its configuration must not be respawned forever.
+#[tokio::test]
+async fn dead_managed_server_is_relaunched_until_the_budget_runs_out() {
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::Managed;
+
+    for round in 0..RESTART_BUDGET {
+        orch.engines
+            .set_chat_status(ServerStatus::Disconnected("process gone".into()));
+        orch.relaunch_dead_managed_servers();
+        assert!(
+            !matches!(
+                orch.engines.status_of(Server::Chat),
+                ServerStatus::Disconnected(_)
+            ),
+            "round {round}: a dead managed server should have been relaunched"
+        );
+    }
+
+    // The budget is spent — the next death is left alone instead of crash-looping.
+    orch.engines
+        .set_chat_status(ServerStatus::Disconnected("process gone".into()));
+    orch.relaunch_dead_managed_servers();
+    assert!(
+        matches!(
+            orch.engines.status_of(Server::Chat),
+            ServerStatus::Disconnected(_)
+        ),
+        "the crash-loop guard should stop relaunching"
+    );
+}
+
+/// We don't own an external process, so there's nothing to relaunch — its monitor
+/// keeps polling and picks the recovery up by itself.
+#[tokio::test]
+async fn external_server_is_never_relaunched() {
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::External;
+    orch.engines
+        .set_chat_status(ServerStatus::Disconnected("host down".into()));
+    orch.relaunch_dead_managed_servers();
+    assert!(
+        matches!(
+            orch.engines.status_of(Server::Chat),
+            ServerStatus::Disconnected(_)
+        ),
+        "an external server must not be relaunched by us"
+    );
 }
