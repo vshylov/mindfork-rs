@@ -9446,9 +9446,16 @@ debounce was done as a separate PR, see below).
 - **Left alone**: `simple_generation` returned an empty response once. The same
   model and stack passed it forty minutes earlier locally, so it is a flake until
   it recurs — worth naming rather than silently hardening around.
-- **Verified in the environment that produced the failures** (a second dispatch
-  on the fix branch), since three of the four are invisible anywhere else.
-  Gates green: **1486 unit tests**, 69 `#[ignore]`, clippy `-D warnings`/fmt/
+- **Smoke — GO, in the environment that produced the failures** (run
+  30399806549, a second dispatch on the fix branch — three of the four are
+  invisible anywhere else): **66 passed, 0 failed**, suite 1120 s, endpoints
+  ready in 257 s. Each fix left its own evidence: `keepalive: 3 round(s) of
+  pings` with the alternate embedder never leaving `running`, so
+  `conventions_behave_as_measured_live` passed; `skip: no audio device
+  available`; `skip: every search provider is throttling this IP`; all three
+  deletes verified `gone` and exit 0. `simple_generation` passed, which is what
+  makes calling it a flake honest rather than convenient.
+- Gates green: **1486 unit tests**, 69 `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan` clean. No CHANGELOG entry — dev infrastructure and tests
   (AGENTS.md §4).
 
