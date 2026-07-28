@@ -2,7 +2,7 @@
 """Hugging Face Inference Endpoints: the client both e2e tools share.
 
 Extracted from `tools/hf_probe.py` (stage 0) when `tools/e2e_hf.py` (stage 2)
-needed the same lifecycle. Plan: docs/remote-e2e-hf.md §6.
+needed the same lifecycle. Plan: docs/history/remote-e2e-hf.md §6.
 
 Sharing it is not tidiness. Two copies of the create payload would drift the
 moment the API schema moves, and — worse — two copies of the cleanup would mean
@@ -63,7 +63,7 @@ NAME_MAX = 32
 
 # Endpoints created by this process, deleted on any exit path. Names are printed
 # before the create call, so an orphan is identifiable even if the response is
-# lost (docs/remote-e2e-hf.md §6).
+# lost (docs/history/remote-e2e-hf.md §6).
 CREATED: list[str] = []
 KEEP = False
 NAMESPACE = ""
@@ -198,7 +198,7 @@ def chat_payload(name, args):
     """The v2 create payload for the managed llama.cpp engine (chat).
 
     Every field here was settled against the live API in stage 0, mostly by
-    successive 422s (docs/remote-e2e-hf.md §3): the file is chosen with
+    successive 422s (docs/history/remote-e2e-hf.md §3): the file is chosen with
     `modelPath` — not any name one would guess — and `ctxSize` is explicit,
     so context is set directly rather than falling out of the Max Tokens x Max
     Concurrent Requests settings the docs describe. `nParallel` splits ctxSize
@@ -219,7 +219,7 @@ def chat_payload(name, args):
                 "maxReplica": 1,
                 # Minutes. This is the leak ceiling: a run that dies without
                 # deleting wastes at most this much idle GPU, whatever else
-                # fails (docs/remote-e2e-hf.md §8).
+                # fails (docs/history/remote-e2e-hf.md §8).
                 "scaleToZeroTimeout": args.scale_to_zero,
             },
         },
@@ -323,7 +323,7 @@ def add_endpoint_args(parser):
     parser.add_argument("--threads-http", type=int, default=8)
     # `url` is required by BaseContainer and has no catalog default, so the
     # llama.cpp build is ours to pick -- and can be pinned to a tag, which
-    # removes the "unpinned master" caveat from docs/remote-e2e-hf.md §10.
+    # removes the "unpinned master" caveat from docs/history/remote-e2e-hf.md §10.
     parser.add_argument("--image", default="ghcr.io/ggml-org/llama.cpp:server-cuda")
     parser.add_argument(
         "--endpoint-type",
@@ -413,7 +413,7 @@ def wait_healthy(url, timeout=900, poll=5):
     answers `503 Loading model` until the weights are in. This is the same
     distinction OpenAiClient::probe() draws, and the runner needs it too --
     starting the suite on `running` alone fails the first request
-    (docs/remote-e2e-hf.md §3)."""
+    (docs/history/remote-e2e-hf.md §3)."""
     print(f"  waiting for /health at {url} (timeout {timeout}s)", flush=True)
     deadline = time.time() + timeout
     status = 0

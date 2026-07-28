@@ -123,16 +123,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-28, version 0.9.4)
+## Status (as of 2026-07-29, version 0.9.4)
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1486 unit
-tests green, 69 `#[ignore]` smokes** (the largest count — log below; the current
-track is the **remote live e2e gate**
-([docs/remote-e2e-hf.md](docs/remote-e2e-hf.md)) — the mandatory live gate
-(AGENTS.md §3) stopped requiring one particular machine on one LAN address:
-`tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints' llama.cpp
-engine) plus a bge-m3 embedding endpoint, runs the `#[ignore]` suite against
-them and deletes them — verifying the deletion, since a leaked endpoint is the
-one outcome that costs money — **done, stages 0–3, live run GO**;
+tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
+recent track — **the remote live e2e gate**, now **closed**
+([docs/history/remote-e2e-hf.md](docs/history/remote-e2e-hf.md)) — the mandatory
+live gate (AGENTS.md §3) stopped requiring one particular machine on one LAN
+address: `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'
+llama.cpp engine) plus **two** embedding models, runs the `#[ignore]` suite
+against them and deletes them — verifying the deletion, since a leaked endpoint
+is the one outcome that costs money. Triggered from CI by `workflow_dispatch`,
+with an hourly sweeper as the backstop — **done, stages 0–3, two consecutive
+green CI runs (66 passed / 0 failed)**;
 before that — **periodic server health monitoring**
 ([docs/server-health-monitoring.md](docs/server-health-monitoring.md)) — the probe
 stopped being one-shot: 60 s while healthy / 5 s while down, three consecutive
@@ -9199,7 +9201,7 @@ debounce was done as a separate PR, see below).
   catchable only by hand. Research
   [docs/research/remote-e2e-gpu.md](docs/research/remote-e2e-gpu.md) (forks
   **R1–R8 accepted by the user as recommended, 2026-07-28**), plan
-  [docs/remote-e2e-hf.md](docs/remote-e2e-hf.md). Branches
+  [docs/history/remote-e2e-hf.md](docs/history/remote-e2e-hf.md). Branches
   `spike/hf-endpoint-probe` (stages 0–1) and `feat/e2e-hf-runner` (stage 2).
 - **Why HF Inference Endpoints and not a rented pod** (R1a): the survey's real
   question was not price but *"can we guarantee the GPU is released when the run

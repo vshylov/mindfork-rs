@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe HF Inference Endpoints as a host for the live e2e smokes (stage 0).
 
-Plan: docs/remote-e2e-hf.md §3. Research: docs/research/remote-e2e-gpu.md.
+Plan: docs/history/remote-e2e-hf.md §3. Research: docs/research/remote-e2e-gpu.md.
 The client (HTTP, payloads, lifecycle, cleanup) lives in tools/hf_api.py, shared
 with the stage-2 runner tools/e2e_hf.py — one implementation of "create, wait,
 delete, verify deleted", not two.
@@ -10,7 +10,7 @@ This script answered, against a real throwaway endpoint, the questions that are
 not documented anywhere reachable — above all **U1: how to select which `.gguf`
 file the llama.cpp engine serves**, because the target repository holds two
 files (the 17.65 GB model and an unwanted 1.2 GB mmproj). All of U1–U7 are
-answered (docs/remote-e2e-hf.md §3); it is kept because the answers can change
+answered (docs/history/remote-e2e-hf.md §3); it is kept because the answers can change
 and because `doctor` and `hardware` remain the fastest way to diagnose a 403 or
 find an instance-type string.
 
@@ -188,7 +188,7 @@ def probe_chat(url, checks):
     checks.record("U6", "unauthenticated request rejected", status in (401, 403), f"HTTP {status}")
 
     # U5-adjacent — does /health survive the router? Decides whether the two
-    # supervisor smokes keep their meaning (docs/remote-e2e-hf.md §4).
+    # supervisor smokes keep their meaning (docs/history/remote-e2e-hf.md §4).
     status, _ = hf.http("GET", f"{url}/health", timeout=30)
     checks.record("U5b", "/health reachable", hf.ok(status), f"HTTP {status}")
 

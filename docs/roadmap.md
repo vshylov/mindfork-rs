@@ -135,7 +135,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   `tools/e2e_hf.py` + the `workflow_dispatch` **Live e2e** workflow run it
   against ephemeral HF Inference Endpoints (chat + two embedding models), so the
   gate no longer needs the one GPU machine
-  ([remote-e2e-hf.md](remote-e2e-hf.md)). Still open: a *scheduled* run
+  ([history/remote-e2e-hf.md](history/remote-e2e-hf.md)). Still open: a *scheduled* run
   (deliberately not wired — R5a; every run costs ~$1 and the non-hermetic smokes
   would flake unattended), and the cloud-key and Python-sandbox smokes, which
   need different credentials and assets.

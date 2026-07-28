@@ -1,11 +1,27 @@
 # Design plan: the live e2e gate on HF Inference Endpoints
 
-**Status:** **complete** — stages 0–3 done, the gate runs and covers the whole
-llama.cpp smoke set.
-**Research and decision:** [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md)
+**Status:** **CLOSED**, 2026-07-29 — stages 0–3 shipped (PRs #226, #227), the
+gate runs in CI and covers the whole llama.cpp smoke set. Historical document:
+the outcome lives in `tools/e2e_hf.py`, the two `e2e-*` workflows, and
+[docs/install.md §7.2](../install.md); the running log is in the CLAUDE.md
+journal.
+**Research and decision:** [docs/research/remote-e2e-gpu.md](../research/remote-e2e-gpu.md)
 (forks R1–R8, all resolved to the recommended option — *user's decision,
 2026-07-28*).
-**Date:** 2026-07-28.
+**Date:** 2026-07-28 → 2026-07-29.
+
+**How it ended.** Two consecutive green runs on a GitHub runner, the second on
+merged `main` — **66 passed, 0 failed**, three endpoints created, kept warm,
+used and provably deleted ([run 30402932121](https://github.com/vshylov/mindfork-rs/actions/runs/30402932121),
+suite 1048 s). Seven live runs across the track, ≈$5 total.
+
+The two runs that *failed* were the valuable ones, and both failures were in the
+safety machinery rather than the feature: a cancellation drill exposed a leak
+caused by `cleanup()` clearing its own name list before a `print` that could
+raise, and the first CI dispatch exposed a false `CLEANUP FAILED` caused by
+verifying a deletion ~400 ms after requesting it — which then masked four real
+test failures behind the wrong exit code. Safety mechanisms earn their own
+scrutiny; running them for real is how you get it.
 
 ## 1. Goal
 
@@ -43,7 +59,7 @@ that would otherwise be guessed at inside a PR.
 
 ## 3. Stage 0 — probe (go/no-go)
 
-Driven by **[`tools/hf_probe.py`](../tools/hf_probe.py)** (stdlib only, no
+Driven by **[`tools/hf_probe.py`](../../tools/hf_probe.py)** (stdlib only, no
 `pip install`; `HF_TOKEN` never leaves the machine it runs on). It creates a
 throwaway endpoint, answers the questions below, and deletes it — verifying the
 deletion, with a failure to delete reported louder (exit 3) than a failed check.
