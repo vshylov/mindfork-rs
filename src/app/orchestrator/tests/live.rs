@@ -138,7 +138,11 @@ async fn attachment_read_e2e_live() {
         },
         ..Default::default()
     };
-    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+    // No embedder on purpose: an indexed attachment hands the model
+    // `attachment_search`, and then whether it pages through the file at all
+    // becomes its choice rather than a property of the code. Search is covered
+    // by `attachment_search_e2e_live`; this smoke owns the *guaranteed* path.
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_no_embed(config) else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
@@ -181,6 +185,9 @@ async fn attachment_read_e2e_live() {
         answer.contains(CODE),
         "the answer sits on a late page and must be found: {answer}"
     );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
     // The stage-1 defect, precisely: the model must reach the file through the
     // attachment tools rather than improvising with the filesystem or the web.
     let attachment_tools = [
@@ -194,26 +201,14 @@ async fn attachment_read_e2e_live() {
                 .all(|(n, _)| attachment_tools.contains(&n.as_str())),
         "the file must be reached through the attachment tools only, called: {names:?}"
     );
-
-    // Turn 2: a specific page keeps the guaranteed path covered live — search
-    // cannot answer "what is on page N".
-    let (answer2, calls2) = run_turn_capture(
-        &cmd_tx,
-        &mut evt_rx,
-        "Открой страницу 1 файла notes-big.txt и процитируй её первую строку.",
-    )
-    .await;
-    cmd_tx.send(AppCommand::Quit).unwrap();
-    handle.await.unwrap();
-
-    let names2: Vec<&String> = calls2.iter().map(|(n, _)| n).collect();
-    eprintln!("turn 2 tool calls: {names2:#?}");
-    eprintln!("turn 2 reply: {answer2}");
+    // And the guaranteed path itself: with nothing indexed, paging is the only
+    // way in, so this is now a property of the setup rather than a hope about
+    // which route the model picks.
     assert!(
-        calls2
+        calls
             .iter()
             .any(|(n, _)| n == crate::features::tools::attachment::ATTACHMENT_READ_ID),
-        "asking for a specific page must go through attachment_read, called: {names2:?}"
+        "a by-reference file with no index must be read page by page, called: {names:?}"
     );
 }
 

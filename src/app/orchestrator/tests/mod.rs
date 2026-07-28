@@ -203,8 +203,36 @@ fn spawn_orch_live() -> Option<OrchHandle> {
 /// Like [`spawn_orch_live`], but with an explicit config (e.g. an MCP host enabled
 /// with a real server for an e2e smoke).
 fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
+    spawn_orch_live_with(config, true)
+}
+
+/// Like [`spawn_orch_live_cfg`], but deliberately **without** an embedder, even
+/// when `MINDFORK_EMBED_URL` is set.
+///
+/// For smokes that must exercise a path the model would otherwise be able to
+/// shortcut. With an embedder present a by-reference attachment gets indexed,
+/// and `attachment_search` becomes a legitimate — often better — route, so
+/// "the model paged through the file" stops being a property of the code and
+/// becomes a property of the model's mood that day. Removing the embedder
+/// removes the alternative instead of hoping it is not taken.
+///
+/// Note `MockSupervisor::with_backend_no_embedder`: passing `None` as the
+/// embedder is **not** enough, since the mock then falls back to a
+/// `MockEmbedder` and the attachment still gets indexed.
+fn spawn_orch_live_no_embed(config: AppConfig) -> Option<OrchHandle> {
+    spawn_orch_live_with(config, false)
+}
+
+fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHandle> {
     let backend = live_backend()?;
-    let embedder = live_embedder();
+    let supervisor: Arc<dyn crate::app::supervisor::ServerSupervisor> = if with_embedder {
+        Arc::new(MockSupervisor::with_backend_and_embedder(
+            Some(backend),
+            live_embedder(),
+        ))
+    } else {
+        Arc::new(MockSupervisor::with_backend_no_embedder(Some(backend)))
+    };
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
     let (cmd_tx, cmd_rx) = unbounded_channel();
@@ -214,10 +242,7 @@ fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
         evt_tx,
         storage,
         config,
-        supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
-            Some(backend),
-            embedder,
-        )),
+        supervisor,
         default_language: crate::shared::i18n::Lang::default(),
     };
     let handle = tokio::spawn(run(deps));

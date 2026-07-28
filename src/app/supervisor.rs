@@ -676,6 +676,9 @@ pub struct MockSupervisor {
     /// An optional **real** embedder (live smokes — bge-m3 from MINDFORK_EMBED_URL
     /// and so on); `None` → a deterministic `MockEmbedder`.
     embedder: Option<Arc<dyn Embedder>>,
+    /// Report `UnavailableEmbedder` instead of the `MockEmbedder` fallback — the
+    /// only way to express "no embedder at all" (see `with_backend_no_embedder`).
+    embed_unavailable: bool,
 }
 
 #[cfg(test)]
@@ -689,6 +692,7 @@ impl MockSupervisor {
             chat_calls: std::sync::atomic::AtomicUsize::new(0),
             embed_dim: 16,
             embedder: None,
+            embed_unavailable: false,
         }
     }
 
@@ -703,6 +707,20 @@ impl MockSupervisor {
             chat_calls: std::sync::atomic::AtomicUsize::new(0),
             embed_dim: 16,
             embedder,
+            embed_unavailable: false,
+        }
+    }
+
+    /// A supervisor that reports **no embedder at all** (`UnavailableEmbedder`).
+    ///
+    /// Distinct from passing `None` above, which falls back to a `MockEmbedder`
+    /// — convenient for most tests, but it means "no embedder" cannot be
+    /// expressed that way. Tests that need the *absence* (a RAG/attachment path
+    /// degrading, a route the model must not be offered) need this.
+    pub fn with_backend_no_embedder(backend: Option<Arc<dyn EngineBackend>>) -> Self {
+        Self {
+            embed_unavailable: true,
+            ..Self::with_backend_and_embedder(backend, None)
         }
     }
 
@@ -772,6 +790,9 @@ impl ServerSupervisor for MockSupervisor {
         _status_tx: UnboundedSender<ServerStatus>,
         _loc: &'static Locale,
     ) -> EmbedSetup {
+        if self.embed_unavailable {
+            return unavailable_embed();
+        }
         let embedder = self.embedder.clone().unwrap_or_else(|| {
             Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim))
         });
