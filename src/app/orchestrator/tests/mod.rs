@@ -173,15 +173,15 @@ async fn enable_all_tools(
 /// The real chat engine from `MINDFORK_ENGINE_URL` (for end-to-end smokes against a live
 /// model). `None` — the variable isn't set (the test is skipped).
 fn live_backend() -> Option<Arc<dyn EngineBackend>> {
-    let url = std::env::var("MINDFORK_ENGINE_URL").ok()?;
-    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
+    let client = crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")?;
+    Some(Arc::new(client) as Arc<dyn EngineBackend>)
 }
 
 /// The real embedder from `MINDFORK_EMBED_URL` (for live smokes — bge-m3 etc.);
 /// `None` when unset → the live smoke falls back to the test `MockEmbedder`.
 fn live_embedder() -> Option<Arc<dyn Embedder>> {
-    let url = std::env::var("MINDFORK_EMBED_URL").ok()?;
-    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn Embedder>)
+    let client = crate::shared::api::live_client("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY")?;
+    Some(Arc::new(client) as Arc<dyn Embedder>)
 }
 
 /// The tuple of a spun-up orchestrator (like [`spawn_orch`]): the data directory,

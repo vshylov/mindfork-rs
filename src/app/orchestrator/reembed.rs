@@ -496,15 +496,15 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires two live embedding servers (MINDFORK_EMBED_URL, MINDFORK_EMBED_URL_ALT)"]
     async fn reindex_restores_retrieval_after_a_model_swap_live() {
-        let (Ok(url_a), Ok(url_b)) = (
-            std::env::var("MINDFORK_EMBED_URL"),
-            std::env::var("MINDFORK_EMBED_URL_ALT"),
+        let (Some(a), Some(b)) = (
+            crate::shared::api::live_client("MINDFORK_EMBED_URL", "MINDFORK_EMBED_KEY"),
+            crate::shared::api::live_client("MINDFORK_EMBED_URL_ALT", "MINDFORK_EMBED_KEY_ALT"),
         ) else {
             eprintln!("skip: MINDFORK_EMBED_URL / MINDFORK_EMBED_URL_ALT not set");
             return;
         };
-        let model_a: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_a));
-        let model_b: Arc<dyn Embedder> = Arc::new(crate::shared::api::OpenAiClient::new(url_b));
+        let model_a: Arc<dyn Embedder> = Arc::new(a);
+        let model_b: Arc<dyn Embedder> = Arc::new(b);
 
         let (_d, storage) = deps();
         let profile = Uuid::new_v4();
