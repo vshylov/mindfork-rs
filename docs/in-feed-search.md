@@ -92,7 +92,28 @@ close to mandatory, and "step through them" means stepping through hundreds.
 
 ---
 
-## 3. Forks for decision
+## 3. Forks — **decided by the user 2026-07-29**
+
+All adopted as recommended (F3, F5 and F6 were stated rather than asked, their
+recommendation being unambiguous):
+
+| | decision |
+|---|---|
+| **F1** trigger | **`Ctrl+F`** in the chat screen; the help entry gets split per screen |
+| **F2** what matches | **Everything drawn on screen** — counter equals the highlights |
+| **F3** query field | **In place of the input box**, so the feed does not rewrap |
+| **F4** next/prev | **The matched line**, re-derived every render |
+| **F5** keys | `Enter`/`↓` next, `Shift+Enter`/`↑` previous, `Esc` closes; the query is remembered per chat |
+| **F6** on close | `Esc` clears the highlight — a highlight with no visible search box would be unexplainable |
+
+The `/` wording in `docs/roadmap.md` and in stage 2's fork S5 is **factually
+wrong** (§1.1) and must be corrected as part of this work, not left standing.
+
+The full options and their trade-offs are kept below as the record of *why*.
+
+---
+
+## 3a. Forks for decision (the record)
 
 **F1 — the trigger key** (`/` is impossible, §1.1).
 (a) **`Ctrl+F`** — free in the chat screen, and what every application uses for
