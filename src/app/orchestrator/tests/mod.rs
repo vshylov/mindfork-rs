@@ -45,7 +45,23 @@ fn spawn_orch_cfg(
     tokio::task::JoinHandle<()>,
 ) {
     let dir = tempfile::tempdir().unwrap();
-    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, evt_rx, handle) = spawn_orch_at(dir.path(), backend, config);
+    (dir, cmd_tx, evt_rx, handle)
+}
+
+/// Like [`spawn_orch_cfg`], but on an **existing** data root — for two-phase
+/// tests that restart the app on the same data (what survived to disk, what a
+/// fresh bootstrap makes of it).
+fn spawn_orch_at(
+    root: &std::path::Path,
+    backend: Option<Arc<dyn EngineBackend>>,
+    config: AppConfig,
+) -> (
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
+    let storage = Arc::new(Storage::open(Paths::with_root(root)).unwrap());
     let (cmd_tx, cmd_rx) = unbounded_channel();
     let (evt_tx, evt_rx) = unbounded_channel();
     let deps = OrchestratorDeps {
@@ -57,7 +73,7 @@ fn spawn_orch_cfg(
         default_language: crate::shared::i18n::Lang::default(),
     };
     let handle = tokio::spawn(run(deps));
-    (dir, cmd_tx, evt_rx, handle)
+    (cmd_tx, evt_rx, handle)
 }
 
 /// Drains events until the first one matching the predicate (or the channel closes).
@@ -386,6 +402,7 @@ mod profiles;
 mod rag;
 mod reflection;
 mod request;
+mod search;
 mod self_consolidation;
 mod self_model;
 mod settings;

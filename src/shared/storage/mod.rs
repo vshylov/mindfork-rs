@@ -12,10 +12,6 @@ use uuid::Uuid;
 
 use crate::shared::paths::Paths;
 
-// Ahead of its consumer, like the module itself (see `cache/mod.rs`): this
-// re-export becomes the path `Storage` uses for its third member. Drop the
-// `allow` when it does.
-#[allow(unused_imports)]
 pub use cache::CacheDb;
 pub use db::Db;
 pub use json::JsonStore;
@@ -24,14 +20,20 @@ pub use json::JsonStore;
 pub struct Storage {
     json: JsonStore,
     db: Db,
+    cache: CacheDb,
 }
 
 impl Storage {
     /// Opens storage at the app's paths.
     pub fn open(paths: Paths) -> Result<Self> {
         let db = Db::open(&paths.data_db())?;
+        // The search index is opened alongside the real data, but it cannot
+        // block startup over its *contents*: `CacheDb::open` wipes an unusable
+        // file and starts empty (research §2). Only an I/O failure that also
+        // prevents creating a fresh one reaches here.
+        let cache = CacheDb::open(&paths.cache_db())?;
         let json = JsonStore::new(paths);
-        Ok(Self { json, db })
+        Ok(Self { json, db, cache })
     }
 
     /// JSON repository (config/profiles/chats).
@@ -42,6 +44,14 @@ impl Storage {
     /// SQLite repository (notes/RAG).
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// The disposable search cache (`cache.db`): a full-text index over chat
+    /// content, kept in step with the chat files by
+    /// [`app::orchestrator::search`](crate::app::orchestrator). Derived data —
+    /// see the [`cache`] module doc.
+    pub fn cache(&self) -> &CacheDb {
+        &self.cache
     }
 
     /// Soft-deletes a profile with a cascade to its chats. Notes/RAG are not

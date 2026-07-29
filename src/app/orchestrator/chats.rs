@@ -142,6 +142,9 @@ impl Orchestrator {
         }
         self.chats.retain(|c| c.id != id);
         self.saves.forget(id);
+        // A hidden chat never appears in the list, so it must not appear in
+        // content-search results either (see [`super::search`]).
+        self.forget_chat_index(id);
 
         // If the active one was deleted — pick another (or create a new one).
         if self.active_id == Some(id) {

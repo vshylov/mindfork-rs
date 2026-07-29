@@ -13,6 +13,34 @@ use crate::entities::profile::Profile;
 use crate::shared::config::AppConfig;
 use crate::shared::paths::Paths;
 
+/// A chat file as seen by a stat-only walk: its id and the cheap change signal
+/// the search index reconciles against (docs/research/chat-content-search.md §3).
+///
+/// `(mtime_ms, size)` is the standard cheap signal. A content hash would be
+/// exact, but it needs reading every byte, and the failure mode it guards
+/// against — a same-size edit within the mtime resolution — is not realistic
+/// for a JSON file the app itself rewrites wholesale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatFileInfo {
+    pub id: Uuid,
+    /// Last-modified time in milliseconds since the Unix epoch (0 when the
+    /// platform cannot report it — then the `size` half still catches edits).
+    pub mtime_ms: i64,
+    pub size: u64,
+}
+
+/// Last-modified time in milliseconds since the epoch. Unsupported/unavailable
+/// times, and times before the epoch, degrade to `0` rather than failing: this
+/// only feeds a "did it change?" comparison, and a constant simply makes the
+/// `size` half do the work.
+fn mtime_ms(meta: &fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// File-based JSON storage of config, profiles, and chats.
 pub struct JsonStore {
     paths: Paths,
@@ -108,6 +136,58 @@ impl JsonStore {
             }
         }
         Ok(chats)
+    }
+
+    /// A **stat-only** listing of the chat files: id + the change signal
+    /// `(mtime_ms, size)`. Nothing is parsed — the whole point is that
+    /// answering "did anything change since we indexed?" costs a directory
+    /// walk (~0.3 ms on the real corpus) instead of a 94 ms parse of every
+    /// chat. See docs/research/chat-content-search.md §3.
+    ///
+    /// Files that are not `*.json`, or whose stem is not a UUID, are skipped:
+    /// the chat id *is* the file name, so an unparseable name is not a chat.
+    /// A file whose metadata cannot be read is skipped too — the reconciliation
+    /// simply leaves that chat as it is.
+    pub fn chat_files(&self) -> Result<Vec<ChatFileInfo>> {
+        let dir = self.paths.chats_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(id) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            // `DirEntry::metadata` is cheaper than `fs::metadata` on Windows:
+            // it reuses what the directory scan already returned.
+            let Ok(meta) = entry.metadata() else { continue };
+            out.push(ChatFileInfo {
+                id,
+                mtime_ms: mtime_ms(&meta),
+                size: meta.len(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Metadata of one chat file (see [`JsonStore::chat_files`]) — for the
+    /// post-save index update, which knows the id already.
+    pub fn chat_file_info(&self, id: Uuid) -> Option<ChatFileInfo> {
+        let meta = fs::metadata(self.paths.chat_file(&id.to_string())).ok()?;
+        Some(ChatFileInfo {
+            id,
+            mtime_ms: mtime_ms(&meta),
+            size: meta.len(),
+        })
     }
 
     /// Marks a chat hidden. Returns `true` if the chat was found.
@@ -221,6 +301,48 @@ mod tests {
 
         assert!(s.hide_chat(chat.id).unwrap());
         assert!(s.load_chat(chat.id).unwrap().unwrap().is_hidden);
+    }
+
+    #[test]
+    fn chat_files_lists_ids_with_a_change_signal() {
+        let (d, s) = store();
+        let p = Profile::new("X", "s");
+        let a = Chat::from_profile(&p, "a");
+        let b = Chat::from_profile(&p, "b");
+        s.save_chat(&a).unwrap();
+        s.save_chat(&b).unwrap();
+        // Not a chat: a different extension, and a `.json` whose name is not a
+        // UUID (the chat id *is* the file name). The `.bak` written by
+        // `save_chat` is covered by the first of those.
+        // (Names chosen to avoid an i18n-bundle prefix — a literal like
+        // `notes.txt` reads as a bundle key to `all_bundle_key_references_in_code_exist`.)
+        std::fs::write(d.path().join("chats").join("scratch.txt"), "x").unwrap();
+        std::fs::write(d.path().join("chats").join("readme.json"), "{}").unwrap();
+
+        let mut files = s.chat_files().unwrap();
+        files.sort_by_key(|f| f.id);
+        let mut expected = vec![a.id, b.id];
+        expected.sort();
+        assert_eq!(files.iter().map(|f| f.id).collect::<Vec<_>>(), expected);
+        assert!(files.iter().all(|f| f.size > 0), "{files:?}");
+
+        // The signal actually changes when the file does — that is the whole
+        // point of it (a re-index is decided on this comparison alone).
+        let before = s.chat_file_info(a.id).unwrap();
+        let mut grown = a.clone();
+        grown.push_message(Message::user("новое сообщение делает файл длиннее"));
+        s.save_chat(&grown).unwrap();
+        let after = s.chat_file_info(a.id).unwrap();
+        assert_ne!(before, after);
+        assert!(after.size > before.size);
+    }
+
+    #[test]
+    fn chat_files_is_empty_without_a_chats_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = JsonStore::new(Paths::with_root(dir.path().join("nothing-here")));
+        assert!(s.chat_files().unwrap().is_empty());
+        assert_eq!(s.chat_file_info(Uuid::new_v4()), None);
     }
 
     #[test]

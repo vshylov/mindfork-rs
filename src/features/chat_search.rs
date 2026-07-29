@@ -12,10 +12,6 @@
 //! FSD note: `shared/storage` may not depend on `features`, so `CacheDb` takes
 //! an already-escaped query and the orchestrator (in `app`) calls this.
 
-// Ahead of its consumer: the orchestrator wiring that calls this lands with the
-// rest of stage 1. Remove this attribute once it does.
-#![allow(dead_code)]
-
 /// Shortest token the trigram tokenizer can match.
 ///
 /// The index is built with `tokenize='trigram'`, so a token of one or two

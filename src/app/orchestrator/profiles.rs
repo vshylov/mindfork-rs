@@ -116,6 +116,9 @@ impl Orchestrator {
         self.chats.retain(|c| c.profile_id != id);
         for cid in &removed {
             self.saves.forget(*cid);
+            // The cascade hid these chats — drop them from the content-search
+            // index too (same rule as `handle_delete`, see [`super::search`]).
+            self.forget_chat_index(*cid);
         }
         self.emit_profile_list();
         // Same as in `handle_create_profile`: refresh the settings screen's copy,

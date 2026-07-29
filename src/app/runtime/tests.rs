@@ -240,6 +240,91 @@ fn self_model_changed_refreshes_open_screen_only() {
     );
 }
 
+/// Renders a chat-list screen and returns the buffer dump.
+#[cfg(test)]
+fn list_dump(list: &mut crate::screens::chat_list::ChatListScreen) -> String {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| list.render(f)).unwrap();
+    format!("{:?}", term.backend().buffer())
+}
+
+#[cfg(test)]
+fn summary(title: &str) -> crate::entities::chat::ChatSummary {
+    crate::entities::chat::ChatSummary {
+        id: uuid::Uuid::new_v4(),
+        title: title.to_string(),
+        created_at: chrono::Utc::now(),
+        modified_at: chrono::Utc::now(),
+        message_count: 0,
+    }
+}
+
+#[test]
+fn chat_search_results_reach_an_open_list_and_are_ignored_when_it_is_closed() {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let chats = vec![summary("Альфа"), summary("Бета")];
+
+    // The list is open and in content mode: the results filter it.
+    let mut active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
+        chats.clone(),
+        None,
+        screen.palette(),
+        screen.loc(),
+    )));
+    if let ActiveScreen::ChatList(list) = &mut active {
+        // `Ctrl+F` also asks for a search — the other half of the round-trip.
+        let intent = list.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(intent, Some(ChatListIntent::SearchContent(String::new())));
+        dispatch_chat_list(intent.unwrap(), &cmd_tx, &mut screen, &mut active);
+    }
+    assert!(matches!(cmd_rx.try_recv(), Ok(AppCommand::SearchChats(q)) if q.is_empty()));
+
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::ChatSearchResults {
+            query: "нечто".into(),
+            chat_ids: Some(vec![]),
+        },
+    );
+    if let ActiveScreen::ChatList(list) = &mut active {
+        let dump = list_dump(list);
+        assert!(
+            !dump.contains("Альфа"),
+            "the list should be filtered: {dump}"
+        );
+    } else {
+        panic!("the list must stay open");
+    }
+
+    // With the list closed the event is dropped — and, crucially, leaves no
+    // residue: a list opened afterwards is unfiltered.
+    let mut active = ActiveScreen::Chat;
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::ChatSearchResults {
+            query: "нечто".into(),
+            chat_ids: Some(vec![]),
+        },
+    );
+    assert!(matches!(active, ActiveScreen::Chat), "no screen was opened");
+
+    let mut fresh = ChatListScreen::new(chats, None, screen.palette(), screen.loc());
+    let dump = list_dump(&mut fresh);
+    assert!(dump.contains("Альфа"), "{dump}");
+}
+
 /// The names reach the chat screen's feed even while another screen is on top
 /// (the event is applied to the chat unconditionally, like `ChatList`).
 #[test]

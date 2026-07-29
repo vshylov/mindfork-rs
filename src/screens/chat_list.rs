@@ -40,6 +40,11 @@ pub enum ChatListIntent {
     Rename { id: Uuid, title: String },
     /// Auto-title a chat via the model (the list stays open) (`Ctrl+R`).
     AutoRename(Uuid),
+    /// Run a full-text search over chat content with this raw query (content
+    /// mode, `Ctrl+F`; the list stays open). The result arrives as
+    /// `AppEvent::ChatSearchResults` → [`ChatListScreen::set_search_results`].
+    /// See docs/research/chat-content-search.md.
+    SearchContent(String),
 }
 
 /// Chat-list screen: widget state + render context.
@@ -132,7 +137,14 @@ impl ChatListScreen {
             ChatListAction::Delete(id) => Some(ChatListIntent::Delete(id)),
             ChatListAction::Rename { id, title } => Some(ChatListIntent::Rename { id, title }),
             ChatListAction::AutoRename(id) => Some(ChatListIntent::AutoRename(id)),
+            ChatListAction::SearchContent(query) => Some(ChatListIntent::SearchContent(query)),
         }
+    }
+
+    /// Applies a content-search result (the `AppEvent::ChatSearchResults`
+    /// event). `chat_ids: None` — not a searchable query, don't filter.
+    pub fn set_search_results(&mut self, query: String, chat_ids: Option<Vec<Uuid>>) {
+        self.state.set_search_results(query, chat_ids);
     }
 
     /// Inserts clipboard text into the rename field (if open).

@@ -33,21 +33,13 @@
 //! **already-escaped** FTS5 query, and `app` — which may use both — calls
 //! `features::chat_search::to_fts_query` and passes the result down.
 
-// Ahead of its consumer: nothing outside the tests calls into the cache yet —
-// `Storage` gains a third member and `app/orchestrator/search.rs` the sync task,
-// both in this same stage. In a binary crate `pub` does not make an item
-// reachable, so every item here reads as dead until then. **Remove this line
-// once the orchestrator wires the cache in** — it is scoped to the module
-// precisely so it stops covering for real dead code the moment it is dropped.
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
 /// Schema version of the disposable cache database (`PRAGMA user_version`). A
@@ -159,9 +151,63 @@ impl CacheDb {
         size: u64,
         messages: &[IndexedMessage],
     ) -> Result<()> {
+        self.index_chat_guarded(chat_id, None, mtime_ms, size, messages)
+            .map(|_| ())
+    }
+
+    /// [`index_chat`](Self::index_chat), but only if the chat's recorded file
+    /// state is still `expected` — i.e. **nobody has indexed it since the caller
+    /// looked**. Returns whether the write happened.
+    ///
+    /// This exists because the index has two writers with very different
+    /// freshness: the post-save hook, which always holds the current chat, and
+    /// the startup reconciliation, which reads a chat and may only get round to
+    /// writing it hundreds of milliseconds later. Without the guard the
+    /// reconciliation's older snapshot can land *after* a live save and wipe it
+    /// — a chat silently missing from search until the next launch, and exactly
+    /// the common case of "launch the app and immediately keep typing".
+    ///
+    /// The comparison is against the bookkeeping row, which is the index's own
+    /// record of what it holds — an exact token, unlike mtime, which two writes
+    /// in the same millisecond would tie on.
+    pub fn index_chat_if_unchanged(
+        &self,
+        chat_id: Uuid,
+        expected: Option<(i64, u64)>,
+        mtime_ms: i64,
+        size: u64,
+        messages: &[IndexedMessage],
+    ) -> Result<bool> {
+        self.index_chat_guarded(chat_id, Some(expected), mtime_ms, size, messages)
+    }
+
+    /// The shared body. `guard: None` writes unconditionally; `Some(expected)`
+    /// writes only when the recorded state still matches — checked **inside the
+    /// transaction**, so the check and the write cannot be separated.
+    fn index_chat_guarded(
+        &self,
+        chat_id: Uuid,
+        guard: Option<Option<(i64, u64)>>,
+        mtime_ms: i64,
+        size: u64,
+        messages: &[IndexedMessage],
+    ) -> Result<bool> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let chat = chat_id.to_string();
+
+        if let Some(expected) = guard {
+            let current: Option<(i64, u64)> = tx
+                .query_row(
+                    "SELECT mtime_ms, size FROM indexed_chats WHERE chat_id = ?1",
+                    params![chat],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u64)),
+                )
+                .optional()?;
+            if current != expected {
+                return Ok(false);
+            }
+        }
 
         // What is indexed for this chat right now: message_id → (rowid, hash).
         let existing: HashMap<String, (i64, i64)> = {
@@ -210,7 +256,7 @@ impl CacheDb {
             params![chat, mtime_ms, size as i64],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     /// Drops a chat from the index entirely — its file is gone, or the chat was
@@ -259,7 +305,11 @@ impl CacheDb {
         Ok(ids)
     }
 
-    /// Number of indexed messages (diagnostics and tests).
+    /// Number of indexed messages. Test-only for now — nothing in the app reads
+    /// it, and gating it (rather than allowing dead code) keeps the module
+    /// honest about what is actually wired. Lift the gate if a diagnostic ever
+    /// wants it; the precedent is `SaveQueue::is_dirty`.
+    #[cfg(test)]
     pub fn message_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))?;
@@ -536,6 +586,57 @@ mod tests {
         assert_eq!(db.search_chats("\"gamma\"").unwrap(), vec![chat]);
         assert_eq!(db.message_count().unwrap(), 2);
         assert_eq!(orphan_fts_rows(&db), 0);
+    }
+
+    #[test]
+    fn a_stale_writer_cannot_clobber_a_fresher_index() {
+        // The lost update this guard exists for, in the order it actually
+        // happens: the startup reconciliation reads a chat while it is still
+        // empty, the app then saves and indexes the real conversation, and the
+        // reconciliation only gets round to writing afterwards. Unguarded, its
+        // older snapshot wins and the chat is missing from search until the
+        // next launch.
+        let db = cache();
+        let chat = Uuid::new_v4();
+
+        // What the reconciliation saw when it read: nothing indexed yet.
+        let seen_by_reconcile = db.indexed_state().unwrap().get(&chat).copied();
+        assert_eq!(seen_by_reconcile, None);
+
+        // Meanwhile the live save indexes the real conversation.
+        db.index_chat(chat, 200, 2000, &[msg("настоящая переписка")])
+            .unwrap();
+
+        // The reconciliation now tries to write its stale, empty snapshot.
+        let wrote = db
+            .index_chat_if_unchanged(chat, seen_by_reconcile, 100, 500, &[])
+            .unwrap();
+        assert!(!wrote, "the stale write must be refused");
+        assert_eq!(db.message_count().unwrap(), 1, "the fresh index was wiped");
+        assert_eq!(db.search_chats("\"настоящая\"").unwrap(), vec![chat]);
+        assert_eq!(
+            db.indexed_state().unwrap().get(&chat),
+            Some(&(200, 2000)),
+            "and the bookkeeping still describes the fresh write"
+        );
+    }
+
+    #[test]
+    fn a_guarded_write_goes_through_when_nothing_moved() {
+        // The other half: the guard must not make the reconciliation a no-op.
+        let db = cache();
+        let chat = Uuid::new_v4();
+        db.index_chat(chat, 1, 10, &[msg("старое содержимое")])
+            .unwrap();
+
+        let seen = db.indexed_state().unwrap().get(&chat).copied();
+        let wrote = db
+            .index_chat_if_unchanged(chat, seen, 2, 20, &[msg("новое содержимое")])
+            .unwrap();
+        assert!(wrote);
+        assert_eq!(db.search_chats("\"новое\"").unwrap(), vec![chat]);
+        assert!(db.search_chats("\"старое\"").unwrap().is_empty());
+        assert_eq!(db.indexed_state().unwrap().get(&chat), Some(&(2, 20)));
     }
 
     #[test]

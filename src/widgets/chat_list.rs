@@ -50,6 +50,34 @@ pub enum ChatListAction {
     Rename { id: Uuid, title: String },
     /// Auto-title: the model reads the conversation and comes up with a title.
     AutoRename(Uuid),
+    /// Run a full-text search over chat **content** with this raw query (content
+    /// mode, `Ctrl+F`). The widget stays dumb: it never builds an FTS5 query —
+    /// that rule lives in one place, the orchestrator (see
+    /// docs/research/chat-content-search.md §7a). Results come back via
+    /// [`ChatListState::set_search_results`].
+    SearchContent(String),
+}
+
+/// What the search line searches. Title mode is the historical behaviour (a
+/// substring of the title, filtered locally); content mode asks the
+/// orchestrator for the chats whose **messages** match. Toggled with `Ctrl+F`.
+/// See docs/research/chat-content-search.md §7 (fork F4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchScope {
+    /// Substring of the chat title (the previous, and default, behaviour).
+    #[default]
+    Title,
+    /// Full-text search over message text.
+    Content,
+}
+
+impl SearchScope {
+    fn toggled(self) -> Self {
+        match self {
+            SearchScope::Title => SearchScope::Content,
+            SearchScope::Content => SearchScope::Title,
+        }
+    }
 }
 
 /// The overlay's input mode.
@@ -75,6 +103,19 @@ pub struct ChatListState {
     all: Vec<ChatSummary>,
     query: String,
     sort: SortMode,
+    /// What the query searches: the title (locally) or message content (via the
+    /// orchestrator). Toggled with `Ctrl+F`.
+    scope: SearchScope,
+    /// The chats the last content search matched — `None` means "no result yet,
+    /// show everything" (also what an unsearchable query yields, so content mode
+    /// with a too-short query behaves exactly like an empty one). Deliberately
+    /// kept across keystrokes: replacing it only when a new result arrives is
+    /// what stops the full list flashing between them.
+    results: Option<Vec<Uuid>>,
+    /// The query those `results` answer. Unused by stage 1's filter (a stale
+    /// result is still applied — showing the previous answer beats showing
+    /// everything), but stage 2 needs it to highlight matches.
+    results_query: String,
     /// Selection index within the currently filtered list.
     selected: usize,
     mode: Mode,
@@ -93,6 +134,9 @@ impl ChatListState {
             all: chats,
             query: String::new(),
             sort: SortMode::default(),
+            scope: SearchScope::default(),
+            results: None,
+            results_query: String::new(),
             selected: 0,
             mode: Mode::Search,
             error: None,
@@ -124,8 +168,49 @@ impl ChatListState {
     }
 
     /// The current filtered/sorted list.
+    ///
+    /// In content mode the title substring filter is deliberately **not**
+    /// applied: the query is answered by the index, and re-applying it to the
+    /// title would hide the very chats the search just found. The user's sort
+    /// still orders the result — stage 1 *filters* rather than ranks, because
+    /// trigram's `bm25` is weak (docs/research/chat-content-search.md §7a).
     fn visible(&self) -> Vec<ChatSummary> {
-        filter_and_sort(&self.all, &self.query, self.sort)
+        match self.scope {
+            SearchScope::Title => filter_and_sort(&self.all, &self.query, self.sort),
+            SearchScope::Content => {
+                let mut out = filter_and_sort(&self.all, "", self.sort);
+                if let Some(ids) = &self.results {
+                    let matched: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+                    out.retain(|c| matched.contains(&c.id));
+                }
+                out
+            }
+        }
+    }
+
+    /// Applies a content-search result (`AppEvent::ChatSearchResults`).
+    /// `chat_ids: None` means "not a searchable query" — show everything, like
+    /// an empty query. A result for an older query is still applied: the
+    /// previous answer is a better thing to show than the whole list.
+    pub fn set_search_results(&mut self, query: String, chat_ids: Option<Vec<Uuid>>) {
+        self.results_query = query;
+        self.results = chat_ids;
+        self.clamp_selection();
+    }
+
+    /// Emits a content search for the current query — when the query changed in
+    /// content mode, or on switching into it.
+    fn search_action(&self) -> ChatListAction {
+        ChatListAction::SearchContent(self.query.clone())
+    }
+
+    /// What an edit to the query means: nothing in title mode (the filter is
+    /// local), a fresh content search otherwise.
+    fn query_changed(&self) -> ChatListAction {
+        match self.scope {
+            SearchScope::Title => ChatListAction::None,
+            SearchScope::Content => self.search_action(),
+        }
     }
 
     /// The selected chat's id (if the list isn't empty).
@@ -190,6 +275,18 @@ impl ChatListState {
                     Some(id) => ChatListAction::AutoRename(id),
                     None => ChatListAction::None,
                 },
+                // Toggle title ↔ content search. Switching *into* content mode
+                // asks for results right away, so the mode takes effect on the
+                // text already typed; switching back needs no round-trip (the
+                // title filter is local).
+                'f' => {
+                    self.scope = self.scope.toggled();
+                    self.selected = 0;
+                    match self.scope {
+                        SearchScope::Content => self.search_action(),
+                        SearchScope::Title => ChatListAction::None,
+                    }
+                }
                 _ => ChatListAction::None,
             };
         }
@@ -262,15 +359,17 @@ impl ChatListState {
                 Some(id) => ChatListAction::Delete(id),
                 None => ChatListAction::None,
             },
+            // Editing the query: in title mode the filter is local (no action),
+            // in content mode every change asks the index for a fresh answer.
             KeyCode::Backspace => {
                 self.query.pop();
                 self.selected = 0;
-                ChatListAction::None
+                self.query_changed()
             }
             KeyCode::Char(c) => {
                 self.query.push(c);
                 self.selected = 0;
-                ChatListAction::None
+                self.query_changed()
             }
             _ => ChatListAction::None,
         }
@@ -485,9 +584,18 @@ impl ChatListState {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // The field and the column for the "/" keycap on the right.
-        let [field, cap] =
-            Layout::horizontal([Constraint::Min(1), Constraint::Length(3)]).areas(inner);
+        // The field, the current search mode, and the column for the "/" keycap
+        // on the right. The mode is shown because it changes what typing does
+        // (`Ctrl+F`, see [`SearchScope`]); it is accented in content mode — the
+        // departure from the historical behaviour — and muted in title mode.
+        let mode = mode_label(self.scope, loc);
+        let mode_w = display_width_str(mode) as u16 + 1;
+        let [field, mode_area, cap] = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(mode_w),
+            Constraint::Length(3),
+        ])
+        .areas(inner);
 
         let mut spans = vec![
             Span::styled(format!("{} ", glyphs.search), palette.muted_style()),
@@ -496,11 +604,22 @@ impl ChatListState {
         ];
         if self.query.is_empty() {
             spans.push(Span::styled(
-                loc.t("ui.chatlist.search_placeholder"),
+                match self.scope {
+                    SearchScope::Title => loc.t("ui.chatlist.search_placeholder"),
+                    SearchScope::Content => loc.t("ui.chatlist.search_placeholder_content"),
+                },
                 palette.muted_style(),
             ));
         }
+        let mode_style = match self.scope {
+            SearchScope::Title => palette.muted_style(),
+            SearchScope::Content => Style::new().fg(palette.accent),
+        };
         frame.render_widget(Paragraph::new(Line::from(spans)), field);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(mode, mode_style))),
+            mode_area,
+        );
         frame.render_widget(Paragraph::new(Line::from(palette.keycap("/"))), cap);
     }
 
@@ -587,9 +706,16 @@ impl ChatListState {
         // top-to-bottom). `Tab` carries the current sort mode. The grid is laid out by
         // the shared helper `Palette::hotkey_grid` (the same one the chat's status bar uses).
         let sort_desc = loc.tf("ui.chatlist.sort", &[("sort", sort_label(self.sort, loc))]);
-        let items: [(&str, &str, bool); 11] = [
+        // `Ctrl+F` carries the current search mode, the same way `Tab` carries
+        // the sort mode.
+        let search_desc = loc.tf(
+            "ui.chatlist.search_mode",
+            &[("mode", mode_label(self.scope, loc))],
+        );
+        let items: [(&str, &str, bool); 12] = [
             ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
             ("Enter", loc.t("ui.chatlist.hk.open"), false),
+            ("Ctrl+F", search_desc.as_str(), false),
             ("F2", loc.t("ui.chatlist.hk.rename"), false),
             ("Ctrl+R", loc.t("ui.chatlist.hk.autoname"), false),
             ("Ctrl+N", loc.t("ui.chatlist.hk.new"), false),
@@ -607,6 +733,14 @@ impl ChatListState {
 /// The visible width of a string in terminal columns.
 fn display_width_str(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
+}
+
+/// A localized search-mode label (the search line and the `Ctrl+F` hint).
+fn mode_label(scope: SearchScope, loc: &'static Locale) -> &'static str {
+    match scope {
+        SearchScope::Title => loc.t("ui.chatlist.mode.title"),
+        SearchScope::Content => loc.t("ui.chatlist.mode.content"),
+    }
 }
 
 /// A localized sort-mode label for the indicator (`Tab` in the chat list).
@@ -685,6 +819,135 @@ mod tests {
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Switch(beta_id)
+        );
+    }
+
+    #[test]
+    fn ctrl_f_toggles_search_mode_and_asks_for_content_results() {
+        let mut s = ChatListState::new(vec![chat("Альфа")], None);
+        for c in "тек".chars() {
+            assert_eq!(s.on_key(key(KeyCode::Char(c))), ChatListAction::None);
+        }
+        assert_eq!(s.scope, SearchScope::Title);
+
+        // Switching into content mode searches the text already typed, rather
+        // than waiting for the next keystroke.
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('f'))),
+            ChatListAction::SearchContent("тек".into())
+        );
+        assert_eq!(s.scope, SearchScope::Content);
+        // Also under a Cyrillic layout (physical F = Ctrl+а).
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('а'))), ChatListAction::None);
+        assert_eq!(s.scope, SearchScope::Title, "and back again");
+    }
+
+    #[test]
+    fn editing_the_query_searches_in_content_mode_only() {
+        let mut s = ChatListState::new(vec![chat("Альфа")], None);
+        // Title mode: filtering is local, so no round-trip.
+        assert_eq!(s.on_key(key(KeyCode::Char('a'))), ChatListAction::None);
+        assert_eq!(s.on_key(key(KeyCode::Backspace)), ChatListAction::None);
+
+        s.on_key(ctrl(KeyCode::Char('f')));
+        assert_eq!(
+            s.on_key(key(KeyCode::Char('x'))),
+            ChatListAction::SearchContent("x".into())
+        );
+        assert_eq!(
+            s.on_key(key(KeyCode::Char('y'))),
+            ChatListAction::SearchContent("xy".into())
+        );
+        assert_eq!(
+            s.on_key(key(KeyCode::Backspace)),
+            ChatListAction::SearchContent("x".into())
+        );
+    }
+
+    #[test]
+    fn content_results_filter_the_list_and_ignore_the_title() {
+        // The point of content mode: a chat whose *title* does not contain the
+        // query still shows up, because its messages matched.
+        let chats = vec![chat("Альфа"), chat("Бета"), chat("Гамма")];
+        let (alpha, gamma) = (chats[0].id, chats[2].id);
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(ctrl(KeyCode::Char('f')));
+
+        // Nothing back yet — everything is shown, exactly like an empty query.
+        for c in "нечто".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(s.visible().len(), 3, "no result yet — show everything");
+
+        s.set_search_results("нечто".into(), Some(vec![alpha, gamma]));
+        let visible: Vec<Uuid> = s.visible().iter().map(|c| c.id).collect();
+        assert_eq!(visible.len(), 2);
+        assert!(visible.contains(&alpha) && visible.contains(&gamma));
+
+        // An unsearchable query (too short for trigram) filters nothing.
+        s.set_search_results("не".into(), None);
+        assert_eq!(s.visible().len(), 3);
+
+        // An empty result is an empty list — not "show everything".
+        s.set_search_results("нечто".into(), Some(vec![]));
+        assert!(s.visible().is_empty());
+        assert_eq!(s.selected_id(), None);
+    }
+
+    #[test]
+    fn stale_results_are_still_applied_rather_than_flashing_the_full_list() {
+        // Results arrive a keystroke or two behind what is typed. Showing the
+        // previous answer beats showing every chat between keystrokes.
+        let chats = vec![chat("Альфа"), chat("Бета")];
+        let alpha = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(ctrl(KeyCode::Char('f')));
+        for c in "текст".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+
+        s.set_search_results("тек".into(), Some(vec![alpha]));
+        assert_eq!(s.visible().len(), 1, "an older answer is still applied");
+        assert_eq!(s.selected_id(), Some(alpha));
+    }
+
+    #[test]
+    fn title_mode_is_unaffected_by_content_results() {
+        // Everything above must leave the historical behaviour alone.
+        let chats = vec![chat("Альфа"), chat("Бета")];
+        let beta = chats[1].id;
+        let mut s = ChatListState::new(chats, None);
+        // A result that arrived while content mode was on…
+        s.on_key(ctrl(KeyCode::Char('f')));
+        s.set_search_results("q".into(), Some(vec![]));
+        // …must not survive the switch back to title search.
+        s.on_key(ctrl(KeyCode::Char('f')));
+        assert_eq!(s.visible().len(), 2);
+        for c in "Бет".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(s.selected_id(), Some(beta));
+    }
+
+    #[test]
+    fn search_mode_is_visible_in_the_search_line() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render = |state: &mut ChatListState| {
+            let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default(), ru()))
+                .unwrap();
+            format!("{:?}", term.backend().buffer())
+        };
+
+        let mut s = ChatListState::new(vec![chat("Альфа")], None);
+        let dump = render(&mut s);
+        assert!(dump.contains("названия"), "{dump}");
+        s.on_key(ctrl(KeyCode::Char('f')));
+        let dump = render(&mut s);
+        assert!(
+            dump.contains("содержимое"),
+            "the mode must be visible — it changes what typing does: {dump}"
         );
     }
 

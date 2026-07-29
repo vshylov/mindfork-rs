@@ -56,6 +56,13 @@ pub enum AppCommand {
     CopyChat(Uuid),
     /// Soft-delete a chat.
     DeleteChat(Uuid),
+    /// Full-text search over chat **content** (the chat list's content mode,
+    /// `Ctrl+F`). The argument is the **raw** user query: escaping it into a
+    /// valid FTS5 query is the orchestrator's job, so that rule lives in one
+    /// place (`features::chat_search::to_fts_query`; FSD — see
+    /// docs/research/chat-content-search.md §4, §7a). The result is a
+    /// [`AppEvent::ChatSearchResults`] event.
+    SearchChats(String),
     /// Create a new profile (the UI section is M8; the command is needed for
     /// operations/tests).
     CreateProfile {
@@ -153,6 +160,18 @@ pub enum AppEvent {
     /// A chat's title changed (manual/auto rename). UI updates the active chat's
     /// feed header without a rebuild (`ChatList` updates the list).
     ChatRenamed { id: Uuid, title: String },
+    /// The result of a content search (a reply to [`AppCommand::SearchChats`]):
+    /// the chats having at least one matching message. `query` is echoed back so
+    /// a late reply can be told from the current one.
+    ///
+    /// `chat_ids: None` means **"not a searchable query — do not filter"**
+    /// (nothing survived trigram's 3-character floor, or the query failed).
+    /// Deliberately an `Option` rather than "all the ids": the event must never
+    /// claim that every chat matched.
+    ChatSearchResults {
+        query: String,
+        chat_ids: Option<Vec<Uuid>>,
+    },
     /// An error from a chat-list operation (auto-title/delete/clone). Shown in
     /// the list overlay's dedicated status area (not the chat feed), if it's open.
     ChatListError(String),
