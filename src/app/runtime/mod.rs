@@ -38,6 +38,7 @@ use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
+use crate::widgets::status_bar::EscTarget;
 
 /// The screen open on top of the chat. `ChatScreen` always exists as the base (the
 /// feed, generation, the input box); the chat list (`Esc`) or settings (`Ctrl+P`) can
@@ -131,6 +132,21 @@ struct SearchReturn {
     /// deleting an exchange, a repeat jump) is not leaving it, so it keeps the
     /// way back.
     chat: Uuid,
+}
+
+/// Where `Esc` currently goes, for the status bar's hint — **derived** from the
+/// back-stack, never mirrored into a second flag.
+///
+/// Setting a flag at each place the stash changes would mean writing the same
+/// rule twice (and the clearing three times, counting the `ChatActivated`
+/// funnel), which is exactly how a hint drifts away from the key it describes.
+/// Deriving it in the draw path instead makes "the bar says where `Esc` goes"
+/// true of every frame by construction.
+fn esc_target(back: &Option<SearchReturn>) -> EscTarget {
+    match back {
+        Some(_) => EscTarget::SearchResults,
+        None => EscTarget::ChatList,
+    }
 }
 
 /// The input polling period (the repaint tick).
@@ -393,6 +409,11 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
+            // The status bar's `Esc` hint, derived from the back-stack for this
+            // frame (see `esc_target`). The stash only ever changes while
+            // handling an event or a keypress, i.e. in an iteration that is
+            // already `dirty`, so the hint is never a frame behind.
+            screen.set_esc_target(esc_target(&back));
             // The frame is wrapped in synchronized output (DEC private mode 2026):
             // `?2026h` before drawing, `?2026l` after — the terminal buffers everything
             // in between and applies the frame ATOMICALLY. Without this, the hardware

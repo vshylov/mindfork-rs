@@ -431,6 +431,7 @@
   "ui.settings.group.embed_input": "Разметка ввода",
   "ui.status.hotkey.help": "справка",
   "ui.status.hotkey.chats": "чаты",
+  "ui.status.hotkey.results": "к поиску",
   "ui.status.hotkey.new": "новый",
   "ui.status.hotkey.settings": "настройки",
   "ui.status.hotkey.quit": "выход",

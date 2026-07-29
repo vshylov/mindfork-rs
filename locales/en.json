@@ -430,6 +430,7 @@
   "ui.settings.group.embed_input": "Input marking",
   "ui.status.hotkey.help": "help",
   "ui.status.hotkey.chats": "chats",
+  "ui.status.hotkey.results": "to search",
   "ui.status.hotkey.new": "new",
   "ui.status.hotkey.settings": "settings",
   "ui.status.hotkey.quit": "quit",

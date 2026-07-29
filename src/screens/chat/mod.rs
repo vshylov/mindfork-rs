@@ -38,7 +38,7 @@ use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
-use crate::widgets::status_bar;
+use crate::widgets::status_bar::{self, EscTarget};
 
 /// Feed scroll height per PageUp/PageDown press (rows).
 const PAGE_SCROLL: usize = 8;
@@ -392,6 +392,10 @@ pub struct ChatScreen {
     /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
     /// status bar.
     speaking: bool,
+    /// Where `Esc` takes the user from here — decides the status bar's `Esc`
+    /// hint. Set by `app/runtime`, which owns the back-stack; the screen only
+    /// renders the label (FSD: `screens` may not depend on `app`).
+    esc_target: EscTarget,
     /// The background RAG-indexing indicator (`/rag add`); `None` — no
     /// indexing in progress.
     rag: Option<RagBanner>,
@@ -458,6 +462,7 @@ impl ChatScreen {
             consolidating: false,
             self_consolidating: false,
             speaking: false,
+            esc_target: EscTarget::default(),
             rag: None,
             attachments: Vec::new(),
             impersonation: None,
@@ -563,6 +568,14 @@ impl ChatScreen {
     /// Sets/clears the active-speech flag (`/tts`) — a status-bar chip.
     pub fn set_speaking(&mut self, active: bool) {
         self.speaking = active;
+    }
+
+    /// Tells the screen where `Esc` currently goes, so the status bar's hint
+    /// says so. `app/runtime` derives this from its back-stack on every frame
+    /// (see `esc_target` there) rather than mirroring it at each place the
+    /// stack changes — one source, so the hint cannot drift from the key.
+    pub fn set_esc_target(&mut self, target: EscTarget) {
+        self.esc_target = target;
     }
 
     /// A label of active background tasks for the status bar (`None` — nothing

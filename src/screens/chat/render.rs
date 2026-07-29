@@ -49,6 +49,7 @@ impl ChatScreen {
             background,
             speaking: self.speaking,
             attachments,
+            esc_target: self.esc_target,
         }
     }
 

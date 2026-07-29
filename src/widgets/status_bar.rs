@@ -13,15 +13,51 @@ use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
+/// The one hotkey whose description is not fixed: `Esc` means "go back", and
+/// where back goes depends on how the chat was reached (see [`EscTarget`]).
+/// Named so the substitution in [`lines`] isn't a bare string match.
+const ESC_KEY: &str = "Esc";
+
 /// Keys of the status bar's fixed hotkeys (after the mouse toggle `Ctrl+W`, whose
 /// description depends on the mode). "Key" + a description key (localized in [`lines`]).
+/// The `Esc` entry carries its **default** description; the live one comes from
+/// [`StatusModel::esc_target`].
 const HOTKEYS: [(&str, &str); 5] = [
     ("F1", "ui.status.hotkey.help"),
-    ("Esc", "ui.status.hotkey.chats"),
+    (ESC_KEY, "ui.status.hotkey.chats"),
     ("Ctrl+N", "ui.status.hotkey.new"),
     ("Ctrl+P", "ui.status.hotkey.settings"),
     ("Ctrl+Q", "ui.status.hotkey.quit"),
 ];
+
+/// Where `Esc` takes the user from the chat. The status bar is the only place
+/// that answers this on screen, so the hint has to move with the key: a chat
+/// opened from the message-search results goes **back to them** first, and a bar
+/// still saying "chats" would be the old answer in exactly the flow where it
+/// surprised someone.
+///
+/// The chat screen is told which one applies and renders the label; it learns
+/// nothing about searching, and the back-stack itself lives in `app/runtime`
+/// (FSD: `screens` may not depend on `app`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EscTarget {
+    /// The chat list — the ordinary case.
+    #[default]
+    ChatList,
+    /// The results the chat was opened from.
+    SearchResults,
+}
+
+impl EscTarget {
+    /// The bundle key of the `Esc` description. `ChatList` deliberately returns
+    /// the same key [`HOTKEYS`] carries, so the const stays honest as the default.
+    fn hint_key(self) -> &'static str {
+        match self {
+            EscTarget::ChatList => "ui.status.hotkey.chats",
+            EscTarget::SearchResults => "ui.status.hotkey.results",
+        }
+    }
+}
 
 /// Gap between hotkey columns and between the status pill and the hotkey grid.
 const GAP: usize = 3;
@@ -50,6 +86,8 @@ pub struct StatusModel<'a> {
     /// count and standing token cost; `None` — nothing attached. See
     /// docs/file-attachments.md.
     pub attachments: Option<&'a str>,
+    /// Where `Esc` goes from here — it decides the `Esc` hint's wording.
+    pub esc_target: EscTarget,
 }
 
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
@@ -233,7 +271,16 @@ fn lines(
         loc.t("ui.status.mouse.select")
     };
     let mut hotkeys: Vec<(&str, &str)> = vec![("Ctrl+W", mouse_desc)];
-    hotkeys.extend(HOTKEYS.iter().map(|(key, k)| (*key, loc.t(k))));
+    hotkeys.extend(HOTKEYS.iter().map(|(key, default)| {
+        // `Esc` is the one hint whose meaning moves with the state; the rest are
+        // fixed. Keeping it in the const preserves one ordered list.
+        let desc_key = if *key == ESC_KEY {
+            model.esc_target.hint_key()
+        } else {
+            *default
+        };
+        (*key, loc.t(desc_key))
+    }));
     let n = hotkeys.len();
     // In "scroll" mode, highlight the mouse toggle's description (index 0) with the
     // `accent` color — the same one that highlights markdown headings in the feed.
@@ -471,6 +518,7 @@ mod tests {
             background: None,
             speaking: false,
             attachments: None,
+            esc_target: EscTarget::default(),
         }
     }
 
@@ -576,6 +624,7 @@ mod tests {
                 background: Some("рефлексия"),
                 speaking: false,
                 attachments: None,
+                esc_target: EscTarget::default(),
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -680,6 +729,7 @@ mod tests {
                 background: None,
                 speaking: false,
                 attachments: None,
+                esc_target: EscTarget::default(),
             };
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -832,8 +882,38 @@ mod tests {
             background: Some("рефлексия"),
             speaking: true,
             attachments: Some("файлы: 2 (~3.1k)"),
+            esc_target: EscTarget::SearchResults,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();
+    }
+
+    /// `Esc` means "go back", and the bar is the only place on screen that says
+    /// where — so the hint has to follow the key rather than always claiming the
+    /// chat list.
+    #[test]
+    fn esc_hint_follows_where_back_goes() {
+        let statuses = ready();
+        let chats = ru().t("ui.status.hotkey.chats");
+        let results = ru().t("ui.status.hotkey.results");
+        assert_ne!(chats, results, "the two labels must be distinguishable");
+
+        let text = |target| {
+            let mut m = model(&statuses, false, 0, None, false, false);
+            m.esc_target = target;
+            lines(200, &m, &Palette::default(), ru())
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        };
+
+        let ordinary = text(EscTarget::ChatList);
+        assert!(ordinary.contains(chats), "{ordinary}");
+        assert!(!ordinary.contains(results), "{ordinary}");
+
+        let from_results = text(EscTarget::SearchResults);
+        assert!(from_results.contains(results), "{from_results}");
+        assert!(!from_results.contains(chats), "{from_results}");
     }
 }

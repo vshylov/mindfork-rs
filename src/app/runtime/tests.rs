@@ -940,3 +940,54 @@ fn re_activating_the_same_chat_keeps_the_way_back() {
     }
     assert!(back.is_some(), "a feed rebuild is not leaving the chat");
 }
+
+/// The status bar is the only on-screen answer to "where does `Esc` go", and
+/// this is the flow where getting it wrong surprised someone. The hint is
+/// **derived** from the back-stack every frame, so it cannot drift from the key:
+/// stashed → the results label, cleared → the chats label.
+#[test]
+fn the_status_bar_esc_hint_follows_the_stashed_results() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let chats =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("ui.status.hotkey.chats");
+    let results =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("ui.status.hotkey.results");
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+
+    // What the loop does before every frame.
+    let bar = |screen: &mut ChatScreen, back: &Option<SearchReturn>| {
+        screen.set_esc_target(esc_target(back));
+        let mut term = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        term.draw(|f| screen.render(f)).unwrap();
+        format!("{:?}", term.backend().buffer())
+    };
+
+    jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    let dump = bar(&mut screen, &back);
+    assert!(dump.contains(results), "the way back must be advertised");
+    assert!(!dump.contains(chats), "{dump}");
+
+    // Leaving for another chat clears the stash — and the hint follows.
+    let other = uuid::Uuid::new_v4();
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(other),
+    );
+    let dump = bar(&mut screen, &back);
+    assert!(dump.contains(chats), "{dump}");
+    assert!(
+        !dump.contains(results),
+        "a stale hint would point at results that are gone"
+    );
+}
