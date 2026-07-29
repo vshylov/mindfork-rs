@@ -78,6 +78,21 @@ pub struct Snippet {
     pub matches: Vec<Range<usize>>,
 }
 
+/// A "open this chat with the feed on this message" request.
+///
+/// One value rather than two parallel event fields because the halves are one
+/// thought: the query's matches are highlighted **inside the focused message
+/// only** (docs/history/chat-search-stage2.md §4a S3(b)), so a query with no
+/// target has nothing to mean, and a jump carries at most one of these.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedFocus {
+    /// The domain message to put the view on.
+    pub message: Uuid,
+    /// The raw search query the jump came from; its matches are highlighted
+    /// inside that message. Empty when there is nothing to highlight.
+    pub query: String,
+}
+
 /// One matching message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
@@ -153,6 +168,45 @@ pub fn build_snippet(text: &str, query: &str, budget_chars: usize) -> Snippet {
         out.push('…');
     }
     Snippet { text: out, matches }
+}
+
+/// Every place `query` matches inside `haystack`, as **byte** ranges — ready to
+/// slice, or to split a rendered line's spans on (the feed's post-render
+/// highlight, fork **S3(b)**).
+///
+/// Shares its matcher with [`build_snippet`] — the same tokenization
+/// (whitespace-separated, tokens under [`MIN_TOKEN_CHARS`] dropped), the same
+/// case folding and the same overlap merging, all of it in [`find_matches`] —
+/// so the results list and the feed cannot drift apart on what counts as a
+/// match. `build_snippet` cuts its window in **characters** and therefore keeps
+/// using that core directly; this is its byte-range face.
+///
+/// Ranges come out sorted, non-overlapping, and always on character boundaries
+/// — a byte/char mix-up here would panic on the first Cyrillic slice.
+pub fn match_ranges(haystack: &str, query: &str) -> Vec<Range<usize>> {
+    let chars: Vec<char> = haystack.chars().collect();
+    let folded: Vec<char> = chars.iter().map(|c| fold_char(*c)).collect();
+    let hits = find_matches(&folded, &query_tokens(query));
+    if hits.is_empty() {
+        return Vec::new();
+    }
+    let byte_at = byte_offsets(&chars);
+    hits.iter()
+        .map(|m| byte_at[m.start]..byte_at[m.end])
+        .collect()
+}
+
+/// The byte offset of every character, plus the total length — the char→byte
+/// map [`match_ranges`] converts through.
+fn byte_offsets(chars: &[char]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(chars.len() + 1);
+    let mut at = 0;
+    for c in chars {
+        out.push(at);
+        at += c.len_utf8();
+    }
+    out.push(at);
+    out
 }
 
 /// The query's searchable tokens, case-folded — the same set [`to_fts_query`]
@@ -467,5 +521,93 @@ mod tests {
     fn snippet_of_a_zero_budget_is_empty_rather_than_a_panic() {
         assert_eq!(build_snippet("текст", "текст", 0), Snippet::default());
         assert_eq!(build_snippet("", "текст", 50), Snippet::default());
+    }
+
+    // ---- match_ranges (the feed's post-render highlight, fork S3(b)) ----
+
+    /// The pieces `match_ranges` points at. Slicing is the assertion: a range on
+    /// a non-character boundary panics here.
+    fn matched<'a>(haystack: &'a str, query: &str) -> Vec<&'a str> {
+        match_ranges(haystack, query)
+            .into_iter()
+            .map(|r| &haystack[r])
+            .collect()
+    }
+
+    /// The reason `match_ranges` exists rather than a second matcher: the list
+    /// and the feed must agree on what counts as a match. With a budget larger
+    /// than the text the snippet is the text itself, so their ranges are
+    /// directly comparable.
+    #[test]
+    fn match_ranges_agrees_with_build_snippet() {
+        for (text, query) in [
+            ("alpha beta alpha gamma", "alpha"),
+            ("Тестовое Сообщение здесь", "сообщение"),
+            ("alpha beta gamma", "alpha gamma"),
+            ("совершенно другой текст", "нечто"),
+            ("overlapping tokens: reference", "refer erence"),
+        ] {
+            let s = build_snippet(text, query, 10_000);
+            assert_eq!(s.text, text, "precondition: nothing was cut ({query:?})");
+            assert_eq!(
+                match_ranges(text, query),
+                s.matches,
+                "the feed and the results list must find the same matches in \
+                 {text:?} for {query:?}"
+            );
+        }
+    }
+
+    /// The trigram floor is counted in **characters**: a byte-length floor would
+    /// keep the 2-character (4-byte) Cyrillic token and highlight noise the
+    /// index could never have matched.
+    #[test]
+    fn match_ranges_drops_tokens_below_the_character_floor() {
+        assert_eq!(matched("мир и мы", "мир"), vec!["мир"]);
+        assert!(match_ranges("мир и мы", "мы").is_empty());
+        // A short token must not zero out the rest of the query either.
+        assert_eq!(matched("a memory b", "a memory b"), vec!["memory"]);
+    }
+
+    #[test]
+    fn match_ranges_is_case_insensitive_and_matches_substrings() {
+        assert_eq!(matched("mixed CASE here", "case"), vec!["CASE"]);
+        assert_eq!(matched("Тестовое", "ЕСТОВ"), vec!["естов"]);
+    }
+
+    /// The trap the whole design rests on: ranges are BYTE offsets while
+    /// matching runs over CHARACTERS. Cyrillic is two bytes per character, so a
+    /// mix-up slices mid-character and panics.
+    #[test]
+    fn match_ranges_are_valid_byte_boundaries_for_cyrillic() {
+        let text = "Начало, затем СЛОВО, и продолжение — СЛОВО снова";
+        assert_eq!(matched(text, "слово"), vec!["СЛОВО", "СЛОВО"]);
+        for r in match_ranges(text, "слово") {
+            assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+        }
+    }
+
+    /// Sorted and non-overlapping, so a consumer can walk them once: two tokens
+    /// matching the same run must yield one range, not nested ones.
+    #[test]
+    fn match_ranges_are_sorted_and_merged() {
+        let ranges = match_ranges("reference material", "refer erence ference");
+        assert_eq!(ranges, vec![0..9]);
+        let ranges = match_ranges("alpha gamma alpha", "alpha gamma");
+        assert!(
+            ranges.windows(2).all(|w| w[0].end <= w[1].start),
+            "{ranges:?}"
+        );
+    }
+
+    #[test]
+    fn match_ranges_of_nothing_searchable_is_empty() {
+        for query in ["", "   ", "ab c"] {
+            assert!(
+                match_ranges("некоторый текст", query).is_empty(),
+                "{query:?}"
+            );
+        }
+        assert!(match_ranges("", "текст").is_empty());
     }
 }

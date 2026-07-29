@@ -7,6 +7,7 @@ use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+pub use crate::features::chat_search::FeedFocus;
 use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
 use crate::features::profiles::ProfileEdit;
@@ -47,7 +48,14 @@ pub enum AppCommand {
     /// from a search hit). Same activation as `SwitchChat`, plus a focus carried
     /// through `ChatActivated`; a message the feed doesn't show (a `Tool`/
     /// `System` one) simply lands at the tail. See docs/history/chat-search-stage2.md §3.
-    OpenChatAt { chat: Uuid, message: Uuid },
+    OpenChatAt {
+        chat: Uuid,
+        message: Uuid,
+        /// The query the hit came from — its matches are highlighted inside the
+        /// focused message (fork S3(b)). Empty when there is nothing to
+        /// highlight.
+        query: String,
+    },
     /// Make a chat active and put the feed on its **first message matching
     /// `query`** (`Enter` in the chat list's content mode). The orchestrator
     /// resolves the message: it owns both the index and the chat, so only it
@@ -247,10 +255,11 @@ pub enum AppEvent {
         title: String,
         messages: Vec<Message>,
         draft: String,
-        /// Put the feed on this message instead of the tail (a jump from a
-        /// search hit, `AppCommand::OpenChatAt`). `None` — every other
-        /// activation. See docs/history/chat-search-stage2.md §3.
-        focus: Option<Uuid>,
+        /// Put the feed on this message instead of the tail, and highlight the
+        /// query inside it (a jump from a search hit, `AppCommand::OpenChatAt`).
+        /// `None` — every other activation, which must not highlight anything.
+        /// See docs/history/chat-search-stage2.md §3 and §4a S3(b).
+        focus: Option<FeedFocus>,
     },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),

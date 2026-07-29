@@ -469,9 +469,17 @@ pub(super) fn dispatch_search(
         }
         // The jump itself is stage 2a's; here it only closes the results, the
         // way `ChatListIntent::Switch` does.
-        SearchIntent::OpenHit { chat, message } => {
+        SearchIntent::OpenHit {
+            chat,
+            message,
+            query,
+        } => {
             *active = ActiveScreen::Chat;
-            let _ = cmd_tx.send(AppCommand::OpenChatAt { chat, message });
+            let _ = cmd_tx.send(AppCommand::OpenChatAt {
+                chat,
+                message,
+                query,
+            });
             false
         }
     }

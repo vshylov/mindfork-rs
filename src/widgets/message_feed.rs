@@ -232,6 +232,17 @@ pub struct MessageFeed {
     /// [`Self::anchor`] is also what keeps it cheap — it is the only one of the
     /// two in [`CacheKey`], so scrolling no longer invalidates the block cache.
     marker: Option<usize>,
+    /// The query whose matches are highlighted **inside the marked message** —
+    /// the other half of a jump ("here is the message" / "here is your word in
+    /// it", fork **S3(b)**).
+    ///
+    /// Moves as one with [`Self::marker`] (both are set by
+    /// [`MessageFeed::focus_message`] and dropped by
+    /// [`MessageFeed::clear_focus`]): a highlight without a marked message has
+    /// nothing to highlight in, and a leftover query from a previous jump would
+    /// light up the wrong message. Scoped to that one message deliberately —
+    /// highlighting every occurrence in the chat is noise.
+    highlight: Option<String>,
     /// [`MessageFeed::build_lines`] dropped the whole cache on this frame (the
     /// key changed), i.e. every row offset it had produced before is stale.
     /// Consumed by `render` to re-derive the anchored row. See [`CacheKey`].
@@ -258,6 +269,11 @@ struct CacheKey {
     /// clearing the marker has to reset the cache. Only the **marker** belongs
     /// here; the scroll anchor is not a rendering input.
     marker: Option<usize>,
+    /// The highlighted query: its matches are recolored inside the marked
+    /// block's cached lines, so a new jump (or a chat switch clearing it) has to
+    /// rebuild them. Cheap — it only changes when a jump happens, which moves
+    /// `marker` and resets the cache anyway.
+    highlight: Option<String>,
 }
 
 /// One message's cached contribution to the feed (already width-wrapped lines
@@ -290,6 +306,7 @@ impl MessageFeed {
             pending_focus: None,
             anchor: None,
             marker: None,
+            highlight: None,
             cache_reset: false,
         }
     }
@@ -376,23 +393,36 @@ impl MessageFeed {
     /// are all keyed by it), the messages are already handed to every other
     /// entry point (`render`/`build_lines`), and the projection's id mapping
     /// ([`FeedMessage::message_ids`]) is the widget's own contract.
-    pub fn focus_message(&mut self, messages: &[FeedMessage], id: Uuid) -> bool {
+    ///
+    /// `highlight` — the search query whose matches are recolored inside that
+    /// message ([`Self::highlight`]); `None`/empty for a jump with nothing to
+    /// highlight. It is a **parameter rather than a separate setter** so it
+    /// cannot get out of step with the marker: the two are one jump, and a
+    /// query left over from a previous one would light up the wrong message.
+    pub fn focus_message(
+        &mut self,
+        messages: &[FeedMessage],
+        id: Uuid,
+        highlight: Option<&str>,
+    ) -> bool {
         let Some(idx) = messages.iter().position(|m| m.message_ids.contains(&id)) else {
             return false;
         };
         self.pending_focus = Some(idx);
         self.anchor = Some(idx);
         self.marker = Some(idx);
+        self.highlight = highlight.filter(|q| !q.is_empty()).map(str::to_owned);
         true
     }
 
-    /// Drops **both** the anchor and the marker: the feed they index is gone
-    /// (a chat switch). Cheap here — a rebuilt feed misses every fingerprint
-    /// anyway, so the cache was going to be rebuilt regardless.
+    /// Drops the anchor, the marker **and the highlight**: the feed they index
+    /// is gone (a chat switch). Cheap here — a rebuilt feed misses every
+    /// fingerprint anyway, so the cache was going to be rebuilt regardless.
     pub fn clear_focus(&mut self) {
         self.pending_focus = None;
         self.anchor = None;
         self.marker = None;
+        self.highlight = None;
     }
 
     /// Drops the scroll anchor, keeping the marker: the user is steering now, so
@@ -441,6 +471,12 @@ impl MessageFeed {
     #[cfg(test)]
     pub(crate) fn marker(&self) -> Option<usize> {
         self.marker
+    }
+
+    /// Test accessor: the query highlighted inside the marked message.
+    #[cfg(test)]
+    pub(crate) fn highlight(&self) -> Option<&str> {
+        self.highlight.as_deref()
     }
 
     /// Draws the feed. `messages` — the active chat's current content. `meta` —
@@ -569,6 +605,7 @@ impl MessageFeed {
             lang: loc.lang(),
             role_names: self.role_names.clone(),
             marker: self.marker,
+            highlight: self.highlight.clone(),
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -593,6 +630,7 @@ impl MessageFeed {
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
                 // A streaming/changed message — recompute only its block.
+                let marked = self.marker == Some(idx);
                 let block = build_message_block(
                     item,
                     palette,
@@ -601,7 +639,15 @@ impl MessageFeed {
                     opts,
                     loc,
                     &self.role_names,
-                    self.marker == Some(idx),
+                    marked,
+                    // The highlight is scoped to the marked message: the user
+                    // asked "where is my word in *this* message", and lighting
+                    // up the whole chat would be noise.
+                    if marked {
+                        self.highlight.as_deref()
+                    } else {
+                        None
+                    },
                 );
                 let cb = CachedBlock {
                     fingerprint: fp,
@@ -626,8 +672,9 @@ impl MessageFeed {
 /// settings; `soft_break_as_newline` is added on by `push_body` for the user).
 /// `names` — the profile's custom role names (empty field → the localized header).
 /// `marked` — this is the jump target ([`MessageFeed::focus_message`]): the rail
-/// is drawn in the accent color to mark the whole message (fork S3 — mark the
-/// message, don't highlight inside it).
+/// is drawn in the accent color to mark the whole message. `highlight` — the
+/// query recolored inside it (fork S3(b), see [`highlight_line`]); `None` for
+/// every message but the marked one.
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -638,6 +685,7 @@ fn build_message_block(
     loc: &'static Locale,
     names: &CharacterNames,
     marked: bool,
+    highlight: Option<&str>,
 ) -> Vec<Line<'static>> {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -652,6 +700,11 @@ fn build_message_block(
     };
     // Build the message body without a rail, at width `inner`.
     let mut body: Vec<Line<'static>> = Vec::new();
+    // Where the message's own content starts, i.e. past the role header. The
+    // header is excluded from the highlight because it is not indexed and would
+    // fire on ordinary queries: `ASSISTANT` matches a search for "assistant" in
+    // every marked assistant bubble, which reads as a bug.
+    let mut content_from = 0usize;
     let glyphs = palette.glyphs();
     match item.role {
         FeedRole::User => {
@@ -663,6 +716,7 @@ fn build_message_block(
                 ),
                 palette.user_soft,
             ));
+            content_from = body.len();
             push_body(&mut body, item, palette, inner, opts);
         }
         FeedRole::Assistant => {
@@ -674,10 +728,20 @@ fn build_message_block(
                 ),
                 palette.assistant_soft,
             ));
+            content_from = body.len();
             push_thoughts(&mut body, &item.thoughts, show_thoughts, palette, loc);
             push_assistant_body(&mut body, item, palette, inner, opts);
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
+    }
+    // Recolor the searched query inside the jumped-to message, **before** the
+    // wrap below: `wrap::wrap_line` carries per-character styles through, so a
+    // highlight applied here survives being wrapped (and being wrapped again in
+    // `render`), while applying it afterwards would have to look past the rail.
+    if let Some(query) = highlight {
+        for line in &mut body[content_from..] {
+            highlight_line(line, query, palette.accent);
+        }
     }
     // If the body already ends on a blank line (a railed gap after a tool card),
     // don't add the railless inter-message separator — otherwise a double gap.
@@ -697,6 +761,77 @@ fn build_message_block(
         out.push(Line::from(""));
     }
     out
+}
+
+/// Recolors every occurrence of `query` in one **rendered** line to `color`,
+/// splitting spans at the match boundaries.
+///
+/// **Post-render matching** (fork **S3(b)**, docs/history/chat-search-stage2.md
+/// §1.4 and §4a): the FTS5 index addresses `Message.text`, but the renderer
+/// destroys that correspondence — `normalize_delimiters` rewrites the string
+/// *before* parsing, and LaTeX→unicode, mermaid, table layout, syntect→ANSI and
+/// two wrapping passes transform it further — so source offsets cannot be
+/// mapped onto what is on screen. This therefore searches **what was actually
+/// rendered**, which is also what the user is looking at.
+///
+/// Its limits follow from that, and are approximations rather than bugs (the
+/// exact alternative, S3(c), means threading `highlight_ranges` through the
+/// whole renderer):
+/// - text the renderer **transformed** no longer contains the query and stays
+///   unhighlighted — a LaTeX formula turned into unicode, a mermaid diagram
+///   drawn in place of its source, a table re-laid-out across cells;
+/// - a match **split across two rendered lines** (a line break inside it) is
+///   missed, since matching is per line;
+/// - conversely, an occurrence in content the index does not cover (thoughts, a
+///   tool card) *is* highlighted — it is on screen and it is the user's word.
+///
+/// Only `fg` is patched: the span's markdown styling (bold, italic, code
+/// coloring) has to survive, or highlighting a word inside a heading would
+/// flatten the heading.
+fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let ranges = crate::features::chat_search::match_ranges(&text, query);
+    if ranges.is_empty() {
+        return;
+    }
+    let spans = std::mem::take(&mut line.spans);
+    let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len() + ranges.len() * 2);
+    // Byte offset of the current span within `text`.
+    let mut at = 0usize;
+    for span in spans {
+        let (start, end) = (at, at + span.content.len());
+        at = end;
+        // Cut points inside this span: every match boundary strictly within it.
+        // Taken per span because a match may **straddle** two of them — bold in
+        // the middle of a word, a link, an inline code span — and then both
+        // halves have to be recolored. `ranges` is sorted and non-overlapping,
+        // so the cuts come out ascending.
+        let mut cuts: Vec<usize> = vec![start];
+        for r in &ranges {
+            for b in [r.start, r.end] {
+                if b > start && b < end {
+                    cuts.push(b);
+                }
+            }
+        }
+        cuts.push(end);
+        cuts.dedup();
+        for w in cuts.windows(2) {
+            let (s, e) = (w[0], w[1]);
+            let inside = ranges.iter().any(|r| r.start <= s && e <= r.end);
+            let style = if inside {
+                span.style.fg(color)
+            } else {
+                span.style
+            };
+            // `s`/`e` are byte offsets into `text`. Both are character
+            // boundaries — a match range is one by construction, and a span
+            // starts on one — so this cannot split a character, which is the
+            // trap that panics on the first Cyrillic match.
+            out.push(Span::styled(text[s..e].to_string(), style));
+        }
+    }
+    line.spans = out;
 }
 
 /// A message's fingerprint over every field that affects rendering. A hash O(len) vs.
@@ -1800,7 +1935,7 @@ mod tests {
     fn focus_scrolls_the_message_into_view() {
         let messages = numbered(12);
         let mut feed = MessageFeed::new();
-        assert!(feed.focus_message(&messages, messages[9].message_ids[0]));
+        assert!(feed.focus_message(&messages, messages[9].message_ids[0], None));
         let rows = visible(&mut feed, &messages, 40, 10);
         assert!(
             rows.iter().any(|r| r.contains("сообщение-9")),
@@ -1811,7 +1946,7 @@ mod tests {
 
         // The first message is at the top — focusing it leaves scroll at 0.
         let mut feed = MessageFeed::new();
-        assert!(feed.focus_message(&messages, messages[0].message_ids[0]));
+        assert!(feed.focus_message(&messages, messages[0].message_ids[0], None));
         let rows = visible(&mut feed, &messages, 40, 10);
         assert!(rows.iter().any(|r| r.contains("сообщение-0")), "{rows:?}");
         assert_eq!(feed.scroll_row(), 0);
@@ -1824,7 +1959,7 @@ mod tests {
     fn focus_survives_a_resize() {
         let messages = numbered_long(12);
         let mut feed = MessageFeed::new();
-        assert!(feed.focus_message(&messages, messages[8].message_ids[0]));
+        assert!(feed.focus_message(&messages, messages[8].message_ids[0], None));
 
         let wide = visible(&mut feed, &messages, 60, 10);
         assert!(wide.iter().any(|r| r.contains("сообщение-8")), "{wide:?}");
@@ -1854,7 +1989,7 @@ mod tests {
             |f: &mut MessageFeed| f.scroll_down(2),
         ] {
             let mut feed = MessageFeed::new();
-            feed.focus_message(&messages, messages[9].message_ids[0]);
+            feed.focus_message(&messages, messages[9].message_ids[0], None);
             let _ = visible(&mut feed, &messages, 40, 10);
             assert_eq!(feed.anchor(), Some(9));
             assert_eq!(feed.marker(), Some(9));
@@ -1875,7 +2010,7 @@ mod tests {
     fn resize_after_a_manual_scroll_does_not_jump_back() {
         let messages = numbered_long(12);
         let mut feed = MessageFeed::new();
-        feed.focus_message(&messages, messages[8].message_ids[0]);
+        feed.focus_message(&messages, messages[8].message_ids[0], None);
         let _ = visible(&mut feed, &messages, 60, 10);
 
         // Scroll all the way up, deliberately away from the jump target.
@@ -1902,7 +2037,7 @@ mod tests {
         let palette = Palette::default();
         let messages = numbered(4);
         let mut feed = MessageFeed::new();
-        feed.focus_message(&messages, messages[2].message_ids[0]);
+        feed.focus_message(&messages, messages[2].message_ids[0], None);
         let lines = feed.build_lines(&messages, &palette, 40, ru());
 
         let rail_color = |needle: &str| -> Option<Color> {
@@ -1926,7 +2061,7 @@ mod tests {
         let palette = Palette::default();
         let messages = numbered(12);
         let mut feed = MessageFeed::new();
-        feed.focus_message(&messages, messages[9].message_ids[0]);
+        feed.focus_message(&messages, messages[9].message_ids[0], None);
         let _ = feed.build_lines(&messages, &palette, 40, ru());
 
         // A warm cache reports no reset on an unchanged frame...
@@ -1942,7 +2077,7 @@ mod tests {
         );
 
         // ...while moving the marker legitimately does (the rail color is baked in).
-        feed.focus_message(&messages, messages[2].message_ids[0]);
+        feed.focus_message(&messages, messages[2].message_ids[0], None);
         let _ = feed.build_lines(&messages, &palette, 40, ru());
         assert!(feed.cache_reset, "a new marker changes the rendered rail");
     }
@@ -1953,25 +2088,203 @@ mod tests {
     fn focus_on_unknown_id_is_a_no_op() {
         let messages = numbered(12);
         let mut feed = MessageFeed::new();
-        assert!(!feed.focus_message(&messages, Uuid::new_v4()));
+        assert!(!feed.focus_message(&messages, Uuid::new_v4(), None));
         assert_eq!(feed.anchor(), None);
         assert_eq!(feed.marker(), None);
         let _ = visible(&mut feed, &messages, 40, 10);
         assert!(feed.is_following(), "the feed stays on the tail");
         // Also safe with nothing in the feed at all.
-        assert!(!feed.focus_message(&[], Uuid::new_v4()));
+        assert!(!feed.focus_message(&[], Uuid::new_v4(), None));
     }
 
     /// A chat switch is the one place that drops the marker too — it indexes a
-    /// feed that no longer exists.
+    /// feed that no longer exists. The highlight goes with it: it is scoped to
+    /// the marked message, so it would otherwise light up whatever lands at that
+    /// index in the next chat.
     #[test]
-    fn clear_focus_drops_both_anchor_and_marker() {
+    fn clear_focus_drops_anchor_marker_and_highlight() {
         let messages = numbered(6);
         let mut feed = MessageFeed::new();
-        feed.focus_message(&messages, messages[3].message_ids[0]);
+        feed.focus_message(&messages, messages[3].message_ids[0], Some("сообщение"));
+        assert!(feed.highlight.is_some());
         feed.clear_focus();
         assert_eq!(feed.anchor(), None);
         assert_eq!(feed.marker(), None);
+        assert_eq!(feed.highlight, None);
+    }
+
+    // ---- highlighting the query inside the jumped-to message (fork S3(b)) ----
+
+    /// The text of every span drawn in the accent color — i.e. every highlight.
+    ///
+    /// The leading rail is skipped: on the marked message it is accent too (that
+    /// is the marker), and it is not a highlight. The bodies below are plain
+    /// prose on purpose, since markdown paints headings, links and code in the
+    /// accent color of its own accord.
+    fn accented(lines: &[Line<'static>], palette: &Palette) -> Vec<String> {
+        lines
+            .iter()
+            .flat_map(|l| l.spans.iter().skip(1))
+            .filter(|s| s.style.fg == Some(palette.accent))
+            .map(|s| s.content.to_string())
+            .collect()
+    }
+
+    /// The gap this closes: a jump marked the message but left the searched word
+    /// unhighlighted inside it, while the results list *did* highlight it.
+    ///
+    /// And the other half — the highlight is scoped to the marked message.
+    /// Lighting up every occurrence in the chat is noise, and was not what was
+    /// asked for: "where is my word in **this** message".
+    ///
+    /// Cyrillic throughout is deliberate: the ranges are byte offsets while the
+    /// matching runs over characters, so a mix-up slices mid-character and
+    /// panics right here.
+    #[test]
+    fn highlight_marks_the_query_inside_the_marked_message_only() {
+        let palette = Palette::default();
+        let messages = vec![
+            msg(FeedRole::User, "первое упоминание маркера", ""),
+            msg(FeedRole::User, "второе упоминание маркера", ""),
+        ];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, messages[1].message_ids[0], Some("маркер")));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+
+        assert_eq!(
+            accented(&feed.cache[1].lines, &palette),
+            vec!["маркер"],
+            "the marked message must show where the query matched"
+        );
+        assert!(
+            accented(&feed.cache[0].lines, &palette).is_empty(),
+            "another message with the same word must stay untouched"
+        );
+    }
+
+    /// A jump with nothing to highlight (and an ordinary chat switch, which
+    /// passes `None` all the way down) must not color anything.
+    #[test]
+    fn no_query_highlights_nothing() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "упоминание маркера", "")];
+        for query in [None, Some("")] {
+            let mut feed = MessageFeed::new();
+            feed.focus_message(&messages, messages[0].message_ids[0], query);
+            let _ = feed.build_lines(&messages, &palette, 60, ru());
+            assert!(
+                accented(&feed.cache[0].lines, &palette).is_empty(),
+                "query {query:?} must not highlight"
+            );
+        }
+    }
+
+    /// A match may straddle a span boundary — bold in the middle of a word, a
+    /// link, an inline code span — and both halves have to light up. The
+    /// markdown styling has to survive: recoloring must patch `fg` only, or
+    /// highlighting a word would flatten the emphasis it sits in.
+    #[test]
+    fn highlight_spans_a_style_boundary_and_keeps_the_markdown_style() {
+        let palette = Palette::default();
+        // The emphasis splits the searched word: this renders as three spans —
+        // the plain head of the word, its bold tail, then the rest of the line.
+        let messages = vec![msg(FeedRole::User, "мар**кер** дальше", "")];
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[0].message_ids[0], Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+
+        let hits = accented(&feed.cache[0].lines, &palette);
+        assert_eq!(
+            hits.concat(),
+            "маркер",
+            "both halves of a straddling match must be highlighted: {hits:?}"
+        );
+        let bold = feed.cache[0]
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content == "кер")
+            .expect("the emphasized half");
+        assert!(
+            bold.style.add_modifier.contains(Modifier::BOLD),
+            "the emphasis must survive the highlight: {:?}",
+            bold.style
+        );
+        assert_eq!(bold.style.fg, Some(palette.accent));
+    }
+
+    /// The highlight is applied **before** wrapping, so `wrap::wrap_line` (which
+    /// carries per-character styles through) keeps it on whichever row the match
+    /// lands on. Applied afterwards it would have to reckon with the rail.
+    #[test]
+    fn highlight_survives_wrapping_onto_a_later_row() {
+        let palette = Palette::default();
+        let body = format!("{} маркер в самом хвосте", "слово ".repeat(20));
+        let messages = vec![msg(FeedRole::User, &body, "")];
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[0].message_ids[0], Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 40, ru());
+
+        let lines = &feed.cache[0].lines;
+        let row = lines
+            .iter()
+            .position(|l| {
+                l.spans
+                    .iter()
+                    .skip(1)
+                    .any(|s| s.style.fg == Some(palette.accent))
+            })
+            .expect("the match must still be highlighted after wrapping");
+        assert!(
+            row > 1,
+            "precondition: the match has to land past the first wrapped row, \
+             otherwise the test proves nothing (row {row} of {})",
+            lines.len()
+        );
+        assert_eq!(accented(lines, &palette), vec!["маркер"]);
+    }
+
+    /// The role header is excluded on purpose: it is not indexed, and
+    /// `ASSISTANT` would light up on a plain search for "assistant" in every
+    /// marked bubble — which reads as a bug.
+    #[test]
+    fn the_role_header_is_never_highlighted() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::Assistant, "речь про ассистента", "")];
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[0].message_ids[0], Some("ассистент"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+
+        let header = &feed.cache[0].lines[0];
+        assert!(
+            header.spans.iter().any(|s| s.content.contains("АССИСТЕНТ")),
+            "precondition: the header spells the role out: {header:?}"
+        );
+        assert_eq!(
+            accented(&feed.cache[0].lines, &palette),
+            vec!["ассистент"],
+            "only the body matches, never the header"
+        );
+    }
+
+    /// The highlight is baked into the cached block, so changing the query has
+    /// to reset the cache — otherwise a second jump would show the first jump's
+    /// highlight.
+    #[test]
+    fn changing_the_query_invalidates_the_block_cache() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "маркер и метка рядом", "")];
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[0].message_ids[0], Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        feed.cache_reset = false;
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        assert!(!feed.cache_reset, "precondition: the cache is warm");
+
+        feed.focus_message(&messages, messages[0].message_ids[0], Some("метка"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        assert!(feed.cache_reset, "a new query changes the rendered block");
+        assert_eq!(accented(&feed.cache[0].lines, &palette), vec!["метка"]);
     }
 
     /// Content that arrives on its own must not yank a reader back to the tail,

@@ -3,9 +3,19 @@
 use super::popups::HELP_KEYS;
 use super::*;
 use crate::entities::message::MessageRole;
+use crate::features::chat_search::FeedFocus;
 
 fn gen_id() -> Uuid {
     Uuid::new_v4()
+}
+
+/// A jump request onto `message` with nothing to highlight (the shape most of
+/// these tests care about — they assert the scroll/marker, not the highlight).
+fn focus_on(message: Uuid) -> Option<FeedFocus> {
+    Some(FeedFocus {
+        message,
+        query: String::new(),
+    })
 }
 
 /// A status snapshot with a ready chat server (embeddings/impersonation not configured).
@@ -243,7 +253,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         .map(|i| Message::user(format!("реплика-{i}")))
         .collect();
     let target = messages[8].id;
-    s.activate_chat(gen_id(), "Чат".into(), &messages, "", Some(target));
+    s.activate_chat(gen_id(), "Чат".into(), &messages, "", focus_on(target));
     assert_eq!(s.feed_view.anchor(), Some(8));
     assert_eq!(s.feed_view.marker(), Some(8));
     // The jump itself is applied by the next render — the row only exists there
@@ -265,6 +275,35 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
     assert!(dump.contains("реплика-11"), "the tail: {dump}");
 }
 
+/// The query rides the jump all the way into the feed, so the searched word is
+/// highlighted inside the message the view lands on (fork S3(b)); an ordinary
+/// activation — a plain switch, a new chat, bootstrap — highlights nothing.
+#[test]
+fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..4)
+        .map(|i| Message::user(format!("реплика-{i} про маркер")))
+        .collect();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        Some(FeedFocus {
+            message: messages[2].id,
+            query: "маркер".into(),
+        }),
+    );
+    assert_eq!(s.feed_view.marker(), Some(2));
+    assert_eq!(s.feed_view.highlight(), Some("маркер"));
+
+    // A plain activation must also clear the previous jump's query, or it would
+    // light up whatever now sits at that index.
+    s.activate_chat(gen_id(), "Чат".into(), &messages, "", None);
+    assert_eq!(s.feed_view.marker(), None);
+    assert_eq!(s.feed_view.highlight(), None);
+}
+
 /// A focus request must never survive into the wrong chat: an id the newly
 /// activated chat doesn't contain falls back to the tail, and both the anchor
 /// and the marker left over from the previous chat are dropped. (The marker
@@ -277,13 +316,13 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         .map(|i| Message::user(format!("первый-{i}")))
         .collect();
     let stale = first[8].id;
-    s.activate_chat(gen_id(), "Первый".into(), &first, "", Some(stale));
+    s.activate_chat(gen_id(), "Первый".into(), &first, "", focus_on(stale));
     assert_eq!(s.feed_view.marker(), Some(8));
 
     let second: Vec<Message> = (0..12)
         .map(|i| Message::user(format!("второй-{i}")))
         .collect();
-    s.activate_chat(gen_id(), "Второй".into(), &second, "", Some(stale));
+    s.activate_chat(gen_id(), "Второй".into(), &second, "", focus_on(stale));
     assert_eq!(
         s.feed_view.anchor(),
         None,

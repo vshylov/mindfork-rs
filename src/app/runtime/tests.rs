@@ -433,11 +433,19 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
         ActiveScreen::Search(search) => {
             let intent = search.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
             match intent {
-                Some(crate::screens::search::SearchIntent::OpenHit { chat, message }) => {
+                Some(crate::screens::search::SearchIntent::OpenHit {
+                    chat,
+                    message,
+                    query,
+                }) => {
+                    // The screen is the last place that knows which query these
+                    // results answer, so the intent has to carry it (fork S3(b)).
+                    assert_eq!(query, "маркер");
                     assert!(!dispatch_any(
                         AnyIntent::Search(crate::screens::search::SearchIntent::OpenHit {
                             chat,
-                            message
+                            message,
+                            query
                         }),
                         &cmd_tx,
                         &mut screen,
@@ -454,7 +462,8 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
     assert!(matches!(active, ActiveScreen::Chat), "the results close");
     assert!(matches!(
         cmd_rx.try_recv(),
-        Ok(AppCommand::OpenChatAt { chat: c, message: m }) if c == chat && m == message
+        Ok(AppCommand::OpenChatAt { chat: c, message: m, query })
+            if c == chat && m == message && query == "маркер"
     ));
 }
 

@@ -3,6 +3,11 @@
 
 use super::*;
 
+// Imported here rather than through `super`: `screens` may not depend on `app`
+// (FSD), so the jump descriptor comes from `features`, where both layers can
+// see it — the `RagProgress` precedent.
+use crate::features::chat_search::FeedFocus;
+
 impl ChatScreen {
     /// Marks that the feed content changed (streaming, a new message, a note,
     /// an edit): if the feed contains risk-group glyphs, the next frame is drawn as a **full
@@ -42,14 +47,16 @@ impl ChatScreen {
     }
 
     /// Rebuilds the feed for a chat. `focus` — a domain message to put the view
-    /// on (`AppCommand::OpenChatAt`); `None` — the usual "show the tail".
+    /// on together with the query to highlight inside it
+    /// (`AppCommand::OpenChatAt`); `None` — the usual "show the tail", with
+    /// nothing highlighted.
     pub fn activate_chat(
         &mut self,
         id: Uuid,
         title: String,
         messages: &[Message],
         draft: &str,
-        focus: Option<Uuid>,
+        focus: Option<FeedFocus>,
     ) {
         // Switching chats resets the generation state: "orphaned" chunks of the
         // previous generation must not land in the new chat's feed.
@@ -77,9 +84,13 @@ impl ChatScreen {
         self.feed_view.clear_focus();
         // A jump asked for by the user wins over the tail; anything else — the
         // usual bottom. An id this chat doesn't contain isn't found, so it falls
-        // through to the tail. See docs/history/chat-search-stage2.md §4.
-        match focus {
-            Some(msg) if self.feed_view.focus_message(&self.feed, msg) => {}
+        // through to the tail (and `clear_focus` above already dropped the
+        // previous highlight). See docs/history/chat-search-stage2.md §4.
+        match &focus {
+            Some(f)
+                if self
+                    .feed_view
+                    .focus_message(&self.feed, f.message, Some(&f.query)) => {}
             _ => self.feed_view.scroll_to_bottom(),
         }
         // Load the chat's saved draft into the input box (empty for a new chat).

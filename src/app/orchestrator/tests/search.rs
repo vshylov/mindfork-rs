@@ -388,11 +388,17 @@ async fn open_chat_at_first_match_activates_with_the_focus() {
     let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
         .unwrap();
-    assert!(
-        matches!(ev, AppEvent::ChatActivated { id, focus, .. }
-            if id == chat_id && focus == Some(user_msg)),
-        "the chat must open on the message that matched"
-    );
+    match ev {
+        AppEvent::ChatActivated { id, focus, .. } => {
+            assert_eq!(id, chat_id, "the chat must open");
+            let focus = focus.expect("on the message that matched");
+            assert_eq!(focus.message, user_msg);
+            // The query travels too, so the feed can highlight it inside that
+            // message rather than only marking the bubble (fork S3(b)).
+            assert_eq!(focus.query, "кристалл");
+        }
+        _ => unreachable!(),
+    }
 
     // Nothing matching → the chat still opens, just at its tail. (From the
     // other chat again: a focus-less jump onto the chat already open is a

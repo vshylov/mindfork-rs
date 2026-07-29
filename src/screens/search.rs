@@ -43,7 +43,14 @@ pub enum SearchIntent {
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Open a chat with the feed on this message (`Enter`) — stage 2a's jump.
-    OpenHit { chat: Uuid, message: Uuid },
+    /// `query` rides along so the feed can highlight it inside that message
+    /// (fork S3(b)): the screen is the one place that still knows which query
+    /// these results answer.
+    OpenHit {
+        chat: Uuid,
+        message: Uuid,
+        query: String,
+    },
 }
 
 /// What a rendered row points at: a hit (selectable, by its index in the
@@ -156,7 +163,11 @@ impl SearchScreen {
             KeyCode::Esc => return Some(SearchIntent::Close),
             KeyCode::Enter => {
                 let (chat, message) = *self.hits().get(self.selected)?;
-                return Some(SearchIntent::OpenHit { chat, message });
+                return Some(SearchIntent::OpenHit {
+                    chat,
+                    message,
+                    query: self.query.clone(),
+                });
             }
             KeyCode::Up => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down => self.selected = (self.selected + 1).min(last),
@@ -534,15 +545,19 @@ mod tests {
         assert_eq!(s.selected, 2, "a page past the end clamps");
     }
 
+    /// `Enter` opens the selected hit **and hands the query along**: this screen
+    /// is the last place that knows it, and the feed needs it to highlight the
+    /// match inside the message it lands on (fork S3(b)).
     #[test]
-    fn enter_opens_the_selected_hit() {
+    fn enter_opens_the_selected_hit_with_the_query() {
         let mut s = screen();
         let hits = s.hits();
         assert_eq!(
             s.handle_key(key(KeyCode::Enter)),
             Some(SearchIntent::OpenHit {
                 chat: hits[0].0,
-                message: hits[0].1
+                message: hits[0].1,
+                query: "маркер".into(),
             })
         );
         s.handle_key(key(KeyCode::Down));
@@ -551,7 +566,8 @@ mod tests {
             s.handle_key(key(KeyCode::Enter)),
             Some(SearchIntent::OpenHit {
                 chat: hits[2].0,
-                message: hits[2].1
+                message: hits[2].1,
+                query: "маркер".into(),
             })
         );
     }

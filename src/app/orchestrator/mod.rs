@@ -59,7 +59,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ServerStatus};
+use crate::app::events::{AppCommand, AppEvent, BackgroundKind, FeedFocus, ServerStatus};
 use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
@@ -483,7 +483,11 @@ impl Orchestrator {
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
-            AppCommand::OpenChatAt { chat, message } => self.handle_open_chat_at(chat, message),
+            AppCommand::OpenChatAt {
+                chat,
+                message,
+                query,
+            } => self.handle_open_chat_at(chat, message, query),
             AppCommand::OpenChatAtFirstMatch { chat, query } => {
                 self.handle_open_chat_at_first_match(chat, &query)
             }
@@ -779,10 +783,11 @@ impl Orchestrator {
         self.activate_focused(id, None);
     }
 
-    /// [`Self::activate`] with an optional message to put the feed on (a jump
-    /// from a search hit, [`AppCommand::OpenChatAt`]). The single activation
-    /// funnel — everything else goes through `activate` and passes `None`.
-    fn activate_focused(&mut self, id: Uuid, focus: Option<Uuid>) {
+    /// [`Self::activate`] with an optional message to put the feed on and query
+    /// to highlight in it (a jump from a search hit,
+    /// [`AppCommand::OpenChatAt`]). The single activation funnel — everything
+    /// else goes through `activate` and passes `None`.
+    fn activate_focused(&mut self, id: Uuid, focus: Option<FeedFocus>) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };

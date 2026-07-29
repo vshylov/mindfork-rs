@@ -239,16 +239,30 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     )
     .await
     .unwrap();
+    // The query rides along with the message: the feed highlights it inside the
+    // focused bubble (fork S3(b)).
+    let jumped = |e: AppEvent, what: &str| {
+        match e {
+            AppEvent::ChatActivated { id, focus, .. } => {
+                assert_eq!(id, first_id, "{what}");
+                let focus = focus.expect(what);
+                assert_eq!(focus.message, msg_id, "{what}");
+                assert_eq!(focus.query, "привет", "the query must ride along: {what}");
+            }
+            _ => unreachable!(),
+        };
+    };
     cmd_tx
         .send(AppCommand::OpenChatAt {
             chat: first_id,
             message: msg_id,
+            query: "привет".into(),
         })
         .unwrap();
     let a = wait_for(&mut evt_rx, activated).await.unwrap();
-    assert!(
-        matches!(a, AppEvent::ChatActivated { id, focus, .. } if id == first_id && focus == Some(msg_id)),
-        "a jump must activate the chat and carry the focused message"
+    jumped(
+        a,
+        "a jump must activate the chat and carry the focused message",
     );
 
     // And onto the already-open chat: a plain switch would be a no-op, a jump
@@ -257,13 +271,11 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
         .send(AppCommand::OpenChatAt {
             chat: first_id,
             message: msg_id,
+            query: "привет".into(),
         })
         .unwrap();
     let a = wait_for(&mut evt_rx, activated).await.unwrap();
-    assert!(
-        matches!(a, AppEvent::ChatActivated { id, focus, .. } if id == first_id && focus == Some(msg_id)),
-        "a jump within the open chat must re-emit with the focus"
-    );
+    jumped(a, "a jump within the open chat must re-emit with the focus");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
