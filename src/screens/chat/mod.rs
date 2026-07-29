@@ -341,6 +341,14 @@ pub struct ChatScreen {
     /// The open modal confirmation popup for an irreversible operation
     /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
+    /// In-feed search (`Ctrl+F`): a single-line query field standing in for the
+    /// message input box while it is open. `None` when not searching. The
+    /// message box's own text is never touched — see docs/in-feed-search.md §3.
+    search: Option<Box<InputBox>>,
+    /// The last query typed in this chat, so a repeat `Ctrl+F` resumes it (the
+    /// emoji picker remembers its selection the same way). Cleared on chat
+    /// switch, in `activate_chat`.
+    search_last: String,
     /// Whether to ask for confirmation before `Ctrl+R`/`Ctrl+E` (from
     /// `interface.confirm_destructive_keys`; updated by the `Settings` event).
     confirm_destructive: bool,
@@ -451,6 +459,8 @@ impl ChatScreen {
             feed_has_risky: false,
             full_redraw: false,
             confirm: None,
+            search: None,
+            search_last: String::new(),
             confirm_destructive: false,
             settings_snapshot: None,
             help: None,

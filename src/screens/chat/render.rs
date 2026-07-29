@@ -155,6 +155,29 @@ impl ChatScreen {
                 &self.palette,
                 self.loc,
             );
+        } else if let Some(field) = &mut self.search {
+            // In-feed search stands in for the input box rather than taking a row
+            // of its own: a fifth layout constraint would shrink the feed, change
+            // the wrap width and rewrap the whole chat on open *and* close
+            // (docs/in-feed-search.md §3, fork F3).
+            let title = match self.feed_view.match_position() {
+                Some((n, total)) => self.loc.tf(
+                    "ui.chat.search.counter",
+                    &[("n", &n.to_string()), ("total", &total.to_string())],
+                ),
+                None => self.loc.t("ui.chat.search.none").to_string(),
+            };
+            field.render(
+                frame,
+                input_area,
+                crate::widgets::input_box::RenderOpts {
+                    title: &title,
+                    focused: true,
+                    command: false,
+                    placeholder: self.loc.t("ui.chat.search.placeholder"),
+                },
+                &self.palette,
+            );
         } else {
             let input_title = if self.generating {
                 self.loc.t("ui.chat.input.generating")

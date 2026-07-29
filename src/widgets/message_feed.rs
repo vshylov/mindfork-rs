@@ -240,13 +240,40 @@ pub struct MessageFeed {
     /// [`MessageFeed::focus_message`] and dropped by
     /// [`MessageFeed::clear_focus`]): a highlight without a marked message has
     /// nothing to highlight in, and a leftover query from a previous jump would
-    /// light up the wrong message. Scoped to that one message deliberately —
-    /// highlighting every occurrence in the chat is noise.
+    /// light up the wrong message. A jump scopes it to that one message
+    /// deliberately — lighting up the whole chat is noise for *that* gesture.
     highlight: Option<String>,
+    /// How far [`Self::highlight`] reaches. A jump lights only the message it
+    /// marked; in-feed search (`Ctrl+F`) lights every match in the chat, because
+    /// there the whole point is seeing them all. See docs/in-feed-search.md §3.
+    highlight_scope: HighlightScope,
+    /// Every match of [`Self::highlight`] in document order, as an index into the
+    /// lines [`MessageFeed::build_lines`] returned. Recomputed there each frame —
+    /// never stored across frames, which is what lets a match survive a rewrap
+    /// (§1.3: stage 2's fork S6 rejected *storing* an intra-block offset, not
+    /// deriving one).
+    matches: Vec<usize>,
+    /// Which match `next`/`prev` last moved to, an index into [`Self::matches`].
+    current_match: usize,
+    /// Set by [`Self::next_match`]/[`Self::prev_match`]/[`Self::set_search`]: the
+    /// next render scrolls to the current match. A flag rather than a scroll
+    /// there and then, because the row is only knowable inside `render` — the
+    /// same constraint the jump obeys (§1.1 of docs/history/chat-search-stage2.md).
+    scroll_to_match: bool,
     /// [`MessageFeed::build_lines`] dropped the whole cache on this frame (the
     /// key changed), i.e. every row offset it had produced before is stale.
     /// Consumed by `render` to re-derive the anchored row. See [`CacheKey`].
     cache_reset: bool,
+}
+
+/// How far the feed's highlight reaches. See [`MessageFeed::highlight_scope`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HighlightScope {
+    /// Only the message a jump marked — "here is your word in *this* message".
+    #[default]
+    MarkedOnly,
+    /// Every match in the chat — in-feed search.
+    WholeFeed,
 }
 
 /// Feed cache validity key. Any of these fields affects the layout of every
@@ -313,6 +340,10 @@ impl MessageFeed {
             anchor: None,
             marker: None,
             highlight: None,
+            highlight_scope: HighlightScope::default(),
+            matches: Vec::new(),
+            current_match: 0,
+            scroll_to_match: false,
             cache_reset: false,
         }
     }
@@ -419,6 +450,56 @@ impl MessageFeed {
         self.marker = Some(idx);
         self.highlight = highlight.filter(|q| !q.is_empty()).map(str::to_owned);
         true
+    }
+
+    /// Sets (or clears) the in-feed search query — `Ctrl+F`, as opposed to the
+    /// query a jump carries. Highlights **every** match in the chat and rebuilds
+    /// the match list on the next render, positioning on the first one.
+    ///
+    /// Cheap on purpose: stage 3a took the query out of [`CacheKey`], so typing
+    /// here costs a normal warm frame rather than re-rendering the chat
+    /// (docs/in-feed-search.md §1.2).
+    pub fn set_search(&mut self, query: Option<&str>) {
+        self.highlight = query.filter(|q| !q.is_empty()).map(str::to_owned);
+        self.highlight_scope = HighlightScope::WholeFeed;
+        self.current_match = 0;
+        // Only chase a match once there is a query; clearing must not scroll.
+        self.scroll_to_match = self.highlight.is_some();
+    }
+
+    /// Leaves in-feed search: drops its highlight and match list. The marker is
+    /// left alone — a jump's mark is not this feature's to clear.
+    pub fn clear_search(&mut self) {
+        self.highlight = None;
+        self.highlight_scope = HighlightScope::MarkedOnly;
+        self.matches.clear();
+        self.current_match = 0;
+        self.scroll_to_match = false;
+    }
+
+    /// How many matches the last render found, and which one is current (1-based
+    /// for display). `None` when there is nothing to count.
+    pub fn match_position(&self) -> Option<(usize, usize)> {
+        (!self.matches.is_empty()).then(|| (self.current_match + 1, self.matches.len()))
+    }
+
+    /// Moves to the next match, wrapping around at the end. A no-op without
+    /// matches, so holding the key on a query that matches nothing is harmless.
+    pub fn next_match(&mut self) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.current_match = (self.current_match + 1) % self.matches.len();
+        self.scroll_to_match = true;
+    }
+
+    /// Moves to the previous match, wrapping around at the start.
+    pub fn prev_match(&mut self) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.current_match = (self.current_match + self.matches.len() - 1) % self.matches.len();
+        self.scroll_to_match = true;
     }
 
     /// Drops the anchor, the marker **and the highlight**: the feed they index
@@ -539,13 +620,30 @@ impl MessageFeed {
             (idx < self.cache.len())
                 .then(|| self.cache.iter().take(idx).map(|b| b.lines.len()).sum())
         });
+        // The current in-feed match rides the same accumulation: its row is
+        // derived here, every frame, never stored — which is what lets it survive
+        // a rewrap where a stored offset could not (§1.3).
+        let match_line = std::mem::take(&mut self.scroll_to_match)
+            .then(|| self.matches.get(self.current_match).copied())
+            .flatten();
         let mut lines: Vec<Line> = Vec::with_capacity(unwrapped.len());
         let mut target_row: Option<usize> = None;
+        let mut match_row: Option<usize> = None;
         for (i, line) in unwrapped.iter().enumerate() {
             if start == Some(i) {
                 target_row = Some(lines.len());
             }
+            if match_line == Some(i) {
+                match_row = Some(lines.len());
+            }
             lines.extend(wrap::wrap_line(line, view_w));
+        }
+        // Applied after the jump target, so pressing next/prev wins over a stale
+        // pending jump rather than fighting it.
+        if let Some(row) = match_row {
+            self.scroll = row;
+            self.follow = false;
+            self.scrolled = true;
         }
         if let Some(row) = target_row {
             self.scroll = row;
@@ -630,6 +728,7 @@ impl MessageFeed {
             ..Default::default()
         };
         let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut found: Vec<usize> = Vec::new();
         for (idx, item) in messages.iter().enumerate() {
             let fp = message_fingerprint(item);
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
@@ -662,8 +761,10 @@ impl MessageFeed {
             lines.extend(self.cache[idx].lines.iter().cloned());
             // Scoped to the marked message: the user asked "where is my word in
             // *this* message", and lighting up the whole chat would be noise.
-            if self.marker == Some(idx)
-                && let Some(query) = self.highlight.as_deref()
+            // A jump lights only the message it marked; in-feed search lights
+            // every match (docs/in-feed-search.md §3, fork F2).
+            if let Some(query) = self.highlight.as_deref()
+                && (self.highlight_scope == HighlightScope::WholeFeed || self.marker == Some(idx))
             {
                 let from = at + self.cache[idx].content_from;
                 // `lines[from..]` is this block's tail: later blocks are not
@@ -678,10 +779,20 @@ impl MessageFeed {
                 // query can match the rail either — `match_ranges` drops tokens
                 // under three characters, and `▌ ` is not in any of them. An
                 // excluding parameter would be untestable by construction.
-                for line in &mut lines[from..] {
-                    highlight_line(line, query, palette.accent);
+                for (i, line) in lines[from..].iter_mut().enumerate() {
+                    // One entry per occurrence, in document order: a single line
+                    // can hold several, and next/prev steps through matches, not
+                    // lines.
+                    for _ in 0..highlight_line(line, query, palette.accent) {
+                        found.push(from + i);
+                    }
                 }
             }
+        }
+        self.matches = found;
+        // The query may have just shrunk the match set under the cursor.
+        if self.current_match >= self.matches.len() {
+            self.current_match = 0;
         }
         lines
     }
@@ -808,12 +919,13 @@ fn build_message_block(
 /// Only `fg` is patched: the span's markdown styling (bold, italic, code
 /// coloring) has to survive, or highlighting a word inside a heading would
 /// flatten the heading.
-fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) {
+fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     let ranges = crate::features::chat_search::match_ranges(&text, query);
     if ranges.is_empty() {
-        return;
+        return 0;
     }
+    let found = ranges.len();
     let spans = std::mem::take(&mut line.spans);
     let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len() + ranges.len() * 2);
     // Byte offset of the current span within `text`.
@@ -852,6 +964,7 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) {
         }
     }
     line.spans = out;
+    found
 }
 
 /// A message's fingerprint over every field that affects rendering. A hash O(len) vs.
@@ -1970,6 +2083,120 @@ mod tests {
         let rows = visible(&mut feed, &messages, 40, 10);
         assert!(rows.iter().any(|r| r.contains("сообщение-0")), "{rows:?}");
         assert_eq!(feed.scroll_row(), 0);
+    }
+
+    /// In-feed search lights **every** match, unlike a jump (fork F2), and the
+    /// counter must equal what is highlighted — if they can drift, the counter is
+    /// a lie. Asserted together for exactly that reason.
+    #[test]
+    fn search_highlights_every_match_and_counts_them() {
+        let palette = Palette::default();
+        let messages = vec![
+            msg(FeedRole::User, "первое про маркер", ""),
+            msg(FeedRole::Assistant, "второе про маркер и снова маркер", ""),
+        ];
+        let mut feed = MessageFeed::new();
+        feed.set_search(Some("маркер"));
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
+
+        let hits = accented(&lines, &palette);
+        assert_eq!(hits, vec!["маркер"; 3], "every occurrence must light up");
+        assert_eq!(
+            feed.match_position(),
+            Some((1, hits.len())),
+            "the counter must equal the highlights, and start on the first"
+        );
+    }
+
+    /// **The reason next/prev resolves a line rather than a message** (§1.3): the
+    /// largest real message is 38,782 characters, so with message-granular
+    /// jumping "next" would leave the viewport where it was. Asserted on the
+    /// scroll row moving, not on the match index.
+    #[test]
+    fn next_match_moves_the_viewport_inside_one_long_message() {
+        // One message, matches at the very start and the very end.
+        let body = format!("маркер{}маркер", "заполнение ".repeat(400));
+        let messages = vec![msg(FeedRole::Assistant, &body, "")];
+        let mut feed = MessageFeed::new();
+        feed.set_search(Some("маркер"));
+        let _ = visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.match_position(), Some((1, 2)));
+        let first = feed.scroll_row();
+
+        feed.next_match();
+        let _ = visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.match_position(), Some((2, 2)));
+        assert!(
+            feed.scroll_row() > first,
+            "next must move the view inside one long message: {} -> {}",
+            first,
+            feed.scroll_row()
+        );
+    }
+
+    #[test]
+    fn next_and_prev_wrap_around() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "маркер раз маркер два", "")];
+        let mut feed = MessageFeed::new();
+        feed.set_search(Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        assert_eq!(feed.match_position(), Some((1, 2)));
+        feed.next_match();
+        assert_eq!(feed.match_position(), Some((2, 2)));
+        feed.next_match();
+        assert_eq!(feed.match_position(), Some((1, 2)), "wraps past the end");
+        feed.prev_match();
+        assert_eq!(feed.match_position(), Some((2, 2)), "wraps past the start");
+    }
+
+    /// Navigating a query that matches nothing must not panic or move anything —
+    /// holding the key on a typo is the ordinary case.
+    #[test]
+    fn navigating_without_matches_is_a_no_op() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "ничего похожего", "")];
+        let mut feed = MessageFeed::new();
+        feed.set_search(Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        assert_eq!(feed.match_position(), None);
+        feed.next_match();
+        feed.prev_match();
+        assert_eq!(feed.match_position(), None);
+    }
+
+    /// Leaving search must not clear a jump's mark: the two share the highlight
+    /// slot but the mark is not this feature's to drop.
+    #[test]
+    fn clear_search_drops_the_highlight_but_keeps_the_marker() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "про маркер", "")];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, messages[0].message_ids[0], None));
+        feed.set_search(Some("маркер"));
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        assert!(feed.match_position().is_some());
+
+        feed.clear_search();
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
+        assert!(accented(&lines, &palette).is_empty(), "highlight gone");
+        assert_eq!(feed.match_position(), None, "match list gone");
+        assert_eq!(feed.marker(), Some(0), "the jump's mark stays");
+    }
+
+    /// Stage 3a's payoff, from this feature's side: typing costs a warm frame.
+    #[test]
+    fn typing_a_search_query_does_not_invalidate_the_cache() {
+        let palette = Palette::default();
+        let messages = vec![msg(FeedRole::User, "маркер и метка рядом", "")];
+        let mut feed = MessageFeed::new();
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        feed.cache_reset = false;
+        for q in ["мар", "марк", "маркер"] {
+            feed.set_search(Some(q));
+            let _ = feed.build_lines(&messages, &palette, 60, ru());
+            assert!(!feed.cache_reset, "query {q:?} must not rebuild a block");
+        }
     }
 
     /// A rewrap wipes the cache and changes every row offset, so the anchor is
