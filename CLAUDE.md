@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-29, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1583 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1604 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
 recent track — **full-text search over chat content**, now **complete**
 ([research](docs/research/chat-content-search.md),
@@ -9698,16 +9698,56 @@ debounce was done as a separate PR, see below).
   threaded through the contract, pinned by a test that asserts the *other*
   position, and mutation-tested. Rewriting the spec to match the code would have
   been the wrong direction.
-- **1583 unit tests green** (+52), 69 `#[ignore]`, clippy `-D warnings`/fmt/
+- **1604 unit tests green** (+73, including the live-run fixes below), 69
+  `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3):
   storage, pure logic and TUI rendering — no engine, memory or provider protocol.
   Snippet quality and the miss rate were nonetheless measured against the **real
   corpus**, as in stage 1.
+- **The live run found two things, and one of them reversed a fork.** The user ran
+  it, and both reports were fair:
+  - **The match was highlighted in the results list but not in the feed** you
+    landed in — visibly inconsistent the moment you arrive. This was fork
+    **S3(a)**, which I had recommended and which they had accepted, so the honest
+    answer was to say so *and* revisit: they had now seen it. Implemented as
+    **S3(b), post-render span matching**. This is **not** a reversal of §1.4 —
+    what that ruled out was mapping *source* byte offsets onto rendered markdown
+    (the renderer discards `pulldown-cmark` ranges, and `normalize_delimiters`
+    rewrites the string before parsing, so the ranges do not address
+    `Message.text`). Matching the text that was actually *rendered* needs none of
+    it, which is exactly why the reversal was cheap. The archived plan records the
+    revision rather than pretending (a) was never chosen.
+    Two consequences the plan had not anticipated, both **over**-highlighting
+    where §4a had only foreseen under-highlighting: the role header would have
+    matched a plain search for "assistant" in every assistant bubble (excluded),
+    and thoughts/tool cards get highlighted although fork F3 indexes
+    `message.text` only — so *highlighted* does not mean *this is what matched*.
+    Kept, since the word is genuinely on screen, and documented.
+  - **`Esc` from a chat opened out of the results threw the results away** and
+    went to the chat list. A genuine gap, not a decision — we never designed the
+    way back. Now a one-deep back-stack in `runtime` holding the live
+    `SearchScreen` (not the query — re-running it would lose selection and
+    scroll). Cleared in the **one funnel** every chat-opening route ends in
+    (`ChatActivated`) rather than by enumerating routes, and on a *different*
+    chat rather than any activation, because `activate()` also rebuilds the same
+    chat's feed after a regeneration or `Ctrl+E`. The chat screen learns nothing
+    about search: `ChatIntent::OpenChatList` already means "go back", and *where*
+    back is, is app-layer knowledge (FSD).
+- **A third fix, from disagreeing with an agent's judgement call**: it had left
+  the status bar saying `Esc чаты` — reasoning that a runtime→screen flag was <!-- cyrillic-ok -->
+  real contract surface for one word. Sound in general, but that word sits in
+  exactly the flow the user had just called confusing, and `F1` enumerating both
+  meanings does not help someone reading the bottom of the screen. It is
+  **derived** from the back-stack once per frame rather than mirrored into state —
+  the alternative would have meant writing the rule at four set/clear sites. The
+  label was **measured**, which changed the obvious choice: `результаты` costs an <!-- cyrillic-ok -->
+  extra row in the hotkey grid at 120 columns, right where everything otherwise
+  fits on one line; `к поиску`/`to search` costs none at any width. <!-- cyrillic-ok -->
 - **Still open**: in-feed `/` search with next/prev (fork S5 kept it out — a
-  different, same-chat interaction), now cheap on 2a's jump; highlighting the
-  match *within* the feed (S3, and the investigation says it needs renderer
-  changes); `cache.db` holding chat-list summaries to remove the 94 ms startup
-  parse.
+  different, same-chat interaction), now cheaper still since both the jump *and*
+  the highlight machinery (`match_ranges` + span re-splitting) exist — what it
+  needs on top is widening the matcher past the focused message and next/prev;
+  `cache.db` holding chat-list summaries to remove the 94 ms startup parse.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

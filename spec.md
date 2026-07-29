@@ -984,7 +984,7 @@ Two main screens + overlays (modals):
 ```
 
 - **Settings screen** — a separate screen (via `Ctrl+P`/a button) with sections (see [11.6](#116-the-settings-screen)).
-- **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one (see [11.2.1](#1121-the-message-level-search-screen)).
+- **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one and highlighting the query inside it; `Esc` from that chat comes back to the results (see [11.2.1](#1121-the-message-level-search-screen)).
 - **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
 - **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`?`), the server startup log.
 - **Token counter** in the status bar: the total "conversation (prompt) + response" count,
@@ -1022,6 +1022,18 @@ Two main screens + overlays (modals):
   the app now becomes usable on its own: previously the chat gate kept generation
   blocked until a restart or a settings edit. See
   docs/server-health-monitoring.md.
+- **Hotkey hints** in the status bar are fixed except one: **`Esc` means "go back"**,
+  and where back is depends on how the chat was reached, so its label follows the key
+  — the chat list normally, the search results when the chat was opened from a hit
+  ([§11.2.1](#1121-the-message-level-search-screen)). The bar is the only place on
+  screen that answers this, so a label still saying "chats" would be the old answer in
+  exactly the flow that needs the new one. It is **derived** from the navigation state
+  once per frame rather than mirrored into a flag, which makes the hint true of every
+  frame by construction. The wording is constrained by the grid: the hints are laid out
+  in right-aligned columns whose width comes from the longest cell, so a label a few
+  characters longer costs a whole extra row at common widths — the alternative label is
+  a short **directional** one ("to search"), which also can't be misread as
+  "`Esc` opens search".
 
 ### 11.2. The chat list (an overlay)
 
@@ -1114,17 +1126,47 @@ this?"*; this screen answers *"where exactly, and take me there."*
   (`AppCommand::OpenChatAt`, [§11.3](#113-the-message-feed)); **`Esc`** returns to
   the chat list **still searching for the same query**, so the search that got you
   there isn't thrown away; `Ctrl+Q`/`F10` quit.
+- **`Esc` in a chat opened from a hit comes back to these results**, not to the chat
+  list — you drilled down from them and are most likely working through the hits, so
+  going back retraces the step you took. The results come back **whole** (the same
+  selection and scroll position), because the screen itself is stashed rather than the
+  query: re-running the search would lose exactly what you want back. It is one step
+  deep and consumed on use — the next `Esc`, now from the results, goes on to the chat
+  list as it always did — and it is forgotten as soon as a *different* chat is opened
+  by any ordinary route (picking one in the list, `Ctrl+N`, a clone, restoring the last
+  chat at startup). Re-activating the *same* chat (a regeneration, `Ctrl+E`, a repeat
+  jump) is not leaving it and keeps the way back. The status bar's `Esc` hint says
+  which of the two it currently means ([§11.7](#117-keybindings-preliminary)).
+- **The query is highlighted inside the message you land on** (`chat_search::match_ranges`),
+  so the feed and the results list agree on what matched — they share one matcher, hence
+  one notion of a match. The highlight is applied **post-render**, by matching the text
+  that was actually drawn and re-splitting its spans; mapping *source* byte offsets
+  through the renderer is what is infeasible, and this never asks that question.
+  Source offsets do not survive because `normalize_delimiters` rewrites the string before
+  parsing, and LaTeX substitution, mermaid replacement, table re-layout, syntect→ANSI, two
+  wrapping passes and rail prepending each independently destroy the correspondence; an
+  assistant bubble is also rendered as several disjoint markdown fragments split by
+  tool-call offsets. See
+  [docs/history/chat-search-stage2.md](docs/history/chat-search-stage2.md) §1.4 and
+  fork S3(b).
+  Three properties follow from matching what is on screen, and they are the honest
+  reading of the feature:
+  - **Approximate by construction** — content the renderer *transformed* no longer
+    contains the query as text and is not found: text pulled into a LaTeX formula and
+    substituted into unicode, or a mermaid diagram drawn in place of its source.
+  - **It over-highlights relative to the index** — "thoughts" and tool cards are
+    highlighted although only `message.text` is indexed (§11.2, fork F3 of stage 1). So
+    *highlighted* does not mean *this is what matched*; the word is genuinely on screen,
+    which is why it is left in. The **role header is excluded** — otherwise a plain
+    search for "assistant" would light up every assistant bubble it marked.
+  - **Only the jumped-to message** is highlighted, never the rest of the feed:
+    the query travels with the focus as one value, so a stale query cannot outlive its
+    target, and highlighting every occurrence chat-wide would be noise nobody asked for.
 - Like the other screens it knows nothing about `app` (FSD) and answers with a
   `SearchIntent`; the orchestrator owns the index and the chats and hands over a
-  finished snapshot (`AppEvent::MessageSearchResults`).
-- **Highlighting inside the feed after a jump is deliberately not done** — the target
-  message is *marked* (an accent rail), its matched text is not highlighted. Source
-  byte offsets do not survive the renderer: `normalize_delimiters` rewrites the string
-  before parsing, and LaTeX substitution, mermaid replacement, table re-layout,
-  syntect→ANSI, two wrapping passes and rail prepending each independently destroy the
-  correspondence; an assistant bubble is also rendered as several disjoint markdown
-  fragments split by tool-call offsets. See
-  [docs/history/chat-search-stage2.md](docs/history/chat-search-stage2.md) §1.4.
+  finished snapshot (`AppEvent::MessageSearchResults`). Where `Esc` goes *back* to is
+  app-layer knowledge too — the chat screen only signals "go back" and never learns
+  that a search exists (see [docs/architecture.md](docs/architecture.md) §10).
 
 ### 11.3. The message feed
 
@@ -1149,10 +1191,15 @@ this?"*; this screen answers *"where exactly, and take me there."*
   not be yanked back. Scrolling to the last line resumes following.
 - **Jumping to a message** (`AppCommand::OpenChatAt` from the search screen, §11.2.1):
   the chat is activated and the feed is positioned on that message, whose rail is
-  drawn in the accent color — "this is where you landed". The **mark survives
+  drawn in the accent color — "this is where you landed" — and **the searched query is
+  highlighted inside that message** (the accent color, the same one the results list
+  uses; approximate, and only that message — see [§11.2.1](#1121-the-message-level-search-screen)).
+  The **mark survives
   scrolling** (that is the point: you read around the hit and can still see it) and is
   dropped only when the chat changes or another jump replaces it; the **view position**
-  is released as soon as you scroll manually. The position is anchored to the *message*
+  is released as soon as you scroll manually. The highlight moves as one with the mark
+  (both set by the jump, both dropped with it), so a query left over from a previous
+  jump cannot light up the wrong message. The position is anchored to the *message*
   (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
   — returns the view to the message rather than to a stale row. A message the feed
   doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
@@ -1223,6 +1270,14 @@ this?"*; this screen answers *"where exactly, and take me there."*
   (`build_code_theme`) as fenced blocks. Used by the feed's tool cards (§11.3) for
   tool arguments/results (`python_exec`, `fs_read`/`fs_write`); an unrecognized
   language → plain text with no highlighting.
+- **The renderer knows nothing about the search highlight** (§11.2.1): a jump's query
+  is applied by the feed *on top of* the rendered lines, matching their text and
+  re-splitting their spans — no `highlight_ranges` threaded through `writer.rs`/
+  `latex.rs`/`table.rs`/the mermaid path, which is what keeps it cheap. It is applied
+  **before** the feed's wrap, since `wrap::wrap_line` carries per-character styles
+  through. The flip side is stated in §11.2.1: everything this section *transforms* —
+  LaTeX substituted into unicode, a mermaid diagram drawn in place of its source — no
+  longer contains the query as text, so the highlight will not find it.
 
 ### 11.5. Input and editing, spellcheck
 
@@ -1368,7 +1423,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
-| `Esc` | the chat-list overlay (open/close) · cancel generation |
+| `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1); the status bar's hint says which · cancel generation |
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `Ctrl+N` | new chat (profile picker) |
 | `Ctrl+P` | the settings screen |

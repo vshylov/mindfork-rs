@@ -84,6 +84,11 @@ two independent parses.
 > actually rendered, or a genuine `highlight_ranges` threaded through the
 > renderer — see fork **S3**.
 
+The distinction matters, because it is what made the later reversal of **S3**
+cheap: what is infeasible is mapping *source* byte offsets onto rendered
+markdown. Matching the **rendered** text needs none of that machinery, and the
+finding above is untouched by it — see the note under §4.
+
 ### 1.5 Resize is unhandled today
 
 Nothing in `src/app/` has a `Resize` arm. On a width change the cache is wiped
@@ -149,10 +154,38 @@ recommendation being unambiguous):
 |---|---|
 | **S1** where results live | **A dedicated screen** (`ActiveScreen::Search`) |
 | **S2** shape and order | **Grouped by chat**, chats in the existing sort, messages in chat order |
-| **S3** feed highlight | **None for now** — jump and mark the whole message |
+| **S3** feed highlight | **None for now** — jump and mark the whole message → **revised to (b) after the live run, 2026-07-29** (see below) |
 | **S4** snippets | **Built in Rust** from the stored text |
 | **S5** in-feed search | **Not in this track** — stays its own roadmap item |
 | **S6** resize anchor | **The message** (feed index), not the row |
+
+### S3 revised to (b) after the live run — 2026-07-29
+
+S3 was decided as (a) "mark the message, don't highlight inside it", with the
+recommendation itself saying *revisit once it is in use*. It was in use the same
+day, and the revisit was immediate: the results list highlights the match, so a
+feed that did not highlight it read as inconsistent the moment you land there.
+Shipped as
+**(b) post-render span matching** — `chat_search::match_ranges` over the rendered
+lines, re-splitting their spans, scoped to the focused message.
+
+This is not a reversal of §1.4's finding, which stands exactly as written: what
+is infeasible is mapping *source* byte offsets through the renderer. (b) never
+asks that question — it matches the text that was actually drawn, which is also
+what the reader can see. The cost was low enough that "revisit later" turned into
+"revisit now"; the options as they stood are kept in §4a unchanged.
+
+Two consequences the plan did not anticipate, both documented in
+[spec.md §11.2.1](../../spec.md):
+
+- the highlight is **approximate by construction** — content the renderer
+  transformed (LaTeX substituted into unicode, a mermaid diagram replacing its
+  source) no longer contains the query as text and is not found;
+- it **over**-highlights relative to the index: "thoughts" and tool cards are
+  highlighted although stage 1's fork F3 indexes `message.text` only. So
+  *highlighted* does not mean *this is what matched*. Left in — the word is
+  genuinely on screen — but the **role header** is excluded, or a plain search
+  for "assistant" would light up every assistant bubble it marked.
 
 ### A behaviour change that falls out of S3/S6
 

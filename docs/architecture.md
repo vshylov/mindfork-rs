@@ -1817,7 +1817,29 @@ nine more that compile silently (`_ =>`/`if let`/`matches!`). Two of those were
 real bugs when `Search` was added — the `SelfModelView` arm would have *replaced*
 the results with a self-model snapshot, and the `Settings` broadcast would have
 left the new screen's theme and UI language frozen — so both are now exhaustive by
-variant, which forces the next screen to decide too. **"Self-model"** (`F3`, view+edit) — the orchestrator
+variant, which forces the next screen to decide too.
+
+**Going back from a jump — a one-deep back-stack** (`SearchReturn`, a local of
+`run_loop` beside `active` rather than a variant of it: it has to survive while
+another screen is in front). Opening a hit stashes the **live `SearchScreen`**, not
+the query — re-running the search would lose the selection and scroll, which is
+exactly what coming back is for — and `ChatIntent::OpenChatList` consumes it:
+`Esc` in that chat restores the results whole, the next `Esc` goes on to the list
+as before. The chat screen learns nothing about searching (FSD: `screens` may not
+depend on `app`) — `OpenChatList` already means "go back" from its point of view,
+and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared
+in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
+where every chat-opening route ends (the list, `Ctrl+N`, a clone, a jump, restoring
+the last chat at startup); enumerating those routes by hand is what would rot
+silently as routes are added. The test is a **different** chat: `activate()` also
+re-emits for the same chat after a regeneration or `Ctrl+E`, and clearing there
+would drop the way back for no reason. It is session state, never persisted.
+The status bar's `Esc` hint (`status_bar::EscTarget`) is **derived** from this
+stack by a pure function called once per frame in the draw path, not mirrored into
+a flag — mirroring would mean writing the same rule at each set/clear site to keep
+one word honest, which is how a hint drifts from the key it describes.
+
+**"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
 sends `AppCommand::RequestSelfModel`; the screen is created on the reply
 event `AppEvent::SelfModelView` (the active profile's model snapshot).

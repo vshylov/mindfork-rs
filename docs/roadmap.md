@@ -100,11 +100,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   an anchor that survives a resize, and a marked message). It was deliberately
   kept out of that track (fork S5) because it is a different interaction —
   same-chat and incremental rather than cross-chat — and folding it in would have
-  doubled the search screen's UI surface. Note that **highlighting the match
-  inside the feed** is a genuinely separate problem, and the harder half:
-  source byte offsets do not survive the renderer (see that plan's §1.4), so it
-  needs either post-render span matching over what was actually drawn, or
-  `highlight_ranges` threaded through the renderer.
+  doubled the search screen's UI surface. **Highlighting inside the feed is no
+  longer the harder half either** — it shipped with the jump (fork S3(b)):
+  `chat_search::match_ranges` plus the feed's span re-splitting already highlight a
+  query inside a message, so `/`-search needs the matcher it already has, widened
+  from the one focused message to the whole feed, plus next/prev over the hits.
+  What that plan's §1.4 rules out is still ruled out — mapping *source* byte
+  offsets through the renderer — and the shipped highlight is approximate for
+  exactly that reason (it matches what was drawn, so transformed content such as
+  LaTeX or a mermaid diagram is not found).
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
@@ -260,7 +264,9 @@ A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
   containing a match, with the existing sort still ordering them; from there
   `Ctrl+G` opens the **messages themselves** — grouped by chat, each with a
   snippet built in Rust with the match highlighted, its role and date — and
-  `Enter` opens the chat *at* that message, which is marked in the feed
+  `Enter` opens the chat *at* that message, which is marked in the feed **with the
+  query highlighted inside it**, and `Esc` there comes back to the results whole —
+  same selection and scroll — before going on to the chat list
   (`Enter` on a chat in content mode does the same, at its first match). The index
   is a separate, disposable `cache.db` — derived data, so a version mismatch or a
   corrupt file is answered by deleting and rebuilding rather than by ADR 0006's
@@ -272,10 +278,13 @@ A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
   infrastructure in its own right: it is necessarily deferred into `render` (the
   block cache only exists there), it anchors to the *message* so it survives a
   resize, and it forced the seven "scroll to the bottom" sites to be split by who
-  asked — so content arriving on its own no longer yanks a reader back. **Still
-  open**: highlighting the match *inside* the feed (source offsets don't survive
-  the renderer) and in-feed `/`-search, which that jump now makes cheap — both
-  §Feed and chat UI. See [chat-content-search.md](research/chat-content-search.md)
+  asked — so content arriving on its own no longer yanks a reader back. A live run
+  revised one decision on the spot: fork S3 shipped as (b), post-render span
+  matching, because a feed that didn't highlight what the results list did read as
+  inconsistent — approximate by design, since it matches what was drawn rather than
+  the source. **Still open**: in-feed `/`-search, which the jump *and* that
+  highlight now make cheap — §Feed and chat UI.
+  See [chat-content-search.md](research/chat-content-search.md)
   and [chat-search-stage2.md](history/chat-search-stage2.md).
 - **Remote live e2e gate** (stages 0–3, complete): the mandatory live gate
   (AGENTS.md §3) stopped depending on one machine at one LAN address.
