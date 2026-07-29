@@ -244,7 +244,23 @@ tool-call JSON and CoT match on words the user never wrote. Indexing only
 
 ---
 
-## 7. Forks for decision
+## 7. Forks — **decided by the user 2026-07-29**
+
+All six adopted as recommended (F2 and F5 were stated rather than asked, their
+recommendation being unambiguous):
+
+| | decision |
+|---|---|
+| **F1** tokenizer | **`trigram`** — substring, as today's filter; immune to Russian morphology |
+| **F2** query syntax | **always literal** — every token quoted, implicit AND, never errors |
+| **F3** scope | **`message.text` only** for stage 1 |
+| **F4** UI | **extend the chat-list screen** with a title/content toggle |
+| **F5** search scope | **global**, matching today's global chat list |
+| **F6** staging | **two PRs** — stage 1 index + sync + minimal UI; stage 2 message-level screen |
+
+The full options and their trade-offs are kept below as the record of *why*.
+
+
 
 **F1 — tokenizer.**
 (a) `trigram` — substring like today's filter, immune to Russian morphology; 2×
