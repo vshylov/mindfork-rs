@@ -34,7 +34,8 @@ Architecture — **Feature-Sliced Design (FSD)**.
   as generation proceeds, visible right from the start. Before the server responds,
   the conversation is shown as an estimate (`~`), then replaced with the exact number
   from `usage` (`stream_options.include_usage`).
-- **Chat list** (`Esc`, full-screen): search by title, two sort orders
+- **Chat list** (`Esc`, full-screen): search by title **or by message content**
+  (`Ctrl+F` toggles; full-text, matches fragments of words), two sort orders
   (by creation / modification date), rename (`F2`), new/clone/delete,
   model-generated **auto-title** (`Ctrl+R` in the list window).
 - **Copy the conversation to the clipboard** (`F5`) — both in the main window (the
@@ -410,6 +411,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `F1` / `?` | help/"About" dialog (tabs: about · hotkeys · commands · license · components; `Tab`/`←→` — switch tabs) |
 | `Ctrl+P` | settings screen |
 | in the chat list (`Esc`) | search, sort orders, `F2`/`Ctrl+N`/`Ctrl+D`/`Del`, `Ctrl+R` auto-title, `F5` copy |
+| `Ctrl+F` | in the chat list: switch the search between titles and message content |
 | `F5` | copy the chat conversation to the clipboard (active / selected in the list) |
 | `Ctrl+N` | new chat (with a profile picker) |
 | `Ctrl+R` | regenerate the last response |

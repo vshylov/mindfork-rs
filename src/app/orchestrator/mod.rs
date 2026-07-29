@@ -20,6 +20,8 @@
 //! - [`title`] — auto-titling a chat (a background task);
 //! - [`impersonation`] — writing a message "on the user's behalf" (a background task);
 //! - [`rag`] — indexing/removing files in the knowledge base;
+//! - [`search`] — the chat-content search index (`cache.db`): startup
+//!   reconciliation, the post-save hook, content queries;
 //! - [`tts`] — speaking chat messages (the `/tts` command);
 //! - [`request`] — mapping domain messages to the engine's format.
 
@@ -39,6 +41,7 @@ mod reflection;
 mod request;
 mod restart_queue;
 mod save_queue;
+mod search;
 mod self_consolidation;
 mod settings;
 mod title;
@@ -189,6 +192,14 @@ pub async fn run(deps: OrchestratorDeps) {
         ));
     }
     orch.emit_settings();
+    // Bring the search index in line with what is on disk — changes made
+    // outside the app (import/restore/a hand-edited file/a deleted `cache.db`).
+    // A background task, so it never delays the UI; a stat walk of an
+    // up-to-date index costs a fraction of a millisecond. Spawned **here**
+    // rather than inside `bootstrap`: bootstrap is plain data loading that unit
+    // tests call directly, off any runtime, and spawning background work is the
+    // loop's business. See [`search`].
+    search::spawn_reconcile(orch.storage.clone());
 
     loop {
         let deadline = orch.saves.deadline();
@@ -477,6 +488,7 @@ impl Orchestrator {
             AppCommand::CloneChat(id) => self.handle_clone(id),
             AppCommand::CopyChat(id) => self.handle_copy_chat(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
+            AppCommand::SearchChats(query) => self.handle_search_chats(query),
             AppCommand::CreateProfile {
                 name,
                 system_message,
@@ -839,13 +851,18 @@ impl Orchestrator {
         self.saves.mark(id);
     }
 
-    /// Saves all dirty chats to disk.
+    /// Saves all dirty chats to disk, then brings each one's search index in
+    /// line (see [`search`]). Indexing runs **after** a successful save so it
+    /// records the file state it actually indexed; a failure there is logged
+    /// and ignored — the index is disposable and must never break saving.
     fn flush_saves(&mut self) {
         for id in self.saves.take() {
-            if let Some(chat) = self.chats.iter().find(|c| c.id == id)
-                && let Err(err) = self.storage.json().save_chat(chat)
-            {
-                tracing::error!(chat = %id, error = %err, "failed to save the chat");
+            let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+                continue;
+            };
+            match self.storage.json().save_chat(chat) {
+                Ok(()) => self.index_saved_chat(chat),
+                Err(err) => tracing::error!(chat = %id, error = %err, "failed to save the chat"),
             }
         }
     }

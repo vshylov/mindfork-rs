@@ -287,4 +287,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # `--list` prints the offending lines, which are Cyrillic by definition. On
+    # Windows the console defaults to cp1252, so printing them raised
+    # UnicodeEncodeError and killed the run exactly when the report was needed.
+    # `errors="replace"` keeps it working even on a console whose font/codepage
+    # cannot render Cyrillic: line numbers and paths still point at the offenders.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())

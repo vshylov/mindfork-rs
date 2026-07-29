@@ -177,6 +177,9 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+X", "ui.help.cut"),
     ("Ctrl+V", "ui.help.paste"),
     ("Esc", "ui.help.esc"),
+    // Only meaningful inside the chat list, but it belongs here: that is where
+    // users look for "how do I search my history?".
+    ("Ctrl+F", "ui.help.search_content"),
     ("Ctrl+N", "ui.help.new_chat"),
     ("F3", "ui.help.self_model"),
     ("F5", "ui.help.copy_chat"),

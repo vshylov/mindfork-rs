@@ -31,6 +31,14 @@ pub(super) fn apply_event(
             screen.set_chat_list(chats);
         }
         AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
+        // Content-search results only mean anything to an open chat list — the
+        // reply to a query it asked for. Ignored when it is closed (a late reply
+        // to a list the user has since left).
+        AppEvent::ChatSearchResults { query, chat_ids } => {
+            if let ActiveScreen::ChatList(list) = active {
+                list.set_search_results(query, chat_ids);
+            }
+        }
         // A list-operation error: into its status area, if the screen is open; otherwise
         // (a late auto-title reply after the list is closed) — as a note in the feed.
         AppEvent::ChatListError(message) => match active {
@@ -346,6 +354,9 @@ pub(super) fn dispatch_chat_list(
         ChatListIntent::Delete(id) => AppCommand::DeleteChat(id),
         ChatListIntent::Rename { id, title } => AppCommand::RenameChat { id, title },
         ChatListIntent::AutoRename(id) => AppCommand::AutoRenameChat(id),
+        // Content search: the raw query goes to the orchestrator, which escapes
+        // it and answers with `ChatSearchResults`. The list stays open.
+        ChatListIntent::SearchContent(query) => AppCommand::SearchChats(query),
     };
     let _ = cmd_tx.send(command);
     false

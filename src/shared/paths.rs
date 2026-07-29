@@ -237,6 +237,15 @@ impl Paths {
         self.root.join("data.db")
     }
 
+    /// The disposable search cache (`cache.db`) — a full-text index over chat
+    /// content. Derived data: deleting it is a supported repair, and
+    /// `features/backup.rs` leaves it out of archives by construction (its
+    /// include list is an allowlist). See
+    /// docs/research/chat-content-search.md §2.
+    pub fn cache_db(&self) -> PathBuf {
+        self.root.join("cache.db")
+    }
+
     /// Hunspell dictionaries directory (`dictionaries/`) under the data root.
     pub fn dictionaries_dir(&self) -> PathBuf {
         self.root.join("dictionaries")
@@ -314,6 +323,17 @@ mod tests {
     fn root_is_preserved() {
         let p = Paths::with_root("some/root");
         assert_eq!(p.root(), Path::new("some/root"));
+    }
+
+    #[test]
+    fn cache_db_under_root_next_to_data_db() {
+        // The search index is a *second* database at the root, not a sibling of
+        // `data.db` inside it — that separation is what lets it be deleted (and
+        // excluded from backups) without touching user content (research §2).
+        let p = Paths::with_root("data-root");
+        assert!(p.cache_db().ends_with("cache.db"));
+        assert_eq!(p.cache_db().parent(), Some(p.root()));
+        assert_ne!(p.cache_db(), p.data_db());
     }
 
     #[test]

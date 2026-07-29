@@ -96,12 +96,23 @@ tooling/caches; in dev — `target/debug/data/`), the following are created:
 | `profiles.json` | AI companion profiles |
 | `chats/{id}.json` | chats (+ `.bak` — backup on overwrite) |
 | `data.db` | notes and RAG (SQLite + sqlite-vec), isolated by profile |
+| `cache.db` | search index over chat content — derived data, safe to delete (see below) |
 | `dictionaries/` | spellcheck dictionaries (Hunspell) |
 | `personal_dictionary.txt` | personal dictionary |
 | `backups/` | backups (see §2.2) |
 | `logs/` | logs (stdout is occupied by the TUI) |
 
 In a dev build this is `target/debug/data/` next to the binary.
+
+**`cache.db` is disposable.** It holds the full-text index behind searching chats by
+content (`Ctrl+F` in the chat list) — everything in it is derived from `chats/*.json`,
+nothing is stored there and nowhere else. It fills in the background: the first launch
+after the update runs an initial pass (a few seconds — ~3 s for a corpus of 171 chats),
+later launches cost nothing when nothing has changed, and the app stays usable
+throughout (search simply covers whatever is indexed so far). If search ever
+misbehaves, **deleting the file is a supported repair** — it is rebuilt automatically
+on the next launch. It is deliberately **not** included in backups (§2.2), so a
+restored copy just rebuilds its own index.
 
 ### 2.1. Installation defaults (`defaults.json`)
 
@@ -155,8 +166,8 @@ mindfork restore D:\copy.zip
 The archive includes: `chats/`, `dictionaries/`, `locales/`, `data.db`,
 `personal_dictionary.txt`, `profiles.json`, `settings.json`, all `*.bak` files, and
 the file tools' "sandbox" directory (`tools.fs_root`) — **only if** it's inside the
-data directory. `backups/`, `logs/`, and the defaults files `defaults.json`/
-`location.json` are excluded.
+data directory. `backups/`, `logs/`, the disposable `cache.db` (rebuilt after a
+restore, §2), and the defaults files `defaults.json`/`location.json` are excluded.
 
 **Restoration is transactional.** The archive is validated first; if the data
 directory already has something in it, it's automatically saved to `backups/` (a
