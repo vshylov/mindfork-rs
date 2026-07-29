@@ -304,6 +304,71 @@ jump)*
 
 ---
 
+## 7a. Stage 1 design (validated by a second probe, 2026-07-29)
+
+The sketch in §8 was revised after probing the actual schema. Two findings moved
+it:
+
+**External-content FTS5, not a standalone table.** A standalone FTS5 table can
+only carry `chat_id` as `UNINDEXED`, so "re-index this one chat" means a full
+scan to delete its old rows. An external-content table (`content='messages'`)
+keeps the metadata in a real table with a real index, and `snippet()` still works
+(verified — it reads through to the content table). Measured: triggers make a
+full rebuild ~1.2 s instead of 350 ms, and the file is the same size (13.8 MB).
+That is the right trade — a full rebuild is rare and runs in the background,
+whereas deletes happen on every incremental re-index.
+
+**Re-index at message level, not chat level.** This is the finding that matters.
+A chat is saved every ~800 ms while a reply streams; re-indexing the whole chat
+on each save would cost ~385 ms for a large one (measured: 1412 messages insert
+in 1089 ms). Since history is append-only apart from truncation, a diff over
+`(message_id, text_hash)` reduces a streaming save to **one row** deleted and
+re-inserted. The hash is FNV-1a — stable across Rust versions, unlike
+`DefaultHasher`; and even a hash change would only cause a harmless re-index.
+
+```sql
+PRAGMA user_version = 1;              -- mismatch → delete the file, rebuild
+
+CREATE TABLE indexed_chats (          -- reconciliation bookkeeping
+  chat_id  TEXT PRIMARY KEY,
+  mtime_ms INTEGER NOT NULL,
+  size     INTEGER NOT NULL
+);
+
+CREATE TABLE messages (
+  id         INTEGER PRIMARY KEY,
+  chat_id    TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  text_hash  INTEGER NOT NULL,        -- FNV-1a, for the message-level diff
+  role       TEXT NOT NULL,           -- unused in stage 1; stage 2 shows it
+  ts         TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  UNIQUE(chat_id, message_id)         -- also serves lookups by chat_id
+);
+
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+  text, content='messages', content_rowid='id', tokenize='trigram');
+-- plus the standard AFTER INSERT / AFTER DELETE sync triggers
+```
+
+**Filter, don't rank.** Trigram's `bm25` is weak (§5), so stage 1 sidesteps
+ranking entirely: content mode *filters* the chat list to chats with at least one
+matching message, and the user's existing sort (Created/Modified) still orders
+it. Ranking becomes a real question only in stage 2, where hits are messages.
+
+**FSD.** Query escaping (§4) is pure logic and belongs in `features`, but
+`shared/storage` may not depend on `features` (that is an upward dependency). So
+`CacheDb::search_chats` takes an **already-escaped** FTS query, and the
+orchestrator — in `app`, which may use both — calls
+`features::chat_search::to_fts_query` and passes the result down.
+
+**Trigram's 3-character floor** shapes the query builder: tokens shorter than 3
+characters cannot match anything, so they are dropped rather than allowed to zero
+out the whole query; if nothing survives, content mode simply shows the unfiltered
+list, exactly as an empty query does today.
+
+---
+
 ## 8. Sketch of the shape (for reference, not a commitment)
 
 ```sql
