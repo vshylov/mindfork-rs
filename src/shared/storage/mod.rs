@@ -2,6 +2,7 @@
 //! (notes/RAG). The [`Storage`] facade combines both and coordinates cascade
 //! soft delete. See spec §5.2, §4.4.2.
 
+pub mod cache;
 pub mod db;
 pub mod json;
 pub mod schema;
@@ -11,6 +12,11 @@ use uuid::Uuid;
 
 use crate::shared::paths::Paths;
 
+// Ahead of its consumer, like the module itself (see `cache/mod.rs`): this
+// re-export becomes the path `Storage` uses for its third member. Drop the
+// `allow` when it does.
+#[allow(unused_imports)]
+pub use cache::CacheDb;
 pub use db::Db;
 pub use json::JsonStore;
 
