@@ -15,6 +15,12 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // In-feed search (`Ctrl+F`) captures input while it is open: keys go to
+        // the query field, `Enter`/`↓` and `Shift+Enter`/`↑` step through matches,
+        // `Esc` closes. See docs/history/in-feed-search.md §3.
+        if self.search.is_some() {
+            return self.handle_search_key(key);
+        }
         // The help/"About" dialog (`F1`/`?`) intercepts input: `Tab`/`←→`
         // switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` scroll the active tab, `Esc`
         // (and a repeat `F1`/`?`) close it, `Ctrl+Q`/`F10` — quit. Other keys
@@ -132,6 +138,13 @@ impl ChatScreen {
                     return (!self.generating).then(|| ChatIntent::Impersonate {
                         seed: self.input.text(),
                     });
+                }
+                // In-feed text search (docs/history/in-feed-search.md). `/` is not
+                // available: the input box is always focused, and `/` in an
+                // empty box is how a command starts (§1.1).
+                'f' => {
+                    self.open_feed_search();
+                    return None;
                 }
                 // Spellcheck suggestions for the word under the cursor (spec
                 // §11.5).
@@ -319,7 +332,84 @@ impl ChatScreen {
     /// view: with help/a popup/an overlay open (their single-line fields) —
     /// a no-op. A paste never sends a message even with line breaks inside.
     /// See spec §11.5.
+    /// Opens in-feed search, resuming the query last typed in this chat.
+    ///
+    /// The message input box is left completely alone — every mode in this screen
+    /// preserves it, and a half-written message must survive a search.
+    pub(super) fn open_feed_search(&mut self) {
+        let mut field = InputBox::new();
+        // Before `set_text`: the single-line invariant (see `InputBox`).
+        field.set_single_line(true);
+        if !self.search_last.is_empty() {
+            field.set_text(&self.search_last);
+        }
+        self.search = Some(Box::new(field));
+        let q = self.search_last.clone();
+        self.feed_view
+            .set_search((!q.is_empty()).then_some(q.as_str()));
+        self.request_full_redraw();
+    }
+
+    /// Leaves in-feed search, dropping its highlight. The query itself is kept
+    /// for the next `Ctrl+F` in this chat (fork F5).
+    pub(super) fn close_feed_search(&mut self) {
+        self.search = None;
+        self.feed_view.clear_search();
+        self.request_full_redraw();
+    }
+
+    /// Keys while the search field is open (fork F5): `Enter`/`↓` next,
+    /// `Shift+Enter`/`↑` previous, `Esc` closes, `Ctrl+Q`/`F10` still quit.
+    /// Everything else is text, and re-runs the search as you type — which costs
+    /// a warm frame, not a re-render (stage 3a, §1.2).
+    fn handle_search_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(&key) == Some('q') {
+            return Some(ChatIntent::Quit);
+        }
+        match (key.code, key.modifiers) {
+            (KeyCode::F(10), _) => return Some(ChatIntent::Quit),
+            (KeyCode::Esc, _) => {
+                self.close_feed_search();
+                return None;
+            }
+            (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+                self.feed_view.prev_match();
+                return None;
+            }
+            (KeyCode::Enter, _) | (KeyCode::Down, _) => {
+                self.feed_view.next_match();
+                return None;
+            }
+            (KeyCode::Up, _) => {
+                self.feed_view.prev_match();
+                return None;
+            }
+            _ => {}
+        }
+        if let Some(field) = &mut self.search
+            && field.on_key(key).edited()
+        {
+            let q = field.text();
+            self.search_last = q.clone();
+            self.feed_view
+                .set_search((!q.is_empty()).then_some(q.as_str()));
+        }
+        None
+    }
+
     pub fn handle_paste(&mut self, text: &str) {
+        // Fast typing arrives as one coalesced paste (§1.5), so the search field
+        // needs its own target — without this, typing quickly into it would land
+        // in the message the user was writing.
+        if let Some(field) = &mut self.search {
+            if !text.is_empty() {
+                field.insert_str(text);
+                let q = field.text();
+                self.search_last = q.clone();
+                self.feed_view.set_search(Some(&q));
+            }
+            return;
+        }
         if self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
@@ -343,7 +433,8 @@ impl ChatScreen {
     /// unexpected). A click/drag outside the field's area (into the feed) —
     /// a no-op (feed selection is a separate track). See spec §11.3, §11.5.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.help.is_some()
+        if self.search.is_some()
+            || self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()

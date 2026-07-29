@@ -93,22 +93,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   workarounds: the full redraw on screen switch / popup close and the VS16
   emoji swap in the grid. The mechanics and terminal-independent probes are
   in `shared::ui` and `widgets::emoji_picker`.
-- **In-feed text search** (`/`-search within the open chat, incremental, with
-  next/prev) — **still open, but now cheap**: the piece it was waiting on,
-  "put the feed on message N", shipped with chat content search (see "Recently
-  closed" and [chat-search-stage2.md](history/chat-search-stage2.md) — a jump,
-  an anchor that survives a resize, and a marked message). It was deliberately
-  kept out of that track (fork S5) because it is a different interaction —
-  same-chat and incremental rather than cross-chat — and folding it in would have
-  doubled the search screen's UI surface. **Highlighting inside the feed is no
-  longer the harder half either** — it shipped with the jump (fork S3(b)):
-  `chat_search::match_ranges` plus the feed's span re-splitting already highlight a
-  query inside a message, so `/`-search needs the matcher it already has, widened
-  from the one focused message to the whole feed, plus next/prev over the hits.
-  What that plan's §1.4 rules out is still ruled out — mapping *source* byte
-  offsets through the renderer — and the shipped highlight is approximate for
-  exactly that reason (it matches what was drawn, so transformed content such as
-  LaTeX or a mermaid diagram is not found).
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
@@ -259,6 +243,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **In-feed text search** (complete): **`Ctrl+F`** inside a chat searches that
+  conversation — every match highlighted, a `match n of total` counter,
+  `Enter`/`↓` and `Shift+Enter`/`↑` to step, `Esc` to close; the message you are
+  writing is untouched. **Not `/`, which this item asked for and which turned out
+  to be unimplementable**: the chat's input box is always focused, and `/` in an
+  empty box is exactly how a command starts (`/rag`, `/file`, …), so gating on
+  empty input does not rescue it either. next/prev goes to the matched **line**,
+  re-derived every frame — the largest real message is 38,782 characters, so
+  jumping to the message start would leave the viewport unmoved. Matching runs
+  over what is **drawn**, which is why the counter can equal the highlights;
+  the same reason means it covers thoughts and tool cards, and misses text the
+  renderer transformed. Prerequisite shipped with it: the highlight left
+  `CacheKey`, so typing costs a warm frame (17 ms) instead of re-rendering the
+  chat (39 ms). See [in-feed-search.md](history/in-feed-search.md).
 - **Chat content search** (stages 1–2, complete): the chat list's search box
   toggles between titles and **message text** (`Ctrl+F`) and filters to the chats
   containing a match, with the existing sort still ordering them; from there

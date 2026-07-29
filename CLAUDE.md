@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-29, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1604 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1615 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
 recent track — **full-text search over chat content**, now **complete**
 ([research](docs/research/chat-content-search.md),
@@ -9748,6 +9748,78 @@ debounce was done as a separate PR, see below).
   the highlight machinery (`match_ranges` + span re-splitting) exist — what it
   needs on top is widening the matcher past the focused message and next/prev;
   `cache.db` holding chat-list summaries to remove the 94 ms startup parse.
+
+### Post-M9: in-feed text search (`Ctrl+F`) (done)
+- Closes the roadmap's last search item ([plan](docs/history/in-feed-search.md),
+  forks **F1–F6 decided by the user 2026-07-29**, all as recommended). Two
+  stages: **3a** moved the highlight out of the block cache, **3b** built the
+  mode. Done by hand rather than delegated — five consecutive agent runs died on
+  transient API 529s.
+- **The investigation invalidated the roadmap's own wording, before any code.**
+  Both `docs/roadmap.md` and stage 2's fork S5 specified this as "`/`-search".
+  `/` is **unimplementable** here: the chat's input box is always focused, and
+  typing `/` into an empty box is exactly the gesture that starts a command
+  (`/rag`, `/file`, `/tts`, `/reindex`). Gating on empty input does not rescue it
+  — that *is* the command-entry gesture. The settings screen can use `/` only
+  because it has a top-level state with no focused editor, which
+  `keys::is_slash_key` documents as its precondition; the chat never has one. So
+  `Ctrl+F`, and both documents were corrected rather than left standing.
+- **Stage 3a — the query left `CacheKey`, and that was the bulk of the work.**
+  Highlighting every match instead of one is a one-line change; the cost was that
+  the query was part of the cache key, and a key mismatch clears every block. For
+  an incremental field that meant re-running markdown + syntect + LaTeX + mermaid
+  + table layout over the whole chat **on every keystroke** — up to 70 blocks and
+  260 K characters. Measured after moving it out: a query change costs **17 ms**,
+  a normal warm frame, against **39 ms** for a rebuild. One rebuild per jump
+  remains and should — the marker changes the rail colour, which is baked in.
+  - The header exclusion had to be rebuilt: it worked by slicing an index into the
+    *unwrapped* body, meaningless post-cache. `CachedBlock` now records how many
+    **output** rows the header took, counted while the block is built — normally
+    one, but a long custom role name can wrap it, so counting output rows is the
+    only stable answer. Mutation-tested.
+  - **I predicted a bug that does not exist.** Excluding the rail span from the
+    match text looked necessary; the mutation **survived**, because
+    `highlight_line` derives its offsets from the same concatenation it matches
+    over, so including the rail shifts both consistently and the output is
+    byte-identical. The parameter was dropped — an untestable precaution is worse
+    than none — and the reasoning lives at the call site.
+  - Five stage-2 tests moved from asserting on `feed.cache[..]` to asserting on the
+    lines handed to the renderer. Not a behaviour change: the cache is query-free
+    by design now, and reaching into it was reading an implementation detail. One
+    asserted the exact property this stage inverts and was rewritten.
+- **Stage 3b — next/prev goes to the matched line, not the message.** The feed
+  could only scroll to a block's first row, and stage 2's fork S6 had refused to
+  *store* an intra-block offset because a rewrap changes a block's height. Here it
+  is **derived every frame** instead, riding the same wrap-accumulating loop the
+  jump uses, so S6's objection does not apply. Not a nicety: the largest real
+  message is **38,782 characters**, so message-granular stepping would leave the
+  viewport unmoved — the test asserts the scroll row moves, not the match index.
+- **The counter is asserted equal to the number of highlighted occurrences**, so
+  the two cannot drift. It exists because a common word matches **200–300 times in
+  a single chat** (measured) — for calibration, the cross-chat screen caps at 200
+  hits across *all* chats. Matching runs over what is drawn (fork F2), which is
+  what makes that equality possible; the honest costs are that it also covers
+  thoughts and tool cards, which the index does not, and misses text the renderer
+  reshaped.
+- **Three things that fail silently, all tested.** Fast typing arrives as one
+  coalesced paste and would have landed in the message being written, so the field
+  has its own paste target. `activate_chat` renumbers the feed under any open
+  search (`Ctrl+E`, `Ctrl+R`, a rewrite round, a cross-chat jump all funnel
+  through it), so the search closes there. And the field stands in for the input
+  box rather than taking a layout row, because a fifth constraint would shrink the
+  feed and rewrap the chat on open *and* close.
+- **Two process lessons, both mine.** A `python` patch script that asserts on one
+  pair mid-batch and dies **writes nothing**, silently losing the whole batch — it
+  cost a lost early return in `handle_key`, found by a test rather than by eye. And
+  **`cargo clippy … | tail` discards the exit code** (the pipeline reports `tail`'s),
+  so a `&&` chain sails past a failing gate; that is how a commit landed with
+  clippy red. Verified by exit code afterwards and the commit rewritten.
+- **1615 unit tests green** (+11), 69 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3): TUI
+  rendering and pure matching, no engine, memory or provider protocol.
+- **Still open**: highlighting a match the renderer transformed (needs
+  `highlight_ranges` threaded through the renderer — stage 2's fork S3(c));
+  `cache.db` holding chat-list summaries to remove the ~94 ms startup parse.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

@@ -1984,3 +1984,94 @@ fn help_tabs_render_distinct_content() {
         "missing the component license"
     );
 }
+
+/// In-feed search must never touch the message being written — that is the whole
+/// reason it lives in its own field (docs/history/in-feed-search.md §3, fork F3).
+#[test]
+fn ctrl_f_opens_feed_search_and_esc_closes_it_leaving_the_message_alone() {
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "недописанное сообщение");
+
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+        None
+    );
+    assert!(s.search.is_some(), "Ctrl+F opens the search field");
+    type_str(&mut s, "маркер");
+    assert_eq!(
+        s.input.text(),
+        "недописанное сообщение",
+        "typing a query must not reach the message box"
+    );
+
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        None
+    );
+    assert!(s.search.is_none(), "Esc closes it");
+    assert_eq!(
+        s.input.text(),
+        "недописанное сообщение",
+        "and leaves the message"
+    );
+}
+
+/// Layout-independent, like every other Ctrl shortcut: physical F is `Ctrl+а`
+/// on a Russian layout.
+#[test]
+fn ctrl_f_opens_feed_search_under_a_cyrillic_layout() {
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::Char('а'), KeyModifiers::CONTROL));
+    assert!(s.search.is_some());
+}
+
+/// **The trap that slow manual testing cannot see** (§1.5): a run of characters
+/// arrives as one coalesced paste, and without its own target it would land in
+/// the message the user was writing.
+#[test]
+fn fast_typing_reaches_the_search_field_not_the_message() {
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "черновик");
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+
+    s.handle_paste("быстрый набор");
+    assert_eq!(
+        s.search.as_ref().map(|f| f.text()),
+        Some("быстрый набор".to_string()),
+        "a coalesced paste belongs to the search field while it is open"
+    );
+    assert_eq!(s.input.text(), "черновик", "and must not touch the message");
+}
+
+/// `Ctrl+E`/`Ctrl+R`/a rewrite round/a cross-chat jump all funnel through
+/// `activate_chat`, which renumbers the feed — so a search left open would point
+/// at messages that moved (§1.5).
+#[test]
+fn activating_a_chat_closes_the_search() {
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    type_str(&mut s, "маркер");
+    assert!(s.search.is_some());
+
+    s.activate_chat(gen_id(), "Чат".into(), &[], "", None);
+    assert!(
+        s.search.is_none(),
+        "the search must not survive a feed rebuild"
+    );
+}
+
+/// Reopening resumes the query, so a second `Ctrl+F` continues rather than
+/// starting over (fork F5) — but only within the same chat.
+#[test]
+fn reopening_the_search_resumes_the_query() {
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    type_str(&mut s, "маркер");
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    assert_eq!(
+        s.search.as_ref().map(|f| f.text()),
+        Some("маркер".to_string())
+    );
+}

@@ -228,7 +228,9 @@ src/
 │
 ├─ widgets/                 composite UI blocks (FSD "widgets")
 │  ├─ message_feed.rs       feed: markdown, thoughts, inline tool blocks, scroll, wrap,
-│  │                        jump to a message (pending_focus/anchor/marker, §4)
+│  │                        jump to a message (pending_focus/anchor/marker, §4),
+│  │                        in-feed search (Ctrl+F): highlight scope, match list and
+│  │                        next/prev to the matched line — see the invariant in §4
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
 │  │                        single-line mode (settings fields), visual navigation
 │  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
@@ -525,6 +527,24 @@ next to the sum.
   separate writes after the diff. Terminals without 2026 support (conhost) ignore
   the mode — a graceful degradation; `?2026l` is duplicated in the panic hook and
   on exit. See spec §4.4.1.
+- **Feed positions are derived, never stored.** A jump and in-feed search both
+  need a scroll row, and a row is only knowable inside `MessageFeed::render`: the
+  per-block cache it is measured against is filled by `build_lines` at the current
+  width, so nothing outside can compute one (see docs/history/chat-search-stage2.md
+  §1.1). Both therefore work as **pending requests consumed by the next render**,
+  and both re-derive their row on every frame rather than keeping it — which is what
+  lets them survive the rewrap a resize forces. The jump anchors to a *message*
+  (fork S6 refused to store an intra-block offset); in-feed search resolves the
+  *matched line*, which is only affordable because it is re-derived rather than
+  stored. Both accumulate the row **through the wrap**, so they stay correct if the
+  second wrap ever stops being an identity.
+- **The searched query is deliberately not in `CacheKey`.** It used to be, and a
+  key mismatch clears every block — so changing it re-ran markdown + syntect over
+  the whole chat. Since in-feed search types into a field, that would have been the
+  price of each keystroke; the highlight is applied *after* the cache instead, to
+  the lines handed to the renderer. Measured on the largest real chat: 17 ms (a warm
+  frame) against 39 ms. The **marker** stays in the key, correctly — it changes the
+  rail colour, which is baked into the block. See docs/history/in-feed-search.md §1.2.
 - **Full redraw (wide glyphs).** A wide emoji occupies two cells — its own and a
   **tail** cell, which `ratatui` resets to default. When the glyph disappears, the
   tail stays a default space in both buffers, the diff considers it unchanged and

@@ -81,6 +81,12 @@ impl ChatScreen {
         // both, so neither can survive into the wrong chat. (The marker outlives
         // a manual scroll on purpose, so a chat switch is the one place that has
         // to clear it explicitly.)
+        // The feed is renumbered under any in-feed search, and `Ctrl+E`/`Ctrl+R`/
+        // a rewrite round/a cross-chat jump all arrive here (§1.5) — so close it
+        // rather than leave it pointing at messages that moved.
+        self.search = None;
+        self.search_last.clear();
+        self.feed_view.clear_search();
         self.feed_view.clear_focus();
         // A jump asked for by the user wins over the tail; anything else — the
         // usual bottom. An id this chat doesn't contain isn't found, so it falls
