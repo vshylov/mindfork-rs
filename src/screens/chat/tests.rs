@@ -218,7 +218,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
         Message::user("привет"),
         Message::assistant("здравствуйте"),
     ];
-    s.activate_chat(id, "Чат".into(), &messages, "");
+    s.activate_chat(id, "Чат".into(), &messages, "", None);
     assert_eq!(s.active_chat, Some(id));
     assert!(!s.generating);
     assert!(s.current_gen.is_none());
@@ -230,6 +230,111 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     assert_eq!(s.feed.len(), 2);
 }
 
+/// A jump from a search hit (`AppCommand::OpenChatAt`): the feed opens on the
+/// requested message instead of the tail, and the message is marked.
+/// See docs/chat-search-stage2.md §3.
+#[test]
+fn activate_chat_with_focus_puts_the_feed_on_that_message() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..12)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    let target = messages[8].id;
+    s.activate_chat(gen_id(), "Чат".into(), &messages, "", Some(target));
+    assert_eq!(s.feed_view.anchor(), Some(8));
+    assert_eq!(s.feed_view.marker(), Some(8));
+    // The jump itself is applied by the next render — the row only exists there
+    // (§1.1), so `follow` is still on until a frame is drawn.
+    let mut term = Terminal::new(TestBackend::new(40, 14)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(!s.feed_view.is_following(), "a jump leaves the tail");
+    let dump = format!("{:?}", term.backend().buffer());
+    assert!(dump.contains("реплика-8"), "{dump}");
+
+    // Without a focus — the usual tail.
+    let mut s = ChatScreen::new();
+    s.activate_chat(gen_id(), "Чат".into(), &messages, "", None);
+    assert_eq!(s.feed_view.anchor(), None);
+    assert_eq!(s.feed_view.marker(), None);
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(s.feed_view.is_following());
+    let dump = format!("{:?}", term.backend().buffer());
+    assert!(dump.contains("реплика-11"), "the tail: {dump}");
+}
+
+/// A focus request must never survive into the wrong chat: an id the newly
+/// activated chat doesn't contain falls back to the tail, and both the anchor
+/// and the marker left over from the previous chat are dropped. (The marker
+/// outlives a manual scroll on purpose, so a chat switch is the one place that
+/// has to clear it explicitly — this is the test that pins it.)
+#[test]
+fn focus_from_another_chat_falls_back_to_the_tail() {
+    let mut s = ChatScreen::new();
+    let first: Vec<Message> = (0..12)
+        .map(|i| Message::user(format!("первый-{i}")))
+        .collect();
+    let stale = first[8].id;
+    s.activate_chat(gen_id(), "Первый".into(), &first, "", Some(stale));
+    assert_eq!(s.feed_view.marker(), Some(8));
+
+    let second: Vec<Message> = (0..12)
+        .map(|i| Message::user(format!("второй-{i}")))
+        .collect();
+    s.activate_chat(gen_id(), "Второй".into(), &second, "", Some(stale));
+    assert_eq!(
+        s.feed_view.anchor(),
+        None,
+        "an id from another chat must not anchor anything here"
+    );
+    assert_eq!(
+        s.feed_view.marker(),
+        None,
+        "and the previous chat's marker must not leak in"
+    );
+    assert!(
+        s.feed_view.is_following(),
+        "and the view falls back to the tail"
+    );
+}
+
+/// The yank split (docs/chat-search-stage2.md §1.3, §4): after the user has
+/// scrolled away, content that arrives on its own leaves the view alone, while
+/// user-initiated content still goes to the tail.
+#[test]
+fn arriving_content_does_not_yank_a_scrolled_away_reader() {
+    let id = gen_id();
+    let mut s = ChatScreen::new();
+    s.push_user_message("вопрос".into());
+    s.begin_generation(id);
+    s.feed_view.scroll_up(5); // the user scrolled up to read
+    assert!(!s.feed_view.is_following());
+
+    // Arrives on its own — the position is kept.
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into());
+    assert!(!s.feed_view.is_following(), "a tool card must not yank");
+    s.push_note("заметка");
+    assert!(!s.feed_view.is_following(), "a note must not yank");
+    s.continue_assistant(id);
+    assert!(!s.feed_view.is_following(), "a followup must not yank");
+    s.rewrite_assistant(id);
+    assert!(!s.feed_view.is_following(), "a rewrite must not yank");
+
+    // User-initiated — back to the tail.
+    s.push_user_message("ещё".into());
+    assert!(s.feed_view.is_following(), "sending goes to the tail");
+
+    // While already following, all of them keep following.
+    let id2 = gen_id();
+    s.begin_generation(id2);
+    assert!(s.feed_view.is_following());
+    s.push_tool_call(id2, "web_search".into(), "{}".into(), "ок".into());
+    s.push_note("ещё заметка");
+    assert!(s.feed_view.is_following());
+}
+
 #[test]
 fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     // Scrolling a feed with plain text doesn't require a full redraw (no flicker),
@@ -237,7 +342,13 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     let id = gen_id();
 
     let mut clean = ChatScreen::new();
-    clean.activate_chat(id, "Чат".into(), &[Message::assistant("обычный текст")], "");
+    clean.activate_chat(
+        id,
+        "Чат".into(),
+        &[Message::assistant("обычный текст")],
+        "",
+        None,
+    );
     clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
     assert!(
         !clean.take_feed_scrolled(),
@@ -247,7 +358,13 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     assert!(!clean.take_feed_scrolled());
 
     let mut emoji = ChatScreen::new();
-    emoji.activate_chat(id, "Чат".into(), &[Message::assistant("## 🗂️ Хэш")], "");
+    emoji.activate_chat(
+        id,
+        "Чат".into(),
+        &[Message::assistant("## 🗂️ Хэш")],
+        "",
+        None,
+    );
     emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
     assert!(
         emoji.take_feed_scrolled(),
@@ -317,12 +434,12 @@ fn shift_and_alt_enter_insert_newline_not_send() {
 fn activate_chat_loads_draft_without_marking_dirty() {
     let mut s = ChatScreen::new();
     // Activating a chat with a saved draft loads it into the input box...
-    s.activate_chat(gen_id(), "Чат".into(), &[], "недописанный текст");
+    s.activate_chat(gen_id(), "Чат".into(), &[], "недописанный текст", None);
     assert_eq!(s.input.text(), "недописанный текст");
     // ...but doesn't mark the draft "dirty" (otherwise it would be sent right back).
     assert_eq!(s.take_dirty_draft(), None);
     // Switching to a chat with no draft clears the input box.
-    s.activate_chat(gen_id(), "Новый".into(), &[], "");
+    s.activate_chat(gen_id(), "Новый".into(), &[], "", None);
     assert!(s.input.is_empty());
     assert_eq!(s.take_dirty_draft(), None);
 }
@@ -795,7 +912,7 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
 fn rename_chat_updates_title_bar_of_active_chat() {
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.activate_chat(id, "Старое".into(), &[], "");
+    s.activate_chat(id, "Старое".into(), &[], "", None);
     s.rename_chat(id, "Новое".into());
     assert_eq!(s.title, "Новое");
     // A foreign chat doesn't touch the active chat's header.
@@ -812,7 +929,7 @@ fn f5_copies_active_chat_in_main_window() {
         None
     );
     let id = gen_id();
-    s.activate_chat(id, "Чат".into(), &[], "");
+    s.activate_chat(id, "Чат".into(), &[], "", None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
         Some(ChatIntent::CopyChat(id))
@@ -1216,7 +1333,13 @@ fn every_feed_mutator_marks_content_change() {
     let mut s = ChatScreen::new();
     let id = gen_id();
 
-    s.activate_chat(id, "Чат".into(), &[Message::assistant("привет 😀")], "");
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &[Message::assistant("привет 😀")],
+        "",
+        None,
+    );
     assert!(s.take_full_redraw(), "activate_chat");
 
     s.push_user_message("вопрос".into());

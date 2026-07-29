@@ -42,6 +42,14 @@ pub enum AppCommand {
     NewChat { profile_id: Option<Uuid> },
     /// Make a chat active (load it into the feed).
     SwitchChat(Uuid),
+    /// Make a chat active **and put the feed on one of its messages** (a jump
+    /// from a search hit). Same activation as `SwitchChat`, plus a focus carried
+    /// through `ChatActivated`; a message the feed doesn't show (a `Tool`/
+    /// `System` one) simply lands at the tail. See docs/chat-search-stage2.md §3.
+    // Built by the message-level search screen (stage 2b of the track); the
+    // handler and the whole jump path are already here and covered by tests.
+    #[allow(dead_code)]
+    OpenChatAt { chat: Uuid, message: Uuid },
     /// Rename a chat.
     RenameChat { id: Uuid, title: String },
     /// Auto-title a chat: the model reads the conversation (or part of it) and comes up
@@ -217,6 +225,10 @@ pub enum AppEvent {
         title: String,
         messages: Vec<Message>,
         draft: String,
+        /// Put the feed on this message instead of the tail (a jump from a
+        /// search hit, `AppCommand::OpenChatAt`). `None` — every other
+        /// activation. See docs/chat-search-stage2.md §3.
+        focus: Option<Uuid>,
     },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),

@@ -40,7 +40,24 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_switch(&mut self, id: Uuid) {
+        self.switch_to(id, None);
+    }
+
+    /// Opens a chat **on a specific message** (a jump from a search hit). Same
+    /// path as a plain switch — the focus rides along to the feed through
+    /// `ChatActivated`. See docs/chat-search-stage2.md §3.
+    pub(super) fn handle_open_chat_at(&mut self, chat: Uuid, message: Uuid) {
+        self.switch_to(chat, Some(message));
+    }
+
+    /// The shared switch path. `focus` — a message to put the feed on.
+    fn switch_to(&mut self, id: Uuid, focus: Option<Uuid>) {
         if self.active_id == Some(id) {
+            // A plain switch to the open chat is a no-op, but a jump still has
+            // to move the feed — re-emit so the focus reaches it.
+            if focus.is_some() {
+                self.activate_focused(id, focus);
+            }
             return;
         }
         // Speech is stopped per the setting (on by default — otherwise you'd
@@ -54,7 +71,7 @@ impl Orchestrator {
             token.cancel();
         }
         if self.chats.iter().any(|c| c.id == id) {
-            self.activate(id);
+            self.activate_focused(id, focus);
         }
     }
 

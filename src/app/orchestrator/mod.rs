@@ -483,6 +483,7 @@ impl Orchestrator {
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
+            AppCommand::OpenChatAt { chat, message } => self.handle_open_chat_at(chat, message),
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
             AppCommand::AutoRenameChat(id) => self.handle_auto_rename(id),
             AppCommand::CloneChat(id) => self.handle_clone(id),
@@ -771,6 +772,13 @@ impl Orchestrator {
 
     /// Makes a chat active and sends its messages to the UI.
     fn activate(&mut self, id: Uuid) {
+        self.activate_focused(id, None);
+    }
+
+    /// [`Self::activate`] with an optional message to put the feed on (a jump
+    /// from a search hit, [`AppCommand::OpenChatAt`]). The single activation
+    /// funnel — everything else goes through `activate` and passes `None`.
+    fn activate_focused(&mut self, id: Uuid, focus: Option<Uuid>) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
@@ -780,6 +788,7 @@ impl Orchestrator {
             title: chat.title.clone(),
             messages: chat.messages.clone(),
             draft: chat.draft.clone(),
+            focus,
         });
         self.emit_character_names();
         self.emit_attachments();

@@ -41,7 +41,16 @@ impl ChatScreen {
         }
     }
 
-    pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message], draft: &str) {
+    /// Rebuilds the feed for a chat. `focus` — a domain message to put the view
+    /// on (`AppCommand::OpenChatAt`); `None` — the usual "show the tail".
+    pub fn activate_chat(
+        &mut self,
+        id: Uuid,
+        title: String,
+        messages: &[Message],
+        draft: &str,
+        focus: Option<Uuid>,
+    ) {
         // Switching chats resets the generation state: "orphaned" chunks of the
         // previous generation must not land in the new chat's feed.
         self.active_chat = Some(id);
@@ -61,7 +70,18 @@ impl ChatScreen {
         // here on the flag only accumulates based on the last block).
         self.feed_has_risky = self.feed.iter().any(feed_msg_has_risky_glyph);
         self.mark_feed_changed();
-        self.feed_view.scroll_to_bottom();
+        // The anchor and the marker index a feed that no longer exists — drop
+        // both, so neither can survive into the wrong chat. (The marker outlives
+        // a manual scroll on purpose, so a chat switch is the one place that has
+        // to clear it explicitly.)
+        self.feed_view.clear_focus();
+        // A jump asked for by the user wins over the tail; anything else — the
+        // usual bottom. An id this chat doesn't contain isn't found, so it falls
+        // through to the tail. See docs/chat-search-stage2.md §4.
+        match focus {
+            Some(msg) if self.feed_view.focus_message(&self.feed, msg) => {}
+            _ => self.feed_view.scroll_to_bottom(),
+        }
         // Load the chat's saved draft into the input box (empty for a new chat).
         // Do NOT mark `draft_dirty` — otherwise we'd immediately send it back via the same
         // `SetDraft`; trigger the spellcheck recheck directly instead.
@@ -91,8 +111,12 @@ impl ChatScreen {
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: false,
+            // The echo carries no id — the domain message is the orchestrator's;
+            // the feed picks the ids up on the next activation.
+            message_ids: Vec::new(),
         });
         self.mark_feed_changed();
+        // User-initiated: you sent it, you want to see it (§4).
         self.feed_view.scroll_to_bottom();
     }
 
@@ -111,8 +135,10 @@ impl ChatScreen {
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: true,
+            message_ids: Vec::new(),
         });
         self.mark_feed_changed();
+        // User-initiated (you pressed send/regenerate): show the new reply (§4).
         self.feed_view.scroll_to_bottom();
     }
 
@@ -140,7 +166,8 @@ impl ChatScreen {
             self.pending_text_sep = true;
             self.pending_thoughts_sep = true;
             self.mark_feed_changed();
-            self.feed_view.scroll_to_bottom();
+            // Arrives on its own mid-turn — must not yank a reader away (§4).
+            self.feed_view.scroll_to_bottom_if_following();
         }
     }
 
@@ -164,9 +191,11 @@ impl ChatScreen {
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: true,
+            message_ids: Vec::new(),
         });
         self.mark_feed_changed();
-        self.feed_view.scroll_to_bottom();
+        // Arrives on its own (the model chose to write another message) — §4.
+        self.feed_view.scroll_to_bottom_if_following();
     }
 
     /// The assistant decided to rewrite the current message (the
@@ -185,7 +214,8 @@ impl ChatScreen {
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
         self.mark_feed_changed();
-        self.feed_view.scroll_to_bottom();
+        // Arrives on its own (the model chose to rewrite) — §4.
+        self.feed_view.scroll_to_bottom_if_following();
     }
 
     /// Guarantees that `last` is a streaming assistant bubble (the target for chunks).
@@ -205,6 +235,7 @@ impl ChatScreen {
                 thoughts: String::new(),
                 tools: Vec::new(),
                 streaming: true,
+                message_ids: Vec::new(),
             });
         }
     }
@@ -293,7 +324,8 @@ impl ChatScreen {
     pub fn push_note(&mut self, text: &str) {
         self.feed.push(FeedMessage::note(text));
         self.mark_feed_changed();
-        self.feed_view.scroll_to_bottom();
+        // Arrives on its own (an error, a late list-operation reply) — §4.
+        self.feed_view.scroll_to_bottom_if_following();
     }
 }
 

@@ -81,6 +81,7 @@ pub(super) fn apply_event(
             title,
             messages,
             draft,
+            focus,
         } => {
             if let ActiveScreen::ChatList(list) = active {
                 if list.take_pending_new_chat() {
@@ -94,7 +95,7 @@ pub(super) fn apply_event(
                     list.set_active(Some(id));
                 }
             }
-            screen.activate_chat(id, title, &messages, &draft);
+            screen.activate_chat(id, title, &messages, &draft, focus);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),

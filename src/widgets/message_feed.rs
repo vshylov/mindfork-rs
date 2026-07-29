@@ -12,6 +12,7 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use uuid::Uuid;
 
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
@@ -59,6 +60,21 @@ pub struct FeedMessage {
     pub tools: Vec<FeedToolCall>,
     /// Whether this message is currently streaming (shows "…" instead of an empty body).
     pub streaming: bool,
+    /// Ids of the **domain** messages folded into this feed item — the only link
+    /// back from a feed position to a [`Message`], and what
+    /// [`MessageFeed::focus_message`] resolves a jump against.
+    ///
+    /// A `Vec`, not an `Option<Uuid>`, because the projection is genuinely
+    /// many-to-one: [`FeedMessage::from_messages`] merges the assistant messages
+    /// of an agentic-loop round into a single bubble, so a single id would lie
+    /// about which messages a bubble shows. The mapping is unrecoverable after
+    /// the fact, hence it is recorded where the merging happens (see
+    /// docs/chat-search-stage2.md §1.2).
+    ///
+    /// **Empty** for items with no domain message behind them: service notes and
+    /// the live streaming bubble (the streaming path pushes literals and never
+    /// goes through `from_messages` — the in-flight reply has no id yet).
+    pub message_ids: Vec<Uuid>,
 }
 
 impl FeedMessage {
@@ -70,6 +86,7 @@ impl FeedMessage {
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: false,
+            message_ids: Vec::new(),
         }
     }
 
@@ -105,6 +122,7 @@ impl FeedMessage {
             thoughts: msg.thoughts.clone().unwrap_or_default(),
             tools,
             streaming: false,
+            message_ids: vec![msg.id],
         })
     }
 
@@ -145,6 +163,10 @@ impl FeedMessage {
                     }
                     last.thoughts.push_str(&fm.thoughts);
                 }
+                // The merge is where the many-to-one mapping happens, so it is
+                // where every folded-in id has to be recorded — a jump to any
+                // round of the bubble must land on the bubble (§1.2).
+                last.message_ids.append(&mut fm.message_ids);
                 continue;
             }
             out.push(fm);
@@ -189,6 +211,31 @@ pub struct MessageFeed {
     cache: Vec<CachedBlock>,
     /// Cache key: changing the width/palette/thoughts display resets the whole cache.
     cache_key: Option<CacheKey>,
+    /// A "put the view on this feed item" request, consumed by the next
+    /// [`MessageFeed::render`]. Deferred by necessity: turning a feed index into
+    /// a scroll row needs the block cache built at the current panel width, and
+    /// neither exists outside `render` (docs/chat-search-stage2.md §1.1).
+    pending_focus: Option<usize>,
+    /// The feed item the **view position** is tied to, used to re-derive the row
+    /// after a rewrap (resize, theme, `Ctrl+T`) invalidates every row offset —
+    /// an index survives that, a row does not (§1.5, fork S6).
+    ///
+    /// Deliberately **not** the same field as [`Self::marker`]: this one is
+    /// cleared by a manual scroll, because once the user has steered away a
+    /// resize must not yank them back to the message.
+    anchor: Option<usize>,
+    /// The feed item drawn with the accent rail — "this is where you landed".
+    ///
+    /// **Survives a manual scroll** (that is the point: you scroll around the
+    /// hit to read its context and can still see it), and is only dropped when
+    /// the chat changes or a new jump replaces it. Being separate from
+    /// [`Self::anchor`] is also what keeps it cheap — it is the only one of the
+    /// two in [`CacheKey`], so scrolling no longer invalidates the block cache.
+    marker: Option<usize>,
+    /// [`MessageFeed::build_lines`] dropped the whole cache on this frame (the
+    /// key changed), i.e. every row offset it had produced before is stale.
+    /// Consumed by `render` to re-derive the anchored row. See [`CacheKey`].
+    cache_reset: bool,
 }
 
 /// Feed cache validity key. Any of these fields affects the layout of every
@@ -206,6 +253,11 @@ struct CacheKey {
     /// Custom role names: they're baked into the cached header lines, so editing
     /// them in settings has to clear the cache.
     role_names: CharacterNames,
+    /// The marked feed item (a jump target): its rail is drawn in the accent
+    /// color, and that color is baked into the cached block — so moving or
+    /// clearing the marker has to reset the cache. Only the **marker** belongs
+    /// here; the scroll anchor is not a rendering input.
+    marker: Option<usize>,
 }
 
 /// One message's cached contribution to the feed (already width-wrapped lines
@@ -235,6 +287,10 @@ impl MessageFeed {
             role_names: CharacterNames::default(),
             cache: Vec::new(),
             cache_key: None,
+            pending_focus: None,
+            anchor: None,
+            marker: None,
+            cache_reset: false,
         }
     }
 
@@ -275,24 +331,116 @@ impl MessageFeed {
         self.scroll = self.scroll.saturating_sub(lines);
         self.follow = false;
         self.scrolled = true;
+        self.release_anchor();
     }
 
     /// Scroll down (turns "follow" back on at the very bottom).
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_add(lines);
         self.scrolled = true;
+        self.release_anchor();
         // Actual clamping and re-enabling follow — in render (the height is known there).
     }
 
     /// Resets scroll to the bottom (on chat switch/send).
+    ///
+    /// **User-initiated only** — see [`Self::scroll_to_bottom_if_following`] for
+    /// content that arrives on its own. The marker is deliberately **kept**: it
+    /// says where you landed, not where you are looking, and clearing it here
+    /// would also wipe the block cache on every send (see [`Self::marker`]).
     pub fn scroll_to_bottom(&mut self) {
         self.follow = true;
+        self.release_anchor();
+    }
+
+    /// Scroll to the tail **only if the view is already following it**.
+    ///
+    /// For content that arrives on its own — a tool card, a service note, the
+    /// next round's bubble. If the user has scrolled away to read, or jumped to
+    /// a message, their position must not be yanked away
+    /// (docs/chat-search-stage2.md §1.3, §4).
+    pub fn scroll_to_bottom_if_following(&mut self) {
+        if self.follow {
+            self.scroll_to_bottom();
+        }
+    }
+
+    /// Puts the view on the feed item holding the domain message `id`: the next
+    /// render scrolls to it, and its rail is drawn in the accent color until the
+    /// chat changes or another jump replaces it. Returns whether the message was
+    /// found — an unknown/hidden id (a `Tool`/`System` message, or one from
+    /// another chat) is a no-op.
+    ///
+    /// Resolving the id lives here, not on the caller: the feed **index** is
+    /// this widget's coordinate system (`scroll`, `cache`, `anchor` and `marker`
+    /// are all keyed by it), the messages are already handed to every other
+    /// entry point (`render`/`build_lines`), and the projection's id mapping
+    /// ([`FeedMessage::message_ids`]) is the widget's own contract.
+    pub fn focus_message(&mut self, messages: &[FeedMessage], id: Uuid) -> bool {
+        let Some(idx) = messages.iter().position(|m| m.message_ids.contains(&id)) else {
+            return false;
+        };
+        self.pending_focus = Some(idx);
+        self.anchor = Some(idx);
+        self.marker = Some(idx);
+        true
+    }
+
+    /// Drops **both** the anchor and the marker: the feed they index is gone
+    /// (a chat switch). Cheap here — a rebuilt feed misses every fingerprint
+    /// anyway, so the cache was going to be rebuilt regardless.
+    pub fn clear_focus(&mut self) {
+        self.pending_focus = None;
+        self.anchor = None;
+        self.marker = None;
+    }
+
+    /// Drops the scroll anchor, keeping the marker: the user is steering now, so
+    /// a later rewrap must not pull the view back — but they can still see where
+    /// they landed. See [`Self::anchor`] vs [`Self::marker`].
+    fn release_anchor(&mut self) {
+        self.pending_focus = None;
+        self.anchor = None;
+    }
+
+    /// The feed index the view must be put on **this frame**: a pending jump
+    /// (consumed), or — after a rewrap invalidated every row offset — the
+    /// anchored item. Both can only become a row inside `render` (§1.1).
+    fn take_focus_target(&mut self) -> Option<usize> {
+        let rewrapped = std::mem::take(&mut self.cache_reset);
+        if let Some(idx) = self.pending_focus.take() {
+            return Some(idx);
+        }
+        // Following the tail needs no anchor — the clamp already keeps it there.
+        if rewrapped && !self.follow {
+            self.anchor
+        } else {
+            None
+        }
     }
 
     /// Test accessor: whether the feed is following the tail (scrolled to bottom).
     #[cfg(test)]
     pub(crate) fn is_following(&self) -> bool {
         self.follow
+    }
+
+    /// Test accessor: the current scroll offset in visual rows.
+    #[cfg(test)]
+    pub(crate) fn scroll_row(&self) -> usize {
+        self.scroll
+    }
+
+    /// Test accessor: the feed index the view position is anchored to.
+    #[cfg(test)]
+    pub(crate) fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+
+    /// Test accessor: the feed index drawn with the accent rail.
+    #[cfg(test)]
+    pub(crate) fn marker(&self) -> Option<usize> {
+        self.marker
     }
 
     /// Draws the feed. `messages` — the active chat's current content. `meta` —
@@ -333,11 +481,37 @@ impl MessageFeed {
         // rows matches `lines.len()`, and the scroll/"follow the tail" math
         // below stays row-based (see shared::wrap, ADR 0001).
         let view_w = inner.width.max(1) as usize;
-        let lines: Vec<Line> = self
-            .build_lines(messages, palette, view_w, loc)
-            .iter()
-            .flat_map(|l| wrap::wrap_line(l, view_w))
-            .collect();
+        let unwrapped = self.build_lines(messages, palette, view_w, loc);
+
+        // A jump (or an anchor whose rows a rewrap just invalidated) becomes a
+        // scroll row here and nowhere else — the cache it is measured against
+        // only exists after `build_lines` at this width (§1.1).
+        //
+        // `build_lines` concatenates `cache[i].lines` in order, so the per-block
+        // lengths address the unwrapped stream exactly; the row offset is then
+        // accumulated **through the wrap** rather than read off the cache. The
+        // second pass is identity here by construction, not by contract — this
+        // stays correct if that ever stops being true (§1.1).
+        let target = self.take_focus_target();
+        let start = target.and_then(|idx| {
+            (idx < self.cache.len())
+                .then(|| self.cache.iter().take(idx).map(|b| b.lines.len()).sum())
+        });
+        let mut lines: Vec<Line> = Vec::with_capacity(unwrapped.len());
+        let mut target_row: Option<usize> = None;
+        for (i, line) in unwrapped.iter().enumerate() {
+            if start == Some(i) {
+                target_row = Some(lines.len());
+            }
+            lines.extend(wrap::wrap_line(line, view_w));
+        }
+        if let Some(row) = target_row {
+            self.scroll = row;
+            self.follow = false;
+            // A jump moves the view like a scroll — same terminal artifacts.
+            self.scrolled = true;
+        }
+
         let total = lines.len();
         let view_h = inner.height.max(1) as usize;
         let max_scroll = total.saturating_sub(view_h);
@@ -394,10 +568,14 @@ impl MessageFeed {
             render_mermaid: self.render_mermaid,
             lang: loc.lang(),
             role_names: self.role_names.clone(),
+            marker: self.marker,
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
             self.cache_key = Some(key);
+            // Every row offset the previous cache produced is stale — `render`
+            // re-derives the anchored one from this flag.
+            self.cache_reset = true;
         }
         // History truncated (Ctrl+E/regenerate) — drop the cache's tail.
         self.cache.truncate(messages.len());
@@ -423,6 +601,7 @@ impl MessageFeed {
                     opts,
                     loc,
                     &self.role_names,
+                    self.marker == Some(idx),
                 );
                 let cb = CachedBlock {
                     fingerprint: fp,
@@ -446,6 +625,9 @@ impl MessageFeed {
 /// the basis of the cache. `opts` — base markdown-render flags (tables/mermaid from
 /// settings; `soft_break_as_newline` is added on by `push_body` for the user).
 /// `names` — the profile's custom role names (empty field → the localized header).
+/// `marked` — this is the jump target ([`MessageFeed::focus_message`]): the rail
+/// is drawn in the accent color to mark the whole message (fork S3 — mark the
+/// message, don't highlight inside it).
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -455,13 +637,18 @@ fn build_message_block(
     opts: markdown::RenderOpts,
     loc: &'static Locale,
     names: &CharacterNames,
+    marked: bool,
 ) -> Vec<Line<'static>> {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
-    let rail = match item.role {
-        FeedRole::User => palette.user,
-        FeedRole::Assistant => palette.assistant,
-        FeedRole::Note => palette.muted,
+    let rail = if marked {
+        palette.accent
+    } else {
+        match item.role {
+            FeedRole::User => palette.user,
+            FeedRole::Assistant => palette.assistant,
+            FeedRole::Note => palette.muted,
+        }
     };
     // Build the message body without a rail, at width `inner`.
     let mut body: Vec<Line<'static>> = Vec::new();
@@ -923,6 +1110,7 @@ mod tests {
             thoughts: thoughts.to_string(),
             tools: Vec::new(),
             streaming: false,
+            message_ids: vec![Uuid::new_v4()],
         }
     }
 
@@ -1530,6 +1718,278 @@ mod tests {
             "once the fence completes — a diagram: {}",
             joined(&done)
         );
+    }
+
+    // ---------- jump to a message (docs/chat-search-stage2.md, stage 2a) ----------
+
+    /// Renders the feed into a `TestBackend` and returns the visible text rows.
+    /// A jump is only applied inside `render` (§1.1), so every focus assertion
+    /// has to go through a real frame.
+    fn visible(feed: &mut MessageFeed, messages: &[FeedMessage], w: u16, h: u16) -> Vec<String> {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| feed.render(f, f.area(), "Чат", "", messages, &Palette::default(), ru()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        let area = buf.area;
+        (area.top()..area.bottom())
+            .map(|y| {
+                (area.left()..area.right())
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A feed of `n` user messages, each with a unique id and a findable body.
+    fn numbered(n: usize) -> Vec<FeedMessage> {
+        (0..n)
+            .map(|i| msg(FeedRole::User, &format!("сообщение-{i}"), ""))
+            .collect()
+    }
+
+    /// Long bodies, so a width change really does re-wrap them.
+    fn numbered_long(n: usize) -> Vec<FeedMessage> {
+        (0..n)
+            .map(|i| {
+                msg(
+                    FeedRole::User,
+                    &format!("сообщение-{i} с довольно длинным текстом который переносится"),
+                    "",
+                )
+            })
+            .collect()
+    }
+
+    /// The mapping a jump resolves against: every domain message records its id,
+    /// and a merged agentic bubble carries **all** of its rounds' ids — the
+    /// property `message_ids` is a `Vec` for (§1.2).
+    #[test]
+    fn from_messages_records_ids_including_every_merged_round() {
+        use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+        let user = Message::user("вопрос");
+        let mut r1 = Message::assistant("Ищу.");
+        r1.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
+            id: "c1".into(),
+            name: "note_save".into(),
+            arguments: serde_json::json!({}),
+            result: Some("ok".into()),
+        }];
+        let tool = {
+            let mut m = Message::new(MessageRole::Tool, "ok");
+            m.tool_call_id = Some("c1".into());
+            m
+        };
+        let r2 = Message::assistant("Готово.");
+        let (uid, id1, id2) = (user.id, r1.id, r2.id);
+
+        let feed = FeedMessage::from_messages(&[user, r1, tool, r2]);
+        assert_eq!(feed.len(), 2, "the two rounds merge into one bubble");
+        assert_eq!(feed[0].message_ids, vec![uid]);
+        assert_eq!(
+            feed[1].message_ids,
+            vec![id1, id2],
+            "a merged bubble must carry every round's id, or a jump to the \
+             second round would find nothing"
+        );
+    }
+
+    /// Focusing scrolls the message into view; the **first** message is already
+    /// at row 0, a later one is not (so the scroll really moved).
+    #[test]
+    fn focus_scrolls_the_message_into_view() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, messages[9].message_ids[0]));
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert!(
+            rows.iter().any(|r| r.contains("сообщение-9")),
+            "the focused message must be visible: {rows:?}"
+        );
+        assert!(feed.scroll_row() > 0, "a later message moves the scroll");
+        assert!(!feed.is_following(), "a jump turns off tail-following");
+
+        // The first message is at the top — focusing it leaves scroll at 0.
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, messages[0].message_ids[0]));
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert!(rows.iter().any(|r| r.contains("сообщение-0")), "{rows:?}");
+        assert_eq!(feed.scroll_row(), 0);
+    }
+
+    /// A rewrap wipes the cache and changes every row offset, so the anchor is
+    /// the message index, not a row (§1.5, fork S6). Asserted as "the message is
+    /// still in view", not as a row number — the row legitimately changes.
+    #[test]
+    fn focus_survives_a_resize() {
+        let messages = numbered_long(12);
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, messages[8].message_ids[0]));
+
+        let wide = visible(&mut feed, &messages, 60, 10);
+        assert!(wide.iter().any(|r| r.contains("сообщение-8")), "{wide:?}");
+        let row_wide = feed.scroll_row();
+
+        let narrow = visible(&mut feed, &messages, 30, 10);
+        assert!(
+            narrow.iter().any(|r| r.contains("сообщение-8")),
+            "after a resize the anchored message must still be in view: {narrow:?}"
+        );
+        assert_ne!(
+            row_wide,
+            feed.scroll_row(),
+            "the rewrap should have moved the row — otherwise the test proves nothing"
+        );
+    }
+
+    /// The split (anchor vs marker): a manual scroll means "I am steering now",
+    /// so the **anchor** goes — but the **marker** stays, because the point of
+    /// marking the message is that you can scroll around it to read its context
+    /// and still see where you landed.
+    #[test]
+    fn manual_scroll_releases_the_anchor_but_keeps_the_marker() {
+        let messages = numbered(12);
+        for scroll in [
+            (|f: &mut MessageFeed| f.scroll_up(2)) as fn(&mut MessageFeed),
+            |f: &mut MessageFeed| f.scroll_down(2),
+        ] {
+            let mut feed = MessageFeed::new();
+            feed.focus_message(&messages, messages[9].message_ids[0]);
+            let _ = visible(&mut feed, &messages, 40, 10);
+            assert_eq!(feed.anchor(), Some(9));
+            assert_eq!(feed.marker(), Some(9));
+
+            scroll(&mut feed);
+            assert_eq!(feed.anchor(), None, "a manual scroll releases the anchor");
+            assert_eq!(feed.marker(), Some(9), "but the marker stays put");
+            // And the marker is still drawn after the next frame.
+            let _ = visible(&mut feed, &messages, 40, 10);
+            assert_eq!(feed.marker(), Some(9));
+        }
+    }
+
+    /// The other half of the split: once the anchor is released, a rewrap must
+    /// **not** pull the view back to the message. (Before the split this was the
+    /// same field, so a resize after scrolling away yanked you back.)
+    #[test]
+    fn resize_after_a_manual_scroll_does_not_jump_back() {
+        let messages = numbered_long(12);
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[8].message_ids[0]);
+        let _ = visible(&mut feed, &messages, 60, 10);
+
+        // Scroll all the way up, deliberately away from the jump target.
+        feed.scroll_up(1000);
+        let before = visible(&mut feed, &messages, 60, 10);
+        assert!(
+            before.iter().any(|r| r.contains("сообщение-0")),
+            "precondition: at the top of the feed: {before:?}"
+        );
+
+        let after = visible(&mut feed, &messages, 30, 10);
+        assert!(
+            after.iter().any(|r| r.contains("сообщение-0")),
+            "a resize must not yank the view back to the jump target: {after:?}"
+        );
+        assert_eq!(feed.scroll_row(), 0);
+        assert_eq!(feed.marker(), Some(8), "the marker still survives");
+    }
+
+    /// The marked message is marked by its rail (fork S3 — mark the whole
+    /// message, no in-content highlighting); others keep their role color.
+    #[test]
+    fn marked_message_rail_uses_accent() {
+        let palette = Palette::default();
+        let messages = numbered(4);
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[2].message_ids[0]);
+        let lines = feed.build_lines(&messages, &palette, 40, ru());
+
+        let rail_color = |needle: &str| -> Option<Color> {
+            lines
+                .iter()
+                .find(|l| l.spans.iter().any(|s| s.content.contains(needle)))
+                .and_then(|l| l.spans.first())
+                .and_then(|s| s.style.fg)
+        };
+        assert_eq!(rail_color("сообщение-2"), Some(palette.accent));
+        assert_eq!(rail_color("сообщение-1"), Some(palette.user));
+        assert_ne!(palette.accent, palette.user, "the marker must be visible");
+    }
+
+    /// Only the marker is a rendering input, so scrolling — which releases the
+    /// anchor — must **not** invalidate the block cache. This is the whole point
+    /// of the split: with one shared field the first scroll after a jump
+    /// re-ran markdown+syntect over the entire chat.
+    #[test]
+    fn scrolling_after_a_jump_does_not_invalidate_the_cache() {
+        let palette = Palette::default();
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[9].message_ids[0]);
+        let _ = feed.build_lines(&messages, &palette, 40, ru());
+
+        // A warm cache reports no reset on an unchanged frame...
+        feed.cache_reset = false;
+        let _ = feed.build_lines(&messages, &palette, 40, ru());
+        assert!(!feed.cache_reset, "precondition: the cache is warm");
+
+        feed.scroll_up(3);
+        let _ = feed.build_lines(&messages, &palette, 40, ru());
+        assert!(
+            !feed.cache_reset,
+            "releasing the anchor must not wipe the block cache"
+        );
+
+        // ...while moving the marker legitimately does (the rail color is baked in).
+        feed.focus_message(&messages, messages[2].message_ids[0]);
+        let _ = feed.build_lines(&messages, &palette, 40, ru());
+        assert!(feed.cache_reset, "a new marker changes the rendered rail");
+    }
+
+    /// An id the feed doesn't show — a `Tool`/`System` message, or one from
+    /// another chat — is a no-op, not a panic (and the view stays at the tail).
+    #[test]
+    fn focus_on_unknown_id_is_a_no_op() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        assert!(!feed.focus_message(&messages, Uuid::new_v4()));
+        assert_eq!(feed.anchor(), None);
+        assert_eq!(feed.marker(), None);
+        let _ = visible(&mut feed, &messages, 40, 10);
+        assert!(feed.is_following(), "the feed stays on the tail");
+        // Also safe with nothing in the feed at all.
+        assert!(!feed.focus_message(&[], Uuid::new_v4()));
+    }
+
+    /// A chat switch is the one place that drops the marker too — it indexes a
+    /// feed that no longer exists.
+    #[test]
+    fn clear_focus_drops_both_anchor_and_marker() {
+        let messages = numbered(6);
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[3].message_ids[0]);
+        feed.clear_focus();
+        assert_eq!(feed.anchor(), None);
+        assert_eq!(feed.marker(), None);
+    }
+
+    /// Content that arrives on its own must not yank a reader back to the tail,
+    /// while a user-initiated jump to the bottom still does (§1.3, §4).
+    #[test]
+    fn tail_following_is_only_forced_by_user_initiated_scrolling() {
+        let mut feed = MessageFeed::new();
+        feed.scroll_up(3);
+        assert!(!feed.is_following());
+        feed.scroll_to_bottom_if_following();
+        assert!(
+            !feed.is_following(),
+            "arriving content must not force follow"
+        );
+        feed.scroll_to_bottom();
+        assert!(feed.is_following(), "user-initiated: back to the tail");
+        feed.scroll_to_bottom_if_following();
+        assert!(feed.is_following(), "already following — stays");
     }
 
     #[test]

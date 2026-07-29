@@ -358,6 +358,7 @@ fn character_names_event_reaches_the_feed() {
         "chat".into(),
         &[Message::user("hi")],
         "",
+        None,
     );
     let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
     term.draw(|f| screen.render(f)).unwrap();
