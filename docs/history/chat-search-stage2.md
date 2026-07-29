@@ -156,7 +156,7 @@ recommendation being unambiguous):
 | **S2** shape and order | **Grouped by chat**, chats in the existing sort, messages in chat order |
 | **S3** feed highlight | **None for now** — jump and mark the whole message → **revised to (b) after the live run, 2026-07-29** (see below) |
 | **S4** snippets | **Built in Rust** from the stored text |
-| **S5** in-feed search | **Not in this track** — stays its own roadmap item |
+| **S5** in-feed search | **Not in this track** — stays its own roadmap item (shipped later as `Ctrl+F`, not `/` — see below) |
 | **S6** resize anchor | **The message** (feed index), not the row |
 
 ### S3 revised to (b) after the live run — 2026-07-29
@@ -250,6 +250,10 @@ trigram-token semantics or its documented 64 ceiling. *(recommended)*
 behaviour beyond the documented limit.
 
 **S5 — does stage 2 also deliver in-feed search (`/` within the open chat)?**
+*(The deferral was right and the feature shipped separately — but the `/` in this
+wording was not implementable: the chat's input box is always focused and `/` in an
+empty box is how a command starts, so it shipped as `Ctrl+F`. See
+[in-feed-search.md](in-feed-search.md) §1.1.)*
 (a) **No** — keep it as its own roadmap item; 2a makes it cheap later.
 *(recommended: it is a different interaction — same-chat, incremental, next/prev
 — and bundling it would double 2b's UI surface)*

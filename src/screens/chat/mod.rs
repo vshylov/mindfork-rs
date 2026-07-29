@@ -343,7 +343,7 @@ pub struct ChatScreen {
     confirm: Option<ConfirmAction>,
     /// In-feed search (`Ctrl+F`): a single-line query field standing in for the
     /// message input box while it is open. `None` when not searching. The
-    /// message box's own text is never touched — see docs/in-feed-search.md §3.
+    /// message box's own text is never touched — see docs/history/in-feed-search.md §3.
     search: Option<Box<InputBox>>,
     /// The last query typed in this chat, so a repeat `Ctrl+F` resumes it (the
     /// emoji picker remembers its selection the same way). Cleared on chat

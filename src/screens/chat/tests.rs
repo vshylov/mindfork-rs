@@ -1986,7 +1986,7 @@ fn help_tabs_render_distinct_content() {
 }
 
 /// In-feed search must never touch the message being written — that is the whole
-/// reason it lives in its own field (docs/in-feed-search.md §3, fork F3).
+/// reason it lives in its own field (docs/history/in-feed-search.md §3, fork F3).
 #[test]
 fn ctrl_f_opens_feed_search_and_esc_closes_it_leaving_the_message_alone() {
     let mut s = ChatScreen::new();

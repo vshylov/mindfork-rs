@@ -15,6 +15,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Search inside the conversation you have open** — `Ctrl+F` in a chat finds text
+  in that chat: every match is highlighted at once, a counter shows which one you
+  are on out of how many, `Enter` (or `↓`) steps to the next and `Shift+Enter`
+  (or `↑`) back, `Esc` closes. Stepping lands on the **line** the match is on, not
+  at the top of the message, which matters in a long answer. The message you were
+  writing is left completely alone, and the query is remembered if you reopen the
+  search in the same chat. Two things worth knowing: the search looks at what is
+  actually drawn, so it also finds words inside "thoughts" and tool cards, and it
+  cannot find text the renderer has reshaped (a formula, a diagram).
+
 - **Search inside chats, not just their titles** — `Ctrl+F` in the chat list
   (`Esc`) switches the search box between titles and **message text**; the list
   narrows to the chats containing a match, ordered by the sort you already chose.

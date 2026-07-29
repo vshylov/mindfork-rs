@@ -1206,6 +1206,40 @@ this?"*; this screen answers *"where exactly, and take me there."*
 - **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
 - **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
+#### 11.3.1. In-feed search (`Ctrl+F`)
+
+Search inside the **open chat** — the browser's "find on this page", as opposed to
+`Ctrl+G`'s cross-chat search ([§11.2.1](#1121-the-message-level-search-screen)).
+Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
+
+- Opened with **`Ctrl+F`**. Deliberately **not `/`**: the chat's input box is
+  always focused, and `/` in an empty box is exactly how a command starts
+  (`/rag`, `/file`, `/tts`, `/reindex`), so a `/` trigger would make command entry
+  impossible — and gating it on an empty box does not help, because that *is* the
+  command-entry gesture.
+- The query field **stands in for the input box** while open, rather than taking a
+  layout row of its own: a fifth constraint would shrink the feed, change the wrap
+  width, and rewrap the whole chat on open *and* close. The message being written
+  is untouched, and the query is remembered for a repeat `Ctrl+F` in the same chat.
+- **Every** match in the chat is highlighted (unlike a jump from `Ctrl+G`, which
+  marks one message), with a `match n of total` counter — a common word matches
+  200–300 times in a single chat, so the count is not decoration.
+- `Enter`/`↓` next, `Shift+Enter`/`↑` previous, wrapping around at the ends; `Esc`
+  closes and clears the highlight. Stepping lands on the **line** the match is on,
+  not the start of its message: the largest real message is 38,782 characters, so
+  message-granular stepping would leave the viewport unmoved. That row is
+  **re-derived every render, never stored** — which is what lets it survive a
+  rewrap, and why [§11.2.1](#1121-the-message-level-search-screen)'s anchor can
+  stay message-granular without contradiction.
+- Matching runs over **what is drawn**, which is what lets the counter equal the
+  highlights. Two honest consequences: it also finds words inside "thoughts" and
+  tool cards, which the full-text index deliberately does not cover, so
+  *highlighted* does not mean *this is what the index matched*; and it cannot find
+  text the renderer reshaped (a LaTeX formula turned into unicode, a mermaid
+  diagram replacing its source) — the same boundary as the jump highlight.
+- The search closes when the chat is re-activated (`Ctrl+E`, `Ctrl+R`, a rewrite
+  round, a jump from the results screen all rebuild the feed and renumber it).
+
 ### 11.4. Markdown, CoT and tool blocks, LaTeX
 
 > Implementation: **our own renderer on `pulldown-cmark`** (`shared/markdown.rs`),
@@ -1427,7 +1461,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `Ctrl+N` | new chat (profile picker) |
 | `Ctrl+P` | the settings screen |
-| `Ctrl+F` | in the chat list: switch the search between titles and message content (§11.2) |
+| `Ctrl+F` | in a chat: in-feed search (§11.3.1); in the chat list: switch the search between titles and message content (§11.2) |
 | `Ctrl+G` | in the chat list (content mode): the message-level search screen — `Enter` opens the chat at the message (§11.2.1). In the input box — spellcheck suggestions |
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |

@@ -245,7 +245,7 @@ pub struct MessageFeed {
     highlight: Option<String>,
     /// How far [`Self::highlight`] reaches. A jump lights only the message it
     /// marked; in-feed search (`Ctrl+F`) lights every match in the chat, because
-    /// there the whole point is seeing them all. See docs/in-feed-search.md §3.
+    /// there the whole point is seeing them all. See docs/history/in-feed-search.md §3.
     highlight_scope: HighlightScope,
     /// Every match of [`Self::highlight`] in document order, as an index into the
     /// lines [`MessageFeed::build_lines`] returned. Recomputed there each frame —
@@ -301,7 +301,7 @@ struct CacheKey {
     // cache, so changing it costs no re-render. In-feed search types into a
     // field, and keying the cache on the query would re-run markdown + syntect
     // over the whole chat on every keystroke — up to 70 blocks and 260 K
-    // characters on the real corpus (docs/in-feed-search.md §1.2).
+    // characters on the real corpus (docs/history/in-feed-search.md §1.2).
 }
 
 /// One message's cached contribution to the feed (already width-wrapped lines
@@ -458,7 +458,7 @@ impl MessageFeed {
     ///
     /// Cheap on purpose: stage 3a took the query out of [`CacheKey`], so typing
     /// here costs a normal warm frame rather than re-rendering the chat
-    /// (docs/in-feed-search.md §1.2).
+    /// (docs/history/in-feed-search.md §1.2).
     pub fn set_search(&mut self, query: Option<&str>) {
         self.highlight = query.filter(|q| !q.is_empty()).map(str::to_owned);
         self.highlight_scope = HighlightScope::WholeFeed;
@@ -762,7 +762,7 @@ impl MessageFeed {
             // Scoped to the marked message: the user asked "where is my word in
             // *this* message", and lighting up the whole chat would be noise.
             // A jump lights only the message it marked; in-feed search lights
-            // every match (docs/in-feed-search.md §3, fork F2).
+            // every match (docs/history/in-feed-search.md §3, fork F2).
             if let Some(query) = self.highlight.as_deref()
                 && (self.highlight_scope == HighlightScope::WholeFeed || self.marker == Some(idx))
             {
@@ -2511,7 +2511,7 @@ mod tests {
         );
     }
 
-    /// **The property this stage exists for** (docs/in-feed-search.md §1.2).
+    /// **The property this stage exists for** (docs/history/in-feed-search.md §1.2).
     ///
     /// The query used to be part of `CacheKey`, so changing it cleared every
     /// block and re-ran markdown + syntect over the whole chat. In-feed search

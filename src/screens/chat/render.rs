@@ -159,7 +159,7 @@ impl ChatScreen {
             // In-feed search stands in for the input box rather than taking a row
             // of its own: a fifth layout constraint would shrink the feed, change
             // the wrap width and rewrap the whole chat on open *and* close
-            // (docs/in-feed-search.md §3, fork F3).
+            // (docs/history/in-feed-search.md §3, fork F3).
             let title = match self.feed_view.match_position() {
                 Some((n, total)) => self.loc.tf(
                     "ui.chat.search.counter",

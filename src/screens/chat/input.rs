@@ -17,7 +17,7 @@ impl ChatScreen {
         }
         // In-feed search (`Ctrl+F`) captures input while it is open: keys go to
         // the query field, `Enter`/`↓` and `Shift+Enter`/`↑` step through matches,
-        // `Esc` closes. See docs/in-feed-search.md §3.
+        // `Esc` closes. See docs/history/in-feed-search.md §3.
         if self.search.is_some() {
             return self.handle_search_key(key);
         }
@@ -139,7 +139,7 @@ impl ChatScreen {
                         seed: self.input.text(),
                     });
                 }
-                // In-feed text search (docs/in-feed-search.md). `/` is not
+                // In-feed text search (docs/history/in-feed-search.md). `/` is not
                 // available: the input box is always focused, and `/` in an
                 // empty box is how a command starts (§1.1).
                 'f' => {
