@@ -124,9 +124,21 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-29, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1486 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1531 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
-recent track — **the remote live e2e gate**, now **closed**
+recent track — **full-text search over chat content**, stage 1 of 2
+([docs/research/chat-content-search.md](docs/research/chat-content-search.md)) —
+`Ctrl+F` in the chat list switches its search from the title to message content,
+backed by a **separate, disposable `cache.db`** (SQLite FTS5, trigram) kept in
+step in the background: because the orchestrator is already the sole writer of
+chats, in-app changes hook into `flush_saves` and only external ones need the
+startup pass, which is a stat-only walk (~0.3 ms on the real corpus). Deleting
+the file is a supported repair — it is derived data, so a version mismatch means
+"rebuild", not a migration (ADR 0006 machinery not needed), and backup's
+allowlist excludes it with no code change — **done, stage 1; stage 2 (a
+message-level screen with snippets and jump-to-message) is coupled to the
+roadmap's in-feed search**;
+before that — **the remote live e2e gate**, now **closed**
 ([docs/history/remote-e2e-hf.md](docs/history/remote-e2e-hf.md)) — the mandatory
 live gate (AGENTS.md §3) stopped requiring one particular machine on one LAN
 address: `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'
@@ -9499,6 +9511,120 @@ debounce was done as a separate PR, see below).
   standalone script — no engine, memory or tool path touched. **1486 unit tests
   green**, 69 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
   clean. No CHANGELOG entry — internal docs and tooling (§4).
+
+### Post-M9: full-text search over chat content — stage 1 (done)
+- **The roadmap item "Search within chat content ... via SQLite FTS"**, stage 1
+  of 2. Research
+  [docs/research/chat-content-search.md](docs/research/chat-content-search.md);
+  **forks F1–F6 decided by the user 2026-07-29** (all as recommended). The user's
+  framing set the shape: chats stay in JSON, the index goes in a **separate
+  database that can be deleted with no risk**, synced in the background, and able
+  to hold other cheap-to-recompute data later. Branches
+  `docs/chat-search-research` → `feat/chat-content-search`.
+- **Everything load-bearing was measured on the real 171-chat dev corpus, not
+  estimated** — and measuring is what decided the design twice and caught two
+  defects (below). FTS5 turns out to be **already compiled into the bundled
+  SQLite 3.53.2** (`ENABLE_FTS5`), so the whole feature needed **no new
+  dependency**. Cyrillic folds correctly under `unicode61` *and* under `trigram`
+  — the latter verified rather than assumed, since trigram's case folding was
+  historically ASCII-only.
+- **F1, the one fork the user really had to settle: `trigram`.** The existing chat
+  filter is substring (`title.contains`), so users are trained on `естов` finding <!-- cyrillic-ok -->
+  `тестовое` — and **FTS5 ships no Russian stemmer** (`porter` is English-only), <!-- cyrillic-ok -->
+  so `unicode61` would not find `памяти` from `память`, a daily miss rather than <!-- cyrillic-ok -->
+  an occasional one. Auto-appending `*` mitigates but does not close it
+  (`память*` still misses `памяти` — they diverge at the last letter). Cost of <!-- cyrillic-ok -->
+  trigram: 2× index, a 3-character floor, weak `bm25`. Hence **stage 1 filters
+  rather than ranks** — content mode narrows the chat list and the user's existing
+  Created/Modified sort still orders it, sidestepping weak ranking entirely.
+- **`cache.db`, and why a second file removes machinery rather than adding it.**
+  `data.db` holds irreplaceable content, hence ADR 0006 (steps in transactions,
+  downgrade guards, pre-migration backups). An index needs **none of it**: a
+  version mismatch, a corrupt file or an unreadable schema all have the same right
+  answer — delete and rebuild. So `CacheDb::open` **self-heals instead of
+  bailing**: a disposable index must never be able to block startup. Two things
+  fell out for free: `features/backup.rs` uses an **allowlist**, so the new file
+  is excluded from archives with **no code change** (and a restore correctly lands
+  without an index and rebuilds), and "delete it" becomes a supported repair
+  instead of data loss.
+- **Schema — external-content FTS5, decided by probe.** A standalone FTS5 table
+  can only carry `chat_id` as `UNINDEXED`, so re-indexing one chat means a full
+  scan; external content (`content='messages'`) keeps metadata in a real table
+  with a real index, and `snippet()` still works (verified — it reads through to
+  the content table). Triggers make a full rebuild ~4× slower, which is the right
+  trade: rebuilds are rare and background, deletes happen on every incremental
+  write.
+- **Message-level diff — the finding that mattered most.** A chat is saved every
+  ~800 ms while a reply streams, and re-indexing a large chat wholesale costs
+  ~385 ms *per save*. Diffing on `(message_id, text_hash)` reduces a streaming
+  save to **one row**. The hash is FNV-1a inline — stable across Rust versions,
+  unlike `DefaultHasher`, which would silently re-index everything on a toolchain
+  bump.
+- **Sync rests on an invariant the project already keeps.** The orchestrator is
+  the sole writer of chats, so in-app changes have an exact hook (`flush_saves`)
+  and need no polling; only *external* changes — import, restore, a hand edit, a
+  deleted cache — need the startup pass, and that is a **stat-only walk**
+  (~0.3 ms for the whole directory), so it runs unconditionally on every launch in
+  `spawn_blocking`.
+- **Two defects that only the real corpus exposed** (both invisible to the
+  synthetic tests, which is the lesson):
+  - **A lost update.** The startup pass reads a chat, the app saves and indexes
+    that same chat, and the pass's older snapshot lands last — the chat silently
+    absent from search until the next launch. That is "launch the app and start
+    typing", the common case, and on a 3 s pass the window is wide. Fixed with a
+    **compare-and-set on the bookkeeping row inside the transaction**
+    (`index_chat_if_unchanged`; `index_chat` stays the unconditional primitive the
+    live hook uses), plus reading the bookkeeping **before** the directory — the
+    other order forgets a chat created between the two reads.
+  - **Hidden chats re-parsed on every startup, forever.** They were *forgotten*,
+    which drops the bookkeeping too, so the next pass found no record, parsed the
+    file again and dropped it again. Soft delete is the only delete here (spec
+    §12.3), so that set only grows: **43 of 171 chats** on the real corpus.
+    Recording them with an **empty message set** (which both clears their rows and
+    records the file state) took the warm pass from 27 ms with 43 re-parses to
+    **0 ms with nothing re-parsed**. Pinned by a regression test that asserts on
+    the *second* pass — a single-pass test cannot see it — and mutation-tested.
+- **Two checks I specified turned out vacuous**, caught by an agent probing
+  instead of assuming: scanning an external-content FTS table reads values back
+  *through* the content table, so a `LEFT JOIN` can **never** see a stale index
+  row (it returned 0 while `MATCH` still returned a deleted message — blind to
+  exactly the user-visible bug); and the bare `integrity-check` only verifies the
+  index against itself unless passed an explicit `1`. Both now pinned by a
+  mutation test against a deliberately-broken trigger, and the deviation is
+  recorded in executable form rather than prose.
+- **Query escaping is the pitfall most likely to bite.** Raw input cannot reach
+  `MATCH`: measured, `C++`, `cost-benefit`, `50%`, `AND` and `(` are all SQL
+  errors on ordinary text — and `cost-benefit`/`a:b` are read as **column
+  filters**, so the error names a column the user never typed. Every token is
+  quoted with inner quotes doubled; tokens under trigram's 3-character floor are
+  dropped rather than allowed to zero out the whole query, counted in
+  **characters** (a 3-character Cyrillic token is 6 bytes — a byte floor would
+  keep 2-character ones; mutation-tested). The rule lives in **one** place,
+  `features/chat_search.rs`, called by the orchestrator: `shared/storage` may not
+  depend on `features` (FSD), so `CacheDb::search_chats` takes an already-escaped
+  query.
+- **Contract**: `AppCommand::SearchChats(String)` →
+  `AppEvent::ChatSearchResults { query, chat_ids: Option<Vec<Uuid>> }`, where
+  `None` means "not a searchable query — do not filter" (deliberately an `Option`
+  rather than "all ids", so the event never claims every chat matched);
+  `ChatListAction/Intent::SearchContent`. The widget stays dumb — it sends the raw
+  query and filters by whatever comes back, so the floor rule isn't duplicated.
+  Stale results are still applied (keeping the last set avoids flashing the full
+  list between keystrokes).
+- **Measured after the fixes** (171 chats, 13.5 MB of JSON): cold pass 3.1 s
+  indexing 1213 messages into 12.7 MB; warm pass **0 ms**; `естов` → 14 chats by <!-- cyrillic-ok -->
+  infix, `C++` → 26 (an FTS5 syntax error unescaped), `rust память` → 23 (implicit <!-- cyrillic-ok -->
+  AND across scripts), a nonsense query → 0, `ми` → below the floor. <!-- cyrillic-ok -->
+  **1531 unit tests green** (+45), 69 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3): no
+  engine, memory or provider protocol is touched — but the reconciliation was
+  nonetheless exercised against the **real corpus**, which is what found both
+  defects above.
+- **Stage 2 (not done)**: a message-level search screen — snippet, chat, date,
+  `Enter` jumps to that message in the feed — deliberately coupled to the
+  roadmap's separate *In-feed text search*, since both need the same "scroll the
+  feed to message N". Groundwork also noted: `cache.db` could hold chat-list
+  summaries, removing the 94 ms parse-everything cost at startup.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
