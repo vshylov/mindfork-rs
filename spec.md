@@ -372,6 +372,8 @@ Two-tier (as in attempt #1):
    - `rag_documents(id, profile_id, source, chunk_text, created_at)` + a `sqlite-vec` virtual table for embeddings (linked by `id`/`rowid`).
    - **Per-profile isolation** — a mandatory `WHERE profile_id = ?` on every notes/RAG query (a repository invariant).
 
+**Plus a disposable third file, `cache.db`** — the full-text index behind searching chats by content (`Ctrl+F` in the chat list, [§11.2](#112-the-chat-list-an-overlay)). It is deliberately **not** a third tier of user data: everything in it is derived from `chats/*.json`, and that changes the rules. It carries none of the schema-versioning machinery of [§12.2](#122-schema-versioning-and-migration), because a version mismatch or a corrupt file is answered by *deleting the file and rebuilding*, never by a migration step and never by refusing to start — a disposable index must not be able to block startup. So deleting it is a **supported repair** rather than data loss, and it is **excluded from backups** ([§12.3](#123-backup-and-deletion) — the archive's include list is an allowlist of user data), so a restore lands without an index and rebuilds it. It is kept in step by the sole writer of chats: the orchestrator indexes a chat right after saving it, and a startup pass reconciles whatever changed outside the app (import, restore, a hand-edited file, a deleted cache).
+
 **Soft delete**: `is_hidden` on chats and profiles; hiding a profile cascades to hide its chats and excludes its notes/RAG from result sets (`WHERE is_hidden = 0`). There's no hard delete.
 
 **Data location**: by default, in a `data/` subdirectory **next to the executable** (portable); a `defaults.json` file can move it to an OS folder/custom directory and set the scaffold/interface language (see [§12.1](#121-configuration)). The `default_language` field is optional: when absent (a fresh install, a deb/rpm package), the language is detected from the OS locale (`ru*` → Russian, otherwise English). The file tolerates a UTF-8 BOM. In non-portable mode, read-only resources (spellcheck dictionaries) are also looked up in the portable layout next to the binary — an installer/package puts them there.
@@ -1024,7 +1026,27 @@ Two main screens + overlays (modals):
 A direct requirement from the task:
 
 - Invoked with the **`Esc`** key (the same key closes the overlay — toggling "list ↔ chat"). Quitting the application — `Ctrl+Q`/`F10` (including from this overlay).
-- **A search field**: filters the list by a substring match on the title.
+- **A search field with two scopes**, toggled by **`Ctrl+F`** (the active one is shown as
+  `search: titles` / `search: content`). **Titles** is the default and the historical
+  behaviour — a substring match on the title, filtered locally. **Content** is a full-text
+  search over the **text of the chats' messages** ("thoughts" and tool calls are
+  deliberately out of scope: they would match on words the user never wrote). Content mode
+  **filters** — the list keeps the chats with at least one matching message, and the sort
+  mode below still orders them; stage 1 deliberately does *not* rank, because the trigram
+  index's `bm25` is weak, and ranking becomes a real question only once hits are individual
+  messages. The title substring filter is **not** additionally applied in this mode: the
+  query has already been answered by the index, and re-applying it to the title would hide
+  the very chats the search just found.
+- **How a content query matches**: by **substring**, like the title filter users are
+  already trained on — which also sidesteps Russian morphology, for which FTS5 has no
+  stemmer. The query is turned into a **literal** match by the orchestrator, so ordinary
+  text searches for itself instead of erroring (`C++`, `cost-benefit` and `AND` are all
+  invalid FTS5 syntax when passed raw); several words mean "all of them, in the same
+  message"; and tokens shorter than 3 characters cannot match under a trigram index, so
+  they are dropped — a query with nothing left shows the unfiltered list, exactly like an
+  empty one. The index itself is a separate, disposable `cache.db`
+  ([§5.2](#52-data-storage)). See
+  [docs/research/chat-content-search.md](docs/research/chat-content-search.md).
 - **Two sort modes**: by creation date and by last-modified date (toggled with a key; the active mode is indicated).
 - **List navigation**: `↑`/`↓` — one row, `PageUp`/`PageDown` — one page (a fixed step, since the list height is only known at render time), `Home`/`End` — to the first/last chat.
 - **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
@@ -1275,6 +1297,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `Ctrl+N` | new chat (profile picker) |
 | `Ctrl+P` | the settings screen |
+| `Ctrl+F` | in the chat list: switch the search between titles and message content (§11.2) |
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `Ctrl+R` | regenerate the last response |

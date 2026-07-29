@@ -15,6 +15,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Search inside chats, not just their titles** — `Ctrl+F` in the chat list
+  (`Esc`) switches the search box between titles and **message text**; the list
+  narrows to the chats containing a match, ordered by the sort you already chose.
+  Matching is by fragment, so part of a word finds the whole one and `C++`
+  searches for itself; words shorter than three characters are ignored, and
+  "thoughts" and tool calls are not searched. The index is a separate `cache.db`
+  next to your data, filled in the background — deleting it is a safe repair (it
+  is rebuilt on the next launch), and it is deliberately not part of backups.
+
 - **Input prefixes for the embedding model** — a new "Input prefixes" setting in
   the Embeddings tab (Model section): `none` (default), `e5`, `e5-instruct`. Some
   embedding families expect each input marked with its role (`query: ` /

@@ -170,6 +170,10 @@ src/
 │  │  │                     read/extract → mode by budget → the chat; background
 │  │  │                     indexing of a by-reference file into the chat-scoped
 │  │  │                     semantic index (best-effort, spec §9.7)
+│  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
+│  │  │                     chat right after it is saved + the startup reconciliation
+│  │  │                     pass (stat-only walk of `chats/`), and answers a query —
+│  │  │                     escaping it here, since `shared` may not use `features`
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
 │  │  │                     synth/playback pipeline, stop points (§11.9)
 │  │  ├─ mcp.rs             McpManager: MCP server lifecycle (spawn/status/
@@ -268,6 +272,9 @@ src/
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
+│  ├─ chat_search.rs        to_fts_query: raw input → a *literal* FTS5 MATCH (every
+│  │                        token quoted, inner quotes doubled; tokens under the
+│  │                        trigram 3-char floor dropped). Pure, tested without a DB
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
@@ -334,6 +341,12 @@ src/
    │  │  │                 embed_calibration/set_embed_calibration, the infallible
    │  │  │                 similarity_scale()) — spec §9.3.4
    │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
+   │  ├─ cache/             CacheDb (`cache.db`) — the disposable full-text index over
+   │  │                     chat message text: external-content FTS5, tokenize='trigram',
+   │  │                     diffed per message (a streaming save rewrites one row) +
+   │  │                     `indexed_chats` bookkeeping for the startup pass. Derived
+   │  │                     data, so open() self-heals: a corrupt file or a foreign
+   │  │                     schema is deleted and started empty, never migrated
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ embed_identity.rs    identity of the embedding model that produced the stored
    │                       vectors: CANARY_TEXT/CANARY_MATCH + EmbedFingerprint
@@ -434,10 +447,16 @@ flowchart LR
 `CancelImpersonation`, `NewChat`, `SwitchChat`, `RenameChat`/`AutoRenameChat`,
 `CloneChat`, `CopyChat`, `DeleteChat`, `CreateProfile`/`DeleteProfile`,
 `UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`,
-`FileAttach`/`FileRemove`/`FileList`, `Tts`/`TtsStop`, `Quit`.
+`FileAttach`/`FileRemove`/`FileList`, `SearchChats` (a **raw** content query from
+the chat list — escaping it is the orchestrator's job, so that rule lives in one
+place), `Tts`/`TtsStop`, `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
-`ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
+`ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
+least one matching message, plus the query echoed back; `chat_ids: None` means
+"not a searchable query — do not filter", deliberately an `Option` so the event
+can never claim that *every* chat matched), `ChatListError`, `CopyToClipboard`,
+`ProfileList`, `Settings`,
 `ChatActivated`, `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
@@ -924,9 +943,31 @@ flowchart LR
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
     end
+    subgraph CACHE["SQLite FTS5 (cache/) — derived, disposable"]
+        MSG["messages (chat_id, message_id, text_hash)"]
+        FTS["messages_fts (external content, trigram)"]
+        IC["indexed_chats (mtime, size)<br/>reconciliation bookkeeping"]
+    end
     STORE --> JSON
     STORE --> DB
+    STORE --> CACHE
 ```
+
+**A third file, and deliberately a separate one — `cache.db`** (`storage/cache/`,
+spec §11.2): the full-text index behind the chat list's content search. It is a
+second *database* rather than more tables in `data.db` because it is **derived
+data, and that changes the rules.** `data.db` holds notes, the self-model and RAG
+— irreplaceable content, hence the machinery below (steps inside transactions,
+downgrade guards, pre-migration backups). An index needs **none** of it: a version
+mismatch (`PRAGMA user_version` ≠ `CACHE_SCHEMA`), an unreadable file or a corrupt
+schema is answered by *deleting the file and starting empty*, so `CacheDb::open`
+self-heals instead of bailing — a disposable index must not be able to block
+startup — and `CACHE_SCHEMA` is bumped freely, with no step and no ADR 0006
+machinery at all. The separation pays elsewhere too: `features/backup.rs` includes
+by **allowlist**, so a new file at the root stays out of archives with no code
+change (a restore lands without an index and rebuilds it), and deleting it is a
+documented repair rather than data loss. See
+[docs/research/chat-content-search.md](research/chat-content-search.md) §2.
 
 Storage invariants:
 
@@ -938,6 +979,15 @@ Storage invariants:
 - **A single writer** — the orchestrator. Chats are saved debounced (800ms,
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.
+- **The search index is derived, never authoritative.** `cache.db` answers only
+  *which chats match*; the chats themselves are always read from `chats/*.json`,
+  and nothing is ever recovered from the index. So every failure on its path is
+  logged and swallowed (best effort): a search that misses a chat is a nuisance, a
+  save that failed because of the index would be a bug. Sync rests on the
+  single-writer invariant above — the orchestrator indexes a chat right after
+  saving it, so only changes made **outside** the app (import, restore, a hand-
+  edited file, a deleted cache) need the startup reconciliation pass, which is a
+  stat-only walk comparing `(mtime, size)` against `indexed_chats`.
 - **Embedding dimensionality** is fixed by the first `/v1/embeddings`
   response and stored in the sqlite-vec schema (`meta.rag_dim`), shared by the
   RAG base and the chat attachment index.

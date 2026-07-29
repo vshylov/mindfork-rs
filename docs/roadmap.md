@@ -93,7 +93,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   workarounds: the full redraw on screen switch / popup close and the VS16
   emoji swap in the grid. The mechanics and terminal-independent probes are
   in `shared::ui` and `widgets::emoji_picker`.
-- **In-feed text search** (`/`-search with highlighting and jumps).
+- **In-feed text search** (`/`-search with highlighting and jumps) — shares
+  "scroll the feed to message N" with stage 2 of chat content search (§Chat and
+  profile management), so the two are worth designing together.
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
@@ -105,8 +107,25 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Pin important chats** at the top of the list.
 - **Prompt templates / snippets** — quick inserts of frequently used system
   messages or seeds.
-- **Search within chat content** (not just the title) — full-text search via
-  SQLite FTS.
+- **Search within chat content — groundwork** (**stage 1 is done**, see "Recently
+  closed": `Ctrl+F` in the chat list toggles the search between titles and message
+  text, and content mode *filters* the list to the chats containing a match).
+  Remaining — **stage 2, the message-level search screen**: hits as individual
+  messages with a snippet, chat and date, and `Enter` jumping to that message in
+  the feed. It is deliberately coupled to **In-feed text search** (§Feed and chat
+  UI): both need the same missing piece, "scroll the feed to message N", so they
+  are worth designing together. Open questions carried into that stage: ranking
+  (trigram's `bm25` is weak — which is exactly why stage 1 filters instead of
+  ranking), the `snippet()` budget, and the fact that highlight offsets don't map
+  cleanly onto the feed's markdown rendering. Plus widening what is indexed beyond
+  `message.text` — "thoughts" and tool results are the obvious candidates, and
+  since the index is disposable that costs a rebuild rather than a migration. See
+  [chat-content-search.md](research/chat-content-search.md).
+- **`cache.db` for chat-list summaries** — the disposable cache introduced for
+  content search is a natural home for other cheap-to-recompute state. The chat
+  list is currently built by parsing every `chats/*.json` at startup (~94 ms, and
+  it grows linearly with the corpus); keeping summaries in the cache would remove
+  that parse. Same rules as the index: derived, safe to delete, rebuilt on demand.
 
 ## Engine and reliability
 - **Provider bridges** — document in install.md the "any OpenAI-compatible
@@ -233,6 +252,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **Chat content search** (stage 1): the chat list's search box toggles between
+  titles and **message text** (`Ctrl+F`) and filters to the chats containing a
+  match, with the existing sort still ordering them. The index is a separate,
+  disposable `cache.db` — derived data, so a version mismatch or a corrupt file is
+  answered by deleting and rebuilding rather than by ADR 0006's migration
+  machinery, and the backup allowlist leaves it out with no code change. Trigram
+  tokenizer, so matching is by fragment, like the title filter users already have
+  — which also sidesteps Russian morphology, for which FTS5 has no stemmer; and
+  every token is quoted, so ordinary text (`C++`, `cost-benefit`) searches for
+  itself instead of raising an FTS5 syntax error. **Stage 2 (message-level hits)
+  is still open** — see §Chat and profile management. See
+  [chat-content-search.md](research/chat-content-search.md).
 - **Remote live e2e gate** (stages 0–3, complete): the mandatory live gate
   (AGENTS.md §3) stopped depending on one machine at one LAN address.
   `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'
