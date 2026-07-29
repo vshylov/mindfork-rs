@@ -154,6 +154,7 @@ pub(super) fn process_input_batch(
     batch: Vec<Event>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
@@ -184,6 +185,7 @@ pub(super) fn process_input_batch(
                         settings.handle_key(key).map(AnyIntent::Settings)
                     }
                     ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
+                    ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
                 };
                 match intent {
                     // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
@@ -197,7 +199,7 @@ pub(super) fn process_input_batch(
                         }
                     }
                     Some(intent) => {
-                        if dispatch_any(intent, cmd_tx, screen, active) {
+                        if dispatch_any(intent, cmd_tx, screen, active, back) {
                             quit = true;
                         }
                     }

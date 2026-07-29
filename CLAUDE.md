@@ -124,20 +124,23 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-29, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1531 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1604 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
-recent track — **full-text search over chat content**, stage 1 of 2
-([docs/research/chat-content-search.md](docs/research/chat-content-search.md)) —
-`Ctrl+F` in the chat list switches its search from the title to message content,
-backed by a **separate, disposable `cache.db`** (SQLite FTS5, trigram) kept in
-step in the background: because the orchestrator is already the sole writer of
-chats, in-app changes hook into `flush_saves` and only external ones need the
-startup pass, which is a stat-only walk (~0.3 ms on the real corpus). Deleting
-the file is a supported repair — it is derived data, so a version mismatch means
-"rebuild", not a migration (ADR 0006 machinery not needed), and backup's
-allowlist excludes it with no code change — **done, stage 1; stage 2 (a
-message-level screen with snippets and jump-to-message) is coupled to the
-roadmap's in-feed search**;
+recent track — **full-text search over chat content**, now **complete**
+([research](docs/research/chat-content-search.md),
+[stage 2 plan](docs/history/chat-search-stage2.md)) — `Ctrl+F` in the chat list
+switches its search from the title to message content, and `Ctrl+G` opens a
+message-level results screen (hits grouped by chat, a snippet with the match
+highlighted, `Enter` jumping the feed onto that exact message). Backed by a
+**separate, disposable `cache.db`** (SQLite FTS5, trigram) kept in step in the
+background: because the orchestrator is already the sole writer of chats, in-app
+changes hook into `flush_saves` and only external ones need the startup pass,
+which is a stat-only walk (~0.3 ms on the real corpus). Deleting the file is a
+supported repair — it is derived data, so a version mismatch means "rebuild", not
+a migration (ADR 0006 machinery not needed), and backup's allowlist excludes it
+with no code change. Along the way the feed stopped being yanked to the bottom by
+content arriving on its own — **done, stages 1–2; in-feed `/` search stays a
+roadmap item, now cheap on stage 2a's jump infrastructure**;
 before that — **the remote live e2e gate**, now **closed**
 ([docs/history/remote-e2e-hf.md](docs/history/remote-e2e-hf.md)) — the mandatory
 live gate (AGENTS.md §3) stopped requiring one particular machine on one LAN
@@ -9620,11 +9623,131 @@ debounce was done as a separate PR, see below).
   engine, memory or provider protocol is touched — but the reconciliation was
   nonetheless exercised against the **real corpus**, which is what found both
   defects above.
-- **Stage 2 (not done)**: a message-level search screen — snippet, chat, date,
-  `Enter` jumps to that message in the feed — deliberately coupled to the
-  roadmap's separate *In-feed text search*, since both need the same "scroll the
-  feed to message N". Groundwork also noted: `cache.db` could hold chat-list
-  summaries, removing the 94 ms parse-everything cost at startup.
+- **Stage 2** — done, see the next entry.
+
+### Post-M9: chat content search — stage 2, jump and the results screen (done)
+- Completes the track ([stage 2 plan](docs/history/chat-search-stage2.md), forks
+  **S1–S6 decided by the user 2026-07-29**, all as recommended). Stage 1 answered
+  *"which chats mention this?"*; stage 2 answers *"where exactly, and take me
+  there."* Split along the risk line: **2a** the jump infrastructure, **2b** the
+  screen that rides on it.
+- **An investigation of the feed came first, and it paid for itself** — it closed
+  off the obvious approach before any code was written:
+  - **A jump can only be applied inside `render`.** The per-block render cache
+    makes the row offset nearly free (`cache[..idx].lines.len()` summed), but it
+    is only valid after a `build_lines` at the current width — width and palette
+    are the cache key. So "compute the row in `activate_chat` and call a setter"
+    is impossible; a jump is necessarily a **deferred request** consumed by the
+    next render.
+  - **`FeedMessage` carries no identity, and the projection is lossy.**
+    `from_messages` merges consecutive assistant messages of agentic rounds into
+    one bubble and drops `Tool`/`System` entirely, so N domain messages become
+    M ≤ N feed items. Unrecoverable afterwards — hence `message_ids: Vec<Uuid>`
+    recorded *at the merge site*. A single `Option<Uuid>` would have lied about
+    merged bubbles.
+  - **Highlighting a match inside the feed by source offset is not feasible.**
+    The renderer receives `pulldown-cmark` byte ranges and discards them — and
+    threading them through would not help, because `normalize_delimiters`
+    rewrites the string **before** parsing, so the ranges do not address
+    `Message.text` at all; downstream, LaTeX→unicode, mermaid substitution, table
+    re-layout, syntect→ANSI, two wrapping passes and rail-prepending each destroy
+    the correspondence independently. Stage 1's research flagged this as "worth a
+    look"; it is now settled, and fork **S3** took "mark the message, don't
+    highlight the match".
+- **Three fields, not one — decided by measurement.** The first implementation had
+  a single `focus` in `CacheKey`, cleared by manual scroll. Measured on the
+  largest real chat: the first scroll after a jump cost **38 ms against 17 ms**,
+  because clearing it wiped the block cache and re-ran markdown+syntect over the
+  whole chat, scaling linearly with chat size. Splitting it fixed that (**38 → 18
+  ms**, identical to any warm frame) — and exposed something worse hiding in the
+  original design: since `scroll_to_bottom` would have been what cleared the
+  marker, and `push_user_message` calls it, **every send would have re-rendered
+  the entire chat**. Final shape: `pending_focus` (consumed by the next render),
+  `anchor` (row re-derivation on rewrap, released by manual scroll), `marker`
+  (the accent rail — the only one in `CacheKey`, surviving scrolling).
+- **A behaviour change that fell out, worth its own CHANGELOG line**: the seven
+  `scroll_to_bottom()` sites are now split by *who asked*. User-initiated ones
+  (activating a chat, sending, starting a generation) still go to the bottom
+  unconditionally; content arriving on its own (tool cards, notes, follow-ups)
+  respects `follow`, so a reader who scrolled away is no longer yanked back. Without
+  this a jump is worthless — the first tool card would undo it.
+- **2b, the screen**: `Ctrl+G` from the chat list's content mode opens results
+  **grouped by chat** (fork S2 — 163 hits for a common word is not a flat list you
+  scroll), each hit a Rust-built snippet with the match highlighted. `Enter` jumps
+  to that exact message; `Esc` returns with the search still live. Capped at 200
+  with an honest "showing N of M" — the true total comes from a separate count,
+  since the rows only equal the total below the cap. Also in content mode, `Enter`
+  on a chat now opens it **at its first matching message** rather than at the end.
+- **Snippets are built in Rust, not by SQLite `snippet()`** (fork S4): we already
+  store the text, we need byte offsets to highlight the list, and under trigram
+  the budget counts 3-grams — 64 "tokens" yields ~70 characters, against a
+  documented ceiling this build silently exceeds. The measurement that settled a
+  worry: a trigram hit containing no literal token would fall back to the head of
+  the message, but on the real corpus that is **0% across every query tried**,
+  including `памяти` at 163 hits — so no clever trigram-overlap positioning was <!-- cyrillic-ok -->
+  needed.
+- **Adding an `ActiveScreen` variant meant auditing nine match sites that compile
+  silently.** Two were real: the `SelfModelView` arm would have **replaced the
+  results with a self-model snapshot**, and the `Settings` broadcast would have
+  left the new screen's theme and UI language frozen. Both are now exhaustive by
+  variant, so the next screen is forced to decide.
+- **A plan-vs-implementation divergence, caught in review and fixed in the code,
+  not the spec.** Fork S2 as agreed said "chats ordered by your existing sort",
+  but the screen hardcoded `modified_at` and ignored the list's `Tab` toggle —
+  invisible because the default toggle position *is* `Modified`. The sort is now
+  threaded through the contract, pinned by a test that asserts the *other*
+  position, and mutation-tested. Rewriting the spec to match the code would have
+  been the wrong direction.
+- **1604 unit tests green** (+73, including the live-run fixes below), 69
+  `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3):
+  storage, pure logic and TUI rendering — no engine, memory or provider protocol.
+  Snippet quality and the miss rate were nonetheless measured against the **real
+  corpus**, as in stage 1.
+- **The live run found two things, and one of them reversed a fork.** The user ran
+  it, and both reports were fair:
+  - **The match was highlighted in the results list but not in the feed** you
+    landed in — visibly inconsistent the moment you arrive. This was fork
+    **S3(a)**, which I had recommended and which they had accepted, so the honest
+    answer was to say so *and* revisit: they had now seen it. Implemented as
+    **S3(b), post-render span matching**. This is **not** a reversal of §1.4 —
+    what that ruled out was mapping *source* byte offsets onto rendered markdown
+    (the renderer discards `pulldown-cmark` ranges, and `normalize_delimiters`
+    rewrites the string before parsing, so the ranges do not address
+    `Message.text`). Matching the text that was actually *rendered* needs none of
+    it, which is exactly why the reversal was cheap. The archived plan records the
+    revision rather than pretending (a) was never chosen.
+    Two consequences the plan had not anticipated, both **over**-highlighting
+    where §4a had only foreseen under-highlighting: the role header would have
+    matched a plain search for "assistant" in every assistant bubble (excluded),
+    and thoughts/tool cards get highlighted although fork F3 indexes
+    `message.text` only — so *highlighted* does not mean *this is what matched*.
+    Kept, since the word is genuinely on screen, and documented.
+  - **`Esc` from a chat opened out of the results threw the results away** and
+    went to the chat list. A genuine gap, not a decision — we never designed the
+    way back. Now a one-deep back-stack in `runtime` holding the live
+    `SearchScreen` (not the query — re-running it would lose selection and
+    scroll). Cleared in the **one funnel** every chat-opening route ends in
+    (`ChatActivated`) rather than by enumerating routes, and on a *different*
+    chat rather than any activation, because `activate()` also rebuilds the same
+    chat's feed after a regeneration or `Ctrl+E`. The chat screen learns nothing
+    about search: `ChatIntent::OpenChatList` already means "go back", and *where*
+    back is, is app-layer knowledge (FSD).
+- **A third fix, from disagreeing with an agent's judgement call**: it had left
+  the status bar saying `Esc чаты` — reasoning that a runtime→screen flag was <!-- cyrillic-ok -->
+  real contract surface for one word. Sound in general, but that word sits in
+  exactly the flow the user had just called confusing, and `F1` enumerating both
+  meanings does not help someone reading the bottom of the screen. It is
+  **derived** from the back-stack once per frame rather than mirrored into state —
+  the alternative would have meant writing the rule at four set/clear sites. The
+  label was **measured**, which changed the obvious choice: `результаты` costs an <!-- cyrillic-ok -->
+  extra row in the hotkey grid at 120 columns, right where everything otherwise
+  fits on one line; `к поиску`/`to search` costs none at any width. <!-- cyrillic-ok -->
+- **Still open**: in-feed `/` search with next/prev (fork S5 kept it out — a
+  different, same-chat interaction), now cheaper still since both the jump *and*
+  the highlight machinery (`match_ranges` + span re-splitting) exist — what it
+  needs on top is widening the matcher past the focused message and next/prev;
+  `cache.db` holding chat-list summaries to remove the 94 ms startup parse.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

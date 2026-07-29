@@ -21,6 +21,7 @@
 //! logged and the app carries on — a search that misses a chat is a nuisance, a
 //! save that fails because of the index would be a bug.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -28,8 +29,10 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
 use crate::entities::message::MessageRole;
+use crate::features::chat_search::{self, SearchGroup, SearchHit};
+use crate::features::chat_search_sort::SortMode;
 use crate::shared::storage::Storage;
-use crate::shared::storage::cache::IndexedMessage;
+use crate::shared::storage::cache::{IndexedMessage, MessageHit};
 
 use super::Orchestrator;
 
@@ -61,6 +64,125 @@ impl Orchestrator {
         let _ = self
             .evt_tx
             .send(AppEvent::ChatSearchResults { query, chat_ids });
+    }
+
+    /// Answers a message-level content query (`Ctrl+G` in the chat list).
+    ///
+    /// Escaping happens here for the same reason as in
+    /// [`Self::handle_search_chats`], and an unsearchable query answers with no
+    /// groups — the screen shows its empty state rather than an error popup.
+    ///
+    /// Grouping is done **here** and not in `CacheDb` because it needs what the
+    /// orchestrator owns and the index does not: chat titles, the chat list's
+    /// order, and the real position of a message inside its chat. See
+    /// docs/history/chat-search-stage2.md §4 (fork S2).
+    pub(super) fn handle_search_messages(&self, query: String, sort: SortMode) {
+        let (groups, total) = self.message_search(&query, sort);
+        let _ = self.evt_tx.send(AppEvent::MessageSearchResults {
+            query,
+            groups,
+            total,
+        });
+    }
+
+    /// The search itself (split out so it is testable without the loop).
+    fn message_search(&self, query: &str, sort: SortMode) -> (Vec<SearchGroup>, usize) {
+        let Some(fts) = chat_search::to_fts_query(query) else {
+            return (Vec::new(), 0);
+        };
+        let cache = self.storage.cache();
+        let hits = match cache.search_messages(&fts, chat_search::HIT_CAP) {
+            Ok(hits) => hits,
+            Err(err) => {
+                tracing::warn!(query = %query, error = %format!("{err:#}"),
+                    "message content search failed");
+                return (Vec::new(), 0);
+            }
+        };
+        // Only pay for the count when the cap actually bit — otherwise the
+        // rows we have *are* the total.
+        let total = if hits.len() < chat_search::HIT_CAP {
+            hits.len()
+        } else {
+            cache.count_matching_messages(&fts).unwrap_or(hits.len())
+        };
+        (self.group_hits(hits, query, sort), total)
+    }
+
+    /// Buckets hits into chats **in the order the chat list is currently showing
+    /// them** (fork S2 — the list's `Tab` toggle carries over, rather than the
+    /// results quietly using a different order), and orders each chat's hits by their real
+    /// position in the conversation.
+    ///
+    /// A hit whose chat we do not have — deleted or hidden since it was indexed
+    /// — is dropped: the index is derived data and may lag by a moment, and
+    /// showing a result that cannot be opened is worse than showing one fewer.
+    fn group_hits(&self, hits: Vec<MessageHit>, query: &str, sort: SortMode) -> Vec<SearchGroup> {
+        let mut by_chat: HashMap<Uuid, Vec<MessageHit>> = HashMap::new();
+        for hit in hits {
+            by_chat.entry(hit.chat_id).or_default().push(hit);
+        }
+
+        let mut chats: Vec<&Chat> = self
+            .chats
+            .iter()
+            .filter(|c| !c.is_hidden && by_chat.contains_key(&c.id))
+            .collect();
+        chats.sort_by_key(|c| {
+            std::cmp::Reverse(match sort {
+                SortMode::Created => c.created_at,
+                SortMode::Modified => c.modified_at,
+            })
+        });
+
+        chats
+            .into_iter()
+            .map(|chat| {
+                let order = message_order(chat);
+                let mut hits = by_chat.remove(&chat.id).unwrap_or_default();
+                hits.sort_by_key(|h| order.get(&h.message_id).copied().unwrap_or(usize::MAX));
+                SearchGroup {
+                    chat_id: chat.id,
+                    title: chat.title.clone(),
+                    hits: hits
+                        .into_iter()
+                        .map(|h| SearchHit {
+                            message_id: h.message_id,
+                            role: h.role,
+                            ts: h.ts,
+                            snippet: chat_search::build_snippet(
+                                &h.text,
+                                query,
+                                chat_search::SNIPPET_BUDGET_CHARS,
+                            ),
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+
+    /// The earliest message of `chat` matching `query`, in real chat order —
+    /// what `Enter` in the chat list's content mode opens the chat at. `None`
+    /// when the query is unsearchable, the search fails, or nothing in this
+    /// chat matches (then the chat opens at its tail, as a plain switch does).
+    pub(super) fn first_match_in_chat(&self, chat_id: Uuid, query: &str) -> Option<Uuid> {
+        let fts = chat_search::to_fts_query(query)?;
+        let ids = self
+            .storage
+            .cache()
+            .matching_messages_in_chat(&fts, chat_id)
+            .inspect_err(|err| {
+                tracing::warn!(chat = %chat_id, error = %format!("{err:#}"),
+                    "resolving the first match in a chat failed");
+            })
+            .ok()?;
+        let chat = self.chats.iter().find(|c| c.id == chat_id)?;
+        let order = message_order(chat);
+        ids.into_iter()
+            .filter_map(|id| order.get(&id).map(|pos| (*pos, id)))
+            .min()
+            .map(|(_, id)| id)
     }
 
     /// Brings one chat's index in line right after it was written to disk.
@@ -113,6 +235,17 @@ fn indexed_messages(chat: &Chat) -> Vec<IndexedMessage> {
             ts: m.timestamp.to_rfc3339(),
             text: m.text.clone(),
         })
+        .collect()
+}
+
+/// `message_id → position in the conversation`, the only authority on the order
+/// hits are shown in: the index's rowids only approximate it, since a message
+/// whose text changed is deleted and re-inserted with a fresh one.
+fn message_order(chat: &Chat) -> HashMap<Uuid, usize> {
+    chat.messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.id, i))
         .collect()
 }
 

@@ -984,6 +984,8 @@ Two main screens + overlays (modals):
 ```
 
 - **Settings screen** — a separate screen (via `Ctrl+P`/a button) with sections (see [11.6](#116-the-settings-screen)).
+- **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one and highlighting the query inside it; `Esc` from that chat comes back to the results (see [11.2.1](#1121-the-message-level-search-screen)).
+- **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
 - **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`?`), the server startup log.
 - **Token counter** in the status bar: the total "conversation (prompt) + response" count,
   updates live during generation and is visible right from the start (not "starting from one").
@@ -1020,6 +1022,18 @@ Two main screens + overlays (modals):
   the app now becomes usable on its own: previously the chat gate kept generation
   blocked until a restart or a settings edit. See
   docs/server-health-monitoring.md.
+- **Hotkey hints** in the status bar are fixed except one: **`Esc` means "go back"**,
+  and where back is depends on how the chat was reached, so its label follows the key
+  — the chat list normally, the search results when the chat was opened from a hit
+  ([§11.2.1](#1121-the-message-level-search-screen)). The bar is the only place on
+  screen that answers this, so a label still saying "chats" would be the old answer in
+  exactly the flow that needs the new one. It is **derived** from the navigation state
+  once per frame rather than mirrored into a flag, which makes the hint true of every
+  frame by construction. The wording is constrained by the grid: the hints are laid out
+  in right-aligned columns whose width comes from the longest cell, so a label a few
+  characters longer costs a whole extra row at common widths — the alternative label is
+  a short **directional** one ("to search"), which also can't be misread as
+  "`Esc` opens search".
 
 ### 11.2. The chat list (an overlay)
 
@@ -1046,7 +1060,20 @@ A direct requirement from the task:
   they are dropped — a query with nothing left shows the unfiltered list, exactly like an
   empty one. The index itself is a separate, disposable `cache.db`
   ([§5.2](#52-data-storage)). See
-  [docs/research/chat-content-search.md](docs/research/chat-content-search.md).
+  [docs/research/chat-content-search.md](docs/research/chat-content-search.md)
+  and [docs/history/chat-search-stage2.md](docs/history/chat-search-stage2.md).
+- **From "which chats" to "where exactly"** (content mode only, since in title mode
+  the query is a title substring and there is nothing to search message text for):
+  **`Ctrl+G`** opens the message-level results screen ([§11.2.1](#1121-the-message-level-search-screen)),
+  and **`Enter` opens the selected chat at its first matching message** instead of at
+  the tail — the user asked where this text is, so landing on it beats landing at the
+  end of the conversation. Which message that is can only be answered by the
+  orchestrator (it owns both the index and the chat, so only it can order the matches
+  by real chat position), so the list hands over the chat and the raw query
+  (`AppCommand::OpenChatAtFirstMatch`); a chat whose match can't be resolved simply
+  opens at the tail, exactly like a plain switch. Title mode keeps the historical
+  plain switch, and the `Ctrl+G` hint is shown only in content mode — an advertised
+  key that is a no-op is worse than a missing hint.
 - **Two sort modes**: by creation date and by last-modified date (toggled with a key; the active mode is indicated).
 - **List navigation**: `↑`/`↓` — one row, `PageUp`/`PageDown` — one page (a fixed step, since the list height is only known at render time), `Home`/`End` — to the first/last chat.
 - **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
@@ -1067,6 +1094,80 @@ A direct requirement from the task:
   of `User:`, §10); otherwise with the interface language's labels.
 - Virtualization of a long list (only visible rows are rendered).
 
+#### 11.2.1. The message-level search screen
+
+A separate full screen (`screens/search.rs`, `ActiveScreen::Search`), opened from the
+chat list's content mode with **`Ctrl+G`**. Stage 1 answers *"which chats mention
+this?"*; this screen answers *"where exactly, and take me there."*
+
+- **Grouped by chat**, not ranked: a chat header (title + its number of hits), then
+  that chat's matching messages **in chat order** (their real position in the
+  conversation, which only the orchestrator can resolve); chats **in whatever order
+  the chat list is currently showing them**, so its `Tab` sort toggle carries over
+  rather than the results quietly using a different one. This sidesteps ranking entirely — the
+  trigram index's `bm25` is measurably usable but a weak proxy for relevance —
+  and it reads well when one chat holds many hits,
+  which is the common case (a common word matched 163 messages across 50 chats on a
+  real 171-chat corpus).
+- **One hit** = a muted `role · date` prefix plus a **snippet** — an excerpt of the
+  message centred on the first match, with the matched spans drawn in the accent
+  color. Snippets are built in Rust from the text the index already stores, not by
+  SQLite's `snippet()`: we need byte offsets to highlight, and under a trigram
+  tokenizer the budget counts 3-grams rather than words (64 "tokens" yields ~70
+  characters, against a documented ceiling this build silently exceeds). A message
+  FTS5 matched whose text does not literally contain the token — possible under
+  trigram — yields the head of the text with no highlights rather than an empty
+  snippet.
+- **A cap of 200 hits** with an honest *"showing N of M"* line; the true total comes
+  from a separate count, since the rows only equal the total below the cap.
+- **Navigation** is over hits, so chat headers are skipped by construction rather
+  than by a filter: `↑`/`↓`, `PageUp`/`PageDown` (a fixed step, as in the chat list),
+  `Home`/`End`. **`Enter`** opens the chat with the feed on that message
+  (`AppCommand::OpenChatAt`, [§11.3](#113-the-message-feed)); **`Esc`** returns to
+  the chat list **still searching for the same query**, so the search that got you
+  there isn't thrown away; `Ctrl+Q`/`F10` quit.
+- **`Esc` in a chat opened from a hit comes back to these results**, not to the chat
+  list — you drilled down from them and are most likely working through the hits, so
+  going back retraces the step you took. The results come back **whole** (the same
+  selection and scroll position), because the screen itself is stashed rather than the
+  query: re-running the search would lose exactly what you want back. It is one step
+  deep and consumed on use — the next `Esc`, now from the results, goes on to the chat
+  list as it always did — and it is forgotten as soon as a *different* chat is opened
+  by any ordinary route (picking one in the list, `Ctrl+N`, a clone, restoring the last
+  chat at startup). Re-activating the *same* chat (a regeneration, `Ctrl+E`, a repeat
+  jump) is not leaving it and keeps the way back. The status bar's `Esc` hint says
+  which of the two it currently means ([§11.7](#117-keybindings-preliminary)).
+- **The query is highlighted inside the message you land on** (`chat_search::match_ranges`),
+  so the feed and the results list agree on what matched — they share one matcher, hence
+  one notion of a match. The highlight is applied **post-render**, by matching the text
+  that was actually drawn and re-splitting its spans; mapping *source* byte offsets
+  through the renderer is what is infeasible, and this never asks that question.
+  Source offsets do not survive because `normalize_delimiters` rewrites the string before
+  parsing, and LaTeX substitution, mermaid replacement, table re-layout, syntect→ANSI, two
+  wrapping passes and rail prepending each independently destroy the correspondence; an
+  assistant bubble is also rendered as several disjoint markdown fragments split by
+  tool-call offsets. See
+  [docs/history/chat-search-stage2.md](docs/history/chat-search-stage2.md) §1.4 and
+  fork S3(b).
+  Three properties follow from matching what is on screen, and they are the honest
+  reading of the feature:
+  - **Approximate by construction** — content the renderer *transformed* no longer
+    contains the query as text and is not found: text pulled into a LaTeX formula and
+    substituted into unicode, or a mermaid diagram drawn in place of its source.
+  - **It over-highlights relative to the index** — "thoughts" and tool cards are
+    highlighted although only `message.text` is indexed (§11.2, fork F3 of stage 1). So
+    *highlighted* does not mean *this is what matched*; the word is genuinely on screen,
+    which is why it is left in. The **role header is excluded** — otherwise a plain
+    search for "assistant" would light up every assistant bubble it marked.
+  - **Only the jumped-to message** is highlighted, never the rest of the feed:
+    the query travels with the focus as one value, so a stale query cannot outlive its
+    target, and highlighting every occurrence chat-wide would be noise nobody asked for.
+- Like the other screens it knows nothing about `app` (FSD) and answers with a
+  `SearchIntent`; the orchestrator owns the index and the chats and hands over a
+  finished snapshot (`AppEvent::MessageSearchResults`). Where `Esc` goes *back* to is
+  app-layer knowledge too — the chat screen only signals "go back" and never learns
+  that a search exists (see [docs/architecture.md](docs/architecture.md) §10).
+
 ### 11.3. The message feed
 
 - Incremental streaming of the assistant's latest response (the text and the "thoughts" stream separately).
@@ -1081,6 +1182,27 @@ A direct requirement from the task:
   applies to the open chat at once; they take part in the feed's render-cache key.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
+- **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
+  to the bottom unconditionally: activating a chat (unless a jump was requested),
+  sending a message, starting a generation. You did it; you want to see the result.
+  **Content arriving on its own** — a tool card, a service note, the next round's
+  bubble after a follow-up or rewrite — only scrolls **if the view was already
+  following the tail**: a reader who has scrolled away (or jumped to a message) must
+  not be yanked back. Scrolling to the last line resumes following.
+- **Jumping to a message** (`AppCommand::OpenChatAt` from the search screen, §11.2.1):
+  the chat is activated and the feed is positioned on that message, whose rail is
+  drawn in the accent color — "this is where you landed" — and **the searched query is
+  highlighted inside that message** (the accent color, the same one the results list
+  uses; approximate, and only that message — see [§11.2.1](#1121-the-message-level-search-screen)).
+  The **mark survives
+  scrolling** (that is the point: you read around the hit and can still see it) and is
+  dropped only when the chat changes or another jump replaces it; the **view position**
+  is released as soon as you scroll manually. The highlight moves as one with the mark
+  (both set by the jump, both dropped with it), so a query left over from a previous
+  jump cannot light up the wrong message. The position is anchored to the *message*
+  (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
+  — returns the view to the message rather than to a stale row. A message the feed
+  doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
 - **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
 - **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
@@ -1148,6 +1270,14 @@ A direct requirement from the task:
   (`build_code_theme`) as fenced blocks. Used by the feed's tool cards (§11.3) for
   tool arguments/results (`python_exec`, `fs_read`/`fs_write`); an unrecognized
   language → plain text with no highlighting.
+- **The renderer knows nothing about the search highlight** (§11.2.1): a jump's query
+  is applied by the feed *on top of* the rendered lines, matching their text and
+  re-splitting their spans — no `highlight_ranges` threaded through `writer.rs`/
+  `latex.rs`/`table.rs`/the mermaid path, which is what keeps it cheap. It is applied
+  **before** the feed's wrap, since `wrap::wrap_line` carries per-character styles
+  through. The flip side is stated in §11.2.1: everything this section *transforms* —
+  LaTeX substituted into unicode, a mermaid diagram drawn in place of its source — no
+  longer contains the query as text, so the highlight will not find it.
 
 ### 11.5. Input and editing, spellcheck
 
@@ -1293,11 +1423,12 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
-| `Esc` | the chat-list overlay (open/close) · cancel generation |
+| `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1); the status bar's hint says which · cancel generation |
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `Ctrl+N` | new chat (profile picker) |
 | `Ctrl+P` | the settings screen |
 | `Ctrl+F` | in the chat list: switch the search between titles and message content (§11.2) |
+| `Ctrl+G` | in the chat list (content mode): the message-level search screen — `Enter` opens the chat at the message (§11.2.1). In the input box — spellcheck suggestions |
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `Ctrl+R` | regenerate the last response |

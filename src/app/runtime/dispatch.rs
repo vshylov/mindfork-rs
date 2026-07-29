@@ -6,9 +6,14 @@ use super::*;
 /// Applies an orchestrator event to the chat screen (a read-only projection).
 /// A settings snapshot, when the settings screen is open, additionally
 /// refreshes its working copy (reflects profile creation/deletion).
+///
+/// `back` is the search-results back-stack ([`SearchReturn`]): the
+/// `ChatActivated` arm is where it gets dropped, because that event is the one
+/// funnel every chat-opening route ends in.
 pub(super) fn apply_event(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
     clipboard: &mut Option<arboard::Clipboard>,
     cmd_tx: &UnboundedSender<AppCommand>,
     event: AppEvent,
@@ -39,6 +44,26 @@ pub(super) fn apply_event(
                 list.set_search_results(query, chat_ids);
             }
         }
+        // Message-level results (`Ctrl+G`): the screen opens on the reply, not
+        // on the key press — the same round-trip as `SelfModelView`, since the
+        // orchestrator owns the index. A later reply refreshes the screen in
+        // place instead of stacking a second one.
+        AppEvent::MessageSearchResults {
+            query,
+            groups,
+            total,
+        } => match active {
+            ActiveScreen::Search(search) => search.set_results(query, groups, total),
+            _ => {
+                *active = ActiveScreen::Search(Box::new(SearchScreen::new(
+                    query,
+                    groups,
+                    total,
+                    screen.palette(),
+                    screen.loc(),
+                )))
+            }
+        },
         // A list-operation error: into its status area, if the screen is open; otherwise
         // (a late auto-title reply after the list is closed) — as a note in the feed.
         AppEvent::ChatListError(message) => match active {
@@ -81,7 +106,21 @@ pub(super) fn apply_event(
             title,
             messages,
             draft,
+            focus,
         } => {
+            // THE clearing funnel for the search back-stack. Every route that
+            // opens a chat — picking one in the list, `Ctrl+N`, a clone, a jump
+            // from a hit, restoring the last chat at startup — ends here, so
+            // this is the one place that can honestly say the results are no
+            // longer where the user came from. Enumerating the routes by hand
+            // instead would rot silently the moment a new one is added.
+            //
+            // The test is "a *different* chat": a re-activation of the same one
+            // (regeneration, deleting an exchange, a repeat jump) rebuilds the
+            // feed without leaving the chat, and must keep the way back.
+            if back.as_ref().is_some_and(|ret| ret.chat != id) {
+                *back = None;
+            }
             if let ActiveScreen::ChatList(list) = active {
                 if list.take_pending_new_chat() {
                     // Activation of a just-created chat arrived (`Ctrl+N` in
@@ -94,7 +133,7 @@ pub(super) fn apply_event(
                     list.set_active(Some(id));
                 }
             }
-            screen.activate_chat(id, title, &messages, &draft);
+            screen.activate_chat(id, title, &messages, &draft, focus);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
@@ -144,9 +183,17 @@ pub(super) fn apply_event(
         AppEvent::Attachments(items) => screen.set_attachments(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
+        // Deliberately exhaustive by variant rather than a `_` catch-all: this
+        // arm *replaces* the active screen, so a new screen that forgot about
+        // it would be silently stolen by an unrelated late event
+        // (docs/history/chat-search-stage2.md §1.6). Every future variant has to say
+        // whether it may be replaced.
         AppEvent::SelfModelView(model) => match active {
             ActiveScreen::SelfModel(view) => view.set_model(*model),
-            _ => {
+            // A results list the user is reading must not be swapped out from
+            // under them by a stale reply to a request they have left behind.
+            ActiveScreen::Search(_) => {}
+            ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
                 *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                     *model,
                     screen.palette(),
@@ -203,6 +250,7 @@ pub(super) enum AnyIntent {
     List(ChatListIntent),
     Settings(SettingsIntent),
     SelfModel(SelfModelIntent),
+    Search(SearchIntent),
 }
 
 /// Dispatches the active screen's intent to the corresponding translator.
@@ -212,12 +260,14 @@ pub(super) fn dispatch_any(
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
 ) -> bool {
     match intent {
-        AnyIntent::Chat(i) => dispatch(i, cmd_tx, screen, active),
+        AnyIntent::Chat(i) => dispatch(i, cmd_tx, screen, active, back),
         AnyIntent::List(i) => dispatch_chat_list(i, cmd_tx, screen, active),
         AnyIntent::Settings(i) => dispatch_settings(i, cmd_tx, active),
         AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
+        AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active, back),
     }
 }
 
@@ -228,6 +278,7 @@ pub(super) fn dispatch(
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &ChatScreen,
     active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
 ) -> bool {
     let command = match intent {
         ChatIntent::Quit => return true,
@@ -268,7 +319,21 @@ pub(super) fn dispatch(
             }
             return false;
         }
-        // The chat list opens from a snapshot the chat keeps up to date.
+        // `Esc` in the chat means "go back", and the chat screen deliberately
+        // cannot know where back is (FSD). When the chat was reached by opening
+        // a search hit, one step back is the **results** — the user drilled down
+        // from them and is most likely working through the hits, so dropping
+        // them into the chat list would throw the whole list away. The stashed
+        // screen is restored whole, selection and scroll included, and is
+        // consumed: the next `Esc`, now from the results, goes on to the list as
+        // it always did.
+        ChatIntent::OpenChatList if back.is_some() => {
+            if let Some(ret) = back.take() {
+                *active = ActiveScreen::Search(ret.screen);
+            }
+            return false;
+        }
+        // Otherwise the chat list opens from a snapshot the chat keeps up to date.
         ChatIntent::OpenChatList => {
             *active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
                 screen.chat_summaries(),
@@ -357,6 +422,18 @@ pub(super) fn dispatch_chat_list(
         // Content search: the raw query goes to the orchestrator, which escapes
         // it and answers with `ChatSearchResults`. The list stays open.
         ChatListIntent::SearchContent(query) => AppCommand::SearchChats(query),
+        // The message-level screen opens on the reply (`MessageSearchResults`),
+        // not here — the orchestrator owns the index, so this is a round-trip
+        // like `RequestSelfModel`. The list stays on screen meanwhile.
+        ChatListIntent::SearchMessages { query, sort } => {
+            AppCommand::SearchMessages { query, sort }
+        }
+        // Opening a chat at its first match closes the list, exactly as a plain
+        // `Switch` does.
+        ChatListIntent::OpenFirstMatch { chat, query } => {
+            *active = ActiveScreen::Chat;
+            AppCommand::OpenChatAtFirstMatch { chat, query }
+        }
     };
     let _ = cmd_tx.send(command);
     false
@@ -390,6 +467,70 @@ pub(super) fn dispatch_settings(
     };
     let _ = cmd_tx.send(command);
     false
+}
+
+/// Translates a message-level search intent. Returns `true` for
+/// [`SearchIntent::Quit`] (the loop ends).
+///
+/// `Close` goes back to the **chat list still searching for the same query**
+/// rather than to a blank one: the user got here from a content search, and
+/// dropping them into an empty title-mode list would throw that away. The list
+/// is rebuilt from the chat screen's snapshot (as `OpenChatList` does) and the
+/// content results are refetched by the same round-trip typing a query uses.
+pub(super) fn dispatch_search(
+    intent: SearchIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &ChatScreen,
+    active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
+) -> bool {
+    match intent {
+        SearchIntent::Quit => true,
+        SearchIntent::Close => {
+            // Leaving the results for the chat list — there is nothing to come
+            // back to any more. Normally the stash is already empty here (it is
+            // taken when the results are restored), but a late
+            // `MessageSearchResults` can open a fresh screen over a chat that
+            // still holds one.
+            *back = None;
+            let query = match active {
+                ActiveScreen::Search(search) => search.query().to_string(),
+                _ => String::new(),
+            };
+            let mut list = ChatListScreen::new(
+                screen.chat_summaries(),
+                screen.active_chat(),
+                screen.palette(),
+                screen.loc(),
+            );
+            list.restore_content_query(query.clone());
+            *active = ActiveScreen::ChatList(Box::new(list));
+            let _ = cmd_tx.send(AppCommand::SearchChats(query));
+            false
+        }
+        // The jump itself is stage 2a's; here it only leaves the results, the
+        // way `ChatListIntent::Switch` leaves the chat list — except that the
+        // screen is **stashed** rather than dropped, so `Esc` in the chat can
+        // come back to these exact hits (see [`SearchReturn`]).
+        SearchIntent::OpenHit {
+            chat,
+            message,
+            query,
+        } => {
+            if let ActiveScreen::Search(results) = std::mem::replace(active, ActiveScreen::Chat) {
+                *back = Some(SearchReturn {
+                    screen: results,
+                    chat,
+                });
+            }
+            let _ = cmd_tx.send(AppCommand::OpenChatAt {
+                chat,
+                message,
+                query,
+            });
+            false
+        }
+    }
 }
 
 /// Translates a self-model-viewer-screen intent: closing returns to the chat,

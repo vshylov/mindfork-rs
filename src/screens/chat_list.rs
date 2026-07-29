@@ -13,6 +13,7 @@ use ratatui::crossterm::event::KeyEvent;
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
+use crate::features::chat_search_sort::SortMode;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
@@ -45,6 +46,13 @@ pub enum ChatListIntent {
     /// `AppEvent::ChatSearchResults` → [`ChatListScreen::set_search_results`].
     /// See docs/research/chat-content-search.md.
     SearchContent(String),
+    /// Open the message-level search screen for this raw query (`Ctrl+G` in
+    /// content mode). The result arrives as `AppEvent::MessageSearchResults`,
+    /// which opens the screen. See docs/history/chat-search-stage2.md.
+    SearchMessages { query: String, sort: SortMode },
+    /// Open a chat at its first message matching the query (`Enter` in content
+    /// mode); the orchestrator resolves which message that is.
+    OpenFirstMatch { chat: Uuid, query: String },
 }
 
 /// Chat-list screen: widget state + render context.
@@ -138,7 +146,20 @@ impl ChatListScreen {
             ChatListAction::Rename { id, title } => Some(ChatListIntent::Rename { id, title }),
             ChatListAction::AutoRename(id) => Some(ChatListIntent::AutoRename(id)),
             ChatListAction::SearchContent(query) => Some(ChatListIntent::SearchContent(query)),
+            ChatListAction::SearchMessages { query, sort } => {
+                Some(ChatListIntent::SearchMessages { query, sort })
+            }
+            ChatListAction::OpenFirstMatch { chat, query } => {
+                Some(ChatListIntent::OpenFirstMatch { chat, query })
+            }
         }
+    }
+
+    /// Reopens the list still searching message content for `query` — used when
+    /// the message-level results screen closes (`Esc`), so the user lands back
+    /// on the search they were doing.
+    pub fn restore_content_query(&mut self, query: String) {
+        self.state.restore_content_query(query);
     }
 
     /// Applies a content-search result (the `AppEvent::ChatSearchResults`

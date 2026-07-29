@@ -23,6 +23,21 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   "thoughts" and tool calls are not searched. The index is a separate `cache.db`
   next to your data, filled in the background — deleting it is a safe repair (it
   is rebuilt on the next launch), and it is deliberately not part of backups.
+  From there you can go on to the **messages themselves**: `Ctrl+G` opens a
+  full-screen list of every matching message, grouped by chat, each shown with an
+  excerpt around the match (highlighted), who wrote it and when. `Enter` on a hit
+  opens that chat **right at that message**, which is marked in the feed so you
+  can see where you landed, with **the word you searched for highlighted inside
+  it** — the highlight marks what is actually drawn on screen, so it can also
+  land in that message's thoughts or a tool card, and it will not find text the
+  renderer transformed (a formula, a diagram). `Esc` from there goes **back to
+  the results**, exactly as you left them — same selection, same scroll — so you
+  can work through the hits one at a time; a further `Esc` goes on to the chat
+  list with the search still running, and the status bar's `Esc` hint says which
+  of the two it currently means. `Enter` on a chat in content mode also opens it
+  at its first matching message now, instead of at the end of the conversation. A
+  very broad query is capped at 200 hits, and the header says "showing N of M"
+  rather than quietly truncating.
 
 - **Input prefixes for the embedding model** — a new "Input prefixes" setting in
   the Embeddings tab (Model section): `none` (default), `e5`, `e5-instruct`. Some
@@ -80,6 +95,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   (`F1`).
 
 ### Changed
+
+- **Content arriving on its own no longer drags the feed back to the bottom.**
+  If you have scrolled up to re-read something, a tool card, a service note or
+  the assistant's next message landing mid-turn now leaves your position alone —
+  previously anything arriving snapped the view straight back to the end, which
+  made reading during a long answer nearly impossible. What *you* start still
+  scrolls to the bottom, as it should: sending a message, opening a chat,
+  starting a generation. Scrolling back down to the last line resumes following
+  the tail as before.
 
 - A change of the embedding model no longer discards anything: memory and the
   search indexes of attached files are set aside and re-embedded from the text

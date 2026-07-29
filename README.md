@@ -38,6 +38,13 @@ Architecture — **Feature-Sliced Design (FSD)**.
   (`Ctrl+F` toggles; full-text, matches fragments of words), two sort orders
   (by creation / modification date), rename (`F2`), new/clone/delete,
   model-generated **auto-title** (`Ctrl+R` in the list window).
+- **Message-level search** (`Ctrl+G` in the list's content mode): the matching
+  **messages** themselves, grouped by chat, each with an excerpt around the
+  match (highlighted), its role and date; `Enter` opens the chat right at that
+  message, which is marked in the feed with the searched word highlighted inside
+  it. `Esc` from there goes back to the results as you left them (same selection
+  and scroll), so you can work through the hits one by one; a further `Esc` goes
+  on to the chat list.
 - **Copy the conversation to the clipboard** (`F5`) — both in the main window (the
   active chat) and in the chat list (the selected one); cross-platform via `arboard`.
 - **Message feed** with its own **Markdown** renderer (theme, code highlighting,
@@ -406,12 +413,13 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break, for terminals without the kitty protocol) |
 | `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut selection · paste from clipboard |
-| `Esc` | chat list (open/close) · cancel generation |
+| `Esc` | back: chat list (the same key closes it) — or the search results, if the chat was opened from a hit · cancel generation |
 | `Ctrl+Q` / `F10` | quit (including from the chat list) |
 | `F1` / `?` | help/"About" dialog (tabs: about · hotkeys · commands · license · components; `Tab`/`←→` — switch tabs) |
 | `Ctrl+P` | settings screen |
 | in the chat list (`Esc`) | search, sort orders, `F2`/`Ctrl+N`/`Ctrl+D`/`Del`, `Ctrl+R` auto-title, `F5` copy |
 | `Ctrl+F` | in the chat list: switch the search between titles and message content |
+| `Ctrl+G` | in the chat list (content mode): the matching messages themselves — `Enter` opens the chat at the message (`Esc` there returns to the results) |
 | `F5` | copy the chat conversation to the clipboard (active / selected in the list) |
 | `Ctrl+N` | new chat (with a profile picker) |
 | `Ctrl+R` | regenerate the last response |
@@ -420,7 +428,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Ctrl+K` | clear all input text (undo with `Ctrl+Z`) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit |
 | `Ctrl+T` | collapse/expand "thoughts" |
-| `Ctrl+G` | spellcheck suggestions |
+| `Ctrl+G` | in the input box: spellcheck suggestions |
 | `Ctrl+B` | emoji picker popup (inserts at the cursor position) |
 | `Ctrl+W` | toggle: mouse wheel ↔ text selection |
 | click / drag with the mouse in the input box | cursor / text selection (with `Ctrl+W` capture on) |

@@ -3,7 +3,7 @@
 
 use uuid::Uuid;
 
-use crate::app::events::AppEvent;
+use crate::app::events::{AppEvent, FeedFocus};
 
 use super::Orchestrator;
 
@@ -40,7 +40,40 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_switch(&mut self, id: Uuid) {
+        self.switch_to(id, None);
+    }
+
+    /// Opens a chat **on a specific message** (a jump from a search hit). Same
+    /// path as a plain switch — the focus rides along to the feed through
+    /// `ChatActivated`, carrying the query so the feed can highlight it inside
+    /// that message. See docs/history/chat-search-stage2.md §3 and §4a S3(b).
+    pub(super) fn handle_open_chat_at(&mut self, chat: Uuid, message: Uuid, query: String) {
+        self.switch_to(chat, Some(FeedFocus { message, query }));
+    }
+
+    /// Opens a chat on its **first message matching `query`** (`Enter` in the
+    /// chat list's content mode). Resolving the match needs both the index and
+    /// the chat, so it happens here rather than in the widget; when nothing
+    /// resolves the chat opens at its tail — a plain switch, not an error.
+    pub(super) fn handle_open_chat_at_first_match(&mut self, chat: Uuid, query: &str) {
+        let focus = self
+            .first_match_in_chat(chat, query)
+            .map(|message| FeedFocus {
+                message,
+                query: query.to_string(),
+            });
+        self.switch_to(chat, focus);
+    }
+
+    /// The shared switch path. `focus` — a message to put the feed on, plus the
+    /// query to highlight inside it.
+    fn switch_to(&mut self, id: Uuid, focus: Option<FeedFocus>) {
         if self.active_id == Some(id) {
+            // A plain switch to the open chat is a no-op, but a jump still has
+            // to move the feed — re-emit so the focus reaches it.
+            if focus.is_some() {
+                self.activate_focused(id, focus);
+            }
             return;
         }
         // Speech is stopped per the setting (on by default — otherwise you'd
@@ -54,7 +87,7 @@ impl Orchestrator {
             token.cancel();
         }
         if self.chats.iter().any(|c| c.id == id) {
-            self.activate(id);
+            self.activate_focused(id, focus);
         }
     }
 

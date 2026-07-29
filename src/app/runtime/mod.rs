@@ -28,14 +28,17 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
+use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
+use crate::widgets::status_bar::EscTarget;
 
 /// The screen open on top of the chat. `ChatScreen` always exists as the base (the
 /// feed, generation, the input box); the chat list (`Esc`) or settings (`Ctrl+P`) can
@@ -50,6 +53,9 @@ enum ActiveScreen {
     Settings(Box<SettingsScreen>),
     /// The "self-model" viewer screen (read-only, `F3`).
     SelfModel(Box<SelfModelScreen>),
+    /// The message-level search results (`Ctrl+G` from the chat list's content
+    /// mode). See docs/history/chat-search-stage2.md.
+    Search(Box<SearchScreen>),
 }
 
 impl ActiveScreen {
@@ -76,6 +82,10 @@ impl ActiveScreen {
                 view.set_palette(palette);
                 view.set_loc(loc);
             }
+            ActiveScreen::Search(search) => {
+                search.set_palette(palette);
+                search.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }
@@ -90,7 +100,52 @@ impl ActiveScreen {
             ActiveScreen::Chat => chat.handle_paste(text),
             ActiveScreen::ChatList(list) => list.handle_paste(text),
             ActiveScreen::SelfModel(view) => view.handle_paste(text),
+            // Read-only results — nothing to paste into.
+            ActiveScreen::Search(_) => {}
         }
+    }
+}
+
+/// A one-deep back-stack for the message-level search results: where `Esc` in the
+/// chat goes when that chat was reached by opening a hit
+/// ([`SearchIntent::OpenHit`]). Without it the user drilled down from the results
+/// and `Esc` threw them away, dropping into the chat list.
+///
+/// The **screen itself** is stashed, not the query: re-running the search would
+/// lose the selection and the scroll position, and working through a list of hits
+/// one by one is exactly what going back is for. It is deliberately session state
+/// — a local of [`run_loop`], never persisted.
+///
+/// The chat screen knows nothing about any of this (FSD: `screens` may not depend
+/// on `app`). [`ChatIntent::OpenChatList`] already means "go back" from its point
+/// of view; which screen that is gets resolved in [`dispatch`].
+struct SearchReturn {
+    /// The live results screen, with its selection and scroll intact. Boxed as it
+    /// is inside [`ActiveScreen`] — the screen is large
+    /// (clippy::large_enum_variant).
+    screen: Box<SearchScreen>,
+    /// The chat the jump opened. Activating a **different** chat means the user
+    /// left by an ordinary route (picking one in the list, `Ctrl+N`, a clone…),
+    /// at which point the results are no longer where they came from — see the
+    /// `ChatActivated` arm of [`apply_event`], the single funnel every one of
+    /// those routes ends in. Re-activating the *same* chat (regeneration,
+    /// deleting an exchange, a repeat jump) is not leaving it, so it keeps the
+    /// way back.
+    chat: Uuid,
+}
+
+/// Where `Esc` currently goes, for the status bar's hint — **derived** from the
+/// back-stack, never mirrored into a second flag.
+///
+/// Setting a flag at each place the stash changes would mean writing the same
+/// rule twice (and the clearing three times, counting the `ChatActivated`
+/// funnel), which is exactly how a hint drifts away from the key it describes.
+/// Deriving it in the draw path instead makes "the bar says where `Esc` goes"
+/// true of every frame by construction.
+fn esc_target(back: &Option<SearchReturn>) -> EscTarget {
+    match back {
+        Some(_) => EscTarget::SearchResults,
+        None => EscTarget::ChatList,
     }
 }
 
@@ -285,6 +340,10 @@ fn run_loop(
     // The chat list (Esc) or settings (Ctrl+P) can be open on top of the chat.
     // Orchestrator events keep applying to the chat (generation isn't interrupted).
     let mut active = ActiveScreen::Chat;
+    // One step back from a chat opened out of the search results (see
+    // `SearchReturn`). Lives beside `active` rather than inside it: it has to
+    // survive while another screen is in front.
+    let mut back: Option<SearchReturn> = None;
     // The clipboard is created lazily on the first copy (on headless Linux without
     // X11/Wayland the constructor may fail — then we show an error, not panic).
     let mut clipboard: Option<arboard::Clipboard> = None;
@@ -304,7 +363,14 @@ fn run_loop(
     let mut last_screen = std::mem::discriminant(&active);
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
-            apply_event(&mut screen, &mut active, &mut clipboard, cmd_tx, event);
+            apply_event(
+                &mut screen,
+                &mut active,
+                &mut back,
+                &mut clipboard,
+                cmd_tx,
+                event,
+            );
             dirty = true;
         }
         // Spellcheck settings received/changed — (re)load dictionaries in the background.
@@ -343,6 +409,11 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
+            // The status bar's `Esc` hint, derived from the back-stack for this
+            // frame (see `esc_target`). The stash only ever changes while
+            // handling an event or a keypress, i.e. in an iteration that is
+            // already `dirty`, so the hint is never a frame behind.
+            screen.set_esc_target(esc_target(&back));
             // The frame is wrapped in synchronized output (DEC private mode 2026):
             // `?2026h` before drawing, `?2026l` after — the terminal buffers everything
             // in between and applies the frame ATOMICALLY. Without this, the hardware
@@ -405,6 +476,7 @@ fn run_loop(
                 ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
                 ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
                 ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
+                ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
             };
             let _ = execute!(stdout(), EndSynchronizedUpdate);
             drawn?;
@@ -433,7 +505,14 @@ fn run_loop(
                     collect_press(&mut batch, event::read()?);
                 }
             }
-            if process_input_batch(batch, &mut screen, &mut active, cmd_tx, &mut clipboard) {
+            if process_input_batch(
+                batch,
+                &mut screen,
+                &mut active,
+                &mut back,
+                cmd_tx,
+                &mut clipboard,
+            ) {
                 quit = true;
             }
         }

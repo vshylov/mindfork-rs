@@ -7,6 +7,8 @@ use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+pub use crate::features::chat_search::FeedFocus;
+use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
@@ -42,6 +44,24 @@ pub enum AppCommand {
     NewChat { profile_id: Option<Uuid> },
     /// Make a chat active (load it into the feed).
     SwitchChat(Uuid),
+    /// Make a chat active **and put the feed on one of its messages** (a jump
+    /// from a search hit). Same activation as `SwitchChat`, plus a focus carried
+    /// through `ChatActivated`; a message the feed doesn't show (a `Tool`/
+    /// `System` one) simply lands at the tail. See docs/history/chat-search-stage2.md §3.
+    OpenChatAt {
+        chat: Uuid,
+        message: Uuid,
+        /// The query the hit came from — its matches are highlighted inside the
+        /// focused message (fork S3(b)). Empty when there is nothing to
+        /// highlight.
+        query: String,
+    },
+    /// Make a chat active and put the feed on its **first message matching
+    /// `query`** (`Enter` in the chat list's content mode). The orchestrator
+    /// resolves the message: it owns both the index and the chat, so only it
+    /// can order the matches by real chat position. A chat whose match cannot
+    /// be resolved simply opens at the tail, exactly like a plain switch.
+    OpenChatAtFirstMatch { chat: Uuid, query: String },
     /// Rename a chat.
     RenameChat { id: Uuid, title: String },
     /// Auto-title a chat: the model reads the conversation (or part of it) and comes up
@@ -63,6 +83,11 @@ pub enum AppCommand {
     /// docs/research/chat-content-search.md §4, §7a). The result is a
     /// [`AppEvent::ChatSearchResults`] event.
     SearchChats(String),
+    /// Full-text search over chat content answered at **message** level (the
+    /// chat list's `Ctrl+G`) — the query is raw, escaped by the orchestrator
+    /// exactly like [`AppCommand::SearchChats`]. The result is a
+    /// [`AppEvent::MessageSearchResults`] event. See docs/history/chat-search-stage2.md.
+    SearchMessages { query: String, sort: SortMode },
     /// Create a new profile (the UI section is M8; the command is needed for
     /// operations/tests).
     CreateProfile {
@@ -172,6 +197,19 @@ pub enum AppEvent {
         query: String,
         chat_ids: Option<Vec<Uuid>>,
     },
+    /// The result of a message-level content search (a reply to
+    /// [`AppCommand::SearchMessages`]): matching messages **grouped by chat**
+    /// (fork S2), chats in the chat list's order, messages in chat order.
+    /// `query` is echoed back so a late reply can be told from the current one.
+    ///
+    /// `total` is the true number of matching messages, which may exceed the
+    /// hits carried here ([`crate::features::chat_search::HIT_CAP`]) — the screen shows
+    /// "showing N of M" rather than truncating silently.
+    MessageSearchResults {
+        query: String,
+        groups: Vec<crate::features::chat_search::SearchGroup>,
+        total: usize,
+    },
     /// An error from a chat-list operation (auto-title/delete/clone). Shown in
     /// the list overlay's dedicated status area (not the chat feed), if it's open.
     ChatListError(String),
@@ -217,6 +255,11 @@ pub enum AppEvent {
         title: String,
         messages: Vec<Message>,
         draft: String,
+        /// Put the feed on this message instead of the tail, and highlight the
+        /// query inside it (a jump from a search hit, `AppCommand::OpenChatAt`).
+        /// `None` — every other activation, which must not highlight anything.
+        /// See docs/history/chat-search-stage2.md §3 and §4a S3(b).
+        focus: Option<FeedFocus>,
     },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),

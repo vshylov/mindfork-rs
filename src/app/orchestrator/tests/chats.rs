@@ -165,6 +165,122 @@ async fn draft_survives_reopen_when_not_sent() {
     assert_eq!(chat.draft, "черновик на потом");
 }
 
+/// `OpenChatAt` goes through the ordinary activation path and carries the
+/// message to put the feed on; every other activation carries `None`.
+/// See docs/history/chat-search-stage2.md §3.
+#[tokio::test]
+async fn open_chat_at_activates_the_chat_carrying_the_focus() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("ответ".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+
+    let activated = |e: &AppEvent| matches!(e, AppEvent::ChatActivated { .. });
+    let a = wait_for(&mut evt_rx, activated).await.unwrap();
+    let first_id = match a {
+        AppEvent::ChatActivated { id, focus, .. } => {
+            assert_eq!(focus, None, "bootstrap activation carries no focus");
+            id
+        }
+        _ => unreachable!(),
+    };
+
+    // Give the chat something to jump to.
+    cmd_tx
+        .send(AppCommand::SendMessage("привет".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+
+    // A second chat, so the jump has to activate a chat rather than only move
+    // the feed of the open one.
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    let a = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id != first_id),
+    )
+    .await
+    .unwrap();
+    let second_id = match a {
+        AppEvent::ChatActivated { id, focus, .. } => {
+            assert_eq!(focus, None, "creating a chat carries no focus");
+            id
+        }
+        _ => unreachable!(),
+    };
+
+    // A plain switch — still no focus; and it hands us a message id to aim at.
+    cmd_tx.send(AppCommand::SwitchChat(first_id)).unwrap();
+    let a = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == first_id),
+    )
+    .await
+    .unwrap();
+    let msg_id = match a {
+        AppEvent::ChatActivated {
+            messages, focus, ..
+        } => {
+            assert_eq!(focus, None, "a plain switch carries no focus");
+            messages.first().expect("the chat has messages").id
+        }
+        _ => unreachable!(),
+    };
+
+    // The cross-chat jump: from another chat, straight onto the message.
+    cmd_tx.send(AppCommand::SwitchChat(second_id)).unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == second_id),
+    )
+    .await
+    .unwrap();
+    // The query rides along with the message: the feed highlights it inside the
+    // focused bubble (fork S3(b)).
+    let jumped = |e: AppEvent, what: &str| {
+        match e {
+            AppEvent::ChatActivated { id, focus, .. } => {
+                assert_eq!(id, first_id, "{what}");
+                let focus = focus.expect(what);
+                assert_eq!(focus.message, msg_id, "{what}");
+                assert_eq!(focus.query, "привет", "the query must ride along: {what}");
+            }
+            _ => unreachable!(),
+        };
+    };
+    cmd_tx
+        .send(AppCommand::OpenChatAt {
+            chat: first_id,
+            message: msg_id,
+            query: "привет".into(),
+        })
+        .unwrap();
+    let a = wait_for(&mut evt_rx, activated).await.unwrap();
+    jumped(
+        a,
+        "a jump must activate the chat and carry the focused message",
+    );
+
+    // And onto the already-open chat: a plain switch would be a no-op, a jump
+    // still has to move the feed — so it re-emits.
+    cmd_tx
+        .send(AppCommand::OpenChatAt {
+            chat: first_id,
+            message: msg_id,
+            query: "привет".into(),
+        })
+        .unwrap();
+    let a = wait_for(&mut evt_rx, activated).await.unwrap();
+    jumped(a, "a jump within the open chat must re-emit with the focus");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
 #[tokio::test]
 async fn bootstrap_emits_chat_list_and_active_chat() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);

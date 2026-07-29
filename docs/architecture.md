@@ -208,6 +208,9 @@ src/
 │  │  ├─ rag.rs             RAG indexing progress banner
 │  │  └─ render.rs          screen rendering
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
+│  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
+│  │                        the list's content mode), grouped by chat with a highlighted
+│  │                        snippet; Enter → a jump into the feed, → SearchIntent
 │  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Memory/
 │     │                     Profiles/Interface) with field groups, Assistant/Impersonation subsections
 │     │                     ("Profiles": the two subsections edit different lists — assistant
@@ -224,7 +227,8 @@ src/
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
 │
 ├─ widgets/                 composite UI blocks (FSD "widgets")
-│  ├─ message_feed.rs       feed: markdown, thoughts, inline tool blocks, scroll, wrap
+│  ├─ message_feed.rs       feed: markdown, thoughts, inline tool blocks, scroll, wrap,
+│  │                        jump to a message (pending_focus/anchor/marker, §4)
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
 │  │                        single-line mode (settings fields), visual navigation
 │  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
@@ -449,15 +453,27 @@ flowchart LR
 `UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`,
 `FileAttach`/`FileRemove`/`FileList`, `SearchChats` (a **raw** content query from
 the chat list — escaping it is the orchestrator's job, so that rule lives in one
-place), `Tts`/`TtsStop`, `Quit`.
+place), `SearchMessages` (the same raw query answered at **message** level — the
+`Ctrl+G` screen), `OpenChatAt { chat, message }` (activate a chat **and put the
+feed on one of its messages** — a jump from a search hit) and
+`OpenChatAtFirstMatch { chat, query }` (`Enter` in the list's content mode; the
+orchestrator resolves *which* message, since only it holds both the index and the
+chat and can therefore order the matches by real chat position),
+`Tts`/`TtsStop`, `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
 least one matching message, plus the query echoed back; `chat_ids: None` means
 "not a searchable query — do not filter", deliberately an `Option` so the event
-can never claim that *every* chat matched), `ChatListError`, `CopyToClipboard`,
+can never claim that *every* chat matched), `MessageSearchResults` (the reply to
+`SearchMessages`: the matching messages **grouped by chat** — chats in the list's
+order, messages in chat order — each with a snippet built in Rust and the matched
+byte ranges to highlight, plus the echoed query and a `total` that may exceed the
+hits carried, since they are capped at `HIT_CAP`; the screen shows "showing N of
+M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ProfileList`, `Settings`,
-`ChatActivated`, `CharacterNames` (the active chat profile's role names for the
+`ChatActivated` (which gained an optional `focus: Option<Uuid>` — the message to
+put the feed on; `None` for every activation but a jump), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
@@ -527,6 +543,36 @@ next to the sum.
   glyph itself clears the background. Both boundaries are pinned by the canary
   `widgets::emoji_picker::upstream_repaints_styled_tail_on_close_but_not_on_selection_move`:
   if it fails, upstream moved the boundary and the workaround needs revisiting.
+- **A feed jump can only be applied inside `render`.** Turning a feed index into a
+  scroll row needs the per-block render cache measured at the current panel width,
+  and neither the width nor the cache exists outside `MessageFeed::render` — the
+  cache is filled by `build_lines`, keyed on width and palette. So "put the view on
+  message N" cannot be a scroll setter called from `activate_chat`: it is
+  necessarily a **deferred request consumed by the next render**
+  (`pending_focus`). The row is then accumulated *through* the wrap pass rather
+  than read off the cache, so it stays correct if the second pass ever stops being
+  an identity. The link back from a feed position to a `Message` is
+  `FeedMessage::message_ids`, recorded inside `from_messages` **at the merge site**:
+  that projection folds an agentic round's assistant messages many-to-one and drops
+  `Tool`/`System` messages, so the mapping is unrecoverable after the fact (the live
+  streaming path pushes `FeedMessage` literals and never goes through
+  `from_messages`, so the in-flight bubble has no id by construction).
+- **Anchor and marker are separate fields, deliberately.** A jump sets three:
+  `pending_focus` (consumed by the next render), `anchor` — the feed index the view
+  position is tied to, used to re-derive the row after a rewrap invalidates every
+  row offset (resize, theme, `Ctrl+T`), released by a manual scroll — and `marker`,
+  the accent rail saying where you landed, which **survives scrolling** and is
+  dropped only on a chat change or another jump. Only `marker` is in the feed's
+  `CacheKey`, because its color is baked into the cached block. Merging the two was
+  measured and rejected: keying the cache on something a manual scroll clears cost a
+  full markdown+syntect rebuild on the first scroll after a jump (38 ms against
+  17 ms on the largest real chat, scaling linearly with chat size) — and since
+  `scroll_to_bottom` would have been what cleared it, **every send** would have
+  re-rendered the whole chat. Anchoring to an index rather than a row is what makes
+  a jumped-to position survive a resize; today only tail-following survives one
+  otherwise (`src/app/` has no `Resize` arm — the cache is wiped and `scroll` keeps
+  a stale number that is merely re-clamped). See
+  [docs/history/chat-search-stage2.md](history/chat-search-stage2.md) §1.
 - **Input batching.** A large clipboard paste on Windows arrives as ordinary
   character-by-character `KeyEvent`s (crossterm's bracketed paste only works on
   unix); `process_input_batch` coalesces a run of text keys (≥2) into
@@ -1756,12 +1802,44 @@ Near-term decision points (deliberately deferred):
 ## 10. UI: screens, widgets, rendering
 
 `runtime.rs` holds one base `ChatScreen` (feed/generation/input) and an
-`ActiveScreen { Chat | ChatList | Settings | SelfModel }` enum — the screen
-open on top of the chat. An open list/settings/view gets input and is drawn
+`ActiveScreen { Chat | ChatList | Settings | SelfModel | Search }` enum — the
+screen open on top of the chat. An open list/settings/view gets input and is drawn
 instead of the chat; the `OpenChatList`/`OpenSettings` event from the chat
 creates them, `Close` (Esc) returns to `Chat`. The chat list keeps its
 snapshot current via `AppEvent::ChatList` (`app` applies it both to the chat
-and to an open list). **"Self-model"** (`F3`, view+edit) — the orchestrator
+and to an open list). **`Search`** (the message-level results, `Ctrl+G` in the
+list's content mode) follows the self-model pattern — the orchestrator owns the
+index, so the screen is created on the reply `AppEvent::MessageSearchResults`, not
+on the key; `Esc` returns to the chat list **with the query restored**, so the
+search that got you there isn't thrown away. **Adding a variant is not free:**
+`ActiveScreen` has 4 exhaustive match sites that force a compile error and about
+nine more that compile silently (`_ =>`/`if let`/`matches!`). Two of those were
+real bugs when `Search` was added — the `SelfModelView` arm would have *replaced*
+the results with a self-model snapshot, and the `Settings` broadcast would have
+left the new screen's theme and UI language frozen — so both are now exhaustive by
+variant, which forces the next screen to decide too.
+
+**Going back from a jump — a one-deep back-stack** (`SearchReturn`, a local of
+`run_loop` beside `active` rather than a variant of it: it has to survive while
+another screen is in front). Opening a hit stashes the **live `SearchScreen`**, not
+the query — re-running the search would lose the selection and scroll, which is
+exactly what coming back is for — and `ChatIntent::OpenChatList` consumes it:
+`Esc` in that chat restores the results whole, the next `Esc` goes on to the list
+as before. The chat screen learns nothing about searching (FSD: `screens` may not
+depend on `app`) — `OpenChatList` already means "go back" from its point of view,
+and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared
+in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
+where every chat-opening route ends (the list, `Ctrl+N`, a clone, a jump, restoring
+the last chat at startup); enumerating those routes by hand is what would rot
+silently as routes are added. The test is a **different** chat: `activate()` also
+re-emits for the same chat after a regeneration or `Ctrl+E`, and clearing there
+would drop the way back for no reason. It is session state, never persisted.
+The status bar's `Esc` hint (`status_bar::EscTarget`) is **derived** from this
+stack by a pure function called once per frame in the draw path, not mirrored into
+a flag — mirroring would mean writing the same rule at each set/clear site to keep
+one word honest, which is how a hint drifts from the key it describes.
+
+**"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
 sends `AppCommand::RequestSelfModel`; the screen is created on the reply
 event `AppEvent::SelfModelView` (the active profile's model snapshot).
