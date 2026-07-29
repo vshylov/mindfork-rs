@@ -269,11 +269,12 @@ struct CacheKey {
     /// clearing the marker has to reset the cache. Only the **marker** belongs
     /// here; the scroll anchor is not a rendering input.
     marker: Option<usize>,
-    /// The highlighted query: its matches are recolored inside the marked
-    /// block's cached lines, so a new jump (or a chat switch clearing it) has to
-    /// rebuild them. Cheap — it only changes when a jump happens, which moves
-    /// `marker` and resets the cache anyway.
-    highlight: Option<String>,
+    //
+    // The searched query is deliberately **absent**: it is applied *after* the
+    // cache, so changing it costs no re-render. In-feed search types into a
+    // field, and keying the cache on the query would re-run markdown + syntect
+    // over the whole chat on every keystroke — up to 70 blocks and 260 K
+    // characters on the real corpus (docs/in-feed-search.md §1.2).
 }
 
 /// One message's cached contribution to the feed (already width-wrapped lines
@@ -281,6 +282,11 @@ struct CacheKey {
 struct CachedBlock {
     fingerprint: u64,
     lines: Vec<Line<'static>>,
+    /// How many of `lines` the role header occupies — the highlight pass skips
+    /// them. Recorded here because the header's height is only known while the
+    /// block is built: it is normally one line, but a long custom role name can
+    /// wrap it, so counting output lines is the only stable answer.
+    content_from: usize,
 }
 
 impl Default for MessageFeed {
@@ -605,7 +611,6 @@ impl MessageFeed {
             lang: loc.lang(),
             role_names: self.role_names.clone(),
             marker: self.marker,
-            highlight: self.highlight.clone(),
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -630,8 +635,7 @@ impl MessageFeed {
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
                 // A streaming/changed message — recompute only its block.
-                let marked = self.marker == Some(idx);
-                let block = build_message_block(
+                let (block, content_from) = build_message_block(
                     item,
                     palette,
                     width,
@@ -639,19 +643,12 @@ impl MessageFeed {
                     opts,
                     loc,
                     &self.role_names,
-                    marked,
-                    // The highlight is scoped to the marked message: the user
-                    // asked "where is my word in *this* message", and lighting
-                    // up the whole chat would be noise.
-                    if marked {
-                        self.highlight.as_deref()
-                    } else {
-                        None
-                    },
+                    self.marker == Some(idx),
                 );
                 let cb = CachedBlock {
                     fingerprint: fp,
                     lines: block,
+                    content_from,
                 };
                 if idx < self.cache.len() {
                     self.cache[idx] = cb;
@@ -659,7 +656,32 @@ impl MessageFeed {
                     self.cache.push(cb);
                 }
             }
+            // The block goes in query-free; the highlight is applied to the
+            // *clones* below, which is what keeps it out of the cache.
+            let at = lines.len();
             lines.extend(self.cache[idx].lines.iter().cloned());
+            // Scoped to the marked message: the user asked "where is my word in
+            // *this* message", and lighting up the whole chat would be noise.
+            if self.marker == Some(idx)
+                && let Some(query) = self.highlight.as_deref()
+            {
+                let from = at + self.cache[idx].content_from;
+                // `lines[from..]` is this block's tail: later blocks are not
+                // appended yet, so the slice cannot reach them.
+                //
+                // The rail sits in span 0 of every cached line and is passed
+                // through untouched — deliberately *without* excluding it from
+                // the match text. That was the obvious precaution, and measuring
+                // showed it buys nothing: `highlight_line` derives its offsets
+                // from the same concatenation it matches over, so including the
+                // rail shifts both consistently and the output is identical. No
+                // query can match the rail either — `match_ranges` drops tokens
+                // under three characters, and `▌ ` is not in any of them. An
+                // excluding parameter would be untestable by construction.
+                for line in &mut lines[from..] {
+                    highlight_line(line, query, palette.accent);
+                }
+            }
         }
         lines
     }
@@ -685,8 +707,7 @@ fn build_message_block(
     loc: &'static Locale,
     names: &CharacterNames,
     marked: bool,
-    highlight: Option<&str>,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, usize) {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = if marked {
@@ -734,33 +755,32 @@ fn build_message_block(
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
     }
-    // Recolor the searched query inside the jumped-to message, **before** the
-    // wrap below: `wrap::wrap_line` carries per-character styles through, so a
-    // highlight applied here survives being wrapped (and being wrapped again in
-    // `render`), while applying it afterwards would have to look past the rail.
-    if let Some(query) = highlight {
-        for line in &mut body[content_from..] {
-            highlight_line(line, query, palette.accent);
-        }
-    }
     // If the body already ends on a blank line (a railed gap after a tool card),
     // don't add the railless inter-message separator — otherwise a double gap.
     let body_ends_blank = body
         .last()
         .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
         .unwrap_or(false);
-    // Wrap to the content width and attach a rail to every row.
+    // Wrap to the content width and attach a rail to every row, noting where the
+    // header ends in **output** rows (the highlight pass runs post-cache and so
+    // cannot use `content_from`, an index into the unwrapped `body`).
     let mut out: Vec<Line<'static>> = Vec::new();
-    for line in body {
+    let mut content_row = None;
+    for (i, line) in body.into_iter().enumerate() {
+        if i == content_from {
+            content_row = Some(out.len());
+        }
         for wrapped in wrap::wrap_line(&line, inner) {
             out.push(prepend_rail(wrapped, rail));
         }
     }
+    // A header-only block never reaches the index above.
+    let content_from = content_row.unwrap_or(out.len());
     // Separator between messages — without a rail.
     if !body_ends_blank {
         out.push(Line::from(""));
     }
-    out
+    (out, content_from)
 }
 
 /// Recolors every occurrence of `query` in one **rendered** line to `color`,
@@ -2149,16 +2169,15 @@ mod tests {
         ];
         let mut feed = MessageFeed::new();
         assert!(feed.focus_message(&messages, messages[1].message_ids[0], Some("маркер")));
-        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
 
+        // Exactly one hit across the **whole feed** proves both halves at once:
+        // the marked message shows it, and the other message — which contains the
+        // same word — does not.
         assert_eq!(
-            accented(&feed.cache[1].lines, &palette),
+            accented(&lines, &palette),
             vec!["маркер"],
-            "the marked message must show where the query matched"
-        );
-        assert!(
-            accented(&feed.cache[0].lines, &palette).is_empty(),
-            "another message with the same word must stay untouched"
+            "the marked message, and only it, must show where the query matched"
         );
     }
 
@@ -2171,9 +2190,9 @@ mod tests {
         for query in [None, Some("")] {
             let mut feed = MessageFeed::new();
             feed.focus_message(&messages, messages[0].message_ids[0], query);
-            let _ = feed.build_lines(&messages, &palette, 60, ru());
+            let lines = feed.build_lines(&messages, &palette, 60, ru());
             assert!(
-                accented(&feed.cache[0].lines, &palette).is_empty(),
+                accented(&lines, &palette).is_empty(),
                 "query {query:?} must not highlight"
             );
         }
@@ -2191,16 +2210,15 @@ mod tests {
         let messages = vec![msg(FeedRole::User, "мар**кер** дальше", "")];
         let mut feed = MessageFeed::new();
         feed.focus_message(&messages, messages[0].message_ids[0], Some("маркер"));
-        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
 
-        let hits = accented(&feed.cache[0].lines, &palette);
+        let hits = accented(&lines, &palette);
         assert_eq!(
             hits.concat(),
             "маркер",
             "both halves of a straddling match must be highlighted: {hits:?}"
         );
-        let bold = feed.cache[0]
-            .lines
+        let bold = lines
             .iter()
             .flat_map(|l| l.spans.iter())
             .find(|s| s.content == "кер")
@@ -2223,9 +2241,8 @@ mod tests {
         let messages = vec![msg(FeedRole::User, &body, "")];
         let mut feed = MessageFeed::new();
         feed.focus_message(&messages, messages[0].message_ids[0], Some("маркер"));
-        let _ = feed.build_lines(&messages, &palette, 40, ru());
-
-        let lines = &feed.cache[0].lines;
+        let lines = feed.build_lines(&messages, &palette, 40, ru());
+        let lines = &lines;
         let row = lines
             .iter()
             .position(|l| {
@@ -2253,25 +2270,29 @@ mod tests {
         let messages = vec![msg(FeedRole::Assistant, "речь про ассистента", "")];
         let mut feed = MessageFeed::new();
         feed.focus_message(&messages, messages[0].message_ids[0], Some("ассистент"));
-        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
 
-        let header = &feed.cache[0].lines[0];
+        let header = &lines[0];
         assert!(
             header.spans.iter().any(|s| s.content.contains("АССИСТЕНТ")),
             "precondition: the header spells the role out: {header:?}"
         );
         assert_eq!(
-            accented(&feed.cache[0].lines, &palette),
+            accented(&lines, &palette),
             vec!["ассистент"],
             "only the body matches, never the header"
         );
     }
 
-    /// The highlight is baked into the cached block, so changing the query has
-    /// to reset the cache — otherwise a second jump would show the first jump's
-    /// highlight.
+    /// **The property this stage exists for** (docs/in-feed-search.md §1.2).
+    ///
+    /// The query used to be part of `CacheKey`, so changing it cleared every
+    /// block and re-ran markdown + syntect over the whole chat. In-feed search
+    /// types into a field, so that would have been the cost of each keystroke.
+    /// The highlight now lands on the lines handed to the renderer instead, and
+    /// the cache stays warm — while the new query is still what gets colored.
     #[test]
-    fn changing_the_query_invalidates_the_block_cache() {
+    fn changing_the_query_does_not_invalidate_the_block_cache() {
         let palette = Palette::default();
         let messages = vec![msg(FeedRole::User, "маркер и метка рядом", "")];
         let mut feed = MessageFeed::new();
@@ -2282,9 +2303,16 @@ mod tests {
         assert!(!feed.cache_reset, "precondition: the cache is warm");
 
         feed.focus_message(&messages, messages[0].message_ids[0], Some("метка"));
-        let _ = feed.build_lines(&messages, &palette, 60, ru());
-        assert!(feed.cache_reset, "a new query changes the rendered block");
-        assert_eq!(accented(&feed.cache[0].lines, &palette), vec!["метка"]);
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
+        assert!(
+            !feed.cache_reset,
+            "a new query must not rebuild any block — that is the whole point"
+        );
+        assert_eq!(
+            accented(&lines, &palette),
+            vec!["метка"],
+            "and the new query is the one highlighted"
+        );
     }
 
     /// Content that arrives on its own must not yank a reader back to the tail,
