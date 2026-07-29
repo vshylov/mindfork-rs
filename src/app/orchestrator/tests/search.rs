@@ -11,6 +11,7 @@
 //! and session 2 asks. Same shape as `remembers_and_restores_last_opened_chat`.
 
 use super::*;
+use crate::features::chat_search_sort::SortMode;
 
 /// Runs one turn against a scripted engine, so the chat gains real messages.
 fn scripted(reply: &str) -> Arc<dyn EngineBackend> {
@@ -168,7 +169,17 @@ fn message_search(
     rx: &mut UnboundedReceiver<AppEvent>,
     query: &str,
 ) -> (Vec<crate::features::chat_search::SearchGroup>, usize) {
-    orch.handle_search_messages(query.into());
+    message_search_sorted(orch, rx, query, SortMode::Modified)
+}
+
+/// The same, for the tests that care which way the chat list is sorted.
+fn message_search_sorted(
+    orch: &mut Orchestrator,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    query: &str,
+    sort: SortMode,
+) -> (Vec<crate::features::chat_search::SearchGroup>, usize) {
+    orch.handle_search_messages(query.into(), sort);
     loop {
         match rx.try_recv().expect("no MessageSearchResults arrived") {
             AppEvent::MessageSearchResults {
@@ -442,4 +453,31 @@ async fn a_deleted_chat_drops_out_of_results() {
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+}
+
+/// Fork S2 promised "chats ordered by your existing sort", so the chat list's
+/// `Tab` toggle has to carry over into the results. It did not at first — the
+/// screen hardcoded `modified_at` — and nothing caught it, because the default
+/// toggle position *is* `Modified`. This asserts the other position.
+#[test]
+fn message_search_follows_the_chat_lists_sort_toggle() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    // Created early, modified late; and the reverse. The two sort modes must
+    // therefore put them in opposite orders.
+    let (old_new, _) = indexed_chat(&mut orch, "Создан раньше", &["про маркер"]);
+    let (new_old, _) = indexed_chat(&mut orch, "Создан позже", &["тоже маркер"]);
+    {
+        let a = orch.chats.iter_mut().find(|c| c.id == old_new).unwrap();
+        a.created_at = "2020-01-01T00:00:00Z".parse().unwrap();
+        a.modified_at = "2030-01-01T00:00:00Z".parse().unwrap();
+        let b = orch.chats.iter_mut().find(|c| c.id == new_old).unwrap();
+        b.created_at = "2029-01-01T00:00:00Z".parse().unwrap();
+        b.modified_at = "2021-01-01T00:00:00Z".parse().unwrap();
+    }
+
+    let (by_modified, _) = message_search_sorted(&mut orch, &mut rx, "маркер", SortMode::Modified);
+    let (by_created, _) = message_search_sorted(&mut orch, &mut rx, "маркер", SortMode::Created);
+
+    assert_eq!(by_modified[0].chat_id, old_new, "newest modification first");
+    assert_eq!(by_created[0].chat_id, new_old, "newest creation first");
 }

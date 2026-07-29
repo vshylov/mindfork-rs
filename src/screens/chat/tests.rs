@@ -232,7 +232,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
 
 /// A jump from a search hit (`AppCommand::OpenChatAt`): the feed opens on the
 /// requested message instead of the tail, and the message is marked.
-/// See docs/chat-search-stage2.md §3.
+/// See docs/history/chat-search-stage2.md §3.
 #[test]
 fn activate_chat_with_focus_puts_the_feed_on_that_message() {
     use ratatui::Terminal;
@@ -300,7 +300,7 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
     );
 }
 
-/// The yank split (docs/chat-search-stage2.md §1.3, §4): after the user has
+/// The yank split (docs/history/chat-search-stage2.md §1.3, §4): after the user has
 /// scrolled away, content that arrives on its own leaves the view alone, while
 /// user-initiated content still goes to the tail.
 #[test]

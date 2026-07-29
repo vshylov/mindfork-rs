@@ -1,10 +1,20 @@
 # Chat content search — stage 2 design plan
 
-**Status:** design, pre-implementation. Continues
-[docs/research/chat-content-search.md](research/chat-content-search.md) (stage 1
-shipped in PR #232). Stage 2 is the half the roadmap deliberately coupled to the
-separate *In-feed text search* item, because both need the same thing: **put the
-feed on a specific message**.
+**Status:** **CLOSED**, 2026-07-29 — stages 2a and 2b shipped, so the whole chat
+content search track is complete. Historical document: the outcome lives in
+`src/screens/search.rs`, `src/features/chat_search.rs` and the feed's
+focus/anchor/marker fields in `src/widgets/message_feed.rs`; the behaviour is
+specified in [spec.md §11.2–11.3](../../spec.md) and the running log is in the
+CLAUDE.md journal.
+**Research and decision:** continues
+[docs/research/chat-content-search.md](../research/chat-content-search.md)
+(stage 1 shipped in PR #232); forks S1–S6 below, all resolved to the recommended
+option — *user's decision, 2026-07-29*.
+
+Stage 2 is the half the roadmap deliberately coupled to the separate *In-feed
+text search* item, because both need the same thing: **put the feed on a
+specific message**. That piece now exists; in-feed search itself remains its own
+roadmap item (fork S5).
 
 Stage 1 answers *"which chats mention this?"*. Stage 2 answers *"where exactly,
 and take me there."*

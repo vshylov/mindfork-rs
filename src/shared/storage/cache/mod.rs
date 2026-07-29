@@ -333,7 +333,7 @@ impl CacheDb {
     /// is why [`Self::count_matching_messages`] exists: the screen says
     /// "showing N of M" rather than silently truncating. On the measured corpus
     /// the worst case is 163 hits against a cap of 200, so this is a safety
-    /// valve rather than an everyday path (docs/chat-search-stage2.md §2).
+    /// valve rather than an everyday path (docs/history/chat-search-stage2.md §2).
     pub fn search_messages(&self, fts_query: &str, limit: usize) -> Result<Vec<MessageHit>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

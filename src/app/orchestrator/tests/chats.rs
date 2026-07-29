@@ -167,7 +167,7 @@ async fn draft_survives_reopen_when_not_sent() {
 
 /// `OpenChatAt` goes through the ordinary activation path and carries the
 /// message to put the feed on; every other activation carries `None`.
-/// See docs/chat-search-stage2.md §3.
+/// See docs/history/chat-search-stage2.md §3.
 #[tokio::test]
 async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     let backend = Arc::new(MockBackend::scripted(vec![

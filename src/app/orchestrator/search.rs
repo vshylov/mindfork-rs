@@ -30,6 +30,7 @@ use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::{self, SearchGroup, SearchHit};
+use crate::features::chat_search_sort::SortMode;
 use crate::shared::storage::Storage;
 use crate::shared::storage::cache::{IndexedMessage, MessageHit};
 
@@ -74,9 +75,9 @@ impl Orchestrator {
     /// Grouping is done **here** and not in `CacheDb` because it needs what the
     /// orchestrator owns and the index does not: chat titles, the chat list's
     /// order, and the real position of a message inside its chat. See
-    /// docs/chat-search-stage2.md §4 (fork S2).
-    pub(super) fn handle_search_messages(&self, query: String) {
-        let (groups, total) = self.message_search(&query);
+    /// docs/history/chat-search-stage2.md §4 (fork S2).
+    pub(super) fn handle_search_messages(&self, query: String, sort: SortMode) {
+        let (groups, total) = self.message_search(&query, sort);
         let _ = self.evt_tx.send(AppEvent::MessageSearchResults {
             query,
             groups,
@@ -85,7 +86,7 @@ impl Orchestrator {
     }
 
     /// The search itself (split out so it is testable without the loop).
-    fn message_search(&self, query: &str) -> (Vec<SearchGroup>, usize) {
+    fn message_search(&self, query: &str, sort: SortMode) -> (Vec<SearchGroup>, usize) {
         let Some(fts) = chat_search::to_fts_query(query) else {
             return (Vec::new(), 0);
         };
@@ -105,17 +106,18 @@ impl Orchestrator {
         } else {
             cache.count_matching_messages(&fts).unwrap_or(hits.len())
         };
-        (self.group_hits(hits, query), total)
+        (self.group_hits(hits, query, sort), total)
     }
 
-    /// Buckets hits into chats, in the order the chat list shows them (most
-    /// recently modified first), and orders each chat's hits by their real
+    /// Buckets hits into chats **in the order the chat list is currently showing
+    /// them** (fork S2 — the list's `Tab` toggle carries over, rather than the
+    /// results quietly using a different order), and orders each chat's hits by their real
     /// position in the conversation.
     ///
     /// A hit whose chat we do not have — deleted or hidden since it was indexed
     /// — is dropped: the index is derived data and may lag by a moment, and
     /// showing a result that cannot be opened is worse than showing one fewer.
-    fn group_hits(&self, hits: Vec<MessageHit>, query: &str) -> Vec<SearchGroup> {
+    fn group_hits(&self, hits: Vec<MessageHit>, query: &str, sort: SortMode) -> Vec<SearchGroup> {
         let mut by_chat: HashMap<Uuid, Vec<MessageHit>> = HashMap::new();
         for hit in hits {
             by_chat.entry(hit.chat_id).or_default().push(hit);
@@ -126,7 +128,12 @@ impl Orchestrator {
             .iter()
             .filter(|c| !c.is_hidden && by_chat.contains_key(&c.id))
             .collect();
-        chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
+        chats.sort_by_key(|c| {
+            std::cmp::Reverse(match sort {
+                SortMode::Created => c.created_at,
+                SortMode::Modified => c.modified_at,
+            })
+        });
 
         chats
             .into_iter()

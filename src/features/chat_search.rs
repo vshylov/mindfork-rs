@@ -1,7 +1,7 @@
 //! Chat search: a safe FTS5 `MATCH` query out of raw user input, plus the
 //! message-level result types and their snippets (pure logic, tested without a
 //! database). See `docs/research/chat-content-search.md` §4 (query syntax) and
-//! §7a (stage 1 design), and `docs/chat-search-stage2.md` §4 (stage 2b).
+//! §7a (stage 1 design), and `docs/history/chat-search-stage2.md` §4 (stage 2b).
 //!
 //! Raw input cannot be handed to `MATCH`: FTS5 reads it as *syntax*, and
 //! ordinary text is routinely invalid syntax — `C++` is a syntax error near
@@ -25,7 +25,7 @@ pub const MIN_TOKEN_CHARS: usize = 3;
 
 /// How many message hits the message-level search returns at most.
 ///
-/// Measured on the real corpus (docs/chat-search-stage2.md §2): a common word
+/// Measured on the real corpus (docs/history/chat-search-stage2.md §2): a common word
 /// matches 163 messages across 50 chats, so this is a safety valve rather than
 /// an everyday limit. The true count travels alongside as `total`, so the
 /// screen can say "showing N of M" instead of silently truncating.

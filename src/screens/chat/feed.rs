@@ -77,7 +77,7 @@ impl ChatScreen {
         self.feed_view.clear_focus();
         // A jump asked for by the user wins over the tail; anything else — the
         // usual bottom. An id this chat doesn't contain isn't found, so it falls
-        // through to the tail. See docs/chat-search-stage2.md §4.
+        // through to the tail. See docs/history/chat-search-stage2.md §4.
         match focus {
             Some(msg) if self.feed_view.focus_message(&self.feed, msg) => {}
             _ => self.feed_view.scroll_to_bottom(),

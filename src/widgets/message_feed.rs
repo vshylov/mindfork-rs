@@ -69,7 +69,7 @@ pub struct FeedMessage {
     /// of an agentic-loop round into a single bubble, so a single id would lie
     /// about which messages a bubble shows. The mapping is unrecoverable after
     /// the fact, hence it is recorded where the merging happens (see
-    /// docs/chat-search-stage2.md §1.2).
+    /// docs/history/chat-search-stage2.md §1.2).
     ///
     /// **Empty** for items with no domain message behind them: service notes and
     /// the live streaming bubble (the streaming path pushes literals and never
@@ -214,7 +214,7 @@ pub struct MessageFeed {
     /// A "put the view on this feed item" request, consumed by the next
     /// [`MessageFeed::render`]. Deferred by necessity: turning a feed index into
     /// a scroll row needs the block cache built at the current panel width, and
-    /// neither exists outside `render` (docs/chat-search-stage2.md §1.1).
+    /// neither exists outside `render` (docs/history/chat-search-stage2.md §1.1).
     pending_focus: Option<usize>,
     /// The feed item the **view position** is tied to, used to re-derive the row
     /// after a rewrap (resize, theme, `Ctrl+T`) invalidates every row offset —
@@ -358,7 +358,7 @@ impl MessageFeed {
     /// For content that arrives on its own — a tool card, a service note, the
     /// next round's bubble. If the user has scrolled away to read, or jumped to
     /// a message, their position must not be yanked away
-    /// (docs/chat-search-stage2.md §1.3, §4).
+    /// (docs/history/chat-search-stage2.md §1.3, §4).
     pub fn scroll_to_bottom_if_following(&mut self) {
         if self.follow {
             self.scroll_to_bottom();
@@ -1720,7 +1720,7 @@ mod tests {
         );
     }
 
-    // ---------- jump to a message (docs/chat-search-stage2.md, stage 2a) ----------
+    // ---------- jump to a message (docs/history/chat-search-stage2.md, stage 2a) ----------
 
     /// Renders the feed into a `TestBackend` and returns the visible text rows.
     /// A jump is only applied inside `render` (§1.1), so every focus assertion

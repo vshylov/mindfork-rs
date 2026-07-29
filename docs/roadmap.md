@@ -93,9 +93,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   workarounds: the full redraw on screen switch / popup close and the VS16
   emoji swap in the grid. The mechanics and terminal-independent probes are
   in `shared::ui` and `widgets::emoji_picker`.
-- **In-feed text search** (`/`-search with highlighting and jumps) — shares
-  "scroll the feed to message N" with stage 2 of chat content search (§Chat and
-  profile management), so the two are worth designing together.
+- **In-feed text search** (`/`-search within the open chat, incremental, with
+  next/prev) — **still open, but now cheap**: the piece it was waiting on,
+  "put the feed on message N", shipped with chat content search (see "Recently
+  closed" and [chat-search-stage2.md](history/chat-search-stage2.md) — a jump,
+  an anchor that survives a resize, and a marked message). It was deliberately
+  kept out of that track (fork S5) because it is a different interaction —
+  same-chat and incremental rather than cross-chat — and folding it in would have
+  doubled the search screen's UI surface. Note that **highlighting the match
+  inside the feed** is a genuinely separate problem, and the harder half:
+  source byte offsets do not survive the renderer (see that plan's §1.4), so it
+  needs either post-render span matching over what was actually drawn, or
+  `highlight_ranges` threaded through the renderer.
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
@@ -107,20 +116,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Pin important chats** at the top of the list.
 - **Prompt templates / snippets** — quick inserts of frequently used system
   messages or seeds.
-- **Search within chat content — groundwork** (**stage 1 is done**, see "Recently
-  closed": `Ctrl+F` in the chat list toggles the search between titles and message
-  text, and content mode *filters* the list to the chats containing a match).
-  Remaining — **stage 2, the message-level search screen**: hits as individual
-  messages with a snippet, chat and date, and `Enter` jumping to that message in
-  the feed. It is deliberately coupled to **In-feed text search** (§Feed and chat
-  UI): both need the same missing piece, "scroll the feed to message N", so they
-  are worth designing together. Open questions carried into that stage: ranking
-  (trigram's `bm25` is weak — which is exactly why stage 1 filters instead of
-  ranking), the `snippet()` budget, and the fact that highlight offsets don't map
-  cleanly onto the feed's markdown rendering. Plus widening what is indexed beyond
-  `message.text` — "thoughts" and tool results are the obvious candidates, and
-  since the index is disposable that costs a rebuild rather than a migration. See
-  [chat-content-search.md](research/chat-content-search.md).
+- **Widening what chat search indexes** — the index covers `message.text` only;
+  "thoughts" and tool results are the obvious candidates. Since the index is
+  disposable, that costs a rebuild rather than a migration. Ranking is the other
+  open question: the search screen groups by chat precisely to sidestep it, and
+  trigram's `bm25` is a weak (though measurably non-degenerate) proxy for
+  relevance. The search itself is done — see "Recently closed",
+  [chat-content-search.md](research/chat-content-search.md) and
+  [chat-search-stage2.md](history/chat-search-stage2.md).
 - **`cache.db` for chat-list summaries** — the disposable cache introduced for
   content search is a natural home for other cheap-to-recompute state. The chat
   list is currently built by parsing every `chats/*.json` at startup (~94 ms, and
@@ -252,18 +255,28 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
-- **Chat content search** (stage 1): the chat list's search box toggles between
-  titles and **message text** (`Ctrl+F`) and filters to the chats containing a
-  match, with the existing sort still ordering them. The index is a separate,
-  disposable `cache.db` — derived data, so a version mismatch or a corrupt file is
-  answered by deleting and rebuilding rather than by ADR 0006's migration
-  machinery, and the backup allowlist leaves it out with no code change. Trigram
-  tokenizer, so matching is by fragment, like the title filter users already have
-  — which also sidesteps Russian morphology, for which FTS5 has no stemmer; and
-  every token is quoted, so ordinary text (`C++`, `cost-benefit`) searches for
-  itself instead of raising an FTS5 syntax error. **Stage 2 (message-level hits)
-  is still open** — see §Chat and profile management. See
-  [chat-content-search.md](research/chat-content-search.md).
+- **Chat content search** (stages 1–2, complete): the chat list's search box
+  toggles between titles and **message text** (`Ctrl+F`) and filters to the chats
+  containing a match, with the existing sort still ordering them; from there
+  `Ctrl+G` opens the **messages themselves** — grouped by chat, each with a
+  snippet built in Rust with the match highlighted, its role and date — and
+  `Enter` opens the chat *at* that message, which is marked in the feed
+  (`Enter` on a chat in content mode does the same, at its first match). The index
+  is a separate, disposable `cache.db` — derived data, so a version mismatch or a
+  corrupt file is answered by deleting and rebuilding rather than by ADR 0006's
+  migration machinery, and the backup allowlist leaves it out with no code change.
+  Trigram tokenizer, so matching is by fragment, like the title filter users
+  already have — which also sidesteps Russian morphology, for which FTS5 has no
+  stemmer; and every token is quoted, so ordinary text (`C++`, `cost-benefit`)
+  searches for itself instead of raising an FTS5 syntax error. The jump is
+  infrastructure in its own right: it is necessarily deferred into `render` (the
+  block cache only exists there), it anchors to the *message* so it survives a
+  resize, and it forced the seven "scroll to the bottom" sites to be split by who
+  asked — so content arriving on its own no longer yanks a reader back. **Still
+  open**: highlighting the match *inside* the feed (source offsets don't survive
+  the renderer) and in-feed `/`-search, which that jump now makes cheap — both
+  §Feed and chat UI. See [chat-content-search.md](research/chat-content-search.md)
+  and [chat-search-stage2.md](history/chat-search-stage2.md).
 - **Remote live e2e gate** (stages 0–3, complete): the mandatory live gate
   (AGENTS.md §3) stopped depending on one machine at one LAN address.
   `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'

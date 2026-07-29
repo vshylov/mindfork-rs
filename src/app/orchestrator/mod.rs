@@ -493,7 +493,7 @@ impl Orchestrator {
             AppCommand::CopyChat(id) => self.handle_copy_chat(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
             AppCommand::SearchChats(query) => self.handle_search_chats(query),
-            AppCommand::SearchMessages(query) => self.handle_search_messages(query),
+            AppCommand::SearchMessages { query, sort } => self.handle_search_messages(query, sort),
             AppCommand::CreateProfile {
                 name,
                 system_message,

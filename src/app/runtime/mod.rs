@@ -52,7 +52,7 @@ enum ActiveScreen {
     /// The "self-model" viewer screen (read-only, `F3`).
     SelfModel(Box<SelfModelScreen>),
     /// The message-level search results (`Ctrl+G` from the chat list's content
-    /// mode). See docs/chat-search-stage2.md.
+    /// mode). See docs/history/chat-search-stage2.md.
     Search(Box<SearchScreen>),
 }
 

@@ -58,8 +58,8 @@ pub enum ChatListAction {
     SearchContent(String),
     /// Open the message-level search screen for the current query (content
     /// mode, `Ctrl+G`). Like [`Self::SearchContent`] the widget stays dumb —
-    /// the query is raw. See docs/chat-search-stage2.md (stage 2b).
-    SearchMessages(String),
+    /// the query is raw. See docs/history/chat-search-stage2.md (stage 2b).
+    SearchMessages { query: String, sort: SortMode },
     /// Open a chat **at its first message matching the query** (`Enter` in
     /// content mode). Which message that is can only be answered by the
     /// orchestrator, which owns both the index and the chat — the widget just
@@ -313,7 +313,10 @@ impl ChatListState {
                 // search message text for; the hint is hidden there too, so no
                 // advertised key is a no-op.
                 'g' => match self.scope {
-                    SearchScope::Content => ChatListAction::SearchMessages(self.query.clone()),
+                    SearchScope::Content => ChatListAction::SearchMessages {
+                        query: self.query.clone(),
+                        sort: self.sort,
+                    },
                     SearchScope::Title => ChatListAction::None,
                 },
                 _ => ChatListAction::None,
@@ -1005,12 +1008,18 @@ mod tests {
         s.on_key(ctrl(KeyCode::Char('f')));
         assert_eq!(
             s.on_key(ctrl(KeyCode::Char('g'))),
-            ChatListAction::SearchMessages("марк".into())
+            ChatListAction::SearchMessages {
+                query: "марк".into(),
+                sort: SortMode::default(),
+            }
         );
         // Also under a Cyrillic layout (physical G = Ctrl+п).
         assert_eq!(
             s.on_key(ctrl(KeyCode::Char('п'))),
-            ChatListAction::SearchMessages("марк".into())
+            ChatListAction::SearchMessages {
+                query: "марк".into(),
+                sort: SortMode::default(),
+            }
         );
     }
 

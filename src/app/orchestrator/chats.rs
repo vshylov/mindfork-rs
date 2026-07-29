@@ -45,7 +45,7 @@ impl Orchestrator {
 
     /// Opens a chat **on a specific message** (a jump from a search hit). Same
     /// path as a plain switch — the focus rides along to the feed through
-    /// `ChatActivated`. See docs/chat-search-stage2.md §3.
+    /// `ChatActivated`. See docs/history/chat-search-stage2.md §3.
     pub(super) fn handle_open_chat_at(&mut self, chat: Uuid, message: Uuid) {
         self.switch_to(chat, Some(message));
     }

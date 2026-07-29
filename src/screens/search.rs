@@ -1,7 +1,7 @@
 //! Message-level search screen (FSD "page"): the messages matching a content
 //! query, grouped by chat, with `Enter` jumping the feed straight onto one.
 //! Opened from the chat list's content mode (`Ctrl+G`), closed via `Esc`.
-//! See docs/chat-search-stage2.md (stage 2b).
+//! See docs/history/chat-search-stage2.md (stage 2b).
 //!
 //! Stage 1 answers *"which chats mention this?"*; this screen answers *"where
 //! exactly, and take me there"* — riding on stage 2a's jump

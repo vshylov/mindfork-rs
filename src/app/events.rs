@@ -7,6 +7,7 @@ use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
@@ -45,7 +46,7 @@ pub enum AppCommand {
     /// Make a chat active **and put the feed on one of its messages** (a jump
     /// from a search hit). Same activation as `SwitchChat`, plus a focus carried
     /// through `ChatActivated`; a message the feed doesn't show (a `Tool`/
-    /// `System` one) simply lands at the tail. See docs/chat-search-stage2.md §3.
+    /// `System` one) simply lands at the tail. See docs/history/chat-search-stage2.md §3.
     OpenChatAt { chat: Uuid, message: Uuid },
     /// Make a chat active and put the feed on its **first message matching
     /// `query`** (`Enter` in the chat list's content mode). The orchestrator
@@ -77,8 +78,8 @@ pub enum AppCommand {
     /// Full-text search over chat content answered at **message** level (the
     /// chat list's `Ctrl+G`) — the query is raw, escaped by the orchestrator
     /// exactly like [`AppCommand::SearchChats`]. The result is a
-    /// [`AppEvent::MessageSearchResults`] event. See docs/chat-search-stage2.md.
-    SearchMessages(String),
+    /// [`AppEvent::MessageSearchResults`] event. See docs/history/chat-search-stage2.md.
+    SearchMessages { query: String, sort: SortMode },
     /// Create a new profile (the UI section is M8; the command is needed for
     /// operations/tests).
     CreateProfile {
@@ -248,7 +249,7 @@ pub enum AppEvent {
         draft: String,
         /// Put the feed on this message instead of the tail (a jump from a
         /// search hit, `AppCommand::OpenChatAt`). `None` — every other
-        /// activation. See docs/chat-search-stage2.md §3.
+        /// activation. See docs/history/chat-search-stage2.md §3.
         focus: Option<Uuid>,
     },
     /// The user's message was accepted (an echo for the feed).

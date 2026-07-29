@@ -168,7 +168,7 @@ pub(super) fn apply_event(
         // Deliberately exhaustive by variant rather than a `_` catch-all: this
         // arm *replaces* the active screen, so a new screen that forgot about
         // it would be silently stolen by an unrelated late event
-        // (docs/chat-search-stage2.md §1.6). Every future variant has to say
+        // (docs/history/chat-search-stage2.md §1.6). Every future variant has to say
         // whether it may be replaced.
         AppEvent::SelfModelView(model) => match active {
             ActiveScreen::SelfModel(view) => view.set_model(*model),
@@ -391,7 +391,9 @@ pub(super) fn dispatch_chat_list(
         // The message-level screen opens on the reply (`MessageSearchResults`),
         // not here — the orchestrator owns the index, so this is a round-trip
         // like `RequestSelfModel`. The list stays on screen meanwhile.
-        ChatListIntent::SearchMessages(query) => AppCommand::SearchMessages(query),
+        ChatListIntent::SearchMessages { query, sort } => {
+            AppCommand::SearchMessages { query, sort }
+        }
         // Opening a chat at its first match closes the list, exactly as a plain
         // `Switch` does.
         ChatListIntent::OpenFirstMatch { chat, query } => {

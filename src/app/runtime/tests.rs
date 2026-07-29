@@ -1,6 +1,7 @@
 //! Runtime tests (input batching, chunk_batch). See mod.rs.
 
 use super::*;
+use crate::features::chat_search_sort::SortMode;
 
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -368,7 +369,13 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
         list.handle_key(ctrl('f')); // into content mode
         list.handle_key(KeyEvent::new(KeyCode::Char('м'), KeyModifiers::NONE));
         let intent = list.handle_key(ctrl('g'));
-        assert_eq!(intent, Some(ChatListIntent::SearchMessages("м".into())));
+        assert_eq!(
+            intent,
+            Some(ChatListIntent::SearchMessages {
+                query: "м".into(),
+                sort: SortMode::Modified,
+            })
+        );
         dispatch_chat_list(intent.unwrap(), &cmd_tx, &mut screen, &mut active);
     }
     // The command goes out; the list is still on screen (nothing to show yet).
@@ -378,7 +385,7 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
     }
     assert!(
         sent.iter()
-            .any(|c| matches!(c, AppCommand::SearchMessages(q) if q == "м")),
+            .any(|c| matches!(c, AppCommand::SearchMessages { query, .. } if query == "м")),
         "{sent:?}"
     );
     assert!(matches!(active, ActiveScreen::ChatList(_)));
@@ -488,7 +495,7 @@ fn esc_from_the_results_returns_to_the_list_still_searching() {
     ));
 }
 
-/// The silent-match-site trap (docs/chat-search-stage2.md §1.6): a new screen
+/// The silent-match-site trap (docs/history/chat-search-stage2.md §1.6): a new screen
 /// is only as safe as the arms that *replace* the active one. `SelfModelView`
 /// is the stealer — its `_ =>` arm would swap a results list the user is
 /// reading for an unrelated snapshot — and the `Settings` broadcast is the one
