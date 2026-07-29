@@ -118,6 +118,16 @@ impl SearchScreen {
         &self.query
     }
 
+    /// The index of the selected hit. Test-only: it is what proves the screen
+    /// came back **whole** after a jump (`SearchReturn`) rather than being
+    /// rebuilt from the query — `scroll` is derived from it inside
+    /// [`Self::render`] (see `adjust_scroll`), so the selection is the state
+    /// worth asserting on.
+    #[cfg(test)]
+    pub(crate) fn selected(&self) -> usize {
+        self.selected
+    }
+
     /// Updates the theme palette (the `AppEvent::Settings` event).
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;

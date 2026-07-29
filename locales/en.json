@@ -548,7 +548,7 @@
   "ui.help.copy": "copy selection",
   "ui.help.cut": "cut selection",
   "ui.help.paste": "paste text from clipboard (multiline)",
-  "ui.help.esc": "chat list · close · cancel generation",
+  "ui.help.esc": "chat list / search results · close · cancel generation",
   "ui.help.search_content": "in the chat list: search titles ↔ message content",
   "ui.help.search_messages": "in the chat list: find the messages themselves (content mode)",
   "ui.help.new_chat": "new chat (choose profile)",

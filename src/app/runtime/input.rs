@@ -154,6 +154,7 @@ pub(super) fn process_input_batch(
     batch: Vec<Event>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
@@ -198,7 +199,7 @@ pub(super) fn process_input_batch(
                         }
                     }
                     Some(intent) => {
-                        if dispatch_any(intent, cmd_tx, screen, active) {
+                        if dispatch_any(intent, cmd_tx, screen, active, back) {
                             quit = true;
                         }
                     }

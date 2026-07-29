@@ -165,8 +165,15 @@ fn open_self_model_requests_snapshot_without_opening() {
     // it opens on the reply `SelfModelView` event.
     let screen = ChatScreen::new();
     let mut active = ActiveScreen::Chat;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    let quit = dispatch(ChatIntent::OpenSelfModel, &cmd_tx, &screen, &mut active);
+    let quit = dispatch(
+        ChatIntent::OpenSelfModel,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
     assert!(!quit);
     assert!(matches!(active, ActiveScreen::Chat));
     assert!(matches!(
@@ -180,12 +187,14 @@ fn self_model_view_event_opens_screen() {
     let mut screen = ChatScreen::new();
     let mut active = ActiveScreen::Chat;
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut m = crate::entities::self_model::SelfModel::new(uuid::Uuid::new_v4());
     m.summary = "о себе".into();
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::SelfModelView(Box::new(Some(m))),
@@ -197,6 +206,7 @@ fn self_model_view_event_opens_screen() {
 fn self_model_changed_refreshes_open_screen_only() {
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
 
     // The `F3` screen is closed → SelfModelChanged sends nothing.
@@ -204,6 +214,7 @@ fn self_model_changed_refreshes_open_screen_only() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::SelfModelChanged,
@@ -219,6 +230,7 @@ fn self_model_changed_refreshes_open_screen_only() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::SelfModelChanged,
@@ -232,6 +244,7 @@ fn self_model_changed_refreshes_open_screen_only() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::BackgroundTask {
@@ -268,6 +281,7 @@ fn chat_search_results_reach_an_open_list_and_are_ignored_when_it_is_closed() {
 
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let chats = vec![summary("Альфа"), summary("Бета")];
 
@@ -289,6 +303,7 @@ fn chat_search_results_reach_an_open_list_and_are_ignored_when_it_is_closed() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::ChatSearchResults {
@@ -312,6 +327,7 @@ fn chat_search_results_reach_an_open_list_and_are_ignored_when_it_is_closed() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::ChatSearchResults {
@@ -356,6 +372,7 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
 
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
         vec![summary("Альфа")],
@@ -394,6 +411,7 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         message_results(),
@@ -404,6 +422,7 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         message_results(),
@@ -419,11 +438,13 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
 
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::Chat;
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         message_results(),
@@ -449,7 +470,8 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
                         }),
                         &cmd_tx,
                         &mut screen,
-                        &mut active
+                        &mut active,
+                        &mut back,
                     ));
                     (chat, message)
                 }
@@ -474,11 +496,13 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
 fn esc_from_the_results_returns_to_the_list_still_searching() {
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::Chat;
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         message_results(),
@@ -489,6 +513,7 @@ fn esc_from_the_results_returns_to_the_list_still_searching() {
         &cmd_tx,
         &mut screen,
         &mut active,
+        &mut back,
     );
     assert!(!quit);
     match &mut active {
@@ -513,11 +538,13 @@ fn esc_from_the_results_returns_to_the_list_still_searching() {
 fn the_search_screen_survives_settings_and_self_model_events() {
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::Chat;
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         message_results(),
@@ -528,6 +555,7 @@ fn the_search_screen_survives_settings_and_self_model_events() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::SelfModelView(Box::new(None)),
@@ -544,6 +572,7 @@ fn the_search_screen_survives_settings_and_self_model_events() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::Settings {
@@ -580,6 +609,7 @@ fn character_names_event_reaches_the_feed() {
 
     let mut screen = ChatScreen::new();
     let mut clip = None;
+    let mut back = None;
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
         None,
@@ -589,6 +619,7 @@ fn character_names_event_reaches_the_feed() {
     apply_event(
         &mut screen,
         &mut active,
+        &mut back,
         &mut clip,
         &cmd_tx,
         AppEvent::CharacterNames(crate::entities::profile::CharacterNames {
@@ -609,4 +640,303 @@ fn character_names_event_reaches_the_feed() {
     term.draw(|f| screen.render(f)).unwrap();
     let dump = format!("{:?}", term.backend().buffer());
     assert!(dump.contains("GAIA"), "{dump}");
+}
+
+// ---- the way back from a chat opened out of the search results ----
+
+/// A results snapshot with **known** ids, so a test can activate the very chat a
+/// jump targets — and a different one.
+#[cfg(test)]
+fn message_results_for(chat: uuid::Uuid, messages: &[uuid::Uuid]) -> AppEvent {
+    use crate::features::chat_search::{SearchGroup, SearchHit, build_snippet};
+    AppEvent::MessageSearchResults {
+        query: "маркер".into(),
+        groups: vec![SearchGroup {
+            chat_id: chat,
+            title: "Найденный чат".into(),
+            hits: messages
+                .iter()
+                .map(|id| SearchHit {
+                    message_id: *id,
+                    role: "user".into(),
+                    ts: "2026-07-29T10:00:00+00:00".into(),
+                    snippet: build_snippet("сообщение про маркер", "маркер", 160),
+                })
+                .collect(),
+        }],
+        total: messages.len(),
+    }
+}
+
+/// What the orchestrator answers with, whatever route opened the chat.
+#[cfg(test)]
+fn chat_activated(id: uuid::Uuid) -> AppEvent {
+    AppEvent::ChatActivated {
+        id,
+        title: "чат".into(),
+        messages: Vec::new(),
+        draft: String::new(),
+        focus: None,
+    }
+}
+
+/// Opens the results, moves the selection down one, and opens that hit — the
+/// real path, key presses included. Returns the chat it jumped into.
+#[cfg(test)]
+fn jump_to_second_hit(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
+    clip: &mut Option<arboard::Clipboard>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+) -> uuid::Uuid {
+    let chat = uuid::Uuid::new_v4();
+    let hits = [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()];
+    apply_event(
+        screen,
+        active,
+        back,
+        clip,
+        cmd_tx,
+        message_results_for(chat, &hits),
+    );
+    let intent = match active {
+        ActiveScreen::Search(search) => {
+            search.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            search.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        }
+        _ => panic!("the results must be open"),
+    };
+    assert!(
+        matches!(intent, Some(SearchIntent::OpenHit { .. })),
+        "expected OpenHit, got {intent:?}"
+    );
+    dispatch_any(
+        AnyIntent::Search(intent.unwrap()),
+        cmd_tx,
+        screen,
+        active,
+        back,
+    );
+    chat
+}
+
+/// Opening a hit **stashes the live screen** rather than dropping it: the
+/// selection and scroll are what makes coming back worth anything, and
+/// re-running the query would lose both.
+#[test]
+fn opening_a_hit_stashes_the_live_results_for_the_way_back() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+
+    let chat = jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+
+    assert!(matches!(active, ActiveScreen::Chat), "the results give way");
+    let ret = back.as_ref().expect("the results must be stashed");
+    assert_eq!(ret.chat, chat, "the stash remembers where the jump landed");
+    assert_eq!(ret.screen.selected(), 1, "with the selection intact");
+}
+
+/// The defect this fixes: `Esc` in a chat reached from a hit goes **one step
+/// back — to the results**, selection and all, so the user can keep working
+/// through the hits. The *next* `Esc` goes on to the chat list, as it always
+/// did.
+#[test]
+fn esc_after_a_jump_returns_to_the_results_then_on_to_the_chat_list() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+
+    let chat = jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    // The activation the jump itself asked for — it must not read as leaving.
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(chat),
+    );
+    assert!(
+        back.is_some(),
+        "the jump's own activation kept the way back"
+    );
+
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    match &active {
+        ActiveScreen::Search(search) => assert_eq!(
+            search.selected(),
+            1,
+            "the same results came back, not a fresh search"
+        ),
+        _ => panic!("expected the results screen"),
+    }
+    assert!(
+        back.is_none(),
+        "the way back is one step deep, and consumed"
+    );
+
+    // And the second `Esc` behaves exactly as it did before.
+    dispatch_any(
+        AnyIntent::Search(SearchIntent::Close),
+        &cmd_tx,
+        &mut screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(matches!(active, ActiveScreen::ChatList(_)));
+}
+
+/// `Esc` resolves against the stash, not against how the chat was reached — the
+/// chat screen cannot know either (FSD), it only ever says "go back".
+#[test]
+fn esc_honours_a_stashed_result_screen() {
+    let screen = ChatScreen::new();
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    let mut back = Some(SearchReturn {
+        screen: Box::new(SearchScreen::new(
+            "маркер".into(),
+            Vec::new(),
+            0,
+            screen.palette(),
+            screen.loc(),
+        )),
+        chat: uuid::Uuid::new_v4(),
+    });
+
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(matches!(active, ActiveScreen::Search(_)));
+    assert!(back.is_none());
+}
+
+/// A chat reached the ordinary way has nothing behind it — `Esc` opens the chat
+/// list, unchanged.
+#[test]
+fn esc_in_a_chat_reached_normally_opens_the_chat_list() {
+    let screen = ChatScreen::new();
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    let mut back = None;
+
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(matches!(active, ActiveScreen::ChatList(_)));
+}
+
+/// The whole risk of the feature: a stale stash must never resurrect results for
+/// a chat the user reached another way. Two routes, both funnelling through
+/// `ChatActivated`.
+#[test]
+fn a_stale_return_is_forgotten_when_another_chat_is_opened() {
+    // Route 1 — picking a chat in the list (`Enter`).
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    let other = uuid::Uuid::new_v4();
+    dispatch_chat_list(
+        ChatListIntent::Switch(other),
+        &cmd_tx,
+        &mut screen,
+        &mut active,
+    );
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(other),
+    );
+    assert!(
+        back.is_none(),
+        "another chat means the results are behind us"
+    );
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(
+        matches!(active, ActiveScreen::ChatList(_)),
+        "`Esc` must not resurrect stale results"
+    );
+
+    // Route 2 — `Ctrl+N` from the chat (a brand-new chat is still another chat).
+    let mut active = ActiveScreen::Chat;
+    let mut back = None;
+    jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    let intent = screen.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+    assert_eq!(intent, Some(ChatIntent::NewChat { profile_id: None }));
+    dispatch(intent.unwrap(), &cmd_tx, &screen, &mut active, &mut back);
+    let fresh = uuid::Uuid::new_v4();
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(fresh),
+    );
+    assert!(back.is_none());
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(matches!(active, ActiveScreen::ChatList(_)));
+}
+
+/// The counterpart that makes the "a *different* chat" test meaningful:
+/// re-activating the **same** chat (regeneration, deleting an exchange, a repeat
+/// jump) rebuilds the feed without leaving it, so the way back survives.
+#[test]
+fn re_activating_the_same_chat_keeps_the_way_back() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+
+    let chat = jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    for _ in 0..2 {
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut back,
+            &mut clip,
+            &cmd_tx,
+            chat_activated(chat),
+        );
+    }
+    assert!(back.is_some(), "a feed rebuild is not leaving the chat");
 }
