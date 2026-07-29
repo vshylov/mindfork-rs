@@ -130,7 +130,41 @@ but stays out of this track unless fork **S5** says otherwise.
 
 ---
 
-## 4. Forks for decision
+## 4. Forks — **decided by the user 2026-07-29**
+
+All adopted as recommended (S4 and S6 were stated rather than asked, their
+recommendation being unambiguous):
+
+| | decision |
+|---|---|
+| **S1** where results live | **A dedicated screen** (`ActiveScreen::Search`) |
+| **S2** shape and order | **Grouped by chat**, chats in the existing sort, messages in chat order |
+| **S3** feed highlight | **None for now** — jump and mark the whole message |
+| **S4** snippets | **Built in Rust** from the stored text |
+| **S5** in-feed search | **Not in this track** — stays its own roadmap item |
+| **S6** resize anchor | **The message** (feed index), not the row |
+
+### A behaviour change that falls out of S3/S6
+
+A jump is worthless if the next event drags the view away, so §1.3's seven
+`scroll_to_bottom()` calls get split by *who asked*:
+
+- **User-initiated — keep scrolling to the bottom unconditionally**:
+  `activate_chat` (unless a focus was requested), `push_user_message`,
+  `begin_generation`. You sent something; you want to see it.
+- **Arriving on its own — respect `follow`**: `push_tool_call`,
+  `continue_assistant`, `rewrite_assistant`, `push_note`. If you have scrolled
+  away to read, a tool card landing must not yank you back.
+
+The second half is a **user-visible change beyond the jump itself** and is worth
+a CHANGELOG line on its own — it is also the behaviour people already expect of
+a chat window.
+
+The full options and their trade-offs are kept below as the record of *why*.
+
+---
+
+## 4a. Forks for decision (the record)
 
 **S1 — where the results live.**
 (a) **A new full screen** (`ActiveScreen::Search`), opened from the chat list's
