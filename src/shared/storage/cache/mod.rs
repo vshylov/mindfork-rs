@@ -63,6 +63,20 @@ pub struct IndexedMessage {
     pub text: String,
 }
 
+/// One matching message, as [`CacheDb::search_messages`] returns it: everything
+/// the message-level search screen shows, straight out of the index (the chats
+/// themselves are not read — that is the point of the cache).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageHit {
+    pub chat_id: Uuid,
+    pub message_id: Uuid,
+    pub role: String,
+    /// Timestamp, RFC 3339 — as stored (see [`IndexedMessage::ts`]).
+    pub ts: String,
+    /// The message's full text; the snippet is built from it in `features`.
+    pub text: String,
+}
+
 /// SQLite full-text index over chat content. Disposable — see the module doc.
 pub struct CacheDb {
     conn: Mutex<Connection>,
@@ -302,6 +316,84 @@ impl CacheDb {
             .collect()
         })()
         .with_context(|| format!("full-text query {fts_query:?}"))?;
+        Ok(ids)
+    }
+
+    /// Individual messages matching an **already-escaped** FTS5 query, at most
+    /// `limit` of them (see the module doc on FSD, and [`Self::search_chats`]).
+    ///
+    /// Ordered by chat, then by insertion, so the caller can group in a single
+    /// pass. Within a chat that order is only *approximately* chat order — a
+    /// message whose text changed is deleted and re-inserted, taking a fresh
+    /// rowid — so the orchestrator, which owns the chats, re-orders the hits
+    /// against the real message list.
+    ///
+    /// When the query matches more than `limit` messages the cut falls by chat
+    /// id, which is arbitrary with respect to the order the screen shows. That
+    /// is why [`Self::count_matching_messages`] exists: the screen says
+    /// "showing N of M" rather than silently truncating. On the measured corpus
+    /// the worst case is 163 hits against a cap of 200, so this is a safety
+    /// valve rather than an everyday path (docs/chat-search-stage2.md §2).
+    pub fn search_messages(&self, fts_query: &str, limit: usize) -> Result<Vec<MessageHit>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT m.chat_id, m.message_id, m.role, m.ts, m.text
+             FROM messages_fts f
+             JOIN messages m ON m.id = f.rowid
+             WHERE messages_fts MATCH ?1
+             ORDER BY m.chat_id, m.id
+             LIMIT ?2",
+        )?;
+        let hits = (|| -> rusqlite::Result<Vec<MessageHit>> {
+            stmt.query_map(params![fts_query, limit as i64], |r| {
+                Ok(MessageHit {
+                    chat_id: parse_uuid(r.get::<_, String>(0)?),
+                    message_id: parse_uuid(r.get::<_, String>(1)?),
+                    role: r.get(2)?,
+                    ts: r.get(3)?,
+                    text: r.get(4)?,
+                })
+            })?
+            .collect()
+        })()
+        .with_context(|| format!("full-text message query {fts_query:?}"))?;
+        Ok(hits)
+    }
+
+    /// How many messages the query matches in total — the honest denominator of
+    /// "showing N of M" when [`Self::search_messages`] hit its cap. Counts in
+    /// the index alone (no join, no text read).
+    pub fn count_matching_messages(&self, fts_query: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                params![fts_query],
+                |r| r.get(0),
+            )
+            .with_context(|| format!("full-text message count {fts_query:?}"))?;
+        Ok(n as usize)
+    }
+
+    /// The ids of one chat's matching messages — unlimited, because a single
+    /// chat is bounded. Used by "open this chat at its first match" (`Enter` in
+    /// the chat list's content mode): the caller picks the earliest by real
+    /// chat order, which only it can know.
+    pub fn matching_messages_in_chat(&self, fts_query: &str, chat_id: Uuid) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT m.message_id
+             FROM messages_fts f
+             JOIN messages m ON m.id = f.rowid
+             WHERE messages_fts MATCH ?1 AND m.chat_id = ?2",
+        )?;
+        let ids = (|| -> rusqlite::Result<Vec<Uuid>> {
+            stmt.query_map(params![fts_query, chat_id.to_string()], |r| {
+                Ok(parse_uuid(r.get::<_, String>(0)?))
+            })?
+            .collect()
+        })()
+        .with_context(|| format!("full-text query {fts_query:?} in one chat"))?;
         Ok(ids)
     }
 
@@ -671,6 +763,112 @@ mod tests {
         assert_eq!(db.search_chats("\"oranges\"").unwrap(), vec![two]);
         let both = db.search_chats("\"and\"").unwrap();
         assert_eq!(both.len(), 2);
+    }
+
+    #[test]
+    fn search_messages_returns_rows_per_message_and_isolates_chats() {
+        // Stage 1 answers "which chats mention this?"; stage 2 answers "where
+        // exactly" — so the same chat must yield one row per matching message,
+        // carrying everything the screen shows.
+        let db = cache();
+        let (one, two) = (Uuid::new_v4(), Uuid::new_v4());
+        let a = IndexedMessage {
+            id: Uuid::new_v4(),
+            role: "assistant".into(),
+            ts: "2026-07-29T10:00:00+00:00".into(),
+            text: "первое упоминание маркера".into(),
+        };
+        let b = msg("второе упоминание маркера");
+        db.index_chat(one, 1, 1, &[a.clone(), b.clone(), msg("ничего")])
+            .unwrap();
+        db.index_chat(two, 1, 1, &[msg("маркера тут тоже")])
+            .unwrap();
+
+        let hits = db.search_messages("\"маркера\"", 100).unwrap();
+        assert_eq!(hits.len(), 3);
+        // Grouping is a single pass: all of a chat's hits are adjacent.
+        let chats: Vec<Uuid> = hits.iter().map(|h| h.chat_id).collect();
+        let mut deduped = chats.clone();
+        deduped.dedup();
+        assert_eq!(
+            deduped.len(),
+            2,
+            "hits of one chat must be adjacent: {chats:?}"
+        );
+
+        let mine: Vec<&MessageHit> = hits.iter().filter(|h| h.chat_id == one).collect();
+        assert_eq!(mine.len(), 2);
+        let first = mine.iter().find(|h| h.message_id == a.id).unwrap();
+        assert_eq!(first.role, "assistant");
+        assert_eq!(first.ts, a.ts);
+        assert_eq!(
+            first.text, a.text,
+            "the whole text — the snippet is built from it"
+        );
+        assert!(mine.iter().any(|h| h.message_id == b.id));
+
+        // A query matching nothing yields nothing (not "everything").
+        assert!(
+            db.search_messages("\"отсутствует\"", 100)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn search_messages_respects_the_limit_and_the_count_stays_honest() {
+        let db = cache();
+        let chat = Uuid::new_v4();
+        let msgs: Vec<IndexedMessage> = (0..10).map(|i| msg(&format!("совпадение {i}"))).collect();
+        db.index_chat(chat, 1, 1, &msgs).unwrap();
+
+        assert_eq!(db.search_messages("\"совпадение\"", 3).unwrap().len(), 3);
+        assert_eq!(db.search_messages("\"совпадение\"", 100).unwrap().len(), 10);
+        // The cap truncates the rows, never the count — that is what lets the
+        // screen say "showing N of M" rather than quietly lying.
+        assert_eq!(db.count_matching_messages("\"совпадение\"").unwrap(), 10);
+        assert_eq!(db.count_matching_messages("\"нет\"").unwrap(), 0);
+    }
+
+    #[test]
+    fn matching_messages_in_chat_is_scoped_to_that_chat() {
+        let db = cache();
+        let (one, two) = (Uuid::new_v4(), Uuid::new_v4());
+        let (a, b) = (msg("общее слово раз"), msg("общее слово два"));
+        db.index_chat(one, 1, 1, &[a.clone(), msg("прочее"), b.clone()])
+            .unwrap();
+        db.index_chat(two, 1, 1, &[msg("общее слово чужое")])
+            .unwrap();
+
+        let mut ids = db.matching_messages_in_chat("\"общее\"", one).unwrap();
+        ids.sort();
+        let mut want = vec![a.id, b.id];
+        want.sort();
+        assert_eq!(ids, want);
+        assert_eq!(
+            db.matching_messages_in_chat("\"общее\"", two)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            db.matching_messages_in_chat("\"прочее\"", two)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malformed_message_queries_are_errors_not_panics() {
+        // Same contract as `search_chats`: escaping is the caller's job, but a
+        // slip must surface as an `Err` — these run from a background task.
+        let db = cache();
+        assert!(db.search_messages("\"unterminated", 10).is_err());
+        assert!(db.count_matching_messages("\"unterminated").is_err());
+        assert!(
+            db.matching_messages_in_chat("\"unterminated", Uuid::new_v4())
+                .is_err()
+        );
     }
 
     #[test]

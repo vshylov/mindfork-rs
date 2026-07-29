@@ -484,12 +484,16 @@ impl Orchestrator {
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::OpenChatAt { chat, message } => self.handle_open_chat_at(chat, message),
+            AppCommand::OpenChatAtFirstMatch { chat, query } => {
+                self.handle_open_chat_at_first_match(chat, &query)
+            }
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
             AppCommand::AutoRenameChat(id) => self.handle_auto_rename(id),
             AppCommand::CloneChat(id) => self.handle_clone(id),
             AppCommand::CopyChat(id) => self.handle_copy_chat(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
             AppCommand::SearchChats(query) => self.handle_search_chats(query),
+            AppCommand::SearchMessages(query) => self.handle_search_messages(query),
             AppCommand::CreateProfile {
                 name,
                 system_message,

@@ -184,6 +184,7 @@ pub(super) fn process_input_batch(
                         settings.handle_key(key).map(AnyIntent::Settings)
                     }
                     ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
+                    ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
                 };
                 match intent {
                     // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —

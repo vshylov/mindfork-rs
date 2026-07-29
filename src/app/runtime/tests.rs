@@ -325,6 +325,235 @@ fn chat_search_results_reach_an_open_list_and_are_ignored_when_it_is_closed() {
     assert!(dump.contains("Альфа"), "{dump}");
 }
 
+// ---- stage 2b: the message-level search screen ----
+
+#[cfg(test)]
+fn message_results() -> AppEvent {
+    use crate::features::chat_search::{SearchGroup, SearchHit, build_snippet};
+    AppEvent::MessageSearchResults {
+        query: "маркер".into(),
+        groups: vec![SearchGroup {
+            chat_id: uuid::Uuid::new_v4(),
+            title: "Найденный чат".into(),
+            hits: vec![SearchHit {
+                message_id: uuid::Uuid::new_v4(),
+                role: "user".into(),
+                ts: "2026-07-29T10:00:00+00:00".into(),
+                snippet: build_snippet("сообщение про маркер", "маркер", 160),
+            }],
+        }],
+        total: 1,
+    }
+}
+
+/// The full `Ctrl+G` round-trip: the chat list asks, the orchestrator answers,
+/// and the reply — not the key press — is what opens the screen (the same shape
+/// as `RequestSelfModel`/`SelfModelView`, because the index lives over there).
+#[test]
+fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
+        vec![summary("Альфа")],
+        None,
+        screen.palette(),
+        screen.loc(),
+    )));
+
+    let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    if let ActiveScreen::ChatList(list) = &mut active {
+        list.handle_key(ctrl('f')); // into content mode
+        list.handle_key(KeyEvent::new(KeyCode::Char('м'), KeyModifiers::NONE));
+        let intent = list.handle_key(ctrl('g'));
+        assert_eq!(intent, Some(ChatListIntent::SearchMessages("м".into())));
+        dispatch_chat_list(intent.unwrap(), &cmd_tx, &mut screen, &mut active);
+    }
+    // The command goes out; the list is still on screen (nothing to show yet).
+    let mut sent = Vec::new();
+    while let Ok(c) = cmd_rx.try_recv() {
+        sent.push(c);
+    }
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, AppCommand::SearchMessages(q) if q == "м")),
+        "{sent:?}"
+    );
+    assert!(matches!(active, ActiveScreen::ChatList(_)));
+
+    // The reply opens it.
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        message_results(),
+    );
+    assert!(matches!(active, ActiveScreen::Search(_)));
+
+    // A later reply refreshes it in place rather than stacking a second one.
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        message_results(),
+    );
+    assert!(matches!(active, ActiveScreen::Search(_)));
+}
+
+/// `Enter` on a hit is stage 2a's jump: the chat opens on that message and the
+/// results close, exactly as `Switch` closes the chat list.
+#[test]
+fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        message_results(),
+    );
+
+    let (chat, message) = match &mut active {
+        ActiveScreen::Search(search) => {
+            let intent = search.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            match intent {
+                Some(crate::screens::search::SearchIntent::OpenHit { chat, message }) => {
+                    assert!(!dispatch_any(
+                        AnyIntent::Search(crate::screens::search::SearchIntent::OpenHit {
+                            chat,
+                            message
+                        }),
+                        &cmd_tx,
+                        &mut screen,
+                        &mut active
+                    ));
+                    (chat, message)
+                }
+                other => panic!("expected OpenHit, got {other:?}"),
+            }
+        }
+        _ => panic!("the screen must be open"),
+    };
+
+    assert!(matches!(active, ActiveScreen::Chat), "the results close");
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::OpenChatAt { chat: c, message: m }) if c == chat && m == message
+    ));
+}
+
+/// `Esc` goes back to the chat list **still searching for the same query** —
+/// dropping the user into a blank title-mode list would throw away the search
+/// that got them here. The results are refetched by the usual round-trip.
+#[test]
+fn esc_from_the_results_returns_to_the_list_still_searching() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        message_results(),
+    );
+
+    let quit = dispatch_any(
+        AnyIntent::Search(crate::screens::search::SearchIntent::Close),
+        &cmd_tx,
+        &mut screen,
+        &mut active,
+    );
+    assert!(!quit);
+    match &mut active {
+        ActiveScreen::ChatList(list) => {
+            let dump = list_dump(list);
+            assert!(dump.contains("маркер"), "the query must come back: {dump}");
+        }
+        _ => panic!("expected the chat list"),
+    }
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::SearchChats(q)) if q == "маркер"
+    ));
+}
+
+/// The silent-match-site trap (docs/chat-search-stage2.md §1.6): a new screen
+/// is only as safe as the arms that *replace* the active one. `SelfModelView`
+/// is the stealer — its `_ =>` arm would swap a results list the user is
+/// reading for an unrelated snapshot — and the `Settings` broadcast is the one
+/// that must reach it, or the theme and UI language would never update.
+#[test]
+fn the_search_screen_survives_settings_and_self_model_events() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        message_results(),
+    );
+    assert!(matches!(active, ActiveScreen::Search(_)));
+
+    // A late self-model snapshot must not replace it.
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::SelfModelView(Box::new(None)),
+    );
+    assert!(
+        matches!(active, ActiveScreen::Search(_)),
+        "the results were stolen by an unrelated event"
+    );
+
+    // The settings broadcast reaches it: switching the UI language to English
+    // must be visible on the screen.
+    let mut config = crate::shared::config::AppConfig::default();
+    config.interface.language = crate::shared::i18n::Lang::En;
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::Settings {
+            config: Box::new(config),
+            profiles: Vec::new(),
+            language_locked: Vec::new(),
+            mcp: Default::default(),
+            api_keys_present: Vec::new(),
+        },
+    );
+    match &mut active {
+        ActiveScreen::Search(search) => {
+            use ratatui::Terminal;
+            use ratatui::backend::TestBackend;
+            let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            term.draw(|f| search.render(f)).unwrap();
+            let dump = format!("{:?}", term.backend().buffer());
+            assert!(
+                dump.contains("Matching messages"),
+                "the locale broadcast must reach the screen: {dump}"
+            );
+        }
+        _ => panic!("the screen must still be open"),
+    }
+}
+
 /// The names reach the chat screen's feed even while another screen is on top
 /// (the event is applied to the chat unconditionally, like `ChatList`).
 #[test]

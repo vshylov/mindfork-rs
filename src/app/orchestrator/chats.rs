@@ -50,6 +50,15 @@ impl Orchestrator {
         self.switch_to(chat, Some(message));
     }
 
+    /// Opens a chat on its **first message matching `query`** (`Enter` in the
+    /// chat list's content mode). Resolving the match needs both the index and
+    /// the chat, so it happens here rather than in the widget; when nothing
+    /// resolves the chat opens at its tail — a plain switch, not an error.
+    pub(super) fn handle_open_chat_at_first_match(&mut self, chat: Uuid, query: &str) {
+        let focus = self.first_match_in_chat(chat, query);
+        self.switch_to(chat, focus);
+    }
+
     /// The shared switch path. `focus` — a message to put the feed on.
     fn switch_to(&mut self, id: Uuid, focus: Option<Uuid>) {
         if self.active_id == Some(id) {

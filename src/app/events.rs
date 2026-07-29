@@ -46,10 +46,13 @@ pub enum AppCommand {
     /// from a search hit). Same activation as `SwitchChat`, plus a focus carried
     /// through `ChatActivated`; a message the feed doesn't show (a `Tool`/
     /// `System` one) simply lands at the tail. See docs/chat-search-stage2.md §3.
-    // Built by the message-level search screen (stage 2b of the track); the
-    // handler and the whole jump path are already here and covered by tests.
-    #[allow(dead_code)]
     OpenChatAt { chat: Uuid, message: Uuid },
+    /// Make a chat active and put the feed on its **first message matching
+    /// `query`** (`Enter` in the chat list's content mode). The orchestrator
+    /// resolves the message: it owns both the index and the chat, so only it
+    /// can order the matches by real chat position. A chat whose match cannot
+    /// be resolved simply opens at the tail, exactly like a plain switch.
+    OpenChatAtFirstMatch { chat: Uuid, query: String },
     /// Rename a chat.
     RenameChat { id: Uuid, title: String },
     /// Auto-title a chat: the model reads the conversation (or part of it) and comes up
@@ -71,6 +74,11 @@ pub enum AppCommand {
     /// docs/research/chat-content-search.md §4, §7a). The result is a
     /// [`AppEvent::ChatSearchResults`] event.
     SearchChats(String),
+    /// Full-text search over chat content answered at **message** level (the
+    /// chat list's `Ctrl+G`) — the query is raw, escaped by the orchestrator
+    /// exactly like [`AppCommand::SearchChats`]. The result is a
+    /// [`AppEvent::MessageSearchResults`] event. See docs/chat-search-stage2.md.
+    SearchMessages(String),
     /// Create a new profile (the UI section is M8; the command is needed for
     /// operations/tests).
     CreateProfile {
@@ -179,6 +187,19 @@ pub enum AppEvent {
     ChatSearchResults {
         query: String,
         chat_ids: Option<Vec<Uuid>>,
+    },
+    /// The result of a message-level content search (a reply to
+    /// [`AppCommand::SearchMessages`]): matching messages **grouped by chat**
+    /// (fork S2), chats in the chat list's order, messages in chat order.
+    /// `query` is echoed back so a late reply can be told from the current one.
+    ///
+    /// `total` is the true number of matching messages, which may exceed the
+    /// hits carried here ([`crate::features::chat_search::HIT_CAP`]) — the screen shows
+    /// "showing N of M" rather than truncating silently.
+    MessageSearchResults {
+        query: String,
+        groups: Vec<crate::features::chat_search::SearchGroup>,
+        total: usize,
     },
     /// An error from a chat-list operation (auto-title/delete/clone). Shown in
     /// the list overlay's dedicated status area (not the chat feed), if it's open.

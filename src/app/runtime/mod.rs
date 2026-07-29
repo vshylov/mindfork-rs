@@ -33,6 +33,7 @@ use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
+use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
@@ -50,6 +51,9 @@ enum ActiveScreen {
     Settings(Box<SettingsScreen>),
     /// The "self-model" viewer screen (read-only, `F3`).
     SelfModel(Box<SelfModelScreen>),
+    /// The message-level search results (`Ctrl+G` from the chat list's content
+    /// mode). See docs/chat-search-stage2.md.
+    Search(Box<SearchScreen>),
 }
 
 impl ActiveScreen {
@@ -76,6 +80,10 @@ impl ActiveScreen {
                 view.set_palette(palette);
                 view.set_loc(loc);
             }
+            ActiveScreen::Search(search) => {
+                search.set_palette(palette);
+                search.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }
@@ -90,6 +98,8 @@ impl ActiveScreen {
             ActiveScreen::Chat => chat.handle_paste(text),
             ActiveScreen::ChatList(list) => list.handle_paste(text),
             ActiveScreen::SelfModel(view) => view.handle_paste(text),
+            // Read-only results — nothing to paste into.
+            ActiveScreen::Search(_) => {}
         }
     }
 }
@@ -405,6 +415,7 @@ fn run_loop(
                 ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
                 ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
                 ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
+                ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
             };
             let _ = execute!(stdout(), EndSynchronizedUpdate);
             drawn?;

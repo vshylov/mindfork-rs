@@ -56,6 +56,15 @@ pub enum ChatListAction {
     /// docs/research/chat-content-search.md §7a). Results come back via
     /// [`ChatListState::set_search_results`].
     SearchContent(String),
+    /// Open the message-level search screen for the current query (content
+    /// mode, `Ctrl+G`). Like [`Self::SearchContent`] the widget stays dumb —
+    /// the query is raw. See docs/chat-search-stage2.md (stage 2b).
+    SearchMessages(String),
+    /// Open a chat **at its first message matching the query** (`Enter` in
+    /// content mode). Which message that is can only be answered by the
+    /// orchestrator, which owns both the index and the chat — the widget just
+    /// says which chat and what was searched for.
+    OpenFirstMatch { chat: Uuid, query: String },
 }
 
 /// What the search line searches. Title mode is the historical behaviour (a
@@ -198,6 +207,17 @@ impl ChatListState {
         self.clamp_selection();
     }
 
+    /// Reopens the list still searching message content for `query` — used
+    /// when the message-level results screen closes, so `Esc` returns to the
+    /// search the user was doing rather than to an empty list. The results
+    /// themselves are refetched by the caller (the same round-trip typing a
+    /// query does).
+    pub fn restore_content_query(&mut self, query: String) {
+        self.query = query;
+        self.scope = SearchScope::Content;
+        self.selected = 0;
+    }
+
     /// Emits a content search for the current query — when the query changed in
     /// content mode, or on switching into it.
     fn search_action(&self) -> ChatListAction {
@@ -287,15 +307,34 @@ impl ChatListState {
                         SearchScope::Title => ChatListAction::None,
                     }
                 }
+                // Go from "which chats mention this" to "where exactly": the
+                // message-level results screen. Content mode only — in title
+                // mode the query is a title substring, which is not a thing to
+                // search message text for; the hint is hidden there too, so no
+                // advertised key is a no-op.
+                'g' => match self.scope {
+                    SearchScope::Content => ChatListAction::SearchMessages(self.query.clone()),
+                    SearchScope::Title => ChatListAction::None,
+                },
                 _ => ChatListAction::None,
             };
         }
         match key.code {
             KeyCode::F(10) => ChatListAction::Quit, // a second way to quit
             KeyCode::Esc => ChatListAction::Close,
-            KeyCode::Enter => match self.selected_id() {
-                Some(id) => ChatListAction::Switch(id),
-                None => ChatListAction::None,
+            // In content mode the chat is opened **at its first match** rather
+            // than at the tail: the user asked where this text is, so landing
+            // on it is strictly more useful than landing at the end of the
+            // conversation (stage 2a's jump). Title mode is unchanged.
+            KeyCode::Enter => match (self.selected_id(), self.scope) {
+                (Some(id), SearchScope::Content) if !self.query.trim().is_empty() => {
+                    ChatListAction::OpenFirstMatch {
+                        chat: id,
+                        query: self.query.clone(),
+                    }
+                }
+                (Some(id), _) => ChatListAction::Switch(id),
+                (None, _) => ChatListAction::None,
             },
             KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
@@ -712,7 +751,7 @@ impl ChatListState {
             "ui.chatlist.search_mode",
             &[("mode", mode_label(self.scope, loc))],
         );
-        let items: [(&str, &str, bool); 12] = [
+        let mut items: Vec<(&str, &str, bool)> = vec![
             ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
             ("Enter", loc.t("ui.chatlist.hk.open"), false),
             ("Ctrl+F", search_desc.as_str(), false),
@@ -726,6 +765,11 @@ impl ChatListState {
             ("Ctrl+Q", loc.t("ui.chatlist.hk.quit"), false),
             ("Tab", sort_desc.as_str(), false),
         ];
+        // Only in content mode, because that is the only mode it does anything
+        // in — an advertised key that is a no-op is worse than a missing hint.
+        if self.scope == SearchScope::Content {
+            items.push(("Ctrl+G", loc.t("ui.chatlist.hk.search_messages"), false));
+        }
         palette.hotkey_grid(&items, width)
     }
 }
@@ -908,6 +952,102 @@ mod tests {
 
         s.set_search_results("тек".into(), Some(vec![alpha]));
         assert_eq!(s.visible().len(), 1, "an older answer is still applied");
+        assert_eq!(s.selected_id(), Some(alpha));
+    }
+
+    /// Stage 2b: in content mode `Enter` opens the chat **at its first match**
+    /// rather than at its tail — the user asked where this text is. Title mode
+    /// keeps the historical plain switch.
+    #[test]
+    fn enter_opens_at_the_first_match_in_content_mode_only() {
+        let chats = vec![chat("Альфа")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+
+        // Title mode — unchanged.
+        for c in "Аль".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(s.on_key(key(KeyCode::Enter)), ChatListAction::Switch(id));
+
+        // Content mode — a jump, carrying the raw query for the orchestrator to
+        // resolve against the index.
+        s.on_key(ctrl(KeyCode::Char('f')));
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::OpenFirstMatch {
+                chat: id,
+                query: "Аль".into()
+            }
+        );
+
+        // With nothing typed there is no match to open at — a plain switch.
+        for _ in 0..3 {
+            s.on_key(key(KeyCode::Backspace));
+        }
+        assert_eq!(s.on_key(key(KeyCode::Enter)), ChatListAction::Switch(id));
+    }
+
+    /// `Ctrl+G` hands the query to the message-level screen — and only in
+    /// content mode, where the hint for it is also the only place it is shown.
+    #[test]
+    fn ctrl_g_asks_for_message_search_in_content_mode_only() {
+        let mut s = ChatListState::new(vec![chat("Альфа")], None);
+        for c in "марк".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('g'))),
+            ChatListAction::None,
+            "title mode has no message search"
+        );
+
+        s.on_key(ctrl(KeyCode::Char('f')));
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('g'))),
+            ChatListAction::SearchMessages("марк".into())
+        );
+        // Also under a Cyrillic layout (physical G = Ctrl+п).
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('п'))),
+            ChatListAction::SearchMessages("марк".into())
+        );
+    }
+
+    #[test]
+    fn the_message_search_hint_is_shown_only_in_content_mode() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render = |state: &mut ChatListState| {
+            let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default(), ru()))
+                .unwrap();
+            format!("{:?}", term.backend().buffer())
+        };
+        let mut s = ChatListState::new(vec![chat("Альфа")], None);
+        assert!(
+            !render(&mut s).contains("Ctrl+G"),
+            "an advertised key that does nothing is worse than no hint"
+        );
+        s.on_key(ctrl(KeyCode::Char('f')));
+        assert!(render(&mut s).contains("Ctrl+G"));
+    }
+
+    /// Closing the message-level screen brings the list back **still searching**
+    /// — the user came from a content search, and an empty title-mode list would
+    /// throw that away.
+    #[test]
+    fn restore_content_query_reopens_the_list_in_content_mode() {
+        let chats = vec![chat("Альфа"), chat("Бета")];
+        let alpha = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.restore_content_query("маркер".into());
+        assert_eq!(s.query, "маркер");
+        assert_eq!(s.scope, SearchScope::Content);
+        // The title filter is not applied in content mode, so until results
+        // arrive everything is shown — then they filter it.
+        assert_eq!(s.visible().len(), 2);
+        s.set_search_results("маркер".into(), Some(vec![alpha]));
         assert_eq!(s.selected_id(), Some(alpha));
     }
 

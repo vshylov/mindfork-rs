@@ -39,6 +39,26 @@ pub(super) fn apply_event(
                 list.set_search_results(query, chat_ids);
             }
         }
+        // Message-level results (`Ctrl+G`): the screen opens on the reply, not
+        // on the key press — the same round-trip as `SelfModelView`, since the
+        // orchestrator owns the index. A later reply refreshes the screen in
+        // place instead of stacking a second one.
+        AppEvent::MessageSearchResults {
+            query,
+            groups,
+            total,
+        } => match active {
+            ActiveScreen::Search(search) => search.set_results(query, groups, total),
+            _ => {
+                *active = ActiveScreen::Search(Box::new(SearchScreen::new(
+                    query,
+                    groups,
+                    total,
+                    screen.palette(),
+                    screen.loc(),
+                )))
+            }
+        },
         // A list-operation error: into its status area, if the screen is open; otherwise
         // (a late auto-title reply after the list is closed) — as a note in the feed.
         AppEvent::ChatListError(message) => match active {
@@ -145,9 +165,17 @@ pub(super) fn apply_event(
         AppEvent::Attachments(items) => screen.set_attachments(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
+        // Deliberately exhaustive by variant rather than a `_` catch-all: this
+        // arm *replaces* the active screen, so a new screen that forgot about
+        // it would be silently stolen by an unrelated late event
+        // (docs/chat-search-stage2.md §1.6). Every future variant has to say
+        // whether it may be replaced.
         AppEvent::SelfModelView(model) => match active {
             ActiveScreen::SelfModel(view) => view.set_model(*model),
-            _ => {
+            // A results list the user is reading must not be swapped out from
+            // under them by a stale reply to a request they have left behind.
+            ActiveScreen::Search(_) => {}
+            ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
                 *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                     *model,
                     screen.palette(),
@@ -204,6 +232,7 @@ pub(super) enum AnyIntent {
     List(ChatListIntent),
     Settings(SettingsIntent),
     SelfModel(SelfModelIntent),
+    Search(SearchIntent),
 }
 
 /// Dispatches the active screen's intent to the corresponding translator.
@@ -219,6 +248,7 @@ pub(super) fn dispatch_any(
         AnyIntent::List(i) => dispatch_chat_list(i, cmd_tx, screen, active),
         AnyIntent::Settings(i) => dispatch_settings(i, cmd_tx, active),
         AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
+        AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active),
     }
 }
 
@@ -358,6 +388,16 @@ pub(super) fn dispatch_chat_list(
         // Content search: the raw query goes to the orchestrator, which escapes
         // it and answers with `ChatSearchResults`. The list stays open.
         ChatListIntent::SearchContent(query) => AppCommand::SearchChats(query),
+        // The message-level screen opens on the reply (`MessageSearchResults`),
+        // not here — the orchestrator owns the index, so this is a round-trip
+        // like `RequestSelfModel`. The list stays on screen meanwhile.
+        ChatListIntent::SearchMessages(query) => AppCommand::SearchMessages(query),
+        // Opening a chat at its first match closes the list, exactly as a plain
+        // `Switch` does.
+        ChatListIntent::OpenFirstMatch { chat, query } => {
+            *active = ActiveScreen::Chat;
+            AppCommand::OpenChatAtFirstMatch { chat, query }
+        }
     };
     let _ = cmd_tx.send(command);
     false
@@ -391,6 +431,48 @@ pub(super) fn dispatch_settings(
     };
     let _ = cmd_tx.send(command);
     false
+}
+
+/// Translates a message-level search intent. Returns `true` for
+/// [`SearchIntent::Quit`] (the loop ends).
+///
+/// `Close` goes back to the **chat list still searching for the same query**
+/// rather than to a blank one: the user got here from a content search, and
+/// dropping them into an empty title-mode list would throw that away. The list
+/// is rebuilt from the chat screen's snapshot (as `OpenChatList` does) and the
+/// content results are refetched by the same round-trip typing a query uses.
+pub(super) fn dispatch_search(
+    intent: SearchIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &ChatScreen,
+    active: &mut ActiveScreen,
+) -> bool {
+    match intent {
+        SearchIntent::Quit => true,
+        SearchIntent::Close => {
+            let query = match active {
+                ActiveScreen::Search(search) => search.query().to_string(),
+                _ => String::new(),
+            };
+            let mut list = ChatListScreen::new(
+                screen.chat_summaries(),
+                screen.active_chat(),
+                screen.palette(),
+                screen.loc(),
+            );
+            list.restore_content_query(query.clone());
+            *active = ActiveScreen::ChatList(Box::new(list));
+            let _ = cmd_tx.send(AppCommand::SearchChats(query));
+            false
+        }
+        // The jump itself is stage 2a's; here it only closes the results, the
+        // way `ChatListIntent::Switch` does.
+        SearchIntent::OpenHit { chat, message } => {
+            *active = ActiveScreen::Chat;
+            let _ = cmd_tx.send(AppCommand::OpenChatAt { chat, message });
+            false
+        }
+    }
 }
 
 /// Translates a self-model-viewer-screen intent: closing returns to the chat,
