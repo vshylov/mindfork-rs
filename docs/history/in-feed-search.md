@@ -170,3 +170,25 @@ clears both.
 Regex or whole-word matching (the matcher is the shared `match_ranges`, ≥3
 characters, case-insensitive — the same rule as everywhere else); searching
 collapsed thoughts without expanding them; persisting a query across chats.
+
+## 5. Highlighting text the renderer transformed — **rejected, 2026-07-30**
+
+Fork **S3(c)** — thread source ranges through the renderer so a match survives
+LaTeX→unicode, table layout and the rest — was left open here. It was measured
+before being built, exhaustively rather than by guessing queries: for every
+message in the dev corpus, every alphanumeric run of ≥3 characters in the source
+(what the index can match) checked against the rendered output (what the feed can
+highlight).
+
+**88 of 186 805 words (0.047%), across 20 messages of 1213.** The words decide
+it: `rightarrow` (the LaTeX command name, not the `→` on screen), `e0f2fe` (a hex
+colour in a mermaid `style` line), `graph lr`, `500px`, `td`. Nobody searches for
+those, and the prose around them highlights fine. S3(c) would rework
+`writer`/`latex`/`table`/`code` and the mermaid path to buy them.
+
+The measurement did find something, though — 68 of the 88 came from a *different*
+defect in one message: block-level raw HTML was dropped by the renderer, prose
+included, so it was invisible in the feed rather than merely unhighlightable.
+That was worth fixing on its own (spec §11.4), and it took the gap to **65**
+words. The 23 recovered are prose; nearly everything left is markup, formula and
+diagram syntax that is deliberately not shown.

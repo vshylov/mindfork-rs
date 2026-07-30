@@ -263,7 +263,12 @@ A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
   jumping to the message start would leave the viewport unmoved. Matching runs
   over what is **drawn**, which is why the counter can equal the highlights;
   the same reason means it covers thoughts and tool cards, and misses text the
-  renderer transformed. Prerequisite shipped with it: the highlight left
+  renderer transformed — **measured and closed 2026-07-30**: 65 words of 186 805
+  (0.035%), all of them LaTeX command names, mermaid syntax and markup tokens, so
+  threading source ranges through the renderer (fork S3(c)) was rejected rather
+  than deferred; the same measurement turned up the dropped-HTML defect and got it
+  fixed ([in-feed-search.md §5](history/in-feed-search.md)).
+  Prerequisite shipped with it: the highlight left
   `CacheKey`, so typing costs a warm frame (17 ms) instead of re-rendering the
   chat (39 ms). See [in-feed-search.md](history/in-feed-search.md).
 - **Chat content search** (stages 1–2, complete): the chat list's search box

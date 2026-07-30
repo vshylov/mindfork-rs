@@ -127,6 +127,14 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Pasted HTML no longer disappears from the conversation.** A message containing
+  a block of raw HTML — a table copied out of a README, an answer a model wrote in
+  HTML — rendered as an empty space: the whole block, prose and all, was dropped.
+  Its text is now shown (tags stripped, cells reading across the line, `&amp;` and
+  friends decoded, an `<img>` showing its alt text and address). Style sheets and
+  scripts stay hidden, as does the markup itself — those are not part of what was
+  written.
+
 - **A server that starts after the app is now picked up on its own.** The
   readiness check ran once and then stopped, so starting the app before
   `llama-server` — the ordinary order of things for a local setup — left

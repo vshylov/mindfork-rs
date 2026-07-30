@@ -193,6 +193,7 @@ fn code_theme(palette: &Palette) -> &'static Theme {
 // ---------- submodules (breaking up the god object: docs/history/refactoring-god-objects.md, stage 6) ----------
 
 mod code;
+mod html;
 mod latex;
 mod mermaid;
 mod speak;
@@ -209,7 +210,7 @@ pub use self::speak::speakable_text;
 // LaTeX (latex) + diagrams (mermaid) are visible to each other and to mod.rs
 // via a re-export (the external surface is render/render_with only, defined
 // here).
-use self::{code::*, latex::*, mermaid::*, table::*, writer::*};
+use self::{code::*, html::*, latex::*, mermaid::*, table::*, writer::*};
 
 /// Shared render test helpers used by several submodules' tests
 /// (code/latex/table/writer). See docs/history/refactoring-god-objects.md.

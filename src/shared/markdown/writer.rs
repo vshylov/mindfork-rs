@@ -27,6 +27,11 @@ pub(super) struct Writer {
     code_highlighter: Option<HighlightLines<'static>>,
     /// Active table collection (`None` outside a table).
     table: Option<TableBuilder>,
+    /// Raw source of the HTML block being collected (`None` outside one).
+    /// Block-level HTML arrives as opaque `Html` chunks split by line, and a
+    /// tag can straddle two of them — so the block is accumulated whole and
+    /// converted once, at [`Writer::end_html_block`]. See [`super::html`].
+    html: Option<String>,
     /// Whether a blank separator is needed before the next block.
     needs_newline: bool,
     /// A list item was just opened (the marker line `1. `/`- ` is already
@@ -78,6 +83,7 @@ impl Writer {
             list_indices: Vec::new(),
             link: None,
             image: None,
+            html: None,
             code_highlighter: None,
             table: None,
             needs_newline: false,
@@ -125,10 +131,19 @@ impl Writer {
             // No line break inside a cell — continue with a space.
             Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
             Event::HardBreak => self.push_line(Line::default()),
-            // `<br>` (frequent in models' table cells) — like HardBreak; other
-            // inline/block HTML is ignored (text between tags arrives as
-            // `Text`).
-            Event::InlineHtml(html) | Event::Html(html) if is_br(&html) => {
+            // A block of raw HTML: collect it verbatim, and let
+            // `end_html_block` extract its text. This arm comes **before**
+            // `is_br` on purpose — a `<br>` line inside a larger block belongs
+            // in the buffer, in order, not pushed out ahead of it.
+            Event::Html(html) if self.html.is_some() => {
+                if let Some(buf) = &mut self.html {
+                    buf.push_str(&html);
+                }
+            }
+            // `<br>` (frequent in models' table cells) — like HardBreak. Inline
+            // HTML needs nothing else: its inner text arrives as `Text`, which
+            // is exactly what block HTML does *not* do.
+            Event::InlineHtml(html) if is_br(&html) => {
                 if self.in_table_cell() {
                     self.push_span(Span::raw(" "));
                 } else {
@@ -183,6 +198,7 @@ impl Writer {
                 }
             }
             Tag::Image { dest_url, .. } => self.image = Some(dest_url.into_string()),
+            Tag::HtmlBlock => self.html = Some(String::new()),
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => {
                 if let Some(tb) = &mut self.table {
@@ -209,6 +225,7 @@ impl Writer {
             TagEnd::Heading(_) => self.needs_newline = true,
             TagEnd::BlockQuote(_) => self.end_blockquote(),
             TagEnd::CodeBlock => self.end_codeblock(),
+            TagEnd::HtmlBlock => self.end_html_block(),
             TagEnd::List(_) => self.end_list(),
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
                 self.inline_styles.pop();
@@ -522,6 +539,36 @@ impl Writer {
         }
     }
 
+    /// Closing a raw HTML block: show its **text**.
+    ///
+    /// Before this the block was dropped whole, so a pasted `<table>` — prose
+    /// and all — rendered as nothing at all (see [`super::html`] for the
+    /// measurement and for why text, rather than the markup or a rebuilt
+    /// table). Laid out like a paragraph: logical lines, wrapped later by the
+    /// feed.
+    pub(super) fn end_html_block(&mut self) {
+        let Some(raw) = self.html.take() else { return };
+        let lines = html_block_to_lines(&raw);
+        if lines.is_empty() {
+            // A block that is only a forced break (`<br>` on its own line) kept
+            // its blank line before this change, and keeps it now.
+            if is_break_only(&raw) {
+                self.push_line(Line::default());
+                self.needs_newline = false;
+            }
+            return;
+        }
+        if self.needs_newline {
+            self.push_line(Line::default());
+        }
+        let style = self.current_style();
+        for text in lines {
+            self.push_line(Line::default());
+            self.push_span(Span::styled(text, style));
+        }
+        self.needs_newline = true;
+    }
+
     pub(super) fn start_table(&mut self, alignments: Vec<Alignment>) {
         if self.needs_newline {
             self.push_line(Line::default());
@@ -664,6 +711,77 @@ pub(super) fn heading_number(level: HeadingLevel) -> u8 {
 mod tests {
     use super::super::testkit::*;
     use super::*;
+
+    /// End to end through the renderer: the defect this fixes is that the
+    /// *whole block* vanished, which only shows up past `Event::Html`.
+    #[test]
+    fn html_block_prose_reaches_the_render() {
+        let collected = rendered_text(
+            "before\n\n<table>\n<tr><td>первая ячейка</td><td>вторая</td></tr>\n\
+             <tr><td>вторая строка</td></tr>\n</table>\n\nafter",
+        );
+        assert!(collected.contains("первая ячейка вторая"), "{collected:?}");
+        assert!(collected.contains("вторая строка"), "{collected:?}");
+        // The surrounding markdown is untouched and still separated.
+        assert!(collected.contains("before"));
+        assert!(collected.contains("after"));
+    }
+
+    /// The regression that guards the *other* half: inline HTML always worked,
+    /// because its inner text arrives as `Text`. Buffering block HTML must not
+    /// disturb it.
+    #[test]
+    fn inline_html_still_renders_its_text() {
+        let collected = rendered_text("абзац с <strong>жирным</strong> словом");
+        assert!(collected.contains("абзац с жирным словом"), "{collected:?}");
+    }
+
+    /// A standalone `<br>` is an HTML *block*, so it now goes through the
+    /// buffer — and must still produce the blank line it always did.
+    #[test]
+    fn a_lone_br_block_still_breaks_the_line() {
+        let collected = rendered_text("раз\n\n<br>\n\nдва");
+        assert!(collected.contains("раз"));
+        assert!(collected.contains("два"));
+        // A `<br>` in a table cell is inline and stays a space.
+        let cell = rendered_text("| a | b |\n|---|---|\n| one<br>two | x |");
+        assert!(cell.contains("one two"), "{cell:?}");
+    }
+
+    /// Script and style content must not leak into the feed as prose — the one
+    /// way "strip the tags" could be worse than the bug.
+    #[test]
+    fn html_block_does_not_leak_css_or_scripts() {
+        let collected =
+            rendered_text("<div>\n<style>.x { color: red; }</style>\nвидимый текст\n</div>");
+        assert!(collected.contains("видимый текст"), "{collected:?}");
+        assert!(!collected.contains("color"), "{collected:?}");
+    }
+
+    /// A long HTML block behaves like a **paragraph**, not like a table: the
+    /// writer leaves it as one logical line and the feed wraps it, which is
+    /// what `max_line_width` shows (a table would have been laid out to fit).
+    /// The invariant that matters here is that no span carries a raw newline —
+    /// the source is full of them, and one surviving would break the feed's
+    /// row math.
+    #[test]
+    fn html_block_is_paragraph_like_and_free_of_raw_newlines() {
+        let long = format!("<div>{}</div>", "слово ".repeat(60));
+        let plain = "слово ".repeat(60);
+        assert!(
+            max_line_width(&long, 24) > 24 && max_line_width(&plain, 24) > 24,
+            "the writer does not wrap paragraphs — the feed does"
+        );
+        for line in render(&long, 24, &Palette::default()).lines {
+            for span in line.spans {
+                assert!(
+                    !span.content.contains('\n'),
+                    "a raw newline survived into a span: {:?}",
+                    span.content
+                );
+            }
+        }
+    }
 
     #[test]
     fn render_produces_owned_text() {

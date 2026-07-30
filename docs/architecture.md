@@ -383,6 +383,10 @@ src/
    │  ├─ code.rs           code block highlighting (syntect: syntax + theme from the palette)
    │  ├─ table.rs          TableBuilder + render_table (table layout/rendering)
    │  ├─ latex.rs          LaTeX→unicode: delimiter normalization + command converter
+   │  ├─ html.rs           text of raw HTML blocks (pulldown gives them as opaque chunks
+   │  │                    with no Text events, so they used to render as nothing):
+   │  │                    tags stripped, script/style dropped, entities decoded (§11.4)
+   │  ├─ mermaid.rs        ```mermaid → text graphics, whitelist + hard fallback to source
    │  └─ speak.rs          speakable_text: TTS-ready text (code/mermaid/tables/
    │                       display-math → a spoken-aside note; §11.9)
    ├─ mcp.rs               minimal MCP client (stdio, tools-only, 2025-11-25 revision):
