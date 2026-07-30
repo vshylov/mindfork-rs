@@ -712,6 +712,77 @@ mod tests {
     use super::super::testkit::*;
     use super::*;
 
+    /// End to end through the renderer: the defect this fixes is that the
+    /// *whole block* vanished, which only shows up past `Event::Html`.
+    #[test]
+    fn html_block_prose_reaches_the_render() {
+        let collected = rendered_text(
+            "before\n\n<table>\n<tr><td>первая ячейка</td><td>вторая</td></tr>\n\
+             <tr><td>вторая строка</td></tr>\n</table>\n\nafter",
+        );
+        assert!(collected.contains("первая ячейка вторая"), "{collected:?}");
+        assert!(collected.contains("вторая строка"), "{collected:?}");
+        // The surrounding markdown is untouched and still separated.
+        assert!(collected.contains("before"));
+        assert!(collected.contains("after"));
+    }
+
+    /// The regression that guards the *other* half: inline HTML always worked,
+    /// because its inner text arrives as `Text`. Buffering block HTML must not
+    /// disturb it.
+    #[test]
+    fn inline_html_still_renders_its_text() {
+        let collected = rendered_text("абзац с <strong>жирным</strong> словом");
+        assert!(collected.contains("абзац с жирным словом"), "{collected:?}");
+    }
+
+    /// A standalone `<br>` is an HTML *block*, so it now goes through the
+    /// buffer — and must still produce the blank line it always did.
+    #[test]
+    fn a_lone_br_block_still_breaks_the_line() {
+        let collected = rendered_text("раз\n\n<br>\n\nдва");
+        assert!(collected.contains("раз"));
+        assert!(collected.contains("два"));
+        // A `<br>` in a table cell is inline and stays a space.
+        let cell = rendered_text("| a | b |\n|---|---|\n| one<br>two | x |");
+        assert!(cell.contains("one two"), "{cell:?}");
+    }
+
+    /// Script and style content must not leak into the feed as prose — the one
+    /// way "strip the tags" could be worse than the bug.
+    #[test]
+    fn html_block_does_not_leak_css_or_scripts() {
+        let collected =
+            rendered_text("<div>\n<style>.x { color: red; }</style>\nвидимый текст\n</div>");
+        assert!(collected.contains("видимый текст"), "{collected:?}");
+        assert!(!collected.contains("color"), "{collected:?}");
+    }
+
+    /// A long HTML block behaves like a **paragraph**, not like a table: the
+    /// writer leaves it as one logical line and the feed wraps it, which is
+    /// what `max_line_width` shows (a table would have been laid out to fit).
+    /// The invariant that matters here is that no span carries a raw newline —
+    /// the source is full of them, and one surviving would break the feed's
+    /// row math.
+    #[test]
+    fn html_block_is_paragraph_like_and_free_of_raw_newlines() {
+        let long = format!("<div>{}</div>", "слово ".repeat(60));
+        let plain = "слово ".repeat(60);
+        assert!(
+            max_line_width(&long, 24) > 24 && max_line_width(&plain, 24) > 24,
+            "the writer does not wrap paragraphs — the feed does"
+        );
+        for line in render(&long, 24, &Palette::default()).lines {
+            for span in line.spans {
+                assert!(
+                    !span.content.contains('\n'),
+                    "a raw newline survived into a span: {:?}",
+                    span.content
+                );
+            }
+        }
+    }
+
     #[test]
     fn render_produces_owned_text() {
         let text = render("# Заголовок\n\nабзац с `кодом`.", 80, &Palette::default());
