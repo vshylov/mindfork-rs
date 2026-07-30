@@ -124,8 +124,12 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1647 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1657 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
+recent change — **database compaction on backup/restore** (`VACUUM`: the archive
+carries a compacted copy of `data.db` instead of the live file, sidecars folded
+in; a restore compacts what it unpacked — including archives from older
+versions), verified against the real 17 MB dev database; before that — the most
 recent track — **full-text search over chat content**, now **complete**
 ([research](docs/research/chat-content-search.md),
 [stage 2 plan](docs/history/chat-search-stage2.md)) — `Ctrl+F` in the chat list
@@ -9981,6 +9985,75 @@ debounce was done as a separate PR, see below).
   `mcp__fs__read_text_file`). The full set is the right scope: the tool-invocation
   path sits on **every** turn, and MCP tools are now all marked dangerous, so the
   default-off path had to be shown to leave them untouched.
+
+### Post-M9: database compaction on backup and restore (done)
+
+- **`data.db` never shrinks on its own.** Deleted notes, `/rag remove`d chunks
+  and an attachment index dropped with its chat all leave free pages that SQLite
+  keeps in the file. So a backup was archiving the holes as well as the data, and
+  a restore laid them back down. Now `mindfork backup` packs a **`VACUUM INTO`
+  copy** of the database instead of the live file, and `mindfork restore`
+  compacts what it unpacked — the second half matters because an archive made
+  before this existed (or by another tool) is fragmented, and it is also what
+  folds in a `-wal` an older archive may carry. Branch
+  `feat/backup-db-compaction`. A simple task by AGENTS.md §1 (no cross-layer
+  contract, no new dependency), so no design doc — but two things had to be
+  measured rather than assumed, below.
+- **The choice was `VACUUM INTO`, not an in-place `VACUUM` before copying.** The
+  source is only read, so a backup cannot damage what it is backing up; the
+  result is a single self-contained file, which is why the `-wal`/`-shm` entries
+  are dropped from the archive when it succeeds (their content is folded in)
+  rather than packed next to a copy they no longer describe. Restore is the one
+  place an in-place `VACUUM` is right: the file is already ours, and rewriting it
+  is the whole point.
+- **Both paths are best effort, and that is the design, not a shortcut.** A
+  `data.db` that cannot be read as a database is packed raw (sidecars included)
+  and left alone on restore. A backup that *happens* for a corrupt database is
+  worth more than a compact one, and the fallback is exactly the pre-change
+  behaviour. Failures are logged (`tracing`), not surfaced — the CLI's own output
+  is unchanged.
+- **Measured hazard #1 — opening a database is not free.** The fallback test
+  failed by finding that a stale `data.db-wal` had *disappeared* from the data
+  root: SQLite deletes it next to a file it reads as **zero-page**, and that is a
+  VFS-level delete which `SQLITE_OPEN_READ_ONLY` does **not** prevent. A separate
+  probe showed a read-**write** open removes it for a valid database too (WAL
+  recovery + checkpoint on close). A backup silently mutating the data root is
+  not acceptable, so a non-database is now refused **by its header before being
+  opened at all**, and a real one is opened read-only. Both guards are
+  mutation-tested: dropping the header check fails the "empty" case, dropping
+  read-only fails the "a real database" case.
+- **Measured hazard #2 — `vec0` is addressed by rowid.** `rag_vectors` /
+  `attachment_vectors` join their neighbours by `rowid`, so a renumbering would
+  leave search returning the *wrong text* — silent, and invisible to any size
+  assertion. `VACUUM` preserves `user_version` and explicit `INTEGER PRIMARY KEY`
+  rowids, which is what makes this safe; `vacuum_into_preserves_the_vector_index`
+  pins it by searching the compacted copy rather than by trusting the
+  documentation.
+- **Consequence worth knowing**: a genuinely hot WAL cannot be recovered
+  read-only, so compaction is skipped and `data.db`+`-wal`+`-shm` are packed
+  together — which is the consistent thing to do anyway. In practice the app
+  never enables WAL mode, so this is a corner.
+- **Tests**: `db/mod.rs::compact_tests` (the vector index survives; the schema
+  version survives; a stale scratch destination is overwritten; in-place
+  compaction reclaims pages and keeps the data; a non-database is refused; the
+  source directory is untouched across placeholder/empty/real inputs) and
+  `features/backup.rs` (a compacted database is packed **without** the sidecars
+  and is still searchable, with no scratch file left behind; the raw file is
+  packed byte-for-byte when it cannot be compacted; restore compacts a
+  legacy-style raw archive; restore leaves an unreadable database alone).
+  **1657 unit tests green** (+10), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **Verified against the real 17.2 MB dev `data.db`** — no live model needed
+  (nothing touches the engine, and the memory *content* paths are unchanged), but
+  a synthetic database cannot answer whether a real one with 1441 attachment
+  chunks and real `vec0` indexes survives. The real CLI was run on an isolated
+  copy: backup → the packed database has **freelist 3 → 0**, an **identical
+  content hash** over every table, `user_version` preserved, and the
+  `rag_documents`/`attachment_documents` rowid sets **matching** their `vec0`
+  shadow tables; then a hand-built "legacy" archive (raw, uncompacted database)
+  was restored into a fresh root and came back compacted with the same content
+  hash. The size gain there is small (40 KB) precisely because that database is
+  barely fragmented — the gain scales with how much has been deleted.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

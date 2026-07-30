@@ -169,6 +169,13 @@ the file tools' "sandbox" directory (`tools.fs_root`) — **only if** it's insid
 data directory. `backups/`, `logs/`, the disposable `cache.db` (rebuilt after a
 restore, §2), and the defaults files `defaults.json`/`location.json` are excluded.
 
+**The database is compacted** on both commands. `data.db` keeps hold of the space
+freed by deleted notes, `/rag remove`, and chats whose attachment index went away,
+so a backup packs a compacted copy of it (which also makes the archive smaller),
+and a restore compacts what it unpacked — including an archive made by an older
+version. If the file can't be read as a database it's copied as-is instead; the
+backup never modifies the data it's copying.
+
 **Restoration is transactional.** The archive is validated first; if the data
 directory already has something in it, it's automatically saved to `backups/` (a
 pre-restore copy), then the data is cleared and the given archive is unpacked. If

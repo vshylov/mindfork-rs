@@ -145,6 +145,95 @@ pub fn needs_step_migration(user_version: u32) -> bool {
     DB_STEPS.iter().any(|s| s.to > user_version.max(1))
 }
 
+// ---------- compaction (VACUUM) ----------
+//
+// A long-lived `data.db` accumulates free pages — deleted notes, `/rag remove`d
+// chunks, an attachment index dropped with its chat — and SQLite never returns
+// them to the file system on its own. Backup and restore compact it (spec
+// §12.3): the archive carries a compacted copy, and a restore compacts what it
+// unpacked (an archive made before this existed, or by another tool, is
+// fragmented).
+//
+// Both entry points work on a **file** and open a bare connection, deliberately
+// not going through [`Db::open`]: no migration is run, so compacting neither
+// writes a schema into someone else's database nor trips the downgrade guard.
+// The callers hold the single-instance lock, so the file is quiescent.
+//
+// `VACUUM` preserves `PRAGMA user_version` and the ROWIDs of tables with an
+// explicit `INTEGER PRIMARY KEY` — which is what keeps the `vec0` indexes
+// joinable (`rag_vectors.rowid = rag_documents.rowid`). That is a load-bearing
+// property rather than an incidental one, so it is pinned by
+// `vacuum_into_preserves_the_vector_index`.
+
+/// Writes a compacted copy of the database at `src` into a **new** file `dest`
+/// (`VACUUM INTO`). The copy is a single self-contained file — a WAL, if there
+/// is one, is folded in — so it needs no `-wal`/`-shm` sidecars.
+///
+/// The source is left untouched, which is load-bearing rather than tidiness —
+/// this runs on live user data during a backup, and **a backup must not modify
+/// what it is backing up**. Two measured hazards are closed for it: SQLite
+/// deletes a stale `data.db-wal` next to a file it reads as zero-page (a
+/// VFS-level delete that read-only flags do not prevent), hence the header
+/// check below; and a read-write open tidies up the directory, hence the
+/// read-only open. The price is that a genuinely hot WAL cannot be recovered
+/// read-only and this fails instead — the caller then packs `data.db` together
+/// with its sidecars, which is the consistent thing to do anyway.
+pub fn vacuum_into(src: &std::path::Path, dest: &std::path::Path) -> Result<()> {
+    use rusqlite::OpenFlags;
+
+    register_sqlite_vec();
+    if !is_sqlite_file(src) {
+        bail!("{} is not a SQLite database", src.display());
+    }
+    let dest_str = dest
+        .to_str()
+        .with_context(|| format!("non-UTF-8 destination path {}", dest.display()))?;
+    // `VACUUM INTO` refuses to write into a file that already exists.
+    if dest.exists() {
+        std::fs::remove_file(dest)
+            .with_context(|| format!("removing a stale {}", dest.display()))?;
+    }
+    let conn = Connection::open_with_flags(
+        src,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("opening {} read-only", src.display()))?;
+    // The file name is an ordinary SQL expression, so it binds as a parameter.
+    conn.execute("VACUUM INTO ?1", [dest_str])
+        .with_context(|| format!("compacting {} into {}", src.display(), dest.display()))?;
+    Ok(())
+}
+
+/// Compacts the database file in place (`VACUUM`). Transactional: on failure
+/// the file is left exactly as it was. Refuses a file that isn't a database
+/// rather than opening it (see [`vacuum_into`] on why opening is not free).
+pub fn vacuum(path: &std::path::Path) -> Result<()> {
+    register_sqlite_vec();
+    if !is_sqlite_file(path) {
+        bail!("{} is not a SQLite database", path.display());
+    }
+    let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+    conn.execute_batch("VACUUM")
+        .with_context(|| format!("compacting {}", path.display()))?;
+    Ok(())
+}
+
+/// Whether the file starts with the SQLite header magic — i.e. whether handing
+/// it to SQLite is safe (see [`vacuum_into`]). An empty file is a valid empty
+/// database to SQLite, but deliberately reads as `false` here: it is one of the
+/// zero-page cases that provoke the sidecar delete, and there is nothing in it
+/// to compact anyway.
+fn is_sqlite_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+
+    const MAGIC: &[u8; 16] = b"SQLite format 3\0";
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 16];
+    f.read_exact(&mut head).is_ok() && &head == MAGIC
+}
+
 /// The idempotent DB schema (additive; see [`migrate`]).
 fn baseline_ddl(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -571,5 +660,160 @@ mod migrate_tests {
         assert!(res.is_err());
         assert_eq!(read_user_version(&conn).unwrap(), 2);
         assert!(!table_exists(&conn, "t_bad"));
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+    use crate::entities::rag::RagDocument;
+
+    /// A database with real content **and** free pages: rows are inserted and
+    /// some of them deleted, which is what leaves pages behind for compaction
+    /// to reclaim. Returns the profile whose two surviving chunks must still be
+    /// searchable afterwards.
+    fn fragmented_db(path: &std::path::Path) -> Uuid {
+        let profile = Uuid::new_v4();
+        let db = Db::open(path).unwrap();
+        for i in 0..200 {
+            let text = format!("scratch {i} {}", "x".repeat(500));
+            db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
+                .unwrap();
+        }
+        db.rag_insert(&RagDocument::new(
+            profile,
+            "keep",
+            "the kept chunk",
+            vec![1.0, 0.0],
+        ))
+        .unwrap();
+        db.rag_insert(&RagDocument::new(
+            profile,
+            "keep",
+            "another kept",
+            vec![0.9, 0.1],
+        ))
+        .unwrap();
+        db.rag_delete_by_source(profile, "scratch").unwrap();
+        profile
+    }
+
+    fn freelist(path: &std::path::Path) -> i64 {
+        let conn = Connection::open(path).unwrap();
+        conn.pragma_query_value(None, "freelist_count", |r| r.get(0))
+            .unwrap()
+    }
+
+    fn len(path: &std::path::Path) -> u64 {
+        std::fs::metadata(path).unwrap().len()
+    }
+
+    #[test]
+    fn vacuum_into_preserves_the_vector_index() {
+        // The load-bearing property: `rag_vectors` is a `vec0` virtual table
+        // joined to `rag_documents` by rowid. If VACUUM renumbered either side,
+        // search would silently return the wrong text (or nothing) — a failure
+        // no size assertion would notice.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        let profile = fragmented_db(&src);
+        let dest = dir.path().join("compact.db");
+
+        vacuum_into(&src, &dest).unwrap();
+
+        assert!(freelist(&src) > 0, "the source keeps its free pages");
+        assert_eq!(freelist(&dest), 0, "the copy has none");
+        assert!(len(&dest) < len(&src), "and is therefore smaller");
+
+        let copy = Db::open(&dest).unwrap();
+        let hits = copy.rag_search(profile, &[1.0, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 2, "both surviving chunks are still indexed");
+        assert_eq!(hits[0].chunk_text, "the kept chunk");
+        assert_eq!(hits[0].source, "keep");
+        assert_eq!(hits[1].chunk_text, "another kept");
+    }
+
+    #[test]
+    fn vacuum_into_preserves_the_schema_version() {
+        // A compacted copy must still be readable by the same app: a lost
+        // `user_version` would read as 0 and re-stamp the baseline.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        Db::open(&src).unwrap();
+        let dest = dir.path().join("compact.db");
+        vacuum_into(&src, &dest).unwrap();
+        assert_eq!(peek_user_version(&dest).unwrap(), DB_SCHEMA);
+    }
+
+    #[test]
+    fn vacuum_into_overwrites_a_stale_destination() {
+        // `VACUUM INTO` itself refuses an existing file; a leftover scratch file
+        // from a crashed run must not break the next backup.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        Db::open(&src).unwrap();
+        let dest = dir.path().join("compact.db");
+        std::fs::write(&dest, b"leftovers").unwrap();
+        vacuum_into(&src, &dest).unwrap();
+        assert_eq!(peek_user_version(&dest).unwrap(), DB_SCHEMA);
+    }
+
+    #[test]
+    fn vacuum_reclaims_free_pages_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.db");
+        let profile = fragmented_db(&path);
+        let before = len(&path);
+        assert!(freelist(&path) > 0);
+
+        vacuum(&path).unwrap();
+
+        assert_eq!(freelist(&path), 0);
+        assert!(len(&path) < before);
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.rag_search(profile, &[1.0, 0.0], 5).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn vacuum_into_does_not_touch_the_source_directory() {
+        // Measured, not assumed: SQLite deletes a stale `data.db-wal` next to a
+        // file it reads as zero-page, and a read-write open tidies the directory
+        // in general. Backup calls this on live user data, so "the source is
+        // only read" is a correctness requirement — this test fails if either
+        // guard is relaxed.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.db");
+        fragmented_db(&real);
+        let valid = std::fs::read(&real).unwrap();
+
+        for (label, content) in [
+            ("placeholder", b"SQLITE".to_vec()),
+            ("empty", Vec::new()),
+            ("a real database", valid),
+        ] {
+            let case = tempfile::tempdir().unwrap();
+            let src = case.path().join("data.db");
+            let wal = case.path().join("data.db-wal");
+            std::fs::write(&src, &content).unwrap();
+            std::fs::write(&wal, b"stale wal").unwrap();
+
+            let _ = vacuum_into(&src, &case.path().join("out.db"));
+
+            assert!(src.is_file(), "{label}: the source must survive");
+            assert!(wal.is_file(), "{label}: and so must its sidecar");
+            assert_eq!(std::fs::read(&wal).unwrap(), b"stale wal", "{label}");
+            assert_eq!(std::fs::read(&src).unwrap(), content, "{label}");
+        }
+    }
+
+    #[test]
+    fn compacting_a_non_database_fails() {
+        // This is what the backup fallback rests on: a file that isn't SQLite
+        // (or is corrupt) must report an error rather than produce a bogus copy.
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("data.db");
+        std::fs::write(&junk, b"definitely not a database").unwrap();
+        assert!(vacuum_into(&junk, &dir.path().join("out.db")).is_err());
+        assert!(vacuum(&junk).is_err());
     }
 }

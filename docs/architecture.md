@@ -1171,6 +1171,21 @@ migration); the actual DB migration happens later, in `Db::open`. The DB
 isn't open yet (quiescent) at backup time → its files (`data.db`+`-wal`+
 `-shm`) are consistent in the shared zip **without** `rusqlite::backup`.
 
+**Compaction** (`db::vacuum_into` / `db::vacuum`, used by `features/backup.rs`
+on both the backup and restore paths — spec §12.3). Both work on a *file* with
+a bare connection, deliberately not through `Db::open`: no migration runs, so
+compacting neither writes a schema into someone else's database nor trips the
+downgrade guard. Two properties are load-bearing and pinned by tests rather
+than assumed. **`VACUUM` preserves `user_version` and explicit
+`INTEGER PRIMARY KEY` rowids** — which is what keeps the `vec0` indexes
+joinable (`rag_vectors.rowid = rag_documents.rowid`); renumbering would make
+search silently return the wrong text. And **the backup must not modify the
+source**: SQLite deletes a stale `data.db-wal` next to a file it reads as
+zero-page (a VFS-level delete that read-only flags don't prevent), so a
+non-database is refused by its header *before* being opened, and a real one is
+opened read-only. Compaction is best effort throughout — a failure falls back
+to packing/leaving the raw files.
+
 ### Three-tier sampling (`entities/sampling.rs`)
 
 `resolve` resolves priority **at request time** (not as a snapshot at
@@ -2130,7 +2145,10 @@ Principles:
   dictionaries/data.db/profiles/settings/personal + `*.bak` + `fs_root` if
   it's inside the root); restore is transactional (validation → a
   pre-restore copy in `backups/` → cleanup → extraction → rollback on
-  failure).
+  failure). `data.db` is **compacted** on both paths (`VACUUM`, see the
+  storage section above): the archive carries a compacted copy instead of
+  the live file (sidecars folded in), and a restore compacts what it
+  unpacked; best effort, and the backup never modifies the source.
 - **Dependencies** (see [Cargo.toml](../Cargo.toml)): `ratatui` 0.30 +
   `crossterm`, `tokio`, `reqwest` (rustls), `rusqlite` (bundled) +
   `sqlite-vec`, `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`,
