@@ -13,6 +13,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Changed
+
+- **`mindfork backup` and `mindfork restore` now compact the database.** `data.db`
+  holds on to the space freed by deleted notes, `/rag remove` and chats whose
+  attachment index went away — a backup now packs a compacted copy of it (a
+  smaller archive), and a restore compacts what it unpacked, including archives
+  made by older versions. A file that can't be read as a database is copied
+  as-is, so an unreadable one still gets backed up; the backup never modifies
+  the data it is copying.
+
 ### Added
 
 - **Ask before a tool does something outside the app.** A new switch in settings

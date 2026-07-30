@@ -4,7 +4,7 @@
 //! and ends the process (see `main.rs`). Archive contents (paths in the archive
 //! are relative to the data root):
 //! - files `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
-//!   if present), `personal_dictionary.txt`;
+//!   if present — see the compaction note below), `personal_dictionary.txt`;
 //! - directories `chats/`, `dictionaries/`, and `locales/` (recursively — their
 //!   `*.bak` files are pulled in too; `locales/` — user overrides of the
 //!   scaffold/UI text);
@@ -17,6 +17,15 @@
 //! `manifest.json` (schema versions + app version) is written into the archive —
 //! metadata for warning on restoring a backup made by a newer version; it is
 //! **not** extracted into the root. See [`BackupManifest`].
+//!
+//! **The database is compacted** on both paths (spec §12.3): a backup packs a
+//! `VACUUM INTO` copy of `data.db` instead of the live file (free pages left by
+//! deleted notes/RAG chunks are dropped, and the `-wal`/`-shm` sidecars are
+//! folded in, so they aren't packed), and a restore compacts what it unpacked —
+//! which is what an archive made before this existed, or by another tool, needs.
+//! Both are **best effort**: if the file can't be compacted (corrupt, or not a
+//! database at all) the raw file is packed / left as unpacked, because a backup
+//! that happens is worth more than a compact one. Details — [`db::vacuum_into`].
 //!
 //! **Restore is transactional.** The archive is validated first (before any
 //! destructive action). If the root already has data, it is automatically
@@ -37,6 +46,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
+use crate::shared::storage::db;
 use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
 
 /// Manifest file name inside the archive (schema-version metadata; not
@@ -107,14 +117,13 @@ pub fn read_manifest(archive: &Path) -> Result<Option<BackupManifest>> {
 }
 
 /// Top-level files included in the backup (missing ones are skipped).
-const TOP_FILES: &[&str] = &[
-    "settings.json",
-    "profiles.json",
-    "data.db",
-    "data.db-wal",
-    "data.db-shm",
-    "personal_dictionary.txt",
-];
+const TOP_FILES: &[&str] = &["settings.json", "profiles.json", "personal_dictionary.txt"];
+
+/// The database and its sidecars. Listed apart from [`TOP_FILES`] because they
+/// are packed as a **single compacted copy** when `VACUUM INTO` succeeds (which
+/// folds the sidecars in) and raw only as a fallback — see [`compacted_db`].
+/// Clearing on restore always covers all three.
+const DB_FILES: &[&str] = &["data.db", "data.db-wal", "data.db-shm"];
 
 /// Directories included in the backup whole (recursively).
 const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales"];
@@ -159,11 +168,15 @@ pub fn create_backup(
     fs_root: Option<&Path>,
     loc: &Locale,
 ) -> Result<PathBuf> {
-    let entries = gather_entries(paths, fs_root, loc)?;
     let out_path = match output {
         Some(p) => p,
         None => default_backup_path(paths, "mindfork-backup"),
     };
+    // A compacted copy is packed in place of the live database (see the module
+    // doc); `None` — there is none, or it couldn't be compacted, and the raw
+    // files go in instead. The scratch file lives until the archive is written.
+    let compact = compacted_db(paths, &out_path);
+    let entries = gather_entries(paths, fs_root, compact.as_ref().map(TempDb::path), loc)?;
     write_zip(&out_path, &entries, level, loc).with_context(|| {
         loc.tf(
             "backup.ctx.create_archive",
@@ -215,7 +228,15 @@ pub fn restore_backup(
     })();
 
     match attempt {
-        Ok(()) => Ok(RestoreOutcome::Restored { pre_restore }),
+        Ok(()) => {
+            // 3a. Compact what was unpacked. Deliberately after the attempt
+            // rather than inside it: the data is already in place and correct,
+            // so a compaction failure must not turn a successful restore into a
+            // rollback (the rollback path unpacks a pre-restore copy, which
+            // `create_backup` already compacted).
+            compact_restored_db(paths);
+            Ok(RestoreOutcome::Restored { pre_restore })
+        }
         Err(restore_error) => match &pre_restore {
             // 4. Roll back to the just-created pre-restore copy.
             Some(backup) => {
@@ -245,11 +266,21 @@ pub fn restore_backup(
 }
 
 /// Gathers the list of files to pack (deduplicated by archive name).
-fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<Vec<Entry>> {
+///
+/// `compact_db` — a compacted copy of `data.db` to pack under that name instead
+/// of the live file; when it is `Some`, the `-wal`/`-shm` sidecars are skipped
+/// too (their content is already folded into the copy).
+fn gather_entries(
+    paths: &Paths,
+    fs_root: Option<&Path>,
+    compact_db: Option<&Path>,
+    loc: &Locale,
+) -> Result<Vec<Entry>> {
     let root = paths.root();
     let mut out: Vec<Entry> = Vec::new();
 
-    for f in TOP_FILES {
+    let raw_db: &[&str] = if compact_db.is_some() { &[] } else { DB_FILES };
+    for f in TOP_FILES.iter().chain(raw_db) {
         let abs = root.join(f);
         if abs.is_file() {
             out.push(Entry {
@@ -257,6 +288,12 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
                 name: (*f).to_string(),
             });
         }
+    }
+    if let Some(compact) = compact_db {
+        out.push(Entry {
+            abs: compact.to_path_buf(),
+            name: "data.db".to_string(),
+        });
     }
 
     // All top-level `*.bak` files (settings.bak, profiles.bak, etc.).
@@ -288,6 +325,87 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
     let mut seen = HashSet::new();
     out.retain(|e| seen.insert(e.name.clone()));
     Ok(out)
+}
+
+/// A compacted copy of `data.db`, packed in place of the live file and removed
+/// on drop — including after a failed `VACUUM INTO`, which can leave a partial
+/// file behind.
+struct TempDb(PathBuf);
+
+impl TempDb {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDb {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Compacts `data.db` into a scratch file next to the archive.
+///
+/// `None` — there is no database, or it could not be compacted (a corrupt file,
+/// or one that isn't SQLite at all); the caller then packs the raw files, which
+/// is the pre-compaction behaviour. Best effort by design: a backup must still
+/// happen for a database we can't read.
+fn compacted_db(paths: &Paths, out_path: &Path) -> Option<TempDb> {
+    let src = paths.data_db();
+    if !src.is_file() {
+        return None;
+    }
+    // Next to the archive: same volume as the destination, and normally
+    // `backups/` — never the data root, which restore clears.
+    let dir = out_path.parent().unwrap_or_else(|| Path::new("."));
+    if let Err(e) = fs::create_dir_all(dir) {
+        tracing::warn!(error = %e, dir = %dir.display(), "backup: no scratch directory for compaction");
+        return None;
+    }
+    // The process id keeps concurrent runs apart (the single-instance lock
+    // already makes that unlikely); `Drop` cleans it up either way.
+    let temp = TempDb(dir.join(format!("data.db.compact-{}.tmp", std::process::id())));
+    match db::vacuum_into(&src, temp.path()) {
+        Ok(()) => {
+            tracing::info!(
+                before = file_len(&src),
+                after = file_len(temp.path()),
+                "backup: database compacted"
+            );
+            Some(temp)
+        }
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "backup: packing the database uncompacted");
+            None
+        }
+    }
+}
+
+/// Compacts the restored database in place.
+///
+/// Best effort, and quiet on failure: the data is already unpacked and correct,
+/// so the worst case is that it stays as fragmented as the archive was.
+fn compact_restored_db(paths: &Paths) {
+    let path = paths.data_db();
+    if !path.is_file() {
+        return;
+    }
+    let before = file_len(&path);
+    match db::vacuum(&path) {
+        Ok(()) => tracing::info!(
+            before,
+            after = file_len(&path),
+            "restore: database compacted"
+        ),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "restore: database left uncompacted")
+        }
+    }
+}
+
+/// File size in bytes (0 when it can't be read — this only feeds a log line).
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
 /// Recursively collects the files of directory `abs` under name prefix `prefix` (with `/`).
@@ -461,7 +579,7 @@ fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
 fn clear_user_data(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<()> {
     let root = paths.root();
 
-    for f in TOP_FILES {
+    for f in TOP_FILES.iter().chain(DB_FILES) {
         remove_file_if_exists(&root.join(f), loc)?;
     }
     if let Ok(rd) = fs::read_dir(root) {
@@ -582,6 +700,41 @@ mod tests {
             b"{\"mode\":\"portable\",\"default_language\":\"ru\"}",
         )
         .unwrap();
+    }
+
+    /// Replaces the placeholder `data.db` with a real database carrying free
+    /// pages (rows inserted, most of them deleted) — what compaction reclaims.
+    /// Returns the profile whose one surviving chunk must stay searchable.
+    fn seed_fragmented_db(root: &Path) -> uuid::Uuid {
+        use crate::entities::rag::RagDocument;
+        use crate::shared::storage::db::Db;
+
+        let profile = uuid::Uuid::new_v4();
+        let path = root.join("data.db");
+        let _ = fs::remove_file(&path);
+        let db = Db::open(&path).unwrap();
+        for i in 0..200 {
+            let text = format!("scratch {i} {}", "x".repeat(500));
+            db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
+                .unwrap();
+        }
+        db.rag_insert(&RagDocument::new(
+            profile,
+            "keep",
+            "the kept chunk",
+            vec![1.0, 0.0],
+        ))
+        .unwrap();
+        db.rag_delete_by_source(profile, "scratch").unwrap();
+        profile
+    }
+
+    /// Unpacks one entry of the archive (for inspecting the packed database).
+    fn extract_entry(archive: &Path, name: &str, dest: &Path) {
+        let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        let mut entry = zip.by_name(name).unwrap();
+        let mut out = File::create(dest).unwrap();
+        io::copy(&mut entry, &mut out).unwrap();
     }
 
     fn archive_names(archive: &Path) -> Vec<String> {
@@ -844,6 +997,124 @@ mod tests {
             zip.finish().unwrap();
         }
         assert!(read_manifest(&archive).unwrap().is_none());
+    }
+
+    #[test]
+    fn backup_packs_a_compacted_database_without_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let profile = seed_fragmented_db(dir.path());
+        // A sidecar left over from a crash: its content is folded into the
+        // compacted copy, so it must not be packed alongside it.
+        fs::write(dir.path().join("data.db-wal"), b"stale wal").unwrap();
+        let live_len = fs::metadata(dir.path().join("data.db")).unwrap().len();
+
+        let paths = Paths::with_root(dir.path());
+        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+
+        let names = archive_names(&out);
+        assert!(names.contains(&"data.db".to_string()), "{names:?}");
+        assert!(!names.contains(&"data.db-wal".to_string()), "{names:?}");
+        assert!(!names.contains(&"data.db-shm".to_string()), "{names:?}");
+
+        // The packed database is compacted — and still usable, which is the
+        // half a size assertion alone would miss.
+        let packed = dir.path().join("unpacked.db");
+        extract_entry(&out, "data.db", &packed);
+        assert!(
+            fs::metadata(&packed).unwrap().len() < live_len,
+            "the packed copy should be smaller than the live file"
+        );
+        let db = crate::shared::storage::db::Db::open(&packed).unwrap();
+        let hits = db.rag_search(profile, &[1.0, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chunk_text, "the kept chunk");
+
+        // The scratch copy doesn't outlive the backup.
+        let leftovers: Vec<String> = fs::read_dir(paths.backups_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn backup_packs_the_raw_database_when_it_cannot_be_compacted() {
+        // `seed_data` leaves a placeholder that isn't a SQLite file at all. The
+        // fallback is the point: an unreadable database must still be backed up
+        // byte for byte, sidecars included.
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        fs::write(dir.path().join("data.db-wal"), b"wal bytes").unwrap();
+        let paths = Paths::with_root(dir.path());
+
+        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+
+        let names = archive_names(&out);
+        assert!(names.contains(&"data.db-wal".to_string()), "{names:?}");
+        let packed = dir.path().join("unpacked.db");
+        extract_entry(&out, "data.db", &packed);
+        assert_eq!(fs::read(&packed).unwrap(), b"SQLITE");
+    }
+
+    #[test]
+    fn restore_compacts_the_database() {
+        // An archive from before compaction existed (or made by another tool):
+        // a fragmented database packed raw. Restoring it must leave a compacted
+        // file on disk.
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let profile = seed_fragmented_db(src.path());
+        let fragmented = fs::read(src.path().join("data.db")).unwrap();
+
+        let archive = src.path().join("old.zip");
+        {
+            let mut zip = ZipWriter::new(File::create(&archive).unwrap());
+            let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zip.start_file("settings.json", opts).unwrap();
+            io::copy(&mut b"{}".as_slice(), &mut zip).unwrap();
+            zip.start_file("data.db", opts).unwrap();
+            io::copy(&mut fragmented.as_slice(), &mut zip).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+
+        let restored = dst.path().join("data.db");
+        assert!(
+            fs::metadata(&restored).unwrap().len() < fragmented.len() as u64,
+            "the restored database should be compacted"
+        );
+        let db = crate::shared::storage::db::Db::open(&restored).unwrap();
+        assert_eq!(db.rag_search(profile, &[1.0, 0.0], 5).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_leaves_an_uncompactable_database_alone() {
+        // Compaction is best effort: a corrupt/foreign `data.db` in the archive
+        // must be restored as-is, not turned into a failed restore.
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive = src.path().join("snap.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive.clone()),
+            0,
+            None,
+            ru(),
+        )
+        .unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+        assert_eq!(fs::read(dst.path().join("data.db")).unwrap(), b"SQLITE");
     }
 
     #[test]
