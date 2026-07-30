@@ -77,6 +77,14 @@ still comfortable, and the incremental path below means a rebuild is rare.
 These numbers are what make the design simple: at this scale we do not need to be
 clever.
 
+> **Build profile (added 2026-07-30).** The original run did not record which
+> profile it used, and that turned out to matter: re-measuring the parse gives
+> **36.5 ms in release** against **97.0 ms in debug** — so the 94 ms above, and
+> by inference the rest of this section, is the **debug** figure. That leaves
+> every conclusion here standing *a fortiori* (the shipped build is faster than
+> the budget the design was sized against), but it does not transfer to a
+> decision that hangs on the number itself — see §9, where it moved one.
+
 ---
 
 ## 2. Shape: a second database, `cache.db`
@@ -406,10 +414,47 @@ orchestration.
 
 ## 9. Open groundwork noted along the way
 
-- `cache.db` could also hold **chat-list summaries**, removing the 94 ms
+- `cache.db` could also hold **chat-list summaries**, removing the
   parse-everything cost at startup (and it grows linearly with the corpus).
-- Search hit → **jump to the message in the feed** is shared with the roadmap's
-  *In-feed text search*.
-- Highlighting matches inside the feed reuses `snippet()`/`highlight()` offsets
-  only loosely — the feed renders markdown, so highlight positions do not map
-  directly. Worth a look before promising it.
+  **Still open, but measured before building — and the measurement moved it
+  down the list; see below.**
+- ~~Search hit → **jump to the message in the feed**~~ — done, stage 2
+  ([chat-search-stage2.md](../history/chat-search-stage2.md)).
+- ~~Highlighting matches inside the feed~~ — done, as fork S3(b): matching runs
+  over what was **drawn**, not over source offsets, which sidesteps the mapping
+  problem entirely. Highlighting a match the renderer *transformed* is the part
+  that stays open ([in-feed-search.md](../history/in-feed-search.md)).
+
+### 9.1 Chat-list summaries: what the measurement found (2026-07-30)
+
+Probed the same way as §1 (throwaway probe, run, removed), same corpus, both
+build profiles. Two findings, and the second is the larger one.
+
+**The number was a third of what the item claimed.** Parsing every
+`chats/*.json` costs **36.5 ms in release** (97.0 ms debug — see the note in
+§1.3), against a `stat`-only walk of 0.4 ms. Resident cost of holding the
+result: **5.8 MB** of message text plus 0.9 MB of struct overhead, ≈ 7 MB. Of
+the 171 chats, 43 are hidden — parsed at bootstrap and immediately discarded.
+
+**And the item's title understates the work.** The startup parse does not serve
+the *list*: `Orchestrator.chats: Vec<Chat>` holds every visible chat's full
+history in memory, and the list is a projection of it (`emit_chat_list` maps
+`Chat::summary`). So "summaries in the cache" is really *make the orchestrator
+lazy* — metadata resident, bodies loaded on demand — and that is the field the
+"sole owner of `Chat`" invariant is built on, with ~20 call sites.
+
+Most of those sites take one chat by id and would not notice a load-on-demand.
+One is structural: `search.rs::group_hits` builds `message_order` for **every**
+chat carrying a hit (the cap is 200 hits, spread across chats), so laziness
+would turn a single search into N file parses — trading a startup cost for a
+per-search one. The clean way out is to store the message's **position in the
+chat** in the index: it is free at index time, `group_hits` and
+`first_match_in_chat` then need no chat body at all, and the search screen stops
+reading chat files entirely — which is what `shared/storage/cache/mod.rs`
+already states the cache is for.
+
+**Verdict: postponed, not rejected.** Both cost and payoff grow linearly, so at
+×10 (~1700 chats) this is ~365 ms and ~70 MB, which is where it starts to pay
+for a multi-stage track through the most concurrency-critical component.
+Revisit at **~1000 chats, or a release parse over ~300 ms** — recorded in
+[roadmap.md](../roadmap.md) §Chat and profile management.

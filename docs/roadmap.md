@@ -113,10 +113,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md](research/chat-content-search.md) and
   [chat-search-stage2.md](history/chat-search-stage2.md).
 - **`cache.db` for chat-list summaries** — the disposable cache introduced for
-  content search is a natural home for other cheap-to-recompute state. The chat
-  list is currently built by parsing every `chats/*.json` at startup (~94 ms, and
-  it grows linearly with the corpus); keeping summaries in the cache would remove
-  that parse. Same rules as the index: derived, safe to delete, rebuilt on demand.
+  content search is a natural home for other cheap-to-recompute state; the chat
+  list is currently built by parsing every `chats/*.json` at startup. **Measured
+  before building (2026-07-30), and the measurement postponed it.** The parse
+  costs **36.5 ms in release** and ≈ 7 MB resident on the dev corpus (171 chats,
+  1540 messages, 14 MB of JSON) — the 94 ms this entry used to quote is the
+  *debug* figure. And the title understates the work: the parse feeds
+  `Orchestrator.chats: Vec<Chat>`, which holds every chat's full history, so
+  removing it means making the orchestrator **lazy** — a multi-stage track
+  through the "sole owner of `Chat`" invariant, with one structural obstacle
+  (`search.rs::group_hits`) and a clean way past it (store the message's position
+  in the index). Cost and payoff both grow linearly: ×10 is ~365 ms and ~70 MB.
+  **Revisit at ~1000 chats, or a release parse over ~300 ms.** Numbers and scope:
+  [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
 - **Provider bridges** — document in install.md the "any OpenAI-compatible
