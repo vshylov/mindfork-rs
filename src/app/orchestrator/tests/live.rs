@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::EmbedRole;
 
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
@@ -1887,4 +1888,73 @@ async fn tts_speaks_chat_e2e_live() {
     }
     cmd_tx.send(AppCommand::Quit).unwrap();
     let _ = handle.await;
+}
+
+/// Dangerous-tool confirmation against a real model (spec §9.7).
+///
+/// The mocked tests prove the channel; this proves the half only a live model
+/// can: that a real model, told about `fs_write`, actually calls it — so the
+/// confirmation appears on the path users take, not just when a fixture forces
+/// the call.
+#[tokio::test]
+#[ignore]
+async fn tool_confirmation_e2e_live() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let mut config = AppConfig::default();
+    config.tools.fs_enabled = true;
+    config.tools.fs_root = Some(sandbox.path().display().to_string());
+    config.tools.confirm_dangerous = true;
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Используй инструмент fs_write, чтобы создать файл note.txt \
+             с содержимым ZARYA-5150. Только вызови инструмент."
+                .into(),
+        ))
+        .unwrap();
+
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ToolConfirmRequest { .. })
+    })
+    .await
+    .unwrap();
+    let (generation_id, call_id, name, arguments) = match ev {
+        AppEvent::ToolConfirmRequest {
+            generation_id,
+            call_id,
+            name,
+            arguments,
+        } => (generation_id, call_id, name, arguments),
+        _ => unreachable!(),
+    };
+    eprintln!("confirmation requested for {name}: {arguments}");
+    assert_eq!(name, "fs_write");
+
+    cmd_tx
+        .send(AppCommand::ConfirmTool {
+            generation_id,
+            call_id,
+            decision: ToolDecision::Allow,
+        })
+        .unwrap();
+
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let written = std::fs::read_to_string(sandbox.path().join("note.txt"))
+        .expect("the approved call did not write the file");
+    eprintln!("file written: {written:?}");
+    assert!(written.contains("ZARYA-5150"));
 }

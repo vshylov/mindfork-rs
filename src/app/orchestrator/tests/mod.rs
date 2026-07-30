@@ -395,6 +395,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 
 mod attachments;
 mod chats;
+mod confirm;
 mod generation;
 mod impersonation;
 mod live;

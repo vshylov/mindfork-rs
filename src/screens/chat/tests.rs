@@ -719,6 +719,174 @@ fn ctrl_r_and_e_emit_directly_without_confirm() {
     assert_eq!(s.confirm, None);
 }
 
+// ---------- the dangerous-tool confirmation popup (spec §9.7) ----------
+
+/// The ids the loop parked the call under. They must come back untouched — a
+/// reply landing on the wrong turn or the wrong call is what the orchestrator
+/// drops on the other side.
+const TOOL_CALL_ID: &str = "call-7";
+
+/// A screen with the dangerous-tool popup open, as [`ChatScreen::request_tool_confirm`]
+/// opens it. Deliberately **not** generating: the tests below pin the popup's own
+/// logic, while `tool_confirm_is_answerable_while_generating` pins the routing
+/// order that makes it usable at all.
+fn with_tool_confirm() -> (ChatScreen, Uuid) {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        r#"{"code":"print(1)"}"#.into(),
+    );
+    (s, id)
+}
+
+/// The intent the popup must emit for `decision`, carrying the ids back.
+fn confirmed(id: Uuid, decision: ToolDecision) -> Option<ChatIntent> {
+    Some(ChatIntent::ConfirmTool {
+        generation_id: id,
+        call_id: TOOL_CALL_ID.into(),
+        decision,
+    })
+}
+
+#[test]
+fn tool_confirm_enter_allows_the_call_and_closes_the_popup() {
+    let (mut s, id) = with_tool_confirm();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        confirmed(id, ToolDecision::Allow)
+    );
+    assert_eq!(s.tool_confirm, None);
+}
+
+#[test]
+fn tool_confirm_a_allows_the_tool_for_the_rest_of_the_turn() {
+    let (mut s, id) = with_tool_confirm();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+        confirmed(id, ToolDecision::AllowForTurn)
+    );
+    assert_eq!(s.tool_confirm, None);
+}
+
+/// Layout-independent, like every other letter shortcut: physical A is `ф` on a
+/// Russian layout (see shared::keys).
+#[test]
+fn tool_confirm_a_works_under_a_cyrillic_layout() {
+    let (mut s, id) = with_tool_confirm();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('ф'), KeyModifiers::NONE)),
+        confirmed(id, ToolDecision::AllowForTurn),
+        "ф (physical A) — allow for the turn"
+    );
+}
+
+/// Declining is **not** cancelling the turn: the loop carries on with the
+/// refusal, and a second `Esc` — now that the popup is gone — cancels as it
+/// always did.
+#[test]
+fn tool_confirm_esc_declines_without_cancelling_the_turn() {
+    let (mut s, id) = with_tool_confirm();
+    s.begin_generation(id);
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        confirmed(id, ToolDecision::Deny)
+    );
+    assert_eq!(s.tool_confirm, None);
+    // Only now does Esc mean "cancel".
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        Some(ChatIntent::Cancel)
+    );
+}
+
+#[test]
+fn tool_confirm_ignores_other_keys_and_stays_open() {
+    let (mut s, _) = with_tool_confirm();
+    for key in [
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    ] {
+        assert_eq!(s.handle_key(key), None, "{key:?} must be ignored");
+        assert!(s.tool_confirm.is_some(), "the popup stays open");
+    }
+    assert!(s.input.is_empty(), "and nothing is typed into the message");
+}
+
+#[test]
+fn ctrl_q_and_f10_break_through_the_tool_confirm_popup() {
+    let (mut s, _) = with_tool_confirm();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::Quit)
+    );
+    assert_eq!(s.tool_confirm, None);
+
+    let (mut s, _) = with_tool_confirm();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)),
+        Some(ChatIntent::Quit)
+    );
+    assert_eq!(s.tool_confirm, None);
+}
+
+/// The point of the feature: the popup is open **during** the turn — the loop is
+/// parked on it. Without the routing order in `handle_key` (the popup checked
+/// before the generation gate) `Enter` would be swallowed and `Esc` would cancel
+/// the turn instead of answering.
+#[test]
+fn tool_confirm_is_answerable_while_generating() {
+    let (mut s, id) = with_tool_confirm();
+    s.begin_generation(id);
+    assert!(s.generating);
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        confirmed(id, ToolDecision::Allow)
+    );
+    assert!(s.generating, "answering doesn't end the turn");
+}
+
+/// The call is formatted through `features::tools::present` — the same
+/// formatting the feed uses afterwards (fork F7) — so the user decides on
+/// readable code, not on a JSON blob.
+#[test]
+fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id);
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        r#"{"code": "print(1)\nprint(2)"}"#.into(),
+    );
+    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let dump = format!("{:?}", term.backend().buffer());
+
+    assert!(dump.contains("python_exec"), "the tool name: {dump}");
+    // The code arrives as lines, not as the raw arguments.
+    assert!(dump.contains("print(1)"), "{dump}");
+    assert!(dump.contains("print(2)"), "{dump}");
+    assert!(
+        !dump.contains("\\\"code\\\""),
+        "the raw JSON must not be shown: {dump}"
+    );
+    // The footer spells out all three answers.
+    for option in [
+        "Enter — выполнить",
+        "A — разрешить до конца хода",
+        "Esc — отклонить",
+    ] {
+        assert!(dump.contains(option), "missing the \"{option}\" option");
+    }
+}
+
 #[test]
 fn esc_opens_chat_list_else_cancels_generation() {
     let mut s = ChatScreen::new();
