@@ -123,8 +123,8 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-29, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1615 unit
+## Status (as of 2026-07-30, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1632 unit
 tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
 recent track — **full-text search over chat content**, now **complete**
 ([research](docs/research/chat-content-search.md),
@@ -9820,6 +9820,75 @@ debounce was done as a separate PR, see below).
 - **Still open**: highlighting a match the renderer transformed (needs
   `highlight_ranges` threaded through the renderer — stage 2's fork S3(c));
   `cache.db` holding chat-list summaries to remove the ~94 ms startup parse.
+
+### Post-M9: raw HTML blocks render their text (and S3(c) measured, then rejected) (done)
+
+- **Started as the deferred fork S3(c)** — highlight a match the renderer
+  transformed (docs/history/in-feed-search.md, stage 2 §1.4) — and the
+  measurement redirected it. Branch `docs/feed-highlight-transformed`.
+- **Measured exhaustively rather than by guessing queries**: for every message in
+  the dev corpus, every alphanumeric run of ≥3 characters in the *source* (what
+  the index can match) checked against the *rendered* output (what the feed can
+  highlight). Result: **88 of 186 805 words (0.047%)**, across **20 messages of
+  1213**. The words settle it — `rightarrow` (the LaTeX command name, not the `→`
+  actually on screen), `e0f2fe` (a hex colour in a mermaid `style` line), `graph
+  lr`, `500px`, `td`. Nobody searches for those, and the prose around them
+  highlights fine. So S3(c) — reworking `writer`/`latex`/`table`/`code` and the
+  mermaid path to carry source ranges — was **rejected, not deferred**, and
+  recorded as such in the plan (§5) and the roadmap. Along the way a hunch of mine
+  was checked and killed: a soft wrap does **not** break a match, because
+  `find_matches` matches each query token independently and a token never contains
+  whitespace.
+- **What the measurement found instead**: 68 of the 88 came from one message and a
+  *different* defect. Block-level raw HTML was dropped by the renderer — prose
+  included — so it was **invisible in the feed**, not merely unhighlightable.
+  Verified directly rather than inferred: `<table><tr><td>visible prose
+  here</td></tr></table>` renders to `""`, while inline `<strong>bold</strong>`
+  renders fine, because pulldown-cmark delivers inline HTML's inner text as `Text`
+  events and a block's as nothing at all. The old code comment ("text between tags
+  arrives as `Text`") was right for inline and wrong for blocks.
+- **The fix** (new `shared/markdown/html.rs`, the `latex.rs` precedent): the block
+  is accumulated whole — a tag can straddle two `Html` chunks — and converted once
+  at `TagEnd::HtmlBlock` by a small state machine. Tags stripped;
+  `<script>`/`<style>` **content dropped** (otherwise "strip the tags" would dump
+  CSS into the conversation — the one way the fix could be worse than the bug);
+  entities decoded, unknown ones left visible; whitespace collapsed; block elements
+  end the line and `<td>`/`<th>` separate words, so a row reads as one line;
+  `<img>` prints alt + URL **exactly as `Writer::end_image` does** for a markdown
+  image, so the same picture reads the same either way. Not the markup verbatim (a
+  30-row table would become a wall of tags) and not a rebuilt table (a far larger
+  feature that would still need this fallback). Not an HTML parser either — no tree
+  is built, so malformed markup degrades into text rather than an error.
+- **Not reusing `web::extract_readable`**, which does the same job for RAG and
+  `fetch_url`: it lives in `features`, which `shared` may not depend on (FSD), and
+  pulling `scraper` into the renderer to strip tags is heavy for the job.
+- **A pre-existing behaviour deliberately preserved**: a lone `<br>` is an HTML
+  *block*, so it now goes through the buffer — `is_break_only` keeps it producing
+  the blank line it always did. The buffering arm sits **before** `is_br` on
+  purpose: a `<br>` line inside a larger block belongs in the buffer, in order,
+  not pushed out ahead of it.
+- **A test of mine that was wrong, and was fixed rather than the code**: it
+  asserted HTML-block lines fit the panel width. The writer does not wrap
+  paragraphs — the feed does — so the assertion was inventing a promise. Replaced
+  with the invariant that actually matters: no span carries a raw newline (the
+  source is full of them, and one surviving would break the feed's row math).
+- **Correcting my own estimate**: I expected this to close 77% of the highlight
+  gap. Re-measured after the fix, it closes **26%** — 88 → **65** words. The 23
+  recovered are prose (`milestones`, `methodically`, `matters`); what remains from
+  that message is attribute names and values (`frameborder`, `background`,
+  `500px`), which the converter drops **by design** — they are markup, and showing
+  them would be the wrong fix.
+- **Verified on the real message**, not only on fixtures: the corpus's one
+  HTML-carrying message (1574 characters previously swallowed) now renders its
+  table as prose rows, decodes `&amp;` into "What & Why", prints the image as
+  "Clarity - With Specflow (clarity.svg)", and leaks no `<td`, `background-color`
+  or `500px`.
+- **1632 unit tests green** (+17), 69 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **A live run is not required** (AGENTS.md
+  §3): this is the markdown renderer — no engine, memory, tool or provider
+  protocol is touched. Docs: spec §11.4 (raw HTML) and §11.3.1 (the highlight
+  boundary, now with the measured number), architecture §3 (the module map, which
+  was also missing `mermaid.rs`), CHANGELOG, roadmap, and the plan's §5.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

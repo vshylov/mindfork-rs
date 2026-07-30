@@ -1236,7 +1236,13 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   tool cards, which the full-text index deliberately does not cover, so
   *highlighted* does not mean *this is what the index matched*; and it cannot find
   text the renderer reshaped (a LaTeX formula turned into unicode, a mermaid
-  diagram replacing its source) — the same boundary as the jump highlight.
+  diagram replacing its source) or deliberately does not show (HTML attribute
+  names and values, §11.4) — the same boundary as the jump highlight. **Measured**
+  on the real corpus rather than assumed: 65 of 186 805 searchable words (0.035%),
+  across 20 messages of 1213 — and they are LaTeX command names (`rightarrow`),
+  mermaid syntax and hex colours, and markup tokens, none of which anyone searches
+  for. That measurement is why threading source ranges through the renderer to
+  close the remainder was **rejected**, not deferred.
 - The search closes when the chat is re-activated (`Ctrl+E`, `Ctrl+R`, a rewrite
   round, a jump from the results screen all rebuild the feed and renumber it).
 
@@ -1263,6 +1269,18 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   off by default (a compact look, with a separator only under the header); enabling
   it gives a "grid" look). A code block's info string (` ```rust,no_run `)
   resolves the language from the first token; `---` stretches across the panel width.
+- **Raw HTML**: *inline* HTML (`<strong>x</strong>` inside a paragraph) has always
+  rendered its text, because pulldown-cmark delivers that text as ordinary `Text`
+  events. A **block** of raw HTML does not — it arrives as opaque chunks — and used
+  to be dropped whole, so a pasted `<table>` rendered as *nothing at all*, prose
+  included. Now its **text** is shown (`shared/markdown/html.rs`): tags stripped,
+  `<script>`/`<style>` content dropped (it is not prose), entities decoded,
+  whitespace collapsed, block elements ending the line and table cells separating
+  words, `<img>` printing alt + URL exactly like a markdown image. Deliberately not
+  the markup itself (a 30-row table would become a wall of tags) and not a
+  reconstructed table (a much larger feature that would still need this fallback);
+  attribute names and values are markup and stay off screen. Not an HTML parser —
+  no tree is built, so malformed markup degrades into text rather than an error.
 - **Mermaid diagrams** (` ```mermaid ` blocks) are rendered as text graphics
   (the `mermaid-text` crate ≥ 0.56.1 — our own upstream multi-byte fix,
   [research doc](docs/research/mermaid-ascii-rendering.md)) — the
