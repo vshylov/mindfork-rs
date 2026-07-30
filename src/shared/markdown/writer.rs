@@ -27,6 +27,11 @@ pub(super) struct Writer {
     code_highlighter: Option<HighlightLines<'static>>,
     /// Active table collection (`None` outside a table).
     table: Option<TableBuilder>,
+    /// Raw source of the HTML block being collected (`None` outside one).
+    /// Block-level HTML arrives as opaque `Html` chunks split by line, and a
+    /// tag can straddle two of them — so the block is accumulated whole and
+    /// converted once, at [`Writer::end_html_block`]. See [`super::html`].
+    html: Option<String>,
     /// Whether a blank separator is needed before the next block.
     needs_newline: bool,
     /// A list item was just opened (the marker line `1. `/`- ` is already
@@ -78,6 +83,7 @@ impl Writer {
             list_indices: Vec::new(),
             link: None,
             image: None,
+            html: None,
             code_highlighter: None,
             table: None,
             needs_newline: false,
@@ -125,10 +131,19 @@ impl Writer {
             // No line break inside a cell — continue with a space.
             Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
             Event::HardBreak => self.push_line(Line::default()),
-            // `<br>` (frequent in models' table cells) — like HardBreak; other
-            // inline/block HTML is ignored (text between tags arrives as
-            // `Text`).
-            Event::InlineHtml(html) | Event::Html(html) if is_br(&html) => {
+            // A block of raw HTML: collect it verbatim, and let
+            // `end_html_block` extract its text. This arm comes **before**
+            // `is_br` on purpose — a `<br>` line inside a larger block belongs
+            // in the buffer, in order, not pushed out ahead of it.
+            Event::Html(html) if self.html.is_some() => {
+                if let Some(buf) = &mut self.html {
+                    buf.push_str(&html);
+                }
+            }
+            // `<br>` (frequent in models' table cells) — like HardBreak. Inline
+            // HTML needs nothing else: its inner text arrives as `Text`, which
+            // is exactly what block HTML does *not* do.
+            Event::InlineHtml(html) if is_br(&html) => {
                 if self.in_table_cell() {
                     self.push_span(Span::raw(" "));
                 } else {
@@ -183,6 +198,7 @@ impl Writer {
                 }
             }
             Tag::Image { dest_url, .. } => self.image = Some(dest_url.into_string()),
+            Tag::HtmlBlock => self.html = Some(String::new()),
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => {
                 if let Some(tb) = &mut self.table {
@@ -209,6 +225,7 @@ impl Writer {
             TagEnd::Heading(_) => self.needs_newline = true,
             TagEnd::BlockQuote(_) => self.end_blockquote(),
             TagEnd::CodeBlock => self.end_codeblock(),
+            TagEnd::HtmlBlock => self.end_html_block(),
             TagEnd::List(_) => self.end_list(),
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
                 self.inline_styles.pop();
@@ -520,6 +537,36 @@ impl Writer {
             self.push_span(Span::styled(url, link_style(&self.palette)));
             self.push_span(Span::from(")"));
         }
+    }
+
+    /// Closing a raw HTML block: show its **text**.
+    ///
+    /// Before this the block was dropped whole, so a pasted `<table>` — prose
+    /// and all — rendered as nothing at all (see [`super::html`] for the
+    /// measurement and for why text, rather than the markup or a rebuilt
+    /// table). Laid out like a paragraph: logical lines, wrapped later by the
+    /// feed.
+    pub(super) fn end_html_block(&mut self) {
+        let Some(raw) = self.html.take() else { return };
+        let lines = html_block_to_lines(&raw);
+        if lines.is_empty() {
+            // A block that is only a forced break (`<br>` on its own line) kept
+            // its blank line before this change, and keeps it now.
+            if is_break_only(&raw) {
+                self.push_line(Line::default());
+                self.needs_newline = false;
+            }
+            return;
+        }
+        if self.needs_newline {
+            self.push_line(Line::default());
+        }
+        let style = self.current_style();
+        for text in lines {
+            self.push_line(Line::default());
+            self.push_span(Span::styled(text, style));
+        }
+        self.needs_newline = true;
     }
 
     pub(super) fn start_table(&mut self, alignments: Vec<Alignment>) {
