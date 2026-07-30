@@ -9968,11 +9968,19 @@ debounce was done as a separate PR, see below).
   never match — a render test written that way passed even when the popup showed
   raw JSON. Rewritten to join rows by hand. Worth remembering for any future
   buffer assertion carrying a quote.
-- **Live run — pending.** The smoke `tool_confirmation_e2e_live` is written but
-  has not been run: no `llama-server` was reachable at the time (`/health` on the
-  usual LAN and localhost addresses all failed). Per AGENTS.md §3 this work
-  touches tools and needs one before the PR is complete — either a local server
-  or the remote HF gate, which is billed and user-triggered.
+- **Live run — GO** (Gemma 4 31B q4_0 + bge-m3, external `llama-server`,
+  `--jinja`): `tool_confirmation_e2e_live` passed first time — the real model
+  reached for `fs_write` on its own, the confirmation arrived carrying the actual
+  arguments (`{"content":"ZARYA-5150","path":"note.txt"}`), `Allow` let it
+  through and the file was written. That is the half the mocked tests cannot
+  cover: that a real model calls the tool at all, so the confirmation appears on
+  the path users take rather than only when a fixture forces the call.
+- **Regression — clean**: all **25** orchestrator e2e live smokes green (577 s) —
+  memory/self-model/notes/graph/cross-organ links/RAG/attachments/control
+  tools/i18n/TTS — plus the MCP smoke (`mcp_filesystem_e2e_live`, 14 tools,
+  `mcp__fs__read_text_file`). The full set is the right scope: the tool-invocation
+  path sits on **every** turn, and MCP tools are now all marked dangerous, so the
+  default-off path had to be shown to leave them untouched.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
