@@ -42,7 +42,7 @@ impl ChatScreen {
     /// the intent), `Esc` cancels, other keys are ignored. Confirmation is
     /// suppressed while generation is running (the orchestrator gates the intent
     /// anyway).
-    /// Keys of the dangerous-tool popup (spec §9.7): `Enter` runs this call,
+    /// Keys of the dangerous-tool popup (spec §9.8): `Enter` runs this call,
     /// `A` runs it and stops asking about this tool until the turn ends, `Esc`
     /// declines. Any other key is ignored and the popup stays — the same rule
     /// as the destructive-keys popup, and the reason it is safe to be modal.
@@ -632,7 +632,7 @@ pub(super) fn render_confirm(
     frame.render_widget(body, area);
 }
 
-/// Draws the dangerous-tool confirmation popup (spec §9.7).
+/// Draws the dangerous-tool confirmation popup (spec §9.8).
 ///
 /// The call is formatted through `features::tools::present` — the same
 /// formatting the feed will show for it afterwards (fork F7), so `python_exec`

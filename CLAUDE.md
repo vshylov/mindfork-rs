@@ -123,9 +123,9 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-30, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1632 unit
-tests green, 69 `#[ignore]` smokes** (the largest count — log below; the most
+## Status (as of 2026-07-31, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1647 unit
+tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
 recent track — **full-text search over chat content**, now **complete**
 ([research](docs/research/chat-content-search.md),
 [stage 2 plan](docs/history/chat-search-stage2.md)) — `Ctrl+F` in the chat list
@@ -9889,6 +9889,90 @@ debounce was done as a separate PR, see below).
   protocol is touched. Docs: spec §11.4 (raw HTML) and §11.3.1 (the highlight
   boundary, now with the measured number), architecture §3 (the module map, which
   was also missing `mermaid.rs`), CHANGELOG, roadmap, and the plan's §5.
+
+### Post-M9: confirmation before dangerous tool calls (done)
+
+- **Human-in-the-loop before a tool call that changes something outside the app**
+  (roadmap §Tools, one of the five "most valuable next"). Design plan with forks
+  F1–F8 — [docs/history/tool-confirmation.md](docs/history/tool-confirmation.md),
+  accepted by the user as recommended 2026-07-30 with one addition: the feature
+  must be **fully** switchable off. Behaviour — spec §9.8. Branch
+  `feat/tool-confirmation`, one PR.
+- **Reading the code first moved the work.** The gate itself is trivial:
+  `generation.rs` has exactly one invocation site, already wrapped in a `select!`
+  with the turn's cancellation token and already carrying three "do not run it"
+  branches (disabled / control tool / discarded rewrite round) whose results are
+  localized text. What had to be *designed* is that **the agentic loop is a
+  background task that only emits events** — every existing internal channel
+  (`title_tx`, `imp_done`, `bg_done`) runs task → orchestrator, and nothing yet
+  sends anything back *into* one. That is fork F8 and the only architectural
+  decision here: the orchestrator holds the in-flight turn's confirmation sender
+  and routes `AppCommand::ConfirmTool` into it.
+- **Two staleness guards, both of which would otherwise run a tool nobody looked
+  at**: a reply whose `generation_id` is not the turn in flight (the user answers
+  at the exact moment a turn is cancelled and the next begins — the same guard
+  `AppEvent::TokenUsage` already uses), and, within a turn, a reply matched to its
+  `call_id` (the model made several calls in one round and they were answered out
+  of order). The wait is a `select!` against the cancellation token, so `Esc`
+  works with the popup open, and a closed channel reads as a refusal rather than
+  as approval.
+- **What counts as dangerous is declared by the tool** (`Tool::danger()`, default
+  `false`), like `group`/`ui_label`/`gate` — the single-source-of-truth decision
+  the project already took for tool metadata. `python_exec`, `fs_write` and
+  **every** MCP tool; not reads, not writes to our own storage (notes,
+  self-model, RAG, attachments — visible in the UI, profile-scoped, reversible).
+  The default is `false` precisely *because* the switch is opt-in: a wrong `false`
+  costs a confirmation someone wanted, while a wrong `true` on `current_time`
+  would train them to press `Enter` without reading.
+- **MCP annotations are deliberately not parsed.** `destructiveHint`/
+  `readOnlyHint` are server-supplied, i.e. untrusted: they could only ever
+  *relax* a decision, which is the attack. Treating every MCP tool as dangerous
+  is both simpler and safer, and the noise is bounded by the feature being
+  opt-in and by "allow for this turn".
+- **Declining does not cancel the turn**: the model is told (axis A) and the loop
+  carries on, so it can explain itself or take another route — ending the turn
+  would throw away the text already streamed. `Esc` declines; a second `Esc`,
+  with the popup gone, cancels as it always did.
+- **An FSD correction caught mid-implementation**: `ToolDecision` was first put
+  next to `AppCommand`, but the popup that produces it lives in `screens`, which
+  may not import `app`. Moved to `features/tools/confirm.rs` — the same reason
+  `RagProgress` lives in `features`.
+- **The popup shows the call through `present.rs`** — the same formatting the feed
+  will show for it afterwards, so `python_exec` reads as code rather than as a
+  JSON blob; long arguments cut with "…" (a decision prompt, not a viewer). It is
+  checked **before** the generation gate in the key routing, because unlike every
+  other popup it is open precisely while the turn runs.
+- **Sub-agents were used at the user's request to save context**: one took the
+  setting end to end (config field, settings row, `field_spec` entry, locale keys,
+  tests), one took the chat-screen tests. The delicate halves — the channel, the
+  gate, the orchestrator integration tests — were kept in the main session. One
+  concurrency lesson: an agent editing `screens/chat/**` silently reverted a
+  section-number fix applied there mid-flight, so edits to a file an agent owns
+  have to be re-applied after it finishes.
+- **A section-number collision worth noting**: `§9.7` was already chat file
+  attachments, so this became **§9.8** — the references written during
+  implementation had to be renumbered, and a `grep` by keyword rather than by file
+  was needed to avoid renumbering the attachment ones.
+- **Tests**: 6 orchestrator integration tests through the real `run` loop
+  (approve, decline, allow-for-turn, a safe tool never asked about, the setting
+  fully off, and both staleness guards — each bogus reply says *deny*, so
+  honouring either shows up as an unwritten file), plus chat-screen tests for the
+  popup and settings tests for the switch. `fs_write` is the tool under test
+  rather than `python_exec`: dangerous by the same rule, and whether it ran is a
+  fact on disk rather than a sandbox that has to be provisioned.
+- **1647 unit tests green** (+14), **70 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **A defect the sub-agent found in its own test, by mutating rather than by it
+  passing**: ratatui's `Buffer` `Debug` prints row content **without escaping
+  quotes**, so an assertion containing `"` against `format!("{:?}", buffer)` can
+  never match — a render test written that way passed even when the popup showed
+  raw JSON. Rewritten to join rows by hand. Worth remembering for any future
+  buffer assertion carrying a quote.
+- **Live run — pending.** The smoke `tool_confirmation_e2e_live` is written but
+  has not been run: no `llama-server` was reachable at the time (`/health` on the
+  usual LAN and localhost addresses all failed). Per AGENTS.md §3 this work
+  touches tools and needs one before the PR is complete — either a local server
+  or the remote HF gate, which is billed and user-triggered.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

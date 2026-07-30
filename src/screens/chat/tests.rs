@@ -719,7 +719,7 @@ fn ctrl_r_and_e_emit_directly_without_confirm() {
     assert_eq!(s.confirm, None);
 }
 
-// ---------- the dangerous-tool confirmation popup (spec §9.7) ----------
+// ---------- the dangerous-tool confirmation popup (spec §9.8) ----------
 
 /// The ids the loop parked the call under. They must come back untouched — a
 /// reply landing on the wrong turn or the wrong call is what the orchestrator
@@ -867,15 +867,33 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
     );
     let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    let dump = format!("{:?}", term.backend().buffer());
+    // Rows joined by hand rather than `format!("{:?}", buffer)`: the buffer's
+    // Debug prints rows inside quotes **without escaping** the ones in the
+    // content, so a `"` assertion against it can never match — and the "no raw
+    // JSON" check below is exactly such an assertion.
+    let buf = term.backend().buffer();
+    let mut text = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            text.push_str(buf[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
 
-    assert!(dump.contains("python_exec"), "the tool name: {dump}");
-    // The code arrives as lines, not as the raw arguments.
-    assert!(dump.contains("print(1)"), "{dump}");
-    assert!(dump.contains("print(2)"), "{dump}");
+    assert!(text.contains("python_exec"), "the tool name: {text}");
+    // The code arrives as lines — each statement on a row of its own, and no
+    // trace of the JSON it was extracted from.
+    assert!(text.contains("print(1)"), "{text}");
+    assert!(text.contains("print(2)"), "{text}");
     assert!(
-        !dump.contains("\\\"code\\\""),
-        "the raw JSON must not be shown: {dump}"
+        !text
+            .lines()
+            .any(|l| l.contains("print(1)") && l.contains("print(2)")),
+        "the two statements belong on separate lines: {text}"
+    );
+    assert!(
+        !text.contains("\"code\""),
+        "the raw JSON must not be shown: {text}"
     );
     // The footer spells out all three answers.
     for option in [
@@ -883,7 +901,7 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
         "A — разрешить до конца хода",
         "Esc — отклонить",
     ] {
-        assert!(dump.contains(option), "missing the \"{option}\" option");
+        assert!(text.contains(option), "missing the \"{option}\" option");
     }
 }
 

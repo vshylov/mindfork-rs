@@ -2,9 +2,10 @@
 
 Human-in-the-loop before a tool call that can change something outside the app:
 running arbitrary Python, writing a file, calling a third-party MCP server. From
-[roadmap.md](roadmap.md) §Tools ("Confirmation for dangerous tools").
+[roadmap.md](../roadmap.md) §Tools ("Confirmation for dangerous tools").
 
-Status: **forks F1–F8 accepted by the user as recommended, 2026-07-30**, with one
+Status: **complete** (one PR). Forks F1–F8 accepted by the user as recommended,
+2026-07-30, with one
 addition: the whole thing must be **fully switchable off in settings** — when
 `tools.confirm_dangerous` is off nothing asks, nothing is gated, and the loop
 behaves exactly as it does today (F2, and the reason `danger()` is consulted only

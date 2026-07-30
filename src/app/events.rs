@@ -24,7 +24,7 @@ pub enum AppCommand {
     SendMessage(String),
     /// The user's answer to an [`AppEvent::ToolConfirmRequest`]. Routed into the
     /// running generation task; a reply whose `generation_id` is not the turn in
-    /// flight is dropped (spec §9.7).
+    /// flight is dropped (spec §9.8).
     ConfirmTool {
         generation_id: Uuid,
         call_id: String,
@@ -297,7 +297,7 @@ pub enum AppEvent {
         reasoning: Option<u32>,
     },
     /// The agentic loop is holding a **dangerous** tool call and asking the user
-    /// whether to run it (`tools.confirm_dangerous`, spec §9.7). The turn is
+    /// whether to run it (`tools.confirm_dangerous`, spec §9.8). The turn is
     /// parked until an [`AppCommand::ConfirmTool`] carrying the same
     /// `generation_id` comes back, or until the turn is cancelled.
     ToolConfirmRequest {

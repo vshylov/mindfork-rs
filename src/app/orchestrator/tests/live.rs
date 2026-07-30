@@ -1890,7 +1890,7 @@ async fn tts_speaks_chat_e2e_live() {
     let _ = handle.await;
 }
 
-/// Dangerous-tool confirmation against a real model (spec §9.7).
+/// Dangerous-tool confirmation against a real model (spec §9.8).
 ///
 /// The mocked tests prove the channel; this proves the half only a live model
 /// can: that a real model, told about `fs_write`, actually calls it — so the

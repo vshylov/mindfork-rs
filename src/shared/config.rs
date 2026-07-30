@@ -654,7 +654,7 @@ pub struct ToolSettings {
     /// Time limit for a sub-agent call (seconds).
     pub subagent_timeout_secs: u64,
     /// Ask the user before the agentic loop runs a tool marked dangerous
-    /// (`Tool::danger()` — spec §9.7). Off by default: opt-in, so the loop
+    /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
     pub confirm_dangerous: bool,
 }

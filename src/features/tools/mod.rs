@@ -245,8 +245,8 @@ pub trait Tool: Send + Sync {
 
     /// Whether a call to this tool changes something **outside the application**
     /// and should therefore be shown to the user first, when
-    /// `tools.confirm_dangerous` is on (spec §9.7, fork F1 of
-    /// docs/tool-confirmation.md).
+    /// `tools.confirm_dangerous` is on (spec §9.8, fork F1 of
+    /// docs/history/tool-confirmation.md).
     ///
     /// The default is `false` — safe — so a new tool is only asked about when its
     /// author says so. That is the right default here precisely because the

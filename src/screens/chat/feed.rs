@@ -346,7 +346,7 @@ impl ChatScreen {
     }
 
     /// The agentic loop is asking whether to run a dangerous tool call
-    /// (spec §9.7). Opens the modal popup; the answer leaves as
+    /// (spec §9.8). Opens the modal popup; the answer leaves as
     /// [`ChatIntent::ConfirmTool`].
     pub fn request_tool_confirm(
         &mut self,

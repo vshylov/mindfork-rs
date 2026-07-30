@@ -339,8 +339,8 @@ struct Orchestrator {
     title_tx: UnboundedSender<TitleResult>,
     profiles: Vec<Profile>,
     /// The in-flight turn's dangerous-tool confirmation channel: its id and the
-    /// sender the generation task is listening on (spec §9.7, fork F8 of
-    /// docs/tool-confirmation.md). `None` between turns.
+    /// sender the generation task is listening on (spec §9.8, fork F8 of
+    /// docs/history/tool-confirmation.md). `None` between turns.
     confirm: Option<(Uuid, UnboundedSender<(String, ToolDecision)>)>,
     /// Visible chats, entirely in memory (the orchestrator is the sole writer).
     chats: Vec<Chat>,

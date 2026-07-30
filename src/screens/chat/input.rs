@@ -69,7 +69,7 @@ impl ChatScreen {
             }
             return None;
         }
-        // A dangerous tool call is waiting for an answer (spec §9.7). Checked
+        // A dangerous tool call is waiting for an answer (spec §9.8). Checked
         // **before** the generation gate below, because unlike every other
         // popup this one is open precisely while the turn runs — the loop is
         // parked on it.

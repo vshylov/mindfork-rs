@@ -340,6 +340,12 @@ impl Orchestrator {
         if !self.gen_state.finish(res.id) {
             return;
         }
+        // The turn is over: drop its confirmation sender, so `confirm` really is
+        // `None` between turns as its doc says. Nothing depends on this — a reply
+        // arriving now is dropped by the `generation_id` guard, and the receiver
+        // is gone with the task — but a field that outlives what it describes is
+        // an invitation to reason wrongly about it later.
+        self.confirm = None;
 
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
@@ -382,7 +388,7 @@ impl Orchestrator {
         self.maybe_auto_self_consolidate(res.chat_id);
     }
 
-    /// Routes the user's answer into the turn that asked (spec §9.7, fork F8).
+    /// Routes the user's answer into the turn that asked (spec §9.8, fork F8).
     ///
     /// A reply for a turn that is no longer in flight is **dropped**: the user
     /// can press a key at the exact moment a turn is cancelled and the next one
@@ -436,12 +442,12 @@ struct GenSpawn {
     ui_loc: &'static crate::shared::i18n::Locale,
     /// `tools.confirm_dangerous` — when off, nothing is asked and no tool is
     /// gated, so the loop behaves exactly as it did before the feature (spec
-    /// §9.7). Snapshotted at the start of the turn, like the other config.
+    /// §9.8). Snapshotted at the start of the turn, like the other config.
     confirm_dangerous: bool,
     /// The user's answers to [`AppEvent::ToolConfirmRequest`], routed in by the
     /// orchestrator. The **only** channel in the codebase that runs orchestrator
     /// → task; everything else (`title_tx`, `imp_done`, the background-task done
-    /// channel) runs the other way. See docs/tool-confirmation.md §3, fork F8.
+    /// channel) runs the other way. See docs/history/tool-confirmation.md §3, fork F8.
     confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
@@ -450,7 +456,7 @@ struct GenSpawn {
 /// Everything [`confirm_call`] needs that does not change between calls.
 struct ConfirmGate<'a> {
     /// `tools.confirm_dangerous`. When `false` the gate is a no-op and never
-    /// even asks the registry — the whole feature is switchable off (spec §9.7).
+    /// even asks the registry — the whole feature is switchable off (spec §9.8).
     enabled: bool,
     registry: &'a ToolRegistry,
     evt_tx: &'a UnboundedSender<AppEvent>,

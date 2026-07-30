@@ -1,8 +1,8 @@
-//! Dangerous-tool confirmation through the real `run` loop (spec §9.7).
+//! Dangerous-tool confirmation through the real `run` loop (spec §9.8).
 //!
 //! These drive the whole path — a mocked model calls `fs_write`, the loop parks,
 //! the answer comes back as an `AppCommand` — because the piece worth testing is
-//! the round trip *into* a running task (fork F8 of docs/tool-confirmation.md),
+//! the round trip *into* a running task (fork F8 of docs/history/tool-confirmation.md),
 //! and nothing shorter exercises it.
 //!
 //! `fs_write` is the tool under test rather than `python_exec`: it is dangerous

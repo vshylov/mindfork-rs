@@ -141,7 +141,7 @@ pub enum ChatIntent {
     /// `arboard` (doesn't go through the orchestrator: the text is already at
     /// the UI). See docs/history/input-selection-undo-mouse.md §B.
     CopyToClipboard(String),
-    /// The user's answer to a dangerous-tool confirmation (spec §9.7). Carries
+    /// The user's answer to a dangerous-tool confirmation (spec §9.8). Carries
     /// the ids back so a reply cannot land on the wrong turn or the wrong call.
     ConfirmTool {
         generation_id: Uuid,
@@ -180,7 +180,7 @@ impl ConfirmAction {
 }
 
 /// A dangerous tool call the agentic loop is holding until the user answers
-/// (spec §9.7).
+/// (spec §9.8).
 ///
 /// A separate state rather than another [`ConfirmAction`] variant for two
 /// reasons: this popup appears **during** generation — that is the whole point —
@@ -363,7 +363,7 @@ pub struct ChatScreen {
     /// The open modal confirmation popup for an irreversible operation
     /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
-    /// A dangerous tool call awaiting the user's answer (spec §9.7). Independent
+    /// A dangerous tool call awaiting the user's answer (spec §9.8). Independent
     /// of [`Self::confirm`]: this one is modal *during* generation.
     pub(super) tool_confirm: Option<ToolConfirm>,
     /// In-feed search (`Ctrl+F`): a single-line query field standing in for the

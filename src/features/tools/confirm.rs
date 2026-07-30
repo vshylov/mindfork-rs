@@ -1,4 +1,4 @@
-//! The user's answer to a dangerous-tool confirmation (spec §9.7).
+//! The user's answer to a dangerous-tool confirmation (spec §9.8).
 //!
 //! **Why this type lives in `features` and not next to `AppCommand`.** The
 //! answer travels UI → orchestrator, so both `app` (the command) and `screens`
@@ -13,7 +13,7 @@ pub enum ToolDecision {
     Allow,
     /// Run it, and stop asking about **this tool** for the rest of the turn.
     ///
-    /// The turn is the natural unit (fork F4 of docs/tool-confirmation.md): it is
+    /// The turn is the natural unit (fork F4 of docs/history/tool-confirmation.md): it is
     /// the scope of one user request, it ends by itself, and nothing outlives it
     /// — so no standing permission accumulates that the user would later have to
     /// remember granting.

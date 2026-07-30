@@ -478,7 +478,7 @@ enum FieldId {
     TSubMaxTokens,
     TSubTimeout,
     /// Ask before the agentic loop runs a tool marked dangerous
-    /// (`tools.confirm_dangerous`, spec §9.7).
+    /// (`tools.confirm_dangerous`, spec §9.8).
     TConfirmDangerous,
     EMode,
     EUrl,
