@@ -12,6 +12,7 @@ use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
+pub use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 pub use crate::shared::server::{ServerStatus, ServerStatuses};
@@ -21,6 +22,14 @@ pub use crate::shared::server::{ServerStatus, ServerStatuses};
 pub enum AppCommand {
     /// Send the user's message to the active chat and start generation.
     SendMessage(String),
+    /// The user's answer to an [`AppEvent::ToolConfirmRequest`]. Routed into the
+    /// running generation task; a reply whose `generation_id` is not the turn in
+    /// flight is dropped (spec §9.7).
+    ConfirmTool {
+        generation_id: Uuid,
+        call_id: String,
+        decision: ToolDecision,
+    },
     /// Save the input box draft in the active chat (unsaved text). UI sends this
     /// on every input change; the orchestrator writes it to the chat file with a debounce.
     /// See spec §11.7.
@@ -286,6 +295,18 @@ pub enum AppEvent {
         context: Option<u64>,
         context_exact: bool,
         reasoning: Option<u32>,
+    },
+    /// The agentic loop is holding a **dangerous** tool call and asking the user
+    /// whether to run it (`tools.confirm_dangerous`, spec §9.7). The turn is
+    /// parked until an [`AppCommand::ConfirmTool`] carrying the same
+    /// `generation_id` comes back, or until the turn is cancelled.
+    ToolConfirmRequest {
+        generation_id: Uuid,
+        /// The call's id — echoed back so a reply cannot answer the wrong call
+        /// when the model made several in one round.
+        call_id: String,
+        name: String,
+        arguments: String,
     },
     /// A tool was called and executed (for the tool block in the feed). See spec §6.3,
     /// §11.3.

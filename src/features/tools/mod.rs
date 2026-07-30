@@ -11,6 +11,7 @@ mod embed_roles_tests;
 
 pub mod attachment;
 pub mod calc;
+pub mod confirm;
 pub mod control;
 pub mod datetime;
 pub mod fetch;
@@ -240,6 +241,24 @@ pub trait Tool: Send + Sync {
     /// [`effective_tool_ids`].
     fn gate(&self) -> Option<meta::ToolGate> {
         None
+    }
+
+    /// Whether a call to this tool changes something **outside the application**
+    /// and should therefore be shown to the user first, when
+    /// `tools.confirm_dangerous` is on (spec §9.7, fork F1 of
+    /// docs/tool-confirmation.md).
+    ///
+    /// The default is `false` — safe — so a new tool is only asked about when its
+    /// author says so. That is the right default here precisely because the
+    /// switch is opt-in: a wrong `false` costs the user a confirmation they
+    /// wanted, while a wrong `true` on, say, `current_time` would train them to
+    /// press `Enter` without reading, which is worse than not asking.
+    ///
+    /// Writes to **our own** storage (notes, the self-model, RAG, attachments)
+    /// are deliberately not dangerous: they are visible in the UI, scoped to the
+    /// profile, and reversible by the same tools that wrote them.
+    fn danger(&self) -> bool {
+        false
     }
 
     /// Whether the tool is enabled in the profile by default (`false` — optional,

@@ -69,6 +69,13 @@ impl ChatScreen {
             }
             return None;
         }
+        // A dangerous tool call is waiting for an answer (spec §9.7). Checked
+        // **before** the generation gate below, because unlike every other
+        // popup this one is open precisely while the turn runs — the loop is
+        // parked on it.
+        if self.tool_confirm.is_some() {
+            return self.handle_tool_confirm_key(key);
+        }
         // The modal confirmation popup (`Ctrl+R`/`Ctrl+E`): Enter — yes, Esc
         // — no, other keys are ignored (the popup stays open). See spec
         // §11.7.

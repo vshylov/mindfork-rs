@@ -543,6 +543,12 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.max_tool_rounds")),
                 row(
+                    FieldId::TConfirmDangerous,
+                    loc.t("ui.settings.field.confirm_dangerous"),
+                    FieldKind::Toggle(t.confirm_dangerous),
+                )
+                .describe(loc.t("ui.settings.desc.confirm_dangerous")),
+                row(
                     FieldId::TSubMaxTokens,
                     loc.t("ui.settings.field.sub_max_tokens"),
                     FieldKind::Text(t.subagent_max_tokens.to_string()),

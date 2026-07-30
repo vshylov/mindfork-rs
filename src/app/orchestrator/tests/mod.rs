@@ -129,6 +129,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         evt_tx,
         engines,
         mcp: McpManager::new(unbounded_channel().0),
+        confirm: None,
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,

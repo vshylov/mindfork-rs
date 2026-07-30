@@ -197,6 +197,12 @@ impl Tool for FsWrite {
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Files
     }
+    /// Creates or **overwrites** a file. `fs_read`/`fs_list` are read-only and
+    /// stay unasked — asking about reads would be the noise that trains a user
+    /// to stop reading the prompt.
+    fn danger(&self) -> bool {
+        true
+    }
     fn ui_label(&self) -> &'static str {
         "write file"
     }

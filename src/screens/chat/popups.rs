@@ -42,6 +42,39 @@ impl ChatScreen {
     /// the intent), `Esc` cancels, other keys are ignored. Confirmation is
     /// suppressed while generation is running (the orchestrator gates the intent
     /// anyway).
+    /// Keys of the dangerous-tool popup (spec §9.7): `Enter` runs this call,
+    /// `A` runs it and stops asking about this tool until the turn ends, `Esc`
+    /// declines. Any other key is ignored and the popup stays — the same rule
+    /// as the destructive-keys popup, and the reason it is safe to be modal.
+    ///
+    /// `Esc` **declines rather than cancelling the turn**: the loop carries on
+    /// with the refusal, and a second `Esc` — now that the popup is gone —
+    /// cancels the turn as it always does.
+    pub(super) fn handle_tool_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        // Ctrl+Q/F10 punch through the popup to quit, as everywhere else.
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && keys::hotkey_char(&key) == Some('q'))
+        {
+            self.tool_confirm = None;
+            return Some(ChatIntent::Quit);
+        }
+        let decision = match key.code {
+            KeyCode::Enter => ToolDecision::Allow,
+            KeyCode::Esc => ToolDecision::Deny,
+            // Layout-independent: `hotkey_char` maps the physical key, so this
+            // is the same key on a Cyrillic layout.
+            KeyCode::Char(_) if keys::hotkey_char(&key) == Some('a') => ToolDecision::AllowForTurn,
+            _ => return None,
+        };
+        let pending = self.tool_confirm.take()?;
+        Some(ChatIntent::ConfirmTool {
+            generation_id: pending.generation_id,
+            call_id: pending.call_id,
+            decision,
+        })
+    }
+
     pub(super) fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         let action = self.confirm?;
         // Ctrl+Q/F10 punch through the popup to quit (layout-independent). See spec §11.7.
@@ -598,6 +631,74 @@ pub(super) fn render_confirm(
     .wrap(Wrap { trim: true });
     frame.render_widget(body, area);
 }
+
+/// Draws the dangerous-tool confirmation popup (spec §9.7).
+///
+/// The call is formatted through `features::tools::present` — the same
+/// formatting the feed will show for it afterwards (fork F7), so `python_exec`
+/// appears as readable code rather than as a JSON blob. The body is capped:
+/// this is a decision prompt, not a viewer, and a popup taller than the screen
+/// would hide its own footer.
+pub(super) fn render_tool_confirm(
+    frame: &mut Frame,
+    pending: &ToolConfirm,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
+    use crate::features::tools::present::{ToolBlock, present};
+
+    let shown = present(&pending.name, &pending.arguments, "");
+    let header = match &shown.header_suffix {
+        Some(suffix) => format!("{}({suffix})", pending.name),
+        None => pending.name.clone(),
+    };
+    let mut body: Vec<Line> = vec![
+        Line::from(Span::styled(
+            loc.t("ui.confirm.tool.question"),
+            Style::new().fg(palette.text),
+        )),
+        Line::from(Span::styled(header, Style::new().fg(palette.accent))),
+    ];
+    for block in &shown.args {
+        let text = match block {
+            ToolBlock::Code { text, .. } | ToolBlock::Plain(text) | ToolBlock::Markdown(text) => {
+                text.as_str()
+            }
+            ToolBlock::Console(_) => continue,
+        };
+        for line in text.lines().take(ARG_PREVIEW_LINES) {
+            body.push(Line::from(Span::styled(
+                line.to_string(),
+                palette.muted_style(),
+            )));
+        }
+        if text.lines().count() > ARG_PREVIEW_LINES {
+            body.push(Line::from(Span::styled("…", palette.muted_style())));
+        }
+    }
+
+    let width = 72u16.min(frame.area().width);
+    let height = (body.len() as u16 + 2).min(frame.area().height);
+    let area = centered_rect(width, height, frame.area());
+    frame.render_widget(Clear, area);
+    let block = palette
+        .panel(loc.t("ui.confirm.tool.title"), true)
+        .title_bottom(
+            Line::from(Span::styled(
+                loc.t("ui.confirm.tool.footer"),
+                palette.muted_style(),
+            ))
+            .centered(),
+        );
+    frame.render_widget(
+        Paragraph::new(body).block(block).wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// How many lines of a call's arguments the confirmation popup shows before
+/// cutting with "…".
+const ARG_PREVIEW_LINES: usize = 12;
 
 #[cfg(test)]
 mod tests {

@@ -344,6 +344,24 @@ impl ChatScreen {
         // Arrives on its own (an error, a late list-operation reply) — §4.
         self.feed_view.scroll_to_bottom_if_following();
     }
+
+    /// The agentic loop is asking whether to run a dangerous tool call
+    /// (spec §9.7). Opens the modal popup; the answer leaves as
+    /// [`ChatIntent::ConfirmTool`].
+    pub fn request_tool_confirm(
+        &mut self,
+        generation_id: Uuid,
+        call_id: String,
+        name: String,
+        arguments: String,
+    ) {
+        self.tool_confirm = Some(ToolConfirm {
+            generation_id,
+            call_id,
+            name,
+            arguments,
+        });
+    }
 }
 
 /// A character whose rendering on legacy terminals (conhost/Command Prompt) diverges

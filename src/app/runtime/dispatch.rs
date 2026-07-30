@@ -153,6 +153,12 @@ pub(super) fn apply_event(
             context_exact,
             reasoning,
         } => screen.set_token_usage(generation_id, completion, context, context_exact, reasoning),
+        AppEvent::ToolConfirmRequest {
+            generation_id,
+            call_id,
+            name,
+            arguments,
+        } => screen.request_tool_confirm(generation_id, call_id, name, arguments),
         AppEvent::ToolCall {
             generation_id,
             name,
@@ -363,6 +369,15 @@ pub(super) fn dispatch(
         }
         // Copying to the clipboard is intercepted earlier — in `process_input_batch`
         // (which has the `arboard` slot, whereas `screen` here is immutable). It never reaches here.
+        ChatIntent::ConfirmTool {
+            generation_id,
+            call_id,
+            decision,
+        } => AppCommand::ConfirmTool {
+            generation_id,
+            call_id,
+            decision,
+        },
         ChatIntent::CopyToClipboard(_) => return false,
     };
     let _ = cmd_tx.send(command);
