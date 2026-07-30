@@ -1,14 +1,15 @@
 //! Assistant reply generation: send/regenerate/delete-exchange commands,
 //! starting a turn, and the background task for the client-side agentic loop (spec §6.3).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::app::events::AppEvent;
+use crate::app::events::{AppEvent, ToolDecision};
 use crate::entities::chat::DeletedCause;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
@@ -302,12 +303,20 @@ impl Orchestrator {
             .evt_tx
             .send(AppEvent::GenerationStarted { generation_id: id });
         self.gen_state.begin(id, cancel.clone());
+        // The confirmation channel for this turn (fork F8). The sender is kept
+        // next to the turn id so a reply arriving for an older turn — the user
+        // pressed a key just as the turn was cancelled and a new one began — is
+        // dropped instead of unblocking the wrong call.
+        let (confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.confirm = Some((id, confirm_tx));
         spawn_generation(GenSpawn {
             backend,
             registry: self.registry.clone(),
             ctx,
             request,
             cancel,
+            confirm_dangerous: self.config.tools.confirm_dangerous,
+            confirm_rx,
             id,
             chat_id: active_id,
             max_rounds: self.config.max_tool_rounds,
@@ -331,6 +340,12 @@ impl Orchestrator {
         if !self.gen_state.finish(res.id) {
             return;
         }
+        // The turn is over: drop its confirmation sender, so `confirm` really is
+        // `None` between turns as its doc says. Nothing depends on this — a reply
+        // arriving now is dropped by the `generation_id` guard, and the receiver
+        // is gone with the task — but a field that outlives what it describes is
+        // an invitation to reason wrongly about it later.
+        self.confirm = None;
 
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
@@ -372,6 +387,30 @@ impl Orchestrator {
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
     }
+
+    /// Routes the user's answer into the turn that asked (spec §9.8, fork F8).
+    ///
+    /// A reply for a turn that is no longer in flight is **dropped**: the user
+    /// can press a key at the exact moment a turn is cancelled and the next one
+    /// starts, and unblocking the new turn's call with the old turn's answer
+    /// would run a tool nobody looked at. Same guard as `AppEvent::TokenUsage`'s
+    /// `generation_id`.
+    pub(super) fn handle_confirm_tool(
+        &mut self,
+        generation_id: Uuid,
+        call_id: String,
+        decision: ToolDecision,
+    ) {
+        let Some((id, tx)) = &self.confirm else {
+            return;
+        };
+        if *id != generation_id {
+            tracing::debug!(reply_for = %generation_id, in_flight = %id,
+                "dropped a tool confirmation from a finished turn");
+            return;
+        }
+        let _ = tx.send((call_id, decision));
+    }
 }
 
 /// Parameters for launching the generation task (the agentic loop).
@@ -401,8 +440,98 @@ struct GenSpawn {
     model_name: Option<String>,
     /// Interface language (axis B) — for error messages shown to a human.
     ui_loc: &'static crate::shared::i18n::Locale,
+    /// `tools.confirm_dangerous` — when off, nothing is asked and no tool is
+    /// gated, so the loop behaves exactly as it did before the feature (spec
+    /// §9.8). Snapshotted at the start of the turn, like the other config.
+    confirm_dangerous: bool,
+    /// The user's answers to [`AppEvent::ToolConfirmRequest`], routed in by the
+    /// orchestrator. The **only** channel in the codebase that runs orchestrator
+    /// → task; everything else (`title_tx`, `imp_done`, the background-task done
+    /// channel) runs the other way. See docs/history/tool-confirmation.md §3, fork F8.
+    confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
+}
+
+/// Everything [`confirm_call`] needs that does not change between calls.
+struct ConfirmGate<'a> {
+    /// `tools.confirm_dangerous`. When `false` the gate is a no-op and never
+    /// even asks the registry — the whole feature is switchable off (spec §9.8).
+    enabled: bool,
+    registry: &'a ToolRegistry,
+    evt_tx: &'a UnboundedSender<AppEvent>,
+    cancel: &'a CancellationToken,
+    id: Uuid,
+    /// Agent-scaffold language: the refusal text is read by the **model**
+    /// (axis A), unlike the popup, which the user reads.
+    loc: &'static crate::shared::i18n::Locale,
+}
+
+/// Asks the user before a dangerous tool call, if the feature is on.
+///
+/// Returns `None` when the call may proceed, or `Some(text)` — the result to
+/// hand the model instead of running it. Approving "for the turn" is recorded in
+/// `allowed_for_turn`, so the same tool is not asked about again before the turn
+/// ends.
+///
+/// Waiting is bounded only by cancellation (fork F6): `Esc` and `Quit` both fire
+/// the turn's token, so a popup left open cannot wedge the task forever. A
+/// closed channel — the orchestrator dropped the sender because the turn is over
+/// — reads as a refusal rather than as approval.
+async fn confirm_call(
+    gate: ConfirmGate<'_>,
+    call: &ApiToolCall,
+    allowed_for_turn: &mut HashSet<ToolId>,
+    confirm_rx: &mut UnboundedReceiver<(String, ToolDecision)>,
+) -> Option<String> {
+    let needs_ask = gate.enabled
+        && !allowed_for_turn.contains(call.name.as_str())
+        && gate
+            .registry
+            .get(&call.name)
+            .is_some_and(|tool| tool.danger());
+    if !needs_ask {
+        return None;
+    }
+    let _ = gate.evt_tx.send(AppEvent::ToolConfirmRequest {
+        generation_id: gate.id,
+        call_id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+    });
+    let decision = tokio::select! {
+        _ = gate.cancel.cancelled() => None,
+        reply = wait_for_decision(confirm_rx, &call.id) => reply,
+    };
+    match decision {
+        Some(ToolDecision::AllowForTurn) => {
+            allowed_for_turn.insert(call.name.clone());
+            None
+        }
+        Some(ToolDecision::Allow) => None,
+        Some(ToolDecision::Deny) => Some(gate.loc.tf("loop.tool_denied", &[("name", &call.name)])),
+        // Cancelled, or the channel closed with the question unanswered.
+        None => Some(gate.loc.t("loop.tool_cancelled").to_string()),
+    }
+}
+
+/// The answer to **this** call, skipping any that arrive for another one.
+///
+/// A mismatch is possible whenever the model made several calls in one round and
+/// the user answered them out of order; answering the wrong call would run a tool
+/// the user never looked at, so the id is checked rather than assumed.
+async fn wait_for_decision(
+    confirm_rx: &mut UnboundedReceiver<(String, ToolDecision)>,
+    call_id: &str,
+) -> Option<ToolDecision> {
+    loop {
+        let (id, decision) = confirm_rx.recv().await?;
+        if id == call_id {
+            return Some(decision);
+        }
+        tracing::debug!(reply_for = %id, waiting_for = %call_id,
+            "dropped a tool confirmation meant for another call");
+    }
 }
 
 /// Accumulator for a single stream round.
@@ -435,6 +564,8 @@ fn spawn_generation(spawn: GenSpawn) {
         ctx,
         mut request,
         cancel,
+        confirm_dangerous,
+        mut confirm_rx,
         id,
         chat_id,
         max_rounds,
@@ -492,6 +623,10 @@ fn spawn_generation(spawn: GenSpawn) {
         // Discarded by the "rewrite" tool (for the deleted archive).
         let mut deleted: Vec<Message> = Vec::new();
         let mut round: u32 = 0;
+        // Tools the user approved "for the rest of this turn" (fork F4). The turn
+        // is the natural unit — it is the scope of one user request and it ends by
+        // itself, so nothing outlives it and no standing permission accumulates.
+        let mut allowed_for_turn: HashSet<ToolId> = HashSet::new();
         // Cumulative reply-token counter across all agentic-loop rounds — the
         // live indicator keeps growing from round to round.
         let mut total_tokens: u64 = 0;
@@ -613,6 +748,26 @@ fn spawn_generation(spawn: GenSpawn) {
                     } else if rewrite {
                         // This round is being discarded — side-effect tools aren't executed.
                         ctx.loc.t("loop.rewrite_skipped").to_string()
+                    } else if let Some(refusal) = confirm_call(
+                        ConfirmGate {
+                            enabled: confirm_dangerous,
+                            registry: &registry,
+                            evt_tx: &evt_tx,
+                            cancel: &cancel,
+                            id,
+                            loc: ctx.loc,
+                        },
+                        call,
+                        &mut allowed_for_turn,
+                        &mut confirm_rx,
+                    )
+                    .await
+                    {
+                        // Declined, or the turn was cancelled while the popup was
+                        // open. Either way the loop carries on and the model is
+                        // told (fork F5) — ending the turn here would throw away
+                        // the text already streamed.
+                        refusal
                     } else {
                         // Execution under a `select!` with the cancellation token: Esc
                         // doesn't wait for a long-running tool (MCP/network) to finish.

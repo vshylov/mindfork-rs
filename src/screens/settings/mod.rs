@@ -477,6 +477,9 @@ enum FieldId {
     TMcpServer(usize),
     TSubMaxTokens,
     TSubTimeout,
+    /// Ask before the agentic loop runs a tool marked dangerous
+    /// (`tools.confirm_dangerous`, spec §9.8).
+    TConfirmDangerous,
     EMode,
     EUrl,
     EBinary,

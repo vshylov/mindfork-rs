@@ -15,6 +15,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Ask before a tool does something outside the app.** A new switch in settings
+  → Tools → "Confirm dangerous calls" (off by default) makes the assistant stop
+  and show you the call before it runs Python, writes a file, or calls an MCP
+  server's tool: you see the code or the path it is about to use. `Enter` runs
+  it, `A` runs it and stops asking about that tool until the answer is finished,
+  `Esc` declines — declining does not throw away the answer, the assistant is
+  told and carries on. Reading files, searching the web and the assistant's own
+  notes are never asked about.
+
 - **Search inside the conversation you have open** — `Ctrl+F` in a chat finds text
   in that chat: every match is highlighted at once, a counter shows which one you
   are on out of how many, `Enter` (or `↓`) steps to the next and `Shift+Enter`

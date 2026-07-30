@@ -247,6 +247,9 @@ src/
 │  ├─ tools/                tool registry and implementations (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            catalog metadata for the UI: tool group/description/gate
+│  │  ├─ confirm.rs         ToolDecision (allow / allow for this turn / deny). In `features`
+│  │  │                     rather than next to AppCommand: `screens` produces it and may
+│  │  │                     not import `app` (same reason as RagProgress). See spec §9.8
 │  │  ├─ mcp.rs             McpTool: wrapper for an MCP server tool (id mcp__srv__tool,
 │  │  │                     clip/timeout/cancel) + McpSnapshot/catalog_hash (TOFU)
 │  │  ├─ present.rs         call presentation for the feed (ToolPresentation): highlighted
@@ -2011,6 +2014,16 @@ Principles:
   `title_tx`, `imp_done_tx`, `imp_status_tx`, `bg_done_tx`) feed the results
   of background tasks back into the main `select!` loop, keeping a single
   point of state writes.
+- **One channel runs the other way** (`confirm`, spec §9.8): dangerous-tool
+  confirmation needs an answer *inside* the running generation task, so the
+  orchestrator holds the in-flight turn's sender and routes
+  `AppCommand::ConfirmTool` into it. It is deliberately the only one — it exists
+  because the loop must **park**, which no result-reporting channel can express.
+  Two staleness guards, both of which would otherwise run a tool the user never
+  looked at: a reply whose `generation_id` is not the turn in flight is dropped,
+  and within a turn a reply is matched to its `call_id`. The wait is a `select!`
+  against the turn's cancellation token, so `Esc` still works while the popup is
+  open.
 - **The "silent" background task family** (auto-reflection/consolidation — a
   mini agentic loop with no UI, sharing a runner,
   `tool_loop::spawn_silent_loop`) is served by a **slot registry**,

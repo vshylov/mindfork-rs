@@ -943,6 +943,52 @@ Attachments are **chat-scoped**, need **no embedder**, and are delivered
   (attachments cost tokens on every turn — the standing cost has to be visible),
   and budget fields in the settings "Memory" section.
 
+
+### 9.8. Confirmation for dangerous tool calls
+
+Human-in-the-loop before a tool call that changes something **outside** the
+application. Design record: [docs/history/tool-confirmation.md](docs/history/tool-confirmation.md).
+
+- **Off by default**, a single switch: `tools.confirm_dangerous` (a toggle in the
+  settings "Tools" section, "Agentic loop" group). When off, nothing is asked and
+  no tool is gated — the loop behaves exactly as it did before the feature; the
+  registry is not even consulted. The dangerous tools all sit behind master
+  switches that are off by default too (`python_enabled`, `fs_enabled`,
+  `mcp.enabled`), so this is a **second** layer for users who want to consent per
+  call rather than once.
+- **What counts as dangerous** is declared by the tool itself (`Tool::danger()`,
+  default `false`), like its group and gate: `python_exec` (arbitrary code),
+  `fs_write` (overwrites a path), and **every** MCP tool (third-party, effects
+  unknown). Reads (`fs_read`/`fs_list`, `web_search`/`fetch_url`) and writes to
+  *our own* storage (notes, self-model, RAG, attachments — visible in the UI,
+  profile-scoped, reversible) are not. A server's own
+  `destructiveHint`/`readOnlyHint` annotations are **untrusted input** and are
+  deliberately not consulted: a server can claim anything, so they could only ever
+  relax the decision, which is the attack.
+- **The popup** shows the call formatted the way the feed will show it afterwards
+  (`features::tools::present`), so `python_exec` reads as code rather than as a
+  JSON blob; long arguments are cut with "…" — it is a decision prompt, not a
+  viewer. `Enter` runs the call, `A` runs it and stops asking about **that tool**
+  for the rest of the turn, `Esc` declines. Any other key is ignored and the popup
+  stays. `Ctrl+Q`/`F10` punch through to quit, as in every other popup.
+- **Declining does not cancel the turn**: the model is told (in the agent-scaffold
+  language) and the loop continues, so it can explain itself or take another
+  route — ending the turn would throw away the text already streamed. `Esc` with
+  the popup gone then cancels the turn as it always does.
+- **The allowance is turn-scoped** — the scope of one user request. It ends by
+  itself, so no standing permission accumulates that the user would later have to
+  remember granting.
+- **Waiting is not timed out.** `Esc` and `Quit` both cancel the turn, so a popup
+  left open cannot wedge the task; a silent auto-decline would be a surprising way
+  to lose work.
+- **Implementation note.** The agentic loop runs in a background task that
+  otherwise only *emits* events, so this is the one place where something is sent
+  back **into** a running task: the orchestrator holds the in-flight turn's
+  confirmation sender and routes `AppCommand::ConfirmTool` into it. A reply whose
+  `generation_id` is not the turn in flight — the user answered just as the turn
+  was cancelled — is dropped, as is one whose `call_id` belongs to another call of
+  the same round; either would run a tool nobody looked at.
+
 ---
 
 ## 10. AI-companion profiles

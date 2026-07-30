@@ -218,6 +218,14 @@ impl Tool for McpTool {
         self.label
     }
 
+    /// Every MCP tool is third-party code whose effects we cannot know (fork
+    /// F3). The server's own `destructiveHint`/`readOnlyHint` annotations are
+    /// untrusted input — a server can claim anything — so they may never *relax*
+    /// this, which is why they are not consulted at all.
+    fn danger(&self) -> bool {
+        true
+    }
+
     fn gate(&self) -> Option<meta::ToolGate> {
         Some(meta::ToolGate::Mcp)
     }

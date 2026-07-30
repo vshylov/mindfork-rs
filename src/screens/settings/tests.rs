@@ -134,6 +134,23 @@ fn toggle_web_emits_save_with_flipped_value() {
 }
 
 #[test]
+fn tools_have_confirm_dangerous_toggle() {
+    let mut s = screen();
+    // The field is in the "Tools" section (the "Agentic loop" group — it gates the
+    // loop's tool calls, not one particular tool).
+    goto_section(&mut s, Section::Tools);
+    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+    assert!(ids.contains(&FieldId::TConfirmDangerous));
+    // Off by default; toggling it saves the config with the flag raised.
+    goto_field(&mut s, FieldId::TConfirmDangerous);
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.tools.confirm_dangerous),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(field_desc(&s, FieldId::TConfirmDangerous).is_some());
+}
+
+#[test]
 fn python_group_visibility_follows_mode() {
     // By default — Wasmer mode: "network" and "sandbox timeout" are visible, the path is hidden.
     let mut s = screen();

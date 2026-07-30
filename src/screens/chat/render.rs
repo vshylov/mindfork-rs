@@ -2,7 +2,7 @@
 //! split out of the chat.rs monolith (see
 //! docs/history/refactoring-god-objects.md, stage 2).
 
-use super::popups::{render_confirm, render_help, render_suggest};
+use super::popups::{render_confirm, render_help, render_suggest, render_tool_confirm};
 use super::*;
 
 impl ChatScreen {
@@ -212,6 +212,10 @@ impl ChatScreen {
         if let Some(picker) = &self.emoji {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
+        }
+        if let Some(pending) = &self.tool_confirm {
+            dim_background(frame, &self.palette);
+            render_tool_confirm(frame, pending, &self.palette, self.loc);
         }
         if let Some(action) = self.confirm {
             dim_background(frame, &self.palette);

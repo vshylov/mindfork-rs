@@ -653,6 +653,10 @@ pub struct ToolSettings {
     pub subagent_max_tokens: usize,
     /// Time limit for a sub-agent call (seconds).
     pub subagent_timeout_secs: u64,
+    /// Ask the user before the agentic loop runs a tool marked dangerous
+    /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
+    /// behaves exactly as before until the user turns it on.
+    pub confirm_dangerous: bool,
 }
 
 impl Default for ToolSettings {
@@ -670,6 +674,7 @@ impl Default for ToolSettings {
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_timeout_secs: DEFAULT_SUBAGENT_TIMEOUT_SECS,
+            confirm_dangerous: false,
         }
     }
 }
@@ -1404,6 +1409,8 @@ mod tests {
         assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
+        // Confirmation of dangerous tool calls is opt-in: off until turned on.
+        assert!(!c.tools.confirm_dangerous);
         // File tools are off by default (like Python).
         assert!(!c.tools.fs_enabled);
         assert_eq!(c.tools.fs_root, None);
@@ -1689,6 +1696,7 @@ mod tests {
                 python_enabled: true,
                 subagent_max_tokens: 512,
                 subagent_timeout_secs: 30,
+                confirm_dangerous: true,
                 ..Default::default()
             },
             interface: InterfaceSettings {

@@ -156,6 +156,11 @@ impl Tool for PythonExec {
     fn ui_label(&self) -> &'static str {
         "run Python"
     }
+    /// Arbitrary code. The sandbox bounds what it can reach (ADR 0005), not
+    /// what it does with the network or the mounted directory.
+    fn danger(&self) -> bool {
+        true
+    }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Python)
     }

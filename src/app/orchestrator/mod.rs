@@ -59,7 +59,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, BackgroundKind, FeedFocus, ServerStatus};
+use crate::app::events::{
+    AppCommand, AppEvent, BackgroundKind, FeedFocus, ServerStatus, ToolDecision,
+};
 use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
@@ -162,6 +164,7 @@ pub async fn run(deps: OrchestratorDeps) {
         title_tx,
         profiles: Vec::new(),
         chats: Vec::new(),
+        confirm: None,
         active_id: None,
         gen_state: GenState::Idle,
         done_tx,
@@ -335,6 +338,10 @@ struct Orchestrator {
     /// Channel for results of background chat-auto-title generation.
     title_tx: UnboundedSender<TitleResult>,
     profiles: Vec<Profile>,
+    /// The in-flight turn's dangerous-tool confirmation channel: its id and the
+    /// sender the generation task is listening on (spec §9.8, fork F8 of
+    /// docs/history/tool-confirmation.md). `None` between turns.
+    confirm: Option<(Uuid, UnboundedSender<(String, ToolDecision)>)>,
     /// Visible chats, entirely in memory (the orchestrator is the sole writer).
     chats: Vec<Chat>,
     active_id: Option<Uuid>,
@@ -476,6 +483,11 @@ impl Orchestrator {
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
+            AppCommand::ConfirmTool {
+                generation_id,
+                call_id,
+                decision,
+            } => self.handle_confirm_tool(generation_id, call_id, decision),
             AppCommand::Impersonate { seed } => self.handle_impersonate(seed),
             AppCommand::CancelImpersonation => self.handle_cancel_impersonation(),
             AppCommand::SetDraft(text) => self.handle_set_draft(text),

@@ -26,6 +26,7 @@ use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
+use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::i18n::{Locale, locale};
@@ -140,6 +141,13 @@ pub enum ChatIntent {
     /// `arboard` (doesn't go through the orchestrator: the text is already at
     /// the UI). See docs/history/input-selection-undo-mouse.md §B.
     CopyToClipboard(String),
+    /// The user's answer to a dangerous-tool confirmation (spec §9.8). Carries
+    /// the ids back so a reply cannot land on the wrong turn or the wrong call.
+    ConfirmTool {
+        generation_id: Uuid,
+        call_id: String,
+        decision: ToolDecision,
+    },
 }
 
 /// An irreversible operation that requires confirmation in a modal popup
@@ -169,6 +177,20 @@ impl ConfirmAction {
             ConfirmAction::DeleteExchange => loc.t("ui.confirm.delete_exchange"),
         }
     }
+}
+
+/// A dangerous tool call the agentic loop is holding until the user answers
+/// (spec §9.8).
+///
+/// A separate state rather than another [`ConfirmAction`] variant for two
+/// reasons: this popup appears **during** generation — that is the whole point —
+/// and it offers three answers instead of yes/no.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ToolConfirm {
+    pub(super) generation_id: Uuid,
+    pub(super) call_id: String,
+    pub(super) name: String,
+    pub(super) arguments: String,
 }
 
 /// An item of the spellcheck suggestions popup.
@@ -341,6 +363,9 @@ pub struct ChatScreen {
     /// The open modal confirmation popup for an irreversible operation
     /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
+    /// A dangerous tool call awaiting the user's answer (spec §9.8). Independent
+    /// of [`Self::confirm`]: this one is modal *during* generation.
+    pub(super) tool_confirm: Option<ToolConfirm>,
     /// In-feed search (`Ctrl+F`): a single-line query field standing in for the
     /// message input box while it is open. `None` when not searching. The
     /// message box's own text is never touched — see docs/history/in-feed-search.md §3.
@@ -459,6 +484,7 @@ impl ChatScreen {
             feed_has_risky: false,
             full_redraw: false,
             confirm: None,
+            tool_confirm: None,
             search: None,
             search_last: String::new(),
             confirm_destructive: false,

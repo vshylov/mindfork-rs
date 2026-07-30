@@ -13,9 +13,7 @@ called out as the highest-payoff tracks (real user pain / direct savings):
    unlocked by the stable daily self-model injection.
 3. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
    reliability.
-4. **Confirmation for dangerous tools** (§Tools) — human-in-the-loop before
-   `python_exec`/file/destructive MCP calls.
-5. **Multimodality (images)** (§Engine and reliability) — a big feature with
+4. **Multimodality (images)** (§Engine and reliability) — a big feature with
    demand.
 
 ## Memory, self-model, knowledge
@@ -61,11 +59,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - non-text result blocks (currently — a placeholder).
   - WASM sandbox for untrusted tools.
   - localization of client wire errors (currently — a technical layer).
-- **Confirmation for dangerous tools** — an interactive prompt before
-  `python_exec`/file operations/destructive MCP calls (human-in-the-loop;
-  `destructiveHint` annotations from MCP servers — untrusted, but usable as a
-  hint). Reuses the `ConfirmAction` popup (the same mechanism already wired
-  to `interface.confirm_destructive_keys` for `Ctrl+R`/`Ctrl+E`).
 
 ## Feed and chat UI
 - **Per-message collapse/select/copy** — explicitly deferred past M3, noted
@@ -250,6 +243,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Confirmation for dangerous tools** (complete): `tools.confirm_dangerous` —
+  off by default — parks a call to `python_exec`, `fs_write` or any MCP tool and
+  shows it, formatted the way the feed will show it afterwards, before it runs;
+  `Enter` runs it, `A` allows that tool for the rest of the turn, `Esc` declines
+  without cancelling the turn (the model is told and carries on). What counts as
+  dangerous is declared by the tool itself, next to its group and gate; MCP
+  servers' own `destructiveHint` annotations are **not** consulted — untrusted
+  input can only ever relax a decision, which is the attack. The load-bearing
+  piece is the confirmation channel: the agentic loop is a background task, and
+  this is the first thing that sends anything back *into* one, with replies from
+  a stale turn or another call of the same round dropped. Turned off, the loop is
+  byte-for-byte its old self. See
+  [tool-confirmation.md](history/tool-confirmation.md), spec §9.8.
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
 - **In-feed text search** (complete): **`Ctrl+F`** inside a chat searches that

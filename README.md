@@ -227,6 +227,12 @@ Architecture — **Feature-Sliced Design (FSD)**.
   `web_search`+`fetch_url`, Python gates `python_exec`, file access gates `fs_*`, MCP
   tools are gated by the `mcp.enabled` master switch); `calculate`/`current_time` are
   safe and always available.
+- **Confirmation before a dangerous call** (`tools.confirm_dangerous`, **off by
+  default**): the loop stops and shows the call — the code, the path — before
+  running `python_exec`, `fs_write` or any MCP tool. `Enter` runs it, `A` allows
+  that tool until the answer is finished, `Esc` declines without throwing the
+  answer away (the model is told and carries on). Reads and the assistant's own
+  notes are never asked about. See [spec §9.8](spec.md).
 
 **Other**
 - **Settings screen** (`Ctrl+P`): model/server, inference, sampling, profiles,
