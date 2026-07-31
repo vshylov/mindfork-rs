@@ -89,10 +89,16 @@ pub(super) fn highlight_line_or_plain(
     }
 }
 
+/// A blank column kept along the block's right edge, so the text doesn't run
+/// into the background's hard edge. Left alone on purpose: the code's own
+/// indentation stays aligned with the fence markers and with the surrounding
+/// prose.
+pub(super) const CODE_RIGHT_PAD: usize = 1;
+
 /// Lays an already-emitted code block out as a solid rectangle: its rows are
 /// wrapped to the panel width and padded with spaces up to the block's own
-/// width — the widest row, capped at `width`. `start` is the index in `lines`
-/// of the block's opening fence.
+/// width — the widest row plus [`CODE_RIGHT_PAD`], capped at `width`. `start`
+/// is the index in `lines` of the block's opening fence.
 ///
 /// Without this the block's background ([`super::code_style`] — `REVERSED`,
 /// so a space paints a solid cell) follows the ragged right edge of the text,
@@ -103,16 +109,20 @@ pub(super) fn highlight_line_or_plain(
 /// Rows are wrapped **here** rather than left to the feed: a row longer than
 /// the panel would be split later and its tail would stay ragged inside an
 /// otherwise rectangular block. The feed's re-wrap then becomes a no-op (every
-/// row is ≤ `width`, like a table's).
+/// row is ≤ `width`, like a table's). They are wrapped to `width -
+/// CODE_RIGHT_PAD` so that the blank column exists even for a block whose text
+/// fills the panel — otherwise the cap would eat it exactly where the edge is
+/// tightest.
 ///
 /// Only the unhighlighted path calls this: a syntect-highlighted block carries
 /// no background at all (the pipeline only transfers foreground color, see
 /// [`build_code_theme`]), so there would be no rectangle to square off.
 pub(super) fn pad_code_block(lines: &mut Vec<Line<'static>>, start: usize, width: usize) {
+    let text_w = width.saturating_sub(CODE_RIGHT_PAD);
     let rows: Vec<Line<'static>> = lines
         .split_off(start)
         .into_iter()
-        .flat_map(|line| wrap::wrap_line(&line, width))
+        .flat_map(|line| wrap::wrap_line(&line, text_w))
         // Trailing spaces carry no meaning in a code block (leading ones —
         // indentation — do), and `wrap_ranges` "spills" a word-boundary space
         // past the row's edge; both would inflate the measured width and defeat
@@ -121,7 +131,7 @@ pub(super) fn pad_code_block(lines: &mut Vec<Line<'static>>, start: usize, width
         .collect();
     let block = rows
         .iter()
-        .map(|l| cell_width(&l.spans))
+        .map(|l| cell_width(&l.spans) + CODE_RIGHT_PAD)
         .max()
         .unwrap_or(0)
         .min(width);
@@ -395,7 +405,8 @@ mod tests {
         let md = "```text\nкороткая\nсамая длинная строка блока\nx\n```";
         let widths = block_widths(md, 80);
         let expected =
-            wrap::display_width(&"самая длинная строка блока".chars().collect::<Vec<_>>());
+            wrap::display_width(&"самая длинная строка блока".chars().collect::<Vec<_>>())
+                + CODE_RIGHT_PAD;
         assert!(
             widths.iter().all(|&w| w == expected),
             "rows are not one width ({expected} expected): {widths:?}"
@@ -418,9 +429,42 @@ mod tests {
     #[test]
     fn blank_line_inside_a_code_block_is_filled() {
         let widths = block_widths("```\naaaa bbbb\n\ncccc\n```", 80);
+        let expected = 9 + CODE_RIGHT_PAD;
         assert!(
-            widths.iter().all(|&w| w == 9),
+            widths.iter().all(|&w| w == expected),
             "a blank row broke the rectangle: {widths:?}"
+        );
+    }
+
+    /// The rectangle keeps a blank column along its right edge, so the text
+    /// doesn't run into the background's hard edge. Checked at a comfortable
+    /// panel and at the awkward one — a panel exactly as wide as the block's
+    /// longest line, where the width cap would otherwise eat that very column
+    /// (the line wraps instead, and the column survives).
+    #[test]
+    fn rectangle_keeps_a_blank_column_on_the_right() {
+        let longest = "самая длинная строка блока";
+        let natural = wrap::display_width(&longest.chars().collect::<Vec<_>>());
+        for w in [80usize, natural] {
+            let rows = block_rows(&format!("```text\nx\n{longest}\n```"), w);
+            for row in &rows {
+                assert!(
+                    row.ends_with(' '),
+                    "the right edge has no blank column at panel {w}: {rows:?}"
+                );
+            }
+        }
+        // Exactly one column, not a margin: the rectangle stays sized to its
+        // content.
+        let rows = block_rows(&format!("```text\nx\n{longest}\n```"), 80);
+        let widest = rows
+            .iter()
+            .find(|r| r.contains(longest))
+            .expect("the longest line");
+        assert_eq!(
+            widest.chars().rev().take_while(|c| *c == ' ').count(),
+            CODE_RIGHT_PAD,
+            "expected exactly one blank column: {widest:?}"
         );
     }
 

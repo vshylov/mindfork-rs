@@ -1319,8 +1319,11 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   one syntect doesn't know — ` ```text `) is drawn on a reverse-video background, and
   that background used to follow the ragged right edge of each line. Its rows —
   fences included, they are the rectangle's top and bottom edge — are now padded to
-  one width: the **block's own** (its widest line), capped by the panel and not
-  stretched to it, the same rule tables follow. A line longer than the panel is
+  one width: the **block's own** (its widest line **plus one blank column** on the
+  right, so the text doesn't run into the background's hard edge), capped by the
+  panel and not stretched to it, the same rule tables follow. There is deliberately
+  no matching column on the left: the code's own indentation stays aligned with the
+  fence markers and the surrounding prose. A line longer than the panel is
   wrapped **by the renderer**, so the block stays square instead of leaving a ragged
   tail row for the feed's re-wrap to produce (and that re-wrap becomes a no-op, as it
   already is for tables). The fences' `DIM` sits on their span rather than on the

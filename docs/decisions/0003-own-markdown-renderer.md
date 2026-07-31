@@ -97,8 +97,12 @@ The `tui-markdown` dependency is removed; direct `pulldown-cmark`, `syntect`,
 - **An unhighlighted code block is a rectangle (2026-07-31, done)** — `code.rs`
   `pad_code_block`: the block's reverse-video background followed the ragged
   right edge of the text. Its rows (fences included) are now wrapped to the
-  panel width and padded to the block's **own** width — the widest row, capped
-  by the panel, laid out to content exactly as a table is. The fences' `DIM`
+  panel width and padded to the block's **own** width — the widest row plus one
+  blank column on the right (`CODE_RIGHT_PAD`, so the text doesn't run into the
+  background's edge; no column on the left — indentation stays aligned with the
+  fences), capped by the panel, laid out to content exactly as a table is. Rows
+  are wrapped to `width - CODE_RIGHT_PAD`, so the column survives even where
+  the edge is tightest — a block whose text fills the panel. The fences' `DIM`
   moved from the line onto its span, so the padding takes the background
   without the dimming (otherwise the box's edges would be a different shade
   from its body). A **highlighted** block is deliberately untouched: the

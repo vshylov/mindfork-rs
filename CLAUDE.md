@@ -124,12 +124,12 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1680 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1681 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — **an unhighlighted code block is drawn as a rectangle** (its
 reverse-video background used to follow the ragged right edge of the text; rows
-are now padded to the block's own width — content-sized like a table, not
-stretched across the panel); before that — **no server restart when nothing
+are now padded to the block's own width plus a blank column on the right —
+content-sized like a table, not stretched across the panel); before that — **no server restart when nothing
 effectively changed** (the
 restart is decided against what each server is actually running, not against the
 previous edit — so an edit and its `Ctrl+Z` no longer reload a multi-GB GGUF for
@@ -10306,6 +10306,16 @@ debounce was done as a separate PR, see below).
   takes the rows from there, measures them and pads each with a raw space span.
   Raw on purpose — the background comes from the **line** style, so the padding
   picks it up on its own.
+- **One blank column on the right** (`CODE_RIGHT_PAD`, added after the first
+  live look at the result — flush text against the background's hard edge reads
+  as abrupt). Deliberately asymmetric: a matching column on the left would shift
+  the code out of alignment with the fence markers and the surrounding prose.
+  Rows are wrapped to `width - CODE_RIGHT_PAD` rather than to `width`, so the
+  column survives the one case where the cap would eat it — a block whose text
+  fills the panel, i.e. exactly where the edge is tightest. The price is that
+  such a line wraps one column earlier; the alternative (keep the column only
+  when it happens to fit) would give wide blocks a different look from narrow
+  ones, which is the raggedness this whole change is about.
 - **Rows are wrapped by the renderer, not left to the feed.** A code line longer
   than the panel would otherwise be split later and its tail would stay ragged
   inside an otherwise rectangular block. Wrapping here makes the feed's re-wrap a
@@ -10328,16 +10338,18 @@ debounce was done as a separate PR, see below).
   because it is the case a reader notices first.
 - **Tests**: the rectangle (all rows one width, that width the block's own and
   below the panel, and the rows really carry the background); a blank line filled;
-  a long line wrapped into the rectangle at four panel widths; the padding not
-  dimmed; the highlighted block left ragged. The existing "content not glued to
-  the fence" test now compares trimmed text — its point is the *content*, not the
-  trailing background. **Mutation-tested**: removing the `pad_code_block` call
-  fails four of the new tests **and** the golden
-  `mermaid_fallback_matches_disabled_render` (the mermaid fallback pads through
-  `emit_fenced_source`, so the two paths would diverge) — while
-  `highlighted_block_is_left_ragged` stays green, as a scope pin should.
-  **1680 unit tests green** (+5), 70 `#[ignore]`, clippy `-D warnings`/fmt/
-  `cyrillic_scan`/`link_check` clean.
+  the blank right column (at a comfortable panel and at one exactly as wide as the
+  block's longest line, plus "exactly one column, not a margin"); a long line
+  wrapped into the rectangle at four panel widths; the padding not dimmed; the
+  highlighted block left ragged. The existing "content not glued to the fence"
+  test now compares trimmed text — its point is the *content*, not the trailing
+  background. **Mutation-tested**: removing the `pad_code_block` call fails four
+  of the new tests **and** the golden `mermaid_fallback_matches_disabled_render`
+  (the mermaid fallback pads through `emit_fenced_source`, so the two paths would
+  diverge); `CODE_RIGHT_PAD = 0` fails the column test alone — while
+  `highlighted_block_is_left_ragged` stays green through both, as a scope pin
+  should. **1681 unit tests green** (+6), 70 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
 - **A live run isn't required** (AGENTS.md §3): this is the markdown renderer —
   no engine, memory, tool or provider path is touched (the precedent set by
   markdown-refinements and the mermaid work). The result was nonetheless checked
