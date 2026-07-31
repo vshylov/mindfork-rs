@@ -15,6 +15,19 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Changed
 
+- **Moving around the settings screen no longer changes settings by accident.**
+  `→` used to step from the section list into the parameters, so `→` and then `←`
+  looked like the way in and back out — but `←` on a switch changes its value, and
+  the first parameter of most sections is a switch (the server mode, the theme).
+  The way back was a silent edit, applied at once and restarting the server. Now
+  the model is: **the arrows change a value, `Enter` goes into the parameters,
+  `Esc` goes back out** (a second `Esc` closes the screen), and `Tab` switches
+  section without moving your focus. The hotkey line at the bottom now changes
+  with your focus, so it always says what `Enter` and `Esc` will do, and each of
+  the two panes has a marker in its title that turns green when it is the one
+  listening to you. Note the two habits that change: `→` no longer enters the
+  parameters, and leaving the screen from inside them takes two `Esc` presses.
+
 - **`mindfork backup` and `mindfork restore` now compact the database.** `data.db`
   holds on to the space freed by deleted notes, `/rag remove` and chats whose
   attachment index went away — a backup now packs a compacted copy of it (a
