@@ -153,6 +153,12 @@ pub(super) struct McpManager {
     /// generation are dropped (a late `Exited` from a shut-down server won't
     /// recreate it).
     epoch: u64,
+    /// The settings the servers were last **actually** spawned from. Killing and
+    /// respawning MCP processes (`npx` → node) is the most expensive re-apply on the
+    /// screen, so `flush_restarts` skips it when nothing effective changed — an edit
+    /// and its undo (`Ctrl+Z`) both raise the debounce flag while leaving the config
+    /// exactly as it was applied. `None` before the first apply.
+    applied: Option<McpSettings>,
 }
 
 impl McpManager {
@@ -161,7 +167,14 @@ impl McpManager {
             slots: HashMap::new(),
             evt_tx,
             epoch: 0,
+            applied: None,
         }
+    }
+
+    /// Whether the servers are already running exactly these settings — i.e. whether
+    /// re-applying would change anything. `false` before the first apply.
+    pub(super) fn is_current(&self, settings: &McpSettings) -> bool {
+        self.applied.as_ref().is_some_and(|a| a == settings)
     }
 
     /// (Re)applies settings: shuts down the previous servers (dropping the
@@ -170,6 +183,7 @@ impl McpManager {
     /// rebuilds the registry (the previous wrappers leave it right away).
     /// `loc` — the UI language (status-reason text).
     pub(super) fn apply(&mut self, settings: &McpSettings, loc: &'static Locale) {
+        self.applied = Some(settings.clone());
         self.epoch += 1;
         self.slots.clear(); // Dropping the slots shuts down the tasks/processes
         if !settings.enabled {

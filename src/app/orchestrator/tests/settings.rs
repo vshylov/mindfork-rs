@@ -165,6 +165,99 @@ async fn model_change_restarts_chat_server_debounced() {
     handle.await.unwrap();
 }
 
+/// An edit and its undo cost **no** restart: the debounce flag only says "something
+/// was edited", and the decision is taken against what the server is actually running.
+/// Without this, `Ctrl+Z` on an engine field would kill and reload a GGUF to arrive at
+/// the values already loaded. See docs/history/settings-undo.md §5.1.
+///
+/// Proving a restart *didn't* happen can't rely on waiting for an absent event, so the
+/// test ends with a genuine change and checks the counter against **its** status
+/// event: if the reverted pair had restarted anything, the final count would be one
+/// higher.
+#[tokio::test(start_paused = true)]
+async fn an_edit_and_its_undo_cost_no_restart() {
+    let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>;
+    let sup = Arc::new(MockSupervisor::with_backend(Some(backend)));
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, mut evt_rx) = unbounded_channel();
+    let handle = tokio::spawn(run(OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config: AppConfig::default(),
+        supervisor: sup.clone(),
+        default_language: crate::shared::i18n::Lang::default(),
+    }));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    assert_eq!(sup.chat_call_count(), 1, "bootstrap raised it once");
+
+    // Edit an engine field, then put it back — exactly what `Ctrl+Z` sends.
+    let edited = crate::shared::config::EngineSettings {
+        managed: crate::shared::config::ManagedSettings {
+            model_path: Some("other.gguf".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(AppConfig {
+            engine: edited,
+            ..Default::default()
+        })))
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::default()))
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.engine == AppConfig::default().engine),
+    )
+    .await
+    .unwrap();
+
+    // Let the debounce deadline pass. Under `start_paused` tokio advances virtual time
+    // to the orchestrator's timer first, so its flush has run by the time this returns.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        sup.chat_call_count(),
+        1,
+        "the config came back to what the server is already running — nothing to do"
+    );
+
+    // A genuine change still restarts — and its status event is the deterministic
+    // marker that the flush above really ran.
+    let changed = crate::shared::config::EngineSettings {
+        managed: crate::shared::config::ManagedSettings {
+            gpu_layers: 10,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(AppConfig {
+            engine: changed,
+            ..Default::default()
+        })))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ServerStatus(_)))
+        .await
+        .unwrap();
+    assert_eq!(
+        sup.chat_call_count(),
+        2,
+        "exactly one restart, for the change that actually differed"
+    );
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
 /// A key entered in settings is saved **encrypted**: `settings.json`
 /// has no plaintext, but the application reads it back (this machine's entry).
 /// The feature's main safety invariant — see docs/research/api-key-storage.md.

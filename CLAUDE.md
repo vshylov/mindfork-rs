@@ -124,9 +124,12 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1674 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1675 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **undo on the settings screen**
+recent change — **no server restart when nothing effectively changed** (the
+restart is decided against what each server is actually running, not against the
+previous edit — so an edit and its `Ctrl+Z` no longer reload a multi-GB GGUF for
+nothing); before that — **undo on the settings screen**
 ([plan](docs/history/settings-undo.md)): `Ctrl+Z` takes a setting edit back and
 lands the cursor on the field it reverted — closing the consequence left over by
 the change before it, which closed the *cause*; the whole thing needed no new
@@ -10224,6 +10227,55 @@ debounce was done as a separate PR, see below).
   clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
 - **A live run isn't required** (AGENTS.md §3): key handling and screen state on
   one screen — no engine, memory, tool or provider path is touched.
+
+### Post-M9: no server restart when nothing effectively changed (done)
+
+- **Closes the consequence recorded in §5.1** of
+  [settings-undo.md](docs/history/settings-undo.md): `handle_update_config` marked
+  a restart by diffing the incoming config against the **previous edit**, so an
+  engine edit plus its `Ctrl+Z` marked it twice and the debounce produced one
+  restart that reloaded the server with the values it already had — on a managed
+  server, unloading and reloading a multi-GB GGUF for nothing. Branch
+  `fix/idle-server-restart`. No forks — the approach was already recorded in the
+  plan, so no design doc (AGENTS.md §1: a simple task).
+- **The fix splits two meanings that had been conflated.** The `RestartQueue`
+  flag keeps saying "something was edited" (cheap, set at edit time); whether a
+  restart is *worth doing* moved to `flush_restarts`, which compares the final
+  config against what each server was **actually launched with**. A flag can't be
+  un-set, so deciding at flush time is the only place the answer can be right.
+- **The recorded identity is (settings, key blob)**, because `apply_*` resolves
+  the key itself via `stored_key` — equal settings with a different blob still
+  warrant a relaunch. The comparison uses the stored **ciphertext**, never the
+  plaintext: no extra copy of a secret is kept, and re-encrypting the same key
+  yields a different nonce, so it errs towards restarting — the safe direction.
+- **Recorded by `apply_*` itself, not by the flush.** That's what keeps
+  `relaunch_dead_managed_servers` correct by construction: it re-applies the same
+  settings on purpose after a crash, and must never be skipped. Impersonation
+  records in **both** arms of its `match`, including `shared` — that mode is a
+  state the server can be *in*, so switching away and back must not read as
+  "nothing to do".
+- **MCP got the same guard** (`McpManager::is_current`): a re-apply there kills
+  and respawns `npx` → node processes, the most expensive one on the screen, and
+  it is reached from the same debounce.
+- **A deliberate loss, recorded rather than papered over**: since a re-apply now
+  needs a real difference, the undocumented trick of "wiggle a settings field to
+  reload the server" no longer works — including as a way to pick up a changed
+  env-var API key (`api_key_env`). It was never a designed feature and depended
+  on the two edits landing on opposite sides of the debounce; the honest fix, if
+  wanted, is an explicit "restart servers" action.
+- **The test had to prove a restart *didn't* happen**, which can't rest on
+  waiting for an absent event. `an_edit_and_its_undo_cost_no_restart` advances
+  virtual time past the deadline (under `start_paused` tokio runs the
+  orchestrator's timer first, so its flush has provably run), asserts the counter
+  is unchanged, and then makes a **genuine** change and checks the counter
+  against *its* status event — a deterministic marker that also proves the flush
+  path still works. Mutation-tested: restoring the unconditional flush fails it.
+  **1675 unit tests green** (+1), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): the change is *when* `apply_*` is
+  called, not what it does — the launch path, its arguments and every provider
+  protocol are untouched, and `MockSupervisor`'s call counter is exactly the
+  observable in question.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
