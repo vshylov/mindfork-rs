@@ -135,25 +135,35 @@ impl Orchestrator {
     pub(super) fn flush_restarts(&mut self) {
         let (chat, embed, imp, mcp) = self.restarts.take();
         let loc = self.ui_locale();
-        if chat {
+        let keys = &self.config.api_keys;
+        // The flag only says "something was edited"; whether a restart is *worth doing*
+        // is decided here, against what each server is actually running. An edit and its
+        // undo (`Ctrl+Z`) both raise the flag, and the final config then equals the
+        // applied one — restarting would reload the server with the values it already
+        // has, and for a managed one that means killing and reloading a GGUF for
+        // nothing. See docs/history/settings-undo.md §5.1.
+        let mut applied_any = false;
+        if chat && !self.engines.chat_is_current(&self.config.engine, keys) {
+            self.engines.apply_chat(&self.config.engine, keys, loc);
+            applied_any = true;
+        }
+        if embed && !self.engines.embed_is_current(&self.config.embed, keys) {
+            self.engines.apply_embed(&self.config.embed, keys, loc);
+            applied_any = true;
+        }
+        if imp
+            && !self
+                .engines
+                .impersonation_is_current(&self.config.impersonation_engine, keys)
+        {
             self.engines
-                .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+                .apply_impersonation(&self.config.impersonation_engine, keys, loc);
+            applied_any = true;
         }
-        if embed {
-            self.engines
-                .apply_embed(&self.config.embed, &self.config.api_keys, loc);
-        }
-        if imp {
-            self.engines.apply_impersonation(
-                &self.config.impersonation_engine,
-                &self.config.api_keys,
-                loc,
-            );
-        }
-        if mcp {
+        if mcp && !self.mcp.is_current(&self.config.mcp) {
             self.apply_mcp_settings();
         }
-        if chat || embed || imp {
+        if applied_any {
             self.emit_server_status();
         }
     }

@@ -1419,7 +1419,9 @@ section and subsection), `Esc` — cancel.
   embedding server for RAG/memory (mode + parameters). **Changing the model = restarting
   the server** — with a debounce (~1.2 s of quiet): a burst of quick edits to engine
   fields is coalesced into a single restart with the final values; the config saves
-  right away.
+  right away. The restart is decided against what the server is **actually
+  running**, not against the previous edit — so an edit and its undo (`Ctrl+Z`)
+  cost nothing, while a genuine change still restarts.
 - **Sampling** (a tab strip Assistant/Impersonation): parameters by group —
   *Basics* (temperature, top-k/p, max_tokens, seed), *Dynamic temperature*,
   *Diversity* (min-p, top-n-sigma, typical-p, adaptive-p, XTC), *Repeat penalties*,

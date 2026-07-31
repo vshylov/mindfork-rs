@@ -27,6 +27,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   never keeps it in the screen), creating or deleting a profile, and confirming
   an MCP server's tool list.
 
+### Fixed
+
+- **Editing a server setting and taking it back no longer reloads the model for
+  nothing.** A change and its undo both asked for a restart, and the app then
+  restarted the server with the settings it was already running — on a local
+  model that means unloading and reloading a multi-gigabyte file. The app now
+  compares against what each server is actually running, so a restart only
+  happens when something really differs. The same applies to MCP servers, where
+  a needless re-apply killed and respawned their processes.
+
 ### Changed
 
 - **Moving around the settings screen no longer changes settings by accident.**

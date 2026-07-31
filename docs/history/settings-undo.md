@@ -187,15 +187,32 @@ Nothing found → stay put.
   engine, memory, tool or provider path is touched. The established precedent for
   settings-screen work.
 
-### 5.1. Known consequence: one wasted restart
+### 5.1. Known consequence: one wasted restart — **closed** in a follow-up
 
 `handle_update_config` marks a server restart by diffing the incoming config
 against the previous one. An engine edit followed by its undo therefore marks the
-restart twice; the debounce coalesces them into **one** restart that reloads the
-server with the values it already had. Correct, merely wasteful, and only when
-the undone field was an engine field. Avoiding it would mean diffing against the
-*last applied* config rather than the previous one — a separate change in the
-orchestrator, deliberately not bundled here.
+restart twice; the debounce coalesced them into **one** restart that reloaded the
+server with the values it already had. Correct, merely wasteful.
+
+Fixed separately (branch `fix/idle-server-restart`): each `apply_*` now records
+what the server was **actually launched with** (its settings plus the key blob
+they were resolved from), and `flush_restarts` compares against that instead of
+against the previous edit. The debounce flag keeps its meaning — "something was
+edited" — while whether a restart is *worth doing* is decided at flush time. The
+same guard covers the MCP host, where a re-apply kills and respawns `npx`
+processes and is the most expensive one on the screen.
+
+The snapshot is recorded by `apply_*` itself rather than by the flush, so a crash
+relaunch (`relaunch_dead_managed_servers`, which re-applies the same settings on
+purpose) keeps it accurate and is never skipped.
+
+**One affordance was lost, deliberately.** Because a re-apply now needs an actual
+difference, the undocumented trick of "wiggle a settings field to reload the
+server" no longer works — which also means a change to an env-var-supplied API
+key (`api_key_env`) can't be picked up that way. It never was a designed feature
+and was unreliable (it depended on the two edits landing on opposite sides of the
+debounce). The honest fix, if it turns out to be wanted, is an explicit "restart
+servers" action rather than a side effect of editing.
 
 ---
 

@@ -101,6 +101,22 @@ pub(super) struct EngineManager {
     /// background probe (the cloud is `Ready` at once). Doesn't gate anything — RAG is
     /// lazy (ADR 0002), the status is informational.
     embed_status: ServerStatus,
+    /// What each server was last **actually launched with**: its settings plus the key
+    /// blob they were resolved from (`stored_key` reads the key inside `apply_*`, so
+    /// both together decide what a relaunch would produce).
+    ///
+    /// [`Orchestrator::flush_restarts`] compares against this rather than against the
+    /// previous edit: the debounce flag only says "something was edited", and an edit
+    /// followed by its undo (`Ctrl+Z`, spec §11.6) raises it twice while leaving the
+    /// config exactly as the server is already running. Recorded by `apply_*` itself,
+    /// so a crash relaunch — which re-applies the same settings — keeps it accurate.
+    ///
+    /// `None` before the first apply, so the initial launch always happens.
+    ///
+    /// [`Orchestrator::flush_restarts`]: super::Orchestrator::flush_restarts
+    applied_chat: Option<(EngineSettings, Vec<ApiKeyEntry>)>,
+    applied_embed: Option<(EmbedSettings, Vec<ApiKeyEntry>)>,
+    applied_imp: Option<(ImpersonationEngineSettings, Vec<ApiKeyEntry>)>,
     /// The chat-server status channel for the supervisor's background probe.
     status_tx: UnboundedSender<ServerStatus>,
     /// The impersonation-server status channel (background probe).
@@ -136,6 +152,9 @@ impl EngineManager {
             backend: None,
             chat_handle: None,
             embed_handle: None,
+            applied_chat: None,
+            applied_embed: None,
+            applied_imp: None,
             imp_backend: None,
             imp_handle: None,
             server_status: ServerStatus::NotConfigured,
@@ -180,6 +199,7 @@ impl EngineManager {
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         self.server_status = setup.status;
+        self.applied_chat = Some((settings.clone(), api_keys.to_vec()));
     }
 
     /// (Re-)raises the embedding server from settings. Like [`Self::apply_chat`]: the
@@ -208,6 +228,7 @@ impl EngineManager {
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
         self.embed_status = setup.status;
+        self.applied_embed = Some((settings.clone(), api_keys.to_vec()));
     }
 
     /// (Re-)raises the impersonation server. In `shared` mode a separate server isn't
@@ -244,6 +265,38 @@ impl EngineManager {
                 self.imp_status = setup.status;
             }
         }
+        // Recorded for both arms: `shared` mode is a state the server can be *in*, so
+        // switching away from it and back must not read as "nothing to do".
+        self.applied_imp = Some((settings.clone(), api_keys.to_vec()));
+    }
+
+    /// Whether a server is already running exactly this configuration — i.e. whether
+    /// re-applying it would change anything. `false` before the first apply.
+    ///
+    /// The comparison covers the key blob as well as the settings: the key is resolved
+    /// inside `apply_*`, so equal settings with a different blob still warrant a
+    /// relaunch. Comparing the stored ciphertext (never the plaintext) is deliberate —
+    /// it errs towards restarting, which is the safe direction.
+    pub(super) fn chat_is_current(&self, s: &EngineSettings, keys: &[ApiKeyEntry]) -> bool {
+        self.applied_chat
+            .as_ref()
+            .is_some_and(|(a, k)| a == s && k == keys)
+    }
+
+    pub(super) fn embed_is_current(&self, s: &EmbedSettings, keys: &[ApiKeyEntry]) -> bool {
+        self.applied_embed
+            .as_ref()
+            .is_some_and(|(a, k)| a == s && k == keys)
+    }
+
+    pub(super) fn impersonation_is_current(
+        &self,
+        s: &ImpersonationEngineSettings,
+        keys: &[ApiKeyEntry],
+    ) -> bool {
+        self.applied_imp
+            .as_ref()
+            .is_some_and(|(a, k)| a == s && k == keys)
     }
 
     /// Updates the chat-server status (from the background monitor).
