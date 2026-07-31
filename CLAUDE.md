@@ -124,9 +124,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1665 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1674 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — the **settings-screen focus model**
+recent change — **undo on the settings screen**
+([plan](docs/history/settings-undo.md)): `Ctrl+Z` takes a setting edit back and
+lands the cursor on the field it reverted — closing the consequence left over by
+the change before it, which closed the *cause*; the whole thing needed no new
+command or event, since `SaveConfig` already carries the entire working config;
+before that — the **settings-screen focus model**
 ([plan](docs/history/settings-navigation.md)): `Enter` is now the only way into the field
 pane and `Esc` the only way out (a second one closes the screen), the arrows only
 ever change a value, and `Tab` no longer drops the focus — closing the trap where
@@ -10147,6 +10152,78 @@ debounce was done as a separate PR, see below).
   config snapshot taken when the screen opens; full `Ctrl+Z` would have to interact
   with the server-restart debounce and with profile edits, which travel as a
   different intent. See docs/history/settings-navigation.md §7.
+
+### Post-M9: undoing an edit on the settings screen (done)
+
+- **The follow-up deferred as fork R6** of the focus-model track
+  ([settings-navigation.md §7](docs/history/settings-navigation.md)): that change
+  removed the main *source* of accidental edits, this one removes the
+  *consequence*. Plan with forks U1–U4 —
+  [docs/history/settings-undo.md](docs/history/settings-undo.md) (**user's
+  decision, 2026-07-31**, all as recommended). Branch `feat/settings-undo`.
+- **The finding that made it cheap, and it came from reading the contract rather
+  than the screen:** `SettingsIntent::SaveConfig` already carries the **whole**
+  working `AppConfig`, and `SaveProfile` a full `ProfileEdit` snapshot of the
+  profile's fields. So undo is *restore an older snapshot into the working copy
+  and emit the same intent again* — **no new `AppCommand`, no new `AppEvent`, no
+  orchestrator change at all**. The three config fields the orchestrator owns
+  (`last_active_chat`, `api_keys`, MCP TOFU pins) are already restored by
+  `handle_update_config` on every update, so replacing a whole older config
+  cannot clobber them — that trap was closed before this feature existed.
+- **Recording goes through one funnel, not nine call sites.** Config/profile
+  mutations happen at ~9 places (`toggle_field`/`cycle_field`/`apply_text`/
+  `reset_field`/`apply_choice`/`toggle_profile_tool`/`apply_profile_text`/persona
+  create+delete); hooking each is shotgun surgery and easy to forget when a field
+  type is added later. Instead `handle_key` was split into a thin wrapper over
+  `handle_key_inner`: snapshot before, dispatch, keep the snapshot **only if a
+  `SaveConfig`/`SaveProfile` intent came back**. The §2.1 exclusions
+  (API key / assistant-profile create+delete / MCP catalog confirmation) then
+  fall out of that `match` instead of needing guards of their own — the same
+  "single funnel" property the codebase already uses for `mark_feed_changed` and
+  `InputBox::touch`.
+- **The snapshot is cheap where it matters**: `pre_edit_snapshot` returns `None`
+  unless the key *could* commit an edit (`Enter`/`Space`/`Del`/`←`/`→`/`Ctrl+N`/
+  `Ctrl+D`), so typing inside a text editor clones nothing per keystroke — only
+  the committing `Enter` does. The transient snapshot holds both stores (the kind
+  is only known from the intent afterwards); `record_edit` keeps the relevant
+  half, so a *stored* step stays small.
+- **Coalescing by field (U2)**: a run of edits to the same field is one step,
+  keeping the *oldest* "before" value — cycling `managed → external → openai`
+  undoes to `managed` in one press, mirroring `InputBox`'s own snapshot
+  coalescing and producing fewer saves (and server restarts) on the way back.
+  `None` for persona `Ctrl+N`/`Ctrl+D`, which therefore never coalesce —
+  otherwise creating two personas would be undone by a single press.
+- **The jump (U4) reuses the search index.** `build_search_index` already
+  enumerates every field of every section/subsection *with its rendered value*,
+  and `jump_to_selected` already moves section+subsection+field — so undo
+  compares the index before and after the restore and lands on the first field
+  present in **both** whose value differs. `SearchHit` gained an `id: FieldId`
+  for this: positional comparison would be wrong exactly where it matters, since
+  changing an engine mode changes *which* fields are visible. Fields that only
+  appear or disappear are skipped — they are the consequence of the change, not
+  the change — which leaves the mode field itself as the match. `jump_to_selected`
+  was split so both callers share `jump_to`.
+- **Key layering**: `Ctrl+Z`/`Ctrl+Y` sit **below** the editor/search/choice
+  branches in `handle_key_inner`, so while any of those is open the keys stay
+  that widget's text undo. Matched by the physical Latin key (`keys::hotkey_char`)
+  — layout-independent. Footer gained one entry `Ctrl+Z/Y` in both focus states:
+  the settings screen isn't in the `F1` overlay, so the footer is the only place
+  these are discoverable.
+- **Known consequence, recorded rather than fixed** (plan §5.1): an engine edit
+  and its undo each mark a restart, so the debounce coalesces them into **one**
+  restart that reloads the server with the values it already had. Correct, merely
+  wasteful. Avoiding it means diffing against the *last applied* config rather
+  than the previous one — an orchestrator change, deliberately not bundled here.
+- **Tests**: 9 behaviour tests, one per fork plus the boundaries — config undo,
+  profile undo, coalescing (and that two different fields stay two steps), redo +
+  its invalidation by a fresh edit, empty-stack no-op, the API-key exclusion, and
+  the jump across sections. **All five changed lines were mutation-tested**;
+  worth noting that reverting the key layering also broke the **pre-existing**
+  `ctrl_k_clears_and_ctrl_z_restores_multiline_editor`, so the editor's own undo
+  is independently guarded. **1674 unit tests green** (+9), 70 `#[ignore]`,
+  clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): key handling and screen state on
+  one screen — no engine, memory, tool or provider path is touched.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

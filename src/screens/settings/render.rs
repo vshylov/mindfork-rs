@@ -34,6 +34,9 @@ impl SettingsScreen {
                 ("Tab/↑↓", loc.t("ui.settings.hint.section")),
                 ("Enter", loc.t("ui.settings.hint.enter_fields")),
                 ("/", loc.t("ui.settings.hint.search")),
+                // The settings screen isn't listed in the `F1` help overlay, so the
+                // footer is the only place these are discoverable.
+                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
             ]
         } else {
             vec![
@@ -44,6 +47,7 @@ impl SettingsScreen {
                 ("Del", loc.t("ui.settings.hint.reset")),
                 ("Tab", loc.t("ui.settings.hint.section")),
                 ("/", loc.t("ui.settings.hint.search")),
+                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
             ]
         };
         if self.section() == Section::Profiles {

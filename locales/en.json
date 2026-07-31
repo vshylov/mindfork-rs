@@ -921,6 +921,7 @@
   "ui.settings.hint.toggle": "toggle",
   "ui.settings.hint.choose": "choose",
   "ui.settings.hint.search": "search",
+  "ui.settings.hint.undo": "undo/redo",
   "ui.settings.hint.reset": "reset",
   "ui.settings.hint.new": "new",
   "ui.settings.hint.delete": "delete",

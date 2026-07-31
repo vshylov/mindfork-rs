@@ -77,6 +77,14 @@ fn goto_field(s: &mut SettingsScreen, id: FieldId) {
     panic!("field {id:?} not found in section {:?}", s.section());
 }
 
+/// Moves to another field when focus is **already** in the pane: steps back out
+/// first, since [`goto_field`] starts from the menu and its `Enter` would otherwise
+/// open an editor instead of entering the pane.
+fn goto_field_again(s: &mut SettingsScreen, id: FieldId) {
+    s.handle_key(key(KeyCode::Esc));
+    goto_field(s, id);
+}
+
 #[test]
 fn esc_closes_from_the_sections() {
     let mut s = screen();
@@ -1010,6 +1018,191 @@ fn render_does_not_panic() {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
     }
+}
+
+// ---------- undo/redo of an edit (docs/history/settings-undo.md) ----------
+
+/// The core: `Ctrl+Z` puts the previous value back and re-emits the same intent the
+/// edit produced — no new command is needed, since `SaveConfig` already carries the
+/// whole working config.
+#[test]
+fn undo_restores_a_config_value_and_emits_save() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let before = s.config.interface.theme;
+
+    s.handle_key(key(KeyCode::Right));
+    assert_ne!(s.config.interface.theme, before);
+
+    let intent = s.handle_key(ctrl('z'));
+    assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
+    assert_eq!(s.config.interface.theme, before, "the value must come back");
+}
+
+/// A profile edit travels as a different intent (`SaveProfile`), and undo mirrors it.
+#[test]
+fn undo_restores_a_profile_field() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PUserName);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "Гея".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.profiles[0].character_names.user, "Гея");
+
+    let intent = s.handle_key(ctrl('z'));
+    assert!(matches!(intent, Some(SettingsIntent::SaveProfile { .. })));
+    assert_eq!(s.profiles[0].character_names.user, "");
+}
+
+/// U2: a run of edits to the **same** field is one step — cycling past the value you
+/// wanted comes back in a single press.
+#[test]
+fn consecutive_edits_of_one_field_undo_together() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XMode);
+    let before = s.config.engine.mode;
+
+    for _ in 0..3 {
+        s.handle_key(key(KeyCode::Right));
+    }
+    assert_ne!(s.config.engine.mode, before);
+
+    s.handle_key(ctrl('z'));
+    assert_eq!(
+        s.config.engine.mode, before,
+        "one press undoes the whole run"
+    );
+}
+
+/// …but two different fields stay two steps.
+#[test]
+fn edits_of_different_fields_are_separate_steps() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let theme = s.config.interface.theme;
+    s.handle_key(key(KeyCode::Right));
+
+    goto_field_again(&mut s, FieldId::ICompat);
+    let compat = s.config.interface.terminal_compat;
+    s.handle_key(key(KeyCode::Char(' ')));
+    assert_ne!(s.config.interface.terminal_compat, compat);
+
+    s.handle_key(ctrl('z'));
+    assert_eq!(s.config.interface.terminal_compat, compat, "the last edit");
+    assert_ne!(s.config.interface.theme, theme, "but not the one before it");
+
+    s.handle_key(ctrl('z'));
+    assert_eq!(s.config.interface.theme, theme);
+}
+
+/// U3: redo re-applies, and a fresh edit invalidates the redo branch.
+#[test]
+fn redo_reapplies_and_a_new_edit_clears_it() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let before = s.config.interface.theme;
+    s.handle_key(key(KeyCode::Right));
+    let after = s.config.interface.theme;
+
+    s.handle_key(ctrl('z'));
+    assert_eq!(s.config.interface.theme, before);
+    let intent = s.handle_key(ctrl('y'));
+    assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
+    assert_eq!(s.config.interface.theme, after, "redo re-applies");
+
+    s.handle_key(ctrl('z'));
+    goto_field_again(&mut s, FieldId::ICompat);
+    s.handle_key(key(KeyCode::Char(' '))); // a genuine fresh edit
+    assert_eq!(s.handle_key(ctrl('y')), None, "redo was invalidated");
+}
+
+#[test]
+fn undo_on_an_empty_stack_is_a_no_op() {
+    let mut s = screen();
+    assert_eq!(s.handle_key(ctrl('z')), None);
+    assert_eq!(s.handle_key(ctrl('y')), None);
+}
+
+/// The layering that must not regress: while a field editor is open, `Ctrl+Z` is the
+/// **text** undo of its `InputBox` — it must not reach past it and revert a setting.
+#[test]
+fn ctrl_z_inside_the_editor_is_text_undo_not_settings_undo() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let theme_before = s.config.interface.theme;
+    s.handle_key(key(KeyCode::Right)); // a setting edit worth reverting
+    let theme_after = s.config.interface.theme;
+
+    goto_field_again(&mut s, FieldId::IDicts);
+    s.handle_key(key(KeyCode::Enter)); // open the text editor
+    for c in "abc".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(s.handle_key(ctrl('z')), None, "consumed by the editor");
+    assert_eq!(
+        s.config.interface.theme, theme_after,
+        "the setting must be untouched"
+    );
+    assert_ne!(theme_before, theme_after);
+}
+
+/// §2.1: an API key is never recorded — the screen doesn't hold it, so there is
+/// nothing to restore, and a step would silently undo the *previous* edit instead.
+#[test]
+fn an_api_key_commit_records_no_undo_step() {
+    let mut s = screen();
+    // A cloud mode, so the "API key" field exists at all. Set up front, so the undo
+    // snapshot taken below is consistent with it.
+    s.config.engine.mode = crate::shared::config::ServerMode::OpenAi;
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let before = s.config.interface.theme;
+    s.handle_key(key(KeyCode::Right));
+
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XApiKey);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "sk-test".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert!(matches!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SetApiKey { .. })
+    ));
+
+    // The one step on the stack is still the theme edit, not the key.
+    s.handle_key(ctrl('z'));
+    assert_eq!(s.config.interface.theme, before);
+}
+
+/// U4: undoing a change made elsewhere moves the cursor onto it — otherwise the
+/// revert happens invisibly.
+#[test]
+fn undo_jumps_to_the_field_it_reverted() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    s.handle_key(key(KeyCode::Right));
+
+    // Walk away — a different section entirely.
+    goto_section(&mut s, Section::Memory);
+    assert_eq!(s.section(), Section::Memory);
+
+    s.handle_key(ctrl('z'));
+    assert_eq!(s.section(), Section::Interface, "jumped back to the change");
+    assert_eq!(
+        s.fields().get(s.field_idx).map(|f| f.id),
+        Some(FieldId::ITheme)
+    );
+    assert!(s.focus == Focus::Fields);
 }
 
 /// The two pane markers (`▸` on the sections, `◆` on the parameters) are **always**
