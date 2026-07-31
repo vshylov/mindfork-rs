@@ -1444,6 +1444,21 @@ section and subsection), `Esc` — cancel.
   see below), *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
   (confirming `Ctrl+R`/`Ctrl+E`), *Conversation copy (F5)* (what's included).
 
+**Navigation** (a two-level focus: the section menu ↔ the field pane). In one
+sentence: *the arrows change, `Enter` goes in, `Esc` goes out, `Tab` switches section.*
+`Enter` is the **only** way into the field pane (`→` deliberately doesn't enter);
+`Esc` is the only way out of it and always means "one level up" — from the field
+pane back to the sections, from the sections out of the screen (the field editor,
+the `Choice` popup and the `/` overlay already close into the pane the same way).
+Inside the pane `←/→` mean exactly one thing — change the value or switch the
+subsection tab — and never move focus. `Tab`/`BackTab` switch the section and
+**preserve** the current focus (the field index resets). Rationale: while `→`
+entered the pane, users built the model "`←` leaves it", but `←` has to cycle a
+`Choice` value — and the first fields of most sections are `Choice` (the server
+mode, the theme), so the intended return keystroke silently changed a setting that
+is saved at once and restarts the server. The hotkey footer is **focus-contextual**
+— that's where the model is stated. See docs/settings-navigation.md.
+
 **Field editing.** For `Choice` toggle fields, `←/→` quickly cycles the value, while
 `Enter` opens a **list popup** of every option (important for `--spec-type`,
 modes, themes, the profile picker). Text/numeric fields are edited in an editor

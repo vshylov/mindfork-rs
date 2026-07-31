@@ -124,9 +124,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1657 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1664 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **database compaction on backup/restore** (`VACUUM`: the archive
+recent change — the **settings-screen focus model**
+([plan](docs/settings-navigation.md)): `Enter` is now the only way into the field
+pane and `Esc` the only way out (a second one closes the screen), the arrows only
+ever change a value, and `Tab` no longer drops the focus — closing the trap where
+the intended "go back" keystroke silently changed the server mode; before that —
+**database compaction on backup/restore** (`VACUUM`: the archive
 carries a compacted copy of `data.db` instead of the live file, sidecars folded
 in; a restore compacts what it unpacked — including archives from older
 versions), verified against the real 17 MB dev database; before that — the most
@@ -10054,6 +10059,81 @@ debounce was done as a separate PR, see below).
   was restored into a fresh root and came back compacted with the same content
   hash. The size gain there is small (40 KB) precisely because that database is
   barely fragmented — the gain scales with how much has been deleted.
+
+### Post-M9: settings-screen focus model (done)
+
+- **Reported from real use**: users step from the section list into the parameters
+  with `→`, then try to come back with `←` — and on a switch that changes its value
+  instead; confused, they press `Esc`, leave the screen entirely, and come back
+  trying to remember what they just changed. Plan with forks R1–R6 —
+  [docs/settings-navigation.md](docs/settings-navigation.md) (**user's decision,
+  2026-07-31**, all as recommended). Branch `feat/settings-focus-model`, stacked on
+  `docs/settings-navigation`.
+- **The damage is larger than "a setting changed", and reading the code is what
+  showed it.** In "Model/server" `→` lands on field 0, which is the **subsection tab
+  strip** — so `←` there switches Assistant → Impersonation and the whole field set
+  changes under the user's hands. One `↓` further is `XMode`, and `←` cycles the
+  server mode, which is emitted at once as `SaveConfig` and, after the debounce,
+  **restarts the server**. So the "way back" was a silent, server-restarting edit
+  that the UI offers no way to undo.
+- **Root cause — a key collision that cannot be removed while `→` enters.** As long
+  as `→` enters the pane, users build the model "`←` leaves it"; but `←` must cycle
+  a `Choice` value, and the first field of most sections *is* a `Choice` (`XMode`,
+  `ITheme`). The value binding is the one that has to stay (`←/→` is the convention,
+  and the tab strip uses it too), so the entry binding is the one that goes.
+- **The `Esc` ladder already half existed** — the field editor, the `Choice` popup
+  and the `/` overlay all close *into* the pane rather than closing the screen, and
+  the footer already read "Esc back", which was strictly speaking a lie. So R3
+  completes an existing rule instead of introducing one.
+- **Target model, one sentence**: *the arrows change, `Enter` goes in, `Esc` goes
+  out, `Tab` switches section.* Four points in `apply.rs`: `Esc` became focus-aware
+  (`Fields → Menu`, `Menu → Close`); the menu's `Enter | Right` became `Enter`
+  (guarded on a non-empty field set — defensive, no section produces one);
+  `Left`'s "fall through to the menu" tail is gone, so the `Left`/`Right` arms are
+  symmetric; `move_section` no longer resets the focus (it still resets
+  `field_idx` — field sets differ per section). Untouched: the initial focus and
+  the `/`-search jump (`Focus::Fields` is exactly right there — "Enter on a result
+  goes to that field" — and `Esc` now steps back out of it).
+- **The footer became focus-contextual** (`render.rs`) — it is the only place the
+  model is stated, so leaving it flat would have made the rules undiscoverable. The
+  mechanism already existed (`Del` was already focus-conditional). Three new i18n
+  keys in both bundles (`hint.enter_fields`/`hint.close`/`hint.to_sections`);
+  `hint.back` **had to be deleted**, not just left unused — the
+  `bundle_keys_are_not_dead` gate fails on a dead key.
+- **The test helpers encoded the old rules, and R4 breaks them silently.**
+  `goto_section` was documented as "after the call, focus is in the menu (Tab
+  resets it)", and `goto_field` builds on that by pressing `Enter`; with the focus
+  preserved that `Enter` would open an editor instead of entering the pane — in
+  many tests at once. The helper now returns to the sections itself instead of
+  relying on `Tab`'s former side effect, and the one test that used `Left` as "back
+  to the menu" moved to `Esc`.
+- **Mutation-tested, and it corrected one of my own comments.** Each of the five
+  changed lines was reverted in turn: `right_does_not_enter_the_field_pane`,
+  `esc_steps_out_of_the_field_pane_then_closes`,
+  `left_on_a_non_choice_field_is_a_no_op`,
+  `tab_preserves_focus_and_resets_the_field_index` and
+  `footer_hints_differ_by_focus` each failed for its own revert. The `←`-on-Choice
+  test, which I had commented as pinning R2, turned out **not** to distinguish the
+  versions — a `Choice` field returns early in both — so its doc comment was
+  corrected to say what it actually is: a regression guard that symmetrizing the
+  arms didn't break value cycling.
+- **Tests**: `esc_closes` split into "closes from the sections" + the ladder test;
+  five new behaviour tests (one per adopted fork) + `footer_hints_differ_by_focus`
+  (`TestBackend`) + `up_on_the_first_field_stays_in_the_pane` (R5 — unchanged
+  behaviour, pinned against a future "helpful" change). **1664 unit tests green**
+  (+7), 70 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
+  clean.
+- **A live run isn't required** (AGENTS.md §3): key handling and rendering on one
+  screen — no engine, memory, tool or provider path is touched. The established
+  precedent for settings-screen work (the whole redesign, stages 1–6).
+- **Deliberately out of scope** (fork R6, a follow-up): an accidental edit is still
+  saved immediately and can't be undone from the UI. This change removes the main
+  *source* of accidental edits, not the consequence — and the existing `•` marker
+  means "differs from the **default**", not "I just touched this", so it doesn't
+  answer "what did I change?". The cheap candidate is a second marker driven by a
+  config snapshot taken when the screen opens; full `Ctrl+Z` would have to interact
+  with the server-restart debounce and with profile edits, which travel as a
+  different intent. See docs/settings-navigation.md §7.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

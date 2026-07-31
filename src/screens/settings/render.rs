@@ -23,24 +23,41 @@ impl SettingsScreen {
         let area = frame.area();
         let palette = self.palette();
         let loc = self.loc();
-        // Contextual footer: base hotkeys + section-specific ones. In "Profiles" —
-        // create/delete a profile.
-        let mut hints: Vec<(&str, &str)> = vec![
-            ("Tab", loc.t("ui.settings.hint.section")),
-            ("↑↓", loc.t("ui.settings.hint.fields")),
-            ("Enter", loc.t("ui.settings.hint.edit")),
-            ("Space", loc.t("ui.settings.hint.toggle")),
-            ("←→", loc.t("ui.settings.hint.choose")),
-            ("/", loc.t("ui.settings.hint.search")),
-        ];
-        if self.focus == Focus::Fields {
-            hints.push(("Del", loc.t("ui.settings.hint.reset")));
-        }
+        // Contextual footer. The hints differ **by focus** — that's what teaches the
+        // navigation model, which is otherwise undiscoverable: on the sections only
+        // Enter goes in, and inside the pane the arrows only change a value while Esc
+        // steps back out. Section-specific extras (Profiles: create/delete) are
+        // appended in both states. See docs/settings-navigation.md §5.1.
+        let on_menu = self.focus == Focus::Menu;
+        let mut hints: Vec<(&str, &str)> = if on_menu {
+            vec![
+                ("Tab/↑↓", loc.t("ui.settings.hint.section")),
+                ("Enter", loc.t("ui.settings.hint.enter_fields")),
+                ("/", loc.t("ui.settings.hint.search")),
+            ]
+        } else {
+            vec![
+                ("↑↓", loc.t("ui.settings.hint.fields")),
+                ("←→", loc.t("ui.settings.hint.choose")),
+                ("Enter", loc.t("ui.settings.hint.edit")),
+                ("Space", loc.t("ui.settings.hint.toggle")),
+                ("Del", loc.t("ui.settings.hint.reset")),
+                ("Tab", loc.t("ui.settings.hint.section")),
+                ("/", loc.t("ui.settings.hint.search")),
+            ]
+        };
         if self.section() == Section::Profiles {
             hints.push(("Ctrl+N", loc.t("ui.settings.hint.new")));
             hints.push(("Ctrl+D", loc.t("ui.settings.hint.delete")));
         }
-        hints.push(("Esc", loc.t("ui.settings.hint.back")));
+        hints.push((
+            "Esc",
+            if on_menu {
+                loc.t("ui.settings.hint.close")
+            } else {
+                loc.t("ui.settings.hint.to_sections")
+            },
+        ));
         hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
         // The hotkey line — below the panel (outside the border), wraps as a grid using
         // the same logic as the chat screen's status bar (right-aligned). Height computed up front.

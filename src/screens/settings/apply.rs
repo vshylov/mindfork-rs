@@ -79,7 +79,17 @@ impl SettingsScreen {
             }
         }
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => Some(SettingsIntent::Close),
+            // Esc — one level up. From the field pane it returns to the sections; from
+            // the sections it closes the screen. The editor/Choice/search popups
+            // handled above already close *into* the pane, so this completes a ladder
+            // that was previously only half built. See docs/settings-navigation.md §2.
+            (KeyCode::Esc, _) => match self.focus {
+                Focus::Fields => {
+                    self.focus = Focus::Menu;
+                    None
+                }
+                Focus::Menu => Some(SettingsIntent::Close),
+            },
             (KeyCode::Tab, _) => {
                 self.move_section(1);
                 None
@@ -103,7 +113,14 @@ impl SettingsScreen {
             KeyCode::Down => {
                 self.move_section(1);
             }
-            KeyCode::Enter | KeyCode::Right => {
+            // Enter is the ONLY way into the field pane. `→` deliberately doesn't
+            // enter: while it did, users built the model "`←` leaves the pane" — but
+            // `←` has to cycle a Choice value, and the first fields of most sections
+            // are Choice (the server mode, the theme), so the return keystroke
+            // silently changed a setting. See docs/settings-navigation.md §1.2.
+            // The guard: a section with no fields would leave the focus pointing at
+            // nothing. No current section produces an empty set — this is defensive.
+            KeyCode::Enter if !self.fields().is_empty() => {
                 self.focus = Focus::Fields;
                 self.field_idx = 0;
             }
@@ -115,14 +132,17 @@ impl SettingsScreen {
     pub(super) fn handle_fields_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         let fields = self.fields();
         match key.code {
+            // ←/→ inside the pane mean exactly one thing: change the value (or switch
+            // the subsection tab). They never move focus — leaving is `Esc`. The two
+            // arms are deliberately symmetric: `←` used to fall through to "back to the
+            // menu" for non-Choice fields, which is what made the key context-dependent
+            // and cost users an accidental edit. See docs/settings-navigation.md R2.
             KeyCode::Left => {
-                // ←: for Choice — cycle the value, otherwise go back to the menu.
                 if let Some(f) = fields.get(self.field_idx)
                     && matches!(f.kind, FieldKind::Choice(_))
                 {
                     return self.cycle_field(f.id, -1);
                 }
-                self.focus = Focus::Menu;
                 None
             }
             KeyCode::Right => {
@@ -253,11 +273,14 @@ impl SettingsScreen {
         }
     }
 
+    /// Switches the section — and nothing else. The focus is **preserved**
+    /// (docs/settings-navigation.md R4): Tab used to reset it to the menu, which made
+    /// the key do two things at once. `field_idx` is still reset, since field sets
+    /// differ per section.
     pub(super) fn move_section(&mut self, delta: i32) {
         let n = SECTIONS.len() as i32;
         self.section_idx = (((self.section_idx as i32 + delta) % n + n) % n) as usize;
         self.field_idx = 0;
-        self.focus = Focus::Menu;
     }
 
     // ---------- applying edits ----------

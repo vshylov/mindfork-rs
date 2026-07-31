@@ -20,8 +20,15 @@ fn ctrl(c: char) -> KeyEvent {
 }
 
 /// Moves to the target section via Tab (robust to section order).
-/// After the call, focus is in the menu (Tab resets it), no field is focused.
+/// After the call, focus is in the menu, no field is focused.
+///
+/// Tab **preserves** the focus (docs/settings-navigation.md R4), so the helper returns
+/// to the sections itself — it can no longer rely on Tab's former side effect. Without
+/// this, [`goto_field`]'s `Enter` would open an editor instead of entering the pane.
 fn goto_section(s: &mut SettingsScreen, sec: Section) {
+    if s.focus == Focus::Fields {
+        s.handle_key(key(KeyCode::Esc));
+    }
     for _ in 0..SECTIONS.len() {
         if s.section() == sec {
             return;
@@ -71,9 +78,94 @@ fn goto_field(s: &mut SettingsScreen, id: FieldId) {
 }
 
 #[test]
-fn esc_closes() {
+fn esc_closes_from_the_sections() {
     let mut s = screen();
     assert_eq!(s.handle_key(key(KeyCode::Esc)), Some(SettingsIntent::Close));
+}
+
+/// The focus ladder (docs/settings-navigation.md R3): Esc in the field pane steps back
+/// to the sections **without** closing; only the second one closes.
+#[test]
+fn esc_steps_out_of_the_field_pane_then_closes() {
+    let mut s = screen();
+    s.handle_key(key(KeyCode::Enter));
+    assert!(s.focus == Focus::Fields);
+
+    assert_eq!(s.handle_key(key(KeyCode::Esc)), None, "must not close yet");
+    assert!(s.focus == Focus::Menu);
+    assert_eq!(s.handle_key(key(KeyCode::Esc)), Some(SettingsIntent::Close));
+}
+
+/// `→` no longer enters the pane — Enter is the only way in (R1). This is the keystroke
+/// that used to teach the "`←` leaves" model behind the accidental edits (§1.2).
+#[test]
+fn right_does_not_enter_the_field_pane() {
+    let mut s = screen();
+    assert_eq!(s.handle_key(key(KeyCode::Right)), None);
+    assert!(s.focus == Focus::Menu, "`→` must not enter the field pane");
+
+    s.handle_key(key(KeyCode::Enter));
+    assert!(s.focus == Focus::Fields);
+}
+
+/// A regression guard for R2, not its detector: a Choice field returned early under the
+/// old code too, so this pins that symmetrizing the `←`/`→` arms didn't break value
+/// cycling. The behaviour change itself is caught by
+/// [`left_on_a_non_choice_field_is_a_no_op`] (verified by mutation).
+#[test]
+fn left_on_a_choice_field_cycles_and_keeps_focus() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ITheme);
+    let before = s.config.interface.theme;
+
+    let intent = s.handle_key(key(KeyCode::Left));
+    assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
+    assert_ne!(s.config.interface.theme, before);
+    assert!(s.focus == Focus::Fields, "`←` must not leave the pane");
+}
+
+/// `←` on a non-Choice field is a plain no-op — it no longer returns to the menu (R2).
+#[test]
+fn left_on_a_non_choice_field_is_a_no_op() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::TWeb); // a Toggle
+    let idx = s.field_idx;
+
+    assert_eq!(s.handle_key(key(KeyCode::Left)), None);
+    assert!(s.focus == Focus::Fields, "`←` must not leave the pane");
+    assert_eq!(s.field_idx, idx, "and must not move the cursor");
+}
+
+/// Tab switches the section and nothing else: the focus stays where it was, in either
+/// state (R4). The field index still resets — field sets differ per section.
+#[test]
+fn tab_preserves_focus_and_resets_the_field_index() {
+    let mut s = screen();
+    // On the sections — stays on the sections.
+    s.handle_key(key(KeyCode::Tab));
+    assert!(s.focus == Focus::Menu);
+
+    // In the pane — stays in the pane, on the section's first field.
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(key(KeyCode::Down));
+    let section_before = s.section();
+    s.handle_key(key(KeyCode::Tab));
+    assert!(s.focus == Focus::Fields, "Tab must not drop the focus");
+    assert_ne!(s.section(), section_before);
+    assert_eq!(s.field_idx, 0);
+}
+
+/// `↑` on the first field stays put (R5) — no implicit arrow-driven focus move, which
+/// is the category of behaviour this whole change removes.
+#[test]
+fn up_on_the_first_field_stays_in_the_pane() {
+    let mut s = screen();
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.handle_key(key(KeyCode::Up)), None);
+    assert!(s.focus == Focus::Fields);
+    assert_eq!(s.field_idx, 0);
 }
 
 #[test]
@@ -551,7 +643,7 @@ fn impersonation_profile_create_edit_delete() {
     ));
     assert_eq!(s.config.impersonation_profiles[0].name, "Владимир");
 
-    s.handle_key(key(KeyCode::Left)); // back to the menu (goto_field starts from there)
+    s.handle_key(key(KeyCode::Esc)); // back to the menu (goto_field starts from there)
     goto_field(&mut s, FieldId::IpSystem);
     s.handle_key(key(KeyCode::Enter));
     for c in "Ты — я.".chars() {
@@ -918,6 +1010,51 @@ fn render_does_not_panic() {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
     }
+}
+
+/// The footer is contextual by focus (docs/settings-navigation.md §5.1) — that's the
+/// only place the navigation model is stated: on the sections Enter goes in and Esc
+/// closes; in the pane Esc steps back to the sections.
+#[test]
+fn footer_hints_differ_by_focus() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let footer = |s: &mut SettingsScreen| -> String {
+        let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        // The hotkey rows sit below the panel — take the trailing ones (they start
+        // with a space at column 0, panel rows carry the border character).
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect();
+        lines
+            .iter()
+            .rev()
+            .take_while(|l| l.starts_with(' '))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    let mut s = screen();
+    let menu = footer(&mut s);
+    assert!(menu.contains("параметры"), "Enter → the pane: {menu:?}");
+    assert!(menu.contains("закрыть"), "Esc closes: {menu:?}");
+    assert!(
+        !menu.contains("к секциям"),
+        "nothing to step back to yet: {menu:?}"
+    );
+
+    s.handle_key(key(KeyCode::Enter));
+    let fields = footer(&mut s);
+    assert!(fields.contains("к секциям"), "Esc steps back: {fields:?}");
+    assert!(!fields.contains("закрыть"), "not a close here: {fields:?}");
+    assert!(fields.contains("сброс"), "Del is pane-only: {fields:?}");
 }
 
 #[test]
