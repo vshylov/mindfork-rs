@@ -69,6 +69,11 @@ pub(super) struct Writer {
     /// the feed's cache recomputes the message and swaps the source for the
     /// diagram.
     codeblock_closed: bool,
+    /// Index in [`Writer::lines`] of the opening fence of the code block being
+    /// collected, for the **unhighlighted** path only (`None` otherwise). The
+    /// block's background is squared off into a rectangle once its width is
+    /// known, i.e. at [`Writer::end_codeblock`] — see [`pad_code_block`].
+    code_start: Option<usize>,
 }
 
 impl Writer {
@@ -93,6 +98,7 @@ impl Writer {
             render_mermaid: false,
             mermaid: None,
             codeblock_closed: true,
+            code_start: None,
         }
     }
 
@@ -395,8 +401,12 @@ impl Writer {
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
         } else {
             self.line_styles.push(code_style());
+            // From here on the lines belong to the block's background
+            // rectangle (squared off in `end_codeblock`, once its width is
+            // known) — the fences included, they are its top and bottom edge.
+            self.code_start = Some(self.lines.len());
         }
-        self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
+        self.push_line(fence_line(format!("```{info}")));
         // The block's content must start on a new line under the opening
         // `​```​`, not glue onto it. In the unhighlighted path (`text`) the
         // first line would otherwise append to the fence line (`i==0`,
@@ -422,10 +432,13 @@ impl Writer {
             self.needs_newline = true;
             return;
         }
-        self.push_line(Line::from("```").add_modifier(Modifier::DIM));
+        self.push_line(fence_line("```".to_string()));
         self.needs_newline = true;
         if self.code_highlighter.take().is_none() {
             self.line_styles.pop();
+            if let Some(start) = self.code_start.take() {
+                pad_code_block(&mut self.lines, start, self.width);
+            }
         }
     }
 
@@ -435,14 +448,16 @@ impl Writer {
     /// (`start_codeblock` with no syntax + `text` + `end_codeblock`), see the
     /// golden test `mermaid_fallback_matches_disabled_render`.
     fn emit_fenced_source(&mut self, info: &str, src: &str) {
+        let start = self.lines.len();
         self.line_styles.push(code_style());
-        self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
+        self.push_line(fence_line(format!("```{info}")));
         for line in src.lines() {
             self.push_line(Line::default());
             self.push_span(Span::styled(line.to_string(), Style::default()));
         }
-        self.push_line(Line::from("```").add_modifier(Modifier::DIM));
+        self.push_line(fence_line("```".to_string()));
         self.line_styles.pop();
+        pad_code_block(&mut self.lines, start, self.width);
     }
 
     pub(super) fn text(&mut self, text: CowStr<'_>) {
@@ -632,6 +647,17 @@ impl Writer {
             self.push_line(Line::from(vec![span]));
         }
     }
+}
+
+/// A code block's fence line (` ```lang ` / ` ``` `). `DIM` sits on the
+/// **span**, not on the line: the line style carries the block's background
+/// ([`code_style`]), and the padding [`pad_code_block`] appends must take that
+/// background *without* the dimming — otherwise the rectangle's top and bottom
+/// edges would come out a different shade from its body. Visually identical to
+/// the previous line-level `DIM` for the fence text itself (the line style is
+/// folded into the spans on render).
+pub(super) fn fence_line(text: String) -> Line<'static> {
+    Line::from(Span::styled(text, Style::new().add_modifier(Modifier::DIM)))
 }
 
 /// Whether a fenced code block is closed in the source. `range` — the byte

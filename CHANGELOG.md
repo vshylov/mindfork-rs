@@ -39,6 +39,14 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Changed
 
+- **Code blocks without highlighting are drawn as a neat rectangle.** Their
+  background used to follow the ragged right edge of the text, so a block read
+  as a stack of bars of differing length. Now every row of the block — the
+  ` ``` ` fences included — is filled to one width, blank lines inside it too.
+  The block is sized to its own content and does not stretch across the panel
+  (the same rule tables follow); a line too long for the panel is wrapped into
+  the rectangle instead of leaving a ragged tail.
+
 - **Moving around the settings screen no longer changes settings by accident.**
   `→` used to step from the section list into the parameters, so `→` and then `←`
   looked like the way in and back out — but `←` on a switch changes its value, and

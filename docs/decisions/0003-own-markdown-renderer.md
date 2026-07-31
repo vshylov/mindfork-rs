@@ -94,6 +94,16 @@ The `tui-markdown` dependency is removed; direct `pulldown-cmark`, `syntect`,
     string resolves syntax by its first token; `---` spans the full width;
     image URLs; `~~~` fences and unclosed `` ` `` in normalization; a
     heuristic for "a price range `$5-$10` — not math".
+- **An unhighlighted code block is a rectangle (2026-07-31, done)** — `code.rs`
+  `pad_code_block`: the block's reverse-video background followed the ragged
+  right edge of the text. Its rows (fences included) are now wrapped to the
+  panel width and padded to the block's **own** width — the widest row, capped
+  by the panel, laid out to content exactly as a table is. The fences' `DIM`
+  moved from the line onto its span, so the padding takes the background
+  without the dimming (otherwise the box's edges would be a different shade
+  from its body). A **highlighted** block is deliberately untouched: the
+  pipeline (`as_24_bit_terminal_escaped(.., false)`) carries only foreground
+  color, so such a block has no background to square off.
 - **Feed render cache (2026-07, done)** — `widgets/message_feed.rs`:
   `build_lines` is called on every dirty frame (streaming/scrolling) and
   re-ran markdown+syntect over the entire history each time. A per-message
