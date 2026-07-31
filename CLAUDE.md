@@ -124,9 +124,12 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1681 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1682 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **an unhighlighted code block is drawn as a rectangle** (its
+recent change — **Zig code blocks are highlighted** (Zig is absent from
+syntect's default bundle, so the label resolved to nothing and the block fell
+into the unhighlighted path; it now borrows the Rust grammar, picked by
+measuring the alternatives); before that — **an unhighlighted code block is drawn as a rectangle** (its
 reverse-video background used to follow the ragged right edge of the text; rows
 are now padded to the block's own width plus a blank column on the right —
 content-sized like a table, not stretched across the panel); before that — **no server restart when nothing
@@ -10355,6 +10358,50 @@ debounce was done as a separate PR, see below).
   markdown-refinements and the mermaid work). The result was nonetheless checked
   against the **actual block from the report** (a rendered dump: 11 rows, all 44
   columns wide, every one carrying `REVERSED`).
+
+### Post-M9: Zig code blocks are highlighted (done)
+
+- **Reported from a screenshot**: a ` ```zig ` block rendered as flat text on the
+  reverse-video rectangle while the ` ```rust ` block above it was coloured.
+  Branch `fix/zig-code-highlighting` (a simple task by AGENTS.md §1: one table
+  entry, no cross-layer contract, no new dependency — no design doc).
+- **Cause, confirmed by probing the bundle rather than by reading the alias
+  table**: `SyntaxSet::load_defaults_newlines` carries **75** syntaxes — the
+  Sublime Text defaults — and Zig is not among them. So `resolve_syntax("zig")`
+  returns `None` and `start_codeblock` takes the *unhighlighted* branch, which is
+  exactly the reverse-video rectangle the previous entry squared off. Nothing was
+  broken by that change: an unrecognized language has always landed there.
+- **The same probe answered the wider question the report implies**: of ~60
+  labels models commonly emit, **36 do not resolve** — `toml`, `dockerfile`,
+  `powershell`, `swift`, `scss`, `graphql`, `terraform`, `asm`, `julia`,
+  `solidity` and the rest. Zig is one instance of a standing limit, not a
+  regression, and the doc comment now states the bundle's size and names Zig
+  among the gaps.
+- **Which grammar to borrow was measured, not guessed** (the table already has
+  the pattern — `typescript → js`, `kotlin → java`): a representative Zig snippet
+  was highlighted through the C, C++, Go, Java, JS and Rust grammars and the
+  spans compared. **Rust wins**: it colours `const`/`pub`/`fn`, the call name,
+  the numeric type names (`u8`/`usize` — spelled as in Rust), numbers, strings
+  with `\n` escapes, `//` comments and the operators, missing only
+  `try`/`defer`/`var`. Go is the runner-up and the interesting one — it is alone
+  in catching `var`/`defer`, but loses `pub`/`fn`/the types **and** paints
+  `while` with the function colour, i.e. it is actively misleading where Rust is
+  merely silent. C++ catches `try` and little else.
+- **Tests**: `zig`/`Zig` added to `language_aliases_resolve_to_syntax`, plus
+  `zig_block_is_highlighted` — a behavioural test asserting the *symptom*, that
+  the block carries RGB foreground colours and **no** `REVERSED` line style, so
+  it pins the path taken rather than the table lookup. **Mutation-tested**:
+  removing the alias fails it with the rendered rectangle in the message.
+  **1682 unit tests green** (+1), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): this is the markdown renderer —
+  no engine, memory, tool or provider path is touched (the precedent set by
+  markdown-refinements and the previous code-block entry).
+- **Groundwork**: real grammars for the missing languages. syntect can load
+  `.sublime-syntax` YAML at runtime (the `yaml-load` feature is on by default),
+  so vendoring a few definitions and extending the set once in the `LazyLock`
+  would give true Zig/TOML/Dockerfile highlighting — an asset to license and
+  maintain, and a separate track from this one-line fix.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

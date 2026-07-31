@@ -37,9 +37,10 @@ pub(super) fn resolve_syntax(lang: &str) -> Option<&'static SyntaxReference> {
 ///
 /// Keys are typical labels Gemma/Qwen/Claude use to mark code blocks. **All
 /// targets are checked against the default bundle**
-/// (`SyntaxSet::load_defaults_newlines`) — the set is narrow (no TypeScript/
-/// Kotlin/PowerShell/Dockerfile/TOML/Swift/…), so mapping to a nonexistent
-/// syntax is pointless. Labels that already resolve (`rust`, `python`, `go`,
+/// (`SyntaxSet::load_defaults_newlines`) — the set is narrow (75 syntaxes, the
+/// Sublime defaults: no TypeScript/Kotlin/Zig/PowerShell/Dockerfile/TOML/
+/// Swift/…), so mapping to a nonexistent syntax is pointless. Labels that
+/// already resolve (`rust`, `python`, `go`,
 /// `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`, `yaml`, `bash`,
 /// `c`, `c++`, `c#`/`cs`, …) aren't listed here.
 pub(super) fn canonical_lang(lang: &str) -> &str {
@@ -60,6 +61,13 @@ pub(super) fn canonical_lang(lang: &str) -> &str {
         // Partial highlighting from a related grammar beats gray text.
         "typescript" | "ts" | "tsx" | "mts" | "cts" | "jsx" => "js", // base JS
         "kotlin" | "kt" | "kts" => "java",
+        // Zig on the Rust grammar — measured against the alternatives (C, C++,
+        // Go, Java, JS) on a representative snippet: Rust covers `const`/`pub`/
+        // `fn`, the call name, the numeric types (`u8`/`usize` — same spelling
+        // as Rust's), numbers, strings with `\n` escapes, `//` comments and the
+        // operators. It misses `try`/`defer`/`var` (Go catches `var`/`defer`
+        // but loses `pub`/`fn`/the types, and paints `while` as a call).
+        "zig" => "rs",
         other => {
             // Return an unmapped label as-is; borrowed from the original
             // string, so we return a slice of `lang`, not a temporary
@@ -290,6 +298,8 @@ mod tests {
             // approximations: the language isn't in the set → a close grammar
             ("typescript", "JavaScript"),
             ("kotlin", "Java"),
+            ("zig", "Rust"),
+            ("Zig", "Rust"),
         ] {
             let syntax = resolve_syntax(label)
                 .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
@@ -502,6 +512,30 @@ mod tests {
         assert!(
             pad.content.trim().is_empty() && !pad.style.add_modifier.contains(Modifier::DIM),
             "the padding must carry the plain background: {pad:?}"
+        );
+    }
+
+    /// A ` ```zig ` block takes the highlighted path instead of dropping into
+    /// the unhighlighted rectangle — the user-visible symptom: Zig is absent
+    /// from the default syntect bundle, so without the alias the token resolved
+    /// to nothing and the block came out as flat text on a reverse-video
+    /// background.
+    #[test]
+    fn zig_block_is_highlighted() {
+        let md = "```zig\nconst memory = try allocator.alloc(u8, 1024);\n```";
+        let lines = render(md, 80, &Palette::for_theme(Theme::Dark)).lines;
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| matches!(s.style.fg, Some(Color::Rgb(..)))),
+            "the zig block is not highlighted: {lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.style.add_modifier.contains(Modifier::REVERSED)),
+            "the zig block went down the unhighlighted path: {lines:?}"
         );
     }
 

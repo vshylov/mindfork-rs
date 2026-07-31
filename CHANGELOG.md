@@ -29,6 +29,11 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Zig code blocks are highlighted.** A ` ```zig ` block came out as flat text
+  on a grey background: the syntax bundle we ship has no Zig grammar, so the
+  label matched nothing. Zig now borrows the Rust grammar — it shares
+  `const`/`pub`/`fn`, the numeric type names, `//` comments and string escapes,
+  so the block reads like code again (`try`/`defer`/`var` stay uncoloured).
 - **Editing a server setting and taking it back no longer reloads the model for
   nothing.** A change and its undo both asked for a restart, and the app then
   restarted the server with the settings it was already running — on a local
