@@ -383,7 +383,11 @@ src/
    │  ├─ mod.rs            render/render_with + highlight_code (highlighting without ``` —
    │  │                    for feed tool cards) + styles from the palette
    │  ├─ writer.rs         Writer: pulldown-cmark event walker → lines
-   │  ├─ code.rs           code block highlighting (syntect: syntax + theme from the palette)
+   │  ├─ code.rs           code block highlighting (syntect: syntax + theme from the palette).
+   │  │                    SYNTAX_SET = the dump build.rs assembles from syntect's bundled
+   │  │                    syntaxes + the grammars vendored in syntaxes/ (its SOURCES.md,
+   │  │                    docs/history/vendored-syntaxes.md); canonical_lang maps only what
+   │  │                    no grammar answers — an alias shadows a real grammar
    │  ├─ table.rs          TableBuilder + render_table (table layout/rendering)
    │  ├─ latex.rs          LaTeX→unicode: delimiter normalization + command converter
    │  ├─ html.rs           text of raw HTML blocks (pulldown gives them as opaque chunks

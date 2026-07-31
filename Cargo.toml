@@ -75,7 +75,19 @@ sqlite-vec = "0.1.9"
 # Detecting the language from the OS locale on a fresh install (no defaults.json/settings.json).
 # Cross-platform (Windows/Linux), pure Rust. See shared/i18n::detect_os_language.
 sys-locale = "0.3"
-syntect = "5.3.0"
+# `default-syntaxes` is off: the app loads its own dump (syntect's bundled
+# syntaxes **plus** the vendored grammars, assembled by build.rs), so syntect's
+# own packdump would be dead weight. `html`/`metadata` are unused, and the theme
+# is built from our palette (ADR 0003), so `default-themes`/`plist-load` are not
+# needed either; `yaml-load` belongs to the build script alone. Measured on the
+# release binary: 20 397 056 -> 20 582 400 bytes — **+181 KiB** for 19 grammars.
+# (An earlier guess that trimming these would make the binary *smaller* was
+# wrong: under LTO the linker already drops syntect's unused dumps.)
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "regex-onig",
+    "dump-load",
+] }
 # Unpacking the `wasmer` tar archive (see flate2 above). Pure Rust.
 tar = "0.4"
 thiserror = "2.0.18"
@@ -108,6 +120,24 @@ zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 #   docs/research/layout-independent-hotkeys.md.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+# Assembling the vendored syntax grammars into a dump (see build.rs and
+# syntaxes/SOURCES.md). The regex engine must be the **same as the runtime's**
+# (`regex-onig`): loading a grammar compiles its regexes, so the build is also
+# what validates them — and the two engines disagree. Measured: with
+# `regex-fancy` the Swift grammar is rejected over a subroutine call (`\g<1>`),
+# which oniguruma accepts and the app therefore highlights fine. Validating with
+# a different engine than the one that runs would reject working grammars and,
+# worse, could accept broken ones.
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "regex-onig",
+    "yaml-load",
+    "dump-create",
+    "dump-load",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"

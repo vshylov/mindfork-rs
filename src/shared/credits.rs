@@ -80,6 +80,41 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("zip", "2.4.2", "MIT"),
 ];
 
+/// One vendored syntax grammar, for the "Components" tab: `(language,
+/// upstream repository, SPDX license)`.
+pub type Grammar = (&'static str, &'static str, &'static str);
+
+/// The manifest of vendored grammars, embedded so the dialog cannot disagree
+/// with what the build actually used (`syntaxes/SOURCES.md` — the same file
+/// `tools/fetch_syntaxes.py` fetches from and `build.rs` compiles).
+const SYNTAX_MANIFEST: &str = include_str!("../../syntaxes/SOURCES.md");
+
+/// Vendored syntax grammars — third-party data, not crates, so they are listed
+/// separately from [`COMPONENTS`] (the Cargo gate tests are about
+/// dependencies).
+///
+/// Parsed from the manifest rather than duplicated into a static list: the
+/// table is ours, so **drift is impossible by construction** — better than a
+/// gate test that merely detects it. Rows are borrowed from the embedded
+/// manifest, so nothing is allocated beyond the vector.
+pub static GRAMMARS: std::sync::LazyLock<Vec<Grammar>> = std::sync::LazyLock::new(|| {
+    SYNTAX_MANIFEST
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('|'))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            // 7 columns; skip the header and its `---` separator row.
+            let [grammar, _file, repo, _path, _commit, licence, _lic_path] = cells[..] else {
+                return None;
+            };
+            let head_or_rule =
+                grammar == "Grammar" || grammar.chars().all(|c| c == '-' || c == ':');
+            (!head_or_rule).then_some((grammar, repo, licence))
+        })
+        .collect()
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +190,50 @@ mod tests {
             missing.is_empty() && extra.is_empty(),
             "COMPONENTS has drifted from Cargo.toml — missing from the list: {missing:?}; extra: {extra:?}"
         );
+    }
+
+    /// Gate: the manifest and the vendored files agree — every row names a
+    /// `.sublime-syntax` that exists and a licence text that ships with it, and
+    /// every file on disk has a row. A file without a row would be compiled
+    /// into the binary with **no recorded provenance or licence**, which is the
+    /// one thing vendoring third-party data must never do.
+    #[test]
+    fn grammar_manifest_matches_the_vendored_files() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/syntaxes"));
+        let on_disk: BTreeSet<String> = std::fs::read_dir(dir)
+            .expect("the syntaxes/ directory")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "sublime-syntax"))
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(!on_disk.is_empty(), "no vendored grammars found in {dir:?}");
+
+        // Re-parse with the file column, which `GRAMMARS` drops.
+        let listed: BTreeSet<String> = SYNTAX_MANIFEST
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with('|'))
+            .filter_map(|l| l.trim_matches('|').split('|').nth(1).map(str::trim))
+            .filter(|f| f.ends_with(".sublime-syntax"))
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            listed, on_disk,
+            "syntaxes/SOURCES.md has drifted from the files in syntaxes/"
+        );
+
+        for (grammar, repo, licence) in GRAMMARS.iter() {
+            assert!(
+                !repo.is_empty() && !licence.is_empty(),
+                "{grammar}: the manifest row must carry a repository and a licence"
+            );
+            let text = dir.join("licenses").join(format!("{grammar}.txt"));
+            assert!(
+                text.is_file(),
+                "{grammar}: the licence text is not vendored ({text:?}) — \
+                 run `python tools/fetch_syntaxes.py`"
+            );
+        }
     }
 
     /// Gate: every component's version is present in `Cargo.lock` (robust to

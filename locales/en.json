@@ -494,6 +494,7 @@
   "ui.about.repo": "Repository",
   "ui.about.crate": "Crate",
   "ui.components.intro": "This program uses the following open-source components:",
+  "ui.components.grammars": "Syntax highlighting uses third-party Sublime grammars:",
   "ui.help.send": "send message",
   "ui.help.newline": "line break",
   "ui.help.select": "select text",

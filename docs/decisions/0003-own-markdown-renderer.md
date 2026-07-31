@@ -58,6 +58,16 @@ The `tui-markdown` dependency is removed; direct `pulldown-cmark`, `syntect`,
   `pulldown-cmark`; LaTeX acts **only** inside math delimiters.
 - **Behavior change**: `\alpha`/`x^2` outside `$…$` are no longer converted
   (fewer false positives; wrap formulas in `$…$`/`\(…\)`).
+- **Which languages highlight — vendored grammars (done).** syntect's bundled
+  set is a snapshot of Sublime's defaults (75 syntaxes), so most labels a model
+  writes — `zig`, `toml`, `dockerfile`, `powershell`, `swift`, `scss`, … — fell
+  into the unhighlighted path. Real `.sublime-syntax` grammars for 19 languages
+  are now vendored in `syntaxes/` (pinned to upstream commits with their
+  licences, see its `SOURCES.md`) and compiled into one dump by `build.rs`,
+  which `code.rs` embeds. Two constraints shape what can be vendored: syntect
+  loads only `.sublime-syntax` (never `.tmLanguage`) and does not support
+  `extends:`, so every grammar must be self-contained. See
+  [docs/history/vendored-syntaxes.md](../history/vendored-syntaxes.md).
 - **Code highlighting — via theme (done).** Previously syntect took the
   hardcoded `base16-ocean.dark`, not aligned with dark/light/auto. Now
   `shared/markdown.rs::build_code_theme(palette)` builds a syntect `Theme`

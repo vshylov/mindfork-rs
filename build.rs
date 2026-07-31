@@ -12,6 +12,13 @@
 //! `artwork/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
 //! default icon. Shortcuts and the installer's `UninstallDisplayIcon`
 //! (`packaging/windows/mindfork.iss`) pick it up from here for free too. See docs/branding.md §4.1.
+//!
+//! **Syntax dump.** The vendored grammars in `syntaxes/` (see its `SOURCES.md`)
+//! are added to syntect's bundled set and written into `OUT_DIR` as one
+//! uncompressed dump, which `shared/markdown/code.rs` embeds. Assembling the
+//! set costs ~130 ms; loading the dump costs ~0.55 ms, so it belongs here and
+//! not in a `LazyLock` — and a grammar syntect cannot load fails the **build**
+//! instead of silently disappearing at runtime (docs/history/vendored-syntaxes.md §2.3).
 
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -21,6 +28,7 @@ fn main() {
     println!("cargo:rerun-if-changed=dictionaries");
 
     embed_windows_icon();
+    build_syntax_dump();
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src = manifest.join("dictionaries");
@@ -87,6 +95,46 @@ fn embed_windows_icon() {
              icon not embedded in .exe (winresource is only available on a Windows host)"
         );
     }
+}
+
+/// Assembles syntect's bundled syntaxes plus everything in `syntaxes/` into one
+/// uncompressed dump at `$OUT_DIR/syntaxes.packdump`.
+///
+/// **A grammar that fails to load fails the build**, deliberately: syntect
+/// reads only `.sublime-syntax` and does not support `extends:`, so an upstream
+/// that migrates to sublime-syntax v2 would otherwise drop a language silently
+/// (docs/history/vendored-syntaxes.md §2.1). The `true` in `load_from_str` is
+/// `lines_include_newline`, matching `load_defaults_newlines` — the renderer
+/// feeds lines with their trailing `\n` (`LinesWithEndings`).
+fn build_syntax_dump() {
+    println!("cargo:rerun-if-changed=syntaxes");
+
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let dir = manifest.join("syntaxes");
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("syntaxes.packdump");
+
+    let mut builder = syntect::parsing::SyntaxSet::load_defaults_newlines().into_builder();
+    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "sublime-syntax"))
+        .collect();
+    // Sorted so the dump is reproducible: `read_dir` order is filesystem-defined.
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "no .sublime-syntax files in {} — run `python tools/fetch_syntaxes.py`",
+        dir.display()
+    );
+    for path in &files {
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let def = syntect::parsing::SyntaxDefinition::load_from_str(&src, true, None)
+            .unwrap_or_else(|e| panic!("{} does not load: {e}", path.display()));
+        builder.add(def);
+    }
+    syntect::dumps::dump_to_uncompressed_file(&builder.build(), &out)
+        .unwrap_or_else(|e| panic!("cannot write {}: {e}", out.display()));
 }
 
 /// The directory with the binary (`target/<profile>/`), derived from `OUT_DIR`:

@@ -29,11 +29,14 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
-- **Zig code blocks are highlighted.** A ` ```zig ` block came out as flat text
-  on a grey background: the syntax bundle we ship has no Zig grammar, so the
-  label matched nothing. Zig now borrows the Rust grammar — it shares
-  `const`/`pub`/`fn`, the numeric type names, `//` comments and string escapes,
-  so the block reads like code again (`try`/`defer`/`var` stay uncoloured).
+- **Zig code blocks are highlighted — and eighteen other languages with them.**
+  A ` ```zig ` block came out as flat text on a grey background, and so did
+  `toml`, `dockerfile`, `powershell`, `swift`, `typescript`, `kotlin`, `scss`,
+  `graphql`, `terraform`, `elixir`, `solidity`, `julia`, `nix`, `dart`,
+  `protobuf`, `cmake`, `nginx` and `sass`: the syntax set the app shipped with
+  covers only what Sublime Text's defaults did, and none of these were in it.
+  Real grammars for all nineteen now ship with the app. Nothing to configure,
+  and startup is no slower — the grammars are compiled in when the app is built.
 - **Editing a server setting and taking it back no longer reloads the model for
   nothing.** A change and its undo both asked for a restart, and the app then
   restarted the server with the settings it was already running — on a local

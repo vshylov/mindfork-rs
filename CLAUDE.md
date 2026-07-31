@@ -124,12 +124,16 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1682 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1686 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **Zig code blocks are highlighted** (Zig is absent from
-syntect's default bundle, so the label resolved to nothing and the block fell
-into the unhighlighted path; it now borrows the Rust grammar, picked by
-measuring the alternatives); before that — **an unhighlighted code block is drawn as a rectangle** (its
+recent change — **real syntax grammars for 19 languages are vendored**
+([plan](docs/history/vendored-syntaxes.md)): syntect ships a 75-syntax snapshot
+of Sublime's defaults, so `zig`/`toml`/`dockerfile`/`powershell`/`swift`/… all
+fell into the unhighlighted path; the grammars now live in `syntaxes/`, pinned
+to upstream commits with their licences, and `build.rs` compiles them into one
+dump — 0.55 ms to load, the same as before; before that — **Zig code blocks are
+highlighted** (the same symptom, closed first with an approximation, now
+superseded by the real grammar); before that — **an unhighlighted code block is drawn as a rectangle** (its
 reverse-video background used to follow the ragged right edge of the text; rows
 are now padded to the block's own width plus a blank column on the right —
 content-sized like a table, not stretched across the panel); before that — **no server restart when nothing
@@ -10402,6 +10406,89 @@ debounce was done as a separate PR, see below).
   so vendoring a few definitions and extending the set once in the `LazyLock`
   would give true Zig/TOML/Dockerfile highlighting — an asset to license and
   maintain, and a separate track from this one-line fix.
+
+### Post-M9: vendored syntax grammars for 19 languages (done)
+
+- **Asked for right after the Zig fix**, which had closed the symptom with an
+  approximation and named the real fix as groundwork. Plan with forks F1–F5 —
+  [docs/history/vendored-syntaxes.md](docs/history/vendored-syntaxes.md)
+  (**user's decision, 2026-07-31**, all four questions as recommended: the
+  curated set, vendored files with a manifest, a build-time dump, no user
+  overlay yet). Branch `feat/vendored-syntaxes`, stacked on the Zig fix (they
+  collide by construction — this deletes the alias that fix added).
+- **Everything load-bearing was probed against real grammars before any
+  code**, and two of the findings decided the design:
+  - **syntect loads only `.sublime-syntax`** — there is no `.tmLanguage`
+    syntax loader (`plist-load` is for *themes*), which disqualifies several
+    obvious upstreams (`PowerShell/EditorSyntax`,
+    `Microsoft/TypeScript-Sublime-Plugin`, `wmertens/sublime-nix`).
+  - **`extends:` is unsupported**, so every grammar must be self-contained.
+    That is what rules out cherry-picking from the current `sublimehq/Packages`
+    — its `TypeScript`/`TSX` extend `JavaScript` and fail to load, as does
+    `alexlouden`'s `HCL`. Measured, not assumed: each produced its own error.
+- **Cost, measured in release** — the number that chose F3: assembling the set
+  at runtime is **130 ms** (24 unlink + 105 build) on the first code block,
+  while a prebuilt **uncompressed** dump loads in **0.55 ms** — indistinguishable
+  from the 0.57 ms the app already paid for syntect's defaults. The compressed
+  form is 4.1 ms for 45 KiB less, so uncompressed wins; it is the same trade
+  syntect makes for its own assets.
+- **`build.rs` assembles the dump, and a grammar that fails to load fails the
+  build.** That is not a slogan — it fired on the first run: the **Swift**
+  grammar was rejected over a subroutine call (`\g<1>`). The cause was my own
+  optimisation: I had given the build-dependency `regex-fancy`, reasoning that
+  a dump stores regex *source* so the engine cannot matter. It does — loading a
+  grammar **compiles** its regexes, so the build is also what validates them,
+  and fancy-regex rejects what oniguruma accepts. The build-dep now uses
+  `regex-onig`, the runtime's engine; validating with a different one would
+  reject working grammars and could accept broken ones.
+- **The set: 19 grammars** (Zig, TypeScript, TOML, Dockerfile, PowerShell,
+  Swift, Kotlin, SCSS, Sass, GraphQL, Terraform, Elixir, Solidity, Julia, Nix,
+  Dart, Protobuf, CMake, nginx) in `syntaxes/`, each pinned in `SOURCES.md` to
+  an upstream repository, commit and licence, with the licence text vendored
+  next to it. `tools/fetch_syntaxes.py` re-fetches from those pins;
+  `--check` reports drift and is **not** in CI (it needs network — the
+  grammars are vendored precisely so the build does not).
+  `sharkdp/bat`'s `.gitmodules` was the shortlist source (a curated,
+  syntect-verified list), and three files come from bat's own converted copies
+  where no self-contained upstream exists — with the **original** author's
+  licence recorded, not bat's.
+- **The alias table had to be pruned, and that is a rule, not a cleanup**:
+  `resolve_syntax` tries the canonical token first, so while `zig → rs`
+  remained, the vendored Zig grammar was **never reached** — measured, `zig`
+  still highlighted as Rust after the grammar was added. `typescript → js` and
+  `kotlin → java` went the same way. What is left maps only what no grammar
+  answers (`docker`, `pwsh`, `hcl`, `proto3`, `jsx`, `tsx`).
+- **Binary size: +181 KiB**, measured on the release binary (20 397 056 →
+  20 582 400). Worth recording because I had claimed the opposite in a code
+  comment — that dropping syntect's `default-syntaxes` would make the binary
+  *smaller* — and the measurement refuted it: under LTO the linker already
+  drops the unused dumps. The feature is still off (it is genuinely dead
+  weight), but the comment now states the measured number.
+- **Attribution**: the "Components" tab (`F1`) gained a grammars section, built
+  by **parsing the manifest** (`include_str!`) rather than duplicating it into
+  a static list — drift is then impossible by construction, which beats a gate
+  test that merely detects it. The gate that remains checks what a parser
+  cannot: that every vendored file has a manifest row, and every row a licence
+  text on disk.
+- **Tests**: `vendored_grammars_resolve_by_their_own_label` (27 labels, the
+  point being that a vendored grammar needs no alias);
+  `dump_carries_the_vendored_grammars` (the dump is the bundled 75 **plus**
+  every file — a guard against the build silently degrading to defaults);
+  `grammar_manifest_matches_the_vendored_files`; the Components tab scrolled to
+  its last page. **All three gates were mutation-tested** — re-adding `zig → rs`
+  fails the first, deleting a grammar file fails the other two.
+  **1686 unit tests green** (+4), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): the markdown renderer and a
+  build step — no engine, memory, tool or provider path is touched. What
+  replaces it here is that the build itself validates every grammar with the
+  runtime's own regex engine, and the resolution tests assert the exact grammar
+  each label reaches.
+- **A process lesson worth recording**: `git checkout <file>` to undo a
+  scripted measurement mutation reverted **all** uncommitted work in those two
+  files, not just the mutation — Cargo.toml's feature trim and code.rs's whole
+  change had to be redone from context. Back up the file, or apply the mutation
+  as a patch you can reverse.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

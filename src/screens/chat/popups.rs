@@ -546,6 +546,35 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
             Span::styled((*license).to_string(), palette.muted_style()),
         ]));
     }
+
+    // Vendored syntax grammars — third-party data rather than crates, hence a
+    // section of their own (see shared/credits.rs and syntaxes/SOURCES.md).
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        format!("{HELP_PAD}{}", loc.t("ui.components.grammars")),
+        palette.muted_style(),
+    )));
+    lines.push(Line::raw(""));
+    let lang_w = credits::GRAMMARS
+        .iter()
+        .map(|(n, ..)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    let repo_w = credits::GRAMMARS
+        .iter()
+        .map(|(_, r, _)| r.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (lang, repo, license) in credits::GRAMMARS.iter() {
+        lines.push(Line::from(vec![
+            Span::raw(HELP_PAD),
+            Span::styled((*lang).to_string(), Style::new().fg(palette.text)),
+            Span::raw(" ".repeat(lang_w + 2 - lang.chars().count())),
+            Span::styled((*repo).to_string(), palette.muted_style()),
+            Span::raw(" ".repeat(repo_w + 2 - repo.chars().count())),
+            Span::styled((*license).to_string(), palette.muted_style()),
+        ]));
+    }
     lines
 }
 

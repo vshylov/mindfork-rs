@@ -1305,6 +1305,17 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   (`build_code_theme`: scopes → semantic roles, text/comments — gray, scaled by
   background lightness `Palette.dark`), so highlighting stays consistent with
   dark/light/auto.
+- **Which languages highlight.** syntect's bundled set is a snapshot of Sublime
+  Text's defaults — 75 syntaxes, missing most of what a model actually tags a block
+  with. So real `.sublime-syntax` grammars for 19 more languages (Zig, TypeScript,
+  TOML, Dockerfile, PowerShell, Swift, Kotlin, SCSS/Sass, GraphQL, Terraform, Elixir,
+  Solidity, Julia, Nix, Dart, Protobuf, CMake, nginx) are **vendored** in `syntaxes/`
+  and compiled into the binary's syntax dump at build time (`build.rs`); each is
+  pinned to an upstream commit with its licence in `syntaxes/SOURCES.md`, refreshed
+  by `python tools/fetch_syntaxes.py`. A label the set still doesn't know is mapped
+  to a close relative where one exists (`canonical_lang`: `jsx → js`, `tsx → ts`,
+  `hcl → tf`, …) — partial highlighting beats grey text — and otherwise falls back
+  to the unhighlighted rectangle below. See docs/history/vendored-syntaxes.md.
 - The full typical LLM markdown output is supported: headings, lists, blockquotes,
   inline/block code with highlighting, links (autolinks `<url>` don't duplicate the
   URL), images (alt text + URL), **tables** (native box-drawing rendering with
