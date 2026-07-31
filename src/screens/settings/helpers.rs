@@ -595,6 +595,7 @@ pub(super) fn collect_hits(
         )
         .to_lowercase();
         out.push(SearchHit {
+            id: f.id,
             section_idx,
             subsection,
             field_idx: fi,

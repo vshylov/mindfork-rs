@@ -1470,6 +1470,21 @@ editor — the label turns red with a hint; a fix or `Esc` close it. An accent-c
 **`•` marker** on the left flags a field whose value differs from the default;
 **`Del`** resets a field to its default (profile fields aren't affected).
 
+**Undoing an edit** (`Ctrl+Z`, redo `Ctrl+Y`). Every commit is applied and saved
+at once, so the screen keeps a stack of the edits made during **this visit** (it
+is rebuilt on each `Ctrl+P`) and `Ctrl+Z` puts the previous value back, re-emitting
+the same intent the edit produced. A run of edits to the *same* field is one step
+(cycling past the value you wanted comes back in one press), and the cursor
+**jumps to the field it reverted**, switching section and subsection if needed —
+otherwise reverting a change made elsewhere would be invisible. Inside an open
+field editor the same two keys stay the editor's own text undo. Not undoable, by
+nature: an **API key** (the screen never holds it), **creating/deleting an
+assistant profile** (owned by the orchestrator; deletion cascades over the
+profile's chats) and **confirming an MCP catalog** (a trust decision, §9.6) — all
+of them deliberate actions behind their own keys. Impersonation personas live in
+the config, so their creation/deletion *is* undoable. See
+docs/history/settings-undo.md.
+
 **Legacy-terminal compatibility mode** (`interface.terminal_compat`, off by
 default). Older emulators (Windows 10's conhost, etc.) can't do emoji or some
 Unicode characters — "tofu" squares are drawn instead of icons, and the `DIM`

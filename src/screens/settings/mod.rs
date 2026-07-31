@@ -632,8 +632,43 @@ enum Focus {
     Fields,
 }
 
+/// The value of one store as it was **before** a single edit — the mirror of the
+/// intent that edit produced. Each edit touches exactly one store (`save_config()`
+/// **or** `save_profile()`, never both), so a step restores exactly what changed.
+enum EditValue {
+    Config(Box<AppConfig>),
+    Profile(Box<Profile>),
+}
+
+/// One undoable edit. See docs/history/settings-undo.md.
+struct EditStep {
+    before: EditValue,
+    /// The field the edit acted on — the coalescing key (U2): a run of edits to the
+    /// same field collapses into one step. `None` for edits with no focused field
+    /// (persona `Ctrl+N`/`Ctrl+D`), which therefore never coalesce — otherwise
+    /// creating two personas would be undone by a single press.
+    field: Option<FieldId>,
+}
+
+/// A snapshot taken **before** dispatching a key that could commit an edit. Holds
+/// both stores because the kind of edit is only known from the intent afterwards;
+/// [`SettingsScreen::record_edit`] keeps the relevant half and drops the rest, so a
+/// *stored* [`EditStep`] stays small.
+struct PendingEdit {
+    config: AppConfig,
+    profiles: Vec<Profile>,
+    field: Option<FieldId>,
+}
+
+/// How many edits back `Ctrl+Z` can reach within one visit to the screen.
+const UNDO_CAP: usize = 50;
+
 /// One field-search target: jump coordinates + text for display/matching.
 struct SearchHit {
+    /// The field itself. Used to match a field **across** two index builds: a mode
+    /// change alters which fields are visible, so comparing by position would be
+    /// wrong exactly where it matters (see `jump_to_changed`).
+    id: FieldId,
     section_idx: usize,
     /// The subsection to jump to (a discriminant; `None` — a section with no subsections).
     subsection: Option<usize>,
@@ -706,6 +741,13 @@ pub struct SettingsScreen {
     /// snapshot). The "API key" field shows its status from this; the screen doesn't
     /// hold the keys themselves. See `shared::secrets`, docs/research/api-key-storage.md.
     api_keys_present: Vec<crate::shared::config::CloudProvider>,
+    /// Edits made during **this visit**, newest last (`Ctrl+Z`). The screen is built
+    /// fresh on every `Ctrl+P`, so the stack scopes to one sitting — which is the
+    /// span the "I just changed something by accident" question covers. See
+    /// docs/history/settings-undo.md.
+    undo: Vec<EditStep>,
+    /// Undone edits available for `Ctrl+Y`; cleared by any fresh edit.
+    redo: Vec<EditStep>,
 }
 
 // ---------- submodules (a breakup of a god object: docs/history/refactoring-god-objects.md) ----------

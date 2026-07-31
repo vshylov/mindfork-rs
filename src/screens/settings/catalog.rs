@@ -36,6 +36,8 @@ impl SettingsScreen {
             language_locked,
             mcp: Default::default(),
             api_keys_present: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 

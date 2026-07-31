@@ -112,6 +112,28 @@ impl SettingsScreen {
         }
     }
 
+    /// Puts the cursor on a field anywhere on the screen: section, subsection, field
+    /// index, focus on the pane. Shared by the search jump and by undo/redo landing on
+    /// the field it reverted (docs/history/settings-undo.md U4).
+    pub(super) fn jump_to(
+        &mut self,
+        section_idx: usize,
+        subsection: Option<usize>,
+        field_idx: usize,
+    ) {
+        self.section_idx = section_idx;
+        if let Some(si) = subsection {
+            match SECTIONS[section_idx] {
+                Section::Model => self.model_sub = ModelTab::from_index(si),
+                Section::Sampling => self.sampling_sub = Subsection::from_index(si),
+                Section::Profiles => self.profile_sub = Subsection::from_index(si),
+                _ => {}
+            }
+        }
+        self.field_idx = field_idx;
+        self.focus = Focus::Fields;
+    }
+
     /// Jumps to the selected result: section, subsection, field, focus on fields.
     pub(super) fn jump_to_selected(&mut self) {
         let target = self.search.as_ref().and_then(|st| {
@@ -121,17 +143,7 @@ impl SettingsScreen {
             })
         });
         if let Some((section_idx, subsection, field_idx)) = target {
-            self.section_idx = section_idx;
-            if let Some(si) = subsection {
-                match SECTIONS[section_idx] {
-                    Section::Model => self.model_sub = ModelTab::from_index(si),
-                    Section::Sampling => self.sampling_sub = Subsection::from_index(si),
-                    Section::Profiles => self.profile_sub = Subsection::from_index(si),
-                    _ => {}
-                }
-            }
-            self.field_idx = field_idx;
-            self.focus = Focus::Fields;
+            self.jump_to(section_idx, subsection, field_idx);
         }
         self.search = None;
     }

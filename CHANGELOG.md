@@ -13,6 +13,20 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Added
+
+- **`Ctrl+Z` on the settings screen takes an edit back** (and `Ctrl+Y` re-applies
+  it). Settings are saved the moment you change them, so until now a wrong
+  keystroke was final — you had to remember what it was and set it back by hand.
+  Now one press restores the previous value, and the cursor **jumps to the field
+  it just reverted**, so you can see what changed even if it was in another
+  section. Cycling a switch past the value you wanted comes back in a single
+  press, not one per step. Undo covers what you can edit in a visit to the
+  screen; while a text field is open for editing, `Ctrl+Z` still undoes your
+  typing, as before. A few things stay outside it by nature: an API key (the app
+  never keeps it in the screen), creating or deleting a profile, and confirming
+  an MCP server's tool list.
+
 ### Changed
 
 - **Moving around the settings screen no longer changes settings by accident.**

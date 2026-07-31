@@ -10,7 +10,172 @@ impl SettingsScreen {
     // ---------- key handling ----------
 
     /// Handles a keypress, returning an intent for `app` (or `None`).
+    ///
+    /// Wraps the real dispatcher to record an undo step (`Ctrl+Z`, see
+    /// docs/history/settings-undo.md). Config and profile mutations happen at ~9
+    /// places inside; hooking them all would be shotgun surgery and easy to forget
+    /// when a field type is added later, so the single entry point takes the
+    /// snapshot instead — and keeps it only if an edit actually came back.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        let pending = self.pre_edit_snapshot(&key);
+        let intent = self.handle_key_inner(key);
+        self.record_edit(pending, &intent);
+        intent
+    }
+
+    /// A snapshot of both stores, taken before a key that **could** commit an edit.
+    /// `None` for every other key — so typing inside a text editor doesn't clone the
+    /// config on each keystroke; only the committing `Enter` does.
+    fn pre_edit_snapshot(&self, key: &KeyEvent) -> Option<PendingEdit> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // `Ctrl+N`/`Ctrl+D` create/delete an impersonation persona, which lives in the
+        // config and is therefore undoable — but with no field to coalesce on.
+        let persona_key = ctrl && matches!(keys::hotkey_char(key), Some('n' | 'd'));
+        let field_key = !ctrl
+            && matches!(
+                key.code,
+                KeyCode::Enter
+                    | KeyCode::Char(' ')
+                    | KeyCode::Delete
+                    | KeyCode::Left
+                    | KeyCode::Right
+            );
+        if !field_key && !persona_key {
+            return None;
+        }
+        // What the key acts on: an open editor/popup targets its own field, otherwise
+        // it's the focused row.
+        let field = (!persona_key)
+            .then(|| {
+                self.editor
+                    .as_ref()
+                    .map(|e| e.field)
+                    .or_else(|| self.choice.as_ref().map(|c| c.field))
+                    .or_else(|| self.fields().get(self.field_idx).map(|f| f.id))
+            })
+            .flatten();
+        Some(PendingEdit {
+            config: self.config.clone(),
+            profiles: self.profiles.clone(),
+            field,
+        })
+    }
+
+    /// Keeps the half of the snapshot the returned intent names, and drops the rest.
+    ///
+    /// Anything that isn't a value edit — an API key (the screen never holds it),
+    /// creating/deleting an assistant profile (owned by the orchestrator; deletion
+    /// cascades over the profile's chats), confirming an MCP catalog (a trust
+    /// decision) — records nothing. That exclusion falls out of this match rather
+    /// than needing a guard of its own. See docs/history/settings-undo.md §2.1.
+    fn record_edit(&mut self, pending: Option<PendingEdit>, intent: &Option<SettingsIntent>) {
+        let Some(p) = pending else { return };
+        let before = match intent {
+            Some(SettingsIntent::SaveConfig(_)) => EditValue::Config(Box::new(p.config)),
+            Some(SettingsIntent::SaveProfile { id, .. }) => {
+                match p.profiles.into_iter().find(|pr| pr.id == *id) {
+                    Some(prev) => EditValue::Profile(Box::new(prev)),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        self.push_undo(EditStep {
+            before,
+            field: p.field,
+        });
+    }
+
+    /// Pushes a step, coalescing a run of edits to the **same** field into one (U2):
+    /// cycling `managed → external → openai` undoes to `managed` in a single press.
+    /// Coalescing keeps the *oldest* "before" value, i.e. drops the newer step.
+    fn push_undo(&mut self, step: EditStep) {
+        self.redo.clear(); // a fresh edit invalidates the redo branch
+        if let Some(last) = self.undo.last()
+            && step.field.is_some()
+            && last.field == step.field
+        {
+            return;
+        }
+        if self.undo.len() >= UNDO_CAP {
+            self.undo.remove(0);
+        }
+        self.undo.push(step);
+    }
+
+    /// `Ctrl+Z`: restores the previous value and re-emits the same intent the edit
+    /// produced. Returns `None` on an empty stack (a plain no-op).
+    pub(super) fn undo_edit(&mut self) -> Option<SettingsIntent> {
+        let step = self.undo.pop()?;
+        let before = self.build_search_index();
+        let (intent, mirror) = self.apply_step(step)?;
+        self.redo.push(mirror);
+        self.jump_to_changed(&before);
+        Some(intent)
+    }
+
+    /// `Ctrl+Y`: the mirror of [`Self::undo_edit`].
+    pub(super) fn redo_edit(&mut self) -> Option<SettingsIntent> {
+        let step = self.redo.pop()?;
+        let before = self.build_search_index();
+        let (intent, mirror) = self.apply_step(step)?;
+        self.undo.push(mirror);
+        self.jump_to_changed(&before);
+        Some(intent)
+    }
+
+    /// Restores a step into the working copy and returns (the intent to persist it,
+    /// the mirror step for the opposite stack). `None` if the step's profile is gone
+    /// — the step is then dropped rather than resurrecting a deleted profile.
+    fn apply_step(&mut self, step: EditStep) -> Option<(SettingsIntent, EditStep)> {
+        match step.before {
+            EditValue::Config(prev) => {
+                let mirror = EditStep {
+                    before: EditValue::Config(Box::new(self.config.clone())),
+                    field: step.field,
+                };
+                self.config = *prev;
+                Some((self.save_config(), mirror))
+            }
+            EditValue::Profile(prev) => {
+                let idx = self.profiles.iter().position(|p| p.id == prev.id)?;
+                let mirror = EditStep {
+                    before: EditValue::Profile(Box::new(self.profiles[idx].clone())),
+                    field: step.field,
+                };
+                self.profiles[idx] = *prev;
+                // Make the restored profile the selected one, so the jump below lands
+                // on a row that shows what was actually restored.
+                self.profile_idx = idx;
+                Some((self.save_profile(), mirror))
+            }
+        }
+    }
+
+    /// Moves the cursor onto the field the undo/redo changed (U4) — otherwise
+    /// reverting something from another section happens invisibly.
+    ///
+    /// Compares the field-search index (which already enumerates every field of every
+    /// section **with its rendered value**) before and after the restore, and takes
+    /// the first field present in **both** whose value differs. Fields that only
+    /// appear or disappear are skipped: they are the *consequence* of a mode change,
+    /// not the change itself, which leaves the mode field as the match.
+    fn jump_to_changed(&mut self, before: &[SearchHit]) {
+        let target = self
+            .build_search_index()
+            .into_iter()
+            .find(|after| {
+                before
+                    .iter()
+                    .any(|b| b.id == after.id && b.value != after.value)
+            })
+            .map(|h| (h.section_idx, h.subsection, h.field_idx));
+        if let Some((section_idx, subsection, field_idx)) = target {
+            self.jump_to(section_idx, subsection, field_idx);
+        }
+    }
+
+    fn handle_key_inner(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         if key.kind != KeyEventKind::Press {
             return None;
         }
@@ -34,6 +199,17 @@ impl SettingsScreen {
         }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
+        }
+        // Undo/redo of a *setting* — deliberately below the editor/search/choice
+        // branches above: while one of those is open the same two keys belong to its
+        // `InputBox` (text undo), which is existing behaviour and must not change.
+        // Matched by the "physical" Latin key, so they work under any layout.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match keys::hotkey_char(&key) {
+                Some('z') => return self.undo_edit(),
+                Some('y') => return self.redo_edit(),
+                _ => {}
+            }
         }
         // `/` opens field search (inside the editor `/` is a plain character, handled
         // above). Matched by the "physical" `/` key — under a Russian layout the same

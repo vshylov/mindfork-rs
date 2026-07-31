@@ -1174,6 +1174,7 @@
   "ui.settings.hint.toggle": "тумблер",
   "ui.settings.hint.choose": "выбор",
   "ui.settings.hint.search": "поиск",
+  "ui.settings.hint.undo": "отмена/повтор",
   "ui.settings.hint.reset": "сброс",
   "ui.settings.hint.new": "новый",
   "ui.settings.hint.delete": "удалить",
