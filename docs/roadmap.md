@@ -61,10 +61,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - localization of client wire errors (currently — a technical layer).
 
 ## Feed and chat UI
-- **Syntax grammars: user overlay and more languages** — 19 grammars are now
+- **Syntax grammars: user overlay and more languages** — 22 grammars are now
   vendored ([plan](history/vendored-syntaxes.md)), which covers what a model
-  usually tags a block with; the rest of the long tail (Vue, Svelte, Fortran,
-  COBOL, Nim, jsonc, …) is one manifest row plus one file each. Deferred by the
+  usually tags a block with; the rest of the long tail (Fortran, COBOL, Vala,
+  Haxe, …) is one manifest row plus one file each. **V** is blocked on
+  licensing — its only grammar has none, so the label maps to Go for now. Deferred by the
   same plan (fork F5): letting a user drop a grammar into `data/syntaxes/`, the
   way external locales work — the overlay would have to parse and re-link at
   runtime, i.e. pay back the ~130 ms the build-time dump removes, so it needs

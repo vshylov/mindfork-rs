@@ -61,7 +61,7 @@ The `tui-markdown` dependency is removed; direct `pulldown-cmark`, `syntect`,
 - **Which languages highlight — vendored grammars (done).** syntect's bundled
   set is a snapshot of Sublime's defaults (75 syntaxes), so most labels a model
   writes — `zig`, `toml`, `dockerfile`, `powershell`, `swift`, `scss`, … — fell
-  into the unhighlighted path. Real `.sublime-syntax` grammars for 19 languages
+  into the unhighlighted path. Real `.sublime-syntax` grammars for 22 languages
   are now vendored in `syntaxes/` (pinned to upstream commits with their
   licences, see its `SOURCES.md`) and compiled into one dump by `build.rs`,
   which `code.rs` embeds. Two constraints shape what can be vendored: syntect

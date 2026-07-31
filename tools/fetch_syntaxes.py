@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,8 +45,10 @@ class Entry:
 
 
 def raw_url(repo: str, commit: str, path: str) -> str:
-    """Raw-file URL for `host:owner/name` at `commit`."""
+    """Raw-file URL for `host:owner/name` at `commit`. The path is quoted —
+    some upstreams put spaces in a grammar's filename (`Vue Component`)."""
     host, _, slug = repo.partition(":")
+    path = urllib.parse.quote(path)
     if host == "github":
         return f"https://raw.githubusercontent.com/{slug}/{commit}/{path}"
     if host == "codeberg":

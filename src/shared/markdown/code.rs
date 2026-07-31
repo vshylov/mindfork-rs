@@ -85,10 +85,22 @@ pub(super) fn canonical_lang(lang: &str) -> &str {
         // `extends:` stub syntect cannot load, so the label goes to Terraform.
         "hcl" | "tfvars" => "tf",
         "proto3" => "protobuf",
+        // JSON with comments: the bundled JSON grammar already highlights `//`
+        // and `/* */` as comments (measured), so this is exact, not an
+        // approximation — only the label is missing.
+        "jsonc" | "json5" => "json",
         // --- approximations: the language isn't in the set, take a close relative ---
         // Partial highlighting from a related grammar beats gray text.
         "jsx" => "js",
         "tsx" => "ts", // TSX is TypeScript plus JSX; the TS grammar covers most
+        // V on the Go grammar. No grammar is vendored because the only
+        // `.sublime-syntax` for V that exists carries **no licence at all**
+        // (see syntaxes/SOURCES.md). Go is the measured best of go/rust/c: V is
+        // Go-inspired and shares `:=`, `import`, `struct`, the primitive type
+        // names, single-quoted strings and `//` comments. Rust catches
+        // `pub`/`fn`/`mut` but reads `'` as a lifetime and **mangles V's
+        // default string form**, which is worse than leaving those three plain.
+        "v" | "vlang" => "go",
         other => {
             // Return an unmapped label as-is; borrowed from the original
             // string, so we return a slice of `lang`, not a temporary
@@ -321,9 +333,13 @@ mod tests {
             ("pwsh", "PowerShell"),
             ("hcl", "Terraform"),
             ("proto3", "Protocol Buffer"),
+            ("jsonc", "JSON"),
+            ("json5", "JSON"),
             // approximations: the language isn't in the set → a close grammar
             ("jsx", "JavaScript"),
             ("tsx", "TypeScript"),
+            ("v", "Go"),
+            ("vlang", "Go"),
         ] {
             let syntax = resolve_syntax(label)
                 .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
@@ -366,10 +382,44 @@ mod tests {
             ("proto", "Protocol Buffer"),
             ("cmake", "CMake"),
             ("nginx", "nginx"),
+            // Vue's grammar calls itself "Vue Component"; the label still
+            // reaches it through the file extension.
+            ("vue", "Vue Component"),
+            ("svelte", "Svelte"),
+            ("nim", "Nim"),
         ] {
             let syntax = resolve_syntax(label)
                 .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
             assert_eq!(syntax.name, expect_name, "label {label:?}");
+        }
+    }
+
+    /// **Every** syntax in the set can actually highlight, not merely load.
+    ///
+    /// The two are different questions, and the gap is where a vendored grammar
+    /// can hurt: Vue and Svelte embed other languages by scope
+    /// (`source.js`/`text.html.basic`/…), and a reference syntect cannot
+    /// resolve at link time only shows up when something is parsed through it.
+    /// A panic there would kill the app — the panic hook restores the terminal
+    /// and exits, and we deliberately do not `catch_unwind` (see the mermaid
+    /// module). An `Err` is fine: `highlight_line_or_plain` degrades to flat
+    /// text.
+    #[test]
+    fn every_syntax_can_highlight_without_panicking() {
+        // Deliberately mixed: markup, script, style, strings and comments, so
+        // an embedded-scope grammar actually reaches its embedded contexts.
+        const SNIPPET: &str = "<div class=\"a\">{{ x }}</div>\n\
+                               <script>const a = 1; // note\n</script>\n\
+                               <style>.a { color: red; }</style>\n\
+                               fn main() { let s = \"текст\"; }\n";
+        let theme = code_theme(&Palette::for_theme(Theme::Dark));
+        for syntax in SYNTAX_SET.syntaxes() {
+            let mut hl = HighlightLines::new(syntax, theme);
+            for line in LinesWithEndings::from(SNIPPET) {
+                // Errors are acceptable (the renderer falls back to plain
+                // text); a panic is not, and is what this test exists to catch.
+                let _ = hl.highlight_line(line, &SYNTAX_SET);
+            }
         }
     }
 
@@ -385,7 +435,7 @@ mod tests {
             .filter(|p| p.extension().is_some_and(|e| e == "sublime-syntax"))
             .count();
         assert!(
-            vendored >= 19,
+            vendored >= 22,
             "expected the vendored grammars, got {vendored}"
         );
         assert_eq!(

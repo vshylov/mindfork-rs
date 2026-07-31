@@ -124,9 +124,9 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1686 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1687 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **real syntax grammars for 19 languages are vendored**
+recent change — **real syntax grammars for 22 languages are vendored**
 ([plan](docs/history/vendored-syntaxes.md)): syntect ships a 75-syntax snapshot
 of Sublime's defaults, so `zig`/`toml`/`dockerfile`/`powershell`/`swift`/… all
 fell into the unhighlighted path; the grammars now live in `syntaxes/`, pinned
@@ -10489,6 +10489,34 @@ debounce was done as a separate PR, see below).
   files, not just the mutation — Cargo.toml's feature trim and code.rs's whole
   change had to be redone from context. Back up the file, or apply the mutation
   as a patch you can reverse.
+- **Follow-up, same branch: Vue, Svelte, Nim, V, JSONC** (asked for right after
+  the track landed). Three vendored — the set is now **22** — and the other two
+  answered by measurement rather than by adding files:
+  - **V could not be vendored, and that is a licensing fact, not a preference**:
+    the only `.sublime-syntax` for V that exists
+    (`elliotchance/vlang-sublime`) has **no licence file and no statement in its
+    README**, i.e. all rights reserved. §5 of the plan says such a candidate is
+    dropped, so the label maps to **Go** — measured the best of go/rust/c on real
+    V code (it shares `:=`, `import`, `struct`, the primitive type names,
+    single-quoted strings, `//`). Rust catches `pub`/`fn`/`mut` but reads `'` as
+    a lifetime and **mangles V's default string form** — worse than three plain
+    keywords. Recorded in `syntaxes/SOURCES.md` under "not vendored".
+  - **JSONC needed no grammar at all**: the bundled JSON grammar already
+    highlights `//` and `/* */` as comments (measured), so `jsonc`/`json5` → `json`
+    is exact rather than approximate. Worth checking before adding a file.
+  - **Svelte repeated the SCSS lesson** — `master` fails to load on
+    sublime-syntax v2 features, bat's pinned commit works. Vue's grammar lives
+    on the `new` branch under a filename with a space (`Vue Component`), which
+    is why `fetch_syntaxes.py` now quotes the path.
+- **The follow-up produced the gate the original stages lacked**:
+  `every_syntax_can_highlight_without_panicking`. Vue and Svelte embed other
+  languages by scope, and an unresolved reference is **invisible at load time** —
+  it surfaces only while parsing, where a panic would kill the app (we
+  deliberately do not `catch_unwind`, see the mermaid module). Highlighting a
+  mixed markup/script/style snippet through **every** syntax in the set closes
+  that gap; all 100 pass, and Vue/Svelte/Nim were additionally eyeballed —
+  embedded JS and CSS inside `<script>`/`<style>` really do highlight.
+  **1687 unit tests green** (+1), gates clean.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

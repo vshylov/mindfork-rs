@@ -38,6 +38,9 @@ syntect loads **only** `.sublime-syntax` — never `.tmLanguage` — and it does
 | Protobuf | Protobuf.sublime-syntax | github:VcamX/protobuf-syntax-highlighting | Protobuf.sublime-syntax | 1365331580b0e4bb86f74d0c599dccc87e7bdacb | MIT | LICENSE |
 | CMake | CMake.sublime-syntax | github:zyxar/Sublime-CMakeLists | CMake.sublime-syntax | 2560a080b3b7dcdb05e17ee85b2171776e84b8c1 | MIT | LICENSE |
 | nginx | nginx.sublime-syntax | github:SublimeText/nginx | Syntaxes/nginx.sublime-syntax | f7a08a8c40caae3e423805dfe7b644d06c9ceff4 | MIT | LICENSE.md |
+| Vue | Vue.sublime-syntax | github:vuejs/vue-syntax-highlight | Vue Component.sublime-syntax | 6eb71bc6bba5e6a284b6d1d3154484da6f366e21 | MIT | LICENSE |
+| Svelte | Svelte.sublime-syntax | github:corneliusio/svelte-sublime | Svelte.sublime-syntax | c71f1290b061c79c027b5eb002ed06aa6d874ffe | MIT | LICENSE |
+| Nim | Nim.sublime-syntax | github:nim-lang/NimLime | Syntaxes/Nim.sublime-syntax | 17b8287df06edaa47e8609403994a9224dc291c0 | MIT | LICENSE |
 
 A licence path of the form `host:owner/repo@commit:path` points at a **different
 repository** than the grammar — see below.
@@ -57,8 +60,25 @@ upstream package, not at bat:
 
 ## Notes on individual pins
 
-- **SCSS** is pinned to an older commit (`d3d9404`, the one bat uses).
-  `braver/SublimeSass` at `master` fails to load — it has moved to
-  sublime-syntax v2 features syntect does not implement.
+- **SCSS** and **Svelte** are pinned to older commits (the ones bat uses).
+  `braver/SublimeSass` and `corneliusio/svelte-sublime` at `master` fail to
+  load — they have moved to sublime-syntax v2 features syntect does not
+  implement.
+- **Vue** comes from the `new` branch, where the grammar is called
+  `Vue Component.sublime-syntax` (the space is why
+  `tools/fetch_syntaxes.py` quotes the path). It declares itself as
+  `name: Vue Component`, so a ` ```vue ` block reaches it via the `.vue` file
+  extension rather than by name.
 - **Zig** lives on Codeberg; the raw-file URL scheme differs from GitHub's and
   `tools/fetch_syntaxes.py` handles both.
+
+## Languages deliberately not vendored
+
+- **V (vlang)** — the only `.sublime-syntax` grammar in existence
+  ([elliotchance/vlang-sublime](https://github.com/elliotchance/vlang-sublime))
+  ships **no licence at all**: no `LICENSE` file, no statement in the README,
+  which means all rights reserved. Redistributing it would be exactly the thing
+  this manifest exists to prevent, so a ` ```v ` block falls back to the **Go**
+  grammar instead (`canonical_lang`, chosen by measuring go/rust/c on real V
+  code). If upstream ever adds a licence, vendoring it is one row here plus
+  deleting that alias.

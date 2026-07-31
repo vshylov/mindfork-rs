@@ -178,6 +178,32 @@ file has a manifest row").
 - **Build-time cost.** syntect compiled once more for the host; the dump build
   is ~100 ms.
 
+## 5.1 Addendum — five more languages (2026-07-31)
+
+Asked for right after the track landed: Vue, Svelte, Nim, V, JSONC. Three were
+vendored (Vue, Svelte, Nim — bringing the set to **22**), and the other two came
+out of the same measurements the plan prescribes rather than from guessing:
+
+- **V** could not be vendored: the only `.sublime-syntax` for it carries **no
+  licence**, so §5's rule ("anything without a clear permissive licence is
+  dropped") applies. The label maps to **Go**, measured as the best of
+  go/rust/c on real V code — it shares `:=`, `import`, `struct`, the primitive
+  type names, single-quoted strings and `//` comments. Rust catches
+  `pub`/`fn`/`mut` but reads `'` as a lifetime and mangles V's default string
+  form, which is worse than leaving three keywords plain.
+- **JSONC** needed no grammar at all: the bundled JSON grammar already
+  highlights `//` and `/* */` as comments (measured), so `jsonc`/`json5` map to
+  `json` and the result is exact rather than approximate.
+- **Svelte** repeated the SCSS lesson — `master` fails to load on v2 features,
+  bat's pinned commit works.
+
+The addition also produced a gate the original stages lacked:
+`every_syntax_can_highlight_without_panicking`. Vue and Svelte embed other
+languages by scope, and an unresolved reference is invisible at load time —
+it would only surface while parsing, where a panic kills the app (we do not
+`catch_unwind`). Highlighting a mixed snippet through **every** syntax in the
+set closes that gap; all 100 pass.
+
 ## 6. Out of scope
 
 - Replacing the base bundle with the current `sublimehq/Packages` (198
