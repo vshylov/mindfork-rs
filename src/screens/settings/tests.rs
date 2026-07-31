@@ -22,7 +22,7 @@ fn ctrl(c: char) -> KeyEvent {
 /// Moves to the target section via Tab (robust to section order).
 /// After the call, focus is in the menu, no field is focused.
 ///
-/// Tab **preserves** the focus (docs/settings-navigation.md R4), so the helper returns
+/// Tab **preserves** the focus (docs/history/settings-navigation.md R4), so the helper returns
 /// to the sections itself — it can no longer rely on Tab's former side effect. Without
 /// this, [`goto_field`]'s `Enter` would open an editor instead of entering the pane.
 fn goto_section(s: &mut SettingsScreen, sec: Section) {
@@ -83,7 +83,7 @@ fn esc_closes_from_the_sections() {
     assert_eq!(s.handle_key(key(KeyCode::Esc)), Some(SettingsIntent::Close));
 }
 
-/// The focus ladder (docs/settings-navigation.md R3): Esc in the field pane steps back
+/// The focus ladder (docs/history/settings-navigation.md R3): Esc in the field pane steps back
 /// to the sections **without** closing; only the second one closes.
 #[test]
 fn esc_steps_out_of_the_field_pane_then_closes() {
@@ -1055,7 +1055,7 @@ fn pane_markers_stay_put_and_swap_colour_with_focus() {
     assert_eq!(fields_at, fields_at2, "the `◆` must not move");
 }
 
-/// The footer is contextual by focus (docs/settings-navigation.md §5.1) — that's the
+/// The footer is contextual by focus (docs/history/settings-navigation.md §5.1) — that's the
 /// only place the navigation model is stated: on the sections Enter goes in and Esc
 /// closes; in the pane Esc steps back to the sections.
 #[test]

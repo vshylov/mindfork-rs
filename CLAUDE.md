@@ -127,7 +127,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1665 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — the **settings-screen focus model**
-([plan](docs/settings-navigation.md)): `Enter` is now the only way into the field
+([plan](docs/history/settings-navigation.md)): `Enter` is now the only way into the field
 pane and `Esc` the only way out (a second one closes the screen), the arrows only
 ever change a value, and `Tab` no longer drops the focus — closing the trap where
 the intended "go back" keystroke silently changed the server mode; before that —
@@ -10066,7 +10066,7 @@ debounce was done as a separate PR, see below).
   with `→`, then try to come back with `←` — and on a switch that changes its value
   instead; confused, they press `Esc`, leave the screen entirely, and come back
   trying to remember what they just changed. Plan with forks R1–R6 —
-  [docs/settings-navigation.md](docs/settings-navigation.md) (**user's decision,
+  [docs/history/settings-navigation.md](docs/history/settings-navigation.md) (**user's decision,
   2026-07-31**, all as recommended). Branch `feat/settings-focus-model`, stacked on
   `docs/settings-navigation`.
 - **The damage is larger than "a setting changed", and reading the code is what
@@ -10146,7 +10146,7 @@ debounce was done as a separate PR, see below).
   answer "what did I change?". The cheap candidate is a second marker driven by a
   config snapshot taken when the screen opens; full `Ctrl+Z` would have to interact
   with the server-restart debounce and with profile edits, which travel as a
-  different intent. See docs/settings-navigation.md §7.
+  different intent. See docs/history/settings-navigation.md §7.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
