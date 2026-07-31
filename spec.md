@@ -1315,6 +1315,22 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   off by default (a compact look, with a separator only under the header); enabling
   it gives a "grid" look). A code block's info string (` ```rust,no_run `)
   resolves the language from the first token; `---` stretches across the panel width.
+- **A code block with no highlighting is a rectangle.** Such a block (no language, or
+  one syntect doesn't know — ` ```text `) is drawn on a reverse-video background, and
+  that background used to follow the ragged right edge of each line. Its rows —
+  fences included, they are the rectangle's top and bottom edge — are now padded to
+  one width: the **block's own** (its widest line **plus one blank column** on the
+  right, so the text doesn't run into the background's hard edge), capped by the
+  panel and not stretched to it, the same rule tables follow. There is deliberately
+  no matching column on the left: the code's own indentation stays aligned with the
+  fence markers and the surrounding prose. A line longer than the panel is
+  wrapped **by the renderer**, so the block stays square instead of leaving a ragged
+  tail row for the feed's re-wrap to produce (and that re-wrap becomes a no-op, as it
+  already is for tables). The fences' `DIM` sits on their span rather than on the
+  line, so the padding takes the background without the dimming and the edges match
+  the body. A **highlighted** block is deliberately left alone: the syntect pipeline
+  only carries foreground color (`build_code_theme`), so it has no background — there
+  is no rectangle to square off.
 - **Raw HTML**: *inline* HTML (`<strong>x</strong>` inside a paragraph) has always
   rendered its text, because pulldown-cmark delivers that text as ordinary `Text`
   events. A **block** of raw HTML does not — it arrives as opaque chunks — and used

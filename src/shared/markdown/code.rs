@@ -89,6 +89,65 @@ pub(super) fn highlight_line_or_plain(
     }
 }
 
+/// A blank column kept along the block's right edge, so the text doesn't run
+/// into the background's hard edge. Left alone on purpose: the code's own
+/// indentation stays aligned with the fence markers and with the surrounding
+/// prose.
+pub(super) const CODE_RIGHT_PAD: usize = 1;
+
+/// Lays an already-emitted code block out as a solid rectangle: its rows are
+/// wrapped to the panel width and padded with spaces up to the block's own
+/// width — the widest row plus [`CODE_RIGHT_PAD`], capped at `width`. `start`
+/// is the index in `lines` of the block's opening fence.
+///
+/// Without this the block's background ([`super::code_style`] — `REVERSED`,
+/// so a space paints a solid cell) follows the ragged right edge of the text,
+/// and the block reads as a stack of bars of differing length instead of one
+/// panel. The width is the **block's own**, not the panel's — the same rule
+/// tables follow: laid out to their content, capped by the panel.
+///
+/// Rows are wrapped **here** rather than left to the feed: a row longer than
+/// the panel would be split later and its tail would stay ragged inside an
+/// otherwise rectangular block. The feed's re-wrap then becomes a no-op (every
+/// row is ≤ `width`, like a table's). They are wrapped to `width -
+/// CODE_RIGHT_PAD` so that the blank column exists even for a block whose text
+/// fills the panel — otherwise the cap would eat it exactly where the edge is
+/// tightest.
+///
+/// Only the unhighlighted path calls this: a syntect-highlighted block carries
+/// no background at all (the pipeline only transfers foreground color, see
+/// [`build_code_theme`]), so there would be no rectangle to square off.
+pub(super) fn pad_code_block(lines: &mut Vec<Line<'static>>, start: usize, width: usize) {
+    let text_w = width.saturating_sub(CODE_RIGHT_PAD);
+    let rows: Vec<Line<'static>> = lines
+        .split_off(start)
+        .into_iter()
+        .flat_map(|line| wrap::wrap_line(&line, text_w))
+        // Trailing spaces carry no meaning in a code block (leading ones —
+        // indentation — do), and `wrap_ranges` "spills" a word-boundary space
+        // past the row's edge; both would inflate the measured width and defeat
+        // the padding. Same reasoning as `trim_row_trailing_ws` in a table cell.
+        .map(trim_row_trailing_ws)
+        .collect();
+    let block = rows
+        .iter()
+        .map(|l| cell_width(&l.spans) + CODE_RIGHT_PAD)
+        .max()
+        .unwrap_or(0)
+        .min(width);
+    lines.extend(rows.into_iter().map(|mut row| {
+        let pad = block.saturating_sub(cell_width(&row.spans));
+        if pad > 0 {
+            // A raw span: the background comes from the line style, which the
+            // padding picks up on its own — and, unlike the fence spans, it
+            // stays free of their `DIM`, so the rectangle's top and bottom
+            // edges are the same shade as its body.
+            row.spans.push(Span::raw(" ".repeat(pad)));
+        }
+        row
+    }));
+}
+
 /// Builds a syntect code-highlighting theme from the semantic [`Palette`],
 /// mapping syntax scopes to theme roles: keywords → `accent`, strings →
 /// `success`, numbers/constants → `warning`, functions → `user`, types →
@@ -306,15 +365,160 @@ mod tests {
     #[test]
     fn plain_code_block_content_not_glued_to_fence() {
         let md = "```\nX_ij = 1, тест\nE = 2/(j-i+1)\n```";
-        let lines: Vec<String> = render(md, 80, &Palette::default())
-            .lines
+        // Rows are padded to the block's rectangle (see `pad_code_block`), so
+        // compare the text, not the trailing background.
+        let lines: Vec<String> = block_rows(md, 80)
             .iter()
-            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .map(|l| l.trim_end().to_string())
             .collect();
         // The opening fence — on its own line, with no content.
         assert_eq!(lines[0], "```", "content glued to the fence: {lines:?}");
         assert_eq!(lines[1], "X_ij = 1, тест");
         assert_eq!(lines[2], "E = 2/(j-i+1)");
         assert_eq!(lines[3], "```");
+    }
+
+    /// Text of each rendered row.
+    fn block_rows(md: &str, width: usize) -> Vec<String> {
+        render(md, width, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// Display width of each rendered row.
+    fn block_widths(md: &str, width: usize) -> Vec<usize> {
+        render(md, width, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| cell_width(&l.spans))
+            .collect()
+    }
+
+    /// The block's background is a solid rectangle: every row — fences
+    /// included — is padded to one width, and that width is the block's own
+    /// (the widest line), not the panel's. Before this the background followed
+    /// the ragged right edge of the text.
+    #[test]
+    fn plain_code_block_is_a_solid_rectangle() {
+        let md = "```text\nкороткая\nсамая длинная строка блока\nx\n```";
+        let widths = block_widths(md, 80);
+        let expected =
+            wrap::display_width(&"самая длинная строка блока".chars().collect::<Vec<_>>())
+                + CODE_RIGHT_PAD;
+        assert!(
+            widths.iter().all(|&w| w == expected),
+            "rows are not one width ({expected} expected): {widths:?}"
+        );
+        // The rectangle is sized to the content, not stretched across the panel
+        // (the rule tables follow).
+        assert!(expected < 80, "the block should not fill the panel");
+        // …and it really is a background, not just padding: the block's rows
+        // carry the reverse-video line style that paints those spaces.
+        for line in render(md, 80, &Palette::default()).lines {
+            assert!(
+                line.style.add_modifier.contains(Modifier::REVERSED),
+                "a block row lost its background: {line:?}"
+            );
+        }
+    }
+
+    /// A blank line inside the block is a full row of the rectangle, not a gap
+    /// in it.
+    #[test]
+    fn blank_line_inside_a_code_block_is_filled() {
+        let widths = block_widths("```\naaaa bbbb\n\ncccc\n```", 80);
+        let expected = 9 + CODE_RIGHT_PAD;
+        assert!(
+            widths.iter().all(|&w| w == expected),
+            "a blank row broke the rectangle: {widths:?}"
+        );
+    }
+
+    /// The rectangle keeps a blank column along its right edge, so the text
+    /// doesn't run into the background's hard edge. Checked at a comfortable
+    /// panel and at the awkward one — a panel exactly as wide as the block's
+    /// longest line, where the width cap would otherwise eat that very column
+    /// (the line wraps instead, and the column survives).
+    #[test]
+    fn rectangle_keeps_a_blank_column_on_the_right() {
+        let longest = "самая длинная строка блока";
+        let natural = wrap::display_width(&longest.chars().collect::<Vec<_>>());
+        for w in [80usize, natural] {
+            let rows = block_rows(&format!("```text\nx\n{longest}\n```"), w);
+            for row in &rows {
+                assert!(
+                    row.ends_with(' '),
+                    "the right edge has no blank column at panel {w}: {rows:?}"
+                );
+            }
+        }
+        // Exactly one column, not a margin: the rectangle stays sized to its
+        // content.
+        let rows = block_rows(&format!("```text\nx\n{longest}\n```"), 80);
+        let widest = rows
+            .iter()
+            .find(|r| r.contains(longest))
+            .expect("the longest line");
+        assert_eq!(
+            widest.chars().rev().take_while(|c| *c == ' ').count(),
+            CODE_RIGHT_PAD,
+            "expected exactly one blank column: {widest:?}"
+        );
+    }
+
+    /// A line longer than the panel is wrapped **by the renderer**, so the
+    /// rectangle stays square instead of leaving a ragged tail row for the
+    /// feed's re-wrap to produce; and no row ever exceeds the panel.
+    #[test]
+    fn long_code_line_wraps_into_the_rectangle() {
+        let md = format!("```\n{}\n```", "слово ".repeat(30));
+        for w in [20usize, 32, 40, 60] {
+            let widths = block_widths(&md, w);
+            let first = widths[0];
+            assert!(
+                first <= w && widths.iter().all(|&x| x == first),
+                "at panel {w} the rectangle came out ragged: {widths:?}"
+            );
+            // The wrap really happened — a 180-column line did not survive whole.
+            assert!(widths.len() > 3, "the long line did not wrap: {widths:?}");
+        }
+    }
+
+    /// The fence's `DIM` must not reach the padding, or the rectangle's top and
+    /// bottom edges would be a different shade from its body.
+    #[test]
+    fn rectangle_padding_is_not_dimmed() {
+        let md = "```text\nсамая длинная строка блока\n```";
+        let fence = render(md, 80, &Palette::default()).lines.remove(0);
+        let text = &fence.spans[0];
+        let pad = fence.spans.last().expect("the fence row is padded");
+        assert!(text.content.starts_with("```"));
+        assert!(
+            text.style.add_modifier.contains(Modifier::DIM),
+            "the fence text should stay dim: {text:?}"
+        );
+        assert!(
+            pad.content.trim().is_empty() && !pad.style.add_modifier.contains(Modifier::DIM),
+            "the padding must carry the plain background: {pad:?}"
+        );
+    }
+
+    /// A **highlighted** block is deliberately left alone: syntect only carries
+    /// foreground color (see `build_code_theme`), so such a block has no
+    /// background — there is no rectangle to square off, and padding would be
+    /// invisible weight.
+    #[test]
+    fn highlighted_block_is_left_ragged() {
+        let widths = block_widths("```rust\nfn main() {\n    let x = 1;\n}\n```", 80);
+        assert!(
+            widths
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1,
+            "a highlighted block should keep its natural row widths: {widths:?}"
+        );
     }
 }
