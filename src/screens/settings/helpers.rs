@@ -605,6 +605,22 @@ pub(super) fn collect_hits(
     }
 }
 
+/// The style of a pane's focus marker: the `▸` on the section menu's title and the `◆`
+/// on the field pane's — green when that pane holds the focus, muted otherwise.
+///
+/// The two markers are a **pair**, hence one helper: they encode the same fact from
+/// opposite sides, and having them drift apart would make the screen lie about where
+/// the focus is. The glyph itself always stays in place and only its colour changes —
+/// showing/hiding it (as the menu title used to) both flickers and shifts the title
+/// text sideways on every focus change.
+pub(super) fn focus_marker_style(focused: bool, palette: &Palette) -> Style {
+    Style::new().fg(if focused {
+        palette.success
+    } else {
+        palette.muted
+    })
+}
+
 /// The subsection tab strip: `Assistant │ Impersonation │ Embeddings`. The active tab
 /// is highlighted (a backdrop when the strip is focused, otherwise an accent color); on
 /// the right, when focused — the `←→` hint. The `│` separator and all content are WGL4-safe.

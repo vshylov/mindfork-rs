@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1664 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1665 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — the **settings-screen focus model**
 ([plan](docs/settings-navigation.md)): `Enter` is now the only way into the field
@@ -10100,6 +10100,19 @@ debounce was done as a separate PR, see below).
   keys in both bundles (`hint.enter_fields`/`hint.close`/`hint.to_sections`);
   `hint.back` **had to be deleted**, not just left unused — the
   `bundle_keys_are_not_dead` gate fails on a dead key.
+- **Follow-up from a live run of the branch (user):** the section menu's `▸` marker
+  was *shown or hidden* by focus, which flickered and shifted the title text
+  sideways on every change, while the field pane's `◆` didn't track focus at all.
+  Both now stay put and only their **colour** moves — `success` for the pane that
+  holds the focus, `muted` for the other — through one shared
+  `helpers::focus_marker_style`, since they are a pair encoding the same fact from
+  opposite sides. Green already means "you are here" on this screen (the active
+  section's rail, the selected row's rail), so this reuses a meaning rather than
+  adding one. Pinned by `pane_markers_stay_put_and_swap_colour_with_focus`, which
+  asserts **both** halves — the colours swap *and* the glyph positions are
+  unchanged; mutation-tested against restoring either old behaviour (the
+  show/hide title fails it with "marker not drawn at all", the fixed-colour `◆`
+  with the muted assertion).
 - **The test helpers encoded the old rules, and R4 breaks them silently.**
   `goto_section` was documented as "after the call, focus is in the menu (Tab
   resets it)", and `goto_field` builds on that by pressing `Enter`; with the focus
@@ -10120,8 +10133,8 @@ debounce was done as a separate PR, see below).
 - **Tests**: `esc_closes` split into "closes from the sections" + the ladder test;
   five new behaviour tests (one per adopted fork) + `footer_hints_differ_by_focus`
   (`TestBackend`) + `up_on_the_first_field_stays_in_the_pane` (R5 — unchanged
-  behaviour, pinned against a future "helpful" change). **1664 unit tests green**
-  (+7), 70 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
+  behaviour, pinned against a future "helpful" change) + the marker test below.
+  **1665 unit tests green** (+8), 70 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
   clean.
 - **A live run isn't required** (AGENTS.md §3): key handling and rendering on one
   screen — no engine, memory, tool or provider path is touched. The established

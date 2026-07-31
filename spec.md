@@ -1457,7 +1457,10 @@ entered the pane, users built the model "`←` leaves it", but `←` has to cycl
 `Choice` value — and the first fields of most sections are `Choice` (the server
 mode, the theme), so the intended return keystroke silently changed a setting that
 is saved at once and restarts the server. The hotkey footer is **focus-contextual**
-— that's where the model is stated. See docs/settings-navigation.md.
+— that's where the model is stated. Which pane holds the focus is shown by a marker
+in each title (`▸` on the sections, `◆` on the parameters): the glyph is always
+drawn and only its **colour** moves — green for the pane that has the focus, muted
+for the other. See docs/settings-navigation.md.
 
 **Field editing.** For `Choice` toggle fields, `←/→` quickly cycles the value, while
 `Enter` opens a **list popup** of every option (important for `--spec-type`,

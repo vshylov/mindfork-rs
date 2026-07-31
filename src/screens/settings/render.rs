@@ -347,18 +347,18 @@ impl SettingsScreen {
         let block = Block::default()
             .borders(Borders::RIGHT)
             .border_style(palette.border_style(false))
-            .title(Span::styled(
-                if focused {
-                    format!(
-                        " {} {} ",
-                        palette.glyphs().collapsed,
-                        loc.t("ui.settings.ui.sections")
-                    )
-                } else {
-                    format!(" {} ", loc.t("ui.settings.ui.sections"))
-                },
-                palette.muted_style(),
-            ));
+            // The marker is always present — only its colour tracks the focus. It used
+            // to appear and disappear, which flickered and shifted the title text.
+            .title(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", palette.glyphs().collapsed),
+                    focus_marker_style(focused, &palette),
+                ),
+                Span::styled(
+                    format!("{} ", loc.t("ui.settings.ui.sections")),
+                    palette.muted_style(),
+                ),
+            ]));
         // Selection — a soft backdrop (as in the chat list), not inverting the whole
         // row: reverse video would swap fg↔bg per span independently, which would smear
         // the green rail `▌` over ~1.5 columns (the glyph is a left half-block), and
@@ -429,9 +429,10 @@ impl SettingsScreen {
         .areas(area);
 
         let mut title_spans = vec![
+            // The counterpart of the section menu's `▸`: same rule, opposite pane.
             Span::styled(
                 format!(" {} ", palette.glyphs().title_marker),
-                Style::new().fg(palette.assistant),
+                focus_marker_style(focused, &palette),
             ),
             Span::styled(
                 format!("{} ", self.section().title(loc)),

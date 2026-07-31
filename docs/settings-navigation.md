@@ -161,6 +161,20 @@ to differ, otherwise the rules are undiscoverable. The mechanism already exists
   toggle · `Del` reset · `Tab` section · \[`Ctrl+N`/`Ctrl+D`\] · **`Esc` to
   sections** · `Ctrl+Q` quit
 
+### 5.1a. Where the focus itself is shown
+
+Both panes carry a marker in their title — `▸` on the sections, `◆` on the
+parameters — and its **colour** follows the focus: `success` (green) for the pane
+that holds it, `muted` otherwise. They are a pair and share one helper
+(`helpers::focus_marker_style`), because they encode the same fact from opposite
+sides and drifting apart would make the screen lie about where the focus is.
+
+The menu's marker used to be *shown or hidden* instead, which both flickered and
+shifted the title text sideways on every focus change; the `◆` didn't track focus
+at all. Green is already "you are here" on this screen (the active section's rail
+and the selected row's rail), so this reuses an established meaning rather than
+adding one.
+
 ### 5.2. i18n
 
 New keys in **both** bundles (`locales/ru.json`, `locales/en.json`) — the ru

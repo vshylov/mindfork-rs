@@ -1012,6 +1012,49 @@ fn render_does_not_panic() {
     }
 }
 
+/// The two pane markers (`▸` on the sections, `◆` on the parameters) are **always**
+/// drawn and only their colour follows the focus. Both halves are asserted: the colours
+/// swap, and the glyphs don't move — the menu marker used to appear and disappear, which
+/// flickered and shifted the title text sideways on every focus change.
+#[test]
+fn pane_markers_stay_put_and_swap_colour_with_focus() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let palette = Palette::for_theme(Theme::Auto);
+    let sections_glyph = palette.glyphs().collapsed;
+    let params_glyph = palette.glyphs().title_marker;
+
+    // (colour, position) of the single cell carrying the glyph.
+    let marker = |s: &mut SettingsScreen, glyph: &str| -> (ratatui::style::Color, (u16, u16)) {
+        let mut term = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                if buf[(x, y)].symbol() == glyph {
+                    return (buf[(x, y)].fg, (x, y));
+                }
+            }
+        }
+        panic!("marker {glyph:?} is not drawn at all");
+    };
+
+    let mut s = screen();
+    let (menu_fg, menu_at) = marker(&mut s, sections_glyph);
+    let (fields_fg, fields_at) = marker(&mut s, params_glyph);
+    assert_eq!(menu_fg, palette.success, "sections hold the focus → green");
+    assert_eq!(fields_fg, palette.muted, "parameters don't → muted");
+
+    s.handle_key(key(KeyCode::Enter)); // focus moves into the field pane
+    let (menu_fg2, menu_at2) = marker(&mut s, sections_glyph);
+    let (fields_fg2, fields_at2) = marker(&mut s, params_glyph);
+    assert_eq!(menu_fg2, palette.muted, "sections lost the focus → muted");
+    assert_eq!(fields_fg2, palette.success, "parameters hold it → green");
+
+    assert_eq!(menu_at, menu_at2, "the `▸` must not move");
+    assert_eq!(fields_at, fields_at2, "the `◆` must not move");
+}
+
 /// The footer is contextual by focus (docs/settings-navigation.md §5.1) — that's the
 /// only place the navigation model is stated: on the sections Enter goes in and Esc
 /// closes; in the pane Esc steps back to the sections.

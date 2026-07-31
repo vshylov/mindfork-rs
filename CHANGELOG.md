@@ -23,9 +23,10 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   the model is: **the arrows change a value, `Enter` goes into the parameters,
   `Esc` goes back out** (a second `Esc` closes the screen), and `Tab` switches
   section without moving your focus. The hotkey line at the bottom now changes
-  with your focus, so it always says what `Enter` and `Esc` will do. Note the two
-  habits that change: `→` no longer enters the parameters, and leaving the screen
-  from inside them takes two `Esc` presses.
+  with your focus, so it always says what `Enter` and `Esc` will do, and each of
+  the two panes has a marker in its title that turns green when it is the one
+  listening to you. Note the two habits that change: `→` no longer enters the
+  parameters, and leaving the screen from inside them takes two `Esc` presses.
 
 - **`mindfork backup` and `mindfork restore` now compact the database.** `data.db`
   holds on to the space freed by deleted notes, `/rag remove` and chats whose
