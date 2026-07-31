@@ -1460,7 +1460,7 @@ is saved at once and restarts the server. The hotkey footer is **focus-contextua
 — that's where the model is stated. Which pane holds the focus is shown by a marker
 in each title (`▸` on the sections, `◆` on the parameters): the glyph is always
 drawn and only its **colour** moves — green for the pane that has the focus, muted
-for the other. See docs/settings-navigation.md.
+for the other. See docs/history/settings-navigation.md.
 
 **Field editing.** For `Choice` toggle fields, `←/→` quickly cycles the value, while
 `Enter` opens a **list popup** of every option (important for `--spec-type`,

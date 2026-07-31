@@ -27,7 +27,7 @@ impl SettingsScreen {
         // navigation model, which is otherwise undiscoverable: on the sections only
         // Enter goes in, and inside the pane the arrows only change a value while Esc
         // steps back out. Section-specific extras (Profiles: create/delete) are
-        // appended in both states. See docs/settings-navigation.md §5.1.
+        // appended in both states. See docs/history/settings-navigation.md §5.1.
         let on_menu = self.focus == Focus::Menu;
         let mut hints: Vec<(&str, &str)> = if on_menu {
             vec![

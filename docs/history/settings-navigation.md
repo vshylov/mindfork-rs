@@ -2,7 +2,7 @@
 
 A design plan for reworking how focus moves between the section menu and the
 field pane on the settings screen (`Ctrl+P`, spec
-[§11.6](../spec.md#116-the-settings-screen)). Scope — one screen
+[§11.6](../../spec.md#116-the-settings-screen)). Scope — one screen
 (`src/screens/settings/`), one PR. No cross-layer contract change: the
 `SettingsIntent` surface, `AppConfig` and storage are untouched.
 
