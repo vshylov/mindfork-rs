@@ -2171,6 +2171,44 @@ fn help_tabs_render_distinct_content() {
     );
 }
 
+/// The vendored syntax grammars are third-party data we redistribute, so the
+/// "Components" tab must name them and their licences — like the crates above.
+/// They sit at the end of a long list, so this scrolls to the bottom rather
+/// than reading the first screen (see `syntaxes/SOURCES.md`).
+#[test]
+fn components_tab_lists_the_vendored_grammars() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    let help = s.help.as_mut().unwrap();
+    help.tab = HelpTab::Components;
+    help.scroll = usize::MAX / 2; // render() clamps to the last page
+    let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let mut out = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            out.push_str(buf[(x, y)].symbol());
+        }
+        out.push('\n');
+    }
+
+    assert!(
+        out.contains("грамматики"),
+        "missing the grammars section header: {out}"
+    );
+    // The last row of the manifest — whichever it is, it must be on the last page.
+    let (lang, repo, licence) = *crate::shared::credits::GRAMMARS
+        .last()
+        .expect("the manifest lists grammars");
+    assert!(out.contains(lang), "missing the grammar {lang}: {out}");
+    assert!(out.contains(repo), "missing its upstream {repo}");
+    assert!(out.contains(licence), "missing its licence {licence}");
+}
+
 /// In-feed search must never touch the message being written — that is the whole
 /// reason it lives in its own field (docs/history/in-feed-search.md §3, fork F3).
 #[test]

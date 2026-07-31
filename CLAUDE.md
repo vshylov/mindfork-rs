@@ -124,9 +124,16 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1681 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1687 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **an unhighlighted code block is drawn as a rectangle** (its
+recent change — **real syntax grammars for 22 languages are vendored**
+([plan](docs/history/vendored-syntaxes.md)): syntect ships a 75-syntax snapshot
+of Sublime's defaults, so `zig`/`toml`/`dockerfile`/`powershell`/`swift`/… all
+fell into the unhighlighted path; the grammars now live in `syntaxes/`, pinned
+to upstream commits with their licences, and `build.rs` compiles them into one
+dump — 0.55 ms to load, the same as before; before that — **Zig code blocks are
+highlighted** (the same symptom, closed first with an approximation, now
+superseded by the real grammar); before that — **an unhighlighted code block is drawn as a rectangle** (its
 reverse-video background used to follow the ragged right edge of the text; rows
 are now padded to the block's own width plus a blank column on the right —
 content-sized like a table, not stretched across the panel); before that — **no server restart when nothing
@@ -10355,6 +10362,161 @@ debounce was done as a separate PR, see below).
   markdown-refinements and the mermaid work). The result was nonetheless checked
   against the **actual block from the report** (a rendered dump: 11 rows, all 44
   columns wide, every one carrying `REVERSED`).
+
+### Post-M9: Zig code blocks are highlighted (done)
+
+- **Reported from a screenshot**: a ` ```zig ` block rendered as flat text on the
+  reverse-video rectangle while the ` ```rust ` block above it was coloured.
+  Branch `fix/zig-code-highlighting` (a simple task by AGENTS.md §1: one table
+  entry, no cross-layer contract, no new dependency — no design doc).
+- **Cause, confirmed by probing the bundle rather than by reading the alias
+  table**: `SyntaxSet::load_defaults_newlines` carries **75** syntaxes — the
+  Sublime Text defaults — and Zig is not among them. So `resolve_syntax("zig")`
+  returns `None` and `start_codeblock` takes the *unhighlighted* branch, which is
+  exactly the reverse-video rectangle the previous entry squared off. Nothing was
+  broken by that change: an unrecognized language has always landed there.
+- **The same probe answered the wider question the report implies**: of ~60
+  labels models commonly emit, **36 do not resolve** — `toml`, `dockerfile`,
+  `powershell`, `swift`, `scss`, `graphql`, `terraform`, `asm`, `julia`,
+  `solidity` and the rest. Zig is one instance of a standing limit, not a
+  regression, and the doc comment now states the bundle's size and names Zig
+  among the gaps.
+- **Which grammar to borrow was measured, not guessed** (the table already has
+  the pattern — `typescript → js`, `kotlin → java`): a representative Zig snippet
+  was highlighted through the C, C++, Go, Java, JS and Rust grammars and the
+  spans compared. **Rust wins**: it colours `const`/`pub`/`fn`, the call name,
+  the numeric type names (`u8`/`usize` — spelled as in Rust), numbers, strings
+  with `\n` escapes, `//` comments and the operators, missing only
+  `try`/`defer`/`var`. Go is the runner-up and the interesting one — it is alone
+  in catching `var`/`defer`, but loses `pub`/`fn`/the types **and** paints
+  `while` with the function colour, i.e. it is actively misleading where Rust is
+  merely silent. C++ catches `try` and little else.
+- **Tests**: `zig`/`Zig` added to `language_aliases_resolve_to_syntax`, plus
+  `zig_block_is_highlighted` — a behavioural test asserting the *symptom*, that
+  the block carries RGB foreground colours and **no** `REVERSED` line style, so
+  it pins the path taken rather than the table lookup. **Mutation-tested**:
+  removing the alias fails it with the rendered rectangle in the message.
+  **1682 unit tests green** (+1), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): this is the markdown renderer —
+  no engine, memory, tool or provider path is touched (the precedent set by
+  markdown-refinements and the previous code-block entry).
+- **Groundwork**: real grammars for the missing languages. syntect can load
+  `.sublime-syntax` YAML at runtime (the `yaml-load` feature is on by default),
+  so vendoring a few definitions and extending the set once in the `LazyLock`
+  would give true Zig/TOML/Dockerfile highlighting — an asset to license and
+  maintain, and a separate track from this one-line fix.
+
+### Post-M9: vendored syntax grammars for 19 languages (done)
+
+- **Asked for right after the Zig fix**, which had closed the symptom with an
+  approximation and named the real fix as groundwork. Plan with forks F1–F5 —
+  [docs/history/vendored-syntaxes.md](docs/history/vendored-syntaxes.md)
+  (**user's decision, 2026-07-31**, all four questions as recommended: the
+  curated set, vendored files with a manifest, a build-time dump, no user
+  overlay yet). Branch `feat/vendored-syntaxes`, stacked on the Zig fix (they
+  collide by construction — this deletes the alias that fix added).
+- **Everything load-bearing was probed against real grammars before any
+  code**, and two of the findings decided the design:
+  - **syntect loads only `.sublime-syntax`** — there is no `.tmLanguage`
+    syntax loader (`plist-load` is for *themes*), which disqualifies several
+    obvious upstreams (`PowerShell/EditorSyntax`,
+    `Microsoft/TypeScript-Sublime-Plugin`, `wmertens/sublime-nix`).
+  - **`extends:` is unsupported**, so every grammar must be self-contained.
+    That is what rules out cherry-picking from the current `sublimehq/Packages`
+    — its `TypeScript`/`TSX` extend `JavaScript` and fail to load, as does
+    `alexlouden`'s `HCL`. Measured, not assumed: each produced its own error.
+- **Cost, measured in release** — the number that chose F3: assembling the set
+  at runtime is **130 ms** (24 unlink + 105 build) on the first code block,
+  while a prebuilt **uncompressed** dump loads in **0.55 ms** — indistinguishable
+  from the 0.57 ms the app already paid for syntect's defaults. The compressed
+  form is 4.1 ms for 45 KiB less, so uncompressed wins; it is the same trade
+  syntect makes for its own assets.
+- **`build.rs` assembles the dump, and a grammar that fails to load fails the
+  build.** That is not a slogan — it fired on the first run: the **Swift**
+  grammar was rejected over a subroutine call (`\g<1>`). The cause was my own
+  optimisation: I had given the build-dependency `regex-fancy`, reasoning that
+  a dump stores regex *source* so the engine cannot matter. It does — loading a
+  grammar **compiles** its regexes, so the build is also what validates them,
+  and fancy-regex rejects what oniguruma accepts. The build-dep now uses
+  `regex-onig`, the runtime's engine; validating with a different one would
+  reject working grammars and could accept broken ones.
+- **The set: 19 grammars** (Zig, TypeScript, TOML, Dockerfile, PowerShell,
+  Swift, Kotlin, SCSS, Sass, GraphQL, Terraform, Elixir, Solidity, Julia, Nix,
+  Dart, Protobuf, CMake, nginx) in `syntaxes/`, each pinned in `SOURCES.md` to
+  an upstream repository, commit and licence, with the licence text vendored
+  next to it. `tools/fetch_syntaxes.py` re-fetches from those pins;
+  `--check` reports drift and is **not** in CI (it needs network — the
+  grammars are vendored precisely so the build does not).
+  `sharkdp/bat`'s `.gitmodules` was the shortlist source (a curated,
+  syntect-verified list), and three files come from bat's own converted copies
+  where no self-contained upstream exists — with the **original** author's
+  licence recorded, not bat's.
+- **The alias table had to be pruned, and that is a rule, not a cleanup**:
+  `resolve_syntax` tries the canonical token first, so while `zig → rs`
+  remained, the vendored Zig grammar was **never reached** — measured, `zig`
+  still highlighted as Rust after the grammar was added. `typescript → js` and
+  `kotlin → java` went the same way. What is left maps only what no grammar
+  answers (`docker`, `pwsh`, `hcl`, `proto3`, `jsx`, `tsx`).
+- **Binary size: +181 KiB**, measured on the release binary (20 397 056 →
+  20 582 400). Worth recording because I had claimed the opposite in a code
+  comment — that dropping syntect's `default-syntaxes` would make the binary
+  *smaller* — and the measurement refuted it: under LTO the linker already
+  drops the unused dumps. The feature is still off (it is genuinely dead
+  weight), but the comment now states the measured number.
+- **Attribution**: the "Components" tab (`F1`) gained a grammars section, built
+  by **parsing the manifest** (`include_str!`) rather than duplicating it into
+  a static list — drift is then impossible by construction, which beats a gate
+  test that merely detects it. The gate that remains checks what a parser
+  cannot: that every vendored file has a manifest row, and every row a licence
+  text on disk.
+- **Tests**: `vendored_grammars_resolve_by_their_own_label` (27 labels, the
+  point being that a vendored grammar needs no alias);
+  `dump_carries_the_vendored_grammars` (the dump is the bundled 75 **plus**
+  every file — a guard against the build silently degrading to defaults);
+  `grammar_manifest_matches_the_vendored_files`; the Components tab scrolled to
+  its last page. **All three gates were mutation-tested** — re-adding `zig → rs`
+  fails the first, deleting a grammar file fails the other two.
+  **1686 unit tests green** (+4), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): the markdown renderer and a
+  build step — no engine, memory, tool or provider path is touched. What
+  replaces it here is that the build itself validates every grammar with the
+  runtime's own regex engine, and the resolution tests assert the exact grammar
+  each label reaches.
+- **A process lesson worth recording**: `git checkout <file>` to undo a
+  scripted measurement mutation reverted **all** uncommitted work in those two
+  files, not just the mutation — Cargo.toml's feature trim and code.rs's whole
+  change had to be redone from context. Back up the file, or apply the mutation
+  as a patch you can reverse.
+- **Follow-up, same branch: Vue, Svelte, Nim, V, JSONC** (asked for right after
+  the track landed). Three vendored — the set is now **22** — and the other two
+  answered by measurement rather than by adding files:
+  - **V could not be vendored, and that is a licensing fact, not a preference**:
+    the only `.sublime-syntax` for V that exists
+    (`elliotchance/vlang-sublime`) has **no licence file and no statement in its
+    README**, i.e. all rights reserved. §5 of the plan says such a candidate is
+    dropped, so the label maps to **Go** — measured the best of go/rust/c on real
+    V code (it shares `:=`, `import`, `struct`, the primitive type names,
+    single-quoted strings, `//`). Rust catches `pub`/`fn`/`mut` but reads `'` as
+    a lifetime and **mangles V's default string form** — worse than three plain
+    keywords. Recorded in `syntaxes/SOURCES.md` under "not vendored".
+  - **JSONC needed no grammar at all**: the bundled JSON grammar already
+    highlights `//` and `/* */` as comments (measured), so `jsonc`/`json5` → `json`
+    is exact rather than approximate. Worth checking before adding a file.
+  - **Svelte repeated the SCSS lesson** — `master` fails to load on
+    sublime-syntax v2 features, bat's pinned commit works. Vue's grammar lives
+    on the `new` branch under a filename with a space (`Vue Component`), which
+    is why `fetch_syntaxes.py` now quotes the path.
+- **The follow-up produced the gate the original stages lacked**:
+  `every_syntax_can_highlight_without_panicking`. Vue and Svelte embed other
+  languages by scope, and an unresolved reference is **invisible at load time** —
+  it surfaces only while parsing, where a panic would kill the app (we
+  deliberately do not `catch_unwind`, see the mermaid module). Highlighting a
+  mixed markup/script/style snippet through **every** syntax in the set closes
+  that gap; all 100 pass, and Vue/Svelte/Nim were additionally eyeballed —
+  embedded JS and CSS inside `<script>`/`<style>` really do highlight.
+  **1687 unit tests green** (+1), gates clean.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

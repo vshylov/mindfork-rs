@@ -6,8 +6,23 @@ use super::*;
 
 // ---------- writer: pulldown events → lines ----------
 
-pub(super) static SYNTAX_SET: LazyLock<SyntaxSet> =
-    LazyLock::new(SyntaxSet::load_defaults_newlines);
+/// syntect's bundled syntaxes **plus** the grammars vendored in `syntaxes/`
+/// (see its `SOURCES.md`), assembled into one dump at build time by
+/// [`build.rs`](../../../build.rs).
+///
+/// The dump is uncompressed on purpose — measured at 0.55 ms to load against
+/// 4.1 ms for the compressed form, for 45 KiB more in the binary; that is the
+/// same trade syntect makes for its own defaults, and it keeps the first code
+/// block rendered as cheap as it was before the grammars were added
+/// (docs/history/vendored-syntaxes.md §2.3). Assembling the set here instead would cost
+/// ~130 ms on that first block.
+pub(super) static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| {
+    syntect::dumps::from_uncompressed_data(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/syntaxes.packdump"
+    )))
+    .expect("the syntax dump built by build.rs must load")
+});
 
 /// Resolves a code block's language label (` ```csharp `) into a syntect
 /// syntax.
@@ -36,12 +51,19 @@ pub(super) fn resolve_syntax(lang: &str) -> Option<&'static SyntaxReference> {
 /// returned as-is (`find_syntax_by_token` itself tries to recognize it).
 ///
 /// Keys are typical labels Gemma/Qwen/Claude use to mark code blocks. **All
-/// targets are checked against the default bundle**
-/// (`SyntaxSet::load_defaults_newlines`) — the set is narrow (no TypeScript/
-/// Kotlin/PowerShell/Dockerfile/TOML/Swift/…), so mapping to a nonexistent
-/// syntax is pointless. Labels that already resolve (`rust`, `python`, `go`,
-/// `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`, `yaml`, `bash`,
-/// `c`, `c++`, `c#`/`cs`, …) aren't listed here.
+/// targets are checked against [`SYNTAX_SET`]** — mapping to a syntax that
+/// isn't there is pointless. Labels that already resolve (`rust`, `python`,
+/// `go`, `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`, `yaml`,
+/// `bash`, `c`, `c++`, `c#`/`cs`, …) aren't listed here — nor are the ones a
+/// **vendored** grammar now answers by its own `file_extensions` (`zig`,
+/// `toml`, `ts`, `swift`, `kt`, `dockerfile`, `scss`, …, see
+/// `syntaxes/SOURCES.md`).
+///
+/// **An alias shadows a real grammar**, since `resolve_syntax` tries the
+/// canonical token first: while `zig → rs` was in this table, the vendored Zig
+/// grammar was never reached and `zig` still highlighted as Rust (measured —
+/// docs/history/vendored-syntaxes.md §2.4). So an approximation must be deleted the
+/// moment its language gets a grammar of its own.
 pub(super) fn canonical_lang(lang: &str) -> &str {
     match lang.trim().to_ascii_lowercase().as_str() {
         // --- direct aliases: the target is in the set, but the label doesn't match it ---
@@ -56,10 +78,29 @@ pub(super) fn canonical_lang(lang: &str) -> &str {
         "shell" | "sh" | "zsh" | "console" | "shell-session" | "shellsession" => "bash",
         "yml" | "yaml-frontmatter" | "frontmatter" => "yaml",
         "rlang" => "r",
+        // --- labels a vendored grammar answers under a different spelling ---
+        "docker" | "containerfile" => "dockerfile",
+        "pwsh" => "ps1", // the grammar answers "powershell"/"ps1", not "pwsh"
+        // HCL is Terraform's own language; its upstream grammar is an
+        // `extends:` stub syntect cannot load, so the label goes to Terraform.
+        "hcl" | "tfvars" => "tf",
+        "proto3" => "protobuf",
+        // JSON with comments: the bundled JSON grammar already highlights `//`
+        // and `/* */` as comments (measured), so this is exact, not an
+        // approximation — only the label is missing.
+        "jsonc" | "json5" => "json",
         // --- approximations: the language isn't in the set, take a close relative ---
         // Partial highlighting from a related grammar beats gray text.
-        "typescript" | "ts" | "tsx" | "mts" | "cts" | "jsx" => "js", // base JS
-        "kotlin" | "kt" | "kts" => "java",
+        "jsx" => "js",
+        "tsx" => "ts", // TSX is TypeScript plus JSX; the TS grammar covers most
+        // V on the Go grammar. No grammar is vendored because the only
+        // `.sublime-syntax` for V that exists carries **no licence at all**
+        // (see syntaxes/SOURCES.md). Go is the measured best of go/rust/c: V is
+        // Go-inspired and shares `:=`, `import`, `struct`, the primitive type
+        // names, single-quoted strings and `//` comments. Rust catches
+        // `pub`/`fn`/`mut` but reads `'` as a lifetime and **mangles V's
+        // default string form**, which is worse than leaving those three plain.
+        "v" | "vlang" => "go",
         other => {
             // Return an unmapped label as-is; borrowed from the original
             // string, so we return a slice of `lang`, not a temporary
@@ -287,14 +328,121 @@ mod tests {
             ("nodejs", "JavaScript"),
             ("shell", "Bourne Again Shell (bash)"),
             ("yml", "YAML"),
+            // labels a vendored grammar answers under a different spelling
+            ("docker", "Dockerfile"),
+            ("pwsh", "PowerShell"),
+            ("hcl", "Terraform"),
+            ("proto3", "Protocol Buffer"),
+            ("jsonc", "JSON"),
+            ("json5", "JSON"),
             // approximations: the language isn't in the set → a close grammar
-            ("typescript", "JavaScript"),
-            ("kotlin", "Java"),
+            ("jsx", "JavaScript"),
+            ("tsx", "TypeScript"),
+            ("v", "Go"),
+            ("vlang", "Go"),
         ] {
             let syntax = resolve_syntax(label)
                 .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
             assert_eq!(syntax.name, expect_name, "label {label:?}");
         }
+    }
+
+    /// Every vendored grammar (`syntaxes/`, see its `SOURCES.md`) is reachable
+    /// by the label a model would write, **and by its own name** — no alias
+    /// table entry needed. A grammar that stopped resolving would otherwise sit
+    /// in the binary doing nothing, which is exactly the failure the vendoring
+    /// exists to end.
+    #[test]
+    fn vendored_grammars_resolve_by_their_own_label() {
+        for (label, expect_name) in [
+            ("zig", "Zig"),
+            ("Zig", "Zig"),
+            ("typescript", "TypeScript"),
+            ("ts", "TypeScript"),
+            ("toml", "TOML"),
+            ("dockerfile", "Dockerfile"),
+            ("powershell", "PowerShell"),
+            ("ps1", "PowerShell"),
+            ("swift", "Swift"),
+            ("kotlin", "Kotlin"),
+            ("kt", "Kotlin"),
+            ("scss", "SCSS"),
+            ("sass", "Sass"),
+            ("graphql", "GraphQL"),
+            ("terraform", "Terraform"),
+            ("tf", "Terraform"),
+            ("elixir", "Elixir"),
+            ("ex", "Elixir"),
+            ("solidity", "Solidity"),
+            ("julia", "Julia"),
+            ("jl", "Julia"),
+            ("nix", "Nix"),
+            ("dart", "Dart"),
+            ("protobuf", "Protocol Buffer"),
+            ("proto", "Protocol Buffer"),
+            ("cmake", "CMake"),
+            ("nginx", "nginx"),
+            // Vue's grammar calls itself "Vue Component"; the label still
+            // reaches it through the file extension.
+            ("vue", "Vue Component"),
+            ("svelte", "Svelte"),
+            ("nim", "Nim"),
+        ] {
+            let syntax = resolve_syntax(label)
+                .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
+            assert_eq!(syntax.name, expect_name, "label {label:?}");
+        }
+    }
+
+    /// **Every** syntax in the set can actually highlight, not merely load.
+    ///
+    /// The two are different questions, and the gap is where a vendored grammar
+    /// can hurt: Vue and Svelte embed other languages by scope
+    /// (`source.js`/`text.html.basic`/…), and a reference syntect cannot
+    /// resolve at link time only shows up when something is parsed through it.
+    /// A panic there would kill the app — the panic hook restores the terminal
+    /// and exits, and we deliberately do not `catch_unwind` (see the mermaid
+    /// module). An `Err` is fine: `highlight_line_or_plain` degrades to flat
+    /// text.
+    #[test]
+    fn every_syntax_can_highlight_without_panicking() {
+        // Deliberately mixed: markup, script, style, strings and comments, so
+        // an embedded-scope grammar actually reaches its embedded contexts.
+        const SNIPPET: &str = "<div class=\"a\">{{ x }}</div>\n\
+                               <script>const a = 1; // note\n</script>\n\
+                               <style>.a { color: red; }</style>\n\
+                               fn main() { let s = \"текст\"; }\n";
+        let theme = code_theme(&Palette::for_theme(Theme::Dark));
+        for syntax in SYNTAX_SET.syntaxes() {
+            let mut hl = HighlightLines::new(syntax, theme);
+            for line in LinesWithEndings::from(SNIPPET) {
+                // Errors are acceptable (the renderer falls back to plain
+                // text); a panic is not, and is what this test exists to catch.
+                let _ = hl.highlight_line(line, &SYNTAX_SET);
+            }
+        }
+    }
+
+    /// The dump `build.rs` embeds really is the bundled set **plus** the
+    /// vendored grammars — a guard against the build step silently degrading to
+    /// syntect's defaults, which would leave every new label unhighlighted
+    /// again, quietly.
+    #[test]
+    fn dump_carries_the_vendored_grammars() {
+        let vendored = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/syntaxes"))
+            .expect("the syntaxes/ directory")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "sublime-syntax"))
+            .count();
+        assert!(
+            vendored >= 22,
+            "expected the vendored grammars, got {vendored}"
+        );
+        assert_eq!(
+            SYNTAX_SET.syntaxes().len(),
+            75 + vendored,
+            "the dump should carry syntect's 75 bundled syntaxes plus every vendored one"
+        );
     }
 
     /// An empty/unknown label doesn't panic and doesn't resolve.
@@ -502,6 +650,32 @@ mod tests {
         assert!(
             pad.content.trim().is_empty() && !pad.style.add_modifier.contains(Modifier::DIM),
             "the padding must carry the plain background: {pad:?}"
+        );
+    }
+
+    /// A ` ```zig ` block takes the highlighted path instead of dropping into
+    /// the unhighlighted rectangle — the user-visible symptom that started the
+    /// track: Zig is absent from syntect's bundled set, so the token resolved
+    /// to nothing and the block came out as flat text on a reverse-video
+    /// background. It is now the vendored Zig grammar that answers, not an
+    /// approximation (`vendored_grammars_resolve_by_their_own_label` pins
+    /// which).
+    #[test]
+    fn zig_block_is_highlighted() {
+        let md = "```zig\nconst memory = try allocator.alloc(u8, 1024);\n```";
+        let lines = render(md, 80, &Palette::for_theme(Theme::Dark)).lines;
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| matches!(s.style.fg, Some(Color::Rgb(..)))),
+            "the zig block is not highlighted: {lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.style.add_modifier.contains(Modifier::REVERSED)),
+            "the zig block went down the unhighlighted path: {lines:?}"
         );
     }
 
