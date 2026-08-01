@@ -123,10 +123,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-31, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1687 unit
+## Status (as of 2026-08-01, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1690 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **real syntax grammars for 22 languages are vendored**
+recent change — **a settings hint always fits its panel** (the bottom panel had
+room for three lines, so the longer hints — API key, MCP servers, speculative
+decoding — were cut mid-sentence; it is now as tall as the section's longest hint
+needs and stays that height across the section, so the list doesn't shift);
+before that — **real syntax grammars for 22 languages are vendored**
 ([plan](docs/history/vendored-syntaxes.md)): syntect ships a 75-syntax snapshot
 of Sublime's defaults, so `zig`/`toml`/`dockerfile`/`powershell`/`swift`/… all
 fell into the unhighlighted path; the grammars now live in `syntaxes/`, pinned
@@ -10517,6 +10521,58 @@ debounce was done as a separate PR, see below).
   that gap; all 100 pass, and Vue/Svelte/Nim were additionally eyeballed —
   embedded JS and CSS inside `<script>`/`<style>` really do highlight.
   **1687 unit tests green** (+1), gates clean.
+
+### Post-M9: a settings hint always fits its panel (done)
+
+- **Reported from a screenshot**: the API-key hint ran past the bottom panel's
+  last row and was cut mid-sentence — precisely on the half that says what to do
+  ("on another computer the key has to be entered again"). Branch
+  `fix/settings-hint-fits` (a simple task by AGENTS.md §1: one screen, no
+  cross-layer contract, no new dependency — no design doc).
+- **Cause**: the panel was a fixed `Length(4)` — a border plus three content
+  rows — deliberately constant so the field list wouldn't jump between fields.
+  The description was then handed to `Paragraph`'s `Wrap`, which wraps *after*
+  layout, so nothing could know it needed a fourth row. **Measured** rather than
+  eyeballed: the longest descriptions are ~310 characters (`mcp_enabled`,
+  `sm_protocol`, `spec_type`, `mcp_server`, `embed_convention`, `api_key`), i.e.
+  four rows at a typical pane width and more on a narrow terminal — a standing
+  limit, not a corner case.
+- **Sized per field set, not per field** — that is the whole design decision.
+  A height following the *selected* field would fix the clipping and shift the
+  list on every step down, trading one annoyance for a worse one; taking the
+  **maximum hint** over the current field set keeps the panel constant exactly
+  where the user is navigating (it can only change when the field set does — a
+  section or subsection switch, which already replaces the list wholesale).
+  Bounded on both sides: never below the three rows it has always had (short
+  sections look unchanged), never above `HINT_MAX_ROWS = 12` and a third of the
+  pane — an **MCP server's tool description is arbitrary server text**, so
+  without a ceiling one field could push the list off the screen.
+- **The full-value preview now gives way to the hint.** It used to be pushed
+  first and could eat the whole panel; the height is reserved for the hint, so
+  the preview takes only what the hint leaves. The right priority because the
+  value is *also* in the list row above (truncated with `…`) while the hint
+  exists nowhere else — and it means a long system message can't inflate the
+  panel for a whole section.
+- **Pre-wrapping is what makes the measurement possible**: two small helpers
+  (`wrapped_rows` counts, `wrap_text` builds) over the existing `shared::wrap`,
+  so the panel's content is wrapped **before** the vertical layout instead of by
+  `Paragraph::wrap`, which is dropped. Both split on `\n` first — `wrap_line`
+  treats a newline as an ordinary zero-width character, so a multiline system
+  message would otherwise have run its lines together.
+- **Tests**: the reported symptom end to end (the API-key field focused at three
+  widths — the whole description present in the rendered pane, not a prefix of
+  it), the preview priority (a 400-character value plus a described field: both
+  the preview and the *complete* hint are on screen), and the height rule as a
+  pure function (floor, growth to the longest, cap). **Mutation-tested**: pinning
+  the height back to three rows fails the first, dropping the preview's
+  `truncate` fails the second. A test-helper trap worth recording — the pane's
+  text has to be extracted **between** the panel's borders, since a `│` at either
+  end lands between the joined rows and breaks a match on wrapped text.
+  **1690 unit tests green** (+3), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): layout and rendering on one
+  screen — no engine, memory, tool or provider path is touched (the precedent set
+  by the settings redesign and the focus-model work).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

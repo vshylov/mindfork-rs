@@ -422,9 +422,20 @@ impl SettingsScreen {
         let loc = self.loc();
 
         // Header: the section title (always) + a tab strip (if there are subsections).
-        // The bottom panel (value+description) is always reserved when there are fields.
-        let desc_h: u16 = if fields.is_empty() { 0 } else { 4 };
+        // The bottom panel (value+description) is always reserved when there are fields,
+        // and is as tall as the longest hint of THIS field set needs — a hint clipped
+        // mid-sentence is unreadable, while a per-field height would shift the list on
+        // every step. The ceiling keeps the list from being squeezed out by a wall of
+        // text (an MCP tool's description is arbitrary server text).
         let head_h: u16 = 1 + if tabs.is_some() { 1 } else { 0 };
+        let desc_h: u16 = if fields.is_empty() {
+            0
+        } else {
+            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(head_h as usize) / 3);
+            let rows = hint_panel_rows(&fields, area.width as usize, cap, loc) as u16;
+            // +1 for the top border; never take the last row away from the list.
+            (rows + 1).min(area.height.saturating_sub(head_h + 1))
+        };
         let [head_area, list_area, desc_area] = Layout::vertical([
             Constraint::Length(head_h),
             Constraint::Min(1),
@@ -580,42 +591,52 @@ impl SettingsScreen {
 
         // The bottom panel: the full value of the selected text field (whole paths,
         // truncated with "…" in the list) + a description hint.
-        if desc_h > 0 {
-            let mut lines: Vec<Line<'static>> = Vec::new();
+        if desc_h > 1 {
+            let content_h = desc_h as usize - 1;
+            let w = desc_area.width as usize;
+            // The hint has first claim on the panel — the height was reserved for it.
+            let mut hint: Vec<Line<'static>> = Vec::new();
             if let Some(f) = focused_field {
-                if let FieldKind::Text(v) = &f.kind {
-                    let shown = v.trim();
-                    // Show the full value only for "long" fields (paths, URLs, the
-                    // system message) — in the list they're truncated with "…". Short
-                    // values (numbers, host) are already fully visible in the list, no need to duplicate.
-                    let long =
-                        crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
-                    if !shown.is_empty() && shown != "—" && long {
-                        // Cap the preview (a multiline system message
-                        // can be huge) — the panel clips by height anyway.
-                        let preview: String = shown.chars().take(400).collect();
-                        lines.push(Line::styled(preview, Style::new().fg(palette.text)));
-                    }
-                }
-                if let Some(text) = f.description.clone() {
-                    lines.push(Line::styled(text, palette.muted_style()));
+                if let Some(text) = f.description.as_deref() {
+                    hint.extend(wrap_text(text, palette.muted_style(), w));
                 }
                 // A globally-disabled tool — an expanded explanation (in warning
                 // color), so the honest gate is understandable, not just "⊘".
                 if f.warn {
-                    lines.push(Line::styled(
+                    hint.extend(wrap_text(
                         loc.t("ui.settings.ui.gate_warn"),
                         Style::new().fg(palette.warning),
+                        w,
                     ));
                 }
             }
-            let para = Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .borders(Borders::TOP)
-                        .border_style(palette.border_style(false)),
-                )
-                .wrap(Wrap { trim: true });
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            if let Some(f) = focused_field
+                && let FieldKind::Text(v) = &f.kind
+            {
+                let shown = v.trim();
+                // Show the full value only for "long" fields (paths, URLs, the
+                // system message) — in the list they're truncated with "…". Short
+                // values (numbers, host) are already fully visible in the list, no need to duplicate.
+                let long =
+                    crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+                if !shown.is_empty() && shown != "—" && long {
+                    // Cap the preview (a multiline system message can be huge):
+                    // it fills what the hint leaves and never grows the panel —
+                    // the value is also in the list row above, the hint is only here.
+                    let preview: String = shown.chars().take(400).collect();
+                    lines = wrap_text(&preview, Style::new().fg(palette.text), w);
+                    lines.truncate(content_h.saturating_sub(hint.len()));
+                }
+            }
+            lines.extend(hint);
+            // Pre-wrapped above (`Wrap` can't be measured before layout), so every
+            // line already fits — no re-wrap here.
+            let para = Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(palette.border_style(false)),
+            );
             frame.render_widget(para, desc_area);
         }
     }

@@ -29,6 +29,12 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **A setting's hint is no longer cut off mid-sentence.** The panel at the
+  bottom of the settings screen had room for three lines, and longer hints — the
+  API key, MCP servers, speculative decoding — simply ran past it, with the part
+  that explained what to actually do left unread. The panel is now as tall as
+  the longest hint in the section needs, and stays that height while you step
+  through its fields, so the list underneath doesn't shift about.
 - **Zig code blocks are highlighted — and twenty-one other languages with them.**
   A ` ```zig ` block came out as flat text on a grey background, and so did
   `toml`, `dockerfile`, `powershell`, `swift`, `typescript`, `kotlin`, `scss`,

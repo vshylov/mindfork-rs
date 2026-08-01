@@ -467,6 +467,70 @@ pub(super) fn section_label_col(fields: &[FieldRow]) -> usize {
         .max(MIN_LABEL_COL)
 }
 
+/// The bottom hint panel's floor in content rows (the border is extra): a section
+/// of short hints keeps the panel it has always had, so the height only ever grows.
+pub(super) const HINT_MIN_ROWS: usize = 3;
+/// ...and its ceiling: an MCP server's tool description is arbitrary text, so
+/// without a cap one field could push the list off the screen. Further bounded by
+/// the pane height at the call site.
+pub(super) const HINT_MAX_ROWS: usize = 12;
+
+/// Rows a plain text occupies when wrapped to `width` (an embedded newline is a
+/// hard break). Counting only — the wrapped rows themselves aren't built.
+pub(super) fn wrapped_rows(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    text.split('\n')
+        .map(|l| crate::shared::wrap::wrap_ranges(&l.chars().collect::<Vec<_>>(), width).len())
+        .sum()
+}
+
+/// Wraps plain text into styled visual rows of `width` (an embedded newline is a
+/// hard break). Pre-wrapping — rather than leaving it to `Paragraph`'s `Wrap` — is
+/// what lets the panel be sized to its content before it is laid out.
+pub(super) fn wrap_text(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    text.split('\n')
+        .flat_map(|l| crate::shared::wrap::wrap_line(&Line::styled(l.to_string(), style), width))
+        .collect()
+}
+
+/// Rows one field's hint needs: its description plus, for a globally-gated tool,
+/// the expanded gate warning below it.
+pub(super) fn hint_rows(f: &FieldRow, width: usize, loc: &'static Locale) -> usize {
+    let mut n = f
+        .description
+        .as_deref()
+        .map_or(0, |t| wrapped_rows(t, width));
+    if f.warn {
+        n += wrapped_rows(loc.t("ui.settings.ui.gate_warn"), width);
+    }
+    n
+}
+
+/// The bottom panel's content height for a field set: the **longest** hint in it,
+/// within [`HINT_MIN_ROWS`]`..=cap`. Sized per field set rather than per field, so
+/// no hint is ever clipped mid-sentence *and* stepping between fields never shifts
+/// the list under the cursor (a per-field height would do the latter constantly).
+/// The full value preview isn't counted — it fills whatever the hint leaves, so a
+/// long path or system message can't inflate the panel for the whole section.
+pub(super) fn hint_panel_rows(
+    fields: &[FieldRow],
+    width: usize,
+    cap: usize,
+    loc: &'static Locale,
+) -> usize {
+    fields
+        .iter()
+        .map(|f| hint_rows(f, width, loc))
+        .max()
+        .unwrap_or(0)
+        .clamp(HINT_MIN_ROWS, cap.max(HINT_MIN_ROWS))
+}
+
 /// An inline hint for a tool disabled by a global gate ("disabled globally:
 /// <switch>"). Shown in warning color.
 pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
