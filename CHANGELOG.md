@@ -26,12 +26,13 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
-- **Spellcheck no longer underlines links.** A URL in the input box
-  (`https://…`, `www.…`, or a bare `example.com/path`) is skipped whole, so its
-  host and path fragments are not flagged word by word, and the suggestions
-  popup (`Ctrl+G`) stays quiet inside a link. Prose around it is checked as
+- **Spellcheck no longer underlines links and email addresses.** A URL
+  (`https://…`, `www.…`, a bare `example.com/path`) or an address
+  (`user@example.com`, `mailto:` and all) in the input box is skipped whole, so
+  its host and path fragments are not flagged word by word, and the suggestions
+  popup (`Ctrl+G`) stays quiet inside one. Prose around it is checked as
   before — including a missing space after a period (`end.Next`), which is still
-  a typo and not a domain.
+  a typo and not a domain, and a mention like `@username`.
 - **A Gemini key can now be entered where `youtube_watch` is configured.**
   The "Model" section only offers a key field for a slot that is actually set to
   that cloud, so with a local or OpenAI setup there was nowhere to enter a Gemini
