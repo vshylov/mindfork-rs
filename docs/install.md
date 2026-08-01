@@ -572,10 +572,14 @@ group of the "Tools" section (`Ctrl+P`):
 | Model | the Gemini model that watches (`gemini-2.5-flash` by default) |
 | Input resolution | how finely frames are sampled: `low` ≈ 100 tokens per second of video, `medium` ≈ 330 |
 | Max video length | refuse anything longer (default 30 min; `0` — no ceiling) |
+| API key | the Gemini key, stored on this computer (encrypted with a machine key, ADR 0008) |
 | API key (env) | env-variable name — a fallback when no key is stored in settings |
 
 **The key is the shared Gemini one** (ADR 0008): if it is already entered for
-chat or embeddings, nothing else is needed. It works whatever your chat engine
+chat or embeddings, nothing else is needed — and if it is not, enter it right
+here. That row exists because the "Model" section only shows a key field for a
+slot whose mode *is* that cloud, so with a local or OpenAI setup there would
+otherwise be nowhere to put a Gemini key at all. It works whatever your chat engine
 is — including a local `llama-server` — because the tool calls Gemini itself and
 returns text into the conversation. Gemini is currently the only provider that
 accepts video at all; OpenAI and Anthropic take text and images only.

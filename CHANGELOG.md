@@ -15,6 +15,13 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **A Gemini key can now be entered where `youtube_watch` is configured.**
+  The "Model" section only offers a key field for a slot that is actually set to
+  that cloud, so with a local or OpenAI setup there was nowhere to enter a Gemini
+  key — and the video tool needs one whatever the chat engine is. The "Video"
+  group in "Tools" now has its own "API key" row, stored on this computer like
+  any other key; it is the same shared Gemini key, so entering it here also
+  configures Gemini chat and embeddings.
 - **`youtube_watch` no longer sends the assistant hunting for a workaround.**
   When video understanding is not configured (or the provider fails), the
   answer now says plainly that the video's content cannot be obtained any other

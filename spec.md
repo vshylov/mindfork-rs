@@ -1006,7 +1006,10 @@ returns text into the conversation — the shape TTS already uses (ADR 0009), so
 it works on a local `llama-server` or on Claude just the same. The slot is
 `config.video` (model / frame-sampling detail / length ceiling / env-var
 fallback); the API key is the **shared Gemini provider key** (ADR 0008), not a
-field of its own.
+value of its own. It can be entered in this group as well as in the "Model"
+section — that section offers a key field only for a slot whose mode *is* that
+cloud, so a local or OpenAI setup would otherwise have nowhere to put a Gemini
+key, while this tool needs one whatever the chat engine is.
 
 **What it returns.** The answer, not the material: a description with
 timestamps, narrowed by `focus`. A 10-minute video costs ~62k tokens at the

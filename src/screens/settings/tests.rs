@@ -2614,6 +2614,74 @@ fn api_key_field_targets_provider_of_its_slot() {
     assert_eq!(s.api_key_field_provider(FieldId::XUrl), None);
 }
 
+/// The video slot's key row stores the **Gemini** key whatever the engines are set
+/// to — and that is the point of it existing. The "Model" section shows a key field
+/// only for a slot whose mode is that cloud, so on a local or OpenAI setup there was
+/// nowhere to enter a Gemini key at all, while `youtube_watch` needs one regardless
+/// of the chat engine. Found by a user who had no way to configure the tool.
+#[test]
+fn video_key_field_targets_gemini_whatever_the_engines_are() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    s.config.impersonation_engine.mode = ImpersonationMode::Shared;
+    s.config.embed.mode = ServerMode::External;
+    assert_eq!(
+        s.api_key_field_provider(FieldId::VideoApiKey),
+        Some(CloudProvider::Gemini),
+        "no engine is on Gemini, yet the video key must still address Gemini"
+    );
+
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoApiKey);
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s.editor.as_ref().expect("the key field's editor is open");
+    assert_eq!(editor.input.text(), "", "a stored key can't be shown");
+    assert!(editor.input.is_masked(), "the secret field must be masked");
+    for c in "AIzaSy-test".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SetApiKey {
+            provider: CloudProvider::Gemini,
+            key: "AIzaSy-test".into()
+        })
+    );
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(
+        !json.contains("AIzaSy-test"),
+        "the key leaked into the screen's config: {json}"
+    );
+}
+
+/// The row reports whether a key is stored, and `Del` deletes it — with nothing
+/// stored there is nothing to delete.
+#[test]
+fn video_key_row_shows_status_and_del_removes_it() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoApiKey);
+    assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+
+    s.set_api_keys_present(vec![CloudProvider::Gemini]);
+    let want =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("ui.settings.value.key_set");
+    assert!(
+        s.fields()
+            .iter()
+            .any(|f| f.id == FieldId::VideoApiKey
+                && matches!(&f.kind, FieldKind::Text(v) if v == want)),
+        "the row must report the key as stored"
+    );
+    assert_eq!(
+        s.handle_key(key(KeyCode::Delete)),
+        Some(SettingsIntent::SetApiKey {
+            provider: CloudProvider::Gemini,
+            key: String::new()
+        })
+    );
+}
+
 /// User data (a profile, an impersonation persona) has no "default value", so it must
 /// never get the `•` "modified" marker — comparing it against a default config would
 /// flag a chosen persona simply because the default config has no personas at all.

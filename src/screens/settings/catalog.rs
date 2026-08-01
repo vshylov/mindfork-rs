@@ -139,6 +139,9 @@ impl SettingsScreen {
             FieldId::IxApiKey => self.config.impersonation_engine.mode.cloud_provider(),
             FieldId::EApiKey => self.config.embed.mode.cloud_provider(),
             FieldId::TtsApiKey => self.config.tts.mode.cloud_provider(),
+            // The video slot has no mode of its own — only Gemini takes video
+            // (spec §9.9), so this row always addresses the Gemini key.
+            FieldId::VideoApiKey => Some(CloudProvider::Gemini),
             _ => None,
         }
     }
@@ -667,6 +670,13 @@ impl SettingsScreen {
                     self.config.video.max_minutes,
                 )
                 .describe(loc.t("ui.settings.desc.video_max_minutes")),
+                secret_row(
+                    FieldId::VideoApiKey,
+                    self.api_key_present(Some(CloudProvider::Gemini)),
+                    loc.t("ui.settings.field.api_key"),
+                    DESC_VIDEO_API_KEY,
+                    loc,
+                ),
                 text_row(
                     FieldId::VideoApiKeyEnv,
                     loc.t("ui.settings.field.api_key_env_opt"),

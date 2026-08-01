@@ -481,6 +481,12 @@ enum FieldId {
     VideoResolution,
     /// Ceiling on a video's length, in minutes (`0` — no ceiling).
     VideoMaxMinutes,
+    /// The **stored** Gemini key (ADR 0008), entered here rather than only in the
+    /// "Model" section: that section shows a key field only for a slot whose mode
+    /// is that cloud, so with a local/OpenAI setup there was nowhere to put a
+    /// Gemini key at all — while `youtube_watch` needs one whatever the chat
+    /// engine is.
+    VideoApiKey,
     /// Env-variable name with the Gemini key — a fallback when no key is stored
     /// in settings (the shared Gemini key, ADR 0008).
     VideoApiKeyEnv,

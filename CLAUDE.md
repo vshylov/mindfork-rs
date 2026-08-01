@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1733 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1735 unit
 tests green, 72 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — **the assistant can watch a YouTube video**
 ([research](docs/research/youtube-integration.md)): `youtube_watch` says what a
@@ -10861,7 +10861,21 @@ debounce was done as a separate PR, see below).
   different starting point. The `timedtext` fetch returned **200 with an empty
   body**, `pip`/`yt-dlp`/`ffmpeg` were absent, and web search had no transcript —
   every measured dead end, re-measured live.
-- **1733 unit tests green** (+1), 72 `#[ignore]`, clippy `-D warnings`/fmt/
+- **Follow-up from the same live run: a Gemini key had nowhere to be
+  entered.** The user's setup was chat on OpenAI with local embeddings — and the
+  "Model" section offers a key row only for a slot whose **mode is that cloud**,
+  so there was no field for a Gemini key anywhere in the UI, while `youtube_watch`
+  needs one whatever the chat engine is. That is the gap that put the tool on its
+  unconfigured path in the first place. Fixed by giving the "Video" group its own
+  stored-key row (`FieldId::VideoApiKey`) — the same machine-bound storage as every
+  other key (ADR 0008), addressing `CloudProvider::Gemini` **unconditionally**
+  rather than deriving the provider from a mode, since this slot has no mode. All
+  the behaviour came free from `is_secret_field` + `api_key_field_provider`: masked
+  empty editor, commit as `SetApiKey`, `Del` deletes, and the key never reaches the
+  screen's config. Tests pin the part that could regress silently — the row targets
+  Gemini **with no engine set to Gemini** — plus the status/`Del` pair.
+  **1735 unit tests green** (+2).
+- **1735 unit tests green** (+3), 72 `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan`/`link_check` clean. **No live run needed** — the change is the
   text of three localized strings and a tool description; the engine, memory and
   tool paths are untouched, and the behaviour it fixes is the model's reading of

@@ -36,6 +36,9 @@ pub(super) const DESC_IMP_MODE: &str = "ui.settings.desc.imp_mode";
 pub(super) const DESC_API_KEY_ENV: &str = "ui.settings.desc.api_key_env";
 /// Description of the "API key" field (the secret itself, stored encrypted for this machine).
 pub(super) const DESC_API_KEY: &str = "ui.settings.desc.api_key";
+/// The video slot's key row: same storage, but it names the provider, because
+/// this row is often the only place a Gemini key gets entered.
+pub(super) const DESC_VIDEO_API_KEY: &str = "ui.settings.desc.video_api_key";
 /// Key: cloud model name (X/Ix/E).
 pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
 /// Key: the env-variable name holding the external-server key (optional).
@@ -289,6 +292,7 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
             | FieldId::IxApiKey
             | FieldId::EApiKey
             | FieldId::TtsApiKey
+            | FieldId::VideoApiKey
             | FieldId::BackupPassword
     )
 }
