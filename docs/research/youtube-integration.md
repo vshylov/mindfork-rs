@@ -279,7 +279,10 @@ that is the one in §3.2.
 
 ---
 
-## 8. Decision points (need the user's answer before implementation)
+## 8. Decision points — **decided by the user 2026-08-01**
+
+Every fork below was accepted **as recommended**, and stage 1 was implemented
+against them — see §8a for what that turned into and where it deviated.
 
 **R1 — Which capability ships first?**
 - **(a) Gemini video understanding + free metadata as the fallback** —
@@ -350,6 +353,55 @@ that is the one in §3.2.
   first version only handles YouTube URLs, so the name would over-promise.
 
 ---
+
+## 8a. Stage 1 as built (2026-08-01)
+
+Implemented on the decisions above. What the sketch in §9 got right, and the four
+places reality differed:
+
+- **`is_youtube_url` is not `video_id().is_some()`.** A bare 11-character id is
+  accepted as *input* (models pass one about as often as a URL), but it must not
+  make `fetch_url` route arbitrary 11-character text into the YouTube branch — so
+  "is this a link" and "can I get an id out of this" are separate questions.
+- **The watch page is parsed with a brace scanner, not a regex.** The probe's
+  `ytInitialPlayerResponse\s*=\s*(\{.*?\});` worked on the real page by luck: the
+  blob contains `}` inside strings, and the non-greedy match survives only
+  because the first such occurrence happens to fall after the object. A
+  string-aware balanced-brace scan is ~25 lines and cannot be wrong that way.
+- **Thinking is muted explicitly**, which the sketch did not anticipate.
+  `maxOutputTokens` **includes thought tokens**, so on a 3.x model the budget can
+  go entirely to thinking and the answer comes back blank — observed during the
+  probe on `gemini-3.6-flash`. The mute has to be per generation (2.5 takes
+  `thinkingBudget: 0`, 3.x has no off switch and takes `thinkingLevel: minimal`,
+  3 Pro rejects even that), so rather than write that heuristic a second time,
+  `is_gemini_3`/`is_gemini_3_pro` in the engine wire became `pub(crate)`.
+- **`VideoConfig::Debug` is hand-written to redact the key.** It is reachable
+  from `ToolConfig`, which derives `Debug` — a plaintext key must not be one
+  stray `{:?}` away from a log file. Pinned by a test.
+
+Also worth recording:
+
+- The **length gate measures the segment, not the video**: with `start`/`end`
+  given, only that span is charged, so gating on the full duration would refuse
+  requests that cost nothing much. When the length cannot be read at all, the
+  request is clipped to the ceiling **and the answer says so** — silently
+  describing only the beginning is the failure mode fork R4 rejected.
+- `config.video` feeds the **tool registry** (that is where the client is built),
+  so it rebuilds on a `config.video` edit *and* on a Gemini key change —
+  otherwise the tool would keep reporting itself unconfigured until some
+  unrelated settings edit happened to rebuild it.
+
+**Live run — GO** (real Gemini, `gemini-2.5-flash`, 2026-08-01): the smoke
+`watches_a_real_video_live` clips a video to its first 20 s — where a transcript
+would give almost nothing, since the first sung line starts at ~0:18 — and the
+answer came back with a timestamped account of clothing, hair, three distinct
+settings and the camera cuts between them, under the live title and duration read
+from the watch page (7.2 s end to end). `live_youtube_link_returns_metadata_not_a_dead_end`
+confirms the `fetch_url` half against the real page (1.3 s).
+
+**Not built (stage 2 candidates):** the `transcript: true` argument and landing a
+long transcript as a chat attachment (fork R3c); cross-chat caching (R8b); a
+transcript path that needs no cloud key (R7).
 
 ## 9. Sketch of the shape (for reference, not a commitment)
 

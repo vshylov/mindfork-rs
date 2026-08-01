@@ -270,7 +270,13 @@ src/
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ python.rs          python_exec (subprocess, timeout)
 │  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot)
-│  │  ├─ fetch.rs           fetch_url (page fetch + summarization via the engine)
+│  │  ├─ fetch.rs           fetch_url (page fetch + summarization via the engine;
+│  │  │                     a YouTube link is answered with metadata + a pointer
+│  │  │                     to youtube_watch instead of "no readable text")
+│  │  ├─ youtube.rs         youtube_watch: what a video says and shows. Free
+│  │  │                     metadata (watch page/oEmbed, pure parse) + the video
+│  │  │                     call via shared/video; degrades to metadata when no
+│  │  │                     provider is configured — spec §9.9
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
@@ -413,6 +419,13 @@ src/
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)
+   ├─ video/               video understanding for `youtube_watch`: the
+   │                       `VideoUnderstanding` contract + `GeminiVideo`
+   │                       (`generateContent` with a `file_data` YouTube URL).
+   │                       A slot of its own, like TTS — only Gemini takes video,
+   │                       so routing it through the chat engine would deny it to
+   │                       local-model users. Key — the shared Gemini provider key
+   │                       (ADR 0008); `VideoConfig`'s `Debug` redacts it. Spec §9.9
    ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
    │                       `openai` client (`/audio/speech`, also used for external) and
    │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
@@ -1257,7 +1270,7 @@ by `ToolGroup` (`Ord`).
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
-| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |

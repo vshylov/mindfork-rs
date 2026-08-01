@@ -124,9 +124,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1702 unit
-tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **password-protected backups** ([plan](docs/history/backup-password.md)):
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1732 unit
+tests green, 72 `#[ignore]` smokes** (the largest count — log below; the most
+recent change — **the assistant can watch a YouTube video**
+([research](docs/research/youtube-integration.md)): `youtube_watch` says what a
+video shows *and* says, with timestamps. Measurement left one option — every free
+caption route is now behind YouTube's PoToken gate (a **signed** `timedtext` URL
+returns 200 with an empty body), `captions.download` needs the owner's OAuth, and
+only Gemini takes video at all — so the tool calls Gemini **out of band**, the
+ADR 0009 shape, and therefore works on a local model too; billed per second of
+footage, it refuses past a ceiling and explains how to ask for a segment, and with
+no key degrades to free metadata rather than vanishing; before that —
+**password-protected backups** ([plan](docs/history/backup-password.md)):
 `--password` on `backup`/`restore` or a password set once in settings → "Data",
 stored machine-bound exactly like a cloud API key (ADR 0008); the archive is
 standard AES-256 so 7-Zip still opens it, restore takes an encrypted *and* an
@@ -10704,6 +10713,114 @@ debounce was done as a separate PR, see below).
   format; `MINDFORK_BACKUP_PASSWORD` (F7) was deliberately not added — trivial
   later, and a third source now would widen "where did this password come from"
   for no current need.
+
+### Post-M9: the assistant can watch a YouTube video (`youtube_watch`) (done)
+
+- **Asked for as "research the possibility of integrating with YouTube, so the
+  assistant can get a description of what is talked about **or shown** in a
+  video"** — and that "or shown" turned out to be the whole story. Research with
+  forks R1–R9 — [docs/research/youtube-integration.md](docs/research/youtube-integration.md)
+  (**user's decision 2026-08-01, all as recommended**); behaviour — spec §9.9.
+  Branch `docs/youtube-research` (research + stage 1).
+- **Everything load-bearing was measured live from this machine before any
+  design**, and two results decided the shape:
+  - **Every free caption path is closed.** The watch page still hands out a fully
+    **signed** `timedtext` URL, and that URL returns **HTTP 200 with a zero-byte
+    body** — tried bare, `&c=WEB`, `&fmt=srv3`, `&fmt=vtt`, `&fmt=json3`, with
+    browser `User-Agent` + `Referer`. That is YouTube's PoToken gate, and it is
+    **not** a datacenter-IP problem: this was a residential IP, the sympathetic
+    case. InnerTube `player` gives `UNPLAYABLE` on WEB/MWEB and `400
+    FAILED_PRECONDITION` on ANDROID/IOS; `get_transcript` 400s;
+    `captions.download` requires the **video owner's** OAuth by design. The Rust
+    crates on that surface (`yt-transcript-rs`, `ytranscript`, `ytt`) inherit it —
+    a dependency moves where the failure prints, not whether it happens.
+  - **Gemini ingests a YouTube URL directly**, through the same
+    `v1beta:generateContent` the project already speaks: a 20 s clip = **2098
+    prompt tokens in 3.4 s**; the full 213 s video = **22 050 in 8.0 s**; ~103
+    tok/s at low detail (audio 32 exactly, video ~71). Verified across
+    `2.5-flash`, `3.1-flash-lite`, `3.6-flash`; `watch?v=`/`youtu.be`/`shorts`
+    accepted verbatim. OpenAI's Responses API and Anthropic take **no** video —
+    checked against primary sources, after a blog claiming a "Claude video API"
+    turned up in search and proved to be invented.
+- **So the capability is Gemini-only, which is exactly why it must not go through
+  the chat engine.** Putting a media part into the provider-agnostic
+  `ChatRequest` (ADR 0004's boundary) would hand video only to users whose *chat*
+  engine happens to be Gemini — i.e. deny it to the local-model users most likely
+  to want it. Instead: a tool with its own client under `shared/video/`, called
+  out of band, returning text into the conversation — the shape **TTS already
+  uses** (ADR 0009). The key needs no plumbing at all: `stored_key` is
+  provider-centric (ADR 0008), so the Gemini key entered for chat or embeddings
+  is the same one.
+- **Returns the answer, not the material** (the `fetch_url` shape): a 10-minute
+  video is ~62k tokens *at Google* and a few hundred *in the conversation*, which
+  is what makes it usable from a local 8k-context model. A raw transcript is
+  deliberately out of scope — its honest home is a chat attachment (§9.7), which
+  is already paged and searchable.
+- **Cost is bounded before it is spent.** The tool refuses past
+  `config.video.max_minutes` (default 30 ≈ 186k tokens) and names `start`/`end`
+  in the refusal, so the model can retry with a segment instead of giving up. The
+  gate measures the **segment**, not the video — with bounds given only that span
+  is charged, so gating on full duration would refuse requests that cost little.
+  When the length cannot be read at all, the request is clipped to the ceiling
+  **and the answer says so**: silently describing only the beginning is the
+  failure mode fork R4 rejected.
+- **Degradation is the contract, not an afterthought.** Title/channel/length/the
+  author's description come free from the watch page (oEmbed as fallback) and
+  still work with no key; with no provider the tool does **not** disappear — it
+  returns that metadata plus a plain statement of what is missing, so the model
+  can explain itself to the user. A provider failure or timeout degrades the same
+  way with the reason included.
+- **Four things the design sketch got wrong, found while building:**
+  - `is_youtube_url` is **not** `video_id().is_some()`. A bare 11-character id is
+    accepted as input (models pass one as often as a URL), but must not let
+    `fetch_url` route arbitrary 11-character text into the YouTube branch.
+  - The watch page is parsed with a **string-aware balanced-brace scanner**, not
+    the probe's regex: the blob contains `}` inside strings, and the non-greedy
+    match survived only by luck.
+  - **Thinking has to be muted explicitly.** `maxOutputTokens` *includes* thought
+    tokens, so on a 3.x model the budget can go entirely to thinking and the
+    answer comes back blank (observed on `gemini-3.6-flash`). The mute is per
+    generation, so rather than write that heuristic a second time,
+    `is_gemini_3`/`is_gemini_3_pro` in the engine wire became `pub(crate)`.
+  - `VideoConfig`'s `Debug` is **hand-written to redact the key** — the type is
+    reachable from `ToolConfig`, which derives `Debug`, so a plaintext key must
+    not be one stray `{:?}` from a log file. Pinned by a test.
+- **`fetch_url` stopped dead-ending on YouTube links** (fork R6): measured, the
+  watch page has **zero** paragraphs and **zero** list items, so readability
+  extracted nothing and the answer was "failed to extract readable text" — a dead
+  end the model cannot reason its way out of. It now returns the same metadata
+  block and points at `youtube_watch`.
+- **Registry wiring**: `config.video` feeds the **tool registry** (the client is
+  built there), so it rebuilds on a `config.video` edit *and* on a **Gemini key
+  change** — otherwise the tool would keep reporting itself unconfigured until
+  some unrelated settings edit happened to rebuild it.
+- **Tests**: URL forms (every shape plus a bare id, and the links that must
+  *not* parse); the brace scanner against `}` inside a string; watch-page and
+  oEmbed parsing; duration formatting; the wire body (file part, bounds only when
+  set, per-generation thinking mute, model-prefix normalization); a blank answer
+  naming its `finishReason` and a filter block reported rather than silently
+  empty; the tool's degraded paths (no provider, non-YouTube URL, reversed range,
+  over-ceiling segment, provider failure) each asserting the provider was **not**
+  called where it must not be; key redaction; localization. Settings: four rows
+  in a "Video" group, going through the `field_spec` access table (the settings
+  plumbing was delegated to a subagent with that constraint spelled out; it
+  followed the precedents and reused two existing label keys rather than adding
+  near-duplicates). **1732 unit tests green** (+30), **72 `#[ignore]`** (+2),
+  clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **Live run — GO** (real Gemini `gemini-2.5-flash`, 2026-08-01):
+  `watches_a_real_video_live` clips a video to its first 20 s — where a
+  transcript would give almost nothing, the first sung line starting at ~0:18 —
+  and got back a timestamped account of clothing, hair, three distinct settings
+  and the cuts between them, under the live title and duration read from the
+  watch page (7.2 s end to end). That is the assertion that matters: it is the
+  half a transcript could not have produced.
+  `live_youtube_link_returns_metadata_not_a_dead_end` confirms the `fetch_url`
+  half against the real page (1.3 s).
+- **Groundwork** (roadmap): `transcript: true` landing a long transcript as a
+  chat attachment (R3c); cross-chat caching of an expensive watch (R8b) — within
+  one chat a follow-up is already free; a transcript path needing no cloud key at
+  all (R7) — the one story stage 1 does not serve; and default-model rot
+  (`gemini-2.5-flash-lite` already 404s for new users).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

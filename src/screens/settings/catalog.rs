@@ -644,6 +644,38 @@ impl SettingsScreen {
             py
         }));
         rows.extend(grouped(
+            loc.t("ui.settings.group.video"),
+            vec![
+                text_row(
+                    FieldId::VideoModel,
+                    loc.t("ui.settings.field.model"),
+                    &self.config.video.model_name,
+                )
+                .describe(loc.t("ui.settings.desc.video_model")),
+                row(
+                    FieldId::VideoResolution,
+                    loc.t("ui.settings.field.video_resolution"),
+                    FieldKind::Choice(video_resolution_label(
+                        self.config.video.media_resolution,
+                        loc,
+                    )),
+                )
+                .describe(loc.t("ui.settings.desc.video_resolution")),
+                num_field(
+                    FieldId::VideoMaxMinutes,
+                    loc.t("ui.settings.field.video_max_minutes"),
+                    self.config.video.max_minutes,
+                )
+                .describe(loc.t("ui.settings.desc.video_max_minutes")),
+                text_row(
+                    FieldId::VideoApiKeyEnv,
+                    loc.t("ui.settings.field.api_key_env_opt"),
+                    &self.config.video.api_key_env,
+                )
+                .describe(loc.t("ui.settings.desc.video_api_key_env")),
+            ],
+        ));
+        rows.extend(grouped(
             loc.t("ui.settings.group.files"),
             vec![
                 row(

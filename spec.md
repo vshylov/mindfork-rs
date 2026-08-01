@@ -989,6 +989,52 @@ application. Design record: [docs/history/tool-confirmation.md](docs/history/too
   was cancelled — is dropped, as is one whose `call_id` belongs to another call of
   the same round; either would run a tool nobody looked at.
 
+### 9.9. Watching a YouTube video (`youtube_watch`)
+
+Answers *what a video says **and shows***. Research and the decision points —
+[docs/research/youtube-integration.md](docs/research/youtube-integration.md).
+
+**Why it is a tool with its own provider and not part of the engine.** Measured
+2026-08-01: Gemini is the only provider that ingests video at all (OpenAI's
+Responses API and Anthropic take text and images only), and every free caption
+route is closed — a signed `timedtext` URL taken off the watch page returns HTTP
+200 with an **empty body** (YouTube's PoToken gate), and `captions.download`
+requires the video owner's OAuth. Putting video into the provider-agnostic
+`ChatRequest` would therefore give the capability only to users whose *chat*
+engine happens to be Gemini. Instead the tool calls Gemini out of band and
+returns text into the conversation — the shape TTS already uses (ADR 0009), so
+it works on a local `llama-server` or on Claude just the same. The slot is
+`config.video` (model / frame-sampling detail / length ceiling / env-var
+fallback); the API key is the **shared Gemini provider key** (ADR 0008), not a
+field of its own.
+
+**What it returns.** The answer, not the material: a description with
+timestamps, narrowed by `focus`. A 10-minute video costs ~62k tokens at the
+provider and a few hundred in the conversation — which is what makes it usable
+from a local model with an 8k window. A raw transcript is deliberately out of
+scope (fork R3; the honest home for one is a chat attachment, §9.7).
+
+**Cost is bounded before it is spent.** Measured ≈103 prompt tokens per second
+of video at low detail (≈330 at medium), so the tool refuses a video longer than
+`config.video.max_minutes` (default 30) and says so in terms the model can act
+on — the `start`/`end` arguments clip to a segment, which is the only way to look
+at a long video without paying for all of it. When the length cannot be read at
+all, the request is clipped to the ceiling **and the answer says so**, rather
+than silently describing only the beginning.
+
+**Degradation is part of the contract.** Title, channel, length and the author's
+description come from the watch page (oEmbed as a fallback) — free, no key, and
+they still work with no provider configured. With no Gemini key the tool does
+**not** disappear: it returns that metadata plus a plain statement of what is
+missing, so the model can explain itself to the user instead of silently lacking
+a capability. A provider failure or timeout degrades the same way, with the
+reason included. Gated by `tools.web_enabled`, like `web_search`/`fetch_url`.
+
+`fetch_url` no longer dead-ends on a YouTube link. The watch page is a
+JavaScript shell — measured, zero paragraphs and zero list items — so
+readability extracted nothing and the answer was "failed to extract readable
+text". It now returns the same metadata block and points at `youtube_watch`.
+
 ---
 
 ## 10. AI-companion profiles

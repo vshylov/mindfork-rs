@@ -15,6 +15,20 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **The assistant can watch a YouTube video** — the new `youtube_watch` tool
+  tells what is **said and shown** in it, with timestamps, and `focus` narrows
+  that to your question. It needs a Gemini API key, but **not** a Gemini chat:
+  the tool calls Gemini itself, so this works with a local model or with Claude
+  just the same (Gemini is currently the only provider that accepts video at
+  all). Long videos are refused with a suggestion to ask for a segment —
+  watching is billed per second of footage — and the ceiling, the model and the
+  frame-sampling detail live in settings → "Tools" → "Video". Without a key the
+  tool still returns the title, channel, length and the author's description,
+  and says plainly that it could not watch. Only public videos.
+- **A YouTube link is no longer a dead end for `fetch_url`.** It used to answer
+  "failed to extract readable text" (a watch page carries none); now it returns
+  the same free metadata and points at `youtube_watch`.
+
 - **Backups can be password-protected.** Give a password with
   `mindfork backup --password …`, or set it once in settings → "Data" → "Backup
   password" and every copy is encrypted with it — including the ones the app

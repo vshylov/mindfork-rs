@@ -13,3 +13,6 @@ mod client;
 mod wire;
 
 pub use client::GeminiClient;
+// Model-generation inference, shared with the video client (`shared::video::gemini`):
+// which thinking knob this model takes. One copy, not two.
+pub(crate) use wire::{is_gemini_3, is_gemini_3_pro};

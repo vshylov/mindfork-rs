@@ -163,7 +163,9 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
 }
 
 /// The Gemini 3.x generation (uses `thinkingLevel`). A rough inference from the model name.
-fn is_gemini_3(model: &str) -> bool {
+/// `pub(crate)` because the video client (`shared::video::gemini`) mutes thinking
+/// the same way and must not carry a second copy of this heuristic.
+pub(crate) fn is_gemini_3(model: &str) -> bool {
     model.contains("gemini-3")
 }
 
@@ -174,7 +176,7 @@ fn is_gemini_25_pro(model: &str) -> bool {
 
 /// Gemini 3.x **Pro** — doesn't support `thinkingLevel:"minimal"` (minimum `low`).
 /// E.g. `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
-fn is_gemini_3_pro(model: &str) -> bool {
+pub(crate) fn is_gemini_3_pro(model: &str) -> bool {
     is_gemini_3(model) && model.contains("pro")
 }
 

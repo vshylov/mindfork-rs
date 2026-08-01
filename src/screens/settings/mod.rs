@@ -24,7 +24,7 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
+    MediaResolution, PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -474,6 +474,16 @@ enum FieldId {
     TPythonNet,
     TPythonWasmTimeout,
     TPythonWasmMemory,
+    /// The Gemini model that watches a video (`youtube_watch`). See spec §9.3,
+    /// docs/research/youtube-integration.md.
+    VideoModel,
+    /// Frame-sampling detail (`generationConfig.mediaResolution`).
+    VideoResolution,
+    /// Ceiling on a video's length, in minutes (`0` — no ceiling).
+    VideoMaxMinutes,
+    /// Env-variable name with the Gemini key — a fallback when no key is stored
+    /// in settings (the shared Gemini key, ADR 0008).
+    VideoApiKeyEnv,
     TFs,
     TFsRoot,
     /// The MCP host's master switch (`config.mcp.enabled`); servers are edited in

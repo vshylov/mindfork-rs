@@ -22,4 +22,5 @@ pub mod theme;
 pub mod tokens;
 pub mod tts;
 pub mod ui;
+pub mod video;
 pub mod wrap;

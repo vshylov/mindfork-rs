@@ -304,6 +304,15 @@ fn build_registry(
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
         fs_root: config.tools.fs_root.clone(),
+        // The video slot for `youtube_watch`: settings + the shared Gemini key
+        // (ADR 0008). Independent of the chat engine — see `shared::video`.
+        video: crate::shared::video::resolve_config(
+            &config.video,
+            crate::shared::secrets::stored_key(
+                &config.api_keys,
+                crate::shared::config::CloudProvider::Gemini.key(),
+            ),
+        ),
         // The chat-engine mode determines the sampling parameters available in
         // get_sampling/set_sampling (schema + filtering). See ADR 0004.
         sampling_provider: config.engine.mode.cloud_provider(),

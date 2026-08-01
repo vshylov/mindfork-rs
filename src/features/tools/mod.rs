@@ -26,6 +26,7 @@ pub mod rag;
 pub mod self_model;
 pub mod subagent;
 pub mod web;
+pub mod youtube;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -274,6 +275,8 @@ pub const WEB_SEARCH_ID: &str = "web_search";
 pub const FETCH_URL_ID: &str = "fetch_url";
 /// Name of the Python tool (gated by `tools.python_enabled`).
 pub const PYTHON_EXEC_ID: &str = "python_exec";
+/// Name of the video tool (gated by `tools.web_enabled` — network access).
+pub const YOUTUBE_WATCH_ID: &str = "youtube_watch";
 
 /// Metadata snapshot of all tools (a single source — the tools themselves via the
 /// [`Tool`] trait). Metadata (group/label/gate/default) doesn't depend on
@@ -382,6 +385,10 @@ pub struct ToolConfig {
     pub web_fetch_content: bool,
     /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
+    /// Resolved video-understanding slot for `youtube_watch` (`None` — not
+    /// configured; the tool then degrades to metadata). Independent of the chat
+    /// engine — see `shared::video`.
+    pub video: Option<crate::shared::video::VideoConfig>,
     /// Cloud provider of the chat engine (`None` — local/external). Determines
     /// which sampling parameters `get_sampling`/`set_sampling` see/change (schema
     /// and result filtering) — a mirror of the wire dialect. See ADR 0004.
@@ -405,6 +412,7 @@ impl Default for ToolConfig {
             ),
             web_fetch_content: true,
             fs_root: None,
+            video: None,
             sampling_provider: None,
         }
     }
@@ -441,6 +449,20 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     )));
     reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content)));
     reg.register(Arc::new(fetch::FetchUrl::new()));
+    // Video understanding is a slot of its own (only Gemini takes video at all),
+    // so the tool gets a client built from `cfg.video` rather than `ctx.engine`.
+    // Unconfigured → registered anyway, degrading to metadata (fork R5a).
+    reg.register(Arc::new(youtube::YoutubeWatch::new(
+        cfg.video.clone().map(|c| {
+            Arc::new(crate::shared::video::gemini::GeminiVideo::new(c))
+                as Arc<dyn crate::shared::video::VideoUnderstanding>
+        }),
+        cfg.video
+            .as_ref()
+            .map_or(crate::shared::config::DEFAULT_VIDEO_MAX_MINUTES, |c| {
+                c.max_minutes
+            }),
+    )));
     reg.register(Arc::new(python::PythonExec::new(
         cfg.python_mode,
         cfg.python_path.clone(),
