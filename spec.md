@@ -1030,6 +1030,17 @@ missing, so the model can explain itself to the user instead of silently lacking
 a capability. A provider failure or timeout degrades the same way, with the
 reason included. Gated by `tools.web_enabled`, like `web_search`/`fetch_url`.
 
+**A degraded answer closes the door, it does not merely describe the lock.** Each
+one states that the video's content is unreachable by any other route available
+to the model, and names them: YouTube returns captions empty without a token
+(neither `fetch_url` nor `python_exec` gets around that — the sandbox has no
+`yt-dlp`, no `ffmpeg` and no `pip`), and no transcript is in web search. Without
+that, an agentic model reads "video understanding is not configured" as a local
+limitation and spends its rounds rediscovering exactly the dead ends this
+project already measured — observed in a live run. The tool description says the
+same thing up front, so the choice is informed before the call rather than after
+it.
+
 `fetch_url` no longer dead-ends on a YouTube link. The watch page is a
 JavaScript shell — measured, zero paragraphs and zero list items — so
 readability extracted nothing and the answer was "failed to extract readable

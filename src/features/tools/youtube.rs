@@ -620,6 +620,36 @@ mod tests {
         );
     }
 
+    /// Every degraded answer must **close the door**, not just describe the lock.
+    ///
+    /// A live run showed why: told only that video understanding was not
+    /// configured, the model read that as a local limitation and spent five
+    /// rounds rediscovering the dead ends this project had already measured —
+    /// scraping `captionTracks` and hitting `timedtext` (200, empty body),
+    /// `pip install youtube-transcript-api` (no pip in the sandbox), looking for
+    /// `yt-dlp`/`ffmpeg` (absent), and searching the web for a transcript. So the
+    /// message names those routes by the tool ids it would reach for. Same defect
+    /// class as the by-reference attachment block, fixed the same way.
+    #[test]
+    fn degraded_answers_name_the_routes_that_do_not_work() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = locale(lang);
+            for key in [
+                "tool.youtube_watch.result.not_configured",
+                "tool.youtube_watch.result.failed",
+                "tool.youtube_watch.result.timeout",
+            ] {
+                let text = loc.t(key);
+                for route in [super::super::PYTHON_EXEC_ID, super::super::FETCH_URL_ID] {
+                    assert!(
+                        text.contains(route),
+                        "{lang:?} {key} must say {route} won't get around it: {text}"
+                    );
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_non_youtube_url_is_reported_not_watched() {
         let (_d, ctx) = ctx();

@@ -13,6 +13,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`youtube_watch` no longer sends the assistant hunting for a workaround.**
+  When video understanding is not configured (or the provider fails), the
+  answer now says plainly that the video's content cannot be obtained any other
+  way — captions, downloading and web search are all dead ends — so the model
+  answers from what it has instead of spending several tool calls trying to
+  scrape subtitles, install packages or find `yt-dlp`.
+
 ### Added
 
 - **The assistant can watch a YouTube video** — the new `youtube_watch` tool

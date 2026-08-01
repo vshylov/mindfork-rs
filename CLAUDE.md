@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1732 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1733 unit
 tests green, 72 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — **the assistant can watch a YouTube video**
 ([research](docs/research/youtube-integration.md)): `youtube_watch` says what a
@@ -10821,6 +10821,52 @@ debounce was done as a separate PR, see below).
   one chat a follow-up is already free; a transcript path needing no cloud key at
   all (R7) — the one story stage 1 does not serve; and default-model rot
   (`gemini-2.5-flash-lite` already 404s for new users).
+
+### Post-M9: `youtube_watch` — a degraded answer has to close the door (done)
+
+- **Found by the user in a live run**, the first real one after the merge: an
+  `openai` chat (gpt-5.6) with **no Gemini key stored**, so `youtube_watch` took
+  its unconfigured path and returned the metadata plus "video understanding is
+  not configured". The model then spent **eight tool calls** rediscovering the
+  dead ends this project had already measured — three `web_search`es (including
+  one for "<video id> transcript"), scraping `captionTracks` off the watch page
+  and hitting the signed `timedtext` URL (200, **0 bytes**, exactly as §3.1 of
+  the research says), `pip install youtube-transcript-api` (**no pip** in the
+  sandbox), looking for `yt-dlp`/`ffmpeg` (**absent**) — until the user cancelled
+  the turn. Branch `fix/youtube-dead-end-wording`.
+- **This is our defect, not the model's.** The stage-1 message said *what* was
+  missing and how the **user** could fix it, but never said the video's content
+  is unreachable by any other route — so an agentic model quite reasonably read
+  it as a local limitation and went looking. **The same defect class**, and the
+  same fix, as the by-reference attachment block: there too the entry described
+  the situation without stating what was and wasn't possible, and there too the
+  model improvised (`fs_list`, `fs_read`, four `web_search`es) and ended on an
+  impossible suggestion.
+- **Fix — the degraded answers now name the routes that don't work**
+  (`not_configured`, `failed`, `timeout`, both bundles): captions come back empty
+  without a token, neither `fetch_url` nor `python_exec` gets around that (no
+  `yt-dlp`, no `ffmpeg`, no `pip` in the sandbox), and no transcript is in web
+  search — followed by what to do instead (answer from what is there, say plainly
+  that the video was not seen, and tell the user how to enable watching). The
+  **tool description** says the same up front, so the choice is informed before
+  the call rather than after it. `failed` additionally allows **one** retry, since
+  a provider error can be transient — but not by another route.
+- **The regression test asserts a property, not prose**: every degraded message,
+  in every built-in locale, must name `python_exec` and `fetch_url` — tool ids,
+  which are stable identifiers rather than wording. **Mutation-tested in both
+  directions**: weakening the clause fails it with the whole message in the
+  failure output. Nothing else changed — no code path, no config, no schema.
+- **Worth recording separately**: the trace is also a clean field confirmation of
+  §3.1 of the research, produced by a different agent on a different day from a
+  different starting point. The `timedtext` fetch returned **200 with an empty
+  body**, `pip`/`yt-dlp`/`ffmpeg` were absent, and web search had no transcript —
+  every measured dead end, re-measured live.
+- **1733 unit tests green** (+1), 72 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run needed** — the change is the
+  text of three localized strings and a tool description; the engine, memory and
+  tool paths are untouched, and the behaviour it fixes is the model's reading of
+  that text, which no automated smoke can assert. Whether the wording actually
+  stops the flailing is the user's next live run to judge.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
