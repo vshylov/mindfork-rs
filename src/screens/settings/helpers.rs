@@ -278,13 +278,18 @@ pub(super) fn cloud_rows(
     ]
 }
 
-/// An input field for the API key itself (not an env-variable name)? Such fields
-/// have special behavior: an empty seed, a masked editor, a commit as a separate
-/// intent, and `Del` as deleting the key. See [`SettingsScreen::api_key_field_provider`].
-pub(super) fn is_api_key_field(id: FieldId) -> bool {
+/// An input field holding a **secret** itself — a cloud API key or the backup
+/// password (not an env-variable name)? Such fields have special behavior: an
+/// empty seed, a masked editor, a commit as a separate intent, and `Del` as
+/// deleting the secret. See [`SettingsScreen::api_key_field_provider`].
+pub(super) fn is_secret_field(id: FieldId) -> bool {
     matches!(
         id,
-        FieldId::XApiKey | FieldId::IxApiKey | FieldId::EApiKey | FieldId::TtsApiKey
+        FieldId::XApiKey
+            | FieldId::IxApiKey
+            | FieldId::EApiKey
+            | FieldId::TtsApiKey
+            | FieldId::BackupPassword
     )
 }
 
@@ -293,22 +298,37 @@ pub(super) fn is_api_key_field(id: FieldId) -> bool {
 /// the env path remains). Editing opens an empty masked editor: a stored
 /// key can't be shown, entering it = replacing it. See docs/research/api-key-storage.md.
 pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> FieldRow {
+    secret_row(
+        id,
+        present,
+        loc.t("ui.settings.field.api_key"),
+        DESC_API_KEY,
+        loc,
+    )
+}
+
+/// A stored-secret row: the value shown is a **status**, and the description
+/// switches to "not supported on this machine" when no encryption scheme is
+/// available (Linux without machine-id), because then the field cannot work at
+/// all. Shared by the API keys and the backup password.
+pub(super) fn secret_row(
+    id: FieldId,
+    present: bool,
+    label: &'static str,
+    desc_key: &str,
+    loc: &'static Locale,
+) -> FieldRow {
     let (value, desc) = if !crate::shared::secrets::scheme_available() {
         (
             loc.t("ui.settings.value.key_unsupported"),
             loc.t("ui.settings.desc.api_key_unsupported"),
         )
     } else if present {
-        (loc.t("ui.settings.value.key_set"), loc.t(DESC_API_KEY))
+        (loc.t("ui.settings.value.key_set"), loc.t(desc_key))
     } else {
-        (loc.t("ui.settings.value.key_unset"), loc.t(DESC_API_KEY))
+        (loc.t("ui.settings.value.key_unset"), loc.t(desc_key))
     };
-    row(
-        id,
-        loc.t("ui.settings.field.api_key"),
-        FieldKind::Text(value.to_string()),
-    )
-    .describe(desc)
+    row(id, label, FieldKind::Text(value.to_string())).describe(desc)
 }
 
 /// Parses an editable optional-number value: empty → `None` (clear),

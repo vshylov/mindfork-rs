@@ -122,12 +122,13 @@ fn real_main(
         CliCommand::Backup {
             output,
             compression,
+            password,
         } => {
-            run_backup(paths, output, compression, loc)?;
+            run_backup(paths, output, compression, password, loc)?;
             Ok(ExitCode::SUCCESS)
         }
-        CliCommand::Restore { archive } => {
-            run_restore(paths, &archive, loc)?;
+        CliCommand::Restore { archive, password } => {
+            run_restore(paths, &archive, password, loc)?;
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::SandboxSetup { force } => {
@@ -276,14 +277,30 @@ fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::Ins
     }
 }
 
-/// The file-tools sandbox from the config (for inclusion/cleanup during backup).
-fn config_fs_root(paths: &Paths) -> Option<PathBuf> {
-    JsonStore::new(paths.clone())
+/// What the backup/restore commands need out of the config: the file-tools
+/// sandbox (for inclusion/cleanup) and the stored backup password.
+struct BackupConfig {
+    fs_root: Option<PathBuf>,
+    stored_password: Option<String>,
+}
+
+fn backup_config(paths: &Paths) -> BackupConfig {
+    let config = JsonStore::new(paths.clone())
         .load_config()
-        .unwrap_or_default()
-        .tools
-        .fs_root
-        .map(PathBuf::from)
+        .unwrap_or_default();
+    BackupConfig {
+        fs_root: config.tools.fs_root.map(PathBuf::from),
+        stored_password: crate::shared::secrets::stored_key(
+            &config.api_keys,
+            crate::shared::secrets::BACKUP_PASSWORD_KEY,
+        ),
+    }
+}
+
+/// The run's one effective password: the argument wins over the stored setting
+/// (docs/history/backup-password.md §4 F8). Empty means "no password".
+fn effective_password(arg: Option<String>, stored: Option<String>) -> Option<String> {
+    arg.or(stored).filter(|p| !p.is_empty())
 }
 
 /// CLI: creating a backup. Output goes to stdout (the TUI isn't running).
@@ -291,12 +308,24 @@ fn run_backup(
     paths: &Paths,
     output: Option<PathBuf>,
     compression: i64,
+    password: Option<String>,
     loc: &Locale,
 ) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.backup"))?;
-    let fs_root = config_fs_root(paths);
-    let out = backup::create_backup(paths, output, compression, fs_root.as_deref(), loc)
-        .with_context(|| loc.t("cli.ctx.backup").to_string())?;
+    let cfg = backup_config(paths);
+    let password = effective_password(password, cfg.stored_password);
+    let out = backup::create_backup(
+        paths,
+        output,
+        compression,
+        cfg.fs_root.as_deref(),
+        password.as_deref(),
+        loc,
+    )
+    .with_context(|| loc.t("cli.ctx.backup").to_string())?;
+    if password.is_some() {
+        println!("{}", loc.t("cli.backup.encrypted"));
+    }
     println!(
         "{}",
         loc.tf(
@@ -307,11 +336,68 @@ fn run_backup(
     Ok(())
 }
 
+/// How many times the restore password may be re-entered before giving up.
+const PASSWORD_ATTEMPTS: usize = 3;
+
+/// Settles the password to restore `archive` with, prompting when needed.
+///
+/// The password we already have (argument, else the setting) is tried first; a
+/// prompt only appears when it is missing or wrong **and** stdin is a terminal
+/// — restoring an archive from another machine is exactly the case where no
+/// stored password can apply (ADR 0008: secrets don't travel). Returning the
+/// unusable password rather than erroring here keeps every "no/wrong password"
+/// message in one place — `backup::restore_backup`'s pre-flight validation.
+fn resolve_restore_password(
+    archive: &Path,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<Option<String>> {
+    use crate::features::backup::ArchivePassword;
+    use crate::features::password_prompt;
+
+    let mut current = password;
+    for _ in 0..PASSWORD_ATTEMPTS {
+        // A read failure here is not ours to report: restore_backup validates
+        // the archive properly and produces the localized error.
+        let Ok(status) = backup::check_password(archive, current.as_deref()) else {
+            return Ok(current);
+        };
+        match status {
+            ArchivePassword::NotNeeded | ArchivePassword::Ok => return Ok(current),
+            ArchivePassword::Required | ArchivePassword::Wrong => {
+                if !password_prompt::is_interactive() {
+                    return Ok(current);
+                }
+                if status == ArchivePassword::Wrong {
+                    eprintln!("{}", loc.t("backup.err.wrong_password"));
+                }
+                match password_prompt::read_password(loc.t("cli.restore.password_prompt"))? {
+                    Some(entered) => current = Some(entered),
+                    // Cancelled: hand back what we had, so the refusal is the
+                    // regular localized one rather than a bare exit.
+                    None => return Ok(current),
+                }
+            }
+        }
+    }
+    Ok(current)
+}
+
 /// CLI: restoring from a backup (transactionally, with a pre-restore copy and a
 /// rollback on failure). Output goes to stdout/stderr (the TUI isn't running).
-fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()> {
+fn run_restore(
+    paths: &Paths,
+    archive: &Path,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
-    let fs_root = config_fs_root(paths);
+    let cfg = backup_config(paths);
+    let password = resolve_restore_password(
+        archive,
+        effective_password(password, cfg.stored_password),
+        loc,
+    )?;
 
     // Warn if the backup was made by a newer version of the app: the data is intact, but
     // the current version might refuse to open it (downgrade guard, ADR 0006). We swallow
@@ -325,8 +411,15 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
         );
     }
 
-    // Err only before any destructive action (missing file / corrupt / unsafe).
-    let outcome = backup::restore_backup(paths, archive, fs_root.as_deref(), loc)?;
+    // Err only before any destructive action (missing file / corrupt / unsafe /
+    // missing or wrong password).
+    let outcome = backup::restore_backup(
+        paths,
+        archive,
+        cfg.fs_root.as_deref(),
+        password.as_deref(),
+        loc,
+    )?;
 
     match outcome {
         RestoreOutcome::Restored { pre_restore } => {
@@ -578,6 +671,32 @@ fn apply_env_overrides(config: &mut AppConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Precedence for the run's one effective password: the argument wins over
+    /// the stored setting, and an empty value means "no password" from either
+    /// source (docs/history/backup-password.md §4 F8).
+    #[test]
+    fn effective_password_prefers_the_argument_then_the_setting() {
+        let arg = || Some("from-arg".to_string());
+        let stored = || Some("from-settings".to_string());
+        assert_eq!(
+            effective_password(arg(), stored()).as_deref(),
+            Some("from-arg")
+        );
+        assert_eq!(
+            effective_password(None, stored()).as_deref(),
+            Some("from-settings")
+        );
+        assert_eq!(effective_password(arg(), None).as_deref(), Some("from-arg"));
+        assert_eq!(effective_password(None, None), None);
+        // An empty password is "no password", not an empty-string key — from
+        // either source, so clearing the setting really returns to plain archives.
+        assert_eq!(effective_password(Some(String::new()), None), None);
+        assert_eq!(effective_password(None, Some(String::new())), None);
+        // An explicitly empty argument overrides a stored password: that is how
+        // one makes a deliberately unencrypted copy without clearing the setting.
+        assert_eq!(effective_password(Some(String::new()), stored()), None);
+    }
 
     #[test]
     fn cli_lang_prefers_settings_then_resolved_default() {

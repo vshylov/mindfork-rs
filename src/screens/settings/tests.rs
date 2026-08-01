@@ -2337,6 +2337,55 @@ fn api_key_field_shows_status_in_cloud_modes_only() {
     assert!(!set.contains("sk-"));
 }
 
+/// The backup password behaves exactly like an API key: a status instead of the
+/// value, an empty masked editor, a commit as its own intent, and `Del` to clear
+/// it. Spec §12.3.
+#[test]
+fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Data);
+    goto_field(&mut s, FieldId::BackupPassword);
+
+    let value = |s: &SettingsScreen| {
+        s.fields()
+            .into_iter()
+            .find(|f| f.id == FieldId::BackupPassword)
+            .map(|f| match f.kind {
+                FieldKind::Text(v) => v,
+                _ => panic!("the backup password should be a text field"),
+            })
+            .expect("the field exists in the Data section")
+    };
+    let unset = value(&s);
+    s.set_backup_password_present(true);
+    assert_ne!(unset, value(&s), "the status doesn't follow the flag");
+
+    // Editing opens empty and masked — a stored password can't be shown.
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s.editor.as_ref().expect("the editor is open");
+    assert_eq!(editor.input.text(), "");
+    assert!(editor.input.is_masked());
+
+    for c in "hunter2".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SetBackupPassword("hunter2".into()))
+    );
+    // The secret never reaches the screen's config.
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(!json.contains("hunter2"), "the password leaked: {json}");
+
+    // `Del` clears a stored password, and is a no-op when there is none.
+    assert_eq!(
+        s.handle_key(key(KeyCode::Delete)),
+        Some(SettingsIntent::SetBackupPassword(String::new()))
+    );
+    s.set_backup_password_present(false);
+    assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+}
+
 /// Editing the key field opens an **empty** masked editor (a stored key
 /// can't be shown), and the commit goes as a separate intent — not into the screen's config.
 #[test]

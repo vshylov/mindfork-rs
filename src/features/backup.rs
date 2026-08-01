@@ -32,6 +32,25 @@
 //! saved into `backups/` (a pre-restore copy), and only then is the root
 //! cleared and the given archive unpacked. If unpacking fails and a
 //! pre-restore copy was created, a rollback to it is performed. See spec §12.3.
+//!
+//! **The archive can be password-protected** (spec §12.3): every data entry is
+//! encrypted with WinZip AES-256, so a backup that leaves the machine is useless
+//! without the password. `manifest.json` is deliberately left **unencrypted** —
+//! it holds no user data, and keeping it readable lets the "this backup is from a
+//! newer version" warning work without a password. Two consequences worth
+//! knowing, both measured (docs/history/backup-password.md §1):
+//!
+//! * a password handed to an **unencrypted** archive is discarded by the zip
+//!   layer, so restoring either kind needs no detection branch;
+//! * the password is verified when an entry is **opened**, not after reading it,
+//!   so [`validate_archive`] rejects a wrong password *before* the destructive
+//!   phase — the transactional guarantee above survives.
+//!
+//! What this does **not** protect: entry names, sizes and the directory
+//! structure are visible without the password (ZIP AES encrypts content only),
+//! and the key derivation is fixed by the format at PBKDF2-HMAC-SHA1/1000, which
+//! is weak against offline brute force of a short password — hence the settings
+//! hint asking for a passphrase. See docs/history/backup-password.md §2.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -42,7 +61,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{AesMode, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
@@ -154,18 +173,68 @@ pub enum RestoreOutcome {
     },
 }
 
+/// Whether an archive's encryption matches the password we hold — the question
+/// asked *before* anything destructive happens (and the one the CLI's password
+/// prompt loops on). See [`check_password`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchivePassword {
+    /// The archive isn't encrypted (any password we were given is irrelevant).
+    NotNeeded,
+    /// Encrypted, and the password opens it.
+    Ok,
+    /// Encrypted, and we have no password.
+    Required,
+    /// Encrypted, and the password we have is wrong.
+    Wrong,
+}
+
+/// Normalizes a password: an empty string means "no password" everywhere, so
+/// clearing the setting returns to plain archives (docs/history/backup-password.md §4 F8).
+fn normalize(password: Option<&str>) -> Option<&str> {
+    password.filter(|p| !p.is_empty())
+}
+
+/// Reports whether `password` opens `archive`, without unpacking anything.
+///
+/// Cheap: the AES layer validates the password when the entry is *opened* (a
+/// 2-byte verifier in its header), so this reads no content. `Err` only for an
+/// archive that can't be opened as a zip at all.
+pub fn check_password(archive: &Path, password: Option<&str>) -> Result<ArchivePassword> {
+    let password = normalize(password);
+    let mut zip = ZipArchive::new(File::open(archive)?)?;
+    // Which entries are encrypted — read first, so the immutable metadata borrow
+    // ends before the mutable decrypt attempt below.
+    let encrypted: Vec<usize> = (0..zip.len())
+        .filter(|&i| zip.by_index_raw(i).is_ok_and(|e| e.encrypted()))
+        .collect();
+    let Some(&first) = encrypted.first() else {
+        return Ok(ArchivePassword::NotNeeded);
+    };
+    let Some(password) = password else {
+        return Ok(ArchivePassword::Required);
+    };
+    // One entry is enough: every entry of one of our archives carries the same
+    // password, and a mixed foreign archive fails later with a clear error.
+    match zip.by_index_decrypt(first, password.as_bytes()) {
+        Ok(_) => Ok(ArchivePassword::Ok),
+        Err(_) => Ok(ArchivePassword::Wrong),
+    }
+}
+
 /// Creates a backup of user data.
 ///
 /// `output` — path to the archive to create (`None` → an auto-name in
 /// `backups/`). `level` — compression level `0..=9` (`0` → no compression,
 /// store). `fs_root` — the file-tool sandbox directory from the config
-/// (included only when it lies inside the data root). Returns the path to the
-/// created archive.
+/// (included only when it lies inside the data root). `password` — encrypts
+/// every data entry with AES-256 (`None`/empty → a plain archive). Returns the
+/// path to the created archive.
 pub fn create_backup(
     paths: &Paths,
     output: Option<PathBuf>,
     level: i64,
     fs_root: Option<&Path>,
+    password: Option<&str>,
     loc: &Locale,
 ) -> Result<PathBuf> {
     let out_path = match output {
@@ -177,7 +246,7 @@ pub fn create_backup(
     // files go in instead. The scratch file lives until the archive is written.
     let compact = compacted_db(paths, &out_path);
     let entries = gather_entries(paths, fs_root, compact.as_ref().map(TempDb::path), loc)?;
-    write_zip(&out_path, &entries, level, loc).with_context(|| {
+    write_zip(&out_path, &entries, level, normalize(password), loc).with_context(|| {
         loc.tf(
             "backup.ctx.create_archive",
             &[("path", &out_path.display().to_string())],
@@ -189,17 +258,24 @@ pub fn create_backup(
 /// Restores data from archive `archive`, replacing the current data.
 ///
 /// Returns `Err` only for an error **before** any destructive action (no
-/// file, a corrupted/unsafe archive). Once the replacement has started it
-/// always returns `Ok(RestoreOutcome)` describing the outcome (including a
-/// rollback). `fs_root` — the current sandbox (cleared if inside the root).
+/// file, a corrupted/unsafe archive, a missing or wrong password). Once the
+/// replacement has started it always returns `Ok(RestoreOutcome)` describing
+/// the outcome (including a rollback). `fs_root` — the current sandbox (cleared
+/// if inside the root).
+///
+/// `password` is the run's **one effective password**
+/// (docs/history/backup-password.md §4 F3): it both opens `archive` and encrypts the
+/// pre-restore copy, so the copy is never weaker than what the user asked for.
 pub fn restore_backup(
     paths: &Paths,
     archive: &Path,
     fs_root: Option<&Path>,
+    password: Option<&str>,
     loc: &Locale,
 ) -> Result<RestoreOutcome> {
+    let password = normalize(password);
     // 1. Validate the archive before any destructive action.
-    validate_archive(archive, loc).with_context(|| {
+    validate_archive(archive, password, loc).with_context(|| {
         loc.tf(
             "backup.ctx.validate",
             &[("path", &archive.display().to_string())],
@@ -213,6 +289,7 @@ pub fn restore_backup(
             Some(default_backup_path(paths, "pre-restore")),
             9,
             fs_root,
+            password,
             loc,
         )
         .with_context(|| loc.t("backup.ctx.pre_restore").to_string())?;
@@ -224,7 +301,7 @@ pub fn restore_backup(
     // 3. Clear + unpack.
     let attempt = (|| -> Result<()> {
         clear_user_data(paths, fs_root, loc)?;
-        extract_archive(paths, archive, loc)
+        extract_archive(paths, archive, password, loc)
     })();
 
     match attempt {
@@ -242,7 +319,7 @@ pub fn restore_backup(
             Some(backup) => {
                 let rollback = (|| -> Result<()> {
                     clear_user_data(paths, fs_root, loc)?;
-                    extract_archive(paths, backup, loc)
+                    extract_archive(paths, backup, password, loc)
                 })();
                 match rollback {
                     Ok(()) => Ok(RestoreOutcome::RolledBack {
@@ -443,8 +520,16 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
     Ok(())
 }
 
-/// Writes the archive from the entry list at the given compression level.
-fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Result<()> {
+/// Writes the archive from the entry list at the given compression level,
+/// encrypting the data entries when `password` is set (the manifest stays
+/// readable — see the module doc).
+fn write_zip(
+    out_path: &Path,
+    entries: &[Entry],
+    level: i64,
+    password: Option<&str>,
+    loc: &Locale,
+) -> Result<()> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             loc.tf(
@@ -462,12 +547,18 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
     let mut zip = ZipWriter::new(file);
 
     let level = level.clamp(0, 9);
-    let options = if level == 0 {
+    let plain = if level == 0 {
         SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
     } else {
         SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(level))
+    };
+    // Data entries: encrypted when a password is set. The manifest always uses
+    // `plain` — it carries no user data and stays readable without the password.
+    let options = match password {
+        Some(pw) => plain.with_aes_encryption(AesMode::Aes256, pw),
+        None => plain,
     };
 
     for e in entries {
@@ -484,7 +575,7 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
     // The schema-version manifest (metadata, not a user file) — written last.
     let manifest = serde_json::to_vec_pretty(&BackupManifest::current())
         .context("serializing backup manifest")?;
-    zip.start_file(MANIFEST_NAME, options)
+    zip.start_file(MANIFEST_NAME, plain)
         .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
     io::copy(&mut manifest.as_slice(), &mut zip)
         .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
@@ -494,9 +585,13 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
     Ok(())
 }
 
-/// Checks that the archive opens and all of its entries are safe relative
-/// paths (no `..`/absolute paths — zip-slip protection).
-fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
+/// Checks that the archive opens, that all of its entries are safe relative
+/// paths (no `..`/absolute paths — zip-slip protection), and that `password`
+/// actually opens it.
+///
+/// Runs **before** anything destructive, which is what makes a wrong password a
+/// clean refusal rather than a rollback.
+fn validate_archive(archive: &Path, password: Option<&str>, loc: &Locale) -> Result<()> {
     let file = File::open(archive).with_context(|| {
         loc.tf(
             "backup.ctx.open_archive",
@@ -505,7 +600,9 @@ fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
     })?;
     let mut zip = ZipArchive::new(file).with_context(|| loc.t("backup.ctx.corrupt").to_string())?;
     for i in 0..zip.len() {
-        let entry = zip.by_index(i)?;
+        // `by_index_raw` doesn't decrypt — the names of an encrypted archive are
+        // readable, so zip-slip is still checked before the password question.
+        let entry = zip.by_index_raw(i)?;
         if entry.enclosed_name().is_none() {
             bail!(
                 "{}",
@@ -513,12 +610,26 @@ fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
             );
         }
     }
-    Ok(())
+    match check_password(archive, password)
+        .with_context(|| loc.t("backup.ctx.corrupt").to_string())?
+    {
+        ArchivePassword::NotNeeded | ArchivePassword::Ok => Ok(()),
+        ArchivePassword::Required => bail!("{}", loc.t("backup.err.password_required")),
+        ArchivePassword::Wrong => bail!("{}", loc.t("backup.err.wrong_password")),
+    }
 }
 
 /// Unpacks the archive into the data root (entry names are already
 /// considered safe — `enclosed_name` rejects escaping outside the root).
-fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
+///
+/// A `password` given for an unencrypted archive is harmlessly discarded by the
+/// zip layer, so one code path restores both kinds.
+fn extract_archive(
+    paths: &Paths,
+    archive: &Path,
+    password: Option<&str>,
+    loc: &Locale,
+) -> Result<()> {
     let file = File::open(archive).with_context(|| {
         loc.tf(
             "backup.ctx.open_archive",
@@ -528,7 +639,10 @@ fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
     let mut zip =
         ZipArchive::new(file).with_context(|| loc.t("backup.ctx.read_archive").to_string())?;
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i)?;
+        let mut entry = match password {
+            Some(pw) => zip.by_index_decrypt(i, pw.as_bytes())?,
+            None => zip.by_index(i)?,
+        };
         let rel = entry.enclosed_name().ok_or_else(|| {
             anyhow!(
                 "{}",
@@ -750,7 +864,7 @@ mod tests {
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
         assert!(out.starts_with(paths.backups_dir()));
         let names = archive_names(&out);
 
@@ -786,7 +900,7 @@ mod tests {
         fs::create_dir_all(&inside).unwrap();
         fs::write(inside.join("note.txt"), b"hi").unwrap();
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, Some(&inside), ru()).unwrap();
+        let out = create_backup(&paths, None, 9, Some(&inside), None, ru()).unwrap();
         assert!(archive_names(&out).contains(&"sandbox/note.txt".to_string()));
 
         // Outside the root — not included.
@@ -795,7 +909,7 @@ mod tests {
         fs::write(outside.path().join("secret.txt"), b"no").unwrap();
         seed_data(outside_root.path());
         let paths2 = Paths::with_root(outside_root.path());
-        let out2 = create_backup(&paths2, None, 0, Some(outside.path()), ru()).unwrap();
+        let out2 = create_backup(&paths2, None, 0, Some(outside.path()), None, ru()).unwrap();
         assert!(
             !archive_names(&out2)
                 .iter()
@@ -811,7 +925,7 @@ mod tests {
         fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
         let src_paths = Paths::with_root(src.path());
         let archive_path = src.path().join("backups").join("snap.zip");
-        create_backup(&src_paths, Some(archive_path.clone()), 9, None, ru()).unwrap();
+        create_backup(&src_paths, Some(archive_path.clone()), 9, None, None, ru()).unwrap();
 
         // Target with different data.
         let dst = tempfile::tempdir().unwrap();
@@ -820,7 +934,7 @@ mod tests {
         fs::write(dst.path().join("chats").join("stale.json"), b"{}").unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
-        let outcome = restore_backup(&dst_paths, &archive_path, None, ru()).unwrap();
+        let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => {
                 // The prior data existed, so a pre-restore copy was created.
@@ -849,7 +963,7 @@ mod tests {
         let bad = dst.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
 
-        let err = restore_backup(&paths, &bad, None, ru());
+        let err = restore_backup(&paths, &bad, None, None, ru());
         assert!(
             err.is_err(),
             "a corrupted archive should give Err before any cleanup"
@@ -869,13 +983,14 @@ mod tests {
             Some(archive.clone()),
             9,
             None,
+            None,
             ru(),
         )
         .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => assert!(pre_restore.is_none()),
             _ => panic!("expected a Restored with no pre-restore"),
@@ -911,7 +1026,7 @@ mod tests {
         fs::create_dir_all(dst.path().join("blocker")).unwrap();
 
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::RolledBack { pre_restore, .. } => assert!(pre_restore.exists()),
             _ => panic!("expected RolledBack on an unpack failure"),
@@ -930,12 +1045,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bad = dir.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
-        let en = validate_archive(&bad, locale(Lang::En))
+        let en = validate_archive(&bad, None, locale(Lang::En))
             .unwrap_err()
             .to_string();
         assert!(en.contains("corrupted"), "{en}");
         assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
-        let r = validate_archive(&bad, ru()).unwrap_err().to_string();
+        let r = validate_archive(&bad, None, ru()).unwrap_err().to_string();
         assert!(r.contains("повреждён"), "{r}");
     }
 
@@ -944,9 +1059,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 0, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 0, None, None, ru()).unwrap();
         // The archive is valid and opens.
-        validate_archive(&out, ru()).unwrap();
+        validate_archive(&out, None, ru()).unwrap();
     }
 
     #[test]
@@ -954,7 +1069,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
 
         assert!(archive_names(&out).contains(&MANIFEST_NAME.to_string()));
         let m = read_manifest(&out)
@@ -1010,7 +1125,7 @@ mod tests {
         let live_len = fs::metadata(dir.path().join("data.db")).unwrap().len();
 
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db".to_string()), "{names:?}");
@@ -1050,7 +1165,7 @@ mod tests {
         fs::write(dir.path().join("data.db-wal"), b"wal bytes").unwrap();
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db-wal".to_string()), "{names:?}");
@@ -1082,7 +1197,7 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
 
         let restored = dst.path().join("data.db");
@@ -1106,13 +1221,14 @@ mod tests {
             Some(archive.clone()),
             0,
             None,
+            None,
             ru(),
         )
         .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         assert_eq!(fs::read(dst.path().join("data.db")).unwrap(), b"SQLITE");
     }
@@ -1121,14 +1237,280 @@ mod tests {
     fn restore_does_not_extract_manifest_into_root() {
         let src = tempfile::tempdir().unwrap();
         seed_data(src.path());
-        let out = create_backup(&Paths::with_root(src.path()), None, 9, None, ru()).unwrap();
+        let out = create_backup(&Paths::with_root(src.path()), None, 9, None, None, ru()).unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &out, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &out, None, None, ru()).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         // Data was restored, but the internal manifest didn't land in the root.
         assert!(dst.path().join("settings.json").exists());
         assert!(!dst.path().join(MANIFEST_NAME).exists());
+    }
+
+    // ---------- password-protected archives (spec §12.3) ----------
+
+    const PW: &str = "correct horse battery staple";
+
+    /// The point of the feature: the data is unreadable without the password.
+    /// Asserted on the archive's **bytes**, not on an API refusal — a refusal
+    /// would still pass if the content were sitting there in the clear.
+    #[test]
+    fn an_encrypted_backup_does_not_carry_readable_data() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        fs::write(
+            dir.path().join("settings.json"),
+            b"{\"secret\":\"HUNTER2-MARKER\"}",
+        )
+        .unwrap();
+        let paths = Paths::with_root(dir.path());
+
+        let out = create_backup(&paths, None, 9, None, Some(PW), ru()).unwrap();
+
+        // Level 0 (store) so the marker would be literally present if unencrypted —
+        // deflate could otherwise hide it and make this test lie.
+        let plain = create_backup(
+            &paths,
+            Some(dir.path().join("plain.zip")),
+            0,
+            None,
+            None,
+            ru(),
+        )
+        .unwrap();
+        let has_marker = |p: &Path| {
+            fs::read(p)
+                .unwrap()
+                .windows(15)
+                .any(|w| w == b"HUNTER2-MARKER\"".get(..15).unwrap_or(b"HUNTER2-MARKER"))
+        };
+        assert!(has_marker(&plain), "the control archive should be readable");
+        assert!(
+            !has_marker(&out),
+            "plaintext leaked into the encrypted archive"
+        );
+        assert_eq!(check_password(&out, Some(PW)).unwrap(), ArchivePassword::Ok);
+    }
+
+    /// The four combinations of (archive encrypted?, password given?). The third
+    /// row is the requirement's own wording: an unencrypted backup restores while
+    /// a password is configured.
+    #[test]
+    fn password_matrix_covers_both_kinds_of_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let enc = create_backup(
+            &paths,
+            Some(dir.path().join("enc.zip")),
+            9,
+            None,
+            Some(PW),
+            ru(),
+        )
+        .unwrap();
+        let plain = create_backup(
+            &paths,
+            Some(dir.path().join("plain.zip")),
+            9,
+            None,
+            None,
+            ru(),
+        )
+        .unwrap();
+
+        use ArchivePassword::*;
+        for (archive, password, expected) in [
+            (&enc, Some(PW), Ok),
+            (&enc, None, Required),
+            (&enc, Some("wrong"), Wrong),
+            (&plain, Some(PW), NotNeeded),
+            (&plain, None, NotNeeded),
+        ] {
+            assert_eq!(
+                check_password(archive, password).unwrap(),
+                expected,
+                "archive={} password={password:?}",
+                archive.display()
+            );
+        }
+    }
+
+    /// Round trip: an encrypted archive restores with the password, and an
+    /// unencrypted one restores *while a password is held* — the second half is
+    /// what the user asked for and would silently break if the password were
+    /// pushed at the zip layer unconditionally in some future refactor.
+    #[test]
+    fn restore_accepts_an_encrypted_and_an_unencrypted_archive() {
+        for password in [Some(PW), None] {
+            let src = tempfile::tempdir().unwrap();
+            seed_data(src.path());
+            fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
+            let archive = src.path().join("snap.zip");
+            create_backup(
+                &Paths::with_root(src.path()),
+                Some(archive.clone()),
+                9,
+                None,
+                password,
+                ru(),
+            )
+            .unwrap();
+
+            let dst = tempfile::tempdir().unwrap();
+            let paths = Paths::with_root(dst.path());
+            // The restore always holds the password — for the plain archive it
+            // must simply be ignored.
+            let outcome = restore_backup(&paths, &archive, None, Some(PW), ru()).unwrap();
+            assert!(
+                matches!(outcome, RestoreOutcome::Restored { .. }),
+                "password={password:?}"
+            );
+            assert_eq!(
+                fs::read(dst.path().join("settings.json")).unwrap(),
+                b"{\"v\":42}",
+                "password={password:?}"
+            );
+            assert!(dst.path().join("chats").join("a.json").exists());
+        }
+    }
+
+    /// A wrong or missing password must be refused **before** anything is
+    /// deleted — the transactional guarantee. Without the pre-flight check the
+    /// data would already be cleared by the time unpacking failed.
+    #[test]
+    fn a_bad_password_is_refused_without_touching_data() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive = src.path().join("enc.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive.clone()),
+            9,
+            None,
+            Some(PW),
+            ru(),
+        )
+        .unwrap();
+
+        for password in [None, Some("wrong")] {
+            let dst = tempfile::tempdir().unwrap();
+            seed_data(dst.path());
+            fs::write(dst.path().join("settings.json"), b"{\"from\":\"original\"}").unwrap();
+            let paths = Paths::with_root(dst.path());
+
+            let err = restore_backup(&paths, &archive, None, password, ru());
+            assert!(err.is_err(), "password={password:?} should be refused");
+            // Nothing was cleared, and no pre-restore copy was even made.
+            assert_eq!(
+                fs::read(dst.path().join("settings.json")).unwrap(),
+                b"{\"from\":\"original\"}"
+            );
+            assert!(dst.path().join("chats").join("a.json").exists());
+            assert!(
+                fs::read_dir(paths.backups_dir()).is_ok_and(|mut d| d.next().is_none()),
+                "a refused restore should not leave a pre-restore copy"
+            );
+        }
+    }
+
+    /// The manifest stays readable without the password, so the "backup from a
+    /// newer version" warning still works on an encrypted archive.
+    #[test]
+    fn manifest_is_readable_without_the_password() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let out =
+            create_backup(&Paths::with_root(dir.path()), None, 9, None, Some(PW), ru()).unwrap();
+
+        let m = read_manifest(&out)
+            .unwrap()
+            .expect("the manifest should be readable with no password");
+        assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"));
+        // …while the data entries around it are genuinely encrypted.
+        assert_eq!(
+            check_password(&out, None).unwrap(),
+            ArchivePassword::Required
+        );
+    }
+
+    /// An empty password means "no encryption" — clearing the setting returns to
+    /// plain archives rather than encrypting with an empty string.
+    #[test]
+    fn an_empty_password_produces_a_plain_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let out =
+            create_backup(&Paths::with_root(dir.path()), None, 9, None, Some(""), ru()).unwrap();
+        assert_eq!(
+            check_password(&out, None).unwrap(),
+            ArchivePassword::NotNeeded
+        );
+    }
+
+    /// The pre-restore copy is encrypted with the run's effective password, so
+    /// restoring an encrypted backup can't quietly write the old data out in the
+    /// clear beside it (docs/history/backup-password.md §4 F3).
+    #[test]
+    fn the_pre_restore_copy_inherits_the_password() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive = src.path().join("enc.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive.clone()),
+            9,
+            None,
+            Some(PW),
+            ru(),
+        )
+        .unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        seed_data(dst.path());
+        let paths = Paths::with_root(dst.path());
+        let RestoreOutcome::Restored {
+            pre_restore: Some(pre),
+        } = restore_backup(&paths, &archive, None, Some(PW), ru()).unwrap()
+        else {
+            panic!("expected a Restored with a pre-restore copy");
+        };
+        assert_eq!(
+            check_password(&pre, None).unwrap(),
+            ArchivePassword::Required
+        );
+        assert_eq!(check_password(&pre, Some(PW)).unwrap(), ArchivePassword::Ok);
+    }
+
+    /// Corruption of an encrypted entry is caught rather than silently yielding
+    /// wrong data: the AES layer authenticates the ciphertext.
+    #[test]
+    fn a_corrupted_encrypted_entry_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let out =
+            create_backup(&Paths::with_root(dir.path()), None, 0, None, Some(PW), ru()).unwrap();
+
+        let mut bytes = fs::read(&out).unwrap();
+        // Inside the first entry's payload: past its local header, before the
+        // second entry's signature.
+        let second = (4..bytes.len() - 4)
+            .find(|&i| &bytes[i..i + 4] == b"PK\x03\x04")
+            .expect("more than one entry");
+        bytes[second - 5] ^= 0xff;
+        let corrupt = dir.path().join("corrupt.zip");
+        fs::write(&corrupt, &bytes).unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        // Either the pre-flight check or the extraction rejects it — what must
+        // never happen is a silent success with mangled content.
+        let refused = match restore_backup(&paths, &corrupt, None, Some(PW), ru()) {
+            Err(_) => true,
+            Ok(RestoreOutcome::Restored { .. }) => false,
+            Ok(_) => true,
+        };
+        assert!(refused, "corrupted ciphertext was accepted");
     }
 }

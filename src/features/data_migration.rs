@@ -133,8 +133,22 @@ fn run_with(
     // One backup before any write. The sandbox's fs_root isn't included (the config may itself
     // need migrating — reading it for fs_root would be premature; the critical
     // settings/profiles/chats/db data is already captured by the backup). A failure → the migration is cancelled.
+    //
+    // The stored backup password *is* read, though (docs/history/backup-password.md §4 F4):
+    // a setting that says "my backups are encrypted" must not have an exception
+    // that quietly writes a plaintext copy of everything. Safe to read ahead of
+    // the migration — the secrets list is additive and has never been migrated.
     let backup_path = backup::default_backup_path(paths, "pre-migrate");
-    backup::create_backup(paths, Some(backup_path.clone()), 9, None, loc).map_err(|e| {
+    let password = stored_backup_password(paths);
+    backup::create_backup(
+        paths,
+        Some(backup_path.clone()),
+        9,
+        None,
+        password.as_deref(),
+        loc,
+    )
+    .map_err(|e| {
         anyhow!(
             "{}",
             loc.tf("migrate.err.backup_failed", &[("err", &format!("{e:#}"))])
@@ -168,6 +182,19 @@ fn run_with(
     }
 
     Ok(())
+}
+
+/// The backup password stored in the settings, read straight from the raw JSON.
+///
+/// Runs before storage opens and before any migration, so the typed `AppConfig`
+/// isn't available — `api_keys` is pulled out of the `Value` instead. Every
+/// failure (no file, corrupt JSON, no entry, a foreign machine's entry) reads as
+/// "no password", which is the pre-existing behaviour.
+fn stored_backup_password(paths: &Paths) -> Option<String> {
+    let value: Value = json::read_json(&paths.settings_file()).ok()??;
+    let entries: Vec<crate::shared::secrets::ApiKeyEntry> =
+        serde_json::from_value(value.get("api_keys")?.clone()).ok()?;
+    crate::shared::secrets::stored_key(&entries, crate::shared::secrets::BACKUP_PASSWORD_KEY)
 }
 
 /// Assesses one file: `Ok(None)` — no file, or already current; `Ok(Some)` — into the plan;

@@ -13,6 +13,7 @@ pub mod data_migration;
 pub mod doc_extract;
 pub mod file_command;
 pub mod import;
+pub mod password_prompt;
 pub mod profiles;
 pub mod rag_command;
 pub mod rag_ingest;

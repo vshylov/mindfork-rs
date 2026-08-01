@@ -533,6 +533,7 @@ impl Orchestrator {
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
             AppCommand::SetApiKey { provider, key } => self.handle_set_api_key(provider, key),
+            AppCommand::SetBackupPassword(password) => self.handle_set_backup_password(password),
         }
         false
     }
@@ -666,6 +667,11 @@ impl Orchestrator {
         .into_iter()
         .filter(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()).is_some())
         .collect();
+        let backup_password_present = crate::shared::secrets::stored_key(
+            &self.config.api_keys,
+            crate::shared::secrets::BACKUP_PASSWORD_KEY,
+        )
+        .is_some();
         // Secrets never leave the backend for the UI, not even as ciphertext:
         // the config snapshot goes out without them (`handle_update_config`
         // holds onto them separately). See docs/research/api-key-storage.md.
@@ -677,6 +683,7 @@ impl Orchestrator {
             language_locked,
             mcp: self.mcp.snapshot(),
             api_keys_present,
+            backup_password_present,
         });
     }
 

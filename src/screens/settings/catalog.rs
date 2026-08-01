@@ -36,6 +36,7 @@ impl SettingsScreen {
             language_locked,
             mcp: Default::default(),
             api_keys_present: Vec::new(),
+            backup_password_present: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -116,6 +117,13 @@ impl SettingsScreen {
         self.api_keys_present = present;
     }
 
+    /// Updates the "a backup password is stored on this machine" flag (from the
+    /// `Settings` snapshot). Like the API keys, the password itself never reaches
+    /// the UI — only its presence. See `shared::secrets`, spec §12.3.
+    pub fn set_backup_password_present(&mut self, present: bool) {
+        self.backup_password_present = present;
+    }
+
     /// Whether the provider's key is stored on this machine (for the "API key" field's status).
     pub(super) fn api_key_present(&self, provider: Option<CloudProvider>) -> bool {
         provider.is_some_and(|p| self.api_keys_present.contains(&p))
@@ -143,6 +151,7 @@ impl SettingsScreen {
             Section::Sampling => self.sampling_fields(),
             Section::Tools => self.tool_fields(),
             Section::Memory => self.memory_fields(),
+            Section::Data => self.data_fields(),
             Section::Profiles => self.profile_fields(),
             Section::Interface => self.interface_fields(),
         }
@@ -687,6 +696,24 @@ impl SettingsScreen {
     }
 
     /// The "Memory" section: knowledge-base chunking (RAG), notes, "self-model".
+    /// The "Data" section: settings about the data root itself rather than about
+    /// the agent — currently the backup password (spec §12.3). Its own section
+    /// because none of the others is about stored data, and a security setting
+    /// filed under an unrelated heading is a setting nobody finds.
+    pub(super) fn data_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
+        grouped(
+            loc.t("ui.settings.group.backup"),
+            vec![secret_row(
+                FieldId::BackupPassword,
+                self.backup_password_present,
+                loc.t("ui.settings.field.backup_password"),
+                "ui.settings.desc.backup_password",
+                loc,
+            )],
+        )
+    }
+
     pub(super) fn memory_fields(&self) -> Vec<FieldRow> {
         let loc = self.loc();
         let mut rows = grouped(

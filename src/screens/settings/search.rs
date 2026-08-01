@@ -67,6 +67,9 @@ impl SettingsScreen {
                     self.memory_fields(),
                     loc,
                 ),
+                Section::Data => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.data_fields(), loc)
+                }
                 Section::Interface => collect_hits(
                     &mut out,
                     sec_idx,

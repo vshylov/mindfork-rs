@@ -169,6 +169,11 @@ impl SettingsScreen {
                     key: String::new(),
                 });
         }
+        if id == FieldId::BackupPassword {
+            return self
+                .backup_password_present
+                .then(|| SettingsIntent::SetBackupPassword(String::new()));
+        }
         let cur_kind = self
             .fields()
             .into_iter()

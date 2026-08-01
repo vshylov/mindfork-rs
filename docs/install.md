@@ -161,7 +161,41 @@ mindfork backup -o D:\copy.zip -c 6     # path and compression level 0..9 (0 —
 
 # Restore from a copy.
 mindfork restore D:\copy.zip
+
+# Password-protected copy (AES-256). Without -p the password from the settings
+# is used, if one is set there.
+mindfork backup -o D:\copy.zip --password "a long passphrase"
+mindfork restore D:\copy.zip --password "a long passphrase"
 ```
+
+**A password can also be set once in the settings** — the "Data" section, the
+"Backup password" field. Every backup is then encrypted with it, including the
+copies the app makes on its own (the pre-restore copy, and the one taken before a
+data-format migration). The password is stored the same way as a cloud API key: it
+is encrypted and **bound to this computer**, cannot be shown again, and `Del`
+clears it. `--password` overrides the stored one; an empty value means "no
+password", so `--password ""` makes a deliberately unencrypted copy without
+touching the setting.
+
+Restoring accepts both kinds of archive — encrypted with that password, or not
+encrypted at all — so nothing has to be switched when restoring an older copy. A
+missing or wrong password is refused **before** any data is replaced, and in a
+terminal `restore` simply asks for it (the input is not echoed).
+
+Three things worth knowing before relying on it:
+
+- **Write the password down somewhere other than the copy.** It does not decrypt
+  on another computer (that is the point of binding it), so an archive whose
+  password lived only in the settings of a machine that died cannot be restored.
+- **Use a long passphrase.** The zip format fixes the key-derivation function to a
+  weak one, so a short or dictionary password can be brute-forced offline by
+  whoever obtains the file.
+- **File names and sizes stay visible** without the password — the zip format
+  encrypts the *contents* of the entries. Chat titles and messages are inside the
+  encrypted files; chat file names are UUIDs.
+
+The archive is standard: 7-Zip, WinZip and the like open it with the password, so
+files can be pulled out by hand without the application.
 
 The archive includes: `chats/`, `dictionaries/`, `locales/`, `data.db`,
 `personal_dictionary.txt`, `profiles.json`, `settings.json`, all `*.bak` files, and

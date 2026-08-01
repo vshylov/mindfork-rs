@@ -379,7 +379,7 @@ impl SettingsScreen {
                         // Secret field: masking (`•`) + an **empty** seed — a stored
                         // key can't be shown (not even the screen has it); editing =
                         // entering it again. See docs/research/api-key-storage.md.
-                        if is_api_key_field(f.id) {
+                        if is_secret_field(f.id) {
                             input.set_mask(true);
                         }
                         // Don't show the "(all)"/"—" placeholders as a value.
@@ -466,7 +466,7 @@ impl SettingsScreen {
         match id {
             // Secret field: the row's value is a status ("configured"), not the key;
             // the editor always opens empty (a stored key can't be shown).
-            _ if is_api_key_field(id) => String::new(),
+            _ if is_secret_field(id) => String::new(),
             FieldId::IDicts => self.config.interface.selected_dictionaries.join(", "),
             // "—" for empty numbers — the seed is empty.
             _ if shown == "—" => String::new(),
@@ -627,6 +627,9 @@ impl SettingsScreen {
                 provider,
                 key: trimmed.to_string(),
             });
+        }
+        if id == FieldId::BackupPassword {
+            return Some(SettingsIntent::SetBackupPassword(trimmed.to_string()));
         }
         match id {
             // Sampling parameters — their own descriptor (`SamplingParam`), not in the table.

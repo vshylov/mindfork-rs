@@ -15,6 +15,21 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Backups can be password-protected.** Give a password with
+  `mindfork backup --password …`, or set it once in settings → "Data" → "Backup
+  password" and every copy is encrypted with it — including the ones the app
+  makes by itself before a restore or a data-format update. The archive uses
+  standard AES-256, so 7-Zip or WinZip still open it with the password if you
+  ever need the files without the application. Restoring accepts an encrypted
+  copy *and* an old unencrypted one, with nothing to switch; a wrong password is
+  refused before anything is replaced, and in a terminal `mindfork restore`
+  simply asks for it. The stored password is encrypted and tied to this
+  computer, just like a cloud API key — so **write it down somewhere else**: it
+  does not move to another machine, and without it an encrypted copy cannot be
+  restored. Use a long passphrase (the zip format's password protection is weak
+  against a short one), and note that file names and sizes inside the archive
+  stay visible — it is their contents that are encrypted.
+
 - **`Ctrl+Z` on the settings screen takes an edit back** (and `Ctrl+Y` re-applies
   it). Settings are saved the moment you change them, so until now a wrong
   keystroke was final — you had to remember what it was and set it back by hand.

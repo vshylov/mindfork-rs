@@ -178,6 +178,10 @@ pub enum AppCommand {
         provider: crate::shared::config::CloudProvider,
         key: String,
     },
+    /// Store/clear the backup password for this machine (spec §12.3). Separate
+    /// from `UpdateConfig` for the same reason as [`AppCommand::SetApiKey`]: the
+    /// secret is encrypted by the orchestrator and never travels in the snapshot.
+    SetBackupPassword(String),
     /// Shut down (the orchestrator stops).
     Quit,
 }
@@ -251,6 +255,9 @@ pub enum AppEvent {
         language_locked: Vec<uuid::Uuid>,
         mcp: crate::features::tools::mcp::McpSnapshot,
         api_keys_present: Vec<crate::shared::config::CloudProvider>,
+        /// Whether a backup password is stored on this machine (spec §12.3) —
+        /// the presence flag only, never the value.
+        backup_password_present: bool,
     },
     /// The role names to show in the feed — the active chat's profile
     /// `character_names` (spec §5.1). Sent on chat activation and whenever the

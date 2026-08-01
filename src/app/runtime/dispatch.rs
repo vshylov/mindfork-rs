@@ -81,12 +81,14 @@ pub(super) fn apply_event(
             language_locked,
             mcp,
             api_keys_present,
+            backup_password_present,
         } => {
             match active {
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
                     settings.set_mcp(mcp.clone());
                     settings.set_api_keys_present(api_keys_present.clone());
+                    settings.set_backup_password_present(backup_password_present);
                 }
                 // The theme/compatibility mode/UI language may have changed — refresh the
                 // palette and locale of open overlay screens (list/self-model) in one broadcast.
@@ -96,7 +98,14 @@ pub(super) fn apply_event(
                     crate::shared::i18n::locale(config.interface.language),
                 ),
             }
-            screen.set_settings(*config, profiles, language_locked, mcp, api_keys_present);
+            screen.set_settings(
+                *config,
+                profiles,
+                language_locked,
+                mcp,
+                api_keys_present,
+                backup_password_present,
+            );
         }
         // Always applied to the chat screen (like `ChatList`): the names must be
         // current whether or not the chat is the visible screen right now.
@@ -309,7 +318,7 @@ pub(super) fn dispatch(
         ChatIntent::TtsPause => AppCommand::TtsPause,
         ChatIntent::TtsResume => AppCommand::TtsResume,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles, language_locked, mcp, api_keys)) =
+            if let Some((config, profiles, language_locked, mcp, api_keys, backup_password)) =
                 screen.settings_snapshot()
             {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
@@ -321,6 +330,7 @@ pub(super) fn dispatch(
                 settings.set_mcp(mcp);
                 // Which keys are stored on this machine (the "API key" status field).
                 settings.set_api_keys_present(api_keys);
+                settings.set_backup_password_present(backup_password);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
@@ -479,6 +489,7 @@ pub(super) fn dispatch_settings(
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         SettingsIntent::ConfirmMcpCatalog(server) => AppCommand::ConfirmMcpCatalog(server),
         SettingsIntent::SetApiKey { provider, key } => AppCommand::SetApiKey { provider, key },
+        SettingsIntent::SetBackupPassword(password) => AppCommand::SetBackupPassword(password),
     };
     let _ = cmd_tx.send(command);
     false
