@@ -261,15 +261,40 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
+/// How a new attachment of `est` estimated tokens should reach the model, given
+/// what the chat already spends inline (`used`) and the budget.
+///
+/// A pure function rather than a rule written twice: the orchestrator decides
+/// this for `/file attach`, and a tool that produces its own attachment (a video
+/// transcript, docs/youtube-transcript.md §3 F2) has to reach the same answer —
+/// it tells the model what it did before the orchestrator persists it. Attaching
+/// never *fails* on size; over the budget simply means by reference.
+pub fn decide_mode(
+    est: usize,
+    used: usize,
+    cfg: &crate::shared::config::AttachmentSettings,
+) -> AttachMode {
+    if est <= cfg.max_file_tokens && used + est <= cfg.max_total_tokens {
+        AttachMode::Inline
+    } else {
+        AttachMode::ByReference
+    }
+}
+
 /// Total estimated tokens of the attachments rendered **inline** — the figure
 /// the **budget** is measured against (`max_total_tokens` governs how much full
 /// text a chat may carry; by-reference excerpts are bounded and small, so they
 /// don't consume that budget). For what the user is shown, use
 /// [`prompt_tokens`].
-pub fn inline_tokens(attachments: &[Attachment]) -> usize {
+///
+/// `replacing` names the source about to be **replaced**, whose cost therefore
+/// does not count: attaching the same file twice drops the old copy, and
+/// counting it against the new one would push a re-attach by reference for no
+/// reason. Pass `""` when nothing is being replaced.
+pub fn inline_tokens_excluding(attachments: &[Attachment], source: &str) -> usize {
     attachments
         .iter()
-        .filter(|a| a.mode == AttachMode::Inline)
+        .filter(|a| a.source != source && a.mode == AttachMode::Inline)
         .map(|a| a.est_tokens)
         .sum()
 }
@@ -350,13 +375,30 @@ mod tests {
     }
 
     #[test]
-    fn inline_tokens_ignores_by_reference() {
+    fn inline_tokens_ignores_by_reference_and_the_source_being_replaced() {
         let list = vec![
             att("a.txt", "abcdefgh", AttachMode::Inline), // 2
             att("b.txt", "abcdefgh", AttachMode::ByReference),
             att("c.txt", "abcd", AttachMode::Inline), // 1
         ];
-        assert_eq!(inline_tokens(&list), 3);
+        assert_eq!(inline_tokens_excluding(&list, ""), 3);
+        // Re-attaching a.txt frees its budget before the new copy is measured.
+        assert_eq!(inline_tokens_excluding(&list, "/tmp/a.txt"), 1);
+    }
+
+    #[test]
+    fn mode_is_by_reference_past_either_budget() {
+        let cfg = crate::shared::config::AttachmentSettings {
+            max_file_tokens: 100,
+            max_total_tokens: 150,
+            ..Default::default()
+        };
+        assert_eq!(decide_mode(100, 0, &cfg), AttachMode::Inline);
+        // Over the per-file budget…
+        assert_eq!(decide_mode(101, 0, &cfg), AttachMode::ByReference);
+        // …or over what is left of the chat's total.
+        assert_eq!(decide_mode(60, 100, &cfg), AttachMode::ByReference);
+        assert_eq!(decide_mode(50, 100, &cfg), AttachMode::Inline);
     }
 
     #[test]

@@ -40,12 +40,28 @@ pub struct VideoRequest {
     pub max_output_tokens: usize,
 }
 
+/// What the provider answered.
+///
+/// [`Self::truncated`] exists because a transcript makes truncation a
+/// **correctness** problem rather than a cosmetic one: an answer cut off at
+/// `max_output_tokens` still arrives as perfectly good-looking text, and a model
+/// told "here is the transcript" would believe it has the whole thing — losing
+/// exactly the guarantee `attachment_read`'s page walk is there to give. For a
+/// description it barely matters; hence one flag rather than a whole finish
+/// reason. See docs/youtube-transcript.md §3 F5.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VideoAnswer {
+    pub text: String,
+    /// The provider stopped at the output ceiling — the answer is a prefix.
+    pub truncated: bool,
+}
+
 /// A provider that can look at a video behind a URL and describe it.
 #[async_trait::async_trait]
 pub trait VideoUnderstanding: Send + Sync {
-    /// Returns the model's answer as plain text. Cancellation must be honored:
-    /// a long video is a long request, and `Esc` has to work through it.
-    async fn describe(&self, req: VideoRequest, cancel: &CancellationToken) -> Result<String>;
+    /// Returns the model's answer. Cancellation must be honored: a long video is
+    /// a long request, and `Esc` has to work through it.
+    async fn describe(&self, req: VideoRequest, cancel: &CancellationToken) -> Result<VideoAnswer>;
 }
 
 /// Resolved configuration for the video slot: settings plus the key that was
@@ -136,14 +152,27 @@ pub(crate) mod mock {
     /// without a network or a key.
     pub struct MockVideo {
         pub last: Mutex<Option<VideoRequest>>,
-        pub reply: std::result::Result<String, String>,
+        pub reply: std::result::Result<VideoAnswer, String>,
     }
 
     impl MockVideo {
         pub fn ok(reply: &str) -> Self {
             Self {
                 last: Mutex::new(None),
-                reply: Ok(reply.to_string()),
+                reply: Ok(VideoAnswer {
+                    text: reply.to_string(),
+                    truncated: false,
+                }),
+            }
+        }
+        /// An answer the provider cut off at the output ceiling.
+        pub fn truncated(reply: &str) -> Self {
+            Self {
+                last: Mutex::new(None),
+                reply: Ok(VideoAnswer {
+                    text: reply.to_string(),
+                    truncated: true,
+                }),
             }
         }
         pub fn failing(err: &str) -> Self {
@@ -159,7 +188,11 @@ pub(crate) mod mock {
 
     #[async_trait::async_trait]
     impl VideoUnderstanding for MockVideo {
-        async fn describe(&self, req: VideoRequest, _cancel: &CancellationToken) -> Result<String> {
+        async fn describe(
+            &self,
+            req: VideoRequest,
+            _cancel: &CancellationToken,
+        ) -> Result<VideoAnswer> {
             *self.last.lock().unwrap() = Some(req);
             self.reply.clone().map_err(|e| anyhow::anyhow!("{e}"))
         }

@@ -14,7 +14,15 @@
 //! Following `fetch_url`, the tool returns **the answer, not the material**: a
 //! 10-minute video costs ~62k tokens at Google and a few hundred in the
 //! conversation, which is what makes this usable from a local 8k-context model.
-//! A raw transcript is deliberately out of scope for now (fork R3, stage 2).
+//!
+//! `transcript: true` (stage 2, docs/youtube-transcript.md) also asks for the
+//! words. It costs **exactly the same** — it is the same request with a longer
+//! prompt, and on the 3.x models audio is not even billed apart from video — so
+//! it is one provider call for both halves, split on a marker. A transcript
+//! larger than the per-file attachment budget is not handed back inline: it
+//! becomes a **chat attachment** (spec §9.7), which is already paged
+//! (`attachment_read`) and searchable (`attachment_search`), where a tool result
+//! would go into the context whole.
 //!
 //! With no Gemini key the tool still exists and returns the metadata plus a
 //! plain statement of what is missing (fork R5a) — a tool that vanishes leaves
@@ -25,12 +33,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use crate::entities::attachment::{Attachment, decide_mode, inline_tokens_excluding};
 use crate::entities::profile::ToolId;
 use crate::shared::i18n::Locale;
 use crate::shared::video::{VideoRequest, VideoUnderstanding};
 
 use super::web::{ACCEPT_HTML, ACCEPT_LANGUAGE, USER_AGENT};
-use super::{Tool, ToolContext, ToolOutcome};
+use super::{ChatEffect, Tool, ToolContext, ToolOutcome};
 
 /// Metadata-fetch timeout. Short: it is a best-effort extra, and a slow page
 /// must not delay the actual answer.
@@ -40,8 +49,20 @@ const META_TIMEOUT: Duration = Duration::from_secs(15);
 const WATCH_TIMEOUT: Duration = Duration::from_secs(300);
 /// Answer budget. Enough for a summary plus a timestamped outline.
 const ANSWER_MAX_TOKENS: usize = 2000;
+/// Answer budget with `transcript: true` — the words themselves are the bulk of
+/// it (~25 minutes of dense speech). A constant rather than a setting: what makes
+/// that acceptable is that the ceiling is **reported** when it is hit, the way
+/// the length ceiling already is, instead of quietly returning a prefix.
+const TRANSCRIPT_MAX_TOKENS: usize = 8000;
 /// How much of the author's description to show in the degraded answer.
 const DESCRIPTION_CHARS: usize = 1200;
+/// The line the transcript prompt asks for between the two halves of the answer.
+/// Deliberately an ASCII token and **not** localized: the model is asked to emit
+/// it verbatim, and a translated marker would be one more thing to get wrong.
+const TRANSCRIPT_MARKER: &str = "---TRANSCRIPT---";
+/// Cap on the video title inside the attachment's display name — it has to stay
+/// readable in `/file list` and typeable in `attachment_read`.
+const NAME_TITLE_CHARS: usize = 60;
 
 /// What the free paths can tell us about a video.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -236,6 +257,116 @@ pub fn format_duration(secs: u32) -> String {
     }
 }
 
+/// Splits an answer asked to carry a description, [`TRANSCRIPT_MARKER`], and
+/// then the transcript. Returns the description and the transcript, if any.
+///
+/// **The fallback is not to guess.** With no marker the whole answer is the
+/// description and the transcript is `None` — the caller then says plainly that
+/// none came back. Splitting on a heuristic would risk filing half a description
+/// as a transcript, which is worse than reporting the miss.
+///
+/// Tolerant about the marker's dressing (`## TRANSCRIPT`, `**TRANSCRIPT**`,
+/// `TRANSCRIPT:`): the model is asked for one exact line, and models decorate.
+pub fn split_transcript(answer: &str) -> (String, Option<String>) {
+    match answer.lines().position(is_marker_line) {
+        Some(i) => {
+            let head: Vec<&str> = answer.lines().take(i).collect();
+            let tail: Vec<&str> = answer.lines().skip(i + 1).collect();
+            let body = tail.join("\n");
+            let body = body.trim();
+            (
+                head.join("\n").trim().to_string(),
+                (!body.is_empty()).then(|| body.to_string()),
+            )
+        }
+        None => (answer.trim().to_string(), None),
+    }
+}
+
+/// Is this the separator line? True for the marker under any decoration the
+/// model might add around the word itself.
+fn is_marker_line(line: &str) -> bool {
+    let stripped: String = line
+        .chars()
+        .filter(|c| !matches!(c, '-' | '=' | '#' | '*' | ':' | '_' | ' ' | '\t'))
+        .collect();
+    stripped.eq_ignore_ascii_case("TRANSCRIPT")
+}
+
+/// `0:40-1:20` / `from 0:40` — the segment as it goes into the attachment's name
+/// and source key. `None` when the whole video was requested.
+fn segment_label(start: Option<u32>, end: Option<u32>) -> Option<String> {
+    match (start, end) {
+        (None, None) => None,
+        (s, Some(e)) => Some(format!(
+            "{}-{}",
+            format_duration(s.unwrap_or(0)),
+            format_duration(e)
+        )),
+        (Some(s), None) => Some(format!("{}-", format_duration(s))),
+    }
+}
+
+/// The attachment's source key — the field attachments dedupe by. A transcript
+/// has no path, so it needs a synthetic one; the **segment is part of it**, so
+/// transcribing the same span twice replaces it while two different spans of one
+/// video coexist.
+fn transcript_source(id: &str, segment: Option<&str>) -> String {
+    match segment {
+        Some(s) => format!("youtube:{id}#transcript@{s}"),
+        None => format!("youtube:{id}#transcript"),
+    }
+}
+
+/// The display name: meaningful in `/file list`, typeable in `attachment_read`.
+fn transcript_name(meta: &VideoMeta, id: &str, segment: Option<&str>, loc: &Locale) -> String {
+    let title = meta
+        .title
+        .as_deref()
+        .map(|t| {
+            let clipped: String = t.chars().take(NAME_TITLE_CHARS).collect();
+            clipped.trim().to_string()
+        })
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| format!("YouTube {id}"));
+    match segment {
+        Some(s) => loc.tf(
+            "tool.youtube_watch.attachment.name_segment",
+            &[("title", &title), ("segment", s)],
+        ),
+        None => loc.tf("tool.youtube_watch.attachment.name", &[("title", &title)]),
+    }
+}
+
+/// The attachment's own header. Read by the model (axis A), and it is what makes
+/// the file self-describing when it is read page by page much later — a bare
+/// wall of timestamps says nothing about which video it came from, nor that it
+/// was produced by a model rather than taken from official captions.
+fn transcript_header(
+    meta: &VideoMeta,
+    url: &str,
+    segment: Option<&str>,
+    truncated: bool,
+    loc: &Locale,
+) -> String {
+    let title = meta.title.as_deref().unwrap_or_default();
+    let mut out = loc.tf(
+        "tool.youtube_watch.attachment.header",
+        &[("title", title.trim()), ("url", url)],
+    );
+    if let Some(s) = segment {
+        out.push('\n');
+        out.push_str(&loc.tf("tool.youtube_watch.attachment.segment", &[("range", s)]));
+    }
+    out.push('\n');
+    out.push_str(loc.t("tool.youtube_watch.attachment.caveat"));
+    if truncated {
+        out.push('\n');
+        out.push_str(loc.t("tool.youtube_watch.attachment.truncated"));
+    }
+    out
+}
+
 /// `youtube_watch` — describe a YouTube video.
 pub struct YoutubeWatch {
     http: reqwest::Client,
@@ -369,7 +500,8 @@ impl Tool for YoutubeWatch {
                 "url": {"type": "string", "description": loc.t("tool.youtube_watch.param.url")},
                 "focus": {"type": "string", "description": loc.t("tool.youtube_watch.param.focus")},
                 "start": {"type": "integer", "description": loc.t("tool.youtube_watch.param.start")},
-                "end": {"type": "integer", "description": loc.t("tool.youtube_watch.param.end")}
+                "end": {"type": "integer", "description": loc.t("tool.youtube_watch.param.end")},
+                "transcript": {"type": "boolean", "description": loc.t("tool.youtube_watch.param.transcript")}
             },
             "required": ["url"]
         })
@@ -395,6 +527,10 @@ impl Tool for YoutubeWatch {
             .filter(|s| !s.is_empty());
         let start = args.get("start").and_then(|v| v.as_u64()).map(|v| v as u32);
         let end = args.get("end").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let want_transcript = args
+            .get("transcript")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let (Some(s), Some(e)) = (start, end)
             && e <= s
         {
@@ -448,23 +584,38 @@ impl Tool for YoutubeWatch {
             }
         }
 
-        let prompt = match focus {
+        let task = match focus {
             Some(f) => ctx
                 .loc
                 .tf("tool.youtube_watch.prompt.focus", &[("focus", f)]),
             None => ctx.loc.t("tool.youtube_watch.prompt.default").to_string(),
+        };
+        // One request for both halves (fork F4): the video is ingested either
+        // way, so a second call would double the expensive part for a formatting
+        // convenience.
+        let prompt = if want_transcript {
+            ctx.loc.tf(
+                "tool.youtube_watch.prompt.transcript",
+                &[("task", &task), ("marker", TRANSCRIPT_MARKER)],
+            )
+        } else {
+            task
         };
         let request = VideoRequest {
             url: url.clone(),
             prompt,
             start_secs: start,
             end_secs,
-            max_output_tokens: ANSWER_MAX_TOKENS,
+            max_output_tokens: if want_transcript {
+                TRANSCRIPT_MAX_TOKENS
+            } else {
+                ANSWER_MAX_TOKENS
+            },
         };
 
         let answer =
             match tokio::time::timeout(WATCH_TIMEOUT, video.describe(request, &ctx.cancel)).await {
-                Ok(Ok(text)) => text,
+                Ok(Ok(answer)) => answer,
                 Ok(Err(err)) => {
                     // Graceful degradation, the `fetch_url` shape: the metadata is
                     // still worth returning, and the model needs to know why.
@@ -489,9 +640,66 @@ impl Tool for YoutubeWatch {
             out.push('\n');
             out.push_str(&n);
         }
+        if !want_transcript {
+            out.push('\n');
+            out.push_str(answer.text.trim());
+            return Ok(ToolOutcome::text(out));
+        }
+
+        let (description, transcript) = split_transcript(&answer.text);
         out.push('\n');
-        out.push_str(answer.trim());
-        Ok(ToolOutcome::text(out))
+        out.push_str(description.trim());
+        let Some(body) = transcript else {
+            // The marker never came, or nothing followed it (a video with no
+            // speech). Report it — a silent absence reads as "there were no
+            // words", which is a different claim.
+            out.push('\n');
+            out.push_str(ctx.loc.t("tool.youtube_watch.result.no_transcript"));
+            return Ok(ToolOutcome::text(out));
+        };
+
+        let segment = segment_label(start, end_secs);
+        let header = transcript_header(&meta, &url, segment.as_deref(), answer.truncated, ctx.loc);
+        let text = format!("{header}\n\n{body}");
+        let est = crate::shared::tokens::estimate_text(&text) as usize;
+
+        // Small enough to read at once → straight into the result: the model needs
+        // no second call, and attaching would put the same text in the pinned
+        // block *and* in the history. The threshold is the attachment budget
+        // itself (fork F2), which is also why an attached transcript is always by
+        // reference: inline requires `est <= max_file_tokens`, and this branch is
+        // exactly the other side of that.
+        if est <= ctx.attachment_cfg.max_file_tokens {
+            out.push('\n');
+            out.push_str(&text);
+            if answer.truncated {
+                out.push('\n');
+                out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));
+            }
+            return Ok(ToolOutcome::text(out));
+        }
+
+        let name = transcript_name(&meta, &id, segment.as_deref(), ctx.loc);
+        let source = transcript_source(&id, segment.as_deref());
+        let used = inline_tokens_excluding(&ctx.attachments, &source);
+        let mode = decide_mode(est, used, &ctx.attachment_cfg);
+        let bytes = text.len();
+        let attachment = Attachment::new(name.clone(), source, text, bytes, mode);
+        let pages = attachment.page_count(ctx.attachment_cfg.page_tokens);
+
+        out.push('\n');
+        out.push_str(&ctx.loc.tf(
+            "tool.youtube_watch.result.transcript_attached",
+            &[("name", &name), ("pages", &pages.to_string())],
+        ));
+        if answer.truncated {
+            out.push('\n');
+            out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));
+        }
+        Ok(ToolOutcome::with_effects(
+            out,
+            vec![ChatEffect::AddAttachment(Box::new(attachment))],
+        ))
     }
 }
 
@@ -737,6 +945,217 @@ mod tests {
         );
     }
 
+    // ---- stage 2: the words, not just the description (docs/youtube-transcript.md)
+
+    #[test]
+    fn split_transcript_takes_both_halves_and_tolerates_decoration() {
+        let (d, t) = split_transcript("a summary\n---TRANSCRIPT---\n[0:01] hello\n[0:04] world");
+        assert_eq!(d, "a summary");
+        assert_eq!(t.as_deref(), Some("[0:01] hello\n[0:04] world"));
+        // Models decorate the one line they were asked for.
+        for marker in [
+            "## Transcript",
+            "**TRANSCRIPT**",
+            "TRANSCRIPT:",
+            "=== transcript ===",
+        ] {
+            let (d, t) = split_transcript(&format!("desc\n{marker}\n[0:01] hi"));
+            assert_eq!(d, "desc", "marker: {marker}");
+            assert_eq!(t.as_deref(), Some("[0:01] hi"), "marker: {marker}");
+        }
+    }
+
+    #[test]
+    fn split_transcript_does_not_guess_when_the_marker_is_missing() {
+        // Filing half a description as a transcript would be worse than
+        // reporting the miss — so everything is the description.
+        let (d, t) = split_transcript("just a description, no marker");
+        assert_eq!(d, "just a description, no marker");
+        assert!(t.is_none());
+        // A marker with nothing under it (a video with no speech) is the same.
+        let (d, t) = split_transcript("desc\n---TRANSCRIPT---\n   \n");
+        assert_eq!(d, "desc");
+        assert!(t.is_none());
+    }
+
+    #[test]
+    fn the_source_key_separates_segments_and_repeats_the_same_one() {
+        let id = "dQw4w9WgXcQ";
+        assert_eq!(
+            transcript_source(id, segment_label(Some(40), Some(80)).as_deref()),
+            transcript_source(id, segment_label(Some(40), Some(80)).as_deref()),
+            "the same segment replaces the previous transcript"
+        );
+        assert_ne!(
+            transcript_source(id, segment_label(Some(40), Some(80)).as_deref()),
+            transcript_source(id, segment_label(Some(80), Some(120)).as_deref()),
+            "a different segment is a different attachment"
+        );
+        assert_ne!(
+            transcript_source(id, None),
+            transcript_source(id, segment_label(Some(0), Some(80)).as_deref())
+        );
+    }
+
+    #[tokio::test]
+    async fn without_the_flag_nothing_about_the_request_changes() {
+        let (_d, ctx) = ctx();
+        let mock = Arc::new(MockVideo::ok("a description"));
+        let tool = YoutubeWatch::new(Some(mock.clone()), 30);
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"url": "dQw4w9WgXcQ"}))
+            .await
+            .unwrap();
+        let req = mock.taken().unwrap();
+        assert!(!req.prompt.contains(TRANSCRIPT_MARKER));
+        assert_eq!(req.max_output_tokens, ANSWER_MAX_TOKENS);
+        assert!(out.effects.is_empty());
+        assert!(out.result.contains("a description"));
+    }
+
+    #[tokio::test]
+    async fn a_small_transcript_comes_back_in_the_result_without_attaching() {
+        let (_d, ctx) = ctx();
+        let mock = Arc::new(MockVideo::ok(
+            "a description\n---TRANSCRIPT---\n[0:01] hello there",
+        ));
+        let tool = YoutubeWatch::new(Some(mock.clone()), 30);
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"url": "dQw4w9WgXcQ", "transcript": true}),
+            )
+            .await
+            .unwrap();
+        let req = mock.taken().unwrap();
+        // One request for both halves, with room for the words.
+        assert!(req.prompt.contains(TRANSCRIPT_MARKER), "{}", req.prompt);
+        assert_eq!(req.max_output_tokens, TRANSCRIPT_MAX_TOKENS);
+        // Small enough to read at once: no second call needed, nothing attached.
+        assert!(out.effects.is_empty(), "nothing should be attached");
+        assert!(out.result.contains("hello there"), "got: {}", out.result);
+        assert!(out.result.contains("a description"), "got: {}", out.result);
+    }
+
+    #[tokio::test]
+    async fn a_large_transcript_becomes_a_by_reference_attachment() {
+        let (_d, mut ctx) = ctx();
+        // The threshold is the attachment budget itself (fork F2).
+        ctx.attachment_cfg.max_file_tokens = 5;
+        let body: String = (0..40)
+            .map(|i| format!("[0:{i:02}] a spoken line number {i}\n"))
+            .collect();
+        let mock = Arc::new(MockVideo::ok(&format!(
+            "a description\n---TRANSCRIPT---\n{body}"
+        )));
+        let tool = YoutubeWatch::new(Some(mock), 30);
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"url": "dQw4w9WgXcQ", "transcript": true, "start": 40, "end": 80}),
+            )
+            .await
+            .unwrap();
+
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!(
+                "expected exactly one attachment effect, got {:?}",
+                out.effects
+            );
+        };
+        // The invariant of fork F2: past the per-file budget there is no other
+        // mode, so this path never adds an inline attachment.
+        assert_eq!(
+            att.mode,
+            crate::entities::attachment::AttachMode::ByReference
+        );
+        assert!(att.text.contains("a spoken line number 39"));
+        // Self-describing: which video, which segment, and what it is.
+        assert!(att.text.contains(&watch_url("dQw4w9WgXcQ")), "{}", att.text);
+        assert!(att.text.contains("0:40-1:20"), "{}", att.text);
+        assert!(
+            att.text
+                .contains(ru().t("tool.youtube_watch.attachment.caveat")),
+            "{}",
+            att.text
+        );
+        assert_eq!(
+            att.source,
+            transcript_source("dQw4w9WgXcQ", Some("0:40-1:20"))
+        );
+
+        // The result must be actionable: the words are not in it, so it names
+        // the attachment and the two tools that reach it.
+        assert!(out.result.contains(&att.name), "got: {}", out.result);
+        for tool_id in ["attachment_read", "attachment_search"] {
+            assert!(out.result.contains(tool_id), "got: {}", out.result);
+        }
+        assert!(
+            !out.result.contains("a spoken line number 39"),
+            "the transcript must not also be dumped into the result: {}",
+            out.result
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_transcript_is_reported_not_silently_absent() {
+        let (_d, ctx) = ctx();
+        // The marker never came — "no words came back" and "the video has no
+        // speech" are different claims, so it says which one it knows.
+        let mock = Arc::new(MockVideo::ok("only a description here"));
+        let tool = YoutubeWatch::new(Some(mock), 30);
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"url": "dQw4w9WgXcQ", "transcript": true}),
+            )
+            .await
+            .unwrap();
+        assert!(out.effects.is_empty());
+        assert!(
+            out.result
+                .contains(ru().t("tool.youtube_watch.result.no_transcript")),
+            "got: {}",
+            out.result
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_transcript_says_so_in_both_places() {
+        let (_d, mut ctx) = ctx();
+        ctx.attachment_cfg.max_file_tokens = 5;
+        let body: String = (0..40).map(|i| format!("[0:{i:02}] line {i}\n")).collect();
+        let mock = Arc::new(MockVideo::truncated(&format!(
+            "a description\n---TRANSCRIPT---\n{body}"
+        )));
+        let tool = YoutubeWatch::new(Some(mock), 30);
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"url": "dQw4w9WgXcQ", "transcript": true}),
+            )
+            .await
+            .unwrap();
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!("expected an attachment");
+        };
+        // In the result, because that is what the model reads now…
+        assert!(
+            out.result
+                .contains(ru().t("tool.youtube_watch.result.transcript_truncated")),
+            "got: {}",
+            out.result
+        );
+        // …and in the file, because that is what it reads later, when the fact
+        // that this is only a prefix is otherwise invisible.
+        assert!(
+            att.text
+                .contains(ru().t("tool.youtube_watch.attachment.truncated")),
+            "{}",
+            att.text
+        );
+    }
+
     #[test]
     fn description_and_parameters_are_localized() {
         // §3.5 docs/history/i18n.md — catches a forgotten `_loc`.
@@ -830,5 +1249,78 @@ mod tests {
             "no visual detail in the answer: {}",
             out.result
         );
+    }
+
+    /// Stage 2's live half: that a real provider returns usable **words** in the
+    /// shape the prompt asks for, and that they land as an attachment.
+    ///
+    /// The mirror of the smoke above, deliberately: that one asserts on
+    /// something only *visible* on screen (what a transcript could never give),
+    /// this one on something only *said*. Together they cover both halves of the
+    /// question the whole track started from.
+    ///
+    /// The per-file budget is lowered rather than the video lengthened: the
+    /// threshold is a user setting, and one short clip keeps the smoke cheap
+    /// while still exercising the attachment path end to end.
+    #[tokio::test]
+    #[ignore = "requires a real Gemini key (MINDFORK_GEMINI_KEY) and network"]
+    async fn transcribes_a_real_video_into_an_attachment_live() {
+        let Ok(key) = std::env::var("MINDFORK_GEMINI_KEY") else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY is not set");
+            return;
+        };
+        let cfg = crate::shared::video::resolve_config(
+            &crate::shared::config::VideoSettings::default(),
+            Some(key),
+        )
+        .expect("a key and the default model are enough to configure the slot");
+        let engine = Arc::new(crate::shared::video::gemini::GeminiVideo::new(cfg));
+        let (_d, mut ctx) = ctx();
+        ctx.attachment_cfg.max_file_tokens = 20;
+        let tool = YoutubeWatch::new(Some(engine), 30);
+
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "start": 40, "end": 80,
+                    "transcript": true
+                }),
+            )
+            .await
+            .unwrap();
+        eprintln!("--- youtube_watch result ---\n{}", out.result);
+
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!(
+                "the transcript should have been attached: {:?}",
+                out.effects
+            );
+        };
+        eprintln!("--- attachment {:?} ---\n{}", att.name, att.text);
+
+        // The words themselves — this segment is squarely inside the chorus.
+        let lower = att.text.to_lowercase();
+        assert!(
+            lower.contains("never gonna"),
+            "no spoken words in the transcript: {}",
+            att.text
+        );
+        // In the shape the prompt asked for: one line per utterance, timestamped.
+        assert!(
+            att.text.lines().any(|l| l.trim_start().starts_with('[')),
+            "no timestamped lines: {}",
+            att.text
+        );
+        // Self-describing, and pointing the model at the tools that reach it.
+        assert!(att.text.contains(&watch_url("dQw4w9WgXcQ")));
+        assert_eq!(
+            att.mode,
+            crate::entities::attachment::AttachMode::ByReference
+        );
+        for tool_id in ["attachment_read", "attachment_search"] {
+            assert!(out.result.contains(tool_id), "got: {}", out.result);
+        }
     }
 }

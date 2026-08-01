@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::{VideoConfig, VideoRequest, VideoUnderstanding, error_body};
+use super::{VideoAnswer, VideoConfig, VideoRequest, VideoUnderstanding, error_body};
 
 /// Client for `…/models/{model}:generateContent` in video-input mode.
 pub struct GeminiVideo {
@@ -131,7 +131,11 @@ struct PromptFeedback {
 /// a budget spent entirely on thinking all produce **no text** — without this
 /// they would surface as a blank result, which reads like a broken tool. Pure —
 /// tested without a network.
-fn text_from_response(resp: GenerateResponse) -> Result<String> {
+///
+/// A `MAX_TOKENS` finish **with** text is not an error: it is a complete-looking
+/// prefix, which is why it is reported as [`VideoAnswer::truncated`] rather than
+/// dropped (docs/youtube-transcript.md §3 F5).
+fn text_from_response(resp: GenerateResponse) -> Result<VideoAnswer> {
     if let Some(reason) = resp.prompt_feedback.and_then(|f| f.block_reason) {
         anyhow::bail!("Gemini refused the video request (reason: {reason})");
     }
@@ -154,12 +158,15 @@ fn text_from_response(resp: GenerateResponse) -> Result<String> {
         }
         anyhow::bail!("Gemini returned no description of the video (finish reason: {finish})");
     }
-    Ok(text)
+    Ok(VideoAnswer {
+        text,
+        truncated: finish.eq_ignore_ascii_case("MAX_TOKENS"),
+    })
 }
 
 #[async_trait::async_trait]
 impl VideoUnderstanding for GeminiVideo {
-    async fn describe(&self, req: VideoRequest, cancel: &CancellationToken) -> Result<String> {
+    async fn describe(&self, req: VideoRequest, cancel: &CancellationToken) -> Result<VideoAnswer> {
         let url = format!(
             "{}/models/{}:generateContent",
             self.cfg.base_url, self.cfg.model
@@ -275,7 +282,24 @@ mod tests {
                             "finishReason": "STOP"}]
         }))
         .unwrap();
-        assert_eq!(text_from_response(resp).unwrap(), "ab");
+        let answer = text_from_response(resp).unwrap();
+        assert_eq!(answer.text, "ab");
+        assert!(!answer.truncated);
+    }
+
+    #[test]
+    fn a_cut_off_answer_is_returned_and_flagged_not_dropped() {
+        // The failure this exists to prevent: a transcript stopped at the output
+        // ceiling still *looks* whole, so handing it back silently would let the
+        // model believe it read the video to the end.
+        let resp: GenerateResponse = serde_json::from_value(json!({
+            "candidates": [{"content": {"parts": [{"text": "[0:00] the beginning"}]},
+                            "finishReason": "MAX_TOKENS"}]
+        }))
+        .unwrap();
+        let answer = text_from_response(resp).unwrap();
+        assert!(answer.truncated, "MAX_TOKENS with text means truncated");
+        assert_eq!(answer.text, "[0:00] the beginning");
     }
 
     #[test]

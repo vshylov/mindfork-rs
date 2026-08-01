@@ -87,8 +87,10 @@ pub struct ToolContext {
     /// attachment's text can be hundreds of KB. Read by `attachment_read`; empty
     /// for background tasks (they have no chat). See spec §9.7.
     pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
-    /// Page size for `attachment_read`, in estimated tokens (`config.attachments`).
-    pub attachment_page_tokens: usize,
+    /// Attachment budget and page size (`config.attachments`): the page size for
+    /// `attachment_read`, and — for a tool that produces an attachment of its own
+    /// — the same thresholds the orchestrator decides the mode with.
+    pub attachment_cfg: crate::shared::config::AttachmentSettings,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -114,8 +116,11 @@ pub struct ToolParams {
     pub chunk_params: rag::ChunkParams,
     pub self_model_params: SelfModelParams,
     pub recall_includes_self: bool,
-    /// Page size for `attachment_read` (`config.attachments.page_tokens`).
-    pub attachment_page_tokens: usize,
+    /// Attachment budget and page size (`config.attachments`). A tool that
+    /// produces an attachment of its own needs the same numbers the orchestrator
+    /// uses, or it would describe to the model something other than what gets
+    /// stored.
+    pub attachments: crate::shared::config::AttachmentSettings,
 }
 
 impl ToolParams {
@@ -125,7 +130,7 @@ impl ToolParams {
             chunk_params: rag::ChunkParams::from_settings(&cfg.rag),
             self_model_params: SelfModelParams::from_settings(&cfg.self_model),
             recall_includes_self: cfg.notes.recall_includes_self,
-            attachment_page_tokens: cfg.attachments.page_tokens,
+            attachments: cfg.attachments,
         }
     }
 }
@@ -158,7 +163,7 @@ impl ToolContext {
             effective_sampling: turn.effective_sampling,
             last_user_message_at: turn.last_user_message_at,
             attachments: turn.attachments,
-            attachment_page_tokens: params.attachment_page_tokens,
+            attachment_cfg: params.attachments,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -180,6 +185,18 @@ pub enum ChatEffect {
     /// `Box`, since `SamplingConfig` is larger than the other variants (clippy
     /// `large_enum_variant`).
     SetSamplingOverride(Box<SamplingConfig>),
+    /// Attach text the tool produced to the chat (spec §9.7), replacing any
+    /// attachment with the same `source`. A video transcript is the first user
+    /// (spec §9.9), and the variant is deliberately generic — it is the natural
+    /// home for any later "this tool produced too much text to hand back inline".
+    ///
+    /// The attachment arrives **already built**, mode included: the tool has
+    /// told the model what it did, and the object described has to be the object
+    /// stored — down to the `id`, which is the key the background index is
+    /// written under. The agentic loop additionally mirrors it into the turn's
+    /// `ToolContext` snapshot, so `attachment_read` finds it in the very next
+    /// round rather than only in the next turn (docs/youtube-transcript.md §3 F1).
+    AddAttachment(Box<crate::entities::attachment::Attachment>),
 }
 
 /// Result of a tool call: text for the model + effects for the orchestrator.
@@ -575,7 +592,7 @@ pub(crate) mod testkit {
             chunk_params: rag::ChunkParams::default(),
             self_model_params: SelfModelParams::default(),
             recall_includes_self: false,
-            attachment_page_tokens: crate::shared::config::DEFAULT_ATTACH_PAGE_TOKENS,
+            attachments: crate::shared::config::AttachmentSettings::default(),
         }
     }
 
