@@ -151,6 +151,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   quick model selector right in the chat).
 - **Multimodality support** (images) — if the model/`llama-server` supports
   vision; passing images from clipboard/file.
+- **YouTube: what a video says and shows** — researched, undecided:
+  [youtube-integration.md](research/youtube-integration.md). Measured
+  2026-08-01: the free caption paths are **closed** (a signed `timedtext` URL
+  returns 200 with an empty body — YouTube's PoToken gate; `captions.download`
+  needs the owner's OAuth), while **Gemini ingests a YouTube URL directly** and
+  describes audio *and* frames with timestamps — the only working path to "what
+  is **shown**", since OpenAI and Anthropic take no video at all. ~103 tok/s at
+  low resolution (measured), so a 10-min video is ~62 k tokens at Google and a
+  few hundred in the conversation if the tool returns an answer rather than a
+  transcript. Shape would follow ADR 0009 (a tool with its own Gemini client, so
+  it works whatever the chat engine is); decision points R1–R9 in §8. Free
+  metadata (title/channel/description via oEmbed + the watch page) works
+  everywhere and would close today's dead end, where `fetch_url` on a YouTube
+  link returns "failed to extract readable text" (also measured).
 
 ## Testing, CI, quality
 - **Live `#[ignore]` smokes in CI** — the llama.cpp set is covered (see
