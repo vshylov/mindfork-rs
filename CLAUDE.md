@@ -10875,6 +10875,27 @@ debounce was done as a separate PR, see below).
   screen's config. Tests pin the part that could regress silently — the row targets
   Gemini **with no engine set to Gemini** — plus the status/`Del` pair.
   **1735 unit tests green** (+2).
+- **Default model moved to `gemini-3.5-flash`** (user's request after a working
+  live run: 2.5 is old and will not stay around). Verified before switching, and
+  the verification changed two documented figures. On the **same 20 s clip with an
+  otherwise identical request**, `mediaResolution` turns out to be a **no-op on the
+  3.x flash models** — 1822 prompt tokens at `LOW` *and* at `MEDIUM`, checked on
+  3.1-flash-lite, 3.5-flash and 3.6-flash — while on 2.5 it behaves as documented
+  (2062 → 5902). And 3.x reports **no `AUDIO` modality** at all, which looked like
+  losing half the feature; it is a *reporting* difference, confirmed
+  **behaviourally** rather than assumed: asked to quote the words in a segment,
+  3.5 and 3.6 returned the sung lines with correct timestamps just as 2.5 did.
+  Audio is folded into the video bucket. Net effect: the new default is **~12%
+  cheaper** (91 vs 103 tok/s at low detail), so the 30-minute ceiling is ~164k
+  tokens rather than ~186k. The resolution setting is **kept** — it is real on
+  2.5-class models and the API documents it generally — but its hint now says
+  where it does nothing instead of promising a 3× saving. Figures corrected in
+  spec §9.9, install.md, both settings hints and the `MediaResolution` doc
+  comment; the research doc gained §3.3a with the comparison table. **Live smokes
+  re-run against the new default — GO.** A trap worth recording: the settings
+  hints are stored as **arrays of strings** (the bundle allows either), so a
+  single-line regex edit mangles them — caught by validating the JSON before
+  writing, which is why the files were never damaged.
 - **1735 unit tests green** (+3), 72 `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan`/`link_check` clean. **No live run needed** — the change is the
   text of three localized strings and a tool description; the engine, memory and

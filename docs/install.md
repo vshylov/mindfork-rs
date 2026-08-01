@@ -569,8 +569,8 @@ group of the "Tools" section (`Ctrl+P`):
 
 | Field | Meaning |
 |---|---|
-| Model | the Gemini model that watches (`gemini-2.5-flash` by default) |
-| Input resolution | how finely frames are sampled: `low` ≈ 100 tokens per second of video, `medium` ≈ 330 |
+| Model | the Gemini model that watches (`gemini-3.5-flash` by default) |
+| Input resolution | how finely frames are sampled — **measured to change nothing on Gemini 3.x**; on 2.5 it is `low` ≈ 100 vs `medium` ≈ 295 tokens per second of video |
 | Max video length | refuse anything longer (default 30 min; `0` — no ceiling) |
 | API key | the Gemini key, stored on this computer (encrypted with a machine key, ADR 0008) |
 | API key (env) | env-variable name — a fallback when no key is stored in settings |
@@ -584,8 +584,8 @@ is — including a local `llama-server` — because the tool calls Gemini itself
 returns text into the conversation. Gemini is currently the only provider that
 accepts video at all; OpenAI and Anthropic take text and images only.
 
-Cost is per second of footage, not per video: at low resolution a 10-minute
-video is ~62k tokens on Google's side (a few hundred in your conversation, since
+Cost is per second of footage, not per video: on the default model a 10-minute
+video is ~55k tokens on Google's side (a few hundred in your conversation, since
 only the answer comes back). Hence the length ceiling — above it the tool
 refuses and suggests a segment, and the model can pass `start`/`end` in seconds
 to watch just part of a long talk.

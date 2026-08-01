@@ -1017,8 +1017,10 @@ provider and a few hundred in the conversation — which is what makes it usable
 from a local model with an 8k window. A raw transcript is deliberately out of
 scope (fork R3; the honest home for one is a chat attachment, §9.7).
 
-**Cost is bounded before it is spent.** Measured ≈103 prompt tokens per second
-of video at low detail (≈330 at medium), so the tool refuses a video longer than
+**Cost is bounded before it is spent.** Measured ≈91 prompt tokens per second of
+video on the default (Gemini 3.x) model — where the frame-detail setting turns out
+to change nothing — and ≈103/≈295 at low/medium on a 2.5-class one. So the tool
+refuses a video longer than
 `config.video.max_minutes` (default 30) and says so in terms the model can act
 on — the `start`/`end` arguments clip to a segment, which is the only way to look
 at a long video without paying for all of it. When the length cannot be read at
