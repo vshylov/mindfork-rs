@@ -987,6 +987,82 @@ pub const DEFAULT_TTS_GEMINI_MODEL: &str = "gemini-2.5-flash-preview-tts";
 /// Default Gemini voice (from 30 prebuilt voices).
 pub const DEFAULT_TTS_GEMINI_VOICE: &str = "Kore";
 
+/// Default model for video understanding (`youtube_watch`). A flash-class model
+/// is enough: the task is description, not reasoning, and video is billed per
+/// second of footage — see docs/research/youtube-integration.md §3.3.
+pub const DEFAULT_VIDEO_MODEL: &str = "gemini-2.5-flash";
+/// Default ceiling on the length of a video the tool will watch (minutes).
+/// At low resolution that is ~186k tokens (measured ≈103 tok/s, §3.3) — enough
+/// for a talk, and a bound on what one tool call can spend.
+pub const DEFAULT_VIDEO_MAX_MINUTES: u32 = 30;
+
+/// Frame sampling detail for video understanding (`generationConfig.mediaResolution`).
+/// Measured: `Low` ≈ 71 video tok/s, `Default` ≈ 3× that
+/// (docs/research/youtube-integration.md §3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaResolution {
+    /// `MEDIA_RESOLUTION_LOW` — the default here: 3× cheaper, and enough to say
+    /// what is happening on screen.
+    #[default]
+    Low,
+    /// `MEDIA_RESOLUTION_MEDIUM` — the provider's default detail. Reads small
+    /// on-screen text better, at 3× the tokens.
+    Medium,
+}
+
+impl MediaResolution {
+    pub const ALL: [MediaResolution; 2] = [MediaResolution::Low, MediaResolution::Medium];
+
+    /// The API value for `generationConfig.mediaResolution`.
+    pub fn as_arg(self) -> &'static str {
+        match self {
+            MediaResolution::Low => "MEDIA_RESOLUTION_LOW",
+            MediaResolution::Medium => "MEDIA_RESOLUTION_MEDIUM",
+        }
+    }
+
+    pub fn cycle(self, dir: i32) -> Self {
+        let i = Self::ALL.iter().position(|v| *v == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(i + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// Video understanding (`youtube_watch`, docs/research/youtube-integration.md).
+/// A slot of its own, independent of the chat engine: only Gemini ingests video
+/// at all, so a user on a local model or on Claude still gets this — the tool
+/// calls Gemini out of band, exactly like TTS (ADR 0009). The API key is **not**
+/// here: it is the provider key shared with chat/embeddings (ADR 0008).
+/// All fields `#[serde(default)]` → old `settings.json` reads without migration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoSettings {
+    /// Gemini model name. Empty → the tool reports itself unconfigured.
+    pub model_name: Option<String>,
+    /// Base URL override (`…/v1beta`); empty → the provider's own.
+    pub url: Option<String>,
+    /// Env-variable name with the key — a fallback when nothing is stored in
+    /// settings (the same pattern as the engine and TTS sections).
+    pub api_key_env: Option<String>,
+    /// Frame sampling detail.
+    pub media_resolution: MediaResolution,
+    /// Refuse videos longer than this many minutes (`0` — no ceiling).
+    pub max_minutes: u32,
+}
+
+impl Default for VideoSettings {
+    fn default() -> Self {
+        Self {
+            model_name: Some(DEFAULT_VIDEO_MODEL.into()),
+            url: None,
+            api_key_env: None,
+            media_resolution: MediaResolution::default(),
+            max_minutes: DEFAULT_VIDEO_MAX_MINUTES,
+        }
+    }
+}
+
 /// Speech (TTS) mode — an independent "server slot", like embeddings
 /// (ADR 0002): Anthropic has no TTS at all, so the speech provider is
 /// configured separately from the chat engine. A local engine (managed sidecar) is
@@ -1249,6 +1325,8 @@ pub struct AppConfig {
     pub mcp: McpSettings,
     /// Speaking chat messages aloud (the `/tts` command, spec §11.9).
     pub tts: TtsSettings,
+    /// Video understanding for `youtube_watch` (spec §9.9).
+    pub video: VideoSettings,
     /// Last-open chat — restored on the next launch. Written by the
     /// orchestrator (not editable via the settings screen). `None` — no memory
     /// (first launch/the chat was deleted) → the most recent one opens.
@@ -1293,6 +1371,7 @@ impl Default for AppConfig {
             copy: CopySettings::default(),
             mcp: McpSettings::default(),
             tts: TtsSettings::default(),
+            video: VideoSettings::default(),
             last_active_chat: None,
             api_keys: Vec::new(),
         }

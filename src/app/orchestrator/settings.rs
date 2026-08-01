@@ -69,7 +69,9 @@ impl Orchestrator {
             self.restarts.mark_mcp();
         }
         // A tool-parameter change — a registry rebuild (python_path, limits).
-        if self.config.tools != old.tools {
+        // Video settings feed the same registry (the `youtube_watch` client is
+        // built there), so they rebuild it too.
+        if self.config.tools != old.tools || self.config.video != old.video {
             self.rebuild_registry();
         }
         self.emit_settings();
@@ -99,6 +101,13 @@ impl Orchestrator {
         }
         if self.config.embed.mode.cloud_provider() == p {
             self.restarts.mark_embed();
+        }
+        // The video slot uses the Gemini key too, and its client lives in the
+        // tool registry — so a Gemini key change has to rebuild it (cheap,
+        // in-memory), or `youtube_watch` would keep reporting itself
+        // unconfigured until the next unrelated settings edit.
+        if provider == CloudProvider::Gemini {
+            self.rebuild_registry();
         }
         self.emit_settings();
     }

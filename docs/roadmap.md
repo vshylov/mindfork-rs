@@ -151,6 +151,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   quick model selector right in the chat).
 - **Multimodality support** (images) — if the model/`llama-server` supports
   vision; passing images from clipboard/file.
+- **YouTube — groundwork** (stage 1 is **done**, see "Recently closed";
+  [youtube-integration.md](research/youtube-integration.md), spec §9.9):
+  - a **raw transcript** when one is actually wanted (fork R3c) — the honest
+    shape is `transcript: true` landing it as a chat attachment (§9.7), which is
+    already paged and searchable, rather than as a tool result;
+  - **cross-chat caching** of an expensive watch (R8b). Within one chat a
+    follow-up is already free — the result is in the history; only a *different*
+    chat re-pays. `cache.db` is deliberately the wrong home: it is disposable by
+    design and a video read is expensive to recompute;
+  - a transcript path that needs **no cloud key at all** (R7) — the one user
+    story stage 1 does not serve. Everything free is PoToken-gated, so this means
+    a paid captions vendor or a `yt-dlp` sidecar;
+  - **default-model rot**: `gemini-2.5-flash-lite` already 404s for new users, so
+    whatever ships as the default eventually stops existing.
 
 ## Testing, CI, quality
 - **Live `#[ignore]` smokes in CI** — the llama.cpp set is covered (see
@@ -263,6 +277,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **YouTube: what a video says and shows** (stage 1, complete): `youtube_watch`
+  describes a video's frames *and* audio with timestamps, narrowed by `focus`,
+  and `start`/`end` clip a long one to a segment. It calls **Gemini out of band**
+  rather than through the chat engine (the ADR 0009 shape), so it works on a
+  local `llama-server` too — which matters because measurement, not preference,
+  left one option: every free caption route is now behind YouTube's PoToken gate
+  (a *signed* `timedtext` URL returns 200 with an **empty body**),
+  `captions.download` needs the video owner's OAuth, and OpenAI and Anthropic
+  take no video at all. Billed per second of footage (~103 tok/s at low detail,
+  measured), so the tool refuses past a configurable ceiling and says how to ask
+  for a segment; with no key it degrades to free metadata and states what is
+  missing, and `fetch_url` stopped dead-ending on YouTube links. See
+  [youtube-integration.md](research/youtube-integration.md), spec §9.9.
 - **Password-protected backups** (complete): `--password` on `backup`/`restore`,
   or a password set once in settings → "Data", stored machine-bound exactly like
   a cloud API key (ADR 0008) — including for the copies the app makes itself

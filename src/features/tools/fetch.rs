@@ -155,6 +155,27 @@ impl Tool for FetchUrl {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             anyhow::bail!(ctx.loc.t("tool.fetch_url.err.url_scheme"));
         }
+        // A YouTube watch page is a JavaScript shell: measured, it has zero
+        // paragraphs and zero list items, so readability extracts nothing and
+        // this used to answer "failed to extract readable text" — a dead end the
+        // model cannot reason its way out of. Hand back what the free paths know
+        // and point at the tool that can actually watch it (fork R6,
+        // docs/research/youtube-integration.md §1).
+        if super::youtube::is_youtube_url(url)
+            && let Some(id) = super::youtube::video_id(url)
+        {
+            let meta = super::youtube::fetch_meta(&self.http, &id)
+                .await
+                .unwrap_or_default();
+            let mut out = super::youtube::YoutubeWatch::meta_block(
+                &meta,
+                &super::youtube::watch_url(&id),
+                ctx.loc,
+            );
+            out.push('\n');
+            out.push_str(ctx.loc.t("tool.fetch_url.result.youtube"));
+            return Ok(ToolOutcome::text(out));
+        }
         let focus = args
             .get("focus")
             .and_then(|v| v.as_str())
@@ -400,6 +421,34 @@ mod tests {
         )
         .unwrap();
         assert!(out.contains("читаемый абзац"), "got: {out}");
+    }
+
+    /// A YouTube link used to be a dead end here — the watch page is a
+    /// JavaScript shell, so readability extracted nothing and the answer was
+    /// "failed to extract readable text". Now it hands back what the free paths
+    /// know and points at `youtube_watch` (fork R6). Needs no key — only network.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn live_youtube_link_returns_metadata_not_a_dead_end() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let out = FetchUrl::new()
+            .invoke(
+                &ctx,
+                serde_json::json!({"url": "https://youtu.be/dQw4w9WgXcQ"}),
+            )
+            .await
+            .unwrap();
+        eprintln!("--- fetch_url on a YouTube link ---\n{}", out.result);
+        assert!(
+            out.result.contains("Never Gonna Give You Up"),
+            "the live watch page's title is missing: {}",
+            out.result
+        );
+        assert!(
+            out.result.contains(super::super::YOUTUBE_WATCH_ID),
+            "the answer must point at the tool that can watch it: {}",
+            out.result
+        );
     }
 
     /// A real network smoke (manual: `cargo test -- --ignored`).

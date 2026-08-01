@@ -930,6 +930,16 @@ pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
     .to_string()
 }
 
+/// The video-understanding frame-sampling detail's label
+/// (`youtube_watch`/`config.video.media_resolution`).
+pub(super) fn video_resolution_label(m: MediaResolution, loc: &'static Locale) -> String {
+    loc.t(match m {
+        MediaResolution::Low => "ui.settings.choice.video_res_low",
+        MediaResolution::Medium => "ui.settings.choice.video_res_medium",
+    })
+    .to_string()
+}
+
 pub(super) fn cycle_theme(t: Theme) -> Theme {
     match t {
         Theme::Auto => Theme::Dark,

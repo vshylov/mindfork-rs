@@ -561,6 +561,37 @@ diagrams, tables, and block formulas are skipped with a short note; "thoughts" a
 tool calls aren't read. No sound card (headless/SSH) — the command shows "audio
 unavailable", the app keeps running.
 
+## 4.4. Watching YouTube videos (`youtube_watch`)
+
+The `youtube_watch` tool tells the assistant what a video **says and shows** —
+a description with timestamps, not a raw transcript. Configured in the "Video"
+group of the "Tools" section (`Ctrl+P`):
+
+| Field | Meaning |
+|---|---|
+| Model | the Gemini model that watches (`gemini-2.5-flash` by default) |
+| Input resolution | how finely frames are sampled: `low` ≈ 100 tokens per second of video, `medium` ≈ 330 |
+| Max video length | refuse anything longer (default 30 min; `0` — no ceiling) |
+| API key (env) | env-variable name — a fallback when no key is stored in settings |
+
+**The key is the shared Gemini one** (ADR 0008): if it is already entered for
+chat or embeddings, nothing else is needed. It works whatever your chat engine
+is — including a local `llama-server` — because the tool calls Gemini itself and
+returns text into the conversation. Gemini is currently the only provider that
+accepts video at all; OpenAI and Anthropic take text and images only.
+
+Cost is per second of footage, not per video: at low resolution a 10-minute
+video is ~62k tokens on Google's side (a few hundred in your conversation, since
+only the answer comes back). Hence the length ceiling — above it the tool
+refuses and suggests a segment, and the model can pass `start`/`end` in seconds
+to watch just part of a long talk.
+
+Without a key the tool still works in a reduced form: title, channel, length and
+the author's description, read from the public watch page. The same metadata is
+what `fetch_url` now returns for a YouTube link, instead of failing to find
+readable text on it. Only **public** videos can be watched — not private or
+unlisted ones. Both paths need the web-access switch on.
+
 ## 5. Importing from other apps
 
 A one-off idempotent import of profiles and chats from a file in the neutral

@@ -3,7 +3,7 @@
 use super::helpers::*;
 use super::*;
 use crate::features::tools::default_tool_ids;
-use crate::shared::config::{FlashAttn, PythonMode, SpecType};
+use crate::shared::config::{FlashAttn, MediaResolution, PythonMode, SpecType};
 use crate::shared::embed_prefix::EmbedConvention;
 
 fn screen() -> SettingsScreen {
@@ -288,6 +288,154 @@ fn python_mode_cycles_and_emits_save() {
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.tools.python_mode, PythonMode::Local)
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn video_group_rows_present_grouped_and_ordered() {
+    // The four "Video (YouTube)" rows live in "Tools", in the documented order
+    // (Model / Input resolution / Max video length / API key), sharing one group
+    // header, each with its own description hint.
+    let s = screen();
+    // `tool_fields()` builds the "Tools" section's rows directly — no navigation needed.
+    let fields = s.tool_fields();
+    let video_ids: Vec<FieldId> = fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.id,
+                FieldId::VideoModel
+                    | FieldId::VideoResolution
+                    | FieldId::VideoMaxMinutes
+                    | FieldId::VideoApiKeyEnv
+            )
+        })
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(
+        video_ids,
+        vec![
+            FieldId::VideoModel,
+            FieldId::VideoResolution,
+            FieldId::VideoMaxMinutes,
+            FieldId::VideoApiKeyEnv,
+        ]
+    );
+    // All four rows carry the same group header (the default screen() locale is ru).
+    for id in &video_ids {
+        let group = fields.iter().find(|f| f.id == *id).unwrap().group;
+        assert_eq!(
+            group, "Видео (YouTube)",
+            "field {id:?} not in the video group"
+        );
+    }
+    for id in video_ids {
+        assert!(
+            field_desc(&s, id).is_some(),
+            "field {id:?} has no description"
+        );
+    }
+}
+
+#[test]
+fn video_resolution_field_cycles_and_saves() {
+    let mut s = screen();
+    assert_eq!(s.config.video.media_resolution, MediaResolution::Low);
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoResolution);
+    let intent = s.handle_key(key(KeyCode::Right));
+    match intent {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.media_resolution, MediaResolution::Medium)
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // The working copy is updated too — the row reflects the new option.
+    assert_eq!(s.config.video.media_resolution, MediaResolution::Medium);
+}
+
+#[test]
+fn video_model_text_field_writes_config() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    s.handle_key(key(KeyCode::Enter)); // open the editor (seeded with the default model)
+    s.handle_key(ctrl('k')); // clear it
+    for c in "gemini-2.5-pro".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.model_name.as_deref(), Some("gemini-2.5-pro"))
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    // An empty value clears the field to `None` (a required-looking field that's
+    // actually optional — the tool reports itself unconfigured).
+    let mut s2 = screen();
+    goto_section(&mut s2, Section::Tools);
+    goto_field(&mut s2, FieldId::VideoModel);
+    s2.handle_key(key(KeyCode::Enter));
+    s2.handle_key(ctrl('k'));
+    match s2.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.video.model_name, None),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn video_max_minutes_is_a_validated_int_field() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoMaxMinutes);
+    assert_eq!(field_num_kind(FieldId::VideoMaxMinutes), Some(NumKind::Int));
+    s.handle_key(key(KeyCode::Enter)); // open the editor (seeded "30")
+    s.handle_key(ctrl('k'));
+    s.handle_key(key(KeyCode::Char('x')));
+    // Non-numeric input keeps the editor open and flags a validation error.
+    assert!(s.handle_key(key(KeyCode::Enter)).is_none());
+    assert!(
+        s.editor.is_some(),
+        "the editor stays open on an invalid number"
+    );
+    assert!(s.editor.as_ref().unwrap().error.is_some());
+    // Fixing it commits normally.
+    s.handle_key(ctrl('k'));
+    for c in "45".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.video.max_minutes, 45),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // `0` is a valid value (no ceiling), not an error.
+    let mut s3 = screen();
+    goto_section(&mut s3, Section::Tools);
+    goto_field(&mut s3, FieldId::VideoMaxMinutes);
+    s3.handle_key(key(KeyCode::Enter));
+    s3.handle_key(ctrl('k'));
+    s3.handle_key(key(KeyCode::Char('0')));
+    match s3.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.video.max_minutes, 0),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn video_api_key_env_text_field_writes_config() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoApiKeyEnv);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "GEMINI_API_KEY".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.api_key_env.as_deref(), Some("GEMINI_API_KEY"))
         }
         other => panic!("expected SaveConfig, got {other:?}"),
     }
@@ -2251,7 +2399,9 @@ fn value_column_is_shared_across_groups() {
     // per section; a per-group column "sawtoothed" between groups).
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
-    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    // "Tools" now carries an extra "Video (YouTube)" group above "Files" — tall enough
+    // that every group (through "Files") stays on screen.
+    let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     let buf = term.backend().buffer();
     let lines: Vec<String> = (0..buf.area.height)

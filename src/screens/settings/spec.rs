@@ -118,6 +118,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 })
             },
         ),
+        VideoResolution => choice(
+            |c, dir| c.video.media_resolution = c.video.media_resolution.cycle(dir),
+            |c, loc| {
+                index_menu(&MediaResolution::ALL, c.video.media_resolution, |x| {
+                    video_resolution_label(x, loc)
+                })
+            },
+        ),
         XFlashAttn => choice(
             |c, dir| c.engine.managed.flash_attn = c.engine.managed.flash_attn.cycle(dir),
             |c, _loc| flash_menu(c.engine.managed.flash_attn),
@@ -384,6 +392,13 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPythonWasmMemory => int(|c, t| {
             c.tools.python_wasm_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
         }),
+        VideoModel => text(|c, t| c.video.model_name = opt(t)),
+        VideoMaxMinutes => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.video.max_minutes = v;
+            }
+        }),
+        VideoApiKeyEnv => text(|c, t| c.video.api_key_env = opt(t)),
         TFsRoot => text(|c, t| c.tools.fs_root = opt(t)),
         TSubMaxTokens => int(|c, t| {
             if let Ok(v) = t.parse() {
