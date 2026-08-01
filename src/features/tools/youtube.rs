@@ -293,6 +293,58 @@ fn is_marker_line(line: &str) -> bool {
     stripped.eq_ignore_ascii_case("TRANSCRIPT")
 }
 
+/// Makes a segment transcript's timestamps absolute — measured from the start of
+/// the **video**, which is what the attachment's header says they are.
+///
+/// Measured live 2026-08-01: asked for a 0:40–1:20 clip, Gemini numbers it from
+/// zero **despite the prompt asking for video-relative timestamps**. The
+/// research doc left this open ("stating it in the prompt costs nothing and
+/// removes the question") — it does not remove it, so the fix is arithmetic we
+/// control rather than an instruction we hope is followed. Left alone, a reader
+/// would seek to 0:03 for a line that is really at 0:43.
+///
+/// Whether the provider complied is decided by the **first** timestamp: one
+/// below `offset` means the clip was numbered from zero. That is what keeps a
+/// future, better-behaved model from being double-shifted; the discriminator is
+/// only ambiguous when `offset` is tiny, where so is the error. Lines that carry
+/// no timestamp pass through untouched.
+fn absolute_timestamps(body: &str, offset: u32) -> String {
+    if offset == 0 {
+        return body.to_string();
+    }
+    let first = body.lines().find_map(|l| leading_stamp(l).map(|(_, s)| s));
+    match first {
+        // Already absolute (or nothing to go on) — leave it be.
+        Some(s) if s >= offset => return body.to_string(),
+        None => return body.to_string(),
+        _ => {}
+    }
+    body.lines()
+        .map(|line| match leading_stamp(line) {
+            Some((end, secs)) => {
+                format!("[{}]{}", format_duration(secs + offset), &line[end + 1..])
+            }
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A leading `[h:mm:ss]` / `[m:ss]` timestamp: the index of the closing bracket
+/// and the time in seconds.
+fn leading_stamp(line: &str) -> Option<(usize, u32)> {
+    let rest = line.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    let parts: Vec<&str> = rest[..end].split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    let nums: Option<Vec<u32>> = parts.iter().map(|p| p.trim().parse::<u32>().ok()).collect();
+    let nums = nums?;
+    let secs = nums.iter().fold(0u32, |acc, n| acc * 60 + n);
+    Some((end + 1, secs))
+}
+
 /// `0:40-1:20` / `from 0:40` — the segment as it goes into the attachment's name
 /// and source key. `None` when the whole video was requested.
 fn segment_label(start: Option<u32>, end: Option<u32>) -> Option<String> {
@@ -659,6 +711,9 @@ impl Tool for YoutubeWatch {
         };
 
         let segment = segment_label(start, end_secs);
+        // The provider numbers a clip from zero whatever the prompt asks (measured
+        // live), so the header's claim is made true here rather than hoped for.
+        let body = absolute_timestamps(&body, start.unwrap_or(0));
         let header = transcript_header(&meta, &url, segment.as_deref(), answer.truncated, ctx.loc);
         let text = format!("{header}\n\n{body}");
         let est = crate::shared::tokens::estimate_text(&text) as usize;
@@ -997,6 +1052,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn segment_timestamps_are_made_absolute_but_only_when_they_are_relative() {
+        let clip = "[0:00:00] first line\nno stamp here\n[0:00:37] later line";
+        // Measured live: the provider numbers a clip from zero, so a 0:40 offset
+        // has to be added or the header's "from the start of the video" is a lie.
+        let shifted = absolute_timestamps(clip, 40);
+        assert!(shifted.starts_with("[0:40] first line"), "{shifted}");
+        assert!(shifted.contains("[1:17] later line"), "{shifted}");
+        assert!(shifted.contains("no stamp here"), "untouched: {shifted}");
+
+        // A provider that *does* honour the instruction must not be shifted
+        // twice — decided by the first timestamp, not by hope.
+        let absolute = "[0:40] first line\n[1:17] later line";
+        assert_eq!(absolute_timestamps(absolute, 40), absolute);
+
+        // No segment, nothing to do.
+        assert_eq!(absolute_timestamps(clip, 0), clip);
+        // Nothing parseable, nothing touched.
+        assert_eq!(absolute_timestamps("just prose", 40), "just prose");
+    }
+
     #[tokio::test]
     async fn without_the_flag_nothing_about_the_request_changes() {
         let (_d, ctx) = ctx();
@@ -1307,11 +1383,19 @@ mod tests {
             "no spoken words in the transcript: {}",
             att.text
         );
-        // In the shape the prompt asked for: one line per utterance, timestamped.
+        // In the shape the prompt asked for: one line per utterance, timestamped…
+        let stamps: Vec<u32> = att
+            .text
+            .lines()
+            .filter_map(|l| leading_stamp(l).map(|(_, s)| s))
+            .collect();
+        assert!(!stamps.is_empty(), "no timestamped lines: {}", att.text);
+        // …and measured from the start of the **video**, as the header claims.
+        // The provider numbers the clip from zero regardless of the prompt
+        // (measured 2026-08-01), so this asserts our own correction, live.
         assert!(
-            att.text.lines().any(|l| l.trim_start().starts_with('[')),
-            "no timestamped lines: {}",
-            att.text
+            stamps.iter().all(|&s| (40..=80 + 5).contains(&s)),
+            "timestamps must be absolute, inside the requested 0:40-1:20: {stamps:?}"
         );
         // Self-describing, and pointing the model at the tools that reach it.
         assert!(att.text.contains(&watch_url("dQw4w9WgXcQ")));
