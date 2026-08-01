@@ -124,9 +124,12 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1749 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1754 unit
 tests green, 73 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **a video's words can now land as a chat attachment**
+recent change — **spellcheck no longer underlines URLs** (a link is skipped
+whole in segmentation, so both the underlining and the `Ctrl+G` popup ignore it;
+a bare domain must be lowercase ASCII, which keeps a run-on sentence like
+`end.Next` a typo rather than a domain); before that — **a video's words can now land as a chat attachment**
 ([plan](docs/history/youtube-transcript.md)): `youtube_watch(transcript: true)`
 also brings back the spoken words with timestamps, in the *same* provider call as
 the description; past the per-file attachment budget they become an attachment
@@ -11008,6 +11011,57 @@ debounce was done as a separate PR, see below).
   tool paths are untouched, and the behaviour it fixes is the model's reading of
   that text, which no automated smoke can assert. Whether the wording actually
   stops the flailing is the user's next live run to judge.
+
+### Post-M9: spellcheck skips URLs (done)
+
+- **Asked for directly**: the input box's spellcheck shouldn't touch URLs. It
+  was underlining a pasted link word by word — `github`, `vshylov`,
+  `mindfork`, `blob` — i.e. the loudest noise lands on exactly the text a user
+  *pastes* rather than types, and none of it is correctable. Branch
+  `fix/spellcheck-skip-urls` (a simple task by AGENTS.md §1: one module, no
+  cross-layer contract, no new dependency — no design doc).
+- **The fix goes in segmentation, and that's the whole reason it is small.**
+  `segment::words` has exactly two callers, both in `SpellChecker`
+  (`misspellings` for the underlines, `misspelled_word_at` for the `Ctrl+G`
+  popup), so skipping a URL there covers both with no second rule to keep in
+  sync — and the `chat_list` rename field, which shares the checker, comes
+  along for free. `words` skips a URL span whole rather than filtering
+  afterwards, so no word can even start inside a link; spans are
+  whitespace-delimited and words never contain whitespace, so a word is always
+  entirely inside or entirely outside one, and the character offsets after a
+  link still address the original line (pinned by a test — those offsets are
+  what draws the underline).
+- **Three shapes, deliberately a heuristic and not a parser**: an explicit
+  scheme (matched *anywhere* in the token, so `(https://x)` counts without
+  trimming games), a `www.` prefix, and a bare domain — the last one because
+  `github.com/foo` is what people actually paste. Surrounding punctuation is
+  trimmed, so a trailing sentence period or `«…»` doesn't hide the link.
+- **The load-bearing detail is the restriction on bare domains: lowercase
+  ASCII.** Without it, a missing space after a period reads as a domain —
+  `end.Next`, and its far more common Cyrillic equivalent — and the check would
+  switch itself off for a genuine typo, silently. Requiring lowercase ASCII
+  labels rules out both (the Cyrillic case by script, the English one by the
+  capital that follows a period), while `example.com` and `sub.example.co.uk`
+  still match. A digits-only last label (`3.14`) is not a TLD, so version
+  numbers are unaffected. Filenames like `main.rs` do read as domains — that
+  is a bonus rather than a cost: a filename isn't prose either.
+- **Scope kept to what was asked**: email addresses and file paths are *not*
+  covered (`user@example.com` is still checked word by word). Worth a follow-up
+  if it turns out to be the same annoyance, but widening it silently would have
+  been a different feature.
+- **Tests**: the four shapes skipped and the prose around them still checked;
+  punctuation around a link; the run-on-sentence guard in both scripts plus a
+  dotted abbreviation and `3.14`; offsets surviving a skipped link; and, in `check.rs`,
+  that a URL is neither underlined nor offered suggestions. **Mutation-tested**:
+  forcing `is_url_token` to `false` fails exactly the four new tests, while the
+  run-on-sentence guard stays green — as a scope pin should. **1754 unit tests
+  green** (+5), 73 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/
+  `link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): pure text segmentation inside
+  one feature module — no engine, memory, tool or provider path is touched.
+- Docs: spec §11.5 (the rule and its boundary; the same bullet also corrected a
+  stale claim that segmentation uses `unicode-segmentation` — it has been our
+  own scanner since M3).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

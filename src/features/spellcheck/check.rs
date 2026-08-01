@@ -139,6 +139,16 @@ mod tests {
     }
 
     #[test]
+    fn a_url_is_not_underlined() {
+        let c = checker();
+        // Nothing in the link is a dictionary word, yet only the prose is flagged.
+        let line = "hello https://github.com/vshylov/mindfork-rs helo";
+        assert_eq!(c.misspellings(line), vec![(45, 49)]);
+        // The suggestions popup doesn't offer anything inside the link either.
+        assert!(c.misspelled_word_at(line, 20).is_none());
+    }
+
+    #[test]
     fn disabled_checker_flags_nothing() {
         let c = SpellChecker::new(Vec::new(), HashSet::new(), None);
         assert!(!c.is_enabled());
