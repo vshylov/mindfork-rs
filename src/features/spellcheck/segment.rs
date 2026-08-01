@@ -5,6 +5,11 @@
 //! letters (ru/en), and connectors (an apostrophe `'`/`’`, a hyphen `-`/`‑`) count
 //! only INSIDE a word (`don't`, `well-known` — one token; a trailing hyphen on a
 //! word is dropped). Indices are by character (matching the `InputBox` model).
+//!
+//! **URLs and email addresses are skipped whole**: an address isn't prose, and
+//! its host and path fragments (`github`, `mindfork`, `rs`, `blob`, …) would
+//! otherwise be underlined word by word — noise on exactly the text a user
+//! pastes rather than types.
 
 /// A word in a string: a range of character indices `[start, end)` and its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,12 +24,122 @@ fn is_connector(c: char) -> bool {
     matches!(c, '\'' | '\u{2019}' | '-' | '\u{2010}')
 }
 
-/// Splits a string into words (letter runs with internal connectors).
+/// Does a whitespace-delimited token look like a URL or an email address?
+///
+/// Deliberately a heuristic over four shapes, not a parser: an explicit scheme
+/// (`https://example.com`), a `www.` prefix, a bare domain (`example.com/path`)
+/// and an address (`user@example.com`, with an optional `mailto:`). A bare
+/// domain additionally has to be **lowercase ASCII** — that restriction is what
+/// keeps a run-on sentence (`end.Next`, and its far more common Cyrillic
+/// equivalent: a missing space after a period) from reading as a domain and
+/// silently switching the check off for a typo.
+fn is_link_token(token: &str) -> bool {
+    // A scheme is unambiguous even with punctuation around it: `(https://x)`.
+    if token.contains("://") {
+        return true;
+    }
+    // Strip surrounding punctuation: `«example.com»`, a trailing sentence period.
+    let core = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/');
+    if core
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("www."))
+    {
+        return core.len() > 4;
+    }
+    if core.contains('@') {
+        return is_email(core);
+    }
+    is_bare_domain(core, DomainCase::AsWritten)
+}
+
+/// `user@example.com`, `Name.Surname+tag@mail.example.co.uk`, `mailto:user@x.io`.
+///
+/// The `@` makes the shape unambiguous, so unlike a bare domain the host may be
+/// written in any case — there is no run-on sentence to confuse it with. The
+/// local part keeps its own case either way (`Vladimir.Shylov@…`).
+fn is_email(core: &str) -> bool {
+    let core = match core.get(..7) {
+        Some(p) if p.eq_ignore_ascii_case("mailto:") => &core[7..],
+        _ => core,
+    };
+    // Split at the last `@`: the local part may legally contain one, the host may not.
+    let Some((local, host)) = core.rsplit_once('@') else {
+        return false;
+    };
+    let local_ok = !local.is_empty()
+        && local
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._%+-'".contains(c));
+    local_ok && is_bare_domain(host, DomainCase::Insensitive)
+}
+
+/// Whether a domain has to be written in lowercase to count as one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DomainCase {
+    /// A bare domain: lowercase only, so `end.Next` stays a typo (see [`is_link_token`]).
+    AsWritten,
+    /// After an `@`: the shape is already unambiguous, so any case will do.
+    Insensitive,
+}
+
+/// `example.com`, `sub.example.co.uk/path?q=1`, `example.com:8080` — a host of
+/// ASCII labels ending in an alphabetic TLD.
+fn is_bare_domain(core: &str, case: DomainCase) -> bool {
+    let host = core.split(['/', '?', '#', ':']).next().unwrap_or_default();
+    let host = match case {
+        DomainCase::AsWritten => host.to_string(),
+        DomainCase::Insensitive => host.to_ascii_lowercase(),
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    let label_ok = |l: &&str| {
+        !l.is_empty()
+            && l.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    if !labels.iter().all(label_ok) {
+        return false;
+    }
+    let tld = labels[labels.len() - 1];
+    (2..=24).contains(&tld.len()) && tld.chars().all(|c| c.is_ascii_lowercase())
+}
+
+/// Character ranges `[start, end)` of link-like tokens in the line.
+fn link_spans(chars: &[char]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        let token: String = chars[start..i].iter().collect();
+        if is_link_token(&token) {
+            spans.push((start, i));
+        }
+    }
+    spans
+}
+
+/// Splits a string into words (letter runs with internal connectors), skipping
+/// URLs and email addresses.
 pub fn words(line: &str) -> Vec<Word> {
     let chars: Vec<char> = line.chars().collect();
+    let links = link_spans(&chars);
     let mut out = Vec::new();
     let mut i = 0;
     while i < chars.len() {
+        // A link is skipped as a whole token, so no word can start inside one.
+        if let Some(&(_, end)) = links.iter().find(|&&(s, e)| i >= s && i < e) {
+            i = end;
+            continue;
+        }
         if !chars[i].is_alphabetic() {
             i += 1;
             continue;
@@ -97,5 +212,70 @@ mod tests {
     fn empty_and_no_words() {
         assert!(words("").is_empty());
         assert!(words("123 !!! ---").is_empty());
+    }
+
+    #[test]
+    fn urls_are_skipped_whole() {
+        // A scheme, `www.`, a bare domain and a path — none of their fragments
+        // become words, while the prose around them still does.
+        assert_eq!(
+            texts("см https://github.com/vshylov/mindfork-rs/blob/main тут"),
+            ["см", "тут"]
+        );
+        assert_eq!(texts("open www.Example.COM now"), ["open", "now"]);
+        assert_eq!(texts("see example.com/path?q=1 ok"), ["see", "ok"]);
+        assert_eq!(texts("host example.com:8080 up"), ["host", "up"]);
+        assert_eq!(texts("ftp://host/file.txt done"), ["done"]);
+    }
+
+    #[test]
+    fn emails_are_skipped_whole() {
+        assert_eq!(
+            texts("пиши vladimir.shylov@outlook.com сюда"),
+            ["пиши", "сюда"]
+        );
+        // The `@` makes the shape unambiguous, so the host may be in any case,
+        // and the local part keeps its own.
+        assert_eq!(texts("на Vladimir.Shylov@Outlook.COM ок"), ["на", "ок"]);
+        assert_eq!(texts("тег user+tag@mail.example.co.uk да"), ["тег", "да"]);
+        assert_eq!(texts("mailto:user@example.io готово"), ["готово"]);
+        assert_eq!(texts("<user@example.com>, ок"), ["ок"]);
+    }
+
+    #[test]
+    fn an_at_sign_alone_is_not_an_address() {
+        // A mention has no domain; a missing space around `@` isn't one either.
+        assert_eq!(
+            texts("привет @username и @self"),
+            ["привет", "username", "и", "self"]
+        );
+        assert_eq!(texts("собака@дома"), ["собака", "дома"]);
+        assert_eq!(texts("a@b пиши"), ["a", "b", "пиши"]);
+    }
+
+    #[test]
+    fn punctuation_around_a_url_does_not_hide_it() {
+        assert_eq!(texts("(https://example.com), да"), ["да"]);
+        assert_eq!(texts("«example.com». Всё"), ["Всё"]);
+    }
+
+    #[test]
+    fn a_run_on_sentence_is_not_a_domain() {
+        // The case the lowercase-ASCII restriction exists for: a missing space
+        // after a period must stay checkable.
+        assert_eq!(texts("конец.Начало"), ["конец", "Начало"]);
+        assert_eq!(texts("end.Next"), ["end", "Next"]);
+        // Ordinary prose with punctuation is untouched.
+        assert_eq!(texts("и т.д. дальше"), ["и", "т", "д", "дальше"]);
+        assert_eq!(texts("версия 3.14 сборки"), ["версия", "сборки"]);
+    }
+
+    #[test]
+    fn word_ranges_survive_a_url_in_the_line() {
+        // The offsets after a skipped URL still address the original line.
+        let w = words("а https://x.com б");
+        assert_eq!(w.len(), 2);
+        assert_eq!((w[0].start, w[0].end), (0, 1));
+        assert_eq!((w[1].start, w[1].end), (16, 17));
     }
 }
