@@ -736,6 +736,10 @@ impl Tool for YoutubeWatch {
 
         let name = transcript_name(&meta, &id, segment.as_deref(), ctx.loc);
         let source = transcript_source(&id, segment.as_deref());
+        // Through the shared rule rather than hardcoding `ByReference`: that is a
+        // *consequence* of the threshold above, not something this line should
+        // assume on its own — and the orchestrator decides `/file attach` the
+        // same way, so the two cannot drift.
         let used = inline_tokens_excluding(&ctx.attachments, &source);
         let mode = decide_mode(est, used, &ctx.attachment_cfg);
         let bytes = text.len();
