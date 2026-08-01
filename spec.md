@@ -1425,8 +1425,13 @@ aligned in **one shared column across the whole section** — sized off the sect
 longest label, with a floor and a cap: every group's values sit on one vertical line,
 and an overly long label doesn't drag the column away (its value sits right after the
 label; current labels stay shorter than the cap — extra context moves into the group
-header). Below the list — a **fixed panel**:
+header). Below the list — a **hint panel**:
 the selected field's full value (paths/URLs, truncated with `…` in the list) + a description hint.
+Its height is that of the **longest hint in the section** (bounded above — an MCP tool's
+description is arbitrary server text — and below by the three rows it has always had):
+a hint clipped mid-sentence is unreadable, while a height following the *selected* field
+would shift the list on every step. The full value shares the panel and gives way to the
+hint (it is also visible in the list row; the hint is only here).
 Sections with **subsections** (Model/Sampling/Profiles) show them as a **tab strip** above the
 fields (a pinned row `Assistant │ Impersonation │ …`, `←/→` switches the active
 tab) — not as a row-field in the list. The hotkey footer is **contextual** (in "Profiles"

@@ -1429,6 +1429,96 @@ fn render_with_focused_description_does_not_panic() {
     }
 }
 
+/// The text of the fields pane (right of the 24-column section menu), rows joined by
+/// a space and whitespace-collapsed — so a hint wrapped across rows can be matched as
+/// one string. Deliberately not the whole screen: the panel's left border column would
+/// land between the rows and break the match.
+fn pane_text(s: &mut SettingsScreen, w: u16, h: u16) -> String {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let text: String = (0..buf.area.height)
+        .map(|y| {
+            // ...and short of the panel's right border, which would otherwise land
+            // between the rows just like the left one.
+            (25..buf.area.width.saturating_sub(1))
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn norm(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The reported symptom: the API-key hint ran past the bottom panel's last row and was
+/// cut mid-sentence. The panel is now as tall as the longest hint of the field set
+/// needs, so the hint is shown whole — at a comfortable width and at a narrow one,
+/// where it wraps into many more rows.
+#[test]
+fn a_long_hint_is_shown_whole_in_the_bottom_panel() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    goto_field(&mut s, FieldId::XApiKey);
+    let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("api key is described"));
+    for (w, h) in [(120u16, 40u16), (146, 46), (70, 40)] {
+        let shown = pane_text(&mut s, w, h);
+        assert!(
+            shown.contains(&desc),
+            "hint clipped at {w}x{h}:\n  want: {desc}\n  got:  {shown}"
+        );
+    }
+}
+
+/// The full-value preview shares the panel with the hint — and gives way to it: the
+/// height is reserved for the hint, so a long value can only take what the hint leaves.
+#[test]
+fn a_long_value_preview_does_not_push_the_hint_out() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    // Long enough that the preview alone would fill the panel and leave nothing.
+    s.config.engine.openai.api_key_env = Some("VERY_LONG_ENVIRONMENT_VARIABLE_NAME_".repeat(12));
+    goto_field(&mut s, FieldId::XApiKeyEnv);
+    let desc = norm(&field_desc(&s, FieldId::XApiKeyEnv).expect("described"));
+    let shown = pane_text(&mut s, 120, 40);
+    assert!(
+        shown.contains("VERY_LONG_ENVIRONMENT_VARIABLE_NAME_VERY_LONG"),
+        "the preview is gone entirely: {shown}"
+    );
+    assert!(
+        shown.contains(&desc),
+        "hint clipped by the preview: {shown}"
+    );
+}
+
+/// The panel's height: the longest hint of the field set (constant while stepping
+/// between its fields — a per-field height would shift the list under the cursor),
+/// never below the floor it has always had, never above the cap (an MCP server's tool
+/// description is arbitrary text).
+#[test]
+fn hint_panel_height_follows_the_longest_hint_within_bounds() {
+    let s = screen();
+    let loc = s.loc();
+    let rows = |fields: &[FieldRow], w: usize, cap: usize| hint_panel_rows(fields, w, cap, loc);
+
+    let short = vec![row(FieldId::XPort, "p", FieldKind::Text("1".into()))];
+    assert_eq!(rows(&short, 80, HINT_MAX_ROWS), HINT_MIN_ROWS, "floor");
+
+    let long = vec![
+        row(FieldId::XPort, "p", FieldKind::Text("1".into())),
+        row(FieldId::XUrl, "u", FieldKind::Text(String::new())).describe("слово ".repeat(60)),
+    ];
+    let need = hint_rows(&long[1], 40, loc);
+    assert!(need > HINT_MIN_ROWS, "the fixture must overflow the floor");
+    assert_eq!(rows(&long, 40, HINT_MAX_ROWS), need, "grows to the longest");
+    assert_eq!(rows(&long, 40, 4), 4, "and stops at the cap");
+}
+
 #[test]
 fn fields_scrollbar_appears_only_on_overflow() {
     use ratatui::Terminal;
