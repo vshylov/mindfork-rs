@@ -134,7 +134,7 @@ struct PromptFeedback {
 ///
 /// A `MAX_TOKENS` finish **with** text is not an error: it is a complete-looking
 /// prefix, which is why it is reported as [`VideoAnswer::truncated`] rather than
-/// dropped (docs/youtube-transcript.md §3 F5).
+/// dropped (docs/history/youtube-transcript.md §3 F5).
 fn text_from_response(resp: GenerateResponse) -> Result<VideoAnswer> {
     if let Some(reason) = resp.prompt_feedback.and_then(|f| f.block_reason) {
         anyhow::bail!("Gemini refused the video request (reason: {reason})");

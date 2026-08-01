@@ -15,7 +15,7 @@
 //! 10-minute video costs ~62k tokens at Google and a few hundred in the
 //! conversation, which is what makes this usable from a local 8k-context model.
 //!
-//! `transcript: true` (stage 2, docs/youtube-transcript.md) also asks for the
+//! `transcript: true` (stage 2, docs/history/youtube-transcript.md) also asks for the
 //! words. It costs **exactly the same** — it is the same request with a longer
 //! prompt, and on the 3.x models audio is not even billed apart from video — so
 //! it is one provider call for both halves, split on a marker. A transcript
@@ -1000,7 +1000,7 @@ mod tests {
         );
     }
 
-    // ---- stage 2: the words, not just the description (docs/youtube-transcript.md)
+    // ---- stage 2: the words, not just the description (docs/history/youtube-transcript.md)
 
     #[test]
     fn split_transcript_takes_both_halves_and_tolerates_decoration() {

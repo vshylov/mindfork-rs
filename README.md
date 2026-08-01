@@ -190,14 +190,18 @@ Architecture — **Feature-Sliced Design (FSD)**.
 - **`fetch_url(url, focus?, summarize?)`** — fetch a page and summarize it with the
   model (like `call_subagent`); `focus` steers the summary, `summarize=false` returns
   the extracted text without the model. Gated by the web-access switch.
-- **`youtube_watch(url, focus?, start?, end?)`** — watch a YouTube video and tell
-  what is **said and shown** in it, with timestamps. Needs a Gemini API key (the
-  same one used for chat): it is the only provider that takes video, so this works
-  whatever your chat engine is — including a local model. Without a key the tool
-  still returns the title, channel, length and the author's description. Long
-  videos are refused with a suggestion to ask for a segment (`start`/`end`);
-  the ceiling and the frame-sampling detail are in settings → "Tools" → "Video".
-  Gated by the web-access switch.
+- **`youtube_watch(url, focus?, start?, end?, transcript?)`** — watch a YouTube
+  video and tell what is **said and shown** in it, with timestamps. Needs a Gemini
+  API key (the same one used for chat): it is the only provider that takes video,
+  so this works whatever your chat engine is — including a local model. Without a
+  key the tool still returns the title, channel, length and the author's
+  description. Long videos are refused with a suggestion to ask for a segment
+  (`start`/`end`); the ceiling and the frame-sampling detail are in settings →
+  "Tools" → "Video". Gated by the web-access switch.
+  With `transcript: true` you also get the words themselves — and if they are
+  large, they arrive as a **chat attachment** (`/file list`) that the model reads
+  page by page and searches, instead of filling the conversation. A transcript
+  costs the same as watching: it is the same request.
 - **`python_exec`** — runs Python in an **isolated Wasmer/WASIX sandbox** (by
   default: no access to the host's files, network gated by a toggle, preinstalled
   **numpy / pandas / requests** packages, no Python needed on the host) or in the

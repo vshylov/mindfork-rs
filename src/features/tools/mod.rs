@@ -195,7 +195,7 @@ pub enum ChatEffect {
     /// stored — down to the `id`, which is the key the background index is
     /// written under. The agentic loop additionally mirrors it into the turn's
     /// `ToolContext` snapshot, so `attachment_read` finds it in the very next
-    /// round rather than only in the next turn (docs/youtube-transcript.md §3 F1).
+    /// round rather than only in the next turn (docs/history/youtube-transcript.md §3 F1).
     AddAttachment(Box<crate::entities::attachment::Attachment>),
 }
 

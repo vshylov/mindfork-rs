@@ -48,7 +48,7 @@ pub struct VideoRequest {
 /// told "here is the transcript" would believe it has the whole thing — losing
 /// exactly the guarantee `attachment_read`'s page walk is there to give. For a
 /// description it barely matters; hence one flag rather than a whole finish
-/// reason. See docs/youtube-transcript.md §3 F5.
+/// reason. See docs/history/youtube-transcript.md §3 F5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoAnswer {
     pub text: String,

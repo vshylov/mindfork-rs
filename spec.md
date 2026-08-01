@@ -876,6 +876,11 @@ server, and retrieval only ever returns the fragments matching a query.
 Attachments are **chat-scoped**, need **no embedder**, and are delivered
 **in full** — see [docs/file-attachments.md](docs/file-attachments.md).
 
+A file is not the only way one appears: a **tool** can produce an attachment
+too, by returning `ChatEffect::AddAttachment` (a video transcript, §9.9). It
+then travels the same path in every respect — budget, index, feed note, status
+chip, `/file list`, `/file remove`.
+
 - **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
   `/file remove <name|#N>`, `/file list`. As with RAG, the removal subcommand is
   only `remove` — never `delete` (it takes nothing off disk).
@@ -1014,8 +1019,51 @@ key, while this tool needs one whatever the chat engine is.
 **What it returns.** The answer, not the material: a description with
 timestamps, narrowed by `focus`. A 10-minute video costs ~62k tokens at the
 provider and a few hundred in the conversation — which is what makes it usable
-from a local model with an 8k window. A raw transcript is deliberately out of
-scope (fork R3; the honest home for one is a chat attachment, §9.7).
+from a local model with an 8k window.
+
+**The words themselves — `transcript: true`** (stage 2,
+[docs/history/youtube-transcript.md](docs/history/youtube-transcript.md)). It
+costs **exactly the same** as watching: the video is ingested either way, and on
+the 3.x models audio is not billed apart from video — so it is **one** provider
+call for both halves, split on a marker, and the parameter's own description
+says so, or the model would treat the words as a cheap extra. If the marker
+never comes the whole answer is the description and the miss is reported: filing
+half a description as a transcript would be worse than saying none arrived.
+
+- **Where the words go** is decided by the existing attachment budget
+  (`config.attachments.max_file_tokens`) — no setting of its own. Below it, the
+  transcript is in the result and the model reads it at once. Above it, it
+  becomes a **chat attachment** (§9.7), which is already paged and searchable,
+  where a tool result would go into the context whole. An attached transcript is
+  therefore **by reference by construction** — inline requires `est <=
+  max_file_tokens`, which is exactly the other side of the threshold — so this
+  path never competes for the chat's inline budget, and it is indexed for
+  `attachment_search` with no special case.
+- **The attachment is self-describing**: video, URL, segment, and a line saying
+  it was produced by a model from the audio rather than taken from official
+  captions. Its source key carries the segment, so transcribing the same span
+  twice replaces it while two different spans coexist.
+- **Timestamps are absolute** — measured from the start of the video, as the
+  header claims. The prompt asks for that, and the provider *sometimes* obeys:
+  measured live, the same model numbered a 0:40–1:20 clip from zero on one run
+  and absolutely on the next. So the tool corrects the timestamps itself,
+  deciding by the first one whether the clip was numbered from zero — a blind
+  shift would push an already-absolute transcript outside the segment.
+- **Truncation is reported**, in the result and in the file. An answer stopped at
+  the output ceiling still looks whole, so a model told "here is the transcript"
+  would believe it had read the video to the end — losing the guarantee
+  `attachment_read`'s page walk exists to give.
+
+**How the attachment reaches the chat.** Tools do not mutate `Chat`: the tool
+returns `ChatEffect::AddAttachment` and the orchestrator applies it through the
+same path `/file attach` takes (§9.7), so the index, the feed note and the
+status chip all follow, and the object described to the model is the object
+stored — `id` included, since that is the key the index is written under. But
+effects are applied when the **turn** ends, while `ToolContext.attachments` is a
+turn snapshot, so the agentic loop also mirrors the effect into that snapshot at
+the end of the round: otherwise "attached as X, read it with `attachment_read`"
+would be an instruction the turn itself could not carry out. A turn cancelled
+after the call still attaches — the transcript was already paid for.
 
 **Cost is bounded before it is spent.** Measured ≈91 prompt tokens per second of
 video on the default (Gemini 3.x) model — where the frame-detail setting turns out

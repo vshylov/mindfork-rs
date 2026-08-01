@@ -2,7 +2,7 @@
 
 > **Genre:** track design plan (AGENTS.md §1), **stage 2** of the YouTube track.
 > Stage 1 is merged (PR #247, #248); research, measurements and forks R1–R9 —
-> [docs/research/youtube-integration.md](research/youtube-integration.md), what
+> [docs/research/youtube-integration.md](../research/youtube-integration.md), what
 > stage 1 turned into — §8a there. Behaviour — spec §9.9.
 >
 > §3 lists the forks. **User's decision, 2026-08-01: all of them as

@@ -109,7 +109,7 @@ impl Orchestrator {
     ///
     /// Two entry points share it: `/file attach` above, and a tool that produced
     /// an attachment of its own and returned it as a `ChatEffect::AddAttachment`
-    /// (a video transcript — spec §9.9, docs/youtube-transcript.md §3 F1). The
+    /// (a video transcript — spec §9.9, docs/history/youtube-transcript.md §3 F1). The
     /// mode is **not** re-decided here: the tool already told the model what it
     /// did, and the object described and the object stored have to be the same
     /// one — down to the `id`, which is the key the index is written under.

@@ -276,7 +276,9 @@ src/
 │  │  ├─ youtube.rs         youtube_watch: what a video says and shows. Free
 │  │  │                     metadata (watch page/oEmbed, pure parse) + the video
 │  │  │                     call via shared/video; degrades to metadata when no
-│  │  │                     provider is configured — spec §9.9
+│  │  │                     provider is configured. transcript: true adds the
+│  │  │                     words — one call, split on a marker; a large one
+│  │  │                     becomes a chat attachment — spec §9.9
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
@@ -1229,13 +1231,25 @@ flowchart TB
     REG["ToolRegistry<br/>schemas_for = profile ∩ registry · invoke(name,args,ctx)"]
     CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
     OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt; }"]
-    EFF["ChatEffect: SetSystemMessage | SetSamplingOverride"]
+    EFF["ChatEffect: SetSystemMessage | SetSamplingOverride | AddAttachment"]
 
     REG --> CTX
     CTX --> OUT
     OUT --> EFF
     EFF -. "applied by the orchestrator (owner of Chat)" .-> ORCH["Chat"]
 ```
+
+**`AddAttachment` and the turn snapshot.** Effects are applied to `Chat` when
+the **turn** ends (`handle_done`), while `ToolContext.attachments` is a snapshot
+taken at its start. For the scalar effects that is invisible; for an attachment
+it is not, because the tool's own result tells the model to read the file with
+`attachment_read` — which reads that snapshot. So the agentic loop mirrors the
+round's `AddAttachment` effects into its own `ToolContext`
+(`generation::sync_attachments`, once per round, applying the same
+dedupe-by-source rule the orchestrator will), and the orchestrator persists them
+through `insert_attachment` — the path `/file attach` takes. The loop still
+never touches `Chat`: the invariant is intact, the snapshot is its own. See
+spec §9.9, docs/history/youtube-transcript.md §3 F1.
 
 The registry is built from `ToolConfig` (`standard_registry(&ToolConfig)`)
 and rebuilt on `config.tools` edits. The effective tool set =
@@ -1270,7 +1284,7 @@ by `ToolGroup` (`Ord`).
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
-| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |

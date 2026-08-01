@@ -425,7 +425,7 @@ async fn attaching_a_missing_file_reports_an_error() {
     }
 }
 
-// ---------- an attachment produced by a tool (spec §9.9, docs/youtube-transcript.md) ----------
+// ---------- an attachment produced by a tool (spec §9.9, docs/history/youtube-transcript.md) ----------
 
 /// Builds the turn snapshot `start_generation` builds, for a chat that already
 /// holds `attachments`.

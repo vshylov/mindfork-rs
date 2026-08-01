@@ -857,7 +857,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 // exists, will ask for it. Without this the tool result would be
                 // an instruction the turn cannot carry out: the effect itself is
                 // applied to `Chat` by the orchestrator only when the turn ends
-                // (docs/youtube-transcript.md §3 F1).
+                // (docs/history/youtube-transcript.md §3 F1).
                 //
                 // Once per round, not per call: within a round the model has
                 // already issued its calls, so finer granularity would buy

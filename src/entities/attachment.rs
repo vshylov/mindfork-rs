@@ -266,7 +266,7 @@ pub fn format_bytes(bytes: usize) -> String {
 ///
 /// A pure function rather than a rule written twice: the orchestrator decides
 /// this for `/file attach`, and a tool that produces its own attachment (a video
-/// transcript, docs/youtube-transcript.md §3 F2) has to reach the same answer —
+/// transcript, docs/history/youtube-transcript.md §3 F2) has to reach the same answer —
 /// it tells the model what it did before the orchestrator persists it. Attaching
 /// never *fails* on size; over the budget simply means by reference.
 pub fn decide_mode(
