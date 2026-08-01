@@ -5,7 +5,8 @@
 > [docs/research/youtube-integration.md](research/youtube-integration.md), what
 > stage 1 turned into — §8a there. Behaviour — spec §9.9.
 >
-> §3 lists the forks that need the user's answer **before** any code is written.
+> §3 lists the forks. **User's decision, 2026-08-01: all of them as
+> recommended** — F1(a), F2(a), F3(a), F4(a), F5(a).
 >
 > **Task (user's framing, 2026-08-01):** stage 2 is fork **R3(c)** — an option to
 > get not only the description but *the words themselves*, and, when they are
