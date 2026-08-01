@@ -151,11 +151,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   quick model selector right in the chat).
 - **Multimodality support** (images) — if the model/`llama-server` supports
   vision; passing images from clipboard/file.
-- **YouTube — groundwork** (stage 1 is **done**, see "Recently closed";
-  [youtube-integration.md](research/youtube-integration.md), spec §9.9):
-  - a **raw transcript** when one is actually wanted (fork R3c) — the honest
-    shape is `transcript: true` landing it as a chat attachment (§9.7), which is
-    already paged and searchable, rather than as a tool result;
+- **YouTube — groundwork** (stages 1 and 2 are **done**, see "Recently closed";
+  [youtube-integration.md](research/youtube-integration.md),
+  [youtube-transcript.md](history/youtube-transcript.md), spec §9.9):
   - **cross-chat caching** of an expensive watch (R8b). Within one chat a
     follow-up is already free — the result is in the history; only a *different*
     chat re-pays. `cache.db` is deliberately the wrong home: it is disposable by
@@ -277,6 +275,22 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **YouTube: the words, as a chat attachment** (stage 2, complete):
+  `transcript: true` also brings back the spoken words with timestamps, in the
+  **same** provider call as the description (the video is ingested either way, so
+  a second call would double the expensive half) — the parameter says so, or the
+  model treats the words as a cheap extra. A transcript past the per-file
+  attachment budget lands as a **chat attachment** (spec §9.7), already paged and
+  searchable, instead of going into the context whole; the threshold is the
+  existing budget, which also makes such a transcript by-reference by
+  construction. The stage's real work was the contract: `ChatEffect` gained a
+  generic `AddAttachment`, and since effects only reach `Chat` when the turn ends
+  while `ToolContext.attachments` is a turn snapshot, the loop mirrors the effect
+  into that snapshot — otherwise "attached as X, read it with `attachment_read`"
+  would be an instruction the turn could not carry out. Timestamps are corrected
+  to be absolute: measured live, the same model numbered a clip from zero on one
+  run and absolutely on the next, so the shift is decided rather than applied
+  blindly. See [youtube-transcript.md](history/youtube-transcript.md), spec §9.9.
 - **YouTube: what a video says and shows** (stage 1, complete): `youtube_watch`
   describes a video's frames *and* audio with timestamps, narrowed by `focus`,
   and `start`/`end` clip a long one to a segment. It calls **Gemini out of band**

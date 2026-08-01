@@ -357,6 +357,9 @@ impl Orchestrator {
                 .iter()
                 .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
         });
+        // Attachments a tool produced this turn (spec §9.9) — applied below,
+        // outside the `chat` borrow.
+        let mut attached: Vec<crate::entities::attachment::Attachment> = Vec::new();
         if let Some(chat) = self.chat_mut(res.chat_id) {
             // Discarded by the "rewrite" tool — into the deleted archive (manual
             // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
@@ -371,10 +374,20 @@ impl Orchestrator {
                 match effect {
                     ChatEffect::SetSystemMessage(s) => chat.system_message = s,
                     ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(*s),
+                    // Needs the whole orchestrator (index prune, background
+                    // indexing, the feed note), so it is applied after the `chat`
+                    // borrow ends — collected here, executed below.
+                    ChatEffect::AddAttachment(a) => attached.push(*a),
                 }
             }
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
+        }
+        // The same path `/file attach` takes — one place decides what attaching
+        // entails (spec §9.7). A turn cancelled after the tool ran still gets
+        // here: the transcript was already paid for.
+        for a in attached {
+            self.insert_attachment(res.chat_id, a);
         }
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
@@ -561,7 +574,7 @@ fn spawn_generation(spawn: GenSpawn) {
     let GenSpawn {
         backend,
         registry,
-        ctx,
+        mut ctx,
         mut request,
         cancel,
         confirm_dangerous,
@@ -837,6 +850,21 @@ fn spawn_generation(spawn: GenSpawn) {
                         let _ = evt_tx.send(AppEvent::AssistantContinue { generation_id: id });
                     }
                 }
+                // An attachment a tool produced this round (a video transcript,
+                // spec §9.9) is mirrored into the turn's snapshot, so
+                // `attachment_read`/`attachment_search` find it in the **next
+                // round** — which is when the model, having just been told it
+                // exists, will ask for it. Without this the tool result would be
+                // an instruction the turn cannot carry out: the effect itself is
+                // applied to `Chat` by the orchestrator only when the turn ends
+                // (docs/history/youtube-transcript.md §3 F1).
+                //
+                // Once per round, not per call: within a round the model has
+                // already issued its calls, so finer granularity would buy
+                // nothing. The loop still never touches `Chat` — this is its own
+                // snapshot.
+                sync_attachments(&mut ctx, &effects);
+
                 // The turn was cancelled while tools were executing — what's
                 // accumulated is already saved above, don't start the next round.
                 if cancel.is_cancelled() {
@@ -867,6 +895,35 @@ fn spawn_generation(spawn: GenSpawn) {
             deleted,
         });
     });
+}
+
+/// Rebuilds the turn's attachment snapshot from the `AddAttachment` effects the
+/// round produced, applying the same dedupe-by-source rule the orchestrator will
+/// apply when it persists them — so what the model can read now and what ends up
+/// in the chat file are the same set.
+///
+/// A no-op in the overwhelming majority of rounds (no such effect), so it checks
+/// before rebuilding rather than cloning the list every round.
+pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
+    let added: Vec<&crate::entities::attachment::Attachment> = effects
+        .iter()
+        .filter_map(|e| match e {
+            ChatEffect::AddAttachment(a) => Some(a.as_ref()),
+            _ => None,
+        })
+        .collect();
+    if added.is_empty() {
+        return;
+    }
+    let mut list: Vec<crate::entities::attachment::Attachment> = ctx.attachments.to_vec();
+    for a in added {
+        if list.iter().any(|x| x.id == a.id) {
+            continue; // already mirrored by an earlier round
+        }
+        list.retain(|x| x.source != a.source);
+        list.push(a.clone());
+    }
+    ctx.attachments = list.into();
 }
 
 /// Streams a single request, relaying `Text`/`Thoughts` to the UI, accumulating

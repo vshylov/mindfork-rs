@@ -424,3 +424,283 @@ async fn attaching_a_missing_file_reports_an_error() {
         _ => unreachable!(),
     }
 }
+
+// ---------- an attachment produced by a tool (spec §9.9, docs/history/youtube-transcript.md) ----------
+
+/// Builds the turn snapshot `start_generation` builds, for a chat that already
+/// holds `attachments`.
+fn turn_ctx(
+    orch: &Orchestrator,
+    profile_id: Uuid,
+    chat_id: Uuid,
+    attachments: Vec<crate::entities::attachment::Attachment>,
+) -> crate::features::tools::ToolContext {
+    use crate::features::tools::{ToolParams, TurnInfo};
+    crate::features::tools::ToolContext::new(
+        orch.tool_deps(Arc::new(MockBackend::scripted(vec![]))),
+        ToolParams::from_config(&orch.config),
+        TurnInfo {
+            profile_id,
+            chat_id,
+            system_message: String::new(),
+            effective_sampling: Default::default(),
+            last_user_message_at: None,
+            attachments: Arc::from(attachments),
+            lang: crate::shared::i18n::Lang::Ru,
+            cancel: CancellationToken::new(),
+        },
+    )
+}
+
+fn made_up_attachment(
+    name: &str,
+    source: &str,
+    text: &str,
+) -> crate::entities::attachment::Attachment {
+    crate::entities::attachment::Attachment::new(
+        name,
+        source,
+        text.to_string(),
+        text.len(),
+        AttachMode::ByReference,
+    )
+}
+
+/// **The hole this stage exists to close.** Effects are applied to `Chat` only
+/// when the whole turn ends, while `ToolContext.attachments` is a turn snapshot —
+/// so without the loop mirroring the effect, a tool that says "attached as X, use
+/// attachment_read" would be issuing an instruction its own turn cannot carry
+/// out. The assertion is therefore the behaviour, not the field: the tool that
+/// the result points the model at must find the file in the **next round**.
+#[tokio::test]
+async fn an_attachment_from_a_tool_is_readable_in_the_next_round_of_the_same_turn() {
+    use crate::features::tools::Tool;
+    use crate::features::tools::attachment::AttachmentRead;
+
+    let (_d, orch) = bare_orch();
+    let body = "расшифровка речи, строка за строкой\n".repeat(20);
+    let attachment = made_up_attachment("видео — расшифровка.txt", "youtube:abc#transcript", &body);
+    let effects = vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+        attachment.clone(),
+    ))];
+
+    let mut ctx = turn_ctx(&orch, Uuid::new_v4(), Uuid::new_v4(), vec![]);
+    // Before the round's effects are mirrored the file does not exist yet…
+    let before = AttachmentRead
+        .invoke(&ctx, serde_json::json!({"name": attachment.name}))
+        .await
+        .unwrap()
+        .result;
+    assert!(!before.contains("строка за строкой"), "{before}");
+
+    super::super::generation::sync_attachments(&mut ctx, &effects);
+
+    // …and after them the very next round can read it.
+    let after = AttachmentRead
+        .invoke(
+            &ctx,
+            serde_json::json!({"name": attachment.name, "page": 1}),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert!(
+        after.contains("строка за строкой"),
+        "the next round must see the attachment: {after}"
+    );
+
+    // Mirroring twice (two rounds carrying the same accumulated effect list)
+    // must not duplicate it — the effects vector is cumulative, not per round.
+    super::super::generation::sync_attachments(&mut ctx, &effects);
+    assert_eq!(ctx.attachments.len(), 1);
+}
+
+/// The other half of F1: what the model was told about is what gets stored —
+/// through the same path `/file attach` takes, so the index, the feed note and
+/// the status chip all follow.
+#[tokio::test]
+async fn a_tool_produced_attachment_is_persisted_and_replaces_the_previous_one() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "t");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    let source = "youtube:abc#transcript@0:40-1:20";
+    let first = made_up_attachment("first.txt", source, "первый вариант расшифровки");
+    let gen_id = Uuid::new_v4();
+    orch.gen_state.begin(gen_id, CancellationToken::new());
+    orch.handle_done(super::super::generation::GenResult {
+        id: gen_id,
+        chat_id,
+        messages: vec![Message::assistant("готово")],
+        effects: vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+            first.clone(),
+        ))],
+        deleted: vec![],
+    });
+
+    let stored = &orch
+        .chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .unwrap()
+        .attachments;
+    assert_eq!(stored.len(), 1);
+    // The stored object is the one the model was told about — the `id` included,
+    // since that is the key the background index is written under.
+    assert_eq!(stored[0].id, first.id);
+    assert_eq!(stored[0].mode, AttachMode::ByReference);
+    // It went through the shared attach path, so the UI hears about it.
+    let mut attached = false;
+    let mut chip = false;
+    while let Ok(e) = rx.try_recv() {
+        match e {
+            AppEvent::FileProgress(FileProgress::Attached { .. }) => attached = true,
+            AppEvent::Attachments(items) => chip = !items.is_empty(),
+            _ => {}
+        }
+    }
+    assert!(attached, "the feed note is part of attaching");
+    assert!(chip, "so is the status-bar chip");
+
+    // Transcribing the same span again replaces it rather than piling up.
+    let second = made_up_attachment("second.txt", source, "исправленная расшифровка");
+    let gen_id = Uuid::new_v4();
+    orch.gen_state.begin(gen_id, CancellationToken::new());
+    orch.handle_done(super::super::generation::GenResult {
+        id: gen_id,
+        chat_id,
+        messages: vec![],
+        effects: vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+            second.clone(),
+        ))],
+        deleted: vec![],
+    });
+    let stored = &orch
+        .chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .unwrap()
+        .attachments;
+    assert_eq!(stored.len(), 1, "same source → replaced, not duplicated");
+    assert_eq!(stored[0].id, second.id);
+}
+
+/// A tool that produces an attachment, standing in for `youtube_watch` with a
+/// video provider (which a test cannot mock — the registry builds the real
+/// Gemini client from config).
+struct AttachingTool {
+    text: String,
+}
+
+#[async_trait::async_trait]
+impl crate::features::tools::Tool for AttachingTool {
+    fn id(&self) -> String {
+        "fake_attach".into()
+    }
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+        "attaches something".into()
+    }
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::ExternalWorld
+    }
+    fn ui_label(&self) -> &'static str {
+        "fake attach"
+    }
+    async fn invoke(
+        &self,
+        _ctx: &crate::features::tools::ToolContext,
+        _args: serde_json::Value,
+    ) -> anyhow::Result<crate::features::tools::ToolOutcome> {
+        Ok(crate::features::tools::ToolOutcome::with_effects(
+            "attached as fake.txt",
+            vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+                made_up_attachment("fake.txt", "fake:source", &self.text),
+            ))],
+        ))
+    }
+}
+
+/// The call site of the mirroring, end to end through the real agentic loop:
+/// round 1 attaches, round 2 reads it back. Without
+/// [`sync_attachments`](super::super::generation::sync_attachments) being called
+/// in the loop, round 2's `attachment_read` looks into a turn snapshot taken
+/// before the attachment existed — which is exactly what the tool result would
+/// have told the model to do.
+#[tokio::test]
+async fn the_loop_lets_the_next_round_read_what_the_previous_one_attached() {
+    use crate::features::tools::ToolRegistry;
+    use crate::features::tools::attachment::{ATTACHMENT_READ_ID, AttachmentRead};
+    use crate::shared::api::contract::ToolCallDelta;
+    use crate::shared::server::ServerStatus;
+
+    let call = |id: &str, name: &str, args: &str| {
+        vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some(id.into()),
+                name: Some(name.into()),
+                arguments: args.into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ]
+    };
+    let backend = Arc::new(MockBackend::sequence(vec![
+        call("c1", "fake_attach", "{}"),
+        // The model reads back exactly what the first round's result named.
+        call("c2", ATTACHMENT_READ_ID, r#"{"name":"fake.txt","page":1}"#),
+        vec![
+            ChatChunk::Text("готово".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let body = "строка расшифровки, слышимая в ролике\n".repeat(20);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(AttachingTool { text: body.clone() }));
+    registry.register(Arc::new(AttachmentRead));
+    orch.registry = Arc::new(registry);
+    orch.engines.backend = Some(backend.clone());
+    orch.engines.server_status = ServerStatus::Ready;
+
+    let mut profile = Profile::new("P", "sys");
+    profile.enabled_tools = vec!["fake_attach".into(), ATTACHMENT_READ_ID.into()];
+    let chat = Chat::from_profile(&profile, "t");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    orch.handle_send("посмотри ролик".into());
+
+    // The second round's tool result is the assertion: the file the first round
+    // attached must be readable now, not next turn.
+    let mut read_back = None;
+    while let Some(ev) = wait_for(&mut rx, |e| {
+        matches!(e, AppEvent::ToolCall { .. } | AppEvent::Finished { .. })
+    })
+    .await
+    {
+        match ev {
+            AppEvent::ToolCall { name, result, .. } if name == ATTACHMENT_READ_ID => {
+                read_back = Some(result);
+                break;
+            }
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    let read_back = read_back.expect("the second round called attachment_read");
+    assert!(
+        read_back.contains("строка расшифровки"),
+        "the next round must read what the previous one attached: {read_back}"
+    );
+}

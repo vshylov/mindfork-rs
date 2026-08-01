@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::attachment::{
-    AttachMode, Attachment, AttachmentChunk, inline_tokens, prompt_tokens,
+    AttachMode, Attachment, AttachmentChunk, decide_mode, inline_tokens_excluding, prompt_tokens,
 };
 use crate::features::file_command::{FileProgress, resolve_target};
 use crate::features::tools::rag::ChunkParams;
@@ -90,26 +90,44 @@ impl Orchestrator {
         let Some(chat) = self.chat_mut(res.chat_id) else {
             return; // the chat is gone (deleted while reading)
         };
-        // Re-attaching the same file replaces the previous snapshot (idempotent,
-        // like re-adding a source to RAG) — and frees its budget first.
-        chat.attachments.retain(|a| a.source != file.source);
-
         let est = crate::shared::tokens::estimate_text(&file.text) as usize;
-        let used = inline_tokens(&chat.attachments);
+        // What is spent inline *excluding* a previous copy of this same file:
+        // re-attaching replaces it (the dedupe happens in `insert_attachment`),
+        // so counting the old copy would push the new one by reference for no
+        // reason.
+        let used = inline_tokens_excluding(&chat.attachments, &file.source);
         // Over the per-file budget, or over what's left of the chat's total →
         // by reference. Attaching never fails on size (docs/file-attachments.md §4.2).
-        let mode = if est <= cfg.max_file_tokens && used + est <= cfg.max_total_tokens {
-            AttachMode::Inline
-        } else {
-            AttachMode::ByReference
-        };
+        let mode = decide_mode(est, used, &cfg);
         let attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
+        self.insert_attachment(res.chat_id, attachment);
+    }
+
+    /// Puts an **already-built** attachment into a chat and does everything that
+    /// follows: dedupe by source, persistence, index prune, the feed note, the
+    /// status chip, and background indexing.
+    ///
+    /// Two entry points share it: `/file attach` above, and a tool that produced
+    /// an attachment of its own and returned it as a `ChatEffect::AddAttachment`
+    /// (a video transcript — spec §9.9, docs/history/youtube-transcript.md §3 F1). The
+    /// mode is **not** re-decided here: the tool already told the model what it
+    /// did, and the object described and the object stored have to be the same
+    /// one — down to the `id`, which is the key the index is written under.
+    pub(super) fn insert_attachment(&mut self, chat_id: Uuid, attachment: Attachment) {
+        let cfg = self.config.attachments;
+        let Some(chat) = self.chat_mut(chat_id) else {
+            return; // the chat is gone (deleted while the tool was running)
+        };
+        // Re-attaching the same source replaces the previous snapshot
+        // (idempotent, like re-adding a source to RAG).
+        chat.attachments.retain(|a| a.source != attachment.source);
+
         let info = attachment.info(cfg.excerpt_tokens);
         // Only a by-reference file is indexed (fork F13): an inline one is
         // already in the prompt in full, so search would return duplicates of
         // what the model can see anyway.
-        let index = (mode == AttachMode::ByReference).then(|| AttachIndex {
-            chat_id: res.chat_id,
+        let index = (attachment.mode == AttachMode::ByReference).then(|| AttachIndex {
+            chat_id,
             attachment_id: attachment.id,
             name: attachment.name.clone(),
             source: attachment.source.clone(),
@@ -121,8 +139,8 @@ impl Orchestrator {
         let total = prompt_tokens(&chat.attachments, cfg.excerpt_tokens);
         let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
 
-        self.mark_dirty(res.chat_id);
-        self.prune_attachment_index(res.chat_id, &keep);
+        self.mark_dirty(chat_id);
+        self.prune_attachment_index(chat_id, &keep);
         self.emit_file_progress(FileProgress::Attached {
             info,
             total_tokens: total,

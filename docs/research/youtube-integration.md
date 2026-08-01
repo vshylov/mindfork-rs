@@ -429,9 +429,36 @@ settings and the camera cuts between them, under the live title and duration rea
 from the watch page (7.2 s end to end). `live_youtube_link_returns_metadata_not_a_dead_end`
 confirms the `fetch_url` half against the real page (1.3 s).
 
-**Not built (stage 2 candidates):** the `transcript: true` argument and landing a
-long transcript as a chat attachment (fork R3c); cross-chat caching (R8b); a
-transcript path that needs no cloud key (R7).
+**Not built in stage 1:** the `transcript: true` argument and landing a long
+transcript as a chat attachment (fork R3c) — **built in stage 2**, see §8b;
+cross-chat caching (R8b); a transcript path that needs no cloud key (R7).
+
+## 8b. Stage 2 as built (2026-08-01)
+
+Fork **R3(c)**, planned in
+[docs/history/youtube-transcript.md](../history/youtube-transcript.md) (forks
+F1–F5, all as recommended). Two things the plan could not know:
+
+- **§5's "unmeasured" question is now measured, and the answer is "no".** The
+  prompt asks for timestamps counted from the start of the video; asked for a
+  0:40–1:20 clip, Gemini numbered the transcript **from zero** — and on the very
+  next run of the same smoke, with the same model and request, numbered it
+  **absolutely**. So the instruction is not reliable in either direction, which
+  is exactly why the tool corrects the timestamps itself and decides whether to
+  shift from the first one rather than shifting blindly: a blind shift would have
+  pushed the second run's transcript outside the segment it describes.
+- **The F2 threshold has a consequence worth stating as an invariant**: because
+  it *is* `max_file_tokens`, a transcript that gets attached is by reference by
+  construction, for any value of the setting. So this path never adds an inline
+  attachment, never competes for the chat's inline budget, and is indexed for
+  `attachment_search` with no special case at all.
+
+**Live run — GO** (real Gemini, `gemini-3.5-flash`): a 0:40–1:20 clip of the
+stage-1 video, `transcript: true` — the transcript came back as an attachment
+carrying the sung lines with timestamps inside the requested span (5.9 s). The
+assertion is deliberately the mirror of stage 1's: that one asserts on something
+only *visible* on screen, this one on something only *said*, so between them both
+halves of the original question are covered by a live test.
 
 ## 9. Sketch of the shape (for reference, not a commitment)
 

@@ -85,7 +85,7 @@ impl Tool for AttachmentRead {
                 &[("name", name), ("names", &names.join(", "))],
             )));
         };
-        let page_tokens = ctx.attachment_page_tokens;
+        let page_tokens = ctx.attachment_cfg.page_tokens;
         let total = att.page_count(page_tokens);
         let page = args
             .get("page")
@@ -261,7 +261,7 @@ mod tests {
     fn ctx_with(attachments: Vec<Attachment>) -> (tempfile::TempDir, ToolContext) {
         let (dir, _storage, mut ctx) = super::super::testkit::ctx_with_storage(Uuid::new_v4());
         ctx.attachments = attachments.into();
-        ctx.attachment_page_tokens = PAGE;
+        ctx.attachment_cfg.page_tokens = PAGE;
         (dir, ctx)
     }
 

@@ -124,9 +124,19 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1735 unit
-tests green, 72 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **the assistant can watch a YouTube video**
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1749 unit
+tests green, 73 `#[ignore]` smokes** (the largest count — log below; the most
+recent change — **a video's words can now land as a chat attachment**
+([plan](docs/history/youtube-transcript.md)): `youtube_watch(transcript: true)`
+also brings back the spoken words with timestamps, in the *same* provider call as
+the description; past the per-file attachment budget they become an attachment
+(spec §9.7) — already paged and searchable — instead of filling the context. The
+stage's real work was the contract: `ChatEffect` gained a generic
+`AddAttachment`, and because effects only reach `Chat` when the turn ends while
+`ToolContext.attachments` is a turn snapshot, the loop mirrors the effect into
+that snapshot, or "attached as X, read it with `attachment_read`" would be an
+instruction the turn itself could not carry out; before that —
+**the assistant can watch a YouTube video**
 ([research](docs/research/youtube-integration.md)): `youtube_watch` says what a
 video shows *and* says, with timestamps. Measurement left one option — every free
 caption route is now behind YouTube's PoToken gate (a **signed** `timedtext` URL
@@ -10821,6 +10831,102 @@ debounce was done as a separate PR, see below).
   one chat a follow-up is already free; a transcript path needing no cloud key at
   all (R7) — the one story stage 1 does not serve; and default-model rot
   (`gemini-2.5-flash-lite` already 404s for new users).
+
+### Post-M9: YouTube stage 2 — the words, as a chat attachment (done)
+
+- **Stage 2 of the YouTube track**, fork **R3(c)**: plan with forks F1–F5 —
+  [docs/history/youtube-transcript.md](docs/history/youtube-transcript.md)
+  (**user's decision, 2026-08-01**, all as recommended); behaviour — spec §9.9.
+  `youtube_watch(transcript: true)` brings back the spoken words as well as the
+  description, and a large transcript lands as a **chat attachment** (spec §9.7)
+  rather than as a tool result — attachments already have a budget, page-by-page
+  reading and semantic search, while a tool result goes into the context whole
+  and would destroy an 8k local model. Branch `feat/youtube-transcript`.
+- **It is not a cheap path, and the parameter says so.** A transcript is the
+  *same request* with a different prompt — the video is ingested either way, and
+  on the 3.x models audio is not even billed apart from video (research §3.3a).
+  So it is **one** provider call for both halves, split on a marker, and the
+  `transcript` description states the cost; without that the model would reach
+  for it by default. What genuinely changes is the **output** side, which is
+  where truncation stops being cosmetic (below).
+- **The stage's real work was the contract, and reading the code decided it.**
+  Tools do not mutate `Chat`: they return `ChatEffect`, which had exactly two
+  scalar variants, and the **orchestrator** applies effects in `handle_done` —
+  i.e. when the whole **turn** is over. Meanwhile `ToolContext.attachments` is a
+  snapshot taken at the turn's start. So the naive implementation has a hole with
+  a name: the tool says "attached as *X*, 14 pages", the model does exactly what
+  it was told — `attachment_read("X", 1)` — and gets "no such attachment". That
+  is the **third instance of one defect class** here, both earlier ones found
+  live: the by-reference attachment block that described the situation without
+  saying what was possible, and stage 1's own unconfigured path (eight tool calls
+  rediscovering measured dead ends). Both were closed by making the message close
+  the door; here the door has to be genuinely open, because the tool can deliver.
+- **Fix (fork F1a)**: a generic `ChatEffect::AddAttachment(Box<Attachment>)`
+  carrying the **already-built** attachment, mirrored by the loop into its own
+  turn snapshot at the end of the round (`generation::sync_attachments`, applying
+  the same dedupe-by-source rule the orchestrator will) and persisted by the
+  orchestrator through `insert_attachment` — the path `/file attach` takes, so
+  the index, the feed note and the status chip all follow. The loop still never
+  touches `Chat`; the snapshot is its own. Carrying the built object means what
+  the model was told about and what gets stored are the same one, `id` included —
+  that `id` is the key the background index is written under. Two facts fell out
+  of the same reading: a **cancelled turn still delivers its effects**, so a
+  transcript already paid for is not lost on `Esc`; and the attach path was
+  already reusable, so stage 2 joined it instead of building a second one.
+- **The threshold is an existing setting (F2), and it has an invariant.**
+  `config.attachments.max_file_tokens` decides result-vs-attachment: below it the
+  model reads the words at once with no second call, and attaching would put the
+  same text in the pinned block *and* in the history. Above it — an attachment,
+  which for **any** value of the setting is **by reference by construction**
+  (inline requires `est <= max_file_tokens`, exactly the other side of the
+  threshold). So this path never adds an inline attachment, never competes for
+  the chat's inline budget, and is indexed for `attachment_search` with no
+  special case (F3). The source key `youtube:<id>#transcript@<segment>` makes
+  re-transcribing the same span replace it while two different spans coexist.
+- **Truncation had to become part of the contract (F5).**
+  `VideoUnderstanding::describe` returned `String`, and a `MAX_TOKENS` finish
+  with partial text was returned silently. For a description that is cosmetic;
+  for a transcript it is a correctness bug, because a complete-looking prefix
+  would let the model believe it had read the video to the end — losing the very
+  guarantee `attachment_read`'s page walk exists to give. It now returns
+  `VideoAnswer { text, truncated }`, and the ceiling is reported in **both**
+  places: the result (what the model reads now) and the file (what it reads
+  later, when being a prefix is otherwise invisible).
+- **The live run measured something the plan had flagged as unmeasured, and it
+  came out "no".** The prompt asks for timestamps counted from the start of the
+  video; asked for a 0:40–1:20 clip, Gemini numbered the transcript **from
+  zero** — while the attachment header says they are absolute, so the file was
+  making a false claim to anyone reading it weeks later (seek to 0:03 for a line
+  that is really at 0:43). Fixed with arithmetic we control rather than an
+  instruction we hope is followed. And the **second** live run justified the
+  design of that fix: the same model, same request, emitted **absolute**
+  timestamps on its own — a blind shift would have pushed them outside the
+  segment entirely. So whether to shift is decided by the first timestamp, and
+  the ambiguity is bounded by the offset itself (documented at the function).
+- **Tests**: the marker split and its no-guessing fallback; the F2 threshold in
+  both directions plus the by-reference invariant; the source key separating
+  segments; truncation reported in result and file; the timestamp correction in
+  both directions; and — the stage's real risk — **the loop letting the next
+  round read what the previous one attached**, end to end through the real
+  agentic loop with a fake attaching tool (round 1 attaches, round 2 reads it
+  back), plus the persistence half through `handle_done`. **1749 unit tests
+  green** (+14), **73 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **Mutation-tested**: dropping the
+  mirroring, the persistence, or the truncation flag each fails its own test and
+  nothing else.
+- **Live run — GO** (real Gemini, `gemini-3.5-flash`): a 0:40–1:20 clip,
+  `transcript: true` — the transcript came back as an attachment carrying the
+  sung lines with timestamps inside the requested span (5.9 s), and the tool
+  result named the attachment, its page count and the two tools that reach it.
+  The assertion is deliberately the mirror of stage 1's, which asserts on
+  something only *visible* on screen: this one asserts on something only *said*,
+  so both halves of the question the track started from are covered live. Stage
+  1's smokes (`watches_a_real_video_live`, the `fetch_url` one) re-run green.
+- **Groundwork unchanged** (roadmap): cross-chat caching of an expensive watch
+  (R8b), a transcript path needing no cloud key (R7), default-model rot. New:
+  `fetch_url`/`python_exec` gaining `attach: true` — the effect makes it cheap,
+  which is exactly why it should be a deliberate decision rather than a side
+  effect of this stage.
 
 ### Post-M9: `youtube_watch` — a degraded answer has to close the door (done)
 

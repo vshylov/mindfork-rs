@@ -13,6 +13,17 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Added
+
+- **`youtube_watch` can bring back the words, not just a description.** Pass
+  `transcript: true` and the assistant also gets a transcript of the speech with
+  timestamps. If it is short, it comes straight back in the answer; if it is
+  large, it is **attached to the chat** (it shows up in `/file list`, and the
+  assistant reads it page by page or searches it by meaning) instead of filling
+  the conversation. The transcript costs exactly as much as watching — it is the
+  same request — so it is not requested by default. Timestamps are always counted
+  from the start of the video, even when you asked for a segment.
+
 ### Fixed
 
 - **A Gemini key can now be entered where `youtube_watch` is configured.**
