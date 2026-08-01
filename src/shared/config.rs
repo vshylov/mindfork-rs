@@ -989,25 +989,40 @@ pub const DEFAULT_TTS_GEMINI_VOICE: &str = "Kore";
 
 /// Default model for video understanding (`youtube_watch`). A flash-class model
 /// is enough: the task is description, not reasoning, and video is billed per
-/// second of footage — see docs/research/youtube-integration.md §3.3.
-pub const DEFAULT_VIDEO_MODEL: &str = "gemini-2.5-flash";
+/// second of footage — see docs/research/youtube-integration.md §3.3. A **current**
+/// generation on purpose: a default model is a thing that rots (`gemini-2.5-flash-lite`
+/// already 404s for new users), so it should be one with life left in it.
+pub const DEFAULT_VIDEO_MODEL: &str = "gemini-3.5-flash";
 /// Default ceiling on the length of a video the tool will watch (minutes).
-/// At low resolution that is ~186k tokens (measured ≈103 tok/s, §3.3) — enough
+/// ~164k prompt tokens on the default model (measured ≈91 tok/s, §3.3) — enough
 /// for a talk, and a bound on what one tool call can spend.
 pub const DEFAULT_VIDEO_MAX_MINUTES: u32 = 30;
 
 /// Frame sampling detail for video understanding (`generationConfig.mediaResolution`).
-/// Measured: `Low` ≈ 71 video tok/s, `Default` ≈ 3× that
-/// (docs/research/youtube-integration.md §3.3).
+///
+/// **Measured 2026-08-01 on YouTube URLs, and it is not what the docs imply**: on
+/// **Gemini 3.x** (checked on 3.1-flash-lite, 3.5-flash, 3.6-flash) the parameter
+/// is a **no-op** — an identical 20 s clip costs 1820 prompt tokens either way
+/// (≈91 tok/s), with audio folded into the video bucket rather than reported
+/// separately. On **2.5** it does what the docs say: ≈103 tok/s at `Low`
+/// (video 71 + audio 32) against ≈295 at `Medium`.
+///
+/// Kept as a setting anyway — it is real on the 2.5-class models, and the API
+/// documents the parameter generally, so a future model may honour it again. The
+/// field's hint says where it currently does nothing, rather than promising a
+/// 3× saving that a 3.x user will not get. See
+/// docs/research/youtube-integration.md §3.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaResolution {
-    /// `MEDIA_RESOLUTION_LOW` — the default here: 3× cheaper, and enough to say
-    /// what is happening on screen.
+    /// `MEDIA_RESOLUTION_LOW` — the default here: on a 2.5-class model it is ~3×
+    /// cheaper and still enough to say what is happening on screen; on 3.x it
+    /// makes no difference.
     #[default]
     Low,
-    /// `MEDIA_RESOLUTION_MEDIUM` — the provider's default detail. Reads small
-    /// on-screen text better, at 3× the tokens.
+    /// `MEDIA_RESOLUTION_MEDIUM` — the provider's default detail. On a 2.5-class
+    /// model it reads small on-screen text better at ~3× the tokens; on 3.x it
+    /// changes nothing.
     Medium,
 }
 

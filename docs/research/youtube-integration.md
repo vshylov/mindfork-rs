@@ -172,6 +172,36 @@ At a Flash-class list price of ~$0.30/M input, a 10-minute video at LOW is
 which is the real constraint, because the project's primary target is a local
 model with an 8k window. That single fact decides §8 R5.
 
+#### 3.3a The table above is for **Gemini 2.5**. On 3.x the rules differ (measured 2026-08-01)
+
+Re-measured when moving the default to `gemini-3.5-flash`, on the same 20 s clip
+with an otherwise identical request — the only variable being the model and
+`mediaResolution`:
+
+| model | `LOW` | `MEDIUM` |
+|---|---|---|
+| `gemini-2.5-flash` | 2062 (video 1420 + **audio 640**) = **103 tok/s** | 5902 (video 5260 + audio 640) = **295 tok/s** |
+| `gemini-3.5-flash` | 1822 (**video 1820**, no audio line) = **91 tok/s** | **1822 — identical** |
+| `gemini-3.6-flash` | 1822 | **1822 — identical** |
+| `gemini-3.1-flash-lite` | 1822 | **1822 — identical** |
+
+Two things fall out, and neither is in the documentation:
+
+- **`mediaResolution` is a no-op on the 3.x flash models** for a YouTube URL —
+  same token count either way. The setting is kept (it is real on 2.5-class
+  models, and the API documents the parameter generally, so a future model may
+  honour it again), but its hint now says where it does nothing rather than
+  promising a 3× saving a 3.x user will not get.
+- **3.x reports no `AUDIO` modality** — and that is a *reporting* difference, not
+  a capability one. Checked behaviourally rather than assumed, because "audio is
+  silently dropped" would gut half the feature: asked to quote the words in a
+  segment, 3.5-flash and 3.6-flash both returned the sung lines with correct
+  timestamps, matching 2.5-flash. The audio is simply folded into the video
+  bucket.
+
+Net: the current default is **~12% cheaper** than the old one at low detail
+(91 vs 103 tok/s), so a 30-minute ceiling is ~164k tokens rather than ~186k.
+
 ### 3.4 The other providers
 
 - **OpenAI Responses API** — no video input at all (images, PDFs, documents,

@@ -1006,7 +1006,10 @@ returns text into the conversation — the shape TTS already uses (ADR 0009), so
 it works on a local `llama-server` or on Claude just the same. The slot is
 `config.video` (model / frame-sampling detail / length ceiling / env-var
 fallback); the API key is the **shared Gemini provider key** (ADR 0008), not a
-field of its own.
+value of its own. It can be entered in this group as well as in the "Model"
+section — that section offers a key field only for a slot whose mode *is* that
+cloud, so a local or OpenAI setup would otherwise have nowhere to put a Gemini
+key, while this tool needs one whatever the chat engine is.
 
 **What it returns.** The answer, not the material: a description with
 timestamps, narrowed by `focus`. A 10-minute video costs ~62k tokens at the
@@ -1014,8 +1017,10 @@ provider and a few hundred in the conversation — which is what makes it usable
 from a local model with an 8k window. A raw transcript is deliberately out of
 scope (fork R3; the honest home for one is a chat attachment, §9.7).
 
-**Cost is bounded before it is spent.** Measured ≈103 prompt tokens per second
-of video at low detail (≈330 at medium), so the tool refuses a video longer than
+**Cost is bounded before it is spent.** Measured ≈91 prompt tokens per second of
+video on the default (Gemini 3.x) model — where the frame-detail setting turns out
+to change nothing — and ≈103/≈295 at low/medium on a 2.5-class one. So the tool
+refuses a video longer than
 `config.video.max_minutes` (default 30) and says so in terms the model can act
 on — the `start`/`end` arguments clip to a segment, which is the only way to look
 at a long video without paying for all of it. When the length cannot be read at
@@ -1029,6 +1034,17 @@ they still work with no provider configured. With no Gemini key the tool does
 missing, so the model can explain itself to the user instead of silently lacking
 a capability. A provider failure or timeout degrades the same way, with the
 reason included. Gated by `tools.web_enabled`, like `web_search`/`fetch_url`.
+
+**A degraded answer closes the door, it does not merely describe the lock.** Each
+one states that the video's content is unreachable by any other route available
+to the model, and names them: YouTube returns captions empty without a token
+(neither `fetch_url` nor `python_exec` gets around that — the sandbox has no
+`yt-dlp`, no `ffmpeg` and no `pip`), and no transcript is in web search. Without
+that, an agentic model reads "video understanding is not configured" as a local
+limitation and spends its rounds rediscovering exactly the dead ends this
+project already measured — observed in a live run. The tool description says the
+same thing up front, so the choice is informed before the call rather than after
+it.
 
 `fetch_url` no longer dead-ends on a YouTube link. The watch page is a
 JavaScript shell — measured, zero paragraphs and zero list items — so

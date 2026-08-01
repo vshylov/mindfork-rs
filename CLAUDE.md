@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1732 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1735 unit
 tests green, 72 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — **the assistant can watch a YouTube video**
 ([research](docs/research/youtube-integration.md)): `youtube_watch` says what a
@@ -10821,6 +10821,87 @@ debounce was done as a separate PR, see below).
   one chat a follow-up is already free; a transcript path needing no cloud key at
   all (R7) — the one story stage 1 does not serve; and default-model rot
   (`gemini-2.5-flash-lite` already 404s for new users).
+
+### Post-M9: `youtube_watch` — a degraded answer has to close the door (done)
+
+- **Found by the user in a live run**, the first real one after the merge: an
+  `openai` chat (gpt-5.6) with **no Gemini key stored**, so `youtube_watch` took
+  its unconfigured path and returned the metadata plus "video understanding is
+  not configured". The model then spent **eight tool calls** rediscovering the
+  dead ends this project had already measured — three `web_search`es (including
+  one for "<video id> transcript"), scraping `captionTracks` off the watch page
+  and hitting the signed `timedtext` URL (200, **0 bytes**, exactly as §3.1 of
+  the research says), `pip install youtube-transcript-api` (**no pip** in the
+  sandbox), looking for `yt-dlp`/`ffmpeg` (**absent**) — until the user cancelled
+  the turn. Branch `fix/youtube-dead-end-wording`.
+- **This is our defect, not the model's.** The stage-1 message said *what* was
+  missing and how the **user** could fix it, but never said the video's content
+  is unreachable by any other route — so an agentic model quite reasonably read
+  it as a local limitation and went looking. **The same defect class**, and the
+  same fix, as the by-reference attachment block: there too the entry described
+  the situation without stating what was and wasn't possible, and there too the
+  model improvised (`fs_list`, `fs_read`, four `web_search`es) and ended on an
+  impossible suggestion.
+- **Fix — the degraded answers now name the routes that don't work**
+  (`not_configured`, `failed`, `timeout`, both bundles): captions come back empty
+  without a token, neither `fetch_url` nor `python_exec` gets around that (no
+  `yt-dlp`, no `ffmpeg`, no `pip` in the sandbox), and no transcript is in web
+  search — followed by what to do instead (answer from what is there, say plainly
+  that the video was not seen, and tell the user how to enable watching). The
+  **tool description** says the same up front, so the choice is informed before
+  the call rather than after it. `failed` additionally allows **one** retry, since
+  a provider error can be transient — but not by another route.
+- **The regression test asserts a property, not prose**: every degraded message,
+  in every built-in locale, must name `python_exec` and `fetch_url` — tool ids,
+  which are stable identifiers rather than wording. **Mutation-tested in both
+  directions**: weakening the clause fails it with the whole message in the
+  failure output. Nothing else changed — no code path, no config, no schema.
+- **Worth recording separately**: the trace is also a clean field confirmation of
+  §3.1 of the research, produced by a different agent on a different day from a
+  different starting point. The `timedtext` fetch returned **200 with an empty
+  body**, `pip`/`yt-dlp`/`ffmpeg` were absent, and web search had no transcript —
+  every measured dead end, re-measured live.
+- **Follow-up from the same live run: a Gemini key had nowhere to be
+  entered.** The user's setup was chat on OpenAI with local embeddings — and the
+  "Model" section offers a key row only for a slot whose **mode is that cloud**,
+  so there was no field for a Gemini key anywhere in the UI, while `youtube_watch`
+  needs one whatever the chat engine is. That is the gap that put the tool on its
+  unconfigured path in the first place. Fixed by giving the "Video" group its own
+  stored-key row (`FieldId::VideoApiKey`) — the same machine-bound storage as every
+  other key (ADR 0008), addressing `CloudProvider::Gemini` **unconditionally**
+  rather than deriving the provider from a mode, since this slot has no mode. All
+  the behaviour came free from `is_secret_field` + `api_key_field_provider`: masked
+  empty editor, commit as `SetApiKey`, `Del` deletes, and the key never reaches the
+  screen's config. Tests pin the part that could regress silently — the row targets
+  Gemini **with no engine set to Gemini** — plus the status/`Del` pair.
+  **1735 unit tests green** (+2).
+- **Default model moved to `gemini-3.5-flash`** (user's request after a working
+  live run: 2.5 is old and will not stay around). Verified before switching, and
+  the verification changed two documented figures. On the **same 20 s clip with an
+  otherwise identical request**, `mediaResolution` turns out to be a **no-op on the
+  3.x flash models** — 1822 prompt tokens at `LOW` *and* at `MEDIUM`, checked on
+  3.1-flash-lite, 3.5-flash and 3.6-flash — while on 2.5 it behaves as documented
+  (2062 → 5902). And 3.x reports **no `AUDIO` modality** at all, which looked like
+  losing half the feature; it is a *reporting* difference, confirmed
+  **behaviourally** rather than assumed: asked to quote the words in a segment,
+  3.5 and 3.6 returned the sung lines with correct timestamps just as 2.5 did.
+  Audio is folded into the video bucket. Net effect: the new default is **~12%
+  cheaper** (91 vs 103 tok/s at low detail), so the 30-minute ceiling is ~164k
+  tokens rather than ~186k. The resolution setting is **kept** — it is real on
+  2.5-class models and the API documents it generally — but its hint now says
+  where it does nothing instead of promising a 3× saving. Figures corrected in
+  spec §9.9, install.md, both settings hints and the `MediaResolution` doc
+  comment; the research doc gained §3.3a with the comparison table. **Live smokes
+  re-run against the new default — GO.** A trap worth recording: the settings
+  hints are stored as **arrays of strings** (the bundle allows either), so a
+  single-line regex edit mangles them — caught by validating the JSON before
+  writing, which is why the files were never damaged.
+- **1735 unit tests green** (+3), 72 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run needed** — the change is the
+  text of three localized strings and a tool description; the engine, memory and
+  tool paths are untouched, and the behaviour it fixes is the model's reading of
+  that text, which no automated smoke can assert. Whether the wording actually
+  stops the flailing is the user's next live run to judge.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
