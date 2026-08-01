@@ -85,32 +85,7 @@ impl Orchestrator {
     /// disk is the ciphertext, and the UI's config snapshot doesn't carry the keys at
     /// all (the UI only gets a "configured" flag). See docs/research/api-key-storage.md.
     pub(super) fn handle_set_api_key(&mut self, provider: CloudProvider, key: String) {
-        let old = self.config.api_keys.clone();
-        let label = || {
-            format!(
-                "{} · {}",
-                crate::shared::secrets::machine_label(),
-                chrono::Local::now().format("%Y-%m-%d")
-            )
-        };
-        if let Err(err) = crate::shared::secrets::put_key(
-            &mut self.config.api_keys,
-            provider.key(),
-            key.trim(),
-            label,
-        ) {
-            let _ = self.evt_tx.send(AppEvent::Error(
-                self.ui_locale()
-                    .tf("ui.err.api_key_save_failed", &[("err", &err.to_string())]),
-            ));
-            return;
-        }
-        if let Err(err) = self.storage.json().save_config(&self.config) {
-            let _ = self.evt_tx.send(AppEvent::Error(
-                self.ui_locale()
-                    .tf("ui.err.save_settings_failed", &[("err", &err.to_string())]),
-            ));
-            self.config.api_keys = old; // roll back to the previous state
+        if !self.store_secret(provider.key(), &key) {
             return;
         }
         // Re-raise only the servers whose active provider had its key changed
@@ -126,6 +101,47 @@ impl Orchestrator {
             self.restarts.mark_embed();
         }
         self.emit_settings();
+    }
+
+    /// Stores the backup password for **this** machine (spec §12.3). Same storage
+    /// and the same never-shown-again contract as an API key; nothing has to be
+    /// restarted, so it just persists and re-emits the presence flag.
+    pub(super) fn handle_set_backup_password(&mut self, password: String) {
+        if self.store_secret(crate::shared::secrets::BACKUP_PASSWORD_KEY, &password) {
+            self.emit_settings();
+        }
+    }
+
+    /// Encrypts a secret into this machine's entry and persists the config.
+    /// `false` — it failed and the error was already reported to the user; the
+    /// previous state is restored, so a failed save never half-applies.
+    fn store_secret(&mut self, name: &str, value: &str) -> bool {
+        let old = self.config.api_keys.clone();
+        let label = || {
+            format!(
+                "{} · {}",
+                crate::shared::secrets::machine_label(),
+                chrono::Local::now().format("%Y-%m-%d")
+            )
+        };
+        if let Err(err) =
+            crate::shared::secrets::put_key(&mut self.config.api_keys, name, value.trim(), label)
+        {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.api_key_save_failed", &[("err", &err.to_string())]),
+            ));
+            return false;
+        }
+        if let Err(err) = self.storage.json().save_config(&self.config) {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.save_settings_failed", &[("err", &err.to_string())]),
+            ));
+            self.config.api_keys = old; // roll back to the previous state
+            return false;
+        }
+        true
     }
 
     /// Applies (re)launches of servers that were deferred by the debounce (the deadline expired):

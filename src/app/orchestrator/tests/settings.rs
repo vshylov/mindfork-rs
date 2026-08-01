@@ -303,6 +303,51 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
     );
 }
 
+/// The backup password takes the same path as an API key: ciphertext on disk, a
+/// presence flag to the UI, and readable back on this machine — which is what
+/// makes `mindfork backup` pick it up with no argument. Spec §12.3.
+#[tokio::test]
+async fn set_backup_password_persists_encrypted_and_reads_back() {
+    if !crate::shared::secrets::scheme_available() {
+        return; // non-systemd Linux without machine-id
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { backup_password_present, .. } if !backup_password_present)
+    })
+    .await
+    .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SetBackupPassword("open-sesame-42".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { backup_password_present, .. } if *backup_password_present)
+    })
+    .await
+    .unwrap();
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let raw = std::fs::read_to_string(root.join("settings.json")).unwrap();
+    assert!(
+        !raw.contains("open-sesame-42"),
+        "the backup password leaked into settings.json in the clear"
+    );
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let cfg = reopened.json().load_config().unwrap();
+    assert_eq!(
+        crate::shared::secrets::stored_key(
+            &cfg.api_keys,
+            crate::shared::secrets::BACKUP_PASSWORD_KEY
+        )
+        .as_deref(),
+        Some("open-sesame-42")
+    );
+}
+
 /// Editing any setting doesn't erase saved keys: the config snapshot from the UI doesn't
 /// carry them, and the orchestrator restores its own value (like `last_active_chat`).
 #[tokio::test]

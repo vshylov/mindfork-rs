@@ -32,9 +32,17 @@ pub enum CliCommand {
     Backup {
         output: Option<PathBuf>,
         compression: i64,
+        /// Encrypt the archive with this password (spec §12.3). `None` — fall
+        /// back to the one stored in the settings, if any.
+        password: Option<String>,
     },
     /// Restore from a backup (`restore <archive>`).
-    Restore { archive: PathBuf },
+    Restore {
+        archive: PathBuf,
+        /// Password for an encrypted archive. `None` — fall back to the stored
+        /// one, then to an interactive prompt.
+        password: Option<String>,
+    },
     /// Import from a mindfork-import format file (`import <file>`).
     /// Format spec — docs/import-format.md.
     Import { file: PathBuf },
@@ -88,6 +96,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
 fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     let mut output = None;
     let mut compression = DEFAULT_COMPRESSION;
+    let mut password = None;
     let mut i = 0;
     while i < toks.len() {
         let a = toks[i];
@@ -99,6 +108,8 @@ fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
             output = Some(PathBuf::from(v));
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-c", "--compression"])? {
             compression = parse_compression(v, loc)?;
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
+            password = Some(v.to_string());
         } else if a.starts_with('-') {
             return Err(unknown_option(loc, a));
         } else {
@@ -108,18 +119,35 @@ fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     Ok(CliCommand::Backup {
         output,
         compression,
+        password,
     })
 }
 
 fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
-    match single_positional(toks, loc, HelpTopic::Restore, "<archive>")? {
-        Positional::Help => Ok(CliCommand::Help {
-            topic: Some(HelpTopic::Restore),
-        }),
-        Positional::Value(archive) => Ok(CliCommand::Restore {
-            archive: PathBuf::from(archive),
-        }),
+    let mut archive: Option<&str> = None;
+    let mut password = None;
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::Restore),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
+            password = Some(v.to_string());
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if archive.is_none() {
+            archive = Some(a);
+            i += 1;
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
     }
+    Ok(CliCommand::Restore {
+        archive: PathBuf::from(archive.ok_or_else(|| missing_arg(loc, "<archive>"))?),
+        password,
+    })
 }
 
 fn parse_import(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -354,21 +382,27 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::Backup) => format!(
             "{d}\n\n{usage} mindfork-rs backup [OPTIONS]\n\n{options}\n\
-             {o:<28}{co}\n{c:<28}{cc}\n{h:<28}{ch}",
+             {o:<30}{co}\n{c:<30}{cc}\n{p:<30}{cp}\n{h:<30}{ch}",
             d = loc.t("cli.help.cmd.backup"),
             o = "  -o, --output <FILE>",
             co = loc.t("cli.help.opt.backup.output"),
             c = "  -c, --compression <0-9>",
             cc = loc.t("cli.help.opt.backup.compression"),
+            p = "  -p, --password <PASSWORD>",
+            cp = loc.t("cli.help.opt.backup.password"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Restore) => format!(
-            "{d}\n\n{usage} mindfork-rs restore <ARCHIVE>\n\n{arguments}\n\
-             {a:<16}{ca}",
+            "{d}\n\n{usage} mindfork-rs restore <ARCHIVE> [OPTIONS]\n\n{arguments}\n\
+             {a:<30}{ca}\n\n{options}\n{p:<30}{cp}\n{h:<30}{ch}",
             d = loc.t("cli.help.cmd.restore"),
             a = "  <ARCHIVE>",
             ca = loc.t("cli.help.arg.restore.archive"),
+            p = "  -p, --password <PASSWORD>",
+            cp = loc.t("cli.help.opt.restore.password"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Import) => format!(
             "{d}\n\n{usage} mindfork-rs import <FILE>\n\n{arguments}\n\
@@ -441,7 +475,8 @@ mod tests {
             p(&["backup"]).unwrap(),
             CliCommand::Backup {
                 output: None,
-                compression: DEFAULT_COMPRESSION
+                compression: DEFAULT_COMPRESSION,
+                password: None,
             }
         );
         // Both option forms: `--opt value` and `--opt=value`, plus the short `-o`.
@@ -449,16 +484,48 @@ mod tests {
             p(&["backup", "-o", "a.zip", "-c", "3"]).unwrap(),
             CliCommand::Backup {
                 output: Some(PathBuf::from("a.zip")),
-                compression: 3
+                compression: 3,
+                password: None,
             }
         );
         assert_eq!(
             p(&["backup", "--output=b.zip", "--compression=0"]).unwrap(),
             CliCommand::Backup {
                 output: Some(PathBuf::from("b.zip")),
-                compression: 0
+                compression: 0,
+                password: None,
             }
         );
+    }
+
+    #[test]
+    fn backup_and_restore_take_a_password() {
+        // Both spellings, and on both commands — `restore` had to grow its own
+        // option parsing (it used to reject anything starting with `-`).
+        assert_eq!(
+            p(&["backup", "-p", "s3cret"]).unwrap(),
+            CliCommand::Backup {
+                output: None,
+                compression: DEFAULT_COMPRESSION,
+                password: Some("s3cret".into()),
+            }
+        );
+        assert_eq!(
+            p(&["restore", "a.zip", "--password=s3cret"]).unwrap(),
+            CliCommand::Restore {
+                archive: PathBuf::from("a.zip"),
+                password: Some("s3cret".into()),
+            }
+        );
+        // The option may precede the positional argument.
+        assert_eq!(
+            p(&["restore", "--password", "s3cret", "a.zip"]).unwrap(),
+            CliCommand::Restore {
+                archive: PathBuf::from("a.zip"),
+                password: Some("s3cret".into()),
+            }
+        );
+        assert!(p(&["restore", "-p"]).is_err()); // option with no value
     }
 
     #[test]
@@ -472,7 +539,8 @@ mod tests {
         assert_eq!(
             p(&["restore", "a.zip"]).unwrap(),
             CliCommand::Restore {
-                archive: PathBuf::from("a.zip")
+                archive: PathBuf::from("a.zip"),
+                password: None,
             }
         );
         assert!(p(&["restore"]).is_err()); // no required argument
@@ -599,5 +667,13 @@ mod tests {
             render_help(Some(HelpTopic::LocalesExport), loc).contains("--output <FILE>  "),
             "the option name ran into its description"
         );
+        // Backup/restore: `-p, --password <PASSWORD>` is now the longest option
+        // of both — the column had to widen with it.
+        for topic in [HelpTopic::Backup, HelpTopic::Restore] {
+            assert!(
+                render_help(Some(topic), loc).contains("--password <PASSWORD>  "),
+                "{topic:?}: the option name ran into its description"
+            );
+        }
     }
 }

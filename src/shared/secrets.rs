@@ -1,6 +1,7 @@
-//! Machine-bound storage for secrets (cloud-provider API keys).
+//! Machine-bound storage for secrets (cloud-provider API keys, the backup
+//! password).
 //!
-//! A key entered in settings is encrypted with **this machine's key** and put
+//! A secret entered in settings is encrypted with **this machine's key** and put
 //! into `settings.json` (see [`crate::shared::config::AppConfig::api_keys`]). The
 //! config stays portable: on another machine the entry does not decrypt — the key
 //! is entered again and added as **its own** entry; going back to the first
@@ -39,6 +40,20 @@ use serde::{Deserialize, Serialize};
 pub const SCHEME_DPAPI: &str = "dpapi";
 /// The Linux scheme: HKDF(machine-id) + ChaCha20-Poly1305.
 pub const SCHEME_MACHINE_KEY_V1: &str = "machine-key-v1";
+
+/// Reserved entry key for the **backup password** (spec §12.3), stored beside
+/// the API keys in the same per-machine entry.
+///
+/// The hyphen makes a collision with a [`crate::shared::config::CloudProvider`]
+/// key (`openai`/`gemini`/`claude`) impossible, so one map can hold both kinds of
+/// secret. Reusing the entry rather than adding a second list keeps `put_key`/
+/// [`stored_key`]/[`is_ours`] working unchanged — and renaming the `api_keys`
+/// field on disk is exactly what the additive-only rule forbids (ADR 0006 F12),
+/// so the field's *name* stays while its meaning is "this machine's secrets".
+///
+/// A dot would read as an i18n bundle key to `tools/cyrillic_scan.py`'s sibling
+/// gate over `*.*` literals — a hyphen is just as unambiguous here.
+pub const BACKUP_PASSWORD_KEY: &str = "backup-password";
 
 /// Plaintext of the `check` probe: encrypted alongside the keys; decrypting it
 /// successfully identifies an entry as "ours" (we do not store an explicit

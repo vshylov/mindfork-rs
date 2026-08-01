@@ -581,6 +581,7 @@ fn the_search_screen_survives_settings_and_self_model_events() {
             language_locked: Vec::new(),
             mcp: Default::default(),
             api_keys_present: Vec::new(),
+            backup_password_present: false,
         },
     );
     match &mut active {

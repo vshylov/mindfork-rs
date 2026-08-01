@@ -63,6 +63,10 @@ pub enum SettingsIntent {
         provider: crate::shared::config::CloudProvider,
         key: String,
     },
+    /// The backup password was entered/cleared (spec §12.3). Travels apart from
+    /// the config for the same reason as [`SettingsIntent::SetApiKey`]: the
+    /// orchestrator encrypts it with the machine key, the screen never holds it.
+    SetBackupPassword(String),
 }
 
 /// Settings sections (the left menu). See spec §11.6.
@@ -72,15 +76,17 @@ enum Section {
     Sampling,
     Tools,
     Memory,
+    Data,
     Profiles,
     Interface,
 }
 
-const SECTIONS: [Section; 6] = [
+const SECTIONS: [Section; 7] = [
     Section::Model,
     Section::Sampling,
     Section::Tools,
     Section::Memory,
+    Section::Data,
     Section::Profiles,
     Section::Interface,
 ];
@@ -169,6 +175,7 @@ impl Section {
             Section::Sampling => "ui.settings.section.sampling",
             Section::Tools => "ui.settings.section.tools",
             Section::Memory => "ui.settings.section.memory",
+            Section::Data => "ui.settings.section.data",
             Section::Profiles => "ui.settings.section.profiles",
             Section::Interface => "ui.settings.section.interface",
         })
@@ -507,6 +514,10 @@ enum FieldId {
     TtsSpeakRoles,
     TtsStopOnSwitch,
     TtsStopOnGeneration,
+    /// The backup password (section "Data"). A secret: the row shows a status,
+    /// never the value; editing goes out as [`SettingsIntent::SetBackupPassword`].
+    /// See spec §12.3, docs/backup-password.md.
+    BackupPassword,
     // RAG (knowledge-base chunking)
     RagTarget,
     RagOverlap,
@@ -741,6 +752,9 @@ pub struct SettingsScreen {
     /// snapshot). The "API key" field shows its status from this; the screen doesn't
     /// hold the keys themselves. See `shared::secrets`, docs/research/api-key-storage.md.
     api_keys_present: Vec<crate::shared::config::CloudProvider>,
+    /// Whether a backup password is stored on this machine (the value never is —
+    /// only the flag). See spec §12.3.
+    backup_password_present: bool,
     /// Edits made during **this visit**, newest last (`Ctrl+Z`). The screen is built
     /// fresh on every `Ctrl+P`, so the stack scopes to one sitting — which is the
     /// span the "I just changed something by accident" question covers. See

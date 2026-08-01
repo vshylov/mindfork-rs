@@ -102,8 +102,11 @@ unicode-width = "0.2.2"
 uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
 # Backup/restore of user data (a zip archive with a
 # configurable deflate compression level). default-features=false disables bzip2/zstd
-# (native C dependencies) — only deflate + store are needed. See features/backup.rs.
-zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
+# (native C dependencies) — only deflate + store are needed. `aes-crypto` adds
+# password-protected backups (WinZip AES-256, spec §12.3): it pulls RustCrypto
+# crates only (pbkdf2/sha1/constant_time_eq on top of aes/hmac, already in the
+# graph) — still no C dependency. See features/backup.rs, docs/backup-password.md.
+zip = { version = "2.2.2", default-features = false, features = ["deflate", "aes-crypto"] }
 
 # Windows specifics:
 # * `Win32_System_JobObjects` — an OS-level memory limit for the Python sandbox via a Job

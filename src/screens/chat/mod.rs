@@ -59,6 +59,7 @@ pub type SettingsSnapshot = (
     Vec<uuid::Uuid>,
     crate::features::tools::mcp::McpSnapshot,
     Vec<crate::shared::config::CloudProvider>,
+    bool,
 );
 
 /// A user intent that `app` executes (translates into an `AppCommand`).
@@ -519,6 +520,7 @@ impl ChatScreen {
         language_locked: Vec<uuid::Uuid>,
         mcp: crate::features::tools::mcp::McpSnapshot,
         api_keys_present: Vec<crate::shared::config::CloudProvider>,
+        backup_password_present: bool,
     ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
@@ -528,7 +530,14 @@ impl ChatScreen {
             .set_table_row_separators(config.interface.table_row_separators);
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
-        self.settings_snapshot = Some((config, profiles, language_locked, mcp, api_keys_present));
+        self.settings_snapshot = Some((
+            config,
+            profiles,
+            language_locked,
+            mcp,
+            api_keys_present,
+            backup_password_present,
+        ));
     }
 
     /// Sets the role names shown in the feed — the active chat's profile
@@ -547,7 +556,7 @@ impl ChatScreen {
     /// the last settings snapshot — for (re)loading dictionaries in
     /// `app/runtime.rs`. See spec §11.6.
     pub fn spell_config(&self) -> Option<(bool, &[String])> {
-        self.settings_snapshot.as_ref().map(|(c, _, _, _, _)| {
+        self.settings_snapshot.as_ref().map(|(c, _, _, _, _, _)| {
             (
                 c.interface.spellcheck_enabled,
                 c.interface.selected_dictionaries.as_slice(),
