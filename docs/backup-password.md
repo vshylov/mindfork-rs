@@ -1,6 +1,10 @@
 # Password-protected backups — design plan
 
-**Status:** research done, forks awaiting the user's decision.
+**Status:** forks decided, implementation in `feat/backup-password`.
+**User's decision, 2026-08-01:** F1 (a) WinZip AES-256 inside the zip; F3 (a) one
+effective password per invocation; F4 yes, the pre-migration backup is encrypted
+too; F6 the hidden prompt is added for `restore` only. F2 (a), F5 yes, F7 no and
+the F8 confirmations were taken as recommended.
 **Request:** a backup password can be given as a command-line argument to
 `backup`/`restore`, or set in the settings. When set in the settings, backups are
 created encrypted with it. Restore must accept **both** an archive encrypted with
