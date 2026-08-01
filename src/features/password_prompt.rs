@@ -1,6 +1,6 @@
 //! Reading a backup password from the terminal without echoing it.
 //!
-//! Used by the CLI `restore` path (docs/backup-password.md §4 F6): restoring a
+//! Used by the CLI `restore` path (docs/history/backup-password.md §4 F6): restoring a
 //! foreign archive on a fresh machine is exactly the case where there is no
 //! stored password, and the only alternative would be `--password` on the
 //! command line — which lands in the shell history and the process list.

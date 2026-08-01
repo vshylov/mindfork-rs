@@ -124,9 +124,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1690 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1702 unit
 tests green, 70 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **a settings hint always fits its panel** (the bottom panel had
+recent change — **password-protected backups** ([plan](docs/history/backup-password.md)):
+`--password` on `backup`/`restore` or a password set once in settings → "Data",
+stored machine-bound exactly like a cloud API key (ADR 0008); the archive is
+standard AES-256 so 7-Zip still opens it, restore takes an encrypted *and* an
+unencrypted copy with nothing to switch, and a wrong password is refused before
+anything is replaced; before that — **a settings hint always fits its panel** (the bottom panel had
 room for three lines, so the longer hints — API key, MCP servers, speculative
 decoding — were cut mid-sentence; it is now as tall as the section's longest hint
 needs and stays that height across the section, so the list doesn't shift);
@@ -10573,6 +10578,132 @@ debounce was done as a separate PR, see below).
 - **A live run isn't required** (AGENTS.md §3): layout and rendering on one
   screen — no engine, memory, tool or provider path is touched (the precedent set
   by the settings redesign and the focus-model work).
+
+### Post-M9: password-protected backups (done)
+
+- **Asked for directly**: a backup password, settable as a CLI argument *or* in
+  the settings, stored machine-bound and encrypted the same way cloud API keys
+  are (ADR 0008); restore must take both an archive encrypted with that password
+  and an unencrypted one. Plan with forks F1–F8 —
+  [docs/history/backup-password.md](docs/history/backup-password.md)
+  (**user's decision, 2026-08-01**, all as recommended). Branches
+  `docs/backup-password` → `feat/backup-password`.
+- **Everything load-bearing was measured against a throwaway probe crate before
+  any design was committed to**, and two of the results shaped the code directly:
+  - **A password handed to an *unencrypted* archive is discarded by the zip
+    layer** (`(Some(_), false) => password = None`). So the requirement's own
+    wording — "restore either kind" — needs **no detection branch and no mode
+    switch**; one code path does both, which is why the diff is small.
+  - **The password is verified when an entry is *opened***, not after reading it
+    (AES stores a 2-byte verifier in the entry header). That is what keeps the
+    transactional restore intact: `validate_archive` already runs before anything
+    destructive, so a wrong password becomes a clean refusal rather than a
+    rollback. Had verification only happened at EOF, every entry would have had
+    to be read up front.
+  - Also measured: writing works at all (`with_aes_encryption`), the plaintext is
+    absent from the archive bytes, entry **names are not** encrypted, the two
+    failure modes are *distinct* errors (`UnsupportedArchive("Password
+    required")` vs `InvalidPassword`), the manifest can stay unencrypted inside
+    an encrypted archive, and the ciphertext **is authenticated** — 66 of 66
+    single-byte corruptions in an entry's payload detected, **0** silently wrong.
+    That last one corrected a first, sloppier probe of mine that flipped a byte
+    at `len()/3` and reported no error: the byte had landed outside the entry.
+- **F1 — WinZip AES-256 inside the zip, not our own container.** The stronger
+  option (ChaCha20-Poly1305 + Argon2id, which would also hide the file names and
+  give a KDF we control) was rejected for what a backup *is*: an artifact whose
+  job is to be recoverable when the application is not available. Standard AES
+  keeps it openable by 7-Zip/WinZip by hand; a private format makes the archive
+  depend on this program continuing to exist and run.
+- **The limits are written down rather than implied** (module doc, settings hint,
+  install.md), in the house style of `shared/secrets.rs`: entry names and sizes
+  stay visible (content-only encryption); the KDF is fixed by the format at
+  PBKDF2-HMAC-SHA1/1000 and is weak against offline brute force of a short
+  password — hence the hint asking for a passphrase; and **a machine-bound
+  password plus a dead machine means unreadable archives**, which inverts the
+  point of a backup, so the hint says to record it elsewhere. This last one is
+  sharper than for an API key, where re-entering is merely an inconvenience.
+- **F2 — the existing `AppConfig.api_keys` was reused** under a reserved entry
+  key, so `put_key`/`stored_key`/`is_ours` work unchanged and one per-machine
+  entry keeps holding everything that machine knows. Renaming the field to match
+  its widened meaning is exactly what the additive-only rule (ADR 0006 F12)
+  forbids, so the doc comment moved instead of the field. **The reserved name is
+  `backup-password`, with a hyphen**: the first version used a dot, and the i18n
+  gate correctly flagged it as a bundle key that isn't in the bundle — a real
+  false positive, better removed at the source than taught to the gate as an
+  exception.
+- **F3/F4 — the copies the app makes on its own are covered too.** The
+  pre-restore copy inherits the run's one effective password (argument, else the
+  setting), and the pre-migration backup (ADR 0006) reads the stored password out
+  of the raw `settings.json` `Value` — it runs before storage opens, so there is
+  no typed `AppConfig` yet. The reasoning is the same in both places: a setting
+  that says "my backups are encrypted" must not have an exception that quietly
+  writes a plaintext copy of everything.
+- **F5 — the manifest stays unencrypted** (it holds only version metadata), so
+  `read_manifest` and the "this backup is from a newer version" warning keep
+  working with no password, and the archive stays self-describing.
+- **F6 — `restore` prompts for the password** when it is missing or wrong, up to
+  three attempts, using `crossterm`'s raw mode (already a dependency — no
+  `rpassword`). Deliberately **skipped when stdin is not a terminal**: prompting
+  in a pipe or a CI job would hang forever instead of failing with a message.
+  Restoring a foreign archive on a fresh machine is exactly the case where no
+  stored password can apply, and the alternative is `--password` in the shell
+  history.
+- **UI — a new "Data" section.** None of Model/Sampling/Tools/Memory/Profiles/
+  Interface is about the data root, and a security setting filed under an
+  unrelated heading is a setting nobody finds; the section also gives the
+  data-location and compaction groundwork items a home. The field itself is a
+  mirror of the "API key" row (a *status*, never the value; an empty masked
+  editor; `Del` clears), which is what the `is_api_key_field` → `is_secret_field`
+  rename and the extracted `secret_row` are for.
+- **Secrets still never reach the UI**: `emit_settings` sends a
+  `backup_password_present: bool` beside `api_keys_present`, and the orchestrator
+  restores `api_keys` on the way back — the round-trip protection that already
+  existed is what makes the new flag safe. `handle_set_api_key`'s "encrypt →
+  persist → roll back on failure" core was extracted as `store_secret` and shared.
+- **Dependencies**: `zip` gained `aes-crypto` — exactly the three predicted new
+  crates (`pbkdf2`, `sha1`, `constant_time_eq`, plus the `zeroize_derive` proc
+  macro), all RustCrypto, still **no C dependency**. `cargo deny check` clean.
+- **Tests**: the four-row read matrix; that an encrypted archive carries no
+  readable data (asserted on the archive's **bytes** against a level-0 control —
+  an API refusal would still pass if the content sat there in the clear); a
+  round trip over both kinds of archive with the password held throughout (the
+  requirement's own case); a bad password refused **without touching data or even
+  writing a pre-restore copy**; the manifest readable without it; an empty
+  password meaning plain; the pre-restore copy inheriting the password;
+  corruption detected; the CLI parser (both spellings, on both commands, and the
+  option before the positional); the help column that had to widen for
+  `--password <PASSWORD>`; the settings field; the orchestrator persisting
+  ciphertext and emitting the flag; and the precedence rule. **1702 unit tests
+  green** (+12), 70 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/
+  `link_check`/`cargo deny` clean.
+- **Mutation-tested**: dropping the pre-flight password check, writing the
+  pre-restore copy without the password, and making `write_zip` ignore the
+  password each fail exactly the tests meant to catch them (1, 1 and 5
+  respectively).
+- **A live model run isn't required** (AGENTS.md §3) — no engine, memory, tool or
+  provider path is touched. What stands in for it, as in the database-compaction
+  work, is the **real CLI against a copy of the real data root** (311 chats,
+  42 MB): a plain and an encrypted backup; **7-Zip reports `Method = AES-256
+  Deflate` and `Encrypted = +`** on the data entries and *nothing* on the
+  manifest, extracts `settings.json` with the password and refuses a wrong one —
+  the interop claim behind F1, verified against a third-party tool rather than
+  our own reader; restore refused (exit 1, data intact at 311 chats) with no
+  password and with a wrong one; restore succeeded with the right one, and the
+  **pre-restore copy came out encrypted**; the plain archive restored while a
+  password was held; and with a password seeded into `settings.json` through the
+  app's own encryption, `backup` and `restore` used it with **no argument at
+  all** (314 encrypted entries).
+- **A trap worth re-recording** (the journal already has it, and it bit again):
+  `./mindfork-rs restore … | tail` reports **`tail`'s** exit code, so a refusal
+  looked like `exit=0` until it was re-run without the pipe. Also, one probe of
+  mine was a bad instrument rather than a finding: a stray file at the data root
+  survives a restore **by design** (the cleanup is an allowlist), so proving a
+  real replacement needs a stray file inside `chats/`.
+- **Groundwork**: encrypting the archive's file names would need the outer
+  container from F1(b); a stronger KDF is impossible without leaving the zip
+  format; `MINDFORK_BACKUP_PASSWORD` (F7) was deliberately not added — trivial
+  later, and a third source now would widen "where did this password come from"
+  for no current need.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

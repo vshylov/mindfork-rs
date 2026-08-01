@@ -11,8 +11,8 @@ created encrypted with it. Restore must accept **both** an archive encrypted wit
 that password and an unencrypted one. The stored password is machine-bound and
 encrypted the same way cloud API keys are (ADR 0008).
 
-Related: [ADR 0008](decisions/0008-api-key-storage.md) (machine-bound secrets),
-[ADR 0006](decisions/0006-data-schema-versioning.md) (the pre-migration backup),
+Related: [ADR 0008](../decisions/0008-api-key-storage.md) (machine-bound secrets),
+[ADR 0006](../decisions/0006-data-schema-versioning.md) (the pre-migration backup),
 spec §12.3 (backup/restore), `src/features/backup.rs`, `src/shared/secrets.rs`.
 
 ## 1. What was measured (not assumed)

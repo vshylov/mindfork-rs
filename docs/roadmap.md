@@ -188,6 +188,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 > needed on axis B, if a language with complex pluralization shows up.
 
 ## Other
+- **Backup encryption — groundwork** (core is **done**, see "Recently closed"):
+  the archive's **file names and sizes stay visible** and the key derivation is
+  fixed by the zip format at PBKDF2-HMAC-SHA1/1000 — both are properties of
+  WinZip AES, so improving either means an outer container of our own
+  (ChaCha20-Poly1305 + Argon2id), which costs the ability to open the archive in
+  7-Zip by hand. That trade was made deliberately, not by omission
+  ([backup-password.md](history/backup-password.md) F1), and would only be worth
+  revisiting if someone needs to hide *which* chats exist rather than what is in
+  them. Also deferred: `MINDFORK_BACKUP_PASSWORD` for scripted/CI backups (F7) —
+  trivial to add, left out so there is one fewer place a password can come from.
 - **Installers — groundwork** (core is **done**,
   [docs/history/installers.md](history/installers.md): Windows Inno Setup +
   Linux nfpm, shipped with releases): Windows code signing (deferred until
@@ -253,6 +263,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Password-protected backups** (complete): `--password` on `backup`/`restore`,
+  or a password set once in settings → "Data", stored machine-bound exactly like
+  a cloud API key (ADR 0008) — including for the copies the app makes itself
+  before a restore or a data migration. The archive is standard AES-256, so
+  7-Zip still opens it by hand; restore takes an encrypted **and** an
+  unencrypted copy with nothing to switch (the zip layer discards a password an
+  entry does not need), and a wrong one is refused before anything is replaced
+  (the password is verified when an entry is opened, not after reading it). Both
+  of those are measured properties, not assumptions. See
+  [backup-password.md](history/backup-password.md), spec §12.3.
 - **Confirmation for dangerous tools** (complete): `tools.confirm_dangerous` —
   off by default — parks a call to `python_exec`, `fs_write` or any MCP tool and
   shows it, formatted the way the feed will show it afterwards, before it runs;

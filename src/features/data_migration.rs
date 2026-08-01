@@ -134,7 +134,7 @@ fn run_with(
     // need migrating — reading it for fs_root would be premature; the critical
     // settings/profiles/chats/db data is already captured by the backup). A failure → the migration is cancelled.
     //
-    // The stored backup password *is* read, though (docs/backup-password.md §4 F4):
+    // The stored backup password *is* read, though (docs/history/backup-password.md §4 F4):
     // a setting that says "my backups are encrypted" must not have an exception
     // that quietly writes a plaintext copy of everything. Safe to read ahead of
     // the migration — the secrets list is additive and has never been migrated.

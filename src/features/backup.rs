@@ -38,7 +38,7 @@
 //! without the password. `manifest.json` is deliberately left **unencrypted** —
 //! it holds no user data, and keeping it readable lets the "this backup is from a
 //! newer version" warning work without a password. Two consequences worth
-//! knowing, both measured (docs/backup-password.md §1):
+//! knowing, both measured (docs/history/backup-password.md §1):
 //!
 //! * a password handed to an **unencrypted** archive is discarded by the zip
 //!   layer, so restoring either kind needs no detection branch;
@@ -50,7 +50,7 @@
 //! structure are visible without the password (ZIP AES encrypts content only),
 //! and the key derivation is fixed by the format at PBKDF2-HMAC-SHA1/1000, which
 //! is weak against offline brute force of a short password — hence the settings
-//! hint asking for a passphrase. See docs/backup-password.md §2.
+//! hint asking for a passphrase. See docs/history/backup-password.md §2.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -189,7 +189,7 @@ pub enum ArchivePassword {
 }
 
 /// Normalizes a password: an empty string means "no password" everywhere, so
-/// clearing the setting returns to plain archives (docs/backup-password.md §4 F8).
+/// clearing the setting returns to plain archives (docs/history/backup-password.md §4 F8).
 fn normalize(password: Option<&str>) -> Option<&str> {
     password.filter(|p| !p.is_empty())
 }
@@ -264,7 +264,7 @@ pub fn create_backup(
 /// if inside the root).
 ///
 /// `password` is the run's **one effective password**
-/// (docs/backup-password.md §4 F3): it both opens `archive` and encrypts the
+/// (docs/history/backup-password.md §4 F3): it both opens `archive` and encrypts the
 /// pre-restore copy, so the copy is never weaker than what the user asked for.
 pub fn restore_backup(
     paths: &Paths,
@@ -1451,7 +1451,7 @@ mod tests {
 
     /// The pre-restore copy is encrypted with the run's effective password, so
     /// restoring an encrypted backup can't quietly write the old data out in the
-    /// clear beside it (docs/backup-password.md §4 F3).
+    /// clear beside it (docs/history/backup-password.md §4 F3).
     #[test]
     fn the_pre_restore_copy_inherits_the_password() {
         let src = tempfile::tempdir().unwrap();

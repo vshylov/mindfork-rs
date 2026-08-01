@@ -298,7 +298,7 @@ fn backup_config(paths: &Paths) -> BackupConfig {
 }
 
 /// The run's one effective password: the argument wins over the stored setting
-/// (docs/backup-password.md §4 F8). Empty means "no password".
+/// (docs/history/backup-password.md §4 F8). Empty means "no password".
 fn effective_password(arg: Option<String>, stored: Option<String>) -> Option<String> {
     arg.or(stored).filter(|p| !p.is_empty())
 }
@@ -674,7 +674,7 @@ mod tests {
 
     /// Precedence for the run's one effective password: the argument wins over
     /// the stored setting, and an empty value means "no password" from either
-    /// source (docs/backup-password.md §4 F8).
+    /// source (docs/history/backup-password.md §4 F8).
     #[test]
     fn effective_password_prefers_the_argument_then_the_setting() {
         let arg = || Some("from-arg".to_string());

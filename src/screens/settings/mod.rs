@@ -516,7 +516,7 @@ enum FieldId {
     TtsStopOnGeneration,
     /// The backup password (section "Data"). A secret: the row shows a status,
     /// never the value; editing goes out as [`SettingsIntent::SetBackupPassword`].
-    /// See spec §12.3, docs/backup-password.md.
+    /// See spec §12.3, docs/history/backup-password.md.
     BackupPassword,
     // RAG (knowledge-base chunking)
     RagTarget,

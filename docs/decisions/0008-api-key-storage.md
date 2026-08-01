@@ -99,6 +99,16 @@ decision is no weaker than the status quo on any dimension and is strictly stron
 - **Minus:** the protection doesn't extend to local malware — documented in the UI
   (field description), README, install.md, and the module doc, so it doesn't create
   false expectations.
+- **Reused, as this predicted:** the **backup password** (spec §12.3,
+  [docs/history/backup-password.md](../history/backup-password.md)) is stored by the very same
+  mechanism, under a reserved entry key (`backup-password`) in the same
+  per-machine entry — no second list, no new scheme, no migration. The field on
+  disk is still called `api_keys`; renaming it is what the additive-only rule
+  ([ADR 0006](0006-data-schema-versioning.md) F12) forbids, so its *meaning*
+  widened to "this machine's secrets" instead. One consequence is sharper there
+  than for an API key: a key that can't be re-entered on a new machine is an
+  inconvenience, whereas a **backup** password that can't be is unreadable data —
+  hence the field's hint tells the user to record it elsewhere.
 - **Groundwork:** an OS keychain as an additional `scheme`; the same mechanism for
   external-proxy keys and MCP server env maps; UI management of other machines' entries
   ("forget this computer").

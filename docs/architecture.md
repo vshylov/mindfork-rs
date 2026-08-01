@@ -294,9 +294,11 @@ src/
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
-│  ├─ backup.rs             data backup/restore (zip, transactional)
+│  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
+│  │                        password — spec §12.3)
 │  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
 │  │                        corruption gates, pre-migration backup, control-parse
+│  ├─ password_prompt.rs    hidden terminal input of the backup password (CLI restore)
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup
 │  └─ import.rs             import from the neutral mindfork-import format
@@ -417,7 +419,8 @@ src/
    │                       queue, lazy device open). See spec §11.9
    ├─ sandbox.rs           SandboxRunner (behind a trait) + WasmerSandbox: `wasmer`
    │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8)
-   ├─ secrets.rs           machine-bound API key storage (ApiKeyEntry — one record
+   ├─ secrets.rs           machine-bound secret storage: cloud API keys + the backup
+   │                       password (ApiKeyEntry — one record
    │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and
    │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). See §12
    ├─ paths.rs             data location (defaults.json) + scaffold/interface language
@@ -2149,7 +2152,12 @@ Principles:
   dictionaries/data.db/profiles/settings/personal + `*.bak` + `fs_root` if
   it's inside the root); restore is transactional (validation → a
   pre-restore copy in `backups/` → cleanup → extraction → rollback on
-  failure). `data.db` is **compacted** on both paths (`VACUUM`, see the
+  failure). The archive is **optionally AES-256 encrypted** with a password
+  from `--password` or from the settings (stored via `shared/secrets.rs`,
+  same as an API key); `manifest.json` stays plain so the "newer version"
+  warning works without it, validation rejects a missing/wrong password
+  before the destructive phase, and the pre-restore and pre-migration copies
+  inherit the password. See spec §12.3, docs/history/backup-password.md. `data.db` is **compacted** on both paths (`VACUUM`, see the
   storage section above): the archive carries a compacted copy instead of
   the live file (sidecars folded in), and a restore compacts what it
   unpacked; best effort, and the backup never modifies the source.

@@ -249,9 +249,15 @@ Architecture — **Feature-Sliced Design (FSD)**.
   neutral [mindfork-import](docs/import-format.md) format (JSON); an external
   converter reads the source application's format and emits the file, and import is
   idempotent (re-running it doesn't create duplicates).
-- **Backup/restore**: `mindfork backup [-o FILE] [-c 0..9]` and
-  `mindfork restore <archive>` (a zip with configurable compression; restore is
-  transactional — a pre-restore copy of the prior data and a rollback on failure).
+- **Backup/restore**: `mindfork backup [-o FILE] [-c 0..9] [-p PASSWORD]` and
+  `mindfork restore <archive> [-p PASSWORD]` (a zip with configurable compression;
+  restore is transactional — a pre-restore copy of the prior data and a rollback on
+  failure). **Backups can be password-protected** (AES-256; the archive still opens
+  in 7-Zip/WinZip): the password comes from `-p` or from the settings, where it is
+  stored encrypted and bound to this computer. A restore accepts both an encrypted
+  and an unencrypted archive, and a wrong password is refused before anything is
+  replaced. Write the password down separately — it does not travel to another
+  computer, and without it the archive cannot be restored.
 - **Portability and install-time defaults**: by default all data lives in a `data/`
   subdirectory next to the binary (the folder/USB stick is self-contained); a
   `defaults.json` file can move it to the standard OS folder or an arbitrary
