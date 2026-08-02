@@ -944,7 +944,7 @@ impl SettingsScreen {
                     var,
                     FieldKind::Text(loc.tf(key, &[("src", source)])),
                 )
-                .describe(loc.t("ui.settings.desc.mcp_env_source"));
+                .describe(loc.tf("ui.settings.desc.mcp_env_source", &[("src", source)]));
                 r.warn = !found;
                 r
             })
@@ -1321,6 +1321,9 @@ impl SettingsScreen {
                     let mut r = row(FieldId::PTool(idx), &info.id, FieldKind::Toggle(on));
                     r.group = loc.get(info.group.i18n_key()).unwrap_or(info.group.title());
                     r.warn = gated_off;
+                    r.warn_note = gated_off
+                        .then(|| gate.map(|g| gate_warn_note(g, loc)))
+                        .flatten();
                     r.hint = if gated_off {
                         gate.map(|g| gate_hint(g, loc))
                     } else {

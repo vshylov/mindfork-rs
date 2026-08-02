@@ -65,6 +65,7 @@ pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     }
 }
 
@@ -567,6 +568,18 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Fs => "ui.settings.gate.fs",
         ToolGate::Mcp => "ui.settings.gate.mcp",
     })
+}
+
+/// The expanded explanation for a tool that is on in the profile but off
+/// globally — naming the section that actually holds the switch. The MCP master
+/// switch moved to "Plugins" when the server editor got its own section, so a
+/// single hardcoded "Tools" was wrong for it.
+pub(super) fn gate_warn_note(gate: ToolGate, loc: &'static Locale) -> String {
+    let section = loc.t(match gate {
+        ToolGate::Mcp => "ui.settings.section.plugins",
+        _ => "ui.settings.section.tools",
+    });
+    loc.tf("ui.settings.ui.gate_warn", &[("section", section)])
 }
 
 /// A span's width in terminal columns (for right-aligning the status chip).

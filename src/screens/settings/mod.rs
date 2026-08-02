@@ -676,9 +676,16 @@ struct FieldRow {
     /// `String` (not `&'static`): MCP-tool descriptions are dynamic
     /// server text (full display is an antidote to tool-poisoning, spec §9.6).
     description: Option<String>,
-    /// Draw the value and hint in warning color — a tool enabled in the
-    /// profile but disabled by a global gate (unavailable to the model).
+    /// Draw the value and hint in warning color — this row needs attention. It
+    /// is raised for several unrelated reasons: a tool enabled in the profile but
+    /// disabled by a global gate, an MCP server whose catalog changed, an
+    /// environment variable whose source is missing.
     warn: bool,
+    /// An expanded explanation printed under the description when there is one to
+    /// give (today: the global gate). Kept apart from [`Self::warn`] — tying one
+    /// fixed sentence to that flag printed the gate explanation on rows that had
+    /// nothing to do with a gate.
+    warn_note: Option<String>,
 }
 
 impl FieldRow {

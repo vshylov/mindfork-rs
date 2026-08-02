@@ -1073,7 +1073,7 @@
   "ui.settings.ui.nothing_found": "  nothing found",
   "ui.settings.ui.search_footer": "Enter — go · ↑↓ — select · Esc — cancel",
   "ui.settings.ui.sections": "Sections",
-  "ui.settings.ui.gate_warn": "The tool is enabled in the profile, but disabled by a global switch — it is unavailable to the model. Enable it in the «Tools» section.",
+  "ui.settings.ui.gate_warn": "The tool is enabled in the profile, but disabled by a global switch — it is unavailable to the model. Enable it in the «{section}» section.",
   "ui.settings.err.int": "an integer is required",
   "ui.settings.err.float": "a number is required",
   "ui.err.profile_name_empty": "Profile name cannot be empty",

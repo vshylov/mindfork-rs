@@ -2302,6 +2302,7 @@ fn long_value_is_truncated_with_ellipsis() {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     };
     let line = render_field_line(&f, 20, 24, false, false, &palette);
     let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
@@ -2322,6 +2323,7 @@ fn selected_field_shows_green_rail() {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     };
     // The selected field — a green rail `▌` in the left column (as the active menu section).
     let sel = render_field_line(&f, 20, 24, false, true, &palette);
@@ -2827,6 +2829,94 @@ fn mcp_env_secret_rows_follow_the_declared_variables() {
         !json.contains("ghp-live-token"),
         "the secret leaked into the screen's config: {json}"
     );
+}
+
+/// The bottom panel's gate explanation belongs to a **gated tool**, not to every
+/// flagged row. `warn` is raised for several unrelated reasons — a changed MCP
+/// catalog, a missing environment source — and keying one fixed sentence off the
+/// flag itself told the user "the tool is enabled in the profile but disabled by
+/// a global switch" on rows that are not tools at all (reported from a live run).
+///
+/// It also names the section that actually holds the switch: the MCP master
+/// toggle moved to "Plugins" when the server editor got its own section, so the
+/// hardcoded "Tools" was wrong for it.
+#[test]
+fn the_gate_explanation_is_only_on_gated_tools_and_names_its_section() {
+    let mut s = screen();
+
+    // A flagged row that is not a gated tool carries no explanation.
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    assert!(type_into(&mut s, FieldId::McpEnv, "ABSENT=MINDFORK_TEST_NO_SUCH_VAR").is_some());
+    let rows = s.plugin_fields();
+    let source_row = rows
+        .iter()
+        .find(|r| matches!(r.id, FieldId::McpEnvSource(_)))
+        .expect("the status row");
+    assert!(source_row.warn, "a missing source is worth flagging");
+    assert!(
+        source_row.warn_note.is_none(),
+        "…but it has nothing to do with a global tool gate"
+    );
+    // And its description substitutes the source name rather than showing {src}.
+    let desc = source_row.description.as_deref().unwrap_or_default();
+    assert!(
+        desc.contains("MINDFORK_TEST_NO_SUCH_VAR") && !desc.contains("{src}"),
+        "the description must name the source: {desc}"
+    );
+
+    // A tool that *is* gated carries the explanation, naming the right section.
+    s.config.mcp.enabled = false;
+    let mcp_tool = crate::features::tools::meta::ToolInfo {
+        id: "mcp__gh__issues".to_string(),
+        group: crate::features::tools::meta::ToolGroup::Plugins,
+        label: "issues",
+        gate: Some(ToolGate::Mcp),
+        enabled_by_default: false,
+        description: None,
+    };
+    s.set_mcp(crate::features::tools::mcp::McpSnapshot {
+        tools: vec![mcp_tool],
+        servers: Vec::new(),
+    });
+    let idx = s
+        .tool_catalog()
+        .iter()
+        .position(|i| i.id == "mcp__gh__issues")
+        .unwrap();
+    s.profiles[0].enabled_tools.push("mcp__gh__issues".into());
+    goto_section(&mut s, Section::Profiles);
+    let gated = s
+        .profile_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::PTool(idx))
+        .expect("the tool toggle");
+    let note = gated.warn_note.expect("a gated tool explains itself");
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    assert!(
+        note.contains(ru.t("ui.settings.section.plugins")),
+        "the MCP switch lives in \"Plugins\", not \"Tools\": {note}"
+    );
+    assert!(
+        !note.contains("{section}"),
+        "unsubstituted placeholder: {note}"
+    );
+
+    // A web tool still points at "Tools", where its switch really is.
+    s.config.tools.web_enabled = false;
+    let web = s
+        .tool_catalog()
+        .iter()
+        .position(|i| i.id == "web_search")
+        .unwrap();
+    s.profiles[0].enabled_tools.push("web_search".into());
+    let note = s
+        .profile_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::PTool(web))
+        .and_then(|r| r.warn_note)
+        .expect("a gated tool explains itself");
+    assert!(note.contains(ru.t("ui.settings.section.tools")), "{note}");
 }
 
 /// A variable that names a source gets a **read-only status** instead of a value
