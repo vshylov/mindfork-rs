@@ -27,7 +27,7 @@ use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot, McpTool, catal
 use crate::features::tools::meta::ToolInfo;
 use crate::shared::config::{McpServerConfig, McpSettings};
 use crate::shared::i18n::Locale;
-use crate::shared::mcp::{McpClient, McpConnection, McpToolInfo, forbidden_batch_command};
+use crate::shared::mcp::{McpClient, McpConnection, McpToolInfo, valid_server_id};
 
 /// Max server restarts within the [`RESTART_WINDOW`] window; beyond that —
 /// `Disconnected` until manual intervention (editing settings recreates the slot).
@@ -58,6 +58,12 @@ pub(super) enum McpEvent {
 /// One server's slot: a config snapshot, status, tools, restart budget.
 struct McpSlot {
     cfg: McpServerConfig,
+    /// The generation this slot's task was spawned in. Events are matched
+    /// against **the slot's** epoch, not the manager's: a reconnect bumps the
+    /// generation for one server, and the others' in-flight events must still
+    /// be accepted (otherwise reconnecting one server would leave another stuck
+    /// on "connecting…" forever).
+    epoch: u64,
     status: ServerStatus,
     /// Tool wrappers (after Ready; empty before readiness / after a crash).
     tools: Vec<Arc<dyn Tool>>,
@@ -93,9 +99,10 @@ pub(super) struct McpEventOutcome {
 }
 
 impl McpSlot {
-    fn new(cfg: McpServerConfig, status: ServerStatus) -> Self {
+    fn new(cfg: McpServerConfig, epoch: u64, status: ServerStatus) -> Self {
         Self {
             cfg,
+            epoch,
             status,
             tools: Vec::new(),
             infos: Vec::new(),
@@ -197,7 +204,7 @@ impl McpManager {
                 if valid_server_id(&cfg.id) {
                     self.slots.insert(
                         cfg.id.clone(),
-                        McpSlot::new(cfg.clone(), ServerStatus::Disconnected(reason)),
+                        McpSlot::new(cfg.clone(), self.epoch, ServerStatus::Disconnected(reason)),
                     );
                 } else {
                     tracing::warn!(id = %cfg.id, %reason, "MCP: server skipped");
@@ -212,7 +219,7 @@ impl McpManager {
                 self.evt_tx.clone(),
                 loc,
             );
-            let mut slot = McpSlot::new(cfg.clone(), ServerStatus::Connecting);
+            let mut slot = McpSlot::new(cfg.clone(), self.epoch, ServerStatus::Connecting);
             slot.cancel = cancel;
             self.slots.insert(cfg.id.clone(), slot);
         }
@@ -231,12 +238,12 @@ impl McpManager {
                 tools,
                 server_info,
             } => {
-                if epoch != self.epoch {
-                    return McpEventOutcome::default();
-                }
                 let Some(slot) = self.slots.get_mut(&server) else {
                     return McpEventOutcome::default();
                 };
+                if epoch != slot.epoch {
+                    return McpEventOutcome::default();
+                }
                 // TOFU catalog pinning (a rug-pull detector, §4.5): a match
                 // against the pin (or the first startup) → registration; a
                 // mismatch → the catalog is held until user confirmation.
@@ -273,24 +280,24 @@ impl McpManager {
                 server,
                 reason,
             } => {
-                if epoch != self.epoch {
-                    return McpEventOutcome::default();
-                }
                 let Some(slot) = self.slots.get_mut(&server) else {
                     return McpEventOutcome::default();
                 };
+                if epoch != slot.epoch {
+                    return McpEventOutcome::default();
+                }
                 tracing::warn!(%server, %reason, "MCP: server failed to come up");
                 slot.status = ServerStatus::Disconnected(reason);
                 // There were no tools yet (Failed comes before Ready) — the catalog didn't change.
                 McpEventOutcome::default()
             }
             McpEvent::Exited { epoch, server } => {
-                if epoch != self.epoch {
-                    return McpEventOutcome::default();
-                }
                 let Some(slot) = self.slots.get_mut(&server) else {
                     return McpEventOutcome::default();
                 };
+                if epoch != slot.epoch {
+                    return McpEventOutcome::default();
+                }
                 let had_tools = !slot.tools.is_empty();
                 // The connection is dead — the wrappers and any unconfirmed
                 // catalog go with it.
@@ -306,7 +313,7 @@ impl McpManager {
                     slot.status = ServerStatus::Connecting;
                     spawn_server_task(
                         slot.cfg.clone(),
-                        self.epoch,
+                        slot.epoch,
                         cancel,
                         self.evt_tx.clone(),
                         loc,
@@ -343,6 +350,37 @@ impl McpManager {
             "MCP: new catalog confirmed by the user"
         );
         Some(pending.hash)
+    }
+
+    /// Restarts one server on an explicit request from settings — the way back
+    /// for a server that exhausted its restart budget, or whose external
+    /// dependency has been fixed. Since `is_current` landed, editing settings
+    /// back and forth no longer re-applies an identical config, so this is the
+    /// only route (docs/history/mcp-server-editor.md F7). The restart budget is
+    /// cleared: this **is** the "manual intervention" it waits for.
+    ///
+    /// `false` — no such server (it is disabled or not configured).
+    pub(super) fn reconnect(&mut self, server: &str, loc: &'static Locale) -> bool {
+        self.epoch += 1;
+        let epoch = self.epoch;
+        let evt_tx = self.evt_tx.clone();
+        let Some(slot) = self.slots.get_mut(server) else {
+            return false;
+        };
+        // The previous task ends gracefully; its events are ignored from here on
+        // (they carry the old epoch, and the slot's has just moved on).
+        slot.cancel.cancel();
+        slot.epoch = epoch;
+        slot.tools.clear();
+        slot.infos.clear();
+        slot.pending = None;
+        slot.restarts.clear();
+        let cancel = CancellationToken::new();
+        slot.cancel = cancel.clone();
+        slot.status = ServerStatus::Connecting;
+        tracing::info!(%server, "MCP: reconnect requested");
+        spawn_server_task(slot.cfg.clone(), epoch, cancel, evt_tx, loc);
+        true
     }
 
     /// Tool wrappers of every ready server (for rebuilding the registry).
@@ -409,16 +447,6 @@ fn allow_restart(restarts: &mut Vec<Instant>, now: Instant) -> bool {
     }
 }
 
-/// Whether a server id is a valid slug (`[a-z0-9-]`, 1..=32): it's part of
-/// the tool id `mcp__<id>__<tool>` and the slot key.
-fn valid_server_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 32
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
 /// Checks the server config before spawning: a slug id, a non-empty command,
 /// a `.bat`/`.cmd` ban (BatBadBut). The error is a localized reason for the
 /// status (UI language, axis B — the status is shown to a human in settings).
@@ -428,9 +456,6 @@ fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result
     }
     if cfg.command.trim().is_empty() {
         return Err(loc.t("ui.err.mcp.empty_command").into());
-    }
-    if forbidden_batch_command(&cfg.command) {
-        return Err(loc.t("ui.err.mcp.batch_forbidden").into());
     }
     Ok(())
 }
@@ -554,6 +579,17 @@ impl super::Orchestrator {
         self.emit_settings();
     }
 
+    /// Reconnects a server on request from settings (`AppCommand::ReconnectMcpServer`,
+    /// Enter on a row with nothing to confirm). Its tools leave the registry at
+    /// once — the connection they hold is being torn down — and come back with
+    /// the `Ready` event.
+    pub(super) fn handle_reconnect_mcp_server(&mut self, server: String) {
+        if self.mcp.reconnect(&server, self.ui_locale()) {
+            self.rebuild_registry();
+            self.emit_settings();
+        }
+    }
+
     /// Persists a server's TOFU catalog pin into `config.mcp` (written directly, not
     /// through `handle_update_config` — otherwise a `config.mcp` diff would flag the servers
     /// for a restart and the cycle would repeat). A write error isn't escalated (the pin is
@@ -623,12 +659,10 @@ mod tests {
                 .unwrap_err()
                 .contains("команда")
         );
-        cfg.command = "evil.bat".into();
-        assert!(
-            validate_server_config(&cfg, ru())
-                .unwrap_err()
-                .contains("BatBadBut")
-        );
+        // A `.cmd` is no longer refused — it is exactly what `npx` resolves to
+        // on Windows, and `std` escapes its arguments (ADR 0007 §2, revisited).
+        cfg.command = "npx.cmd".into();
+        assert!(validate_server_config(&cfg, ru()).is_ok());
         cfg.command = "cmd".into();
         cfg.id = "BAD ID".into();
         assert!(
@@ -652,6 +686,94 @@ mod tests {
             &mut marks,
             t0 + RESTART_WINDOW + Duration::from_secs(11)
         ));
+    }
+
+    #[tokio::test]
+    async fn reconnect_respawns_one_server_without_stranding_the_others() {
+        // Reconnect bumps the generation for the server it restarts and leaves
+        // every other slot on its own — the reason events are matched against
+        // the *slot's* epoch. With a single global epoch this test's second half
+        // fails: `gh`'s in-flight Ready would be dropped and that server would
+        // sit on "connecting…" forever.
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![server_cfg("fs"), server_cfg("gh")],
+            },
+            ru(),
+        );
+        let gh_ready = McpEvent::Ready {
+            epoch: m.epoch, // captured while `gh` was still coming up
+            server: "gh".into(),
+            conn: dummy_conn(),
+            tools: vec![tool_info("issues")],
+            server_info: "x".into(),
+        };
+        m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
+        assert_eq!(m.snapshot().servers[0].status, ServerStatus::Ready);
+
+        assert!(m.reconnect("fs", ru()));
+        let snap = m.snapshot();
+        assert_eq!(snap.servers[0].status, ServerStatus::Connecting);
+        assert!(
+            snap.tools.is_empty(),
+            "the tools go with the connection being torn down"
+        );
+
+        // The other server's event still lands.
+        let out = m.handle_event(gh_ready, ru());
+        assert!(out.catalog_changed);
+        assert_eq!(m.snapshot().servers[1].status, ServerStatus::Ready);
+
+        // …while the reconnected server's own previous-generation event doesn't.
+        let stale = McpEvent::Exited {
+            epoch: m.epoch - 1,
+            server: "fs".into(),
+        };
+        m.handle_event(stale, ru());
+        assert_eq!(
+            m.snapshot().servers[0].status,
+            ServerStatus::Connecting,
+            "a stale Exited must not restart the fresh task"
+        );
+        // An unknown server — nothing to reconnect.
+        assert!(!m.reconnect("nope", ru()));
+    }
+
+    #[tokio::test]
+    async fn reconnect_clears_the_restart_budget() {
+        // The budget guards against a crash loop; an explicit reconnect *is* the
+        // "manual intervention" it waits for, so a server that exhausted it can
+        // be brought back (docs/history/mcp-server-editor.md F7).
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![server_cfg("fs")],
+            },
+            ru(),
+        );
+        m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
+        for _ in 0..=RESTART_BUDGET {
+            let epoch = m.slots["fs"].epoch;
+            m.handle_event(
+                McpEvent::Exited {
+                    epoch,
+                    server: "fs".into(),
+                },
+                ru(),
+            );
+        }
+        assert!(matches!(
+            m.snapshot().servers[0].status,
+            ServerStatus::Disconnected(_)
+        ));
+        assert!(m.reconnect("fs", ru()));
+        assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
+        assert!(m.slots["fs"].restarts.is_empty());
     }
 
     fn ready_evt(m: &McpManager, tools: Vec<McpToolInfo>) -> McpEvent {
@@ -816,7 +938,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let mut m = McpManager::new(tx);
         let mut bad = server_cfg("bad");
-        bad.command = "srv.cmd".into();
+        bad.command = "  ".into(); // no launch command
         let mut off = server_cfg("off");
         off.enabled = false;
         m.apply(
@@ -826,12 +948,12 @@ mod tests {
             },
             ru(),
         );
-        // A disabled server gets no slot; .cmd — Disconnected with a reason.
+        // A disabled server gets no slot; an invalid one — Disconnected with a reason.
         let servers = m.snapshot().servers;
         assert_eq!(servers.len(), 1);
         assert!(matches!(
             servers[0].status,
-            ServerStatus::Disconnected(ref r) if r.contains("BatBadBut")
+            ServerStatus::Disconnected(ref r) if r.contains("команда")
         ));
         // The master switch: everything shuts down.
         m.apply(

@@ -21,6 +21,7 @@ impl SettingsScreen {
             focus: Focus::Menu,
             profile_idx: 0,
             imp_profile_idx: 0,
+            mcp_server_idx: 0,
             pending_profile_select: false,
             model_sub: ModelTab::Assistant,
             sampling_sub: Subsection::Assistant,
@@ -78,6 +79,7 @@ impl SettingsScreen {
             self.profile_idx = self.profiles.len() - 1;
         }
         self.clamp_imp_profile_idx();
+        self.clamp_mcp_server_idx();
     }
 
     /// Keeps the impersonation-profile selection inside the list (it can shrink from a
@@ -153,6 +155,7 @@ impl SettingsScreen {
             Section::Model => self.model_fields(),
             Section::Sampling => self.sampling_fields(),
             Section::Tools => self.tool_fields(),
+            Section::Plugins => self.plugin_fields(),
             Section::Memory => self.memory_fields(),
             Section::Data => self.data_fields(),
             Section::Profiles => self.profile_fields(),
@@ -702,39 +705,175 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
-        rows.extend(grouped(loc.t("ui.tool.group.plugins"), {
-            let mut mcp_rows = vec![
+        rows
+    }
+
+    /// The "Plugins" section: the MCP host — the master switch, the server
+    /// inventory (an editor for the selected server) and the live status of the
+    /// ones that are running. Its own section rather than a group in "Tools"
+    /// (docs/history/mcp-server-editor.md F1): "Tools" is a list of gates for
+    /// built-in tools, while this is an inventory of external programs with
+    /// per-server settings and a lifecycle. See spec §9.6.
+    pub(super) fn plugin_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
+        let mut rows = grouped(
+            loc.t("ui.settings.group.mcp_host"),
+            vec![
                 row(
                     FieldId::TMcpEnabled,
                     loc.t("ui.settings.field.mcp_enabled"),
                     FieldKind::Toggle(self.config.mcp.enabled),
                 )
                 .describe(loc.t("ui.settings.desc.mcp_enabled")),
-            ];
-            // Server-status rows (read-only): ready/connecting/failure
-            // reason; "catalog changed" is highlighted as a warning, Enter
-            // confirms the new catalog (TOFU reconfirmation, spec §9.6).
-            for (idx, srv) in self.mcp.servers.iter().enumerate() {
-                let status = match &srv.status {
-                    ServerStatus::Ready => loc.tf(
-                        "ui.settings.mcp.ready",
-                        &[("n", &srv.tool_count.to_string())],
-                    ),
-                    ServerStatus::Connecting => loc.t("ui.settings.mcp.connecting").into(),
-                    ServerStatus::NotConfigured => loc.t("ui.settings.mcp.not_configured").into(),
-                    ServerStatus::Disconnected(reason) => reason.clone(),
-                };
-                let mut r = row(FieldId::TMcpServer(idx), &srv.id, FieldKind::Text(status))
-                    .describe(loc.t("ui.settings.desc.mcp_server"));
-                if srv.pending_catalog {
-                    r.warn = true;
-                    r.hint = Some(loc.t("ui.settings.mcp.confirm_hint"));
-                }
-                mcp_rows.push(r);
-            }
-            mcp_rows
-        }));
+            ],
+        );
+        rows.extend(grouped(
+            loc.t("ui.settings.group.mcp_server"),
+            self.mcp_server_fields(),
+        ));
+        // Server-status rows (read-only): ready/connecting/failure reason;
+        // "catalog changed" is highlighted as a warning. Enter does what the row
+        // needs — confirm the new catalog (TOFU) or reconnect (spec §9.6). Only
+        // servers the host actually tried to start have one, so a disabled server
+        // is absent here and edited above.
+        if !self.mcp.servers.is_empty() {
+            rows.extend(grouped(
+                loc.t("ui.settings.group.mcp_status"),
+                self.mcp
+                    .servers
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, srv)| {
+                        let status = match &srv.status {
+                            // "ready · tools: N · in profile: K" — a server can
+                            // be up while the model still sees nothing, because
+                            // MCP tools are opt-in per profile (double opt-in,
+                            // ADR 0007 R7). Saying only "ready" is how a user
+                            // ends up adding a server and finding it does not
+                            // work (docs/history/mcp-server-editor.md §5).
+                            ServerStatus::Ready => loc.tf(
+                                "ui.settings.mcp.ready",
+                                &[
+                                    ("n", &srv.tool_count.to_string()),
+                                    ("k", &self.enabled_mcp_tools(&srv.id).to_string()),
+                                ],
+                            ),
+                            ServerStatus::Connecting => loc.t("ui.settings.mcp.connecting").into(),
+                            ServerStatus::NotConfigured => {
+                                loc.t("ui.settings.mcp.not_configured").into()
+                            }
+                            ServerStatus::Disconnected(reason) => reason.clone(),
+                        };
+                        let mut r = row(FieldId::TMcpServer(idx), &srv.id, FieldKind::Text(status))
+                            .describe(loc.t("ui.settings.desc.mcp_server"));
+                        if srv.pending_catalog {
+                            r.warn = true;
+                            r.hint = Some(loc.t("ui.settings.mcp.confirm_hint"));
+                        } else if srv.status == ServerStatus::Ready
+                            && srv.tool_count > 0
+                            && self.enabled_mcp_tools(&srv.id) == 0
+                        {
+                            // Up, and invisible to the model — say what is missing
+                            // rather than let the user discover it in a chat.
+                            r.hint = Some(loc.t("ui.settings.mcp.tools_off_hint"));
+                        }
+                        r
+                    })
+                    .collect(),
+            ));
+        }
         rows
+    }
+
+    /// The selected MCP server's fields. An empty inventory shows only the
+    /// selector's placeholder — `Ctrl+N` creates the first entry (the
+    /// impersonation-persona shape, spec §11.8).
+    fn mcp_server_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
+        let Some(srv) = self.config.mcp.servers.get(self.mcp_server_idx) else {
+            return vec![
+                row(
+                    FieldId::McpSelect,
+                    loc.t("ui.settings.field.mcp_select"),
+                    FieldKind::Choice(loc.t("ui.settings.value.no_servers").to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.mcp_select")),
+            ];
+        };
+        vec![
+            row(
+                FieldId::McpSelect,
+                loc.t("ui.settings.field.mcp_select"),
+                FieldKind::Choice(srv.id.clone()),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_select")),
+            row(
+                FieldId::McpId,
+                loc.t("ui.settings.field.mcp_id"),
+                FieldKind::Text(srv.id.clone()),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_id")),
+            row(
+                FieldId::McpCommand,
+                loc.t("ui.settings.field.mcp_command"),
+                FieldKind::Text(srv.command.clone()),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_command")),
+            row(
+                FieldId::McpArgs,
+                loc.t("ui.settings.field.mcp_args"),
+                FieldKind::Text(join_args(&srv.args)),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_args")),
+            row(
+                FieldId::McpEnv,
+                loc.t("ui.settings.field.mcp_env"),
+                FieldKind::Text(join_env_map(&srv.env)),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_env")),
+            row(
+                FieldId::McpEnabled,
+                loc.t("ui.settings.field.mcp_server_enabled"),
+                FieldKind::Toggle(srv.enabled),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_server_enabled")),
+            row(
+                FieldId::McpTimeout,
+                loc.t("ui.settings.field.mcp_timeout"),
+                FieldKind::Text(srv.tool_timeout_secs.to_string()),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_timeout")),
+            row(
+                FieldId::McpMaxResult,
+                loc.t("ui.settings.field.mcp_max_result"),
+                FieldKind::Text(srv.max_result_chars.to_string()),
+            )
+            .describe(loc.t("ui.settings.desc.mcp_max_result")),
+        ]
+    }
+
+    /// How many of the server's tools the **selected** profile has enabled. The
+    /// count is per profile because that is what `effective_tool_ids` reads;
+    /// with several profiles it follows the one being edited in "Profiles".
+    fn enabled_mcp_tools(&self, server: &str) -> usize {
+        let prefix = format!("mcp__{server}__");
+        let Some(profile) = self.profiles.get(self.profile_idx) else {
+            return 0;
+        };
+        profile
+            .enabled_tools
+            .iter()
+            .filter(|t| t.starts_with(&prefix))
+            .count()
+    }
+
+    /// Keeps the MCP-server selection inside the list (it can shrink from a
+    /// re-emit or an undo).
+    fn clamp_mcp_server_idx(&mut self) {
+        let n = self.config.mcp.servers.len();
+        if n > 0 && self.mcp_server_idx >= n {
+            self.mcp_server_idx = n - 1;
+        }
     }
 
     /// The "Memory" section: knowledge-base chunking (RAG), notes, "self-model".

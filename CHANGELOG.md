@@ -15,6 +15,35 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **MCP servers are configured in the settings window.** A new **"Plugins"**
+  section holds the master switch, the server list and its editor: `Ctrl+N` adds
+  a server, the fields below set its command line and environment, `Ctrl+D`
+  deletes it — no more hand-editing `settings.json` (which still works and is the
+  same data). A server added here starts switched off, so nothing is launched
+  while you are still typing its command, and an identifier that would make the
+  server invisible is refused as you enter it. Environment values are still the
+  **names** of your OS environment variables, not the secrets themselves.
+- **One MCP server config now works on every platform.** The launch command is
+  resolved the way a shell resolves it, so `"command": "npx"` no longer has to be
+  written as `cmd /c npx …` on Windows — configs can be copied between machines
+  and between operating systems as they are. Existing `cmd /c …` configs keep
+  working.
+- **A stuck MCP server can be reconnected from settings.** `Enter` on a server's
+  row confirms a changed tool catalog as before — and, when there is nothing to
+  confirm, restarts the server. Previously a server that had crashed too often
+  could only be brought back by restarting the application.
+
+### Fixed
+
+- **Appending to a file could silently lose what was appended.** `fs_write` with
+  `append` did not flush before closing the file, so the text sometimes never
+  reached disk — the file simply stayed as it was.
+- **An MCP server's status no longer hides that its tools are switched off.** The
+  row now reads `ready · tools: 14 · in profile: 0` and points at the "Profiles"
+  section: a server can be running while the model sees none of its tools, because
+  they are enabled per profile — previously the row just said "ready", and the only
+  way to find out was to ask the assistant and be told it has no such tool.
+
 - **`youtube_watch` can bring back the words, not just a description.** Pass
   `transcript: true` and the assistant also gets a transcript of the speech with
   timestamps. If it is short, it comes straight back in the answer; if it is

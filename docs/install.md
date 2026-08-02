@@ -489,18 +489,20 @@ A custom `wasmer` binary can be set via the `MINDFORK_SANDBOX_WASMER` env variab
 ## 4.2. MCP server tools (plugins)
 
 Custom model tools are attached via external **MCP servers** (stdio; any server
-from the Model Context Protocol ecosystem works). Servers are described in
-`settings.json` (the `mcp` section; the file is in the data root, see §2), and
-enabling them takes two steps (double opt-in):
+from the Model Context Protocol ecosystem works). Servers are configured in the
+settings screen — the **"Plugins"** section: `Ctrl+N` adds a server, the fields
+below it are its command line and environment, `Ctrl+D` deletes it. The same data
+can be edited by hand in `settings.json` (the `mcp` section; the file is in the
+data root, see §2) — which is what the example below shows. Enabling a server
+takes two steps (double opt-in):
 
 ```jsonc
 "mcp": {
   "enabled": true,                  // master switch (false by default)
   "servers": [{
     "id": "fs",                     // slug [a-z0-9-] — part of tool names mcp__fs__*
-    "command": "cmd",               // Windows: npx is a .cmd shim, run it via cmd /c
-    "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
-    // Linux/macOS: "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/work"]
+    "command": "npx",               // the same on every platform (see the note below)
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
     "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },  // child variable → NAME of the source variable (secrets aren't in the file)
     "enabled": true,
     "tool_timeout_secs": 60,        // timeout for one call
@@ -509,21 +511,35 @@ enabling them takes two steps (double opt-in):
 }
 ```
 
-1. Turn on the "MCP servers" master toggle (settings → "Tools" → "Plugins
-   (MCP)") — server statuses are shown there too;
+1. Turn on the "MCP servers" master toggle (settings → "Plugins") — the server
+   editor and the live statuses are in the same section;
 2. turn on the desired tools in the profile (settings → "Profiles", "Plugins
    (MCP)" group; focusing the toggle shows the tool's **full description** from
    the server at the bottom).
 
+Both steps are required, and the server's status row says where you are: `ready ·
+tools: 14 · in profile: 0` means the server is up and the model still sees none of
+it — step 2 is missing.
+
 Notes:
 
-- **`.bat`/`.cmd` as the server command are forbidden** (the BatBadBut
-  vulnerability); `npx`/`uvx` servers on Windows are launched as `cmd /c npx …` or
-  via a direct exe path.
+- **The command is resolved the way a shell resolves it**, so one config works on
+  every platform: `"command": "npx"` needs no `cmd /c` wrapper on Windows. (Why it
+  is needed at all: `cmd.exe` completes a bare name using `PATHEXT`, and Rust does
+  not — `npx` on Windows is really `npx.cmd`. Note npm ships an extensionless
+  `npx` next to it, a Unix shell script Windows cannot run, so a bare name is
+  always completed from `PATHEXT` and never taken as-is.) A `.bat`/`.cmd` command
+  is allowed: `std` escapes batch-file arguments and refuses the ones it cannot
+  escape, which is stricter than routing them through `cmd.exe`.
 - **The tool catalog is pinned on first startup** (protection against tampering):
   if a server changes its tool set/descriptions after an update, they won't be
   available to the model until you confirm the new catalog (Enter on the server's
-  row in settings).
+  row in settings). With nothing to confirm, the same Enter **reconnects** the
+  server — the way to bring one back after you have fixed whatever it needed.
+- A server added in the settings screen is created **switched off**: fill in the
+  command and arguments, then turn "Enabled" on. Its `env` values are the **names**
+  of environment variables of the application, not the secrets themselves — set the
+  variable in your OS (or your launcher) and name it here.
 - An MCP server is an ordinary program running with your user's rights: only
   connect trusted ones. A server that crashes often (3 crashes in 5 minutes) is
   disabled until you fix the settings; server stderr is written to `logs/`.

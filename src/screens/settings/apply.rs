@@ -222,6 +222,18 @@ impl SettingsScreen {
             self.open_search();
             return None;
         }
+        // Create/delete an MCP server (in the "Plugins" section) — the same two
+        // keys as the profile lists below, over `config.mcp.servers`.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.section() == Section::Plugins
+            && let Some(physical) = keys::hotkey_char(&key)
+        {
+            match physical {
+                'n' => return Some(self.create_mcp_server()),
+                'd' => return self.delete_mcp_server(),
+                _ => {}
+            }
+        }
         // Create/delete a profile (in the "Profiles" section). Matched by the
         // "physical" Latin key — shortcuts work under any layout (see shared::keys).
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -354,10 +366,10 @@ impl SettingsScreen {
             }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
-                // The MCP-server row — a read-only status; Enter when "catalog
-                // changed" confirms the new catalog (TOFU, spec §9.6).
+                // The MCP-server row — a read-only status; Enter does what the
+                // row needs: confirm a changed catalog (TOFU) or reconnect.
                 if let FieldId::TMcpServer(idx) = f.id {
-                    return self.confirm_mcp_catalog(idx);
+                    return self.mcp_server_action(idx);
                 }
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
@@ -401,6 +413,29 @@ impl SettingsScreen {
 
     pub(super) fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         let loc = self.loc();
+        // The commit is handled before taking the `&mut` borrow: some rules need
+        // the rest of the configuration to judge (an MCP server id has to be
+        // unique among the others), and a validator holding the editor borrow
+        // could not look at it.
+        let ed = self.editor.as_ref()?;
+        let multiline_break = ed.multiline
+            && key
+                .modifiers
+                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+        if key.code == KeyCode::Enter && !multiline_break {
+            let (field, text) = (ed.field, ed.input.text());
+            // Validation without closing: an invalid value leaves the editor
+            // open, the title turns red; fixing it or Esc closes it.
+            if let Some(err_key) = self
+                .mcp_field_error(field, &text)
+                .or_else(|| field_validation_error(field, &text))
+            {
+                self.editor.as_mut()?.error = Some(loc.t(err_key));
+                return None;
+            }
+            self.editor = None;
+            return self.apply_text(field, &text);
+        }
         let editor = self.editor.as_mut()?;
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
@@ -410,22 +445,9 @@ impl SettingsScreen {
             // The multiline editor (system message/greeting): `Shift+Enter` (or
             // `Alt+Enter` — a fallback for terminals without the kitty protocol,
             // see item 11) — a line break, Enter — commit (as in chat input, spec §11.7).
-            (KeyCode::Enter, m)
-                if editor.multiline && m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
-            {
+            (KeyCode::Enter, _) => {
                 editor.input.insert_newline();
                 None
-            }
-            (KeyCode::Enter, _) => {
-                let text = editor.input.text();
-                // Validation without closing: an invalid numeric field leaves the editor
-                // open, the title turns red; fixing it or Esc closes it.
-                if let Some(err_key) = field_validation_error(editor.field, &text) {
-                    editor.error = Some(loc.t(err_key));
-                    return None;
-                }
-                let editor = self.editor.take().unwrap();
-                self.apply_text(editor.field, &text)
             }
             // All Ctrl combos on the field (`Ctrl+K` clear with `Ctrl+Z` to restore,
             // word-wise navigation/deletion, undo/redo) are handled by `InputBox` itself
@@ -480,6 +502,12 @@ impl SettingsScreen {
         if let FieldId::PTool(idx) = id {
             return self.toggle_profile_tool(idx);
         }
+        // The selected MCP server's switch — indexed, so not in the access table.
+        if id == FieldId::McpEnabled {
+            let srv = self.config.mcp.servers.get_mut(self.mcp_server_idx)?;
+            srv.enabled = !srv.enabled;
+            return Some(self.save_config());
+        }
         // Config toggles — via the access table (single source, see spec.rs).
         if let Some(FieldSpec {
             access: Access::Toggle(flip),
@@ -492,13 +520,76 @@ impl SettingsScreen {
         None
     }
 
-    /// Confirming a changed MCP-server catalog (Enter on its row): the intent goes to
-    /// the orchestrator only when the server is actually awaiting confirmation
-    /// (`pending_catalog`); otherwise — a no-op (the row is read-only).
-    pub(super) fn confirm_mcp_catalog(&self, idx: usize) -> Option<SettingsIntent> {
+    /// Enter on an MCP server's status row: it does whatever that row needs —
+    /// confirms a changed catalog when one is pending (TOFU, spec §9.6),
+    /// otherwise reconnects. Reconnect is the only way back for a server that
+    /// exhausted its restart budget: since `McpManager::is_current` landed, an
+    /// identical config is not re-applied, so "wiggle a setting" no longer
+    /// restarts anything (docs/history/mcp-server-editor.md F7).
+    pub(super) fn mcp_server_action(&self, idx: usize) -> Option<SettingsIntent> {
         let srv = self.mcp.servers.get(idx)?;
-        srv.pending_catalog
-            .then(|| SettingsIntent::ConfirmMcpCatalog(srv.id.clone()))
+        Some(if srv.pending_catalog {
+            SettingsIntent::ConfirmMcpCatalog(srv.id.clone())
+        } else {
+            SettingsIntent::ReconnectMcpServer(srv.id.clone())
+        })
+    }
+
+    /// `Ctrl+N` in the "Plugins" section: appends a server and selects it. It is
+    /// created **disabled** with a unique generated id and no command — nothing
+    /// is spawned while the command is still half-typed, and flipping "Enabled"
+    /// becomes the deliberate "start it" moment that a per-field debounce cannot
+    /// express (docs/history/mcp-server-editor.md F5).
+    pub(super) fn create_mcp_server(&mut self) -> SettingsIntent {
+        let id = (1..)
+            .map(|n| format!("server-{n}"))
+            .find(|id| !self.config.mcp.servers.iter().any(|s| &s.id == id))
+            .expect("an unused server id always exists");
+        self.config.mcp.servers.push(McpServerConfig {
+            id,
+            enabled: false,
+            ..Default::default()
+        });
+        self.mcp_server_idx = self.config.mcp.servers.len() - 1;
+        self.save_config()
+    }
+
+    /// `Ctrl+D` in the "Plugins" section: removes the selected server. Its
+    /// per-profile tool toggles are left alone — they name tools that no longer
+    /// exist and are simply not offered to the model (the dangling-reference
+    /// rule the persona list already uses).
+    pub(super) fn delete_mcp_server(&mut self) -> Option<SettingsIntent> {
+        if self.mcp_server_idx >= self.config.mcp.servers.len() {
+            return None;
+        }
+        self.config.mcp.servers.remove(self.mcp_server_idx);
+        self.mcp_server_idx = self.mcp_server_idx.saturating_sub(1);
+        Some(self.save_config())
+    }
+
+    /// Validation of an MCP server field that needs the rest of the inventory to
+    /// judge — returns an i18n key for the editor's inline error. The host would
+    /// report an invalid id or a batch command in the status row too, but an
+    /// invalid **id** creates no slot at all, so without this the server would
+    /// simply vanish from the status list (docs/history/mcp-server-editor.md F8).
+    pub(super) fn mcp_field_error(&self, id: FieldId, text: &str) -> Option<&'static str> {
+        let t = text.trim();
+        match id {
+            FieldId::McpId => {
+                if !valid_mcp_server_id(t) {
+                    return Some("ui.settings.err.mcp_id");
+                }
+                let taken = self
+                    .config
+                    .mcp
+                    .servers
+                    .iter()
+                    .enumerate()
+                    .any(|(i, s)| i != self.mcp_server_idx && s.id == t);
+                taken.then_some("ui.settings.err.mcp_id_taken")
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn toggle_profile_tool(&mut self, idx: usize) -> Option<SettingsIntent> {
@@ -547,6 +638,15 @@ impl SettingsScreen {
                 if !self.profiles.is_empty() {
                     let n = self.profiles.len() as i32;
                     self.profile_idx = (((self.profile_idx as i32 + dir) % n + n) % n) as usize;
+                }
+                None
+            }
+            // MCP-server selection — navigation, no save.
+            FieldId::McpSelect => {
+                let n = self.config.mcp.servers.len() as i32;
+                if n > 0 {
+                    self.mcp_server_idx =
+                        (((self.mcp_server_idx as i32 + dir) % n + n) % n) as usize;
                 }
                 None
             }
@@ -655,6 +755,34 @@ impl SettingsScreen {
                     FieldId::IpName if trimmed.is_empty() => return None, // no empty names
                     FieldId::IpName => ip.name = trimmed.to_string(),
                     _ => ip.system_message = trimmed.to_string(),
+                }
+            }
+            // The selected MCP server's fields — over `config.mcp.servers`.
+            FieldId::McpId
+            | FieldId::McpCommand
+            | FieldId::McpArgs
+            | FieldId::McpEnv
+            | FieldId::McpTimeout
+            | FieldId::McpMaxResult => {
+                let srv = self.config.mcp.servers.get_mut(self.mcp_server_idx)?;
+                match id {
+                    // Shape and uniqueness are checked before the commit
+                    // (`mcp_field_error`); an empty id would make the server
+                    // invisible to the host, so it is refused there.
+                    FieldId::McpId => srv.id = trimmed.to_string(),
+                    FieldId::McpCommand => srv.command = trimmed.to_string(),
+                    FieldId::McpArgs => srv.args = parse_args(trimmed),
+                    FieldId::McpEnv => srv.env = parse_env_map(trimmed),
+                    // A zero timeout would mean "give up at once"; the host
+                    // clamps it to 1s anyway, so keep the previous value.
+                    FieldId::McpTimeout => match trimmed.parse::<u64>() {
+                        Ok(v) if v > 0 => srv.tool_timeout_secs = v,
+                        _ => return None,
+                    },
+                    _ => match trimmed.parse::<usize>() {
+                        Ok(v) if v > 0 => srv.max_result_chars = v,
+                        _ => return None,
+                    },
                 }
             }
             // Config fields — via the access table (the setter itself parses and routes

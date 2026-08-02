@@ -178,6 +178,11 @@ pub enum AppCommand {
         provider: crate::shared::config::CloudProvider,
         key: String,
     },
+    /// Restart one MCP server (Enter on its row in settings when there is no
+    /// catalog to confirm). An action, not a config edit: an identical config is
+    /// not re-applied (`McpManager::is_current`), so a server that exhausted its
+    /// restart budget has no other way back. See spec §9.6.
+    ReconnectMcpServer(String),
     /// Store/clear the backup password for this machine (spec §12.3). Separate
     /// from `UpdateConfig` for the same reason as [`AppCommand::SetApiKey`]: the
     /// secret is encrypted by the orchestrator and never travels in the snapshot.

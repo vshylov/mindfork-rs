@@ -48,7 +48,11 @@ to installing software; there is no sandbox — same as goose/Zed/Claude Code).
 Mitigations:
 
 - master switch `config.mcp.enabled = false` by default; servers are
-  configured only by the user editing `settings.json` (R6); tools are
+  configured only by the user — R6 said "by editing `settings.json`", and was
+  revisited in 2026-08 once the host had proved itself: the same data is now
+  authored in the settings screen's "Plugins" section
+  ([mcp-server-editor.md](../history/mcp-server-editor.md)), which changes the
+  authoring surface and nothing about the trust model; tools are
   **disabled in profiles by default** → a double opt-in;
 - **TOFU catalog pinning** (rug-pull detector, tool poisoning): a sha256 of
   the tools' names+descriptions+schemas is pinned on first startup
@@ -58,8 +62,14 @@ Mitigations:
   bottom panel) — descriptions go into the system prompt on every turn;
 - secrets — **env variable names** in the `env` map (R8, the `api_key_env`
   precedent); the actual values are never written to `settings.json`;
-- `.bat`/`.cmd` commands are forbidden (BatBadBut, CVE-2024-24576; `cmd /c
-  npx …` is allowed), `CREATE_NO_WINDOW`, Job Object kill-on-close (the
+- the server command is resolved as a shell would (`PATHEXT` completion on
+  Windows), so one config works on every platform. **The `.bat`/`.cmd` ban was
+  removed in 2026-08** after measuring the premise: CVE-2024-24576 ("BatBadBut")
+  is fixed in `std` as of Rust 1.77.2, which escapes batch-file arguments and
+  **refuses** the ones it cannot escape — so the ban added no protection while
+  forcing users onto `cmd /c npx …`, where the arguments are re-parsed by
+  `cmd.exe` *outside* that escaping. Spawning the resolved `.cmd` directly is
+  both portable and strictly safer. `CREATE_NO_WINDOW`, Job Object kill-on-close (the
   `cmd /c npx → node` process tree does not survive the app exiting or
   crashing), clipped results and per-call timeouts, server stderr only goes
   to the file log.
@@ -99,8 +109,8 @@ API was rejected.
   localized); manager status reasons — axis B; client wire errors — a
   technical layer (like the HTTP client wrappers).
 - Groundwork (roadmap): HTTP transport, resources/prompts,
-  `notifications/tools/list_changed`, per-call confirmation for destructive
-  calls, deferred schemas ("tool search"), a UI server editor, a WASM sandbox
+  `notifications/tools/list_changed`, deferred schemas ("tool search"), secrets
+  for the `env` map + JSON import (stage 2 of the editor track), a WASM sandbox
   for untrusted tools, server `instructions` → system prompt.
 
 ## Verification

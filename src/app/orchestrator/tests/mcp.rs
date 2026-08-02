@@ -154,28 +154,7 @@ async fn mcp_filesystem_e2e_live() {
     .unwrap();
     let allowed = files_dir.path().to_string_lossy().replace('\\', "/");
 
-    // npx on Windows is a .cmd shim: launch via `cmd /c` (the §4.6 pitfall).
-    let (command, args): (String, Vec<String>) = if cfg!(windows) {
-        (
-            "cmd".into(),
-            [
-                "/c",
-                "npx",
-                "-y",
-                "@modelcontextprotocol/server-filesystem",
-                &allowed,
-            ]
-            .map(String::from)
-            .to_vec(),
-        )
-    } else {
-        (
-            "npx".into(),
-            ["-y", "@modelcontextprotocol/server-filesystem", &allowed]
-                .map(String::from)
-                .to_vec(),
-        )
-    };
+    let (command, args) = filesystem_server_cmd(&allowed);
     let config = AppConfig {
         mcp: McpSettings {
             enabled: true,
@@ -273,4 +252,118 @@ async fn mcp_exited_removes_tools_from_registry() {
     });
     assert!(orch.registry.get("mcp__fs__read_text_file").is_none());
     assert!(orch.registry.get("note_save").is_some());
+}
+
+#[tokio::test]
+async fn a_server_edited_in_settings_reaches_the_host() {
+    // The seam the whole settings editor rests on: the screen only sends the
+    // config, and everything else is the existing `UpdateConfig` → diff →
+    // debounce → `apply_mcp_settings` path (docs/history/mcp-server-editor.md §1).
+    // Without this, "the orchestrator needed no changes" is an untested claim.
+    let (_dir, mut orch) = bare_orch();
+    assert!(orch.mcp.snapshot().servers.is_empty());
+
+    let mut edited = orch.config.clone();
+    edited.mcp = mcp_config(); // the config a `Ctrl+N` + field edits would produce
+    orch.handle_update_config(edited);
+    orch.flush_restarts();
+    assert_eq!(
+        orch.mcp.snapshot().servers.len(),
+        1,
+        "the edited server should have reached the host"
+    );
+
+    // …and an edit that changes nothing effective costs no restart, so the
+    // debounce cannot respawn `npx` for an edit plus its undo.
+    let same = orch.config.clone();
+    orch.handle_update_config(same);
+    assert!(orch.mcp.is_current(&orch.config.mcp));
+
+    // Removing it takes the server back down.
+    let mut cleared = orch.config.clone();
+    cleared.mcp.servers.clear();
+    orch.handle_update_config(cleared);
+    orch.flush_restarts();
+    assert!(orch.mcp.snapshot().servers.is_empty());
+}
+
+/// The launch command for a real `@modelcontextprotocol/server-filesystem` over
+/// `npx` — **the same on every platform**, which is the point: on Windows `npx`
+/// is a `.cmd` shim that `Command` cannot find without `PATHEXT` completion, and
+/// `shared::mcp::resolve_command` closes exactly that gap. Before it, this test
+/// needed a `cfg!(windows)` branch spelling out `cmd /c npx …`.
+fn filesystem_server_cmd(allowed: &str) -> (String, Vec<String>) {
+    (
+        "npx".into(),
+        ["-y", "@modelcontextprotocol/server-filesystem", allowed]
+            .map(String::from)
+            .to_vec(),
+    )
+}
+
+/// Live smoke for the reconnect action (docs/history/mcp-server-editor.md F7):
+/// a **real** server is brought up, then reconnected the way `Enter` on its
+/// settings row does — and has to come back with its catalog.
+///
+/// This is the half unit tests cannot answer. They can prove the slot is reset
+/// and a task is spawned with a fresh generation; whether a real subprocess is
+/// actually torn down and a new one handshakes successfully in its place is a
+/// property of the process handling, not of the manager's bookkeeping. Needs
+/// only `npx` — no model, so it runs without an engine.
+#[tokio::test]
+#[ignore = "requires npx (real filesystem MCP server)"]
+async fn mcp_reconnect_live() {
+    let dir = tempfile::tempdir().unwrap();
+    let allowed = dir.path().to_string_lossy().replace('\\', "/");
+    let (command, args) = filesystem_server_cmd(&allowed);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut mgr = super::super::mcp::McpManager::new(tx);
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let settings = McpSettings {
+        enabled: true,
+        servers: vec![McpServerConfig {
+            id: "fs".into(),
+            command,
+            args,
+            ..Default::default()
+        }],
+    };
+
+    // First bring-up (npx may download the package — a generous timeout).
+    mgr.apply(&settings, loc);
+    let evt = tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv())
+        .await
+        .expect("the MCP server should come up within 120s")
+        .unwrap();
+    mgr.handle_event(evt, loc);
+    let first = mgr.snapshot();
+    eprintln!(
+        "first bring-up: {:?}, tools: {}",
+        first.servers[0].status, first.servers[0].tool_count
+    );
+    assert_eq!(first.servers[0].status, ServerStatus::Ready);
+    assert!(first.servers[0].tool_count > 0);
+
+    // Reconnect: the old process is torn down, a new one takes its place.
+    assert!(mgr.reconnect("fs", loc));
+    assert_eq!(mgr.snapshot().servers[0].status, ServerStatus::Connecting);
+    assert!(
+        mgr.snapshot().tools.is_empty(),
+        "the tools go with the connection being torn down"
+    );
+    let evt = tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv())
+        .await
+        .expect("the reconnected server should come up within 120s")
+        .unwrap();
+    mgr.handle_event(evt, loc);
+    let again = mgr.snapshot();
+    eprintln!(
+        "after reconnect: {:?}, tools: {}",
+        again.servers[0].status, again.servers[0].tool_count
+    );
+    assert_eq!(again.servers[0].status, ServerStatus::Ready);
+    assert_eq!(
+        again.servers[0].tool_count, first.servers[0].tool_count,
+        "the same server should come back with the same catalog"
+    );
 }

@@ -20,6 +20,17 @@ impl SettingsScreen {
             return Some(options(&self.config, self.loc()));
         }
         match id {
+            // MCP servers — the inventory in `config.mcp.servers`, by id.
+            FieldId::McpSelect => {
+                let opts: Vec<String> = self
+                    .config
+                    .mcp
+                    .servers
+                    .iter()
+                    .map(|s| s.id.clone())
+                    .collect();
+                (!opts.is_empty()).then_some((opts, self.mcp_server_idx))
+            }
             // Sampling (Thinking/Reasoning/Verbosity) and profile selection — their own sources.
             FieldId::S(
                 p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),

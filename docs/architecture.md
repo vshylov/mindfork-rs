@@ -211,8 +211,11 @@ src/
 │  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
 │  │                        the list's content mode), grouped by chat with a highlighted
 │  │                        snippet; Enter → a jump into the feed, → SearchIntent
-│  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Memory/
-│     │                     Profiles/Interface) with field groups, Assistant/Impersonation subsections
+│  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Plugins/
+│     │                     Memory/Data/Profiles/Interface) with field groups; "Plugins" is the
+│     │                     MCP host — master switch, server editor (Ctrl+N/Ctrl+D over
+│     │                     config.mcp.servers) and live statuses, spec §9.6;
+│     │                     Assistant/Impersonation subsections
 │     │                     ("Profiles": the two subsections edit different lists — assistant
 │     │                     profiles vs. impersonation personas, spec §11.8).
 │     │                     God object broken up (docs/history/refactoring-god-objects.md, stage 1):

@@ -822,10 +822,16 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   `initialize` → `tools/list` with pagination → `tools/call`; replying to `ping`,
   `-32601` to other server-initiated requests, `notifications/cancelled` on timeout/
   cancellation, skipping garbage stdout lines).
-- **Configuration** — the `mcp` section in `settings.json` (hand-edited, decision point R6):
+- **Configuration** — the "Plugins" section of the settings screen, or the `mcp`
+  section in `settings.json` by hand (the two are the same data; decision point R6 was
+  revisited once the host had proved itself — see docs/history/mcp-server-editor.md):
   a master switch `enabled` (**disabled by default**) + `servers[]`
-  (an `id` slug, `command`+`args` — `.bat`/`.cmd` forbidden (BatBadBut), `npx` on
-  Windows — `cmd /c npx …`; `env` — a map "the child's variable → the **name** of
+  (an `id` slug, `command`+`args` — the command is resolved as a shell would
+  (`shared::mcp::resolve_command`), so `"command": "npx"` works on every platform:
+  on Windows `PATHEXT` completion finds `npx.cmd`, which Rust's own `Command` does
+  not do. A bare name is never taken as-is — npm ships an extensionless `npx` next
+  to the shim, and it is a Unix script Windows cannot execute. `env` — a map "the
+  child's variable → the **name** of
   the source environment variable" (secrets aren't written into `settings.json`, R8);
   `tool_timeout_secs` — a per-call timeout; `max_result_chars` — result clipping).
 - **Lifecycle** — `McpManager` (`app/orchestrator/mcp.rs`, mirroring
@@ -847,8 +853,21 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   tools aren't registered, and the server row in settings is marked "catalog
   changed" — Enter reconfirms it (the new pin is persisted). Manually removing the
   field from `settings.json` = resetting trust.
-- **UI** (the "Tools" section, "Plugins (MCP)" group): a master toggle + status rows
-  per server (`ready · tools: N` / `connecting…` / a failure reason);
+- **UI** (the "Plugins" section): a master toggle; a **server editor** — a selector
+  plus the selected server's fields (id/command/arguments/environment/enabled/timeout/
+  result limit), `Ctrl+N` adds a server and `Ctrl+D` deletes it; and status rows per
+  server (`ready · tools: N · in profile: K` / `connecting…` / a failure reason) —
+  `K` is how many of them the selected profile has enabled, because a server can be
+  up while the model sees nothing (double opt-in), and a row that said only "ready"
+  is how a user adds a server and finds it does not work. Arguments are edited
+  as a shell-quoted command line and the environment as `VARIABLE=SOURCE` pairs, both
+  round-tripping through the field. A server created in the UI starts **disabled**, so
+  nothing is spawned while its command is still half-typed; the id is validated before
+  it commits (slug shape and uniqueness) — an invalid id creates no slot at all, so the
+  server would otherwise vanish from the status list. **Enter on a status row** does
+  what the row needs: confirms a changed catalog when one is pending, otherwise
+  **reconnects** the server — the only way back for one that exhausted its restart
+  budget, since an identical config is no longer re-applied (`is_current`).
   tool toggles live in the profile under a "Plugins (MCP)" group, with the tool's
   **full** description (server-supplied text) shown in the bottom panel on focus —
   mandatory description visibility as an antidote to tool-poisoning (descriptions
@@ -864,8 +883,9 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   the model as the result. Non-text result blocks (image/audio/resource) become a
   text placeholder.
 - **Groundwork**: an HTTP transport, resources/prompts,
-  `notifications/tools/list_changed`, per-call confirmation of destructive calls,
-  deferred schemas, a server-editor UI — see docs/roadmap.md.
+  `notifications/tools/list_changed`, deferred schemas, secrets for the `env` map and
+  import of the ecosystem's `mcpServers` JSON (stage 2 of the editor track) — see
+  docs/roadmap.md.
 
 ### 9.7. Chat file attachments (`/file attach`)
 

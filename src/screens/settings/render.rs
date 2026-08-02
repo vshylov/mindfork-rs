@@ -50,7 +50,7 @@ impl SettingsScreen {
                 ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
             ]
         };
-        if self.section() == Section::Profiles {
+        if matches!(self.section(), Section::Profiles | Section::Plugins) {
             hints.push(("Ctrl+N", loc.t("ui.settings.hint.new")));
             hints.push(("Ctrl+D", loc.t("ui.settings.hint.delete")));
         }

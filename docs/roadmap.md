@@ -54,7 +54,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - `notifications/tools/list_changed` — live catalog re-listing.
   - deferred schemas ("tool search") — context budget with many servers.
   - per-server tool count ceiling.
-  - server editor UI (currently — edit `settings.json` by hand).
+  - **stage 2 of the server editor** ([mcp-server-editor.md](history/mcp-server-editor.md)):
+    machine-bound secret values for the `env` map (ADR 0008 storage, no schema
+    change) and lossless import of the ecosystem's `mcpServers` JSON. Stage 1 (the
+    editor itself) is **done**; without stage 2 a hosted server still needs its
+    token in an OS environment variable.
   - server `instructions` → system prompt.
   - non-text result blocks (currently — a placeholder).
   - WASM sandbox for untrusted tools.

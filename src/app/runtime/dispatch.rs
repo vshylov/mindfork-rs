@@ -488,6 +488,7 @@ pub(super) fn dispatch_settings(
         },
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         SettingsIntent::ConfirmMcpCatalog(server) => AppCommand::ConfirmMcpCatalog(server),
+        SettingsIntent::ReconnectMcpServer(server) => AppCommand::ReconnectMcpServer(server),
         SettingsIntent::SetApiKey { provider, key } => AppCommand::SetApiKey { provider, key },
         SettingsIntent::SetBackupPassword(password) => AppCommand::SetBackupPassword(password),
     };

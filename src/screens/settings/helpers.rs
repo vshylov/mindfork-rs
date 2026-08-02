@@ -1025,6 +1025,8 @@ pub(super) fn cycle_verbosity(v: Option<Verbosity>) -> Option<Verbosity> {
 pub(super) fn field_num_kind(id: FieldId) -> Option<NumKind> {
     match id {
         FieldId::S(p) | FieldId::IS(p) => p.num_kind(),
+        // The selected MCP server's numbers — indexed, so outside the access table.
+        FieldId::McpTimeout | FieldId::McpMaxResult => Some(NumKind::Int),
         _ => super::spec::field_spec(id).and_then(|s| s.num),
     }
 }
@@ -1152,6 +1154,16 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::IpSelect
             | FieldId::IpName
             | FieldId::IpSystem
+            // MCP servers live in the config too, but they are an inventory the
+            // user authors — there is no meaningful "default server" to reset to.
+            | FieldId::McpSelect
+            | FieldId::McpId
+            | FieldId::McpCommand
+            | FieldId::McpArgs
+            | FieldId::McpEnv
+            | FieldId::McpEnabled
+            | FieldId::McpTimeout
+            | FieldId::McpMaxResult
     )
 }
 
@@ -1181,6 +1193,112 @@ pub(super) fn join_list(v: Option<&[String]>, sep: char) -> String {
         Some(items) if !items.is_empty() => items.join(&sep.to_string()),
         _ => "—".to_string(),
     }
+}
+
+/// An MCP server's `args` as a command line: joined with spaces, quoting an
+/// argument that could not be read back verbatim. Shell-style rather than a
+/// separator character (docs/history/mcp-server-editor.md F3): it is how a
+/// person types a command line, and unlike a separator it is total — any
+/// argument can be represented. Round-trips with [`parse_args`].
+pub(super) fn join_args(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            // Quote on anything that would re-parse differently: whitespace
+            // (a separator), and either quote character (which would open a
+            // quoted run mid-token).
+            if a.is_empty()
+                || a.chars()
+                    .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+            {
+                let escaped = a.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("\"{escaped}\"")
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A command line back into an MCP server's `args`. Whitespace separates;
+/// `"…"` quotes with `\\`/`\"` escapes; `'…'` quotes literally. An unterminated
+/// quote simply runs to the end of the line — the field is edited character by
+/// character, so refusing a half-typed value would be hostile.
+pub(super) fn parse_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut started = false; // distinguishes an empty quoted arg from no arg
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                if started {
+                    out.push(std::mem::take(&mut cur));
+                    started = false;
+                }
+            }
+            '"' => {
+                started = true;
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            // Only the two characters `join_args` escapes; any
+                            // other backslash stays literal (Windows paths).
+                            Some(n @ ('\\' | '"')) => cur.push(n),
+                            Some(n) => {
+                                cur.push('\\');
+                                cur.push(n);
+                            }
+                            None => cur.push('\\'),
+                        },
+                        c => cur.push(c),
+                    }
+                }
+            }
+            '\'' => {
+                started = true;
+                for c in chars.by_ref() {
+                    if c == '\'' {
+                        break;
+                    }
+                    cur.push(c);
+                }
+            }
+            c => {
+                started = true;
+                cur.push(c);
+            }
+        }
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// An MCP server's `env` map as text: `CHILD=SOURCE, CHILD2=SOURCE2`. Both
+/// sides are environment **variable names** (the value is the name of the
+/// source variable, not a secret — ADR 0007 R8), and a variable name contains
+/// neither `,` nor `=`, which is what makes this flat form unambiguous.
+pub(super) fn join_env_map(env: &std::collections::BTreeMap<String, String>) -> String {
+    env.iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Text back into an MCP server's `env` map. Entries without a `=` or with an
+/// empty name are dropped — the field is edited character by character, so a
+/// half-typed entry must not break the ones already there.
+pub(super) fn parse_env_map(s: &str) -> std::collections::BTreeMap<String, String> {
+    s.split(',')
+        .filter_map(|part| {
+            let (k, v) = part.split_once('=')?;
+            let (k, v) = (k.trim(), v.trim());
+            (!k.is_empty()).then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
 }
 
 /// DRY breakers: like [`parse_list`] on commas, but with decoding the `\n`/`\t`/`\r`

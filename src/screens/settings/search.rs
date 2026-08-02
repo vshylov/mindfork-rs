@@ -58,6 +58,15 @@ impl SettingsScreen {
                 Section::Tools => {
                     collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields(), loc)
                 }
+                Section::Plugins => collect_hits(
+                    &mut out,
+                    sec_idx,
+                    *sec,
+                    None,
+                    None,
+                    self.plugin_fields(),
+                    loc,
+                ),
                 Section::Memory => collect_hits(
                     &mut out,
                     sec_idx,

@@ -226,8 +226,9 @@ Architecture — **Feature-Sliced Design (FSD)**.
   Gemma 4 and Qwen 3.6.
 - **Plugins: MCP-server tools** — plugs in any tools from the **Model Context
   Protocol** ecosystem (files, git, GitHub, databases, browser, …) as external stdio
-  servers: servers are described in `settings.json` (the `mcp` section; command +
-  args + env variable names — secrets aren't written to the file), and their tools
+  servers: servers are configured in the settings screen's **"Plugins"** section —
+  command + arguments + env variable names, secrets aren't written to the file —
+  (or by hand in `settings.json`), and their tools
   show up in the profile toggles under a "Plugins (MCP)" group. **Double opt-in** (a
   master switch, off by default, plus a per-profile toggle), **TOFU catalog pinning**
   (a change to a server's tool set/descriptions requires re-confirmation —

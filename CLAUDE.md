@@ -123,10 +123,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-08-01, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1756 unit
-tests green, 73 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **spellcheck no longer underlines URLs and email addresses** (an
+## Status (as of 2026-08-02, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1769 unit
+tests green, 74 `#[ignore]` smokes** (the largest count — log below; the most
+recent change — **MCP servers are configured in the settings window**
+([plan](docs/history/mcp-server-editor.md)): a new "Plugins" section holds the
+master switch, a server editor (`Ctrl+N`/`Ctrl+D` over `config.mcp.servers`) and
+the live statuses; the orchestrator needed nothing for the edits themselves — the
+screen already ships the whole config and `handle_update_config` diffs `config.mcp`
+into the restart debounce — while `Enter` on a status row gained a second meaning,
+**reconnect**, which is the only way back for a server past its restart budget
+since `is_current` stopped re-applying an identical config; before that —
+**spellcheck no longer underlines URLs and email addresses** (an
 address is skipped whole in segmentation, so both the underlining and the
 `Ctrl+G` popup ignore it; a bare domain must be lowercase ASCII, which keeps a
 run-on sentence like `end.Next` a typo rather than a domain); before that — **a video's words can now land as a chat attachment**
@@ -11073,6 +11081,164 @@ debounce was done as a separate PR, see below).
 - Docs: spec §11.5 (the rule and its boundary; the same bullet also corrected a
   stale claim that segmentation uses `unicode-segmentation` — it has been our
   own scanner since M3).
+
+### Post-M9: MCP servers in the settings window (done)
+
+- **Closes the ADR 0007 groundwork item "server editor UI"** — until now
+  `config.mcp.servers` was hand-edited in `settings.json` (decision point R6,
+  deliberate at the time: the host was new and a file was the smaller surface).
+  Design plan with forks F1–F8 —
+  [docs/history/mcp-server-editor.md](docs/history/mcp-server-editor.md)
+  (**confirmed by the user 2026-08-02, all as recommended; scope — stage 1**).
+  Behaviour — spec §9.6. Branches `docs/mcp-server-editor` → `feat/mcp-server-editor`.
+- **Reading the code first shrank the task and reshaped it.** The settings screen
+  already owns a working `AppConfig` and emits `SettingsIntent::SaveConfig` carrying
+  the **whole** thing; `handle_update_config` diffs `config.mcp` → `mark_mcp()` → the
+  1.2 s debounce → `apply_mcp_settings()`. So editing the inventory from the screen
+  needed **no new `AppCommand`, no new `AppEvent` and no orchestrator change at all**
+  for the edits themselves — the impersonation-persona shape
+  (`config.impersonation_profiles`, spec §11.8), which is the precedent this follows
+  throughout. `Ctrl+Z` undo came free for field edits *and* for create/delete (it
+  restores a whole older config snapshot), and `is_current` already suppresses the
+  no-op restart from an edit plus its undo.
+- **The hole that reading turned up, and the one genuinely new action.** A server
+  that exhausts its restart budget (3 crashes / 5 min) sits `Disconnected` "until
+  manual intervention (editing settings recreates the slot)" — but since `is_current`
+  landed, toggling a field off and on inside the debounce window yields an
+  *identical* final config and therefore **no re-apply at all**. There was no
+  reliable way to retry a dead server short of restarting the app. So `Enter` on a
+  status row now does what that row needs: confirm a changed catalog when one is
+  pending (today's meaning), otherwise **reconnect** — an action, not a config edit,
+  so it gets an intent/command pair mirroring `ConfirmMcpCatalog`. The restart budget
+  is cleared by it: an explicit reconnect *is* the manual intervention it waits for.
+- **Reconnect forced the event epoch to become per slot** (`McpSlot.epoch`), replacing
+  the comparison against the manager's global one. Bumping the global epoch to restart
+  one server would drop **another** server's in-flight `Ready` and strand it on
+  "connecting…" forever; keeping the epoch would let the cancelled task's late
+  `Exited` restart the fresh one. Per-slot is strictly more precise than the global
+  check it replaces (an event for a server that was removed, or whose slot has moved
+  on, is dropped exactly as before) and is a ~10-line diff.
+- **Where it lives (F1b): a dedicated "Plugins" section**, not a group in "Tools".
+  The "Data" precedent — a section exists when nothing else is about that thing:
+  "Tools" is a list of *gates for built-in tools* (one toggle each), while this is an
+  *inventory of external programs* with per-server settings, statuses and a lifecycle.
+  It also gives the remaining MCP groundwork (HTTP transport, resources/prompts, tool
+  caps) somewhere to land. Layout: master switch → a `Choice` server selector plus the
+  selected server's fields → the status rows that used to sit in "Tools" (kept as the
+  at-a-glance list, so status is not duplicated).
+- **The two non-scalar fields.** `args: Vec<String>` is edited as a **shell-quoted
+  command line** (F3a) — how a person types one, and unlike a separator it is total:
+  `join_args` quotes any argument containing whitespace or either quote character, so
+  the round trip holds for *any* value (pinned by a test over paths with spaces,
+  embedded quotes, apostrophes and an empty argument). `env` is `VARIABLE=SOURCE`
+  pairs (F4a): flat parsing is unambiguous **because** the value is the name of a
+  source environment variable rather than a secret (ADR 0007 R8) — a property worth
+  stating, since stage 2 changing that would change the shape.
+- **A new server starts disabled** (F5a) with a generated free id and no command:
+  nothing is spawned while the command is half-typed, and flipping "Enabled" becomes
+  the deliberate "start it" moment a per-field debounce cannot express.
+- **Validation before the commit** (F8a) for the three rules the screen can check
+  itself: slug shape, **uniqueness** among servers, and the batch-command ban. The
+  status row remains the backstop for everything else, but an invalid **id** creates
+  no slot at all — just a log warn — so without this a typo'd id would make the
+  server *vanish* from the status list. The server-id rule moved from
+  `orchestrator/mcp.rs` into `shared/mcp.rs` next to `forbidden_batch_command`: the
+  screen may not import `app` (FSD), and one rule with two copies is how they drift.
+  The validation is checked **before** taking the editor's `&mut` borrow — uniqueness
+  needs the rest of the config, which a validator holding that borrow cannot see.
+- **The TOFU pin is deliberately untouched by an edit**: changing `command`/`args`
+  keeps it, so pointing a server at a different program trips the catalog check —
+  precisely when it should fire. A **rename** drops the pin (it is inherited by id in
+  `handle_update_config`) and the server re-pins silently, which is acceptable since a
+  rename changes every tool name anyway; documented rather than special-cased.
+- **Not in this stage** (F4b/F6, a separate decision): machine-bound secret **values**
+  for the `env` map and import of the ecosystem's `mcpServers` JSON. Storage needs no
+  change for the first — `secrets::put_key`/`store_secret` already take an arbitrary
+  key name, as the backup password proved — but it amends R8, and the two are coupled
+  (an imported `env` carries literal secrets), so they stay stage 2. The honest limit
+  today: a hosted server still needs its token in an OS environment variable.
+- **Tests**: create → edit → delete round trip (including that a new server is off and
+  gets a free id); `args`/`env` round-tripping through the field, plus hand-typed
+  forms; the id refused for shape, emptiness and collision while its *own* id is not a
+  collision; the batch ban; the selector cycling and its popup; `Del`/the `•` marker
+  skipping user data; undo restoring a deleted server; and at the manager level,
+  reconnect respawning one server **without stranding another's in-flight event** and
+  clearing an exhausted budget. **All seven load-bearing behaviours were
+  mutation-tested** — each mutation (a server created enabled, validation dropped,
+  Enter doing nothing on a healthy row, the global epoch restored, the budget kept,
+  the fields treated as config data) fails its own test and only that one. Plus the
+  seam the whole editor rests on — a `config.mcp` edit reaching the host through the
+  existing `UpdateConfig` → diff → debounce path, and *not* costing a restart when
+  nothing effective changed — which was the one untested claim behind "the
+  orchestrator needed no changes" (mutation-tested too). **1766 unit tests green**
+  (+10), **74 `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/
+  `link_check` clean.
+- **Live run — GO** (`mcp_reconnect_live`, a real
+  `npx @modelcontextprotocol/server-filesystem`): first bring-up **Ready, 14 tools**;
+  reconnect → the tools leave with the connection, the server comes back **Ready with
+  the same 14** in 6.1 s. That is the half unit tests cannot answer — they can prove
+  the slot is reset and a task spawned with a fresh generation, but whether a real
+  subprocess is actually torn down and a new one handshakes in its place is a property
+  of the process handling. The smoke needs only `npx`, no model, so it runs without an
+  engine. `mcp_filesystem_e2e_live` is green too (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server`, `--jinja`): 14 tools in the catalog, the model called
+  `mcp__fs__read_text_file` and used the result.
+- **Regression — clean** (same stack): **26 of 27** orchestrator e2e live smokes green
+  on the first pass (669 s) — memory/self-model/notes/graph/cross-organ links/RAG/
+  attachments/control tools/i18n/MCP. The one failure was `followup_tool_e2e_live`,
+  where the model simply answered with a bare one-line greeting and never
+  called `send_followup_message`; it passed on re-run (`saw_continue=true`, a second bubble).
+  A model-behaviour flake of the class the control-tools entry already records, not a
+  regression: the diff touches **zero** files on the agentic-loop/control-tool path.
+- **The first manual run in a terminal found two things** (plan §8), both fixed on
+  the same branch.
+  - **A platform-dependent config.** A spike measured *why* `cmd /c npx …` is
+    needed on Windows rather than assuming: `cmd.exe` completes a bare name from
+    `PATHEXT` and **Rust does not** (`Command::new("npx")` → `NotFound`,
+    `Command::new("npx.cmd")` → spawns). `shared::mcp::resolve_command` now does
+    that completion, so one config works on every platform. The same spike
+    **overturned the premise of the `.bat`/`.cmd` ban** (ADR 0007 §2):
+    CVE-2024-24576 is fixed in `std` as of Rust 1.77.2 — measured, `a"b`, `%CD%`
+    and `a&whoami` are escaped and an embedded newline is *refused* with
+    `InvalidInput` — so the ban added nothing over `std` while pushing users onto
+    `cmd /c`, where arguments are re-parsed by `cmd.exe` **outside** that
+    escaping. Removed, with the reasoning recorded in the ADR; the live smokes now
+    use a bare `npx` on every platform, which makes them the demonstration.
+  - **The live run then caught a bug in the new resolver**, which is what a live
+    run is for: npm ships an extensionless `npx` (a Unix script) *next to*
+    `npx.cmd`, and preferring the exact name spawned the script — `os error 193:
+    not a valid Win32 application`. `cmd.exe` only ever completes a **bare** name;
+    a name that already carries an extension is tried as written and then still
+    completed (so `my.tool` reaches `my.tool.exe`). The rule's core became a pure
+    function over `PATH`/`PATHEXT`, so a test builds the npm layout in a temp
+    directory instead of mutating the process environment. The *wiring* (that
+    `spawn` calls the resolver) is covered by the **live smoke only** — a unit test
+    would need a global `PATH` mutation (racy under a parallel suite) or would sit
+    through the 30 s handshake timeout; recorded rather than faked.
+  - **"Ready" could mean invisible.** The reported symptom was a server showing
+    `ready · tools: 1` while the assistant said it had no such tool — the double
+    opt-in (R7) working as designed, but the row never said so. Same defect class
+    as the by-reference attachment block and the `youtube_watch` unconfigured path:
+    the UI states a situation without saying what is possible next. The row now
+    reads `ready · tools: N · in profile: K` and points at "Profiles" when `K` is
+    zero; the double opt-in itself is unchanged.
+  - **1769 unit tests green** (+3), 74 `#[ignore]`; the resolver's bare-name rule,
+    its extension handling and both halves of the status row were mutation-tested.
+    **Live — GO** with a bare `npx` on Windows: `mcp_filesystem_e2e_live` (14
+    tools, the model read the file) and `mcp_reconnect_live` (Ready → reconnect →
+    Ready, same 14).
+- **Acceptance criterion — met** (manual run by the user, 2026-08-02): a real
+  server configured **entirely from the settings window** — `mcp-echo-server` with
+  the platform-independent `npx` + `-y mcp-echo-server` (no `cmd /c`), the status
+  row reading `ready · tools: 1 · in profile: 1`, and the model calling
+  `mcp__mcp-echo-server__echo` and getting its result back. Every part of the track
+  that only a human at a terminal could exercise is confirmed: authoring, the
+  resolver, the profile-count row, and the tool reaching the model.
+- **A process trap, hit for the second time in this repo** (the journal already
+  records it from the vendored-syntaxes work): `git checkout -- <file>` used to revert
+  a scripted mutation reverts **all** uncommitted work in that file. It cost the whole
+  of `apply.rs`, restored by re-running the patch script. The fix is procedural —
+  commit before mutating, which is what the second run did.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

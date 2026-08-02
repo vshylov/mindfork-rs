@@ -57,7 +57,9 @@ fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
         rows.extend(s.profile_fields_for(sub));
     }
     rows.extend(s.tool_fields());
+    rows.extend(s.plugin_fields());
     rows.extend(s.memory_fields());
+    rows.extend(s.data_fields());
     rows.extend(s.interface_fields());
     rows.into_iter()
         .find(|r| r.id == id)
@@ -1953,8 +1955,8 @@ fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
             },
         ],
     });
-    goto_section(&mut s, Section::Tools);
-    let fields = s.tool_fields();
+    goto_section(&mut s, Section::Plugins);
+    let fields = s.plugin_fields();
     let fs = fields
         .iter()
         .find(|r| r.id == FieldId::TMcpServer(0))
@@ -1967,10 +1969,14 @@ fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
         .unwrap();
     assert!(gh.warn, "a changed catalog — a warning");
     assert!(gh.hint.unwrap().contains("Enter"));
-    // Enter on a ready server — a no-op; on a changed one — the confirm intent.
-    assert!(s.confirm_mcp_catalog(0).is_none());
+    // Enter does what the row needs: a ready server reconnects, one with a
+    // changed catalog confirms it.
     assert_eq!(
-        s.confirm_mcp_catalog(1),
+        s.mcp_server_action(0),
+        Some(SettingsIntent::ReconnectMcpServer("fs".into()))
+    );
+    assert_eq!(
+        s.mcp_server_action(1),
         Some(SettingsIntent::ConfirmMcpCatalog("github".into()))
     );
     // Enter via handle_key reaches confirmation.
@@ -1982,11 +1988,16 @@ fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
 }
 
 #[test]
-fn mcp_master_toggle_lives_in_tools_section() {
-    // The "MCP servers" toggle in the "Tools" section: toggling it saves the config.
+fn mcp_master_toggle_lives_in_plugins_section() {
+    // The "MCP servers" toggle heads the "Plugins" section: toggling it saves
+    // the config. It moved out of "Tools" together with the server inventory.
     let mut s = screen();
     assert!(!s.config.mcp.enabled);
-    goto_section(&mut s, Section::Tools);
+    assert!(
+        !s.tool_fields().iter().any(|r| r.id == FieldId::TMcpEnabled),
+        "the MCP switch left the Tools section"
+    );
+    goto_section(&mut s, Section::Plugins);
     goto_field(&mut s, FieldId::TMcpEnabled);
     s.handle_key(key(KeyCode::Char(' ')));
     assert!(s.config.mcp.enabled, "Space enables the MCP master gate");
@@ -2712,4 +2723,273 @@ fn profile_and_persona_rows_are_never_marked_modified() {
         !marked(&mut s),
         "the impersonation subsection marked user data as modified"
     );
+}
+
+/// Types `text` into the field's editor and commits it.
+fn type_into(s: &mut SettingsScreen, id: FieldId, text: &str) -> Option<SettingsIntent> {
+    goto_field_again(s, id);
+    s.handle_key(key(KeyCode::Enter)); // open the editor
+    s.handle_key(ctrl('k')); // clear the seed
+    s.handle_paste(text);
+    s.handle_key(key(KeyCode::Enter))
+}
+
+#[test]
+fn mcp_server_create_edit_delete_round_trip() {
+    // The whole point of the track: a server is authored without touching
+    // settings.json (docs/history/mcp-server-editor.md).
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    assert!(s.config.mcp.servers.is_empty());
+    // The empty inventory shows only the selector's placeholder.
+    assert!(
+        s.plugin_fields()
+            .iter()
+            .all(|r| r.id != FieldId::McpCommand)
+    );
+
+    assert!(matches!(
+        s.handle_key(ctrl('n')),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    let srv = &s.config.mcp.servers[0];
+    assert_eq!(srv.id, "server-1");
+    assert!(
+        !srv.enabled,
+        "a new server is off — nothing spawns while the command is half-typed (F5)"
+    );
+    assert_eq!(s.mcp_server_idx, 0);
+
+    assert!(type_into(&mut s, FieldId::McpId, "fs").is_some());
+    assert!(type_into(&mut s, FieldId::McpCommand, "cmd").is_some());
+    assert!(
+        type_into(
+            &mut s,
+            FieldId::McpArgs,
+            r#"/c npx -y @modelcontextprotocol/server-filesystem "D:/my work""#,
+        )
+        .is_some()
+    );
+    assert!(type_into(&mut s, FieldId::McpEnv, "GITHUB_TOKEN=MINDFORK_PAT").is_some());
+    assert!(type_into(&mut s, FieldId::McpTimeout, "90").is_some());
+    let srv = &s.config.mcp.servers[0];
+    assert_eq!(srv.id, "fs");
+    assert_eq!(srv.command, "cmd");
+    assert_eq!(
+        srv.args,
+        [
+            "/c",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-filesystem",
+            "D:/my work"
+        ]
+    );
+    assert_eq!(srv.env["GITHUB_TOKEN"], "MINDFORK_PAT");
+    assert_eq!(srv.tool_timeout_secs, 90);
+
+    // Enabling it is a separate, deliberate act.
+    goto_field_again(&mut s, FieldId::McpEnabled);
+    s.handle_key(key(KeyCode::Char(' ')));
+    assert!(s.config.mcp.servers[0].enabled);
+
+    // A second server gets a free id, and Ctrl+D removes the selected one.
+    s.handle_key(ctrl('n'));
+    assert_eq!(s.config.mcp.servers[1].id, "server-1");
+    assert!(matches!(
+        s.handle_key(ctrl('d')),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    assert_eq!(s.config.mcp.servers.len(), 1);
+    assert_eq!(s.mcp_server_idx, 0);
+    s.handle_key(ctrl('d'));
+    assert!(s.config.mcp.servers.is_empty());
+    assert!(s.handle_key(ctrl('d')).is_none(), "nothing left to delete");
+}
+
+#[test]
+fn mcp_id_must_be_a_unique_slug() {
+    // An invalid id makes the host create no slot at all, so without this the
+    // server would simply vanish from the status list (F8).
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    type_into(&mut s, FieldId::McpId, "fs");
+    s.handle_key(ctrl('n'));
+
+    for bad in ["Files", "my server", ""] {
+        assert!(
+            type_into(&mut s, FieldId::McpId, bad).is_none(),
+            "{bad:?} committed"
+        );
+        assert!(s.editor.is_some(), "{bad:?}: the editor must stay open");
+        assert!(s.editor.as_ref().unwrap().error.is_some());
+        s.handle_key(key(KeyCode::Esc));
+    }
+    // Taken by the other server.
+    assert!(type_into(&mut s, FieldId::McpId, "fs").is_none());
+    let err = s.editor.as_ref().unwrap().error.unwrap();
+    assert!(err.contains("занят"), "{err}");
+    s.handle_key(key(KeyCode::Esc));
+    // A free one commits, and keeping its own id is not a duplicate.
+    assert!(type_into(&mut s, FieldId::McpId, "gh").is_some());
+    assert!(type_into(&mut s, FieldId::McpId, "gh").is_some());
+    assert_eq!(s.config.mcp.servers[1].id, "gh");
+}
+
+#[test]
+fn mcp_command_accepts_a_shim_and_a_plain_name() {
+    // The `.bat`/`.cmd` ban is gone (ADR 0007 §2, revisited): `npx` resolves to
+    // `npx.cmd` on Windows anyway, and `std` escapes batch arguments — refusing
+    // the spelling only pushed users onto `cmd /c`, which is the worse path.
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    for command in ["npx", "run-server.cmd", "C:/tools/server.exe"] {
+        assert!(
+            type_into(&mut s, FieldId::McpCommand, command).is_some(),
+            "{command} was refused"
+        );
+        assert!(s.editor.is_none(), "{command} left the editor open");
+        assert_eq!(s.config.mcp.servers[0].command, command);
+    }
+}
+
+#[test]
+fn mcp_selector_switches_the_edited_server() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    type_into(&mut s, FieldId::McpId, "fs");
+    s.handle_key(ctrl('n'));
+    type_into(&mut s, FieldId::McpId, "gh");
+
+    goto_field_again(&mut s, FieldId::McpSelect);
+    assert!(
+        s.handle_key(key(KeyCode::Left)).is_none(),
+        "selection is navigation, not an edit"
+    );
+    assert_eq!(s.mcp_server_idx, 0);
+    let shown = s.fields();
+    let id_row = shown.iter().find(|r| r.id == FieldId::McpId).unwrap();
+    assert!(matches!(&id_row.kind, FieldKind::Text(v) if v == "fs"));
+    // The popup lists every configured server and jumps to the picked one.
+    s.handle_key(key(KeyCode::Enter));
+    let (opts, cur) = s.choice_menu(FieldId::McpSelect).unwrap();
+    assert_eq!(opts, ["fs", "gh"]);
+    assert_eq!(cur, 0);
+    s.handle_key(key(KeyCode::Down));
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.mcp_server_idx, 1);
+}
+
+#[test]
+fn mcp_server_fields_are_user_data() {
+    // No config "default server" exists to reset to, so `Del` is a no-op and the
+    // "differs from default" marker never appears — like the persona list.
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    type_into(&mut s, FieldId::McpId, "fs");
+    goto_field_again(&mut s, FieldId::McpId);
+    assert!(s.handle_key(key(KeyCode::Delete)).is_none());
+    assert_eq!(s.config.mcp.servers[0].id, "fs");
+    for id in [
+        FieldId::McpSelect,
+        FieldId::McpId,
+        FieldId::McpCommand,
+        FieldId::McpArgs,
+        FieldId::McpEnv,
+        FieldId::McpEnabled,
+        FieldId::McpTimeout,
+        FieldId::McpMaxResult,
+    ] {
+        assert!(is_profile_field(id), "{id:?}");
+    }
+}
+
+#[test]
+fn mcp_undo_restores_a_deleted_server() {
+    // Free: `Ctrl+Z` restores a whole older config snapshot
+    // (docs/history/settings-undo.md), so it covers create/delete too.
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    type_into(&mut s, FieldId::McpId, "fs");
+    s.handle_key(ctrl('d'));
+    assert!(s.config.mcp.servers.is_empty());
+    assert!(matches!(
+        s.handle_key(ctrl('z')),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    assert_eq!(s.config.mcp.servers[0].id, "fs");
+}
+
+#[test]
+fn mcp_args_and_env_round_trip_as_text() {
+    // The field shows what `parse_args` will read back — a value that changed
+    // shape on the way through would be edited into something else.
+    for args in [
+        vec!["-y".to_string(), "@scope/pkg".to_string()],
+        vec!["D:/my work".to_string()],
+        vec![r#"say "hi""#.to_string()],
+        vec!["it's".to_string(), String::new()],
+        vec![r"C:\Program Files\srv.exe".to_string()],
+    ] {
+        assert_eq!(parse_args(&join_args(&args)), args, "{args:?}");
+    }
+    // A hand-typed line: single quotes and runs of spaces are accepted too.
+    assert_eq!(parse_args("  a   'b c'  d "), ["a", "b c", "d"]);
+    assert_eq!(parse_args(""), Vec::<String>::new());
+
+    let env = std::collections::BTreeMap::from([
+        ("GITHUB_TOKEN".to_string(), "MINDFORK_PAT".to_string()),
+        ("HOME".to_string(), "MY_HOME".to_string()),
+    ]);
+    assert_eq!(parse_env_map(&join_env_map(&env)), env);
+    // A half-typed entry doesn't destroy the ones already there.
+    assert_eq!(parse_env_map("A=B, junk, =C, D=").len(), 2);
+}
+
+#[test]
+fn mcp_status_says_how_many_tools_the_profile_enabled() {
+    use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot};
+    // A server can be up while the model sees nothing — MCP tools are opt-in per
+    // profile. Saying only "ready" is how a user adds a server and finds it does
+    // not work (docs/history/mcp-server-editor.md §5).
+    let mut s = screen();
+    s.config.mcp.enabled = true;
+    s.set_mcp(McpSnapshot {
+        tools: Vec::new(),
+        servers: vec![McpServerSnapshot {
+            id: "fs".into(),
+            status: ServerStatus::Ready,
+            tool_count: 2,
+            pending_catalog: false,
+        }],
+    });
+    let row = |s: &SettingsScreen| {
+        s.plugin_fields()
+            .into_iter()
+            .find(|r| r.id == FieldId::TMcpServer(0))
+            .unwrap()
+    };
+    let off = row(&s);
+    assert!(
+        matches!(&off.kind, FieldKind::Text(v) if v.contains('2') && v.contains('0')),
+        "the count of enabled tools is missing"
+    );
+    assert!(
+        off.hint.is_some_and(|h| h.contains("Профил")),
+        "no pointer to where they are enabled"
+    );
+
+    // Enabling one in the profile is reflected, and the pointer goes away.
+    s.profiles[0].enabled_tools.push("mcp__fs__read".into());
+    let on = row(&s);
+    assert!(matches!(&on.kind, FieldKind::Text(v) if v.contains("1")));
+    assert!(on.hint.is_none(), "the hint should go once tools are on");
+    // Another server's tools don't count towards this one.
+    s.profiles[0].enabled_tools.push("mcp__other__x".into());
+    assert!(matches!(&row(&s).kind, FieldKind::Text(v) if v.contains("1")));
 }
