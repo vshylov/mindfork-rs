@@ -260,3 +260,43 @@ docs/install.md §4.2 (the hand-edited JSON becomes the alternative, not the
 only way); docs/roadmap.md (the groundwork item closes); ADR 0007 gets a note
 that R6 was revisited — and, if stage 2 lands, that R8 is extended by ADR
 0008's storage.
+
+## 8. Follow-up from the first manual run (2026-08-02)
+
+The first real run in a terminal turned up two things the design had not
+covered. Both were fixed on the same branch.
+
+**A platform-dependent config.** Writing `cmd /c npx …` on Windows is the single
+biggest papercut in authoring a server, and it makes a config unportable. A
+spike measured why, rather than assuming: `cmd.exe` completes a bare name from
+`PATHEXT` and **Rust does not** — `Command::new("npx")` is `NotFound` while
+`Command::new("npx.cmd")` spawns fine. So `shared::mcp::resolve_command` now does
+that completion, and one config works everywhere.
+
+The same spike overturned the premise of the `.bat`/`.cmd` ban (ADR 0007 §2):
+CVE-2024-24576 is fixed in `std` as of Rust 1.77.2 — measured, `a"b`, `%CD%` and
+`a&whoami` are escaped and an embedded newline is **refused** with
+`InvalidInput`. The ban therefore added nothing over `std` while pushing users
+onto `cmd /c`, where the arguments are re-parsed by `cmd.exe` outside that
+escaping. It was removed, with the reasoning recorded in the ADR.
+
+**The live run then caught a bug in the resolver itself** — which is exactly what
+a live run is for. npm ships an extensionless `npx` (a Unix shell script) *next
+to* `npx.cmd`, and the first implementation preferred the exact name, so it
+spawned the script: `os error 193: not a valid Win32 application`. `cmd.exe` only
+ever completes a bare name; a name that already carries an extension is tried as
+written and then still completed (so `my.tool` can reach `my.tool.exe`). The
+rule's core is now a pure function taking the `PATH`/`PATHEXT` as parameters, so
+a test can build the npm layout in a temp directory instead of mutating the
+process environment. The *wiring* (that `spawn` calls the resolver) is covered by
+the live smoke only: a unit test would need either a global `PATH` mutation —
+racy under a parallel suite — or would sit through the 30 s handshake timeout.
+
+**A server can be "ready" and invisible.** The reported symptom was a server
+showing `ready · tools: 1` while the assistant said it had no such tool. That is
+the double opt-in (R7) working as designed — MCP tools are enabled per profile —
+but the row said nothing about it, which is the same defect class this project
+has fixed twice before (the by-reference attachment block, the `youtube_watch`
+unconfigured path): the UI states a situation without saying what is possible
+next. The row now reads `ready · tools: N · in profile: K` and, when `K` is zero,
+points at the "Profiles" section. The double opt-in itself is unchanged.

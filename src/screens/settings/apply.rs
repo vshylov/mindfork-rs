@@ -588,8 +588,6 @@ impl SettingsScreen {
                     .any(|(i, s)| i != self.mcp_server_idx && s.id == t);
                 taken.then_some("ui.settings.err.mcp_id_taken")
             }
-            FieldId::McpCommand => crate::shared::mcp::forbidden_batch_command(t)
-                .then_some("ui.settings.err.mcp_batch"),
             _ => None,
         }
     }

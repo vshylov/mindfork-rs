@@ -62,8 +62,14 @@ Mitigations:
   bottom panel) — descriptions go into the system prompt on every turn;
 - secrets — **env variable names** in the `env` map (R8, the `api_key_env`
   precedent); the actual values are never written to `settings.json`;
-- `.bat`/`.cmd` commands are forbidden (BatBadBut, CVE-2024-24576; `cmd /c
-  npx …` is allowed), `CREATE_NO_WINDOW`, Job Object kill-on-close (the
+- the server command is resolved as a shell would (`PATHEXT` completion on
+  Windows), so one config works on every platform. **The `.bat`/`.cmd` ban was
+  removed in 2026-08** after measuring the premise: CVE-2024-24576 ("BatBadBut")
+  is fixed in `std` as of Rust 1.77.2, which escapes batch-file arguments and
+  **refuses** the ones it cannot escape — so the ban added no protection while
+  forcing users onto `cmd /c npx …`, where the arguments are re-parsed by
+  `cmd.exe` *outside* that escaping. Spawning the resolved `.cmd` directly is
+  both portable and strictly safer. `CREATE_NO_WINDOW`, Job Object kill-on-close (the
   `cmd /c npx → node` process tree does not survive the app exiting or
   crashing), clipped results and per-call timeouts, server stderr only goes
   to the file log.

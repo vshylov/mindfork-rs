@@ -27,9 +27,7 @@ use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot, McpTool, catal
 use crate::features::tools::meta::ToolInfo;
 use crate::shared::config::{McpServerConfig, McpSettings};
 use crate::shared::i18n::Locale;
-use crate::shared::mcp::{
-    McpClient, McpConnection, McpToolInfo, forbidden_batch_command, valid_server_id,
-};
+use crate::shared::mcp::{McpClient, McpConnection, McpToolInfo, valid_server_id};
 
 /// Max server restarts within the [`RESTART_WINDOW`] window; beyond that —
 /// `Disconnected` until manual intervention (editing settings recreates the slot).
@@ -459,9 +457,6 @@ fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result
     if cfg.command.trim().is_empty() {
         return Err(loc.t("ui.err.mcp.empty_command").into());
     }
-    if forbidden_batch_command(&cfg.command) {
-        return Err(loc.t("ui.err.mcp.batch_forbidden").into());
-    }
     Ok(())
 }
 
@@ -664,12 +659,10 @@ mod tests {
                 .unwrap_err()
                 .contains("команда")
         );
-        cfg.command = "evil.bat".into();
-        assert!(
-            validate_server_config(&cfg, ru())
-                .unwrap_err()
-                .contains("BatBadBut")
-        );
+        // A `.cmd` is no longer refused — it is exactly what `npx` resolves to
+        // on Windows, and `std` escapes its arguments (ADR 0007 §2, revisited).
+        cfg.command = "npx.cmd".into();
+        assert!(validate_server_config(&cfg, ru()).is_ok());
         cfg.command = "cmd".into();
         cfg.id = "BAD ID".into();
         assert!(
@@ -945,7 +938,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let mut m = McpManager::new(tx);
         let mut bad = server_cfg("bad");
-        bad.command = "srv.cmd".into();
+        bad.command = "  ".into(); // no launch command
         let mut off = server_cfg("off");
         off.enabled = false;
         m.apply(
@@ -955,12 +948,12 @@ mod tests {
             },
             ru(),
         );
-        // A disabled server gets no slot; .cmd — Disconnected with a reason.
+        // A disabled server gets no slot; an invalid one — Disconnected with a reason.
         let servers = m.snapshot().servers;
         assert_eq!(servers.len(), 1);
         assert!(matches!(
             servers[0].status,
-            ServerStatus::Disconnected(ref r) if r.contains("BatBadBut")
+            ServerStatus::Disconnected(ref r) if r.contains("команда")
         ));
         // The master switch: everything shuts down.
         m.apply(

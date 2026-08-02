@@ -501,9 +501,8 @@ takes two steps (double opt-in):
   "enabled": true,                  // master switch (false by default)
   "servers": [{
     "id": "fs",                     // slug [a-z0-9-] — part of tool names mcp__fs__*
-    "command": "cmd",               // Windows: npx is a .cmd shim, run it via cmd /c
-    "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
-    // Linux/macOS: "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/work"]
+    "command": "npx",               // the same on every platform (see the note below)
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
     "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },  // child variable → NAME of the source variable (secrets aren't in the file)
     "enabled": true,
     "tool_timeout_secs": 60,        // timeout for one call
@@ -518,11 +517,20 @@ takes two steps (double opt-in):
    (MCP)" group; focusing the toggle shows the tool's **full description** from
    the server at the bottom).
 
+Both steps are required, and the server's status row says where you are: `ready ·
+tools: 14 · in profile: 0` means the server is up and the model still sees none of
+it — step 2 is missing.
+
 Notes:
 
-- **`.bat`/`.cmd` as the server command are forbidden** (the BatBadBut
-  vulnerability); `npx`/`uvx` servers on Windows are launched as `cmd /c npx …` or
-  via a direct exe path.
+- **The command is resolved the way a shell resolves it**, so one config works on
+  every platform: `"command": "npx"` needs no `cmd /c` wrapper on Windows. (Why it
+  is needed at all: `cmd.exe` completes a bare name using `PATHEXT`, and Rust does
+  not — `npx` on Windows is really `npx.cmd`. Note npm ships an extensionless
+  `npx` next to it, a Unix shell script Windows cannot run, so a bare name is
+  always completed from `PATHEXT` and never taken as-is.) A `.bat`/`.cmd` command
+  is allowed: `std` escapes batch-file arguments and refuses the ones it cannot
+  escape, which is stricter than routing them through `cmd.exe`.
 - **The tool catalog is pinned on first startup** (protection against tampering):
   if a server changes its tool set/descriptions after an update, they won't be
   available to the model until you confirm the new catalog (Enter on the server's

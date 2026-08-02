@@ -745,9 +745,18 @@ impl SettingsScreen {
                     .enumerate()
                     .map(|(idx, srv)| {
                         let status = match &srv.status {
+                            // "ready · tools: N · in profile: K" — a server can
+                            // be up while the model still sees nothing, because
+                            // MCP tools are opt-in per profile (double opt-in,
+                            // ADR 0007 R7). Saying only "ready" is how a user
+                            // ends up adding a server and finding it does not
+                            // work (docs/history/mcp-server-editor.md §5).
                             ServerStatus::Ready => loc.tf(
                                 "ui.settings.mcp.ready",
-                                &[("n", &srv.tool_count.to_string())],
+                                &[
+                                    ("n", &srv.tool_count.to_string()),
+                                    ("k", &self.enabled_mcp_tools(&srv.id).to_string()),
+                                ],
                             ),
                             ServerStatus::Connecting => loc.t("ui.settings.mcp.connecting").into(),
                             ServerStatus::NotConfigured => {
@@ -760,6 +769,13 @@ impl SettingsScreen {
                         if srv.pending_catalog {
                             r.warn = true;
                             r.hint = Some(loc.t("ui.settings.mcp.confirm_hint"));
+                        } else if srv.status == ServerStatus::Ready
+                            && srv.tool_count > 0
+                            && self.enabled_mcp_tools(&srv.id) == 0
+                        {
+                            // Up, and invisible to the model — say what is missing
+                            // rather than let the user discover it in a chat.
+                            r.hint = Some(loc.t("ui.settings.mcp.tools_off_hint"));
                         }
                         r
                     })
@@ -834,6 +850,21 @@ impl SettingsScreen {
             )
             .describe(loc.t("ui.settings.desc.mcp_max_result")),
         ]
+    }
+
+    /// How many of the server's tools the **selected** profile has enabled. The
+    /// count is per profile because that is what `effective_tool_ids` reads;
+    /// with several profiles it follows the one being edited in "Profiles".
+    fn enabled_mcp_tools(&self, server: &str) -> usize {
+        let prefix = format!("mcp__{server}__");
+        let Some(profile) = self.profiles.get(self.profile_idx) else {
+            return 0;
+        };
+        profile
+            .enabled_tools
+            .iter()
+            .filter(|t| t.starts_with(&prefix))
+            .count()
     }
 
     /// Keeps the MCP-server selection inside the list (it can shrink from a

@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-02, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1766 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1769 unit
 tests green, 74 `#[ignore]` smokes** (the largest count — log below; the most
 recent change — **MCP servers are configured in the settings window**
 ([plan](docs/history/mcp-server-editor.md)): a new "Plugins" section holds the
@@ -11190,6 +11190,43 @@ debounce was done as a separate PR, see below).
   called `send_followup_message`; it passed on re-run (`saw_continue=true`, a second bubble).
   A model-behaviour flake of the class the control-tools entry already records, not a
   regression: the diff touches **zero** files on the agentic-loop/control-tool path.
+- **The first manual run in a terminal found two things** (plan §8), both fixed on
+  the same branch.
+  - **A platform-dependent config.** A spike measured *why* `cmd /c npx …` is
+    needed on Windows rather than assuming: `cmd.exe` completes a bare name from
+    `PATHEXT` and **Rust does not** (`Command::new("npx")` → `NotFound`,
+    `Command::new("npx.cmd")` → spawns). `shared::mcp::resolve_command` now does
+    that completion, so one config works on every platform. The same spike
+    **overturned the premise of the `.bat`/`.cmd` ban** (ADR 0007 §2):
+    CVE-2024-24576 is fixed in `std` as of Rust 1.77.2 — measured, `a"b`, `%CD%`
+    and `a&whoami` are escaped and an embedded newline is *refused* with
+    `InvalidInput` — so the ban added nothing over `std` while pushing users onto
+    `cmd /c`, where arguments are re-parsed by `cmd.exe` **outside** that
+    escaping. Removed, with the reasoning recorded in the ADR; the live smokes now
+    use a bare `npx` on every platform, which makes them the demonstration.
+  - **The live run then caught a bug in the new resolver**, which is what a live
+    run is for: npm ships an extensionless `npx` (a Unix script) *next to*
+    `npx.cmd`, and preferring the exact name spawned the script — `os error 193:
+    not a valid Win32 application`. `cmd.exe` only ever completes a **bare** name;
+    a name that already carries an extension is tried as written and then still
+    completed (so `my.tool` reaches `my.tool.exe`). The rule's core became a pure
+    function over `PATH`/`PATHEXT`, so a test builds the npm layout in a temp
+    directory instead of mutating the process environment. The *wiring* (that
+    `spawn` calls the resolver) is covered by the **live smoke only** — a unit test
+    would need a global `PATH` mutation (racy under a parallel suite) or would sit
+    through the 30 s handshake timeout; recorded rather than faked.
+  - **"Ready" could mean invisible.** The reported symptom was a server showing
+    `ready · tools: 1` while the assistant said it had no such tool — the double
+    opt-in (R7) working as designed, but the row never said so. Same defect class
+    as the by-reference attachment block and the `youtube_watch` unconfigured path:
+    the UI states a situation without saying what is possible next. The row now
+    reads `ready · tools: N · in profile: K` and points at "Profiles" when `K` is
+    zero; the double opt-in itself is unchanged.
+  - **1769 unit tests green** (+3), 74 `#[ignore]`; the resolver's bare-name rule,
+    its extension handling and both halves of the status row were mutation-tested.
+    **Live — GO** with a bare `npx` on Windows: `mcp_filesystem_e2e_live` (14
+    tools, the model read the file) and `mcp_reconnect_live` (Ready → reconnect →
+    Ready, same 14).
   **Still to do**: the acceptance criterion proper — a manual run configuring a real
   server **entirely from the settings window**, which needs a real terminal.
 - **A process trap, hit for the second time in this repo** (the journal already

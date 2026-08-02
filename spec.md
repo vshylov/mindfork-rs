@@ -826,8 +826,12 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   section in `settings.json` by hand (the two are the same data; decision point R6 was
   revisited once the host had proved itself — see docs/history/mcp-server-editor.md):
   a master switch `enabled` (**disabled by default**) + `servers[]`
-  (an `id` slug, `command`+`args` — `.bat`/`.cmd` forbidden (BatBadBut), `npx` on
-  Windows — `cmd /c npx …`; `env` — a map "the child's variable → the **name** of
+  (an `id` slug, `command`+`args` — the command is resolved as a shell would
+  (`shared::mcp::resolve_command`), so `"command": "npx"` works on every platform:
+  on Windows `PATHEXT` completion finds `npx.cmd`, which Rust's own `Command` does
+  not do. A bare name is never taken as-is — npm ships an extensionless `npx` next
+  to the shim, and it is a Unix script Windows cannot execute. `env` — a map "the
+  child's variable → the **name** of
   the source environment variable" (secrets aren't written into `settings.json`, R8);
   `tool_timeout_secs` — a per-call timeout; `max_result_chars` — result clipping).
 - **Lifecycle** — `McpManager` (`app/orchestrator/mcp.rs`, mirroring
@@ -852,7 +856,10 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
 - **UI** (the "Plugins" section): a master toggle; a **server editor** — a selector
   plus the selected server's fields (id/command/arguments/environment/enabled/timeout/
   result limit), `Ctrl+N` adds a server and `Ctrl+D` deletes it; and status rows per
-  server (`ready · tools: N` / `connecting…` / a failure reason). Arguments are edited
+  server (`ready · tools: N · in profile: K` / `connecting…` / a failure reason) —
+  `K` is how many of them the selected profile has enabled, because a server can be
+  up while the model sees nothing (double opt-in), and a row that said only "ready"
+  is how a user adds a server and finds it does not work. Arguments are edited
   as a shell-quoted command line and the environment as `VARIABLE=SOURCE` pairs, both
   round-tripping through the field. A server created in the UI starts **disabled**, so
   nothing is spawned while its command is still half-typed; the id is validated before

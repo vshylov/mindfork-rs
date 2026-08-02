@@ -288,31 +288,17 @@ async fn a_server_edited_in_settings_reaches_the_host() {
 }
 
 /// The launch command for a real `@modelcontextprotocol/server-filesystem` over
-/// `npx`, restricted to `allowed`. On Windows `npx` is a `.cmd` shim, so it is
-/// launched through `cmd /c` (the §4.6 pitfall; a `.cmd` **as the command** is
-/// refused outright — BatBadBut).
+/// `npx` — **the same on every platform**, which is the point: on Windows `npx`
+/// is a `.cmd` shim that `Command` cannot find without `PATHEXT` completion, and
+/// `shared::mcp::resolve_command` closes exactly that gap. Before it, this test
+/// needed a `cfg!(windows)` branch spelling out `cmd /c npx …`.
 fn filesystem_server_cmd(allowed: &str) -> (String, Vec<String>) {
-    if cfg!(windows) {
-        (
-            "cmd".into(),
-            [
-                "/c",
-                "npx",
-                "-y",
-                "@modelcontextprotocol/server-filesystem",
-                allowed,
-            ]
+    (
+        "npx".into(),
+        ["-y", "@modelcontextprotocol/server-filesystem", allowed]
             .map(String::from)
             .to_vec(),
-        )
-    } else {
-        (
-            "npx".into(),
-            ["-y", "@modelcontextprotocol/server-filesystem", allowed]
-                .map(String::from)
-                .to_vec(),
-        )
-    }
+    )
 }
 
 /// Live smoke for the reconnect action (docs/history/mcp-server-editor.md F7):

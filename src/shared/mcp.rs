@@ -15,10 +15,10 @@
 //! would hang), `notifications/cancelled` on timeout/cancellation, a shutdown
 //! ladder (close stdin → wait → kill). Known pitfalls (§4.6): garbage lines on
 //! stdout are skipped with a warn; unknown notifications are ignored; `npx`/`uvx`
-//! are `.cmd`-shims (spawn as `cmd /c npx …` on Windows); `.bat`/`.cmd` themselves
-//! as a server command are **forbidden** (CVE-2024-24576 "BatBadBut"); on Windows
-//! the process tree is killed by a Job Object kill-on-close (orphaned
-//! `npx`→`node` children don't outlive app exit).
+//! are `.cmd` shims, which [`resolve_command`] finds via `PATHEXT` so one config
+//! works on every platform (the old `.bat`/`.cmd` ban is gone — see its doc and
+//! ADR 0007 §2); on Windows the process tree is killed by a Job Object
+//! kill-on-close (orphaned `npx`→`node` children don't outlive app exit).
 //!
 //! Transport is decoupled from the process ([`McpConnection::over`] works over
 //! any `AsyncRead`/`AsyncWrite`) — unit tests run the protocol on
@@ -369,18 +369,86 @@ pub fn valid_server_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Is the server command a `.bat`/`.cmd`? Such commands are **forbidden** as an
-/// MCP server command: CVE-2024-24576 "BatBadBut" — batch-file arguments on
-/// Windows can't be escaped (Rust ≥1.77.2 itself rejects spawning with risky
-/// arguments; we reject it earlier, with a clear message). `npx` servers are
-/// configured as `cmd /c npx …` (the command is `cmd`, which is allowed) or via
-/// a direct exe path.
-pub fn forbidden_batch_command(command: &str) -> bool {
-    let base = Path::new(command.trim())
-        .file_name()
-        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+/// Resolves a server command the way a shell would, so **one config works on
+/// every platform** (`"command": "npx"` rather than `cmd /c npx …` on Windows).
+///
+/// Why this is needed at all: `cmd.exe` completes a bare name using `PATHEXT`,
+/// and **Rust does not** — measured, `Command::new("npx")` is `NotFound` on
+/// Windows while `Command::new("npx.cmd")` spawns fine. That single difference
+/// is what used to force a platform-specific config.
+///
+/// Why spawning the resolved `.cmd` directly is safe — and safer than the
+/// `cmd /c` we used to require: CVE-2024-24576 ("BatBadBut") was fixed in
+/// `std` as of Rust 1.77.2, which escapes batch-file arguments and **refuses**
+/// the ones it cannot escape (measured: `a"b`, `%CD%` and `a&whoami` are
+/// escaped, an embedded newline is rejected with `InvalidInput`). Routing
+/// through `cmd /c` instead hands the arguments to `cmd.exe`, which re-parses
+/// them *outside* that protection. So the old `.bat`/`.cmd` ban added no safety
+/// over `std` while pushing users onto the worse path — see ADR 0007 §2.
+///
+/// A no-op on unix, where `Command` already does the `PATH` lookup itself and
+/// there is no extension to complete. Returns `None` when nothing matched — the
+/// caller then spawns the command as written, so the OS produces the error.
+#[cfg(windows)]
+pub fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
+    let exts: Vec<String> = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
+    let dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    base.ends_with(".bat") || base.ends_with(".cmd")
+    resolve_in(command, &dirs, &exts)
+}
+
+/// The pure core of [`resolve_command`]: the environment is a parameter, so the
+/// rule can be tested without touching the process's own `PATH`.
+///
+/// **A bare name is never taken as-is** — that is the whole subtlety, and it was
+/// caught by a live run rather than by reasoning: npm ships *both*
+/// `npx` (a Unix shell script) and `npx.cmd` next to each other, so accepting
+/// the extensionless file spawns something Windows cannot execute
+/// (`os error 193: not a valid Win32 application`). `cmd.exe` only ever
+/// completes a bare name from `PATHEXT`; a name that already carries an
+/// extension is tried as written first, then still completed (so `my.tool`
+/// can reach `my.tool.exe`).
+#[cfg(windows)]
+fn resolve_in(
+    command: &str,
+    dirs: &[std::path::PathBuf],
+    exts: &[String],
+) -> Option<std::path::PathBuf> {
+    let cmd = command.trim();
+    if cmd.is_empty() {
+        return None;
+    }
+    let has_ext = Path::new(cmd).extension().is_some();
+    let candidates = |dir: &Path| -> Option<std::path::PathBuf> {
+        let base = dir.join(cmd);
+        has_ext
+            .then(|| base.clone())
+            .into_iter()
+            .chain(exts.iter().map(|ext| {
+                let mut s = base.clone().into_os_string();
+                s.push(ext);
+                std::path::PathBuf::from(s)
+            }))
+            .find(|p| p.is_file())
+    };
+    // A command with a path in it is not searched on `PATH` — only completed,
+    // exactly like a shell.
+    if cmd.contains(['/', '\\']) || Path::new(cmd).is_absolute() {
+        return candidates(Path::new(""));
+    }
+    dirs.iter().find_map(|dir| candidates(dir))
+}
+
+/// On unix `Command` performs the `PATH` lookup itself — nothing to resolve.
+#[cfg(not(windows))]
+pub fn resolve_command(_command: &str) -> Option<std::path::PathBuf> {
+    None
 }
 
 /// An MCP client over a subprocess: spawn + handshake + tools methods + shutdown.
@@ -419,13 +487,14 @@ impl McpClient {
     /// caller — `McpManager` — expands source names into values). The server's
     /// stderr is drained into the file log.
     pub async fn spawn(program: &str, args: &[String], envs: &[(String, String)]) -> Result<Self> {
-        if forbidden_batch_command(program) {
-            bail!(
-                "an MCP server command can't be .bat/.cmd (BatBadBut, \
-                 CVE-2024-24576); use `cmd /c …` or a direct exe path"
-            );
-        }
-        let mut cmd = Command::new(program);
+        // Resolve the way a shell would, so the same config works on every
+        // platform (see `resolve_command`). Unresolved — spawn as written and
+        // let the OS produce the error.
+        let resolved = resolve_command(program);
+        let mut cmd = match &resolved {
+            Some(path) => Command::new(path),
+            None => Command::new(program),
+        };
         cmd.args(args)
             .envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
@@ -438,9 +507,14 @@ impl McpClient {
             // inherit the TUI's Ctrl+C group.
             cmd.creation_flags(0x0800_0000);
         }
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("launching MCP server: {program}"))?;
+        let mut child = cmd.spawn().with_context(|| match &resolved {
+            // Name what was actually launched: with `npx` resolving to
+            // `npx.cmd`, "launching npx" would hide which file failed.
+            Some(p) if p.as_os_str() != program => {
+                format!("launching MCP server: {program} ({})", p.display())
+            }
+            _ => format!("launching MCP server: {program}"),
+        })?;
 
         // The process tree (`cmd /c npx` → node) goes into a kill-on-close Job
         // Object: the handle lives in the monitor task; closing it (a clean exit
@@ -909,21 +983,77 @@ mod tests {
         // BatBadBut (CVE-2024-24576): .bat/.cmd as a server command are
         // forbidden, including with a path and any letter case; `cmd` (the
         // shell for npx) and exe are allowed.
-        assert!(forbidden_batch_command("evil.bat"));
-        assert!(forbidden_batch_command("C:/tools/npx.CMD"));
-        assert!(forbidden_batch_command(r"C:\tools\run.Bat"));
-        assert!(!forbidden_batch_command("cmd"));
-        assert!(!forbidden_batch_command("npx"));
-        assert!(!forbidden_batch_command("C:/tools/server.exe"));
+        // The resolver replaced the ban (ADR 0007 §2): a `.cmd` is what `npx`
+        // legitimately resolves to on Windows, and `std` escapes its arguments.
+        assert!(resolve_command("").is_none());
+        assert!(resolve_command("definitely-not-a-real-program-xyz").is_none());
     }
 
     #[tokio::test]
-    async fn spawn_rejects_batch_command() {
-        let err = match McpClient::spawn("server.cmd", &[], &[]).await {
-            Ok(_) => panic!(".cmd command should have been rejected"),
-            Err(e) => e.to_string(),
+    async fn spawn_reports_which_file_it_failed_to_launch() {
+        // A `.cmd` is no longer refused up front (ADR 0007 §2, revisited); a
+        // missing program fails at the OS, and the message has to name it —
+        // with `npx` resolving to `npx.cmd`, "launching npx" would hide which
+        // file was actually tried.
+        let err = match McpClient::spawn("definitely-not-a-real-program-xyz", &[], &[]).await {
+            Ok(_) => panic!("a nonexistent program should not spawn"),
+            Err(e) => format!("{e:#}"),
         };
-        assert!(err.contains("BatBadBut"), "{err}");
+        assert!(err.contains("definitely-not-a-real-program-xyz"), "{err}");
+    }
+
+    /// The whole point of the resolver: a config written once works on every
+    /// platform. On Windows `Command::new("cmd")` finds nothing without
+    /// `PATHEXT` completion — that gap is what used to force `cmd /c npx …`.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_completes_pathext_on_windows() {
+        let resolved = resolve_command("cmd").expect("cmd.exe is on PATH");
+        assert_eq!(
+            resolved.extension().map(|e| e.to_ascii_lowercase()),
+            Some("exe".into()),
+            "resolved to {resolved:?}"
+        );
+        assert!(resolved.is_file());
+        // An explicit extension is honoured rather than completed again
+        // (`npx.cmd` must not become `npx.cmd.exe`).
+        let exact = resolve_command("cmd.exe").expect("cmd.exe is on PATH");
+        assert_eq!(exact, resolved);
+    }
+
+    /// The npm layout, which is what a live run tripped over: `npx` and
+    /// `npx.cmd` sit **side by side**, and the extensionless one is a Unix shell
+    /// script Windows cannot execute. A bare name must therefore complete from
+    /// `PATHEXT` and never be taken as-is.
+    #[cfg(windows)]
+    #[test]
+    fn bare_name_never_resolves_to_the_extensionless_twin() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("npx"), "#!/bin/sh\n").unwrap();
+        std::fs::write(dir.path().join("npx.cmd"), "@echo off\n").unwrap();
+        let dirs = vec![dir.path().to_path_buf()];
+        let exts: Vec<String> = [".com", ".exe", ".bat", ".cmd"].map(String::from).to_vec();
+
+        let got = resolve_in("npx", &dirs, &exts).expect("npx.cmd should be found");
+        assert_eq!(got, dir.path().join("npx.cmd"), "picked the shell script");
+        // Spelled out in full — taken as written, not completed again.
+        assert_eq!(
+            resolve_in("npx.cmd", &dirs, &exts).unwrap(),
+            dir.path().join("npx.cmd")
+        );
+        // A path rather than a name: completed, but not searched on PATH.
+        let full = dir.path().join("npx").to_string_lossy().replace('\\', "/");
+        assert_eq!(
+            resolve_in(&full, &[], &exts).unwrap(),
+            dir.path().join("npx.cmd")
+        );
+        // A name with a dot that is not a real extension still reaches the exe.
+        std::fs::write(dir.path().join("my.tool.exe"), "").unwrap();
+        assert_eq!(
+            resolve_in("my.tool", &dirs, &exts).unwrap(),
+            dir.path().join("my.tool.exe")
+        );
+        assert!(resolve_in("nothing-here", &dirs, &exts).is_none());
     }
 
     #[tokio::test]

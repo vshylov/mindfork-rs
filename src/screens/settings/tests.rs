@@ -2838,21 +2838,21 @@ fn mcp_id_must_be_a_unique_slug() {
 }
 
 #[test]
-fn mcp_batch_command_is_refused_in_the_editor() {
+fn mcp_command_accepts_a_shim_and_a_plain_name() {
+    // The `.bat`/`.cmd` ban is gone (ADR 0007 §2, revisited): `npx` resolves to
+    // `npx.cmd` on Windows anyway, and `std` escapes batch arguments — refusing
+    // the spelling only pushed users onto `cmd /c`, which is the worse path.
     let mut s = screen();
     goto_section(&mut s, Section::Plugins);
     s.handle_key(ctrl('n'));
-    assert!(type_into(&mut s, FieldId::McpCommand, "run-server.cmd").is_none());
-    assert!(
-        s.editor
-            .as_ref()
-            .unwrap()
-            .error
-            .unwrap()
-            .contains(".bat/.cmd")
-    );
-    s.handle_key(key(KeyCode::Esc));
-    assert!(type_into(&mut s, FieldId::McpCommand, "cmd").is_some());
+    for command in ["npx", "run-server.cmd", "C:/tools/server.exe"] {
+        assert!(
+            type_into(&mut s, FieldId::McpCommand, command).is_some(),
+            "{command} was refused"
+        );
+        assert!(s.editor.is_none(), "{command} left the editor open");
+        assert_eq!(s.config.mcp.servers[0].command, command);
+    }
 }
 
 #[test]
@@ -2949,4 +2949,47 @@ fn mcp_args_and_env_round_trip_as_text() {
     assert_eq!(parse_env_map(&join_env_map(&env)), env);
     // A half-typed entry doesn't destroy the ones already there.
     assert_eq!(parse_env_map("A=B, junk, =C, D=").len(), 2);
+}
+
+#[test]
+fn mcp_status_says_how_many_tools_the_profile_enabled() {
+    use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot};
+    // A server can be up while the model sees nothing — MCP tools are opt-in per
+    // profile. Saying only "ready" is how a user adds a server and finds it does
+    // not work (docs/history/mcp-server-editor.md §5).
+    let mut s = screen();
+    s.config.mcp.enabled = true;
+    s.set_mcp(McpSnapshot {
+        tools: Vec::new(),
+        servers: vec![McpServerSnapshot {
+            id: "fs".into(),
+            status: ServerStatus::Ready,
+            tool_count: 2,
+            pending_catalog: false,
+        }],
+    });
+    let row = |s: &SettingsScreen| {
+        s.plugin_fields()
+            .into_iter()
+            .find(|r| r.id == FieldId::TMcpServer(0))
+            .unwrap()
+    };
+    let off = row(&s);
+    assert!(
+        matches!(&off.kind, FieldKind::Text(v) if v.contains('2') && v.contains('0')),
+        "the count of enabled tools is missing"
+    );
+    assert!(
+        off.hint.is_some_and(|h| h.contains("Профил")),
+        "no pointer to where they are enabled"
+    );
+
+    // Enabling one in the profile is reflected, and the pointer goes away.
+    s.profiles[0].enabled_tools.push("mcp__fs__read".into());
+    let on = row(&s);
+    assert!(matches!(&on.kind, FieldKind::Text(v) if v.contains("1")));
+    assert!(on.hint.is_none(), "the hint should go once tools are on");
+    // Another server's tools don't count towards this one.
+    s.profiles[0].enabled_tools.push("mcp__other__x".into());
+    assert!(matches!(&row(&s).kind, FieldKind::Text(v) if v.contains("1")));
 }
