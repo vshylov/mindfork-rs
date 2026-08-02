@@ -63,6 +63,13 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **The settings panel no longer explains the wrong thing.** The line about a
+  tool being "disabled by a global switch" used to appear under **any** row
+  flagged for attention — an MCP server whose tool catalog had changed, or an
+  environment variable whose source is missing — where it is about neither that
+  row nor anything the user can act on. It now shows only for a tool that really
+  is gated, and names the section that holds the switch: the MCP master toggle
+  lives in "Plugins", not "Tools".
 - **Appending to a file could silently lose what was appended.** `fs_write` with
   `append` did not flush before closing the file, so the text sometimes never
   reached disk — the file simply stayed as it was.

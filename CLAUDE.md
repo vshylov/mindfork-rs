@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-02, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1786 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1787 unit
 tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
 recent change completes the **MCP server editor** track
 ([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
@@ -11330,7 +11330,7 @@ debounce was done as a separate PR, see below).
   screen's config; `Del` deleting; the row dropping unrepresentable names; the
   import row committing a path; and end-to-end through the orchestrator — secrets
   stored as ciphertext with **no plaintext in `settings.json`**, servers disabled,
-  ids sanitized, a re-import a no-op. **1786 unit tests green** (+12), **75
+  ids sanitized, a re-import a no-op. **1787 unit tests green** (+13), **75
   `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
 - **Mutation-tested, and it earned its keep**: nine mutations, eight caught by
   their own tests — the ninth **survived**, exposing that nothing asserted a stored
@@ -11393,6 +11393,21 @@ debounce was done as a separate PR, see below).
   **started** with, so a variable set after launch needs a restart.
   Mutation-tested. Rejected: leaving it silent (the diagnosis stays indirect) and
   dropping the source form from the UI (it is the only way to rename a source).
+
+- **The live check of that row found two defects, one of them older than this
+  track.** Focusing a variable whose source is missing printed "the tool is
+  enabled in the profile but disabled by a global switch — enable it in the
+  «Tools» section", which is about neither that row nor that section. Root cause:
+  `FieldRow.warn` meant **two** things — "colour this row" and "append the gate
+  explanation" — so the sentence appeared wherever the flag was raised, including
+  (since stage 1, unnoticed) on an MCP server whose catalog had changed. The
+  explanation now travels in its own `warn_note`, set where the gate is actually
+  detected; `warn` is back to meaning only "this row needs attention". And the
+  text now **names the section that holds the switch**: the MCP master toggle
+  moved to "Plugins" when the editor got its own section, so the hardcoded
+  "Tools" had been wrong for it ever since — the user caught that too. Third,
+  smaller: the new row's description showed a literal `{src}`, resolved with `t`
+  where it needed `tf`. One test pins all three (mutation-tested).
 
 - **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
