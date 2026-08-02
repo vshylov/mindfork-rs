@@ -1,7 +1,7 @@
 # MCP servers in the settings window — design plan
 
 **Status:** stage 1 **done and accepted** (2026-08-02); **stage 2 (secrets +
-import) — §9, forks S1–S8 awaiting the user's decision.** The file stays in
+import) — §9, forks S1–S8 accepted 2026-08-02, in implementation.** The file stays in
 `docs/history/` while stage 2 runs: every reference to it (roadmap, ADR 0007,
 CLAUDE.md) already points here, and moving it back and forth would churn those
 links for no gain.
@@ -317,8 +317,13 @@ the one part of this track no automated test could stand in for.
 
 ## 9. Stage 2 — secrets for the `env` map and JSON import
 
-Forks **S1–S8**, awaiting the user's decision. Scope: F4(b) + F6(a) above,
-branch `feat/mcp-env-secrets`. Amends **ADR 0007 R8** (as stage 1 amended R6):
+**Forks S1–S8 confirmed by the user 2026-08-02, all as recommended** — S1(a) the
+`env` row declares the variables and a per-variable secret row holds the value,
+S2(a)+S3(a) one typed `SetSecret`/`secrets_present`, S4(b) orphaned secrets are
+never collected automatically, S5(a) an imported value becomes a stored secret,
+S6(b) the import takes a file path and the orchestrator parses it, S7 the import
+package, S8(a) the env-name path survives as the fallback. Scope: F4(b) + F6(a)
+above, branch `feat/mcp-env-secrets`. Amends **ADR 0007 R8** (as stage 1 amended R6):
 the spirit is kept — no plaintext secret on disk — but the storage becomes
 [ADR 0008](../decisions/0008-api-key-storage.md)'s machine-bound encryption
 instead of "the value lives in an OS environment variable".
