@@ -676,10 +676,11 @@
   "ui.settings.mcp.not_configured": "not configured",
   "ui.settings.mcp.confirm_hint": "catalog changed — Enter: confirm",
   "ui.settings.desc.mcp_server": [
-    "Status of an MCP server from settings.json (mcp.servers section). \"Catalog",
-    "changed\" means the server's tool set/descriptions differ from what was",
-    "approved earlier (possible tool poisoning); Enter confirms the new catalog,",
-    "until then the server's tools are unavailable to the model."
+    "The status of a running MCP server. \"Catalog changed\" means the server's",
+    "tool set/descriptions differ from what was approved earlier (possible tool",
+    "poisoning): Enter confirms the new catalog. With nothing to confirm, Enter",
+    "reconnects the server — the only way to bring back one that exhausted its",
+    "restart budget."
   ],
   "ui.err.mcp.invalid_id": "invalid server id (a slug [a-z0-9-], ≤32 is required)",
   "ui.err.mcp.empty_command": "no launch command configured",
@@ -689,7 +690,62 @@
   "ui.err.mcp.server_ctx": "MCP server {id}",
   "ui.err.mcp.tools_list_ctx": "MCP server {id}: tools/list",
   "ui.err.mcp.empty_catalog": "MCP server {id}: empty tool catalog",
-  "ui.settings.desc.mcp_enabled": "Master switch for plugin tools (MCP). Servers are configured in settings.json (mcp.servers section: command, arguments, env names); their tools appear among the profile toggles and are enabled manually (double opt-in). An MCP server is an arbitrary program running with your privileges: enable only trusted ones.",
+  "ui.settings.desc.mcp_enabled": [
+    "Master switch for plugin tools (MCP). Servers are configured below (or by",
+    "hand in settings.json, the mcp.servers section); their tools appear among",
+    "the profile toggles and are enabled manually (double opt-in). An MCP",
+    "server is an ordinary program running with your user's rights."
+  ],
+  "ui.settings.section.plugins": "Plugins",
+  "ui.settings.group.mcp_host": "MCP host",
+  "ui.settings.group.mcp_server": "Server",
+  "ui.settings.group.mcp_status": "Status",
+  "ui.settings.value.no_servers": "(no servers)",
+  "ui.settings.field.mcp_select": "Server",
+  "ui.settings.field.mcp_id": "Identifier",
+  "ui.settings.field.mcp_command": "Command",
+  "ui.settings.field.mcp_args": "Arguments",
+  "ui.settings.field.mcp_env": "Environment",
+  "ui.settings.field.mcp_server_enabled": "Enabled",
+  "ui.settings.field.mcp_timeout": "Call timeout (s)",
+  "ui.settings.field.mcp_max_result": "Result limit",
+  "ui.settings.desc.mcp_select": [
+    "The server being edited: ←/→ or Enter for the list.",
+    "Ctrl+N adds a server, Ctrl+D deletes the selected one."
+  ],
+  "ui.settings.desc.mcp_id": [
+    "Short server identifier (a slug [a-z0-9-], up to 32 characters) — the",
+    "tool names mcp__<id>__<tool> are built from it. Must be unique;",
+    "renaming it drops the pinned catalog."
+  ],
+  "ui.settings.desc.mcp_command": [
+    "The server executable. .bat/.cmd commands are forbidden (BatBadBut,",
+    "CVE-2024-24576): npx/uvx on Windows run as cmd /c npx … (the command",
+    "is cmd), or give a direct path to an exe."
+  ],
+  "ui.settings.desc.mcp_args": [
+    "Command-line arguments separated by spaces; quote an argument that",
+    "contains one: /c npx -y @modelcontextprotocol/server-filesystem \"D:/my work\"."
+  ],
+  "ui.settings.desc.mcp_env": [
+    "The child process environment as VARIABLE=SOURCE pairs, comma separated.",
+    "The value is the NAME of one of the application's own environment",
+    "variables, not the secret itself — tokens never reach settings.json.",
+    "A missing source is skipped (a warning in the log)."
+  ],
+  "ui.settings.desc.mcp_server_enabled": [
+    "Whether this server starts. A server created here is off: nothing is",
+    "spawned while the command is still half-typed, so turning it on is the",
+    "deliberate \"start it\"."
+  ],
+  "ui.settings.desc.mcp_timeout": "Timeout for one tool call of this server (seconds).",
+  "ui.settings.desc.mcp_max_result": [
+    "Tool-result clip (characters) — a limit on how much this server can add",
+    "to the context in a single answer."
+  ],
+  "ui.settings.err.mcp_id": "a slug [a-z0-9-] of up to 32 characters is required",
+  "ui.settings.err.mcp_id_taken": "that identifier is already taken",
+  "ui.settings.err.mcp_batch": "a .bat/.cmd command is forbidden — use `cmd /c …` or a path to an exe",
   "ui.settings.sampling.temp": "Temperature",
   "ui.settings.sampling.thinking": "Thinking",
   "ui.settings.sampling.group.basic": "Basic",

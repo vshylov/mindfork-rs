@@ -356,6 +356,19 @@ fn clip_line(s: &str) -> &str {
     &s[..s.len().min(200)]
 }
 
+/// Whether a server id is a valid slug (`[a-z0-9-]`, 1..=32): it is part of the
+/// tool id `mcp__<id>__<tool>` and the host's slot key. Lives here rather than in
+/// the host because the settings screen validates it before committing an edit —
+/// an invalid id creates no slot at all, so the server would otherwise silently
+/// vanish from the status list (docs/history/mcp-server-editor.md F8).
+pub fn valid_server_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 32
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 /// Is the server command a `.bat`/`.cmd`? Such commands are **forbidden** as an
 /// MCP server command: CVE-2024-24576 "BatBadBut" — batch-file arguments on
 /// Windows can't be escaped (Rust ≥1.77.2 itself rejects spawning with risky

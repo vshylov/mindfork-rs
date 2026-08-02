@@ -24,11 +24,13 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    MediaResolution, PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
+    McpServerConfig, MediaResolution, PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings,
+    TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mcp::valid_server_id as valid_mcp_server_id;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
@@ -56,6 +58,11 @@ pub enum SettingsIntent {
     /// Confirm a changed MCP-server tool catalog (TOFU,
     /// Enter on a server row marked "catalog changed"). See spec §9.6.
     ConfirmMcpCatalog(String),
+    /// Reconnect an MCP server (Enter on a server row that has nothing to
+    /// confirm). The only way back for a server that exhausted its restart
+    /// budget: a settings edit no longer helps, since an identical config is
+    /// not re-applied (`McpManager::is_current`). See spec §9.6.
+    ReconnectMcpServer(String),
     /// Save the entered cloud-provider API key (empty — delete it).
     /// The orchestrator encrypts it with the machine key; the screen's config has no keys.
     /// See `shared::secrets`, docs/research/api-key-storage.md.
@@ -75,16 +82,18 @@ enum Section {
     Model,
     Sampling,
     Tools,
+    Plugins,
     Memory,
     Data,
     Profiles,
     Interface,
 }
 
-const SECTIONS: [Section; 7] = [
+const SECTIONS: [Section; 8] = [
     Section::Model,
     Section::Sampling,
     Section::Tools,
+    Section::Plugins,
     Section::Memory,
     Section::Data,
     Section::Profiles,
@@ -174,6 +183,7 @@ impl Section {
             Section::Model => "ui.settings.section.model",
             Section::Sampling => "ui.settings.section.sampling",
             Section::Tools => "ui.settings.section.tools",
+            Section::Plugins => "ui.settings.section.plugins",
             Section::Memory => "ui.settings.section.memory",
             Section::Data => "ui.settings.section.data",
             Section::Profiles => "ui.settings.section.profiles",
@@ -492,12 +502,30 @@ enum FieldId {
     VideoApiKeyEnv,
     TFs,
     TFsRoot,
-    /// The MCP host's master switch (`config.mcp.enabled`); servers are edited in
-    /// `settings.json` (R6).
+    /// The MCP host's master switch (`config.mcp.enabled`). Lives in the
+    /// "Plugins" section together with the server inventory.
     TMcpEnabled,
-    /// An MCP server's status row by index in the `mcp.servers` snapshot (read-only;
-    /// Enter when "catalog changed" confirms the new catalog — TOFU).
+    /// An MCP server's status row by index in the `mcp.servers` snapshot
+    /// (read-only). Enter does what the row needs: confirms a changed catalog
+    /// (TOFU) when one is pending, otherwise reconnects the server.
     TMcpServer(usize),
+    // ---- the selected MCP server (an index into `config.mcp.servers`; user
+    // data, so these are in `is_profile_field` — no `Del` reset, no `•` marker).
+    /// The server selector; `Ctrl+N` creates, `Ctrl+D` deletes.
+    McpSelect,
+    /// Slug id — part of the tool names `mcp__<id>__*`; validated on commit.
+    McpId,
+    McpCommand,
+    /// Launch arguments as a command line (shell-style quoting, see `parse_args`).
+    McpArgs,
+    /// `CHILD=SOURCE` pairs: the child's variable ← the **name** of a source
+    /// variable in the app's environment (no secrets on disk, ADR 0007 R8).
+    McpEnv,
+    /// Whether the server starts. A server created in the UI starts **off**, so
+    /// nothing is spawned while its command is still half-typed.
+    McpEnabled,
+    McpTimeout,
+    McpMaxResult,
     TSubMaxTokens,
     TSubTimeout,
     /// Ask before the agentic loop runs a tool marked dangerous
@@ -738,6 +766,10 @@ pub struct SettingsScreen {
     /// The selected impersonation profile in the "Impersonation" subsection of
     /// "Profiles" (an index into `config.impersonation_profiles`).
     imp_profile_idx: usize,
+    /// The selected MCP server in the "Plugins" section (an index into
+    /// `config.mcp.servers`). Clamped by `refresh` — the list can shrink under
+    /// an undo. See spec §9.6.
+    mcp_server_idx: usize,
     /// A profile creation (`Ctrl+N`) is in flight: the orchestrator owns the profile
     /// list, so the new profile only arrives with the next `Settings` snapshot —
     /// [`SettingsScreen::refresh`] then selects whichever profile is new. One-shot.
@@ -761,7 +793,7 @@ pub struct SettingsScreen {
     language_locked: Vec<uuid::Uuid>,
     /// The MCP-host snapshot (from the `Settings` event): the dynamic tool catalog
     /// (appended to the static `tool_catalog()` for profile toggles) +
-    /// server statuses (rows in the "Tools" section, TOFU confirmation).
+    /// server statuses (rows in the "Plugins" section, TOFU confirmation).
     /// Empty until servers come up/while MCP is off. See spec §9.6.
     mcp: crate::features::tools::mcp::McpSnapshot,
     /// Providers whose API key is stored on **this** machine (from the `Settings`
