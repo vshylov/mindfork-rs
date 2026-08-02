@@ -236,6 +236,42 @@ async fn mcp_filesystem_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
 }
 
+/// Storing an MCP environment secret schedules the re-apply that hands it to the
+/// child process. Without this the `is_current` fix is never even consulted: the
+/// settings are unchanged, so nothing would flag the servers, and the new value
+/// would sit in the store while the running server keeps the old one.
+#[tokio::test]
+async fn storing_an_env_secret_schedules_the_reapply() {
+    if !crate::shared::secrets::scheme_available() {
+        return; // Linux without machine-id: storing secrets is unsupported
+    }
+    let (_dir, mut orch) = bare_orch();
+    let mut settings = mcp_config();
+    settings.servers[0]
+        .env
+        .insert("TOKEN".into(), String::new());
+    orch.config.mcp = settings;
+    orch.apply_mcp_settings();
+    assert!(orch.mcp.is_current(&orch.config.mcp, &orch.config.api_keys));
+
+    orch.handle_set_secret(
+        crate::shared::secrets::SecretKey::McpEnv {
+            server: "fs".into(),
+            var: "TOKEN".into(),
+        },
+        "ghp-live".into(),
+    );
+    assert!(
+        !orch.mcp.is_current(&orch.config.mcp, &orch.config.api_keys),
+        "the value handed to the child changed"
+    );
+    orch.flush_restarts();
+    assert!(
+        orch.mcp.is_current(&orch.config.mcp, &orch.config.api_keys),
+        "the debounce should have re-applied the servers with the new value"
+    );
+}
+
 /// End to end for the JSON import (§9, S5–S7): the file's **literal** `env`
 /// values become machine-bound secrets, the servers arrive disabled, ids are
 /// sanitized to our slug, and — the claim that matters — no token reaches
@@ -355,6 +391,104 @@ async fn a_server_edited_in_settings_reaches_the_host() {
     orch.handle_update_config(cleared);
     orch.flush_restarts();
     assert!(orch.mcp.snapshot().servers.is_empty());
+}
+
+/// A minimal MCP server in Node that answers `tools/list` with a tool **named
+/// after an environment variable it was given**. Enough protocol to reach
+/// `Ready`; the point is what the child can see in its own environment.
+#[cfg(test)]
+fn env_echo_server_script() -> String {
+    r#"
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf("\n")) >= 0) {
+    const line = buf.slice(0, i); buf = buf.slice(i + 1);
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    if (msg.method === "initialize") {
+      send({ jsonrpc: "2.0", id: msg.id, result: {
+        protocolVersion: "2025-11-25",
+        capabilities: { tools: {} },
+        serverInfo: { name: "env-echo", version: "1" } } });
+    } else if (msg.method === "tools/list") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { tools: [
+        { name: "echo_env",
+          description: process.env.SECRET_TOKEN || "(no SECRET_TOKEN)",
+          inputSchema: { type: "object" } } ] } });
+    } else if (msg.id !== undefined) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+    }
+  }
+});
+function send(o) { process.stdout.write(JSON.stringify(o) + "\n"); }
+"#
+    .to_string()
+}
+
+/// **The one thing unit tests cannot show**: that a value stored as a
+/// machine-bound secret actually reaches the child process's environment. The
+/// storage, the resolution and the re-apply are each covered above; here a real
+/// subprocess is spawned by the real manager and asked what it sees.
+///
+/// Needs only `node` — no model, so it runs without an engine.
+#[tokio::test]
+#[ignore = "requires node (spawns a real MCP server subprocess)"]
+async fn stored_env_secret_reaches_the_child_process_live() {
+    if !crate::shared::secrets::scheme_available() {
+        eprintln!("skip: no secret encryption scheme on this machine");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("env-echo-server.mjs");
+    std::fs::write(&script, env_echo_server_script()).unwrap();
+
+    // The server declares SECRET_TOKEN with **no** OS source: the only way it can
+    // get a value is the stored secret.
+    let mut cfg = McpServerConfig {
+        id: "envecho".into(),
+        command: "node".into(),
+        args: vec![script.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    cfg.env.insert("SECRET_TOKEN".into(), String::new());
+    let settings = McpSettings {
+        enabled: true,
+        servers: vec![cfg],
+    };
+    let mut keys = Vec::new();
+    crate::shared::secrets::put_key(
+        &mut keys,
+        &crate::shared::secrets::SecretKey::McpEnv {
+            server: "envecho".into(),
+            var: "SECRET_TOKEN".into(),
+        }
+        .storage_name(),
+        "ZARYA-7719",
+        || "test".to_string(),
+    )
+    .unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut mgr = super::super::mcp::McpManager::new(tx);
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    mgr.apply(&settings, &keys, loc);
+    let evt = tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv())
+        .await
+        .expect("the node MCP server should come up within 30s")
+        .unwrap();
+    mgr.handle_event(evt, loc);
+
+    let snap = mgr.snapshot();
+    eprintln!("server: {:?}", snap.servers[0].status);
+    let seen = snap.tools[0].description.clone().unwrap_or_default();
+    eprintln!("the child reports SECRET_TOKEN as: {seen}");
+    assert_eq!(
+        seen, "ZARYA-7719",
+        "the stored secret did not reach the child process's environment"
+    );
+    mgr.shutdown();
 }
 
 /// The launch command for a real `@modelcontextprotocol/server-filesystem` over
