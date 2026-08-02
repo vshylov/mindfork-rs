@@ -371,6 +371,12 @@ impl SettingsScreen {
                 if let FieldId::TMcpServer(idx) = f.id {
                     return self.mcp_server_action(idx);
                 }
+                // A variable that names a source: the row only reports whether
+                // that OS variable is there — there is nothing here to edit (the
+                // source itself is edited in the "Variables" row above).
+                if matches!(f.id, FieldId::McpEnvSource(_)) {
+                    return None;
+                }
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
                     // Choice (incl. profile selection PSelect) — an option-list popup.

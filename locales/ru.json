@@ -713,6 +713,8 @@
   "ui.settings.field.mcp_args": "Аргументы",
   "ui.settings.field.mcp_env": "Переменные",
   "ui.settings.field.mcp_import": "Импорт из файла",
+  "ui.settings.value.mcp_source_found": "из {src}: найдена",
+  "ui.settings.value.mcp_source_missing": "из {src}: не найдена",
   "ui.settings.field.mcp_server_enabled": "Включён",
   "ui.settings.field.mcp_timeout": "Таймаут вызова (с)",
   "ui.settings.field.mcp_max_result": "Предел результата",
@@ -747,6 +749,12 @@
     "компьютера (как ключ API) и не попадает в settings.json в открытом виде —",
     "поэтому вводится отдельно от списка имён выше. Enter — ввести заново",
     "(показать сохранённое нельзя), Del — удалить."
+  ],
+  "ui.settings.desc.mcp_env_source": [
+    "Значение этой переменной берётся из переменной окружения {src} — вводить",
+    "здесь нечего, источник указан в списке выше. Приложение видит окружение,",
+    "с которым его запустили: если вы задали переменную только что,",
+    "перезапустите приложение."
   ],
   "ui.settings.desc.mcp_import": [
     "Путь к конфигу другого MCP-клиента (обычно claude_desktop_config.json:",

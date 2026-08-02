@@ -712,6 +712,8 @@
   "ui.settings.field.mcp_args": "Arguments",
   "ui.settings.field.mcp_env": "Variables",
   "ui.settings.field.mcp_import": "Import from a file",
+  "ui.settings.value.mcp_source_found": "from {src}: found",
+  "ui.settings.value.mcp_source_missing": "from {src}: not found",
   "ui.settings.field.mcp_server_enabled": "Enabled",
   "ui.settings.field.mcp_timeout": "Call timeout (s)",
   "ui.settings.field.mcp_max_result": "Result limit",
@@ -746,6 +748,12 @@
     "key (like an API key), so settings.json never holds it in the clear — which",
     "is why it is entered apart from the list of names above. Enter to enter it",
     "again (a stored one cannot be shown), Del to delete."
+  ],
+  "ui.settings.desc.mcp_env_source": [
+    "This variable's value comes from the environment variable {src} — there is",
+    "nothing to enter here, its source is given in the list above. The",
+    "application sees the environment it was started with: if you have just set",
+    "the variable, restart the application."
   ],
   "ui.settings.desc.mcp_import": [
     "Path to another MCP client's config (usually claude_desktop_config.json:",

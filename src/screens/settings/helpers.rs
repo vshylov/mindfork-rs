@@ -1165,6 +1165,7 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::McpArgs
             | FieldId::McpEnv
             | FieldId::McpEnvSecret(_)
+            | FieldId::McpEnvSource(_)
             | FieldId::McpImport
             | FieldId::McpEnabled
             | FieldId::McpTimeout

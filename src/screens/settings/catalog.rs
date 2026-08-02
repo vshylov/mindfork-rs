@@ -866,9 +866,9 @@ impl SettingsScreen {
             )
             .describe(loc.t("ui.settings.desc.mcp_env")),
         ];
-        // The value of each declared variable, if this machine stores one — right
-        // below the declaration that names it.
-        rows.extend(self.mcp_env_secret_rows(srv));
+        // Where each declared variable's value comes from, and whether it is
+        // there — right below the declaration that names it.
+        rows.extend(self.mcp_env_value_rows(srv));
         rows.extend([
             row(
                 FieldId::McpEnabled,
@@ -892,38 +892,61 @@ impl SettingsScreen {
         rows
     }
 
-    /// A stored-secret row per variable the selected server declares **by name
-    /// alone**: the value this machine hands the child process, entered in a
-    /// masked field and kept machine-bound (ADR 0008) instead of in an OS
-    /// environment variable.
+    /// One row per variable the selected server declares, in the map's order,
+    /// saying where that variable's value comes from **and whether it is there**:
     ///
-    /// A variable that names a source (`API_KEY=OTHER_NAME`) gets **no** row —
-    /// its value comes from that OS variable, and offering to store one as well
-    /// would be offering two answers to one question
-    /// (docs/history/mcp-server-editor.md §9.5b). The index stays the position in
-    /// the whole map, so `secret_field_key` keeps resolving it.
+    /// * declared by name alone → an editable secret row (masked, machine-bound
+    ///   storage, ADR 0008): "configured (this computer)" / "not set";
+    /// * declared with a source (`API_KEY=OTHER_NAME`) → a **read-only** status:
+    ///   whether that OS variable exists. No value field — its origin is already
+    ///   given, and offering to store one too would be two answers to one
+    ///   question (docs/history/mcp-server-editor.md §9.5b). It still gets a row,
+    ///   because otherwise that route is mute and the only symptom of a missing
+    ///   variable is the server not working (§9.5c).
+    ///
+    /// The index is the position in the whole map either way, so
+    /// `secret_field_key` keeps resolving it.
     ///
     /// The label is the variable name — user data, so it can be longer than
     /// `LABEL_CAP`; the value column then just does not grow past the cap, as
     /// with the server status rows.
-    fn mcp_env_secret_rows(&self, srv: &McpServerConfig) -> Vec<FieldRow> {
+    fn mcp_env_value_rows(&self, srv: &McpServerConfig) -> Vec<FieldRow> {
         let loc = self.loc();
         srv.env
             .iter()
             .enumerate()
-            .filter(|(_, (_, source))| source.is_empty())
-            .map(|(idx, (var, _))| {
-                let key = SecretKey::McpEnv {
-                    server: srv.id.clone(),
-                    var: var.clone(),
+            .map(|(idx, (var, source))| {
+                if source.is_empty() {
+                    let key = SecretKey::McpEnv {
+                        server: srv.id.clone(),
+                        var: var.clone(),
+                    };
+                    return secret_row(
+                        FieldId::McpEnvSecret(idx),
+                        self.secret_present(Some(&key)),
+                        var,
+                        "ui.settings.desc.mcp_env_secret",
+                        loc,
+                    );
+                }
+                // The application's **own** environment — the one it was started
+                // with, which is also what the child inherits. A variable set
+                // after launch reads as missing until a restart, and the
+                // description says so.
+                let found = std::env::var(source).is_ok();
+                let key = if found {
+                    "ui.settings.value.mcp_source_found"
+                } else {
+                    "ui.settings.value.mcp_source_missing"
                 };
-                secret_row(
-                    FieldId::McpEnvSecret(idx),
-                    self.secret_present(Some(&key)),
+                let mut r = row(
+                    FieldId::McpEnvSource(idx),
                     var,
-                    "ui.settings.desc.mcp_env_secret",
-                    loc,
+                    FieldKind::Text(loc.tf(key, &[("src", source)])),
                 )
+                .describe(loc.t("ui.settings.desc.mcp_env_source"));
+                r.warn = !found;
+                r
             })
             .collect()
     }

@@ -2829,6 +2829,72 @@ fn mcp_env_secret_rows_follow_the_declared_variables() {
     );
 }
 
+/// A variable that names a source gets a **read-only status** instead of a value
+/// field: whether that OS variable is actually there. Without it the two routes
+/// are asymmetric — the stored one reports "configured / not set" while a named
+/// source reports nothing, and a missing variable shows up only as the server
+/// failing to work (docs/history/mcp-server-editor.md §9.5c).
+#[test]
+fn a_sourced_variable_shows_whether_its_source_exists() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    // SAFETY: single-threaded test, scoped to this process.
+    unsafe { std::env::set_var("MINDFORK_TEST_SETTINGS_SRC", "x") };
+    assert!(
+        type_into(
+            &mut s,
+            FieldId::McpEnv,
+            "PRESENT=MINDFORK_TEST_SETTINGS_SRC, ABSENT=MINDFORK_TEST_NO_SUCH_VAR",
+        )
+        .is_some()
+    );
+
+    let rows = s.plugin_fields();
+    let row_of = |idx: usize| {
+        rows.iter()
+            .find(|r| r.id == FieldId::McpEnvSource(idx))
+            .unwrap_or_else(|| panic!("no status row for variable {idx}"))
+    };
+    // Map order: ABSENT(0), PRESENT(1).
+    let absent = row_of(0);
+    let present = row_of(1);
+    assert_eq!(absent.label, "ABSENT");
+    assert_eq!(present.label, "PRESENT");
+    assert!(
+        matches!(&present.kind, FieldKind::Text(v) if v.contains("MINDFORK_TEST_SETTINGS_SRC")
+            && v.contains(&ru_t("ui.settings.value.mcp_source_found"))),
+        "the row must name the source and say it was found"
+    );
+    assert!(!present.warn);
+    assert!(
+        matches!(&absent.kind, FieldKind::Text(v)
+            if v.contains(&ru_t("ui.settings.value.mcp_source_missing"))),
+        "a missing source must be visible"
+    );
+    assert!(absent.warn, "a missing source is worth flagging");
+
+    // Neither variable offers to store a value, and the status row is read-only.
+    assert!(
+        !rows
+            .iter()
+            .any(|r| matches!(r.id, FieldId::McpEnvSecret(_))),
+        "a variable that names a source has its origin already"
+    );
+    goto_field_again(&mut s, FieldId::McpEnvSource(1));
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(s.editor.is_none(), "there is nothing to edit here");
+}
+
+/// The value part of a localized row, for asserting on a rendered value that
+/// carries an interpolated source name.
+fn ru_t(key: &str) -> String {
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    // The templates are "{src}: found" / "{src}: not found" — compare on the tail
+    // after the placeholder, which is the part that distinguishes them.
+    ru.t(key).rsplit("{src}").next().unwrap_or("").to_string()
+}
+
 /// `Del` on a stored value deletes it; with nothing stored there is nothing to
 /// delete (the API-key row's behaviour, reached through the same field).
 #[test]

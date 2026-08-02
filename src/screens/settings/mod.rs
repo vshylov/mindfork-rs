@@ -530,8 +530,16 @@ enum FieldId {
     McpEnv,
     /// The stored value of the n-th variable the selected server declares (the
     /// order of the `env` map). A secret: the row shows a status, never the
-    /// value; editing goes out as [`SettingsIntent::SetSecret`].
+    /// value; editing goes out as [`SettingsIntent::SetSecret`]. Only for a
+    /// variable declared **by name alone** — one that names a source has its
+    /// answer already and gets [`FieldId::McpEnvSource`] instead.
     McpEnvSecret(usize),
+    /// Read-only status of the n-th variable when it names a source: whether that
+    /// OS variable is actually there. Without it one of the two routes is mute —
+    /// the stored one shows "configured / not set" while a named source shows
+    /// nothing at all, and the only symptom is the server not working
+    /// (docs/history/mcp-server-editor.md §9.5c).
+    McpEnvSource(usize),
     /// Import servers from an ecosystem `mcpServers` JSON file — the value
     /// entered is a **path**; the row shows the last import's outcome.
     McpImport,
