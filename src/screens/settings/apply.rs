@@ -490,6 +490,8 @@ impl SettingsScreen {
             // the editor always opens empty (a stored key can't be shown).
             _ if is_secret_field(id) => String::new(),
             FieldId::IDicts => self.config.interface.selected_dictionaries.join(", "),
+            // The import row shows the last outcome; what it edits is a path.
+            FieldId::McpImport => String::new(),
             // "—" for empty numbers — the seed is empty.
             _ if shown == "—" => String::new(),
             _ => shown.to_string(),
@@ -721,15 +723,19 @@ impl SettingsScreen {
     pub(super) fn apply_text(&mut self, id: FieldId, text: &str) -> Option<SettingsIntent> {
         let trimmed = text.trim();
         // The secret isn't stored in the config working copy — it goes as a separate
-        // intent (the orchestrator encrypts it with the machine key). Empty input = delete the key.
-        if let Some(provider) = self.api_key_field_provider(id) {
-            return Some(SettingsIntent::SetApiKey {
-                provider,
-                key: trimmed.to_string(),
+        // intent (the orchestrator encrypts it with the machine key). Empty input =
+        // delete it.
+        if let Some(key) = self.secret_field_key(id) {
+            return Some(SettingsIntent::SetSecret {
+                key,
+                value: trimmed.to_string(),
             });
         }
-        if id == FieldId::BackupPassword {
-            return Some(SettingsIntent::SetBackupPassword(trimmed.to_string()));
+        // The import is read and parsed by the orchestrator: the file carries
+        // literal secrets, which must not travel through `screens` (§9 S6).
+        if id == FieldId::McpImport {
+            return (!trimmed.is_empty())
+                .then(|| SettingsIntent::ImportMcpServers(trimmed.to_string()));
         }
         match id {
             // Sampling parameters — their own descriptor (`SamplingParam`), not in the table.

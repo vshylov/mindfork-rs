@@ -70,6 +70,7 @@ use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::FinishReason;
 use crate::shared::config::{AppConfig, CloudProvider};
+use crate::shared::secrets::SecretKey;
 use crate::shared::storage::Storage;
 
 use self::attachments::AttachResult;
@@ -542,8 +543,8 @@ impl Orchestrator {
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
             AppCommand::ReconnectMcpServer(server) => self.handle_reconnect_mcp_server(server),
-            AppCommand::SetApiKey { provider, key } => self.handle_set_api_key(provider, key),
-            AppCommand::SetBackupPassword(password) => self.handle_set_backup_password(password),
+            AppCommand::SetSecret { key, value } => self.handle_set_secret(key, value),
+            AppCommand::ImportMcpServers(path) => self.handle_import_mcp_servers(path),
         }
         false
     }
@@ -668,20 +669,29 @@ impl Orchestrator {
             .filter(|p| self.profile_has_data(p.id))
             .map(|p| p.id)
             .collect();
-        // Which keys are stored on **this** machine (for the status field in settings).
-        let api_keys_present: Vec<CloudProvider> = [
+        // Which secrets are stored on **this** machine (the status shown by every
+        // secret field). Candidates are enumerated rather than listed from the
+        // entry: the entry may also hold this machine's secrets for servers that
+        // have since been renamed or deleted (they are deliberately not collected,
+        // §9 S4), and a status row must only speak for a field that exists.
+        let secrets_present: Vec<SecretKey> = [
             CloudProvider::OpenAi,
             CloudProvider::Gemini,
             CloudProvider::Claude,
         ]
         .into_iter()
-        .filter(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()).is_some())
+        .map(SecretKey::Provider)
+        .chain(std::iter::once(SecretKey::BackupPassword))
+        .chain(self.config.mcp.servers.iter().flat_map(|s| {
+            s.env.keys().map(|var| SecretKey::McpEnv {
+                server: s.id.clone(),
+                var: var.clone(),
+            })
+        }))
+        .filter(|k| {
+            crate::shared::secrets::stored_key(&self.config.api_keys, &k.storage_name()).is_some()
+        })
         .collect();
-        let backup_password_present = crate::shared::secrets::stored_key(
-            &self.config.api_keys,
-            crate::shared::secrets::BACKUP_PASSWORD_KEY,
-        )
-        .is_some();
         // Secrets never leave the backend for the UI, not even as ciphertext:
         // the config snapshot goes out without them (`handle_update_config`
         // holds onto them separately). See docs/research/api-key-storage.md.
@@ -692,8 +702,7 @@ impl Orchestrator {
             profiles: visible,
             language_locked,
             mcp: self.mcp.snapshot(),
-            api_keys_present,
-            backup_password_present,
+            secrets_present,
         });
     }
 

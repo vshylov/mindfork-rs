@@ -5,6 +5,7 @@ use super::*;
 
 use crate::app::orchestrator::engines::{RESTART_BUDGET, Server};
 use crate::shared::config::{CloudProvider, ServerMode};
+use crate::shared::secrets::SecretKey;
 use crate::shared::server::ServerStatus;
 
 #[tokio::test]
@@ -273,14 +274,15 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
         .unwrap();
 
     cmd_tx
-        .send(AppCommand::SetApiKey {
-            provider: CloudProvider::OpenAi,
-            key: "sk-super-secret-42".into(),
+        .send(AppCommand::SetSecret {
+            key: SecretKey::Provider(CloudProvider::OpenAi),
+            value: "sk-super-secret-42".into(),
         })
         .unwrap();
-    wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
-    })
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { secrets_present, .. } if !secrets_present.is_empty()),
+    )
     .await
     .unwrap();
 
@@ -314,16 +316,19 @@ async fn set_backup_password_persists_encrypted_and_reads_back() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
     let root = _d.path().to_path_buf();
     wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { backup_password_present, .. } if !backup_password_present)
+        matches!(e, AppEvent::Settings { secrets_present, .. } if !secrets_present.contains(&SecretKey::BackupPassword))
     })
     .await
     .unwrap();
 
     cmd_tx
-        .send(AppCommand::SetBackupPassword("open-sesame-42".into()))
+        .send(AppCommand::SetSecret {
+            key: SecretKey::BackupPassword,
+            value: "open-sesame-42".into(),
+        })
         .unwrap();
     wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { backup_password_present, .. } if *backup_password_present)
+        matches!(e, AppEvent::Settings { secrets_present, .. } if secrets_present.contains(&SecretKey::BackupPassword))
     })
     .await
     .unwrap();
@@ -362,14 +367,15 @@ async fn update_config_preserves_stored_api_keys() {
         .unwrap();
 
     cmd_tx
-        .send(AppCommand::SetApiKey {
-            provider: CloudProvider::Claude,
-            key: "sk-ant-keep-me".into(),
+        .send(AppCommand::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Claude),
+            value: "sk-ant-keep-me".into(),
         })
         .unwrap();
-    wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
-    })
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { secrets_present, .. } if !secrets_present.is_empty()),
+    )
     .await
     .unwrap();
 
@@ -410,26 +416,27 @@ async fn set_empty_api_key_removes_stored_entry() {
         .await
         .unwrap();
     cmd_tx
-        .send(AppCommand::SetApiKey {
-            provider: CloudProvider::Gemini,
-            key: "sk-temp".into(),
-        })
-        .unwrap();
-    wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
-    })
-    .await
-    .unwrap();
-    // An empty key means removal: the "configured" flag goes dark.
-    cmd_tx
-        .send(AppCommand::SetApiKey {
-            provider: CloudProvider::Gemini,
-            key: String::new(),
+        .send(AppCommand::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Gemini),
+            value: "sk-temp".into(),
         })
         .unwrap();
     wait_for(
         &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { api_keys_present, .. } if api_keys_present.is_empty()),
+        |e| matches!(e, AppEvent::Settings { secrets_present, .. } if !secrets_present.is_empty()),
+    )
+    .await
+    .unwrap();
+    // An empty key means removal: the "configured" flag goes dark.
+    cmd_tx
+        .send(AppCommand::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Gemini),
+            value: String::new(),
+        })
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { secrets_present, .. } if secrets_present.is_empty()),
     )
     .await
     .unwrap();
@@ -450,24 +457,28 @@ async fn settings_snapshot_carries_flags_not_secrets() {
         .unwrap();
 
     cmd_tx
-        .send(AppCommand::SetApiKey {
-            provider: CloudProvider::OpenAi,
-            key: "sk-in-snapshot-test".into(),
+        .send(AppCommand::SetSecret {
+            key: SecretKey::Provider(CloudProvider::OpenAi),
+            value: "sk-in-snapshot-test".into(),
         })
         .unwrap();
-    let ev = wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
-    })
+    let ev = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { secrets_present, .. } if !secrets_present.is_empty()),
+    )
     .await
     .unwrap();
 
     if let AppEvent::Settings {
         config,
-        api_keys_present,
+        secrets_present,
         ..
     } = ev
     {
-        assert_eq!(api_keys_present, vec![CloudProvider::OpenAi]);
+        assert_eq!(
+            secrets_present,
+            vec![SecretKey::Provider(CloudProvider::OpenAi)]
+        );
         assert!(
             config.api_keys.is_empty(),
             "the UI snapshot must not carry key entries"

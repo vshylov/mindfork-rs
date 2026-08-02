@@ -36,8 +36,8 @@ impl SettingsScreen {
             },
             language_locked,
             mcp: Default::default(),
-            api_keys_present: Vec::new(),
-            backup_password_present: false,
+            secrets_present: Vec::new(),
+            mcp_import_result: None,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -112,38 +112,53 @@ impl SettingsScreen {
         self.mcp = mcp;
     }
 
-    /// Updates the list of providers with an API key stored on this machine (from the
-    /// `Settings` snapshot) — the "API key" field shows its status from this. The keys
+    /// Updates which secrets are stored on this machine (from the `Settings`
+    /// snapshot) — every secret field shows its status from this. The secrets
     /// themselves never reach the UI. See `shared::secrets`.
-    pub fn set_api_keys_present(&mut self, present: Vec<CloudProvider>) {
-        self.api_keys_present = present;
+    pub fn set_secrets_present(&mut self, present: Vec<SecretKey>) {
+        self.secrets_present = present;
     }
 
-    /// Updates the "a backup password is stored on this machine" flag (from the
-    /// `Settings` snapshot). Like the API keys, the password itself never reaches
-    /// the UI — only its presence. See `shared::secrets`, spec §12.3.
-    pub fn set_backup_password_present(&mut self, present: bool) {
-        self.backup_password_present = present;
+    /// Shows the outcome of an MCP import on the import row
+    /// (`AppEvent::McpImportResult`).
+    pub fn set_mcp_import_result(&mut self, text: String) {
+        self.mcp_import_result = Some(text);
+    }
+
+    /// Whether this secret is stored on this machine (a secret field's status).
+    pub(super) fn secret_present(&self, key: Option<&SecretKey>) -> bool {
+        key.is_some_and(|k| self.secrets_present.contains(k))
     }
 
     /// Whether the provider's key is stored on this machine (for the "API key" field's status).
     pub(super) fn api_key_present(&self, provider: Option<CloudProvider>) -> bool {
-        provider.is_some_and(|p| self.api_keys_present.contains(&p))
+        self.secret_present(provider.map(SecretKey::Provider).as_ref())
     }
 
-    /// The provider the API-key input field belongs to (by the corresponding engine's
-    /// active mode), or `None` — not a key field. The key is shared across
-    /// chat/impersonation/embeddings of one provider, so it's the provider that matters,
-    /// not the slot. See docs/research/api-key-storage.md.
-    pub(super) fn api_key_field_provider(&self, id: FieldId) -> Option<CloudProvider> {
+    /// Which stored secret an input field addresses, or `None` — not a secret
+    /// field. A provider key is shared across chat/impersonation/embeddings of one
+    /// provider, so it is the provider that matters, not the slot; an MCP value is
+    /// addressed by (server, variable). See docs/research/api-key-storage.md,
+    /// docs/history/mcp-server-editor.md §9.
+    pub(super) fn secret_field_key(&self, id: FieldId) -> Option<SecretKey> {
+        let provider = |p: Option<CloudProvider>| p.map(SecretKey::Provider);
         match id {
-            FieldId::XApiKey => self.config.engine.mode.cloud_provider(),
-            FieldId::IxApiKey => self.config.impersonation_engine.mode.cloud_provider(),
-            FieldId::EApiKey => self.config.embed.mode.cloud_provider(),
-            FieldId::TtsApiKey => self.config.tts.mode.cloud_provider(),
+            FieldId::XApiKey => provider(self.config.engine.mode.cloud_provider()),
+            FieldId::IxApiKey => provider(self.config.impersonation_engine.mode.cloud_provider()),
+            FieldId::EApiKey => provider(self.config.embed.mode.cloud_provider()),
+            FieldId::TtsApiKey => provider(self.config.tts.mode.cloud_provider()),
             // The video slot has no mode of its own — only Gemini takes video
             // (spec §9.9), so this row always addresses the Gemini key.
-            FieldId::VideoApiKey => Some(CloudProvider::Gemini),
+            FieldId::VideoApiKey => Some(SecretKey::Provider(CloudProvider::Gemini)),
+            FieldId::BackupPassword => Some(SecretKey::BackupPassword),
+            FieldId::McpEnvSecret(idx) => {
+                let srv = self.config.mcp.servers.get(self.mcp_server_idx)?;
+                let var = srv.env.keys().nth(idx)?;
+                Some(SecretKey::McpEnv {
+                    server: srv.id.clone(),
+                    var: var.clone(),
+                })
+            }
             _ => None,
         }
     }
@@ -731,6 +746,25 @@ impl SettingsScreen {
             loc.t("ui.settings.group.mcp_server"),
             self.mcp_server_fields(),
         ));
+        // Import from another client's config. A file path rather than a pasted
+        // blob: the file carries live tokens, and pasting one would leave it
+        // visible on screen and in the editor undo buffer (§9, S6). The row shows
+        // the last outcome as its value.
+        rows.extend(grouped(
+            loc.t("ui.settings.group.mcp_import"),
+            vec![
+                row(
+                    FieldId::McpImport,
+                    loc.t("ui.settings.field.mcp_import"),
+                    FieldKind::Text(
+                        self.mcp_import_result
+                            .clone()
+                            .unwrap_or_else(|| "—".to_string()),
+                    ),
+                )
+                .describe(loc.t("ui.settings.desc.mcp_import")),
+            ],
+        ));
         // Server-status rows (read-only): ready/connecting/failure reason;
         // "catalog changed" is highlighted as a warning. Enter does what the row
         // needs — confirm the new catalog (TOFU) or reconnect (spec §9.6). Only
@@ -800,7 +834,7 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.mcp_select")),
             ];
         };
-        vec![
+        let mut rows = vec![
             row(
                 FieldId::McpSelect,
                 loc.t("ui.settings.field.mcp_select"),
@@ -831,6 +865,11 @@ impl SettingsScreen {
                 FieldKind::Text(join_env_map(&srv.env)),
             )
             .describe(loc.t("ui.settings.desc.mcp_env")),
+        ];
+        // The value of each declared variable, if this machine stores one — right
+        // below the declaration that names it.
+        rows.extend(self.mcp_env_secret_rows(srv));
+        rows.extend([
             row(
                 FieldId::McpEnabled,
                 loc.t("ui.settings.field.mcp_server_enabled"),
@@ -849,7 +888,38 @@ impl SettingsScreen {
                 FieldKind::Text(srv.max_result_chars.to_string()),
             )
             .describe(loc.t("ui.settings.desc.mcp_max_result")),
-        ]
+        ]);
+        rows
+    }
+
+    /// A stored-secret row per variable the selected server declares: the value
+    /// this machine hands the child process, entered in a masked field and kept
+    /// machine-bound (ADR 0008) instead of in an OS environment variable. The
+    /// `env` row above stays the declaration and the fallback source name — a
+    /// stored secret simply wins (docs/history/mcp-server-editor.md §9, S1/S8).
+    ///
+    /// The label is the variable name — user data, so it can be longer than
+    /// `LABEL_CAP`; the value column then just does not grow past the cap, as
+    /// with the server status rows.
+    fn mcp_env_secret_rows(&self, srv: &McpServerConfig) -> Vec<FieldRow> {
+        let loc = self.loc();
+        srv.env
+            .keys()
+            .enumerate()
+            .map(|(idx, var)| {
+                let key = SecretKey::McpEnv {
+                    server: srv.id.clone(),
+                    var: var.clone(),
+                };
+                secret_row(
+                    FieldId::McpEnvSecret(idx),
+                    self.secret_present(Some(&key)),
+                    var,
+                    "ui.settings.desc.mcp_env_secret",
+                    loc,
+                )
+            })
+            .collect()
     }
 
     /// How many of the server's tools the **selected** profile has enabled. The
@@ -887,7 +957,7 @@ impl SettingsScreen {
             loc.t("ui.settings.group.backup"),
             vec![secret_row(
                 FieldId::BackupPassword,
-                self.backup_password_present,
+                self.secret_present(Some(&SecretKey::BackupPassword)),
                 loc.t("ui.settings.field.backup_password"),
                 "ui.settings.desc.backup_password",
                 loc,

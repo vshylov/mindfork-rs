@@ -55,6 +55,41 @@ pub const SCHEME_MACHINE_KEY_V1: &str = "machine-key-v1";
 /// gate over `*.*` literals — a hyphen is just as unambiguous here.
 pub const BACKUP_PASSWORD_KEY: &str = "backup-password";
 
+/// Which secret a storage slot holds. One typed key instead of raw strings: the
+/// side effects of storing differ per kind (a provider key re-raises the servers
+/// that use it, an MCP one re-spawns that server, a backup password needs
+/// nothing), and dispatching those by parsing a name is how they drift. Carried
+/// by `AppCommand::SetSecret` and by the settings snapshot's presence list; the
+/// storage itself only ever sees [`Self::storage_name`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretKey {
+    /// A cloud provider's API key — shared by chat/impersonation/embeddings of
+    /// that provider (ADR 0008 §3).
+    Provider(crate::shared::config::CloudProvider),
+    /// The backup password (spec §12.3).
+    BackupPassword,
+    /// The value of one environment variable handed to an MCP server
+    /// (docs/history/mcp-server-editor.md §9, S1): the alternative to naming an
+    /// OS variable in `env`, and the only one that does not require setting a
+    /// variable outside the app.
+    McpEnv { server: String, var: String },
+}
+
+impl SecretKey {
+    /// The key this secret is stored under in the machine entry. `mcp-` cannot
+    /// collide with a provider key (`openai`/`gemini`/`claude`) or with
+    /// [`BACKUP_PASSWORD_KEY`], and since a variable name is restricted to
+    /// `[A-Za-z0-9_]` (only the server id may contain `-`) the composed name is
+    /// unambiguous from the right.
+    pub fn storage_name(&self) -> String {
+        match self {
+            Self::Provider(p) => p.key().to_string(),
+            Self::BackupPassword => BACKUP_PASSWORD_KEY.to_string(),
+            Self::McpEnv { server, var } => format!("mcp-{server}-{var}"),
+        }
+    }
+}
+
 /// Plaintext of the `check` probe: encrypted alongside the keys; decrypting it
 /// successfully identifies an entry as "ours" (we do not store an explicit
 /// machine-id in the portable config).

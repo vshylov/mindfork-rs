@@ -236,6 +236,76 @@ async fn mcp_filesystem_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
 }
 
+/// End to end for the JSON import (§9, S5–S7): the file's **literal** `env`
+/// values become machine-bound secrets, the servers arrive disabled, ids are
+/// sanitized to our slug, and — the claim that matters — no token reaches
+/// `settings.json` in the clear.
+#[tokio::test]
+async fn import_stores_secrets_and_never_writes_them_in_the_clear() {
+    if !crate::shared::secrets::scheme_available() {
+        return; // Linux without machine-id: storing secrets is unsupported
+    }
+    let (dir, mut orch) = bare_orch();
+    let path = dir.path().join("claude_desktop_config.json");
+    std::fs::write(
+        &path,
+        r#"{ "mcpServers": {
+              "My Server": { "command": "npx",
+                             "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/w"],
+                             "env": { "GITHUB_TOKEN": "ghp_live_secret_42" } },
+              "remote":    { "type": "sse", "url": "https://example/mcp" }
+        } }"#,
+    )
+    .unwrap();
+
+    orch.handle_import_mcp_servers(path.to_string_lossy().to_string());
+
+    assert_eq!(orch.config.mcp.servers.len(), 1, "the sse entry is skipped");
+    let srv = &orch.config.mcp.servers[0];
+    assert_eq!(
+        srv.id, "my-server",
+        "the free-form key is sanitized to a slug"
+    );
+    assert!(!srv.enabled, "an imported server never spawns on arrival");
+    assert_eq!(srv.command, "npx");
+    // The variable is declared with no OS source; its value lives in the secret store.
+    assert_eq!(srv.env.get("GITHUB_TOKEN").map(String::as_str), Some(""));
+    let stored = crate::shared::secrets::stored_key(
+        &orch.config.api_keys,
+        &crate::shared::secrets::SecretKey::McpEnv {
+            server: "my-server".into(),
+            var: "GITHUB_TOKEN".into(),
+        }
+        .storage_name(),
+    );
+    assert_eq!(stored.as_deref(), Some("ghp_live_secret_42"));
+
+    // On disk: ciphertext only. This is the whole reason the orchestrator parses
+    // the file instead of the screen.
+    let raw = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
+    assert!(
+        !raw.contains("ghp_live_secret_42"),
+        "the imported token leaked into settings.json"
+    );
+    assert!(raw.contains("my-server"), "the server wasn't persisted");
+
+    // A re-import adds nothing (S7) — and does not duplicate the server.
+    orch.handle_import_mcp_servers(path.to_string_lossy().to_string());
+    assert_eq!(orch.config.mcp.servers.len(), 1);
+}
+
+/// A file that cannot be read or parsed reports itself on the import row rather
+/// than failing silently — and changes nothing.
+#[tokio::test]
+async fn a_bad_import_reports_and_changes_nothing() {
+    let (dir, mut orch, mut rx) = bare_orch_rx();
+    orch.handle_import_mcp_servers(dir.path().join("nope.json").to_string_lossy().to_string());
+    assert!(orch.config.mcp.servers.is_empty());
+    let reported = std::iter::from_fn(|| rx.try_recv().ok())
+        .any(|e| matches!(e, AppEvent::McpImportResult(_)));
+    assert!(reported, "a failed import must say so");
+}
+
 #[tokio::test]
 async fn mcp_exited_removes_tools_from_registry() {
     let (_dir, mut orch) = bare_orch();
@@ -277,7 +347,7 @@ async fn a_server_edited_in_settings_reaches_the_host() {
     // debounce cannot respawn `npx` for an edit plus its undo.
     let same = orch.config.clone();
     orch.handle_update_config(same);
-    assert!(orch.mcp.is_current(&orch.config.mcp));
+    assert!(orch.mcp.is_current(&orch.config.mcp, &orch.config.api_keys));
 
     // Removing it takes the server back down.
     let mut cleared = orch.config.clone();
@@ -330,7 +400,7 @@ async fn mcp_reconnect_live() {
     };
 
     // First bring-up (npx may download the package — a generous timeout).
-    mgr.apply(&settings, loc);
+    mgr.apply(&settings, &[], loc);
     let evt = tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv())
         .await
         .expect("the MCP server should come up within 120s")

@@ -80,15 +80,13 @@ pub(super) fn apply_event(
             profiles,
             language_locked,
             mcp,
-            api_keys_present,
-            backup_password_present,
+            secrets_present,
         } => {
             match active {
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
                     settings.set_mcp(mcp.clone());
-                    settings.set_api_keys_present(api_keys_present.clone());
-                    settings.set_backup_password_present(backup_password_present);
+                    settings.set_secrets_present(secrets_present.clone());
                 }
                 // The theme/compatibility mode/UI language may have changed — refresh the
                 // palette and locale of open overlay screens (list/self-model) in one broadcast.
@@ -98,14 +96,7 @@ pub(super) fn apply_event(
                     crate::shared::i18n::locale(config.interface.language),
                 ),
             }
-            screen.set_settings(
-                *config,
-                profiles,
-                language_locked,
-                mcp,
-                api_keys_present,
-                backup_password_present,
-            );
+            screen.set_settings(*config, profiles, language_locked, mcp, secrets_present);
         }
         // Always applied to the chat screen (like `ChatList`): the names must be
         // current whether or not the chat is the visible screen right now.
@@ -229,6 +220,14 @@ pub(super) fn apply_event(
             BackgroundKind::Consolidation => screen.set_consolidating(on),
             BackgroundKind::SelfConsolidation => screen.set_self_consolidating(on),
         },
+        // The import runs from the settings screen and its outcome is shown
+        // there, on the import row itself — a note in the feed would sit behind
+        // the screen the user is standing on.
+        AppEvent::McpImportResult(text) => {
+            if let ActiveScreen::Settings(settings) = active {
+                settings.set_mcp_import_result(text);
+            }
+        }
         AppEvent::Error(message) => screen.push_error(&message),
     }
 }
@@ -318,7 +317,7 @@ pub(super) fn dispatch(
         ChatIntent::TtsPause => AppCommand::TtsPause,
         ChatIntent::TtsResume => AppCommand::TtsResume,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles, language_locked, mcp, api_keys, backup_password)) =
+            if let Some((config, profiles, language_locked, mcp, secrets)) =
                 screen.settings_snapshot()
             {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
@@ -328,9 +327,8 @@ pub(super) fn dispatch(
                 // The MCP-host snapshot (the tool catalog + server statuses);
                 // afterward `apply_event` updates it from the `Settings` event.
                 settings.set_mcp(mcp);
-                // Which keys are stored on this machine (the "API key" status field).
-                settings.set_api_keys_present(api_keys);
-                settings.set_backup_password_present(backup_password);
+                // Which secrets are stored on this machine (every secret field's status).
+                settings.set_secrets_present(secrets);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
@@ -489,8 +487,8 @@ pub(super) fn dispatch_settings(
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         SettingsIntent::ConfirmMcpCatalog(server) => AppCommand::ConfirmMcpCatalog(server),
         SettingsIntent::ReconnectMcpServer(server) => AppCommand::ReconnectMcpServer(server),
-        SettingsIntent::SetApiKey { provider, key } => AppCommand::SetApiKey { provider, key },
-        SettingsIntent::SetBackupPassword(password) => AppCommand::SetBackupPassword(password),
+        SettingsIntent::SetSecret { key, value } => AppCommand::SetSecret { key, value },
+        SettingsIntent::ImportMcpServers(path) => AppCommand::ImportMcpServers(path),
     };
     let _ = cmd_tx.send(command);
     false

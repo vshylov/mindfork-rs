@@ -288,7 +288,8 @@ pub(super) fn cloud_rows(
 pub(super) fn is_secret_field(id: FieldId) -> bool {
     matches!(
         id,
-        FieldId::XApiKey
+        FieldId::McpEnvSecret(_)
+            | FieldId::XApiKey
             | FieldId::IxApiKey
             | FieldId::EApiKey
             | FieldId::TtsApiKey
@@ -318,7 +319,9 @@ pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> F
 pub(super) fn secret_row(
     id: FieldId,
     present: bool,
-    label: &'static str,
+    // Not `&'static str`: an MCP environment row is labelled with the variable
+    // name, which is user data.
+    label: &str,
     desc_key: &str,
     loc: &'static Locale,
 ) -> FieldRow {
@@ -1161,6 +1164,8 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::McpCommand
             | FieldId::McpArgs
             | FieldId::McpEnv
+            | FieldId::McpEnvSecret(_)
+            | FieldId::McpImport
             | FieldId::McpEnabled
             | FieldId::McpTimeout
             | FieldId::McpMaxResult
@@ -1288,15 +1293,16 @@ pub(super) fn join_env_map(env: &std::collections::BTreeMap<String, String>) -> 
         .join(", ")
 }
 
-/// Text back into an MCP server's `env` map. Entries without a `=` or with an
-/// empty name are dropped — the field is edited character by character, so a
-/// half-typed entry must not break the ones already there.
+/// Text back into an MCP server's `env` map. Entries without a `=` or with a
+/// name we cannot carry (`valid_env_name`) are dropped — the field is edited
+/// character by character, so a half-typed entry must not break the ones already
+/// there.
 pub(super) fn parse_env_map(s: &str) -> std::collections::BTreeMap<String, String> {
     s.split(',')
         .filter_map(|part| {
             let (k, v) = part.split_once('=')?;
             let (k, v) = (k.trim(), v.trim());
-            (!k.is_empty()).then(|| (k.to_string(), v.to_string()))
+            crate::shared::mcp::valid_env_name(k).then(|| (k.to_string(), v.to_string()))
         })
         .collect()
 }

@@ -166,27 +166,27 @@ pub enum AppCommand {
     /// reconfirmation from settings): register the held-back tools
     /// and persist the new pin. The argument is the server id. See spec §9.6.
     ConfirmMcpCatalog(String),
-    /// Save a cloud provider's API key (entered in settings). The orchestrator
-    /// encrypts it with the machine key and puts it into `config.api_keys` — plaintext
-    /// lives only along this path and in the HTTP client, it never reaches disk in
-    /// plaintext. An empty `key` — delete the saved key for this provider. See
-    /// `shared::secrets`, docs/research/api-key-storage.md.
-    // Built by the settings screen (the "API key" field, stage 2 of the track);
-    // the handler and persistence are already here and covered by orchestrator tests.
-    #[allow(dead_code)]
-    SetApiKey {
-        provider: crate::shared::config::CloudProvider,
-        key: String,
+    /// Store a secret entered in settings — a cloud provider's API key, the
+    /// backup password, or an MCP server's environment value. The orchestrator
+    /// encrypts it with the machine key and puts it into `config.api_keys`:
+    /// plaintext lives only along this path and in the consumer (the HTTP client,
+    /// the archive, the child process), never on disk. An empty `value` deletes
+    /// it. Separate from `UpdateConfig` precisely so the secret never travels in
+    /// a config snapshot. See `shared::secrets`, docs/research/api-key-storage.md.
+    SetSecret {
+        key: crate::shared::secrets::SecretKey,
+        value: String,
     },
     /// Restart one MCP server (Enter on its row in settings when there is no
     /// catalog to confirm). An action, not a config edit: an identical config is
     /// not re-applied (`McpManager::is_current`), so a server that exhausted its
     /// restart budget has no other way back. See spec §9.6.
     ReconnectMcpServer(String),
-    /// Store/clear the backup password for this machine (spec §12.3). Separate
-    /// from `UpdateConfig` for the same reason as [`AppCommand::SetApiKey`]: the
-    /// secret is encrypted by the orchestrator and never travels in the snapshot.
-    SetBackupPassword(String),
+    /// Import MCP servers from an ecosystem `mcpServers` JSON file (the argument
+    /// is the path). Parsed by the orchestrator, not the screen: it is the sole
+    /// writer of `settings.json` and the only layer allowed to touch the literal
+    /// secrets such a file carries. See docs/history/mcp-server-editor.md §9.
+    ImportMcpServers(String),
     /// Shut down (the orchestrator stops).
     Quit,
 }
@@ -248,22 +248,24 @@ pub enum AppEvent {
     /// toggles + server statuses for rows in the "Tools" section); MCP tools are not
     /// part of the static `tool_catalog()`. Empty while the servers haven't
     /// come up / are disabled.
-    /// `api_keys_present` — providers whose API key is saved **on this machine**
-    /// (the "configured" status field in the cloud subsections). The keys themselves
-    /// aren't included in the snapshot: `config.api_keys` is cleared on emit — UI
-    /// doesn't carry secrets even as ciphertext, and the orchestrator restores them on
-    /// the way back (`handle_update_config`). See `shared::secrets`,
+    /// `secrets_present` — which secrets are stored **on this machine** (the
+    /// "configured" status shown by every secret field: provider keys, the backup
+    /// password, MCP environment values). The secrets themselves aren't included
+    /// in the snapshot: `config.api_keys` is cleared on emit — UI doesn't carry
+    /// them even as ciphertext, and the orchestrator restores them on the way back
+    /// (`handle_update_config`). See `shared::secrets`,
     /// docs/research/api-key-storage.md.
     Settings {
         config: Box<AppConfig>,
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
         mcp: crate::features::tools::mcp::McpSnapshot,
-        api_keys_present: Vec<crate::shared::config::CloudProvider>,
-        /// Whether a backup password is stored on this machine (spec §12.3) —
-        /// the presence flag only, never the value.
-        backup_password_present: bool,
+        secrets_present: Vec<crate::shared::secrets::SecretKey>,
     },
+    /// The outcome of an MCP import (`AppCommand::ImportMcpServers`) — a
+    /// localized one-line summary, or the reason it failed. Shown as the import
+    /// row's value in settings, where the user is standing.
+    McpImportResult(String),
     /// The role names to show in the feed — the active chat's profile
     /// `character_names` (spec §5.1). Sent on chat activation and whenever the
     /// profile is edited, so a name change applies to the open chat immediately.
