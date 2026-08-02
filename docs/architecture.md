@@ -1332,13 +1332,24 @@ Implementation notes:
   revision: the `McpConnection` transport works over any `AsyncRead`/
   `AsyncWrite` — testable over a duplex; `McpClient` is a subprocess with a
   kill/exited monitor task modeled on `managed.rs` + a Job Object
-  kill-on-close on Windows; `.bat`/`.cmd` forbidden — BatBadBut). Lifecycle is
+  kill-on-close on Windows; the command is resolved as a shell would —
+  `PATHEXT` completion, so one config works on every platform). Lifecycle is
   `McpManager` (`app/orchestrator/mcp.rs`, mirroring `EngineManager`):
   background spawn tasks send `Ready`/`Failed`/`Exited` events, epoch-guarded,
   into the loop's internal channel `run`; a restart budget (3 crashes/5 min);
   TOFU catalog pinning (sha256 of names+descriptions+schemas; a change →
   tools are held back until confirmed in settings, the pin is
-  `config.mcp.servers[].pinned_catalog`, written by the orchestrator). Call
+  `config.mcp.servers[].pinned_catalog`, written by the orchestrator). The
+  child's environment is resolved by the manager (`resolve_env`, the
+  `EngineManager` precedent — decryption lives here, the spawn layer sees
+  plaintext): a **stored secret** (ADR 0008, `mcp-<server>-<VAR>`) wins, the OS
+  variable named in `env` is the fallback. Because a secret change alters no
+  setting, `is_current` compares the **resolved environment** as well — otherwise
+  the debounce would skip the re-apply and the server would keep the old value
+  (docs/history/mcp-server-editor.md §9.1). Importing another client's
+  `mcpServers` JSON is planned by `features/mcp_import.rs` and applied by the
+  orchestrator, which is the only layer allowed to touch the literal secrets such
+  a file carries. Call
   cancellation is `ToolContext.cancel` (a clone of the turn's token; the
   agentic loop additionally wraps any tool's `invoke` in a `select!` with it
   — Esc is never blocked).

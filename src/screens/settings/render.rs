@@ -600,14 +600,12 @@ impl SettingsScreen {
                 if let Some(text) = f.description.as_deref() {
                     hint.extend(wrap_text(text, palette.muted_style(), w));
                 }
-                // A globally-disabled tool — an expanded explanation (in warning
-                // color), so the honest gate is understandable, not just "⊘".
-                if f.warn {
-                    hint.extend(wrap_text(
-                        loc.t("ui.settings.ui.gate_warn"),
-                        Style::new().fg(palette.warning),
-                        w,
-                    ));
+                // An expanded explanation for a flagged row, when the row has one
+                // (a globally-disabled tool) — so the honest gate is
+                // understandable, not just "⊘". Driven by the note rather than by
+                // `warn`: that flag is raised for several unrelated reasons.
+                if let Some(note) = f.warn_note.as_deref() {
+                    hint.extend(wrap_text(note, Style::new().fg(palette.warning), w));
                 }
             }
             let mut lines: Vec<Line<'static>> = Vec::new();

@@ -31,6 +31,7 @@ use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::mcp::valid_server_id as valid_mcp_server_id;
+use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
@@ -63,17 +64,20 @@ pub enum SettingsIntent {
     /// budget: a settings edit no longer helps, since an identical config is
     /// not re-applied (`McpManager::is_current`). See spec §9.6.
     ReconnectMcpServer(String),
-    /// Save the entered cloud-provider API key (empty — delete it).
-    /// The orchestrator encrypts it with the machine key; the screen's config has no keys.
-    /// See `shared::secrets`, docs/research/api-key-storage.md.
-    SetApiKey {
-        provider: crate::shared::config::CloudProvider,
-        key: String,
+    /// A secret was entered/cleared (empty value — delete it): a cloud-provider
+    /// API key, the backup password, an MCP server's environment value. Travels
+    /// apart from the config on purpose — the orchestrator encrypts it with the
+    /// machine key and the screen never holds it. See `shared::secrets`,
+    /// docs/research/api-key-storage.md.
+    SetSecret {
+        key: crate::shared::secrets::SecretKey,
+        value: String,
     },
-    /// The backup password was entered/cleared (spec §12.3). Travels apart from
-    /// the config for the same reason as [`SettingsIntent::SetApiKey`]: the
-    /// orchestrator encrypts it with the machine key, the screen never holds it.
-    SetBackupPassword(String),
+    /// Import MCP servers from an ecosystem `mcpServers` JSON file (the argument
+    /// is the path). The orchestrator reads and parses it: such a file carries
+    /// literal secrets, which must not travel through `screens`. See
+    /// docs/history/mcp-server-editor.md §9.
+    ImportMcpServers(String),
 }
 
 /// Settings sections (the left menu). See spec §11.6.
@@ -519,8 +523,26 @@ enum FieldId {
     /// Launch arguments as a command line (shell-style quoting, see `parse_args`).
     McpArgs,
     /// `CHILD=SOURCE` pairs: the child's variable ← the **name** of a source
-    /// variable in the app's environment (no secrets on disk, ADR 0007 R8).
+    /// variable in the app's environment. Also the *declaration* of the
+    /// variables: a value stored on this machine ([`FieldId::McpEnvSecret`])
+    /// wins over the named source, and either way `settings.json` holds no
+    /// secret (ADR 0007 R8 as amended, docs/history/mcp-server-editor.md §9).
     McpEnv,
+    /// The stored value of the n-th variable the selected server declares (the
+    /// order of the `env` map). A secret: the row shows a status, never the
+    /// value; editing goes out as [`SettingsIntent::SetSecret`]. Only for a
+    /// variable declared **by name alone** — one that names a source has its
+    /// answer already and gets [`FieldId::McpEnvSource`] instead.
+    McpEnvSecret(usize),
+    /// Read-only status of the n-th variable when it names a source: whether that
+    /// OS variable is actually there. Without it one of the two routes is mute —
+    /// the stored one shows "configured / not set" while a named source shows
+    /// nothing at all, and the only symptom is the server not working
+    /// (docs/history/mcp-server-editor.md §9.5c).
+    McpEnvSource(usize),
+    /// Import servers from an ecosystem `mcpServers` JSON file — the value
+    /// entered is a **path**; the row shows the last import's outcome.
+    McpImport,
     /// Whether the server starts. A server created in the UI starts **off**, so
     /// nothing is spawned while its command is still half-typed.
     McpEnabled,
@@ -559,7 +581,7 @@ enum FieldId {
     TtsStopOnSwitch,
     TtsStopOnGeneration,
     /// The backup password (section "Data"). A secret: the row shows a status,
-    /// never the value; editing goes out as [`SettingsIntent::SetBackupPassword`].
+    /// never the value; editing goes out as [`SettingsIntent::SetSecret`].
     /// See spec §12.3, docs/history/backup-password.md.
     BackupPassword,
     // RAG (knowledge-base chunking)
@@ -654,9 +676,16 @@ struct FieldRow {
     /// `String` (not `&'static`): MCP-tool descriptions are dynamic
     /// server text (full display is an antidote to tool-poisoning, spec §9.6).
     description: Option<String>,
-    /// Draw the value and hint in warning color — a tool enabled in the
-    /// profile but disabled by a global gate (unavailable to the model).
+    /// Draw the value and hint in warning color — this row needs attention. It
+    /// is raised for several unrelated reasons: a tool enabled in the profile but
+    /// disabled by a global gate, an MCP server whose catalog changed, an
+    /// environment variable whose source is missing.
     warn: bool,
+    /// An expanded explanation printed under the description when there is one to
+    /// give (today: the global gate). Kept apart from [`Self::warn`] — tying one
+    /// fixed sentence to that flag printed the gate explanation on rows that had
+    /// nothing to do with a gate.
+    warn_note: Option<String>,
 }
 
 impl FieldRow {
@@ -796,13 +825,15 @@ pub struct SettingsScreen {
     /// server statuses (rows in the "Plugins" section, TOFU confirmation).
     /// Empty until servers come up/while MCP is off. See spec §9.6.
     mcp: crate::features::tools::mcp::McpSnapshot,
-    /// Providers whose API key is stored on **this** machine (from the `Settings`
-    /// snapshot). The "API key" field shows its status from this; the screen doesn't
-    /// hold the keys themselves. See `shared::secrets`, docs/research/api-key-storage.md.
-    api_keys_present: Vec<crate::shared::config::CloudProvider>,
-    /// Whether a backup password is stored on this machine (the value never is —
-    /// only the flag). See spec §12.3.
-    backup_password_present: bool,
+    /// Which secrets are stored on **this** machine (from the `Settings`
+    /// snapshot): provider keys, the backup password, MCP environment values.
+    /// Every secret field shows its status from this list; the screen never holds
+    /// the secrets themselves. See `shared::secrets`, docs/research/api-key-storage.md.
+    secrets_present: Vec<crate::shared::secrets::SecretKey>,
+    /// The last MCP import's outcome (`AppEvent::McpImportResult`) — shown as the
+    /// import row's value, where the user is standing. See §9 of
+    /// docs/history/mcp-server-editor.md.
+    mcp_import_result: Option<String>,
     /// Edits made during **this visit**, newest last (`Ctrl+Z`). The screen is built
     /// fresh on every `Ctrl+P`, so the stack scopes to one sitting — which is the
     /// span the "I just changed something by accident" question covers. See

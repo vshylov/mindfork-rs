@@ -831,9 +831,44 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   on Windows `PATHEXT` completion finds `npx.cmd`, which Rust's own `Command` does
   not do. A bare name is never taken as-is — npm ships an extensionless `npx` next
   to the shim, and it is a Unix script Windows cannot execute. `env` — a map "the
-  child's variable → the **name** of
-  the source environment variable" (secrets aren't written into `settings.json`, R8);
+  child's variable → the **name** of the source environment variable"; the source
+  may be left empty, which **declares** the variable and leaves its value to a
+  stored secret (below). Either way no secret is written into `settings.json` (R8);
   `tool_timeout_secs` — a per-call timeout; `max_result_chars` — result clipping).
+- **Secret values for `env`**: a declared variable's value can also be entered in
+  the window and is then stored **encrypted with this machine's key**
+  ([ADR 0008](docs/decisions/0008-api-key-storage.md)) under the name
+  `mcp-<server>-<VARIABLE>` in `config.api_keys` — the same per-machine entry the
+  cloud keys and the backup password use, so no new config field and no schema
+  change. Each declared variable has exactly **one** origin and the row says which:
+  a bare name takes the stored value (and with none stored is left to inheritance),
+  while `VARIABLE=SOURCE` takes it from that OS variable and a stored value is not
+  consulted for it — the alternative is a row saying "take it from X" while a secret
+  silently overrides it. CI and scripted setups are unaffected: they set the variable
+  under its own name, which the child inherits. A child
+  variable name is restricted to `[A-Za-z0-9_]`: that is what keeps the flat
+  variable-list row parseable and the storage name unambiguous. The secret never
+  reaches the UI — the settings snapshot carries presence flags only. Orphaned
+  secrets (a server renamed or deleted) are **not** collected automatically: the row
+  commits on Enter, so a half-typed edit would destroy a value, and `Ctrl+Z` restores
+  the config but cannot restore a secret — undoing a server delete brings the server
+  back, not its secrets.
+- **Import of the ecosystem's `mcpServers` JSON** (`claude_desktop_config.json` and
+  the clients that copied its shape; VS Code's `servers` key is accepted too): the
+  field takes a **file path**, not pasted JSON — a pasted blob would leave live
+  tokens visible on screen and in the editor's undo buffer. The **orchestrator**
+  reads and parses it, mirroring `ConfirmMcpCatalog`: such a file carries literal
+  secrets, and the orchestrator is the sole writer of `settings.json` and the only
+  layer that may touch plaintext. Semantics: imported servers arrive **disabled**
+  (nothing spawns until the user says so, and an imported command may not even exist
+  on this machine); every literal `env` value is stored as a machine-bound secret and
+  its variable declared with an empty source, so nothing lands in `settings.json` in
+  the clear; ids are sanitized to our slug (`[a-z0-9-]`, ≤32, a numeric suffix on
+  collision within the file); a server whose id **already exists is skipped** and
+  reported, so a re-import is a no-op and never overwrites a hand-tuned server;
+  non-stdio entries (`"type": "sse"/"http"`, or a `url` and no `command`) are skipped
+  and reported — HTTP transport isn't implemented. The row shows a one-line outcome:
+  imported / skipped / secrets stored.
 - **Lifecycle** — `McpManager` (`app/orchestrator/mcp.rs`, mirroring
   `EngineManager`): spawns enabled servers as background tasks on startup/settings
   changes (through the `RestartQueue` debounce); a process monitor (kill/exited
@@ -860,15 +895,29 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   `K` is how many of them the selected profile has enabled, because a server can be
   up while the model sees nothing (double opt-in), and a row that said only "ready"
   is how a user adds a server and finds it does not work. Arguments are edited
-  as a shell-quoted command line and the environment as `VARIABLE=SOURCE` pairs, both
-  round-tripping through the field. A server created in the UI starts **disabled**, so
+  as a shell-quoted command line and the environment as a comma-separated **list of
+  variable names** (`GITHUB_TOKEN, SLACK_TOKEN`), both round-tripping through the
+  field; the `VARIABLE=SOURCE` form remains for the rare case of a differently named
+  source. The list is only *overrides*: a variable already set in the application's
+  own environment reaches the child by inheritance without being listed
+  (`Command::envs` adds, it does not replace). Below the variables row sits **one row per
+  declared variable**, saying where its value comes from and whether it is there: a
+  variable declared by name alone shows its secret's status (`configured (this
+  computer)` / `not set`), opens an **empty masked editor** on Enter and deletes the
+  stored value on `Del` — exactly the "API key" row's behaviour; one that names a
+  source shows a **read-only** `from SRC: found / not found` instead (flagged when
+  missing), because it has no value to enter and leaving it silent would make one of
+  the two routes undiagnosable. The app sees the environment it was *started* with, so
+  a variable set after launch reads as missing until a restart. Plus an "import from a
+  file" row taking the path of an `mcpServers` JSON.
+  A server created in the UI starts **disabled**, so
   nothing is spawned while its command is still half-typed; the id is validated before
   it commits (slug shape and uniqueness) — an invalid id creates no slot at all, so the
   server would otherwise vanish from the status list. **Enter on a status row** does
   what the row needs: confirms a changed catalog when one is pending, otherwise
   **reconnects** the server — the only way back for one that exhausted its restart
   budget, since an identical config is no longer re-applied (`is_current`).
-  tool toggles live in the profile under a "Plugins (MCP)" group, with the tool's
+  Tool toggles live in the profile under a "Plugins (MCP)" group, with the tool's
   **full** description (server-supplied text) shown in the bottom panel on focus —
   mandatory description visibility as an antidote to tool-poisoning (descriptions
   go straight into the system prompt).
@@ -883,9 +932,7 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   the model as the result. Non-text result blocks (image/audio/resource) become a
   text placeholder.
 - **Groundwork**: an HTTP transport, resources/prompts,
-  `notifications/tools/list_changed`, deferred schemas, secrets for the `env` map and
-  import of the ecosystem's `mcpServers` JSON (stage 2 of the editor track) — see
-  docs/roadmap.md.
+  `notifications/tools/list_changed`, deferred schemas — see docs/roadmap.md.
 
 ### 9.7. Chat file attachments (`/file attach`)
 

@@ -1,8 +1,14 @@
 # MCP servers in the settings window — design plan
 
-**Status:** stage 1 **done and accepted** (2026-08-02) — a real server was
-configured end to end from the settings window with a platform-independent
-command, and the model called its tool. Forks accepted — **forks F1–F8 confirmed by the user 2026-08-02,
+**Status:** the track is **complete** — stage 1 done and accepted 2026-08-02,
+stage 2 (secrets + import, §9, forks S1–S8 accepted the same day) implemented and
+live-run 2026-08-02. The file stayed in `docs/history/` throughout: every
+reference to it (roadmap, ADR 0007, CLAUDE.md) already points here, and moving it
+back and forth would churn those links for no gain.
+
+Stage 1's acceptance: a real server was configured end to end from the settings
+window with a platform-independent command, and the model called its tool. Forks
+accepted — **F1–F8 confirmed by the user 2026-08-02,
 all as recommended** (F1(b) a dedicated section, F2(a) a selector, F3(a)
 space-separated with shell quoting, F4(a) the env map stays variable names,
 F5(a) a new server starts disabled, F6 deferred, F7(a) reconnect, F8(a)
@@ -56,7 +62,7 @@ the security question of where an MCP server's secrets live.
 ```rust
 McpServerConfig {
     id: String,                      // slug [a-z0-9-] ≤32 — part of mcp__<id>__<tool>
-    command: String,                 // .bat/.cmd forbidden (BatBadBut)
+    command: String,                 // resolved as a shell would (PATHEXT), see §8
     args: Vec<String>,
     env: BTreeMap<String, String>,   // child var → NAME of a source OS env var (R8)
     enabled: bool,
@@ -308,3 +314,320 @@ authored in the window as `npx` + `-y mcp-echo-server`, the status row reading
 `ready · tools: 1 · in profile: 1`, and the assistant calling
 `mcp__mcp-echo-server__echo` successfully. That closes §6's acceptance criterion,
 the one part of this track no automated test could stand in for.
+
+## 9. Stage 2 — secrets for the `env` map and JSON import
+
+**Forks S1–S8 confirmed by the user 2026-08-02, all as recommended** — S1(a) the
+`env` row declares the variables and a per-variable secret row holds the value,
+S2(a)+S3(a) one typed `SetSecret`/`secrets_present`, S4(b) orphaned secrets are
+never collected automatically, S5(a) an imported value becomes a stored secret,
+S6(b) the import takes a file path and the orchestrator parses it, S7 the import
+package, S8(a) the env-name path survives as the fallback. Scope: F4(b) + F6(a)
+above, branch `feat/mcp-env-secrets`. Amends **ADR 0007 R8** (as stage 1 amended R6):
+the spirit is kept — no plaintext secret on disk — but the storage becomes
+[ADR 0008](../decisions/0008-api-key-storage.md)'s machine-bound encryption
+instead of "the value lives in an OS environment variable".
+
+### 9.1 The gap, and what reading the code settled
+
+Today `env` is `child variable → **name** of an OS environment variable of the
+app`. It keeps `settings.json` free of secrets, and it is a wall: to use a
+hosted server (GitHub, Slack, …) the user must set an OS variable **and restart
+the app**, which is the opposite of "configure it in the window". The import
+(F6) is coupled to it: in the ecosystem's `mcpServers` format those values are
+**literal secrets**, so an import without secret storage either loses them or
+writes a token in the clear.
+
+Four things were established by reading rather than assumed:
+
+- **The storage needs no change.** `secrets::put_key`/`stored_key` and
+  `Orchestrator::store_secret` take an arbitrary key name — proved by the backup
+  password (`BACKUP_PASSWORD_KEY`), which reused the same per-machine entry with
+  no new list, no new scheme and no migration.
+- **The resolution pattern already exists and is per-provider:**
+  `resolve_api_key(stored, api_key_env)` — the stored key wins, the env name
+  stays as the fallback for CI and power users (ADR 0008 §3). One `api_key` row
+  and one `api_key_env` row sit next to each other today; the same pair is
+  exactly what an MCP variable needs.
+- **Decryption belongs in the manager, not below it.** `EngineManager` itself
+  calls `secrets::stored_key` and hands the *supervisor* an already-decrypted
+  `stored_key: Option<&str>`. `McpManager` is the same layer, so it decrypting
+  is the mirror of that precedent, not a new pattern.
+- **`McpManager::is_current` would swallow a secret change.** It compares
+  `McpSettings` only, so changing a secret without touching any server field
+  leaves the final config identical to the applied one and `flush_restarts`
+  skips the re-apply — the server would keep running with the old value and no
+  way to notice. The engines already solved this: `chat_is_current(&settings,
+  keys)` compares the pair. `is_current` must take the key blob too. **This is
+  the one trap that would otherwise ship silently.**
+
+### 9.2 Forks
+
+#### S1 — how a secret value is declared and edited
+
+The flat `VAR=SOURCE, VAR2=SOURCE2` text row is unambiguous *because* the value
+is a variable name. A secret cannot go in that slot: not only would parsing stop
+being unambiguous, the screen must never hold a secret at all (ADR 0008 §4).
+
+- **(a) [recommended]** Keep `env` exactly as it is — it becomes the
+  **declaration** of the child variables plus an *optional* OS source name (an
+  empty source is legal and already parses) — and add **one indexed secret row
+  per declared variable** below it, showing a status (`configured (this
+  computer)` / `not set`) and opening an empty masked editor, exactly like the
+  "API key" row. Resolution mirrors ADR 0008 §3: **a stored secret wins, the OS
+  variable named in `env` is the fallback.** Cost: nothing. **No new config
+  field**, no schema change — the presence of a secret is a fact about
+  `config.api_keys`, and `handle_update_config` already restores that field on
+  the way back, so secrets survive every settings edit with no new code. Reuses
+  `secret_row`, `is_secret_field`, the masked editor and `Del`-deletes.
+- **(b)** A second config field (`env_secret: Vec<String>` — the variables whose
+  value is stored) edited as its own text row of names, plus the same per-name
+  secret rows. Adds a field that duplicates information already derivable from
+  the stored key set, and the two can drift.
+- **(c)** A sigil in the value (`GITHUB_TOKEN=@secret`). One row, but the secret
+  still cannot be *entered* there, so it needs the per-variable rows anyway —
+  and it makes the flat parse ambiguous again for no gain.
+
+#### S2 — the set-secret command
+
+Today `AppCommand::SetApiKey { provider, key }` and
+`AppCommand::SetBackupPassword(String)` are two variants of one thing; a third
+kind would make three.
+
+- **(a) [recommended]** One `AppCommand::SetSecret { key: SecretKey, value:
+  String }` with a small typed enum `SecretKey { Provider(CloudProvider),
+  BackupPassword, McpEnv { server: String, var: String } }` and one
+  `SecretKey::storage_name() -> String`. Typed rather than a raw string: the
+  post-store side effects differ per kind (a provider key marks the slots that
+  use it for a deferred re-raise and rebuilds the registry for Gemini; an MCP
+  secret marks `mcp`; a backup password marks nothing), and dispatching those by
+  parsing a string name is how they drift. The two existing commands fold into
+  it — the same intent/dispatch path, one handler.
+- **(b)** Add `SetMcpSecret { server, var, value }` as a third variant. Smaller
+  diff, keeps the duplication the task set out to remove.
+
+#### S3 — presence flags in the settings snapshot
+
+`AppEvent::Settings` carries `api_keys_present: Vec<CloudProvider>` and
+`backup_password_present: bool`; the UI never sees a secret, only these.
+
+- **(a) [recommended, if S2(a)]** Replace both with `secrets_present:
+  Vec<SecretKey>` — one type shared by the command and the snapshot, so a fourth
+  secret kind later costs nothing. ~10 mechanical call sites.
+- **(b)** Add a third field (`mcp_secrets_present: Vec<String>` of storage
+  names). Least churn, three parallel mechanisms for one fact.
+
+#### S4 — orphaned secrets (a server renamed or deleted)
+
+The storage name embeds the server id and the variable name, so renaming either
+orphans the secret, and deleting a server orphans all of them.
+
+- **(a)** Garbage-collect in `handle_update_config`: drop every `mcp-…` secret
+  whose (server, variable) no longer exists. **Rejected** — the `env` row is
+  committed on `Enter`, so a half-typed edit would destroy a secret the user
+  then has to re-enter, and `Ctrl+Z` restores the *config* but cannot resurrect
+  a secret (secrets are deliberately not part of the snapshot undo restores).
+- **(b) [recommended]** Never collect automatically. An orphan is inert
+  ciphertext in this machine's entry; re-entering under the new name is the fix.
+  ADR 0008 already lists UI management of stored entries ("forget this
+  computer") as groundwork — that is where a cleanup belongs, as an explicit
+  act.
+- **(c)** Collect only on an explicit server delete (`Ctrl+D`). Narrower than
+  (a), but it still makes `Ctrl+Z` of that delete lossy.
+
+#### S5 — what an imported `env` value becomes
+
+In `claude_desktop_config.json` and its relatives, `env` values are literals —
+usually a token, sometimes a benign setting (`NODE_ENV=production`).
+
+- **(a) [recommended]** Every imported value is stored as a machine-bound
+  secret, and the variable is declared in `env` with an empty source. Lossless,
+  and nothing is ever written to `settings.json` in the clear. Cost: a benign
+  literal also becomes machine-bound and invisible — re-entered on another
+  machine like any other secret.
+- **(b)** Classify by variable name (`*TOKEN*`/`*KEY*`/`*SECRET*` → secret, the
+  rest → a literal). Needs a third value mode ("literal value stored in
+  `settings.json`") — i.e. plaintext on disk, which is what R8 exists to
+  prevent — and a name heuristic that is wrong for whatever it does not cover.
+- **(c)** Drop `env` on import and report it. That is F6(b), already rejected in
+  §3: it is the dead-end-note pattern this project has had to fix twice.
+
+#### S6 — the import's input, and who parses it
+
+- **(a)** A "paste JSON" row (a multiline editor with validation-without-closing).
+  **Rejected**: the pasted blob carries live tokens, which would then sit
+  **visible on screen** and in the editor's undo buffer.
+- **(b) [recommended]** A **file path** row ("Import servers from a file"), with
+  the platform's usual location named in the field description. The user has the
+  file already; the tokens never appear on screen.
+- **(c)** Both, sniffing a leading `{` to tell a blob from a path. Cheap and
+  unambiguous, but keeps (a)'s exposure for the blob case.
+
+**Where the parsing lives is not a fork:** the *orchestrator* parses and applies
+it (`SettingsIntent::ImportMcpServers(path)` → `AppCommand` → parse → store
+secrets → update `config.mcp` → `emit_settings`), mirroring `ConfirmMcpCatalog`.
+The orchestrator is the sole writer of `settings.json` and the only layer that
+may touch plaintext; a screen-side parse would put every imported token through
+`screens`.
+
+#### S7 — import semantics
+
+Recommended as one package:
+
+- imported servers arrive **disabled** — consistent with F5(a): nothing spawns
+  until the user says so, and an imported command may not even exist here;
+- an **existing id is skipped** and reported, so a re-import is safe and never
+  silently overwrites a hand-tuned server (the user deletes first to refresh);
+- ids are **sanitized to our slug** (`[a-z0-9-]`, ≤32) with a numeric suffix on
+  collision — the ecosystem's keys are free-form (`My_Server`) and ours are part
+  of every tool name;
+- non-stdio entries (`"type": "sse"/"http"`, a `url` and no `command`) are
+  **skipped and reported** — HTTP transport is groundwork, not a silent drop;
+- the result is one summary line: imported / skipped / secrets stored.
+
+Alternatives: overwrite an existing id (destroys hand-tuning), or import
+enabled (spawns processes the user has not reviewed).
+
+#### S8 — does the env-name path survive?
+
+- **(a) [recommended]** Yes, both coexist, stored wins — the exact
+  `api_key`/`api_key_env` shape. The env path is what CI, scripted setups and
+  machines without an encryption scheme (Linux with no machine-id, where
+  `scheme_available()` is false and the field says so) rely on. Removing it would
+  make MCP unusable in precisely those environments.
+- **(b)** Replace it: `env` values become secret-only. Simpler UI, breaks the
+  above.
+
+### 9.3 Staging
+
+One PR (`feat/mcp-env-secrets`), two commits: **secrets** (S1–S4, S8) then
+**import** (S5–S7), which depends on them. Out of scope, and staying on the
+roadmap: the external proxy's key via the same mechanism (ADR 0008 groundwork),
+HTTP transport, "forget this computer".
+
+### 9.4 Implementation notes
+
+- **`is_current` must take the key blob** — see §9.1. Mirror
+  `chat_is_current(&settings, keys)`; a test that changes only a secret and
+  asserts a re-apply is the guard.
+- **The slot needs the resolved env**, not just `cfg`: a respawn after `Exited`
+  and a `reconnect` both build the task from `slot.cfg`. Plaintext therefore
+  lives in the manager's memory for as long as the server runs — unavoidable, it
+  is what gets handed to the child process.
+- **Restrict a child variable name to `[A-Za-z0-9_]`** in `parse_env_map`
+  (a `,` or `=` in a name already breaks the flat row today). It also makes
+  `mcp-<server>-<VAR>` unambiguous: only the server id can contain `-`, so the
+  name splits from the right if it ever needs to.
+- **`resolve_env`'s warning changes**: an empty source is no longer "variable not
+  found" — it means "the value comes from a stored secret". Warn only when
+  neither is present.
+- Row **labels for the per-variable secret rows are user data** and can exceed
+  `LABEL_CAP = 28`; the value column simply does not grow past the cap (the
+  existing safety net), and `all_labels_fit_alignment_cap` covers static labels
+  only — as with the server status rows.
+- `Ctrl+Z` restores a config snapshot, which by design carries **no** secrets:
+  undoing a server delete brings the server back but not its secrets. Same as
+  API keys; worth one line in the docs.
+- New `FieldId`s: `McpEnvSecret(usize)` (indexed into the selected server's
+  declared variables) and `McpImport`. Both are indexed/user data → their own
+  branches, not the `field_spec` table, and they join `is_profile_field` so
+  `Del`-reset and the `•` marker skip them (`McpEnvSecret`'s `Del` deletes the
+  secret instead, via `is_secret_field`).
+- i18n: new `ui.settings.*` keys in **both** bundles; the import's summary is
+  axis B (a human reads it).
+
+### 9.5 Testing
+
+Unit: the storage name is built and looked up consistently; a secret wins over
+an env name and an env name is still the fallback; `is_current` says "not
+current" when only a secret changed (**the §9.1 trap**, mutation-tested); the
+per-variable rows appear for declared variables only, show status, and never put
+the secret into the screen's config; import — a golden `mcp-servers.json`
+fixture (a stdio server with `env`, an existing id, an `sse` entry, a free-form
+key needing sanitization) asserting servers arrive disabled, secrets are stored
+as ciphertext, **no plaintext appears in `settings.json`**, ids are sanitized,
+and the summary counts match; a re-import is a no-op.
+
+**A live run is required** (AGENTS.md §3 — this touches the tool path):
+`mcp_filesystem_e2e_live` and `mcp_reconnect_live` (they need only `npx`), plus
+a new smoke that spawns a server whose behaviour depends on an env value
+delivered from a stored secret — the one thing unit tests cannot show is that
+the value actually reaches the child process. Acceptance, as in stage 1, is a
+**manual run**: import a real `claude_desktop_config.json`, enter a token in the
+window, and have the assistant call that server's tool — with no OS environment
+variable set.
+
+### 9.5a Revised after the first manual run (S1's UI form)
+
+The user imported a real config (a Cursor one) successfully, and then said the
+variable configuration "looks strange and inconvenient — why type
+`variable=value` pairs and then enter the value in a separate field as well".
+
+Fair, and the phrasing is the evidence: the row's value slot means the **name of
+a source variable**, but it *reads* as `variable=value`, so the field asking for
+the value underneath looks redundant. Checking `McpClient::spawn` settled how
+much of the mechanism was even load-bearing: it uses `Command::envs` with **no**
+`env_clear`, so the child already inherits the whole application environment.
+The `NAME=SOURCE` form is therefore only needed to take a value from a
+*differently named* variable — the same-name case works by inheritance, with no
+configuration at all.
+
+So the row became a **bare list of names** (`GITHUB_TOKEN, SLACK_TOKEN`), with
+`NAME=SOURCE` still accepted and no longer advertised, the label changed from
+"Environment" to "Variables", and the hints were rewritten around "the value goes
+in the row below; a variable already in the app's environment is inherited
+anyway". **No behaviour changed** — only what the field asks for. The
+inheritance claim the new hint makes is now pinned by the live smoke: a variable
+set in the test process and named nowhere in the server's config reaches the
+child (it would go silently untrue if `env_clear` ever appeared).
+
+### 9.5b One origin per variable (the second follow-up)
+
+Looking at the result, the user said that when a source variable *is* named,
+offering to enter a value as well is unnecessary. It is worse than unnecessary:
+S8 made a stored value **win** over the named source, so the row could say "take
+it from `CLAUDE_API_KEY`" while a secret silently overrode it — a hidden state
+nothing on screen could explain. Hiding the value row alone would have made that
+worse, not better: the override would still happen, with the only thing that
+could reveal it now gone.
+
+So the rule became **one origin per variable, decided by the row**: a bare name
+takes the stored value (and with none stored is left to inheritance);
+`NAME=SOURCE` takes the value from that OS variable and consults no stored value
+— and gets no value row. This narrows S8 rather than reversing it: the fallback
+existed so a shared config could work on a machine with the variable set in the
+OS, and that case uses the variable's own name, which inheritance already covers.
+Only "renamed source **and** a stored value" changes behaviour, and that
+combination is precisely the contradiction.
+
+### 9.5c Both routes report themselves (the third follow-up)
+
+With the UI accepted, the user's remaining objection was about the *logic*: a
+fallback plus machine-bound storage means "checking whether the variable exists
+and whether a value was entered on this particular machine".
+
+Half of that had already gone with §9.5b — for a single variable the row now
+decides which route applies, so the two are never both in play. What was left is
+an **asymmetry of visibility**: the stored route reports itself ("configured
+(this computer)" / "not set") while a named source reported nothing, so a missing
+OS variable surfaced only as the server failing to work. That, rather than the
+existence of two mechanisms, is what makes it feel like something has to be
+checked by hand.
+
+So a variable that names a source now gets a **read-only status row** in place of
+the value field it deliberately does not have: `PRESENT — from
+MINDFORK_SRC: found` / `ABSENT — from …: not found`, flagged when missing. The
+description also states what was invisible before: the application sees the
+environment it was **started with**, so a variable set after launch needs a
+restart. Rejected alternatives: leaving it silent (the diagnosis stays indirect)
+and dropping the source form from the UI entirely (it is the only way to rename a
+source, and the user had called the fallback worth keeping).
+
+### 9.6 Documentation to update on completion
+
+CLAUDE.md journal; CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten
+(env names *or* machine-bound stored values, both without plaintext on disk),
+with a pointer to ADR 0008; **ADR 0008** — its "MCP server env maps" groundwork
+item closes; spec §9.6 (secret values, import); README; docs/install.md §4.2 (a
+token no longer needs an OS variable); docs/roadmap.md (the stage-2 item closes,
+HTTP transport and "forget this computer" stay).

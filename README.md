@@ -227,8 +227,12 @@ Architecture — **Feature-Sliced Design (FSD)**.
 - **Plugins: MCP-server tools** — plugs in any tools from the **Model Context
   Protocol** ecosystem (files, git, GitHub, databases, browser, …) as external stdio
   servers: servers are configured in the settings screen's **"Plugins"** section —
-  command + arguments + env variable names, secrets aren't written to the file —
-  (or by hand in `settings.json`), and their tools
+  command, arguments and environment (or by hand in `settings.json`). A server's
+  token can be **entered right in the app** and is stored encrypted for this
+  computer, so it never appears in the settings file; naming an operating-system
+  variable instead still works. An existing configuration from another MCP client
+  (`claude_desktop_config.json` and its relatives) can be **imported by file
+  path** — the imported servers arrive switched off. Their tools
   show up in the profile toggles under a "Plugins (MCP)" group. **Double opt-in** (a
   master switch, off by default, plus a per-profile toggle), **TOFU catalog pinning**
   (a change to a server's tool set/descriptions requires re-confirmation —

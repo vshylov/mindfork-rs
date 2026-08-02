@@ -167,23 +167,21 @@ impl SettingsScreen {
     /// Resets a config field to its default value. Profile fields and values already
     /// at the default — a no-op (no redundant save).
     pub(super) fn reset_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
-        if is_profile_field(id) {
-            return None;
-        }
-        // Secret field: "reset" = delete the stored key (an empty value). The comparison
-        // against the default below doesn't apply — the row's value is a status, not the value.
-        if let Some(provider) = self.api_key_field_provider(id) {
+        // Secret field: "reset" = delete the stored secret (an empty value). The
+        // comparison against the default below doesn't apply — the row's value is a
+        // status, not the value. Checked **before** `is_profile_field`: an MCP
+        // environment value is user data (no `•` marker, nothing to reset to) and
+        // yet its `Del` has a real meaning.
+        if let Some(key) = self.secret_field_key(id) {
             return self
-                .api_key_present(Some(provider))
-                .then(|| SettingsIntent::SetApiKey {
-                    provider,
-                    key: String::new(),
+                .secret_present(Some(&key))
+                .then(|| SettingsIntent::SetSecret {
+                    key,
+                    value: String::new(),
                 });
         }
-        if id == FieldId::BackupPassword {
-            return self
-                .backup_password_present
-                .then(|| SettingsIntent::SetBackupPassword(String::new()));
+        if is_profile_field(id) {
+            return None;
         }
         let cur_kind = self
             .fields()

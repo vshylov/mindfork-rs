@@ -65,6 +65,7 @@ pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     }
 }
 
@@ -288,7 +289,8 @@ pub(super) fn cloud_rows(
 pub(super) fn is_secret_field(id: FieldId) -> bool {
     matches!(
         id,
-        FieldId::XApiKey
+        FieldId::McpEnvSecret(_)
+            | FieldId::XApiKey
             | FieldId::IxApiKey
             | FieldId::EApiKey
             | FieldId::TtsApiKey
@@ -318,7 +320,9 @@ pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> F
 pub(super) fn secret_row(
     id: FieldId,
     present: bool,
-    label: &'static str,
+    // Not `&'static str`: an MCP environment row is labelled with the variable
+    // name, which is user data.
+    label: &str,
     desc_key: &str,
     loc: &'static Locale,
 ) -> FieldRow {
@@ -564,6 +568,18 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Fs => "ui.settings.gate.fs",
         ToolGate::Mcp => "ui.settings.gate.mcp",
     })
+}
+
+/// The expanded explanation for a tool that is on in the profile but off
+/// globally — naming the section that actually holds the switch. The MCP master
+/// switch moved to "Plugins" when the server editor got its own section, so a
+/// single hardcoded "Tools" was wrong for it.
+pub(super) fn gate_warn_note(gate: ToolGate, loc: &'static Locale) -> String {
+    let section = loc.t(match gate {
+        ToolGate::Mcp => "ui.settings.section.plugins",
+        _ => "ui.settings.section.tools",
+    });
+    loc.tf("ui.settings.ui.gate_warn", &[("section", section)])
 }
 
 /// A span's width in terminal columns (for right-aligning the status chip).
@@ -1161,6 +1177,9 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::McpCommand
             | FieldId::McpArgs
             | FieldId::McpEnv
+            | FieldId::McpEnvSecret(_)
+            | FieldId::McpEnvSource(_)
+            | FieldId::McpImport
             | FieldId::McpEnabled
             | FieldId::McpTimeout
             | FieldId::McpMaxResult
@@ -1283,20 +1302,30 @@ pub(super) fn parse_args(s: &str) -> Vec<String> {
 /// neither `,` nor `=`, which is what makes this flat form unambiguous.
 pub(super) fn join_env_map(env: &std::collections::BTreeMap<String, String>) -> String {
     env.iter()
-        .map(|(k, v)| format!("{k}={v}"))
+        .map(|(k, v)| {
+            if v.is_empty() {
+                k.clone()
+            } else {
+                format!("{k}={v}")
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-/// Text back into an MCP server's `env` map. Entries without a `=` or with an
-/// empty name are dropped — the field is edited character by character, so a
-/// half-typed entry must not break the ones already there.
+/// Text back into an MCP server's `env` map. A bare `VARIABLE` declares it with
+/// no source — the usual form, since the value is then entered in the row below
+/// (or simply inherited: the child gets the app's whole environment). The
+/// `VARIABLE=SOURCE` form remains for the rare case of taking the value from a
+/// *differently named* variable. A name we cannot carry (`valid_env_name`) is
+/// dropped — the field is edited character by character, so a half-typed entry
+/// must not break the ones already there.
 pub(super) fn parse_env_map(s: &str) -> std::collections::BTreeMap<String, String> {
     s.split(',')
         .filter_map(|part| {
-            let (k, v) = part.split_once('=')?;
+            let (k, v) = part.split_once('=').unwrap_or((part, ""));
             let (k, v) = (k.trim(), v.trim());
-            (!k.is_empty()).then(|| (k.to_string(), v.to_string()))
+            crate::shared::mcp::valid_env_name(k).then(|| (k.to_string(), v.to_string()))
         })
         .collect()
 }

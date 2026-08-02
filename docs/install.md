@@ -503,7 +503,7 @@ takes two steps (double opt-in):
     "id": "fs",                     // slug [a-z0-9-] — part of tool names mcp__fs__*
     "command": "npx",               // the same on every platform (see the note below)
     "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
-    "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },  // child variable → NAME of the source variable (secrets aren't in the file)
+    "env": { "GITHUB_TOKEN": "" },  // the variables the server needs; "" = the value is entered in the app, a name = take it from that OS variable (no secrets in the file either way)
     "enabled": true,
     "tool_timeout_secs": 60,        // timeout for one call
     "max_result_chars": 20000       // result clip (goes into the prompt)
@@ -521,6 +521,37 @@ Both steps are required, and the server's status row says where you are: `ready 
 tools: 14 · in profile: 0` means the server is up and the model still sees none of
 it — step 2 is missing.
 
+**Tokens for a hosted server** (GitHub, Slack, …) are entered in the same section.
+List the variables the server needs in its "Variables" row, comma separated and by
+name alone (`GITHUB_TOKEN, SLACK_TOKEN`) — a row then appears underneath for each of
+them: `Enter` opens a masked field for the value, `Del` deletes a stored one. The
+value is **encrypted with this computer's key** (the same storage as the cloud API
+keys, §3.1, and the backup password, §2.2), so it never lands in `settings.json` and
+it is **not** carried along if you copy the file to another machine — enter it again
+there.
+
+The list holds only *overrides*: the server already inherits the application's own
+environment, so a variable you have set in the OS reaches it without being listed at
+all — which is what makes CI and scripted setups work unchanged. Write
+`GITHUB_TOKEN=OTHER_NAME` only when the value has to come from a variable with a
+**different** name; such a variable gets no value row — instead its row reports
+whether that OS variable is actually there. Note that the application sees the
+environment it was **started with**: a variable you set after launching it reads as
+missing until you restart the application.
+
+**Importing an existing configuration.** The "Import from a file" row takes the
+**path** of an `mcpServers` JSON — the format used by `claude_desktop_config.json`
+and the clients that copied it (Windows
+`%APPDATA%\Claude\claude_desktop_config.json`, Linux
+`~/.config/Claude/claude_desktop_config.json`). A path rather than pasted text on
+purpose: the file usually carries live tokens, which would otherwise be sitting on
+your screen. Every `env` value in it is stored as an encrypted value as described
+above, so nothing is written to `settings.json` in the clear. Imported servers arrive
+**switched off** — review the command, then turn "Enabled" on. A server whose name
+already exists is skipped rather than overwritten (so re-importing is harmless; to
+refresh one, delete it first), and entries that aren't stdio (`"type": "sse"`/
+`"http"`) are skipped as well — only stdio servers are supported.
+
 Notes:
 
 - **The command is resolved the way a shell resolves it**, so one config works on
@@ -537,9 +568,12 @@ Notes:
   row in settings). With nothing to confirm, the same Enter **reconnects** the
   server — the way to bring one back after you have fixed whatever it needed.
 - A server added in the settings screen is created **switched off**: fill in the
-  command and arguments, then turn "Enabled" on. Its `env` values are the **names**
-  of environment variables of the application, not the secrets themselves — set the
-  variable in your OS (or your launcher) and name it here.
+  command and arguments, then turn "Enabled" on.
+- **No secret is ever written to `settings.json`**, by either route: the environment
+  row holds the *name* of an operating-system variable, and a value entered in the
+  app is stored encrypted for this computer. Undo (`Ctrl+Z`) restores settings, not
+  stored values — undeleting a server does not bring its tokens back, and renaming a
+  server means entering them again under the new name.
 - An MCP server is an ordinary program running with your user's rights: only
   connect trusted ones. A server that crashes often (3 crashes in 5 minutes) is
   disabled until you fix the settings; server stderr is written to `logs/`.

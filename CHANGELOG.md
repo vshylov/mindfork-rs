@@ -21,8 +21,26 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   deletes it — no more hand-editing `settings.json` (which still works and is the
   same data). A server added here starts switched off, so nothing is launched
   while you are still typing its command, and an identifier that would make the
-  server invisible is refused as you enter it. Environment values are still the
-  **names** of your OS environment variables, not the secrets themselves.
+  server invisible is refused as you enter it.
+- **An MCP server's token can be entered in the app.** List the variables the
+  server needs by name (`GITHUB_TOKEN, SLACK_TOKEN`) and a row appears for each:
+  press `Enter` and type the value into a masked field, `Del` deletes it. The
+  value is encrypted with a key belonging to **this computer** and never appears in the settings file — the
+  same storage the cloud API keys and the backup password use, so copying the
+  configuration elsewhere is still safe (on another computer you enter the value
+  again). Scripted setups are unaffected: the server inherits the application's
+  own environment, so a variable you already set in the system reaches it
+  without being listed at all. Previously a hosted server (GitHub, Slack, …)
+  meant setting a system variable and restarting the application.
+- **A configuration from another MCP client can be imported.** "Import from a
+  file" in the "Plugins" section takes the path of a `mcpServers` JSON —
+  Claude Desktop's `claude_desktop_config.json` and the clients that share its
+  shape. Imported servers arrive **switched off** so nothing starts unreviewed,
+  their tokens are stored encrypted for this computer rather than written to the
+  settings file, a server whose name is already taken is skipped (so importing
+  twice changes nothing), and entries this application cannot run — the ones
+  that connect over the network rather than as a program — are reported instead
+  of quietly disappearing.
 - **One MCP server config now works on every platform.** The launch command is
   resolved the way a shell resolves it, so `"command": "npx"` no longer has to be
   written as `cmd /c npx …` on Windows — configs can be copied between machines
@@ -33,8 +51,25 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   confirm, restarts the server. Previously a server that had crashed too often
   could only be brought back by restarting the application.
 
+### Security
+
+- An MCP server's token, whether typed in or imported from another client's
+  configuration, is stored the way the cloud API keys are: encrypted with a key
+  belonging to this computer, never written to the settings file in the clear
+  and never shown in the interface. An imported configuration therefore does not
+  turn its literal tokens into plaintext on your disk. The same limitation
+  applies as for the API keys — this protects the file, not against programs
+  running under your own account.
+
 ### Fixed
 
+- **The settings panel no longer explains the wrong thing.** The line about a
+  tool being "disabled by a global switch" used to appear under **any** row
+  flagged for attention — an MCP server whose tool catalog had changed, or an
+  environment variable whose source is missing — where it is about neither that
+  row nor anything the user can act on. It now shows only for a tool that really
+  is gated, and names the section that holds the switch: the MCP master toggle
+  lives in "Plugins", not "Tools".
 - **Appending to a file could silently lose what was appended.** `fs_write` with
   `append` did not flush before closing the file, so the text sometimes never
   reached disk — the file simply stayed as it was.

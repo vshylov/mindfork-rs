@@ -3,6 +3,7 @@
 
 use crate::app::events::AppEvent;
 use crate::shared::config::{AppConfig, CloudProvider, ImpersonationMode, ServerMode};
+use crate::shared::secrets::SecretKey;
 use crate::shared::server::ServerStatus;
 
 use super::Orchestrator;
@@ -77,54 +78,57 @@ impl Orchestrator {
         self.emit_settings();
     }
 
-    /// Saves an API key entered in settings for the provider: encrypts it with the
-    /// machine key (`shared::secrets`) and puts it into `config.api_keys` as **this**
-    /// machine's entry. An empty key means removal. Affects every slot (chat/impersonation/
-    /// embeddings) whose active provider is this one: they're flagged for a deferred
-    /// (re)raise — the key is picked up by the next `flush_restarts`.
+    /// Stores a secret entered in settings: encrypts it with the machine key
+    /// (`shared::secrets`) and puts it into `config.api_keys` as **this** machine's
+    /// entry. An empty value means removal. What has to happen afterwards depends
+    /// on the kind of secret, which is why the command carries a typed
+    /// [`SecretKey`] rather than a storage name.
     ///
-    /// The plaintext lives only in the argument and in the HTTP client: what goes to
-    /// disk is the ciphertext, and the UI's config snapshot doesn't carry the keys at
-    /// all (the UI only gets a "configured" flag). See docs/research/api-key-storage.md.
-    pub(super) fn handle_set_api_key(&mut self, provider: CloudProvider, key: String) {
-        if !self.store_secret(provider.key(), &key) {
+    /// The plaintext lives only in the argument and in the consumer (the HTTP
+    /// client, the archive, the MCP child process): what goes to disk is the
+    /// ciphertext, and the UI's config snapshot doesn't carry secrets at all (only
+    /// a "configured" flag). See docs/research/api-key-storage.md.
+    pub(super) fn handle_set_secret(&mut self, key: SecretKey, value: String) {
+        if !self.store_secret(&key.storage_name(), &value) {
             return;
         }
-        // Re-raise only the servers whose active provider had its key changed
-        // (the same debounce as for engine edits — see `flush_restarts`).
-        let p = Some(provider);
-        if self.config.engine.mode.cloud_provider() == p {
-            self.restarts.mark_chat();
-        }
-        if self.config.impersonation_engine.mode.cloud_provider() == p {
-            self.restarts.mark_impersonation();
-        }
-        if self.config.embed.mode.cloud_provider() == p {
-            self.restarts.mark_embed();
-        }
-        // The video slot uses the Gemini key too, and its client lives in the
-        // tool registry — so a Gemini key change has to rebuild it (cheap,
-        // in-memory), or `youtube_watch` would keep reporting itself
-        // unconfigured until the next unrelated settings edit.
-        if provider == CloudProvider::Gemini {
-            self.rebuild_registry();
+        match key {
+            SecretKey::Provider(provider) => {
+                // Re-raise only the servers whose active provider had its key changed
+                // (the same debounce as for engine edits — see `flush_restarts`).
+                let p = Some(provider);
+                if self.config.engine.mode.cloud_provider() == p {
+                    self.restarts.mark_chat();
+                }
+                if self.config.impersonation_engine.mode.cloud_provider() == p {
+                    self.restarts.mark_impersonation();
+                }
+                if self.config.embed.mode.cloud_provider() == p {
+                    self.restarts.mark_embed();
+                }
+                // The video slot uses the Gemini key too, and its client lives in the
+                // tool registry — so a Gemini key change has to rebuild it (cheap,
+                // in-memory), or `youtube_watch` would keep reporting itself
+                // unconfigured until the next unrelated settings edit.
+                if provider == CloudProvider::Gemini {
+                    self.rebuild_registry();
+                }
+            }
+            // The value is handed to a child process at spawn time, so it only
+            // takes effect on a re-apply — deferred like an engine edit. The
+            // config itself is unchanged, so `McpManager::is_current` has to
+            // compare the *resolved* environment, not just the settings (§9.1).
+            SecretKey::McpEnv { .. } => self.restarts.mark_mcp(),
+            // Read at backup/restore time — nothing to restart.
+            SecretKey::BackupPassword => {}
         }
         self.emit_settings();
-    }
-
-    /// Stores the backup password for **this** machine (spec §12.3). Same storage
-    /// and the same never-shown-again contract as an API key; nothing has to be
-    /// restarted, so it just persists and re-emits the presence flag.
-    pub(super) fn handle_set_backup_password(&mut self, password: String) {
-        if self.store_secret(crate::shared::secrets::BACKUP_PASSWORD_KEY, &password) {
-            self.emit_settings();
-        }
     }
 
     /// Encrypts a secret into this machine's entry and persists the config.
     /// `false` — it failed and the error was already reported to the user; the
     /// previous state is restored, so a failed save never half-applies.
-    fn store_secret(&mut self, name: &str, value: &str) -> bool {
+    pub(super) fn store_secret(&mut self, name: &str, value: &str) -> bool {
         let old = self.config.api_keys.clone();
         let label = || {
             format!(
@@ -185,7 +189,7 @@ impl Orchestrator {
                 .apply_impersonation(&self.config.impersonation_engine, keys, loc);
             applied_any = true;
         }
-        if mcp && !self.mcp.is_current(&self.config.mcp) {
+        if mcp && !self.mcp.is_current(&self.config.mcp, keys) {
             self.apply_mcp_settings();
         }
         if applied_any {
@@ -327,7 +331,7 @@ impl Orchestrator {
     /// generation (dead connections) leave it immediately.
     pub(super) fn apply_mcp_settings(&mut self) {
         let loc = self.ui_locale();
-        self.mcp.apply(&self.config.mcp, loc);
+        self.mcp.apply(&self.config.mcp, &self.config.api_keys, loc);
         self.rebuild_registry();
     }
 }

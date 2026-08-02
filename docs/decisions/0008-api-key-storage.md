@@ -109,6 +109,21 @@ decision is no weaker than the status quo on any dimension and is strictly stron
   than for an API key: a key that can't be re-entered on a new machine is an
   inconvenience, whereas a **backup** password that can't be is unreadable data —
   hence the field's hint tells the user to record it elsewhere.
+- **Reused again, as predicted:** an **MCP server's environment values** (spec §9.6,
+  [mcp-server-editor.md](../history/mcp-server-editor.md) §9) — under
+  `mcp-<server>-<VARIABLE>` in the same per-machine entry. Resolution differs
+  from §3 on purpose: there the env variable is a *fallback* under a stored key,
+  while here the two live in the same row, so naming a source is an explicit
+  instruction and a stored value must not silently override it — one origin per
+  variable, decided by what the row says. It also
+  generalized the plumbing: one typed `SecretKey { Provider | BackupPassword |
+  McpEnv }` behind one `SetSecret` command and one `secrets_present` list in the
+  settings snapshot, instead of a parallel command and flag per kind. This is the
+  first reuse where the secret is consumed by a **child process** rather than by an
+  HTTP client, and where a *rename* can orphan a stored value — deliberately not
+  collected automatically, because the config snapshot undo restores cannot restore
+  a secret.
 - **Groundwork:** an OS keychain as an additional `scheme`; the same mechanism for
-  external-proxy keys and MCP server env maps; UI management of other machines' entries
-  ("forget this computer").
+  external-proxy keys; UI management of other machines' entries ("forget this
+  computer"), which is also where an explicit cleanup of orphaned MCP secrets
+  belongs.

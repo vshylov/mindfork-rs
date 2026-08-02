@@ -60,8 +60,24 @@ Mitigations:
   reconfirmed in settings (Enter on the server's row);
 - **full tool descriptions are visible** in the UI (the settings screen's
   bottom panel) — descriptions go into the system prompt on every turn;
-- secrets — **env variable names** in the `env` map (R8, the `api_key_env`
-  precedent); the actual values are never written to `settings.json`;
+- secrets — R8 originally said the `env` map holds only **names of environment
+  variables** (the `api_key_env` precedent), and was **revisited in 2026-08**
+  together with R6: a hosted server (GitHub, Slack) then needed its token set in
+  the OS and the app restarted, which is the opposite of "configure it in the
+  window". A declared variable's value can now also be entered in the settings
+  screen and is stored **encrypted with this machine's key**
+  ([ADR 0008](0008-api-key-storage.md)) under `mcp-<server>-<VARIABLE>` in the
+  same per-machine entry as the cloud keys — so R8's actual invariant is
+  unchanged: **no secret is written to `settings.json` in plaintext**, and the
+  config stays portable. Each declared variable has exactly one origin, decided
+  by the row: a bare name takes the stored value (or is left to the environment
+  the child inherits anyway), `VARIABLE=SOURCE` takes it from that OS variable
+  and consults no stored value — CI and scripted setups keep working because
+  they set the variable under its own name. The same storage is what makes importing
+  another client's `mcpServers` JSON lossless: those files carry **literal**
+  secrets, so the import is parsed by the orchestrator (never by `screens`) and
+  each value goes straight into the store. See
+  [mcp-server-editor.md](../history/mcp-server-editor.md) §9;
 - the server command is resolved as a shell would (`PATHEXT` completion on
   Windows), so one config works on every platform. **The `.bat`/`.cmd` ban was
   removed in 2026-08** after measuring the premise: CVE-2024-24576 ("BatBadBut")
@@ -109,9 +125,8 @@ API was rejected.
   localized); manager status reasons — axis B; client wire errors — a
   technical layer (like the HTTP client wrappers).
 - Groundwork (roadmap): HTTP transport, resources/prompts,
-  `notifications/tools/list_changed`, deferred schemas ("tool search"), secrets
-  for the `env` map + JSON import (stage 2 of the editor track), a WASM sandbox
-  for untrusted tools, server `instructions` → system prompt.
+  `notifications/tools/list_changed`, deferred schemas ("tool search"), a WASM
+  sandbox for untrusted tools, server `instructions` → system prompt.
 
 ## Verification
 

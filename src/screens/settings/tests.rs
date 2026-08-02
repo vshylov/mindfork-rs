@@ -1325,7 +1325,7 @@ fn an_api_key_commit_records_no_undo_step() {
     }
     assert!(matches!(
         s.handle_key(key(KeyCode::Enter)),
-        Some(SettingsIntent::SetApiKey { .. })
+        Some(SettingsIntent::SetSecret { .. })
     ));
 
     // The one step on the stack is still the theme edit, not the key.
@@ -2302,6 +2302,7 @@ fn long_value_is_truncated_with_ellipsis() {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     };
     let line = render_field_line(&f, 20, 24, false, false, &palette);
     let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
@@ -2322,6 +2323,7 @@ fn selected_field_shows_green_rail() {
         hint: None,
         description: None,
         warn: false,
+        warn_note: None,
     };
     // The selected field — a green rail `▌` in the left column (as the active menu section).
     let sel = render_field_line(&f, 20, 24, false, true, &palette);
@@ -2485,14 +2487,14 @@ fn api_key_field_shows_status_in_cloud_modes_only() {
     };
     let unset = value(&s);
     // This provider's key is stored on the machine → the status changes.
-    s.set_api_keys_present(vec![CloudProvider::OpenAi]);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenAi)]);
     let set = value(&s);
     assert_ne!(
         unset, set,
         "the field's status doesn't reflect the key's presence"
     );
     // Another provider's key doesn't affect OpenAI's status.
-    s.set_api_keys_present(vec![CloudProvider::Claude]);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Claude)]);
     assert_eq!(value(&s), unset);
     // The secret itself never appears in the field's value under any status.
     assert!(!set.contains("sk-"));
@@ -2518,7 +2520,7 @@ fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
             .expect("the field exists in the Data section")
     };
     let unset = value(&s);
-    s.set_backup_password_present(true);
+    s.set_secrets_present(vec![SecretKey::BackupPassword]);
     assert_ne!(unset, value(&s), "the status doesn't follow the flag");
 
     // Editing opens empty and masked — a stored password can't be shown.
@@ -2532,7 +2534,10 @@ fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
     }
     assert_eq!(
         s.handle_key(key(KeyCode::Enter)),
-        Some(SettingsIntent::SetBackupPassword("hunter2".into()))
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::BackupPassword,
+            value: "hunter2".into()
+        })
     );
     // The secret never reaches the screen's config.
     let json = serde_json::to_string(&s.config).unwrap();
@@ -2541,9 +2546,12 @@ fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
     // `Del` clears a stored password, and is a no-op when there is none.
     assert_eq!(
         s.handle_key(key(KeyCode::Delete)),
-        Some(SettingsIntent::SetBackupPassword(String::new()))
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::BackupPassword,
+            value: String::new()
+        })
     );
-    s.set_backup_password_present(false);
+    s.set_secrets_present(Vec::new());
     assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
 }
 
@@ -2553,7 +2561,7 @@ fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
 fn api_key_editor_is_masked_empty_and_commits_intent() {
     let mut s = screen();
     s.config.engine.mode = ServerMode::Claude;
-    s.set_api_keys_present(vec![CloudProvider::Claude]); // the key is already stored
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Claude)]); // the key is already stored
     goto_section(&mut s, Section::Model);
     goto_field(&mut s, FieldId::XApiKey);
 
@@ -2568,9 +2576,9 @@ fn api_key_editor_is_masked_empty_and_commits_intent() {
     let intent = s.handle_key(key(KeyCode::Enter));
     assert_eq!(
         intent,
-        Some(SettingsIntent::SetApiKey {
-            provider: CloudProvider::Claude,
-            key: "sk-ant-123".into()
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Claude),
+            value: "sk-ant-123".into()
         })
     );
     // The secret didn't leak into the config working copy.
@@ -2592,12 +2600,12 @@ fn del_on_api_key_field_removes_stored_key() {
     // No key — the reset does nothing.
     assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
 
-    s.set_api_keys_present(vec![CloudProvider::Gemini]);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Gemini)]);
     assert_eq!(
         s.handle_key(key(KeyCode::Delete)),
-        Some(SettingsIntent::SetApiKey {
-            provider: CloudProvider::Gemini,
-            key: String::new()
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Gemini),
+            value: String::new()
         })
     );
 }
@@ -2611,18 +2619,18 @@ fn api_key_field_targets_provider_of_its_slot() {
     s.config.impersonation_engine.mode = ImpersonationMode::Claude;
     s.config.embed.mode = ServerMode::Gemini;
     assert_eq!(
-        s.api_key_field_provider(FieldId::XApiKey),
-        Some(CloudProvider::OpenAi)
+        s.secret_field_key(FieldId::XApiKey),
+        Some(SecretKey::Provider(CloudProvider::OpenAi))
     );
     assert_eq!(
-        s.api_key_field_provider(FieldId::IxApiKey),
-        Some(CloudProvider::Claude)
+        s.secret_field_key(FieldId::IxApiKey),
+        Some(SecretKey::Provider(CloudProvider::Claude))
     );
     assert_eq!(
-        s.api_key_field_provider(FieldId::EApiKey),
-        Some(CloudProvider::Gemini)
+        s.secret_field_key(FieldId::EApiKey),
+        Some(SecretKey::Provider(CloudProvider::Gemini))
     );
-    assert_eq!(s.api_key_field_provider(FieldId::XUrl), None);
+    assert_eq!(s.secret_field_key(FieldId::XUrl), None);
 }
 
 /// The video slot's key row stores the **Gemini** key whatever the engines are set
@@ -2637,8 +2645,8 @@ fn video_key_field_targets_gemini_whatever_the_engines_are() {
     s.config.impersonation_engine.mode = ImpersonationMode::Shared;
     s.config.embed.mode = ServerMode::External;
     assert_eq!(
-        s.api_key_field_provider(FieldId::VideoApiKey),
-        Some(CloudProvider::Gemini),
+        s.secret_field_key(FieldId::VideoApiKey),
+        Some(SecretKey::Provider(CloudProvider::Gemini)),
         "no engine is on Gemini, yet the video key must still address Gemini"
     );
 
@@ -2653,9 +2661,9 @@ fn video_key_field_targets_gemini_whatever_the_engines_are() {
     }
     assert_eq!(
         s.handle_key(key(KeyCode::Enter)),
-        Some(SettingsIntent::SetApiKey {
-            provider: CloudProvider::Gemini,
-            key: "AIzaSy-test".into()
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Gemini),
+            value: "AIzaSy-test".into()
         })
     );
     let json = serde_json::to_string(&s.config).unwrap();
@@ -2674,7 +2682,7 @@ fn video_key_row_shows_status_and_del_removes_it() {
     goto_field(&mut s, FieldId::VideoApiKey);
     assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
 
-    s.set_api_keys_present(vec![CloudProvider::Gemini]);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Gemini)]);
     let want =
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("ui.settings.value.key_set");
     assert!(
@@ -2686,9 +2694,9 @@ fn video_key_row_shows_status_and_del_removes_it() {
     );
     assert_eq!(
         s.handle_key(key(KeyCode::Delete)),
-        Some(SettingsIntent::SetApiKey {
-            provider: CloudProvider::Gemini,
-            key: String::new()
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::Provider(CloudProvider::Gemini),
+            value: String::new()
         })
     );
 }
@@ -2732,6 +2740,321 @@ fn type_into(s: &mut SettingsScreen, id: FieldId, text: &str) -> Option<Settings
     s.handle_key(ctrl('k')); // clear the seed
     s.handle_paste(text);
     s.handle_key(key(KeyCode::Enter))
+}
+
+/// A stored-value row appears for **each** variable the selected server
+/// declares, reports whether this machine holds it, and commits as a
+/// `SetSecret` addressed to (server, variable) — never into the screen's config
+/// (docs/history/mcp-server-editor.md §9, S1).
+#[test]
+fn mcp_env_secret_rows_follow_the_declared_variables() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    assert!(type_into(&mut s, FieldId::McpId, "gh").is_some());
+    // No variables declared — no value rows.
+    assert!(
+        !s.plugin_fields()
+            .iter()
+            .any(|r| matches!(r.id, FieldId::McpEnvSecret(_))),
+        "a server with no env has nothing to store"
+    );
+
+    assert!(type_into(&mut s, FieldId::McpEnv, "GITHUB_TOKEN, OTHER, FROM_OS=SRC").is_some());
+    let all = s.plugin_fields();
+    let rows: Vec<&FieldRow> = all
+        .iter()
+        .filter(|r| matches!(r.id, FieldId::McpEnvSecret(_)))
+        .collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "a row per variable declared by name alone — the one naming a source has \
+         its answer already"
+    );
+    // The label is the variable name, in the map's order.
+    assert_eq!(rows[0].label, "GITHUB_TOKEN");
+    assert_eq!(rows[1].label, "OTHER");
+    assert!(
+        !rows.iter().any(|r| r.label == "FROM_OS"),
+        "offering to store a value for a variable that names a source would be two \
+         answers to one question (§9.5b)"
+    );
+
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    assert!(
+        matches!(&rows[0].kind, FieldKind::Text(v) if v == ru.t("ui.settings.value.key_unset")),
+        "nothing stored yet"
+    );
+    s.set_secrets_present(vec![SecretKey::McpEnv {
+        server: "gh".into(),
+        var: "GITHUB_TOKEN".into(),
+    }]);
+    let rows = s.plugin_fields();
+    // Index 1: the map is sorted, so FROM_OS is 0 — and it has no row, which is
+    // exactly why the index must stay the position in the whole map.
+    let stored = rows
+        .iter()
+        .find(|r| r.id == FieldId::McpEnvSecret(1))
+        .unwrap();
+    assert!(
+        matches!(&stored.kind, FieldKind::Text(v) if v == ru.t("ui.settings.value.key_set")),
+        "the row must report the value as stored"
+    );
+
+    // Editing: an empty masked editor, and the commit carries the secret out of
+    // the screen rather than into its config. The index is the position in the
+    // whole map (`OTHER` is second alphabetically: FROM_OS, GITHUB_TOKEN, OTHER),
+    // so skipping a row never shifts the addressing.
+    goto_field_again(&mut s, FieldId::McpEnvSecret(2));
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s.editor.as_ref().expect("the editor is open");
+    assert_eq!(editor.input.text(), "", "a stored value cannot be shown");
+    assert!(editor.input.is_masked());
+    for c in "ghp-live-token".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::McpEnv {
+                server: "gh".into(),
+                var: "OTHER".into()
+            },
+            value: "ghp-live-token".into()
+        })
+    );
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(
+        !json.contains("ghp-live-token"),
+        "the secret leaked into the screen's config: {json}"
+    );
+}
+
+/// The bottom panel's gate explanation belongs to a **gated tool**, not to every
+/// flagged row. `warn` is raised for several unrelated reasons — a changed MCP
+/// catalog, a missing environment source — and keying one fixed sentence off the
+/// flag itself told the user "the tool is enabled in the profile but disabled by
+/// a global switch" on rows that are not tools at all (reported from a live run).
+///
+/// It also names the section that actually holds the switch: the MCP master
+/// toggle moved to "Plugins" when the server editor got its own section, so the
+/// hardcoded "Tools" was wrong for it.
+#[test]
+fn the_gate_explanation_is_only_on_gated_tools_and_names_its_section() {
+    let mut s = screen();
+
+    // A flagged row that is not a gated tool carries no explanation.
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    assert!(type_into(&mut s, FieldId::McpEnv, "ABSENT=MINDFORK_TEST_NO_SUCH_VAR").is_some());
+    let rows = s.plugin_fields();
+    let source_row = rows
+        .iter()
+        .find(|r| matches!(r.id, FieldId::McpEnvSource(_)))
+        .expect("the status row");
+    assert!(source_row.warn, "a missing source is worth flagging");
+    assert!(
+        source_row.warn_note.is_none(),
+        "…but it has nothing to do with a global tool gate"
+    );
+    // And its description substitutes the source name rather than showing {src}.
+    let desc = source_row.description.as_deref().unwrap_or_default();
+    assert!(
+        desc.contains("MINDFORK_TEST_NO_SUCH_VAR") && !desc.contains("{src}"),
+        "the description must name the source: {desc}"
+    );
+
+    // A tool that *is* gated carries the explanation, naming the right section.
+    s.config.mcp.enabled = false;
+    let mcp_tool = crate::features::tools::meta::ToolInfo {
+        id: "mcp__gh__issues".to_string(),
+        group: crate::features::tools::meta::ToolGroup::Plugins,
+        label: "issues",
+        gate: Some(ToolGate::Mcp),
+        enabled_by_default: false,
+        description: None,
+    };
+    s.set_mcp(crate::features::tools::mcp::McpSnapshot {
+        tools: vec![mcp_tool],
+        servers: Vec::new(),
+    });
+    let idx = s
+        .tool_catalog()
+        .iter()
+        .position(|i| i.id == "mcp__gh__issues")
+        .unwrap();
+    s.profiles[0].enabled_tools.push("mcp__gh__issues".into());
+    goto_section(&mut s, Section::Profiles);
+    let gated = s
+        .profile_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::PTool(idx))
+        .expect("the tool toggle");
+    let note = gated.warn_note.expect("a gated tool explains itself");
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    assert!(
+        note.contains(ru.t("ui.settings.section.plugins")),
+        "the MCP switch lives in \"Plugins\", not \"Tools\": {note}"
+    );
+    assert!(
+        !note.contains("{section}"),
+        "unsubstituted placeholder: {note}"
+    );
+
+    // A web tool still points at "Tools", where its switch really is.
+    s.config.tools.web_enabled = false;
+    let web = s
+        .tool_catalog()
+        .iter()
+        .position(|i| i.id == "web_search")
+        .unwrap();
+    s.profiles[0].enabled_tools.push("web_search".into());
+    let note = s
+        .profile_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::PTool(web))
+        .and_then(|r| r.warn_note)
+        .expect("a gated tool explains itself");
+    assert!(note.contains(ru.t("ui.settings.section.tools")), "{note}");
+}
+
+/// A variable that names a source gets a **read-only status** instead of a value
+/// field: whether that OS variable is actually there. Without it the two routes
+/// are asymmetric — the stored one reports "configured / not set" while a named
+/// source reports nothing, and a missing variable shows up only as the server
+/// failing to work (docs/history/mcp-server-editor.md §9.5c).
+#[test]
+fn a_sourced_variable_shows_whether_its_source_exists() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    // SAFETY: single-threaded test, scoped to this process.
+    unsafe { std::env::set_var("MINDFORK_TEST_SETTINGS_SRC", "x") };
+    assert!(
+        type_into(
+            &mut s,
+            FieldId::McpEnv,
+            "PRESENT=MINDFORK_TEST_SETTINGS_SRC, ABSENT=MINDFORK_TEST_NO_SUCH_VAR",
+        )
+        .is_some()
+    );
+
+    let rows = s.plugin_fields();
+    let row_of = |idx: usize| {
+        rows.iter()
+            .find(|r| r.id == FieldId::McpEnvSource(idx))
+            .unwrap_or_else(|| panic!("no status row for variable {idx}"))
+    };
+    // Map order: ABSENT(0), PRESENT(1).
+    let absent = row_of(0);
+    let present = row_of(1);
+    assert_eq!(absent.label, "ABSENT");
+    assert_eq!(present.label, "PRESENT");
+    assert!(
+        matches!(&present.kind, FieldKind::Text(v) if v.contains("MINDFORK_TEST_SETTINGS_SRC")
+            && v.contains(&ru_t("ui.settings.value.mcp_source_found"))),
+        "the row must name the source and say it was found"
+    );
+    assert!(!present.warn);
+    assert!(
+        matches!(&absent.kind, FieldKind::Text(v)
+            if v.contains(&ru_t("ui.settings.value.mcp_source_missing"))),
+        "a missing source must be visible"
+    );
+    assert!(absent.warn, "a missing source is worth flagging");
+
+    // Neither variable offers to store a value, and the status row is read-only.
+    assert!(
+        !rows
+            .iter()
+            .any(|r| matches!(r.id, FieldId::McpEnvSecret(_))),
+        "a variable that names a source has its origin already"
+    );
+    goto_field_again(&mut s, FieldId::McpEnvSource(1));
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(s.editor.is_none(), "there is nothing to edit here");
+}
+
+/// The value part of a localized row, for asserting on a rendered value that
+/// carries an interpolated source name.
+fn ru_t(key: &str) -> String {
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    // The templates are "{src}: found" / "{src}: not found" — compare on the tail
+    // after the placeholder, which is the part that distinguishes them.
+    ru.t(key).rsplit("{src}").next().unwrap_or("").to_string()
+}
+
+/// `Del` on a stored value deletes it; with nothing stored there is nothing to
+/// delete (the API-key row's behaviour, reached through the same field).
+#[test]
+fn del_on_an_env_secret_row_removes_the_stored_value() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    assert!(type_into(&mut s, FieldId::McpId, "gh").is_some());
+    assert!(type_into(&mut s, FieldId::McpEnv, "TOKEN=").is_some());
+    goto_field_again(&mut s, FieldId::McpEnvSecret(0));
+    assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+
+    s.set_secrets_present(vec![SecretKey::McpEnv {
+        server: "gh".into(),
+        var: "TOKEN".into(),
+    }]);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Delete)),
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::McpEnv {
+                server: "gh".into(),
+                var: "TOKEN".into()
+            },
+            value: String::new()
+        })
+    );
+}
+
+/// A variable name we cannot carry is dropped by the row's parser — it would
+/// break both the flat `VAR=SOURCE` text and the secret's storage name.
+#[test]
+fn env_row_drops_names_it_cannot_carry() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    s.handle_key(ctrl('n'));
+    assert!(type_into(&mut s, FieldId::McpEnv, "OK_1=A, has-dash=B, 1BAD=C").is_some());
+    let keys: Vec<&String> = s.config.mcp.servers[0].env.keys().collect();
+    assert_eq!(keys, vec!["OK_1"]);
+}
+
+/// The import row commits a **path** (the orchestrator reads and parses the
+/// file), and shows the last outcome as its value.
+#[test]
+fn mcp_import_row_commits_a_path_and_shows_the_outcome() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Plugins);
+    assert_eq!(
+        type_into(
+            &mut s,
+            FieldId::McpImport,
+            "D:/cfg/claude_desktop_config.json"
+        ),
+        Some(SettingsIntent::ImportMcpServers(
+            "D:/cfg/claude_desktop_config.json".into()
+        ))
+    );
+    // An empty path does nothing.
+    assert_eq!(type_into(&mut s, FieldId::McpImport, ""), None);
+
+    s.set_mcp_import_result("Импортировано серверов: 2".into());
+    let row = s
+        .plugin_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::McpImport)
+        .unwrap();
+    assert!(matches!(&row.kind, FieldKind::Text(v) if v.contains("2")));
+    // …and the outcome is not offered back as the value to edit.
+    goto_field_again(&mut s, FieldId::McpImport);
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
 }
 
 #[test]
@@ -2900,6 +3223,8 @@ fn mcp_server_fields_are_user_data() {
         FieldId::McpCommand,
         FieldId::McpArgs,
         FieldId::McpEnv,
+        FieldId::McpEnvSecret(0),
+        FieldId::McpImport,
         FieldId::McpEnabled,
         FieldId::McpTimeout,
         FieldId::McpMaxResult,
@@ -2942,13 +3267,31 @@ fn mcp_args_and_env_round_trip_as_text() {
     assert_eq!(parse_args("  a   'b c'  d "), ["a", "b c", "d"]);
     assert_eq!(parse_args(""), Vec::<String>::new());
 
-    let env = std::collections::BTreeMap::from([
+    // The usual form is a bare list of names: the value is entered in the row
+    // below, or simply inherited. `=SOURCE` is the rare "take it from a
+    // differently named variable" case, and both round-trip.
+    let declared = std::collections::BTreeMap::from([
+        ("GITHUB_TOKEN".to_string(), String::new()),
+        ("SLACK_TOKEN".to_string(), String::new()),
+    ]);
+    assert_eq!(join_env_map(&declared), "GITHUB_TOKEN, SLACK_TOKEN");
+    assert_eq!(parse_env_map(&join_env_map(&declared)), declared);
+    let mapped = std::collections::BTreeMap::from([
         ("GITHUB_TOKEN".to_string(), "MINDFORK_PAT".to_string()),
         ("HOME".to_string(), "MY_HOME".to_string()),
     ]);
-    assert_eq!(parse_env_map(&join_env_map(&env)), env);
-    // A half-typed entry doesn't destroy the ones already there.
-    assert_eq!(parse_env_map("A=B, junk, =C, D=").len(), 2);
+    assert_eq!(parse_env_map(&join_env_map(&mapped)), mapped);
+    // Mixed, hand-typed, with spacing.
+    assert_eq!(
+        parse_env_map(" A = B , C "),
+        std::collections::BTreeMap::from([
+            ("A".to_string(), "B".to_string()),
+            ("C".to_string(), String::new()),
+        ])
+    );
+    // A half-typed entry doesn't destroy the ones already there: a nameless one
+    // and one whose name we cannot carry are dropped.
+    assert_eq!(parse_env_map("A=B, =C, has-dash").len(), 1);
 }
 
 #[test]

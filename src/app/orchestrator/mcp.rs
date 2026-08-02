@@ -12,7 +12,7 @@
 //! probe). Events carry `epoch` — a settings generation: late events from
 //! already-shut-down servers (a "died before cancel" race) are dropped.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,19 +21,23 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::events::ServerStatus;
+use crate::app::events::{AppEvent, ServerStatus};
 use crate::features::tools::Tool;
 use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot, McpTool, catalog_hash};
 use crate::features::tools::meta::ToolInfo;
 use crate::shared::config::{McpServerConfig, McpSettings};
 use crate::shared::i18n::Locale;
 use crate::shared::mcp::{McpClient, McpConnection, McpToolInfo, valid_server_id};
+use crate::shared::secrets::{ApiKeyEntry, SecretKey};
 
 /// Max server restarts within the [`RESTART_WINDOW`] window; beyond that —
 /// `Disconnected` until manual intervention (editing settings recreates the slot).
 const RESTART_BUDGET: usize = 3;
 /// The restart budget's window.
 const RESTART_WINDOW: Duration = Duration::from_secs(300);
+
+/// Every enabled server's resolved child environment, by server id.
+type ResolvedEnvs = BTreeMap<String, Vec<(String, String)>>;
 
 /// A server background task's event → the orchestrator's `run` loop.
 pub(super) enum McpEvent {
@@ -58,6 +62,12 @@ pub(super) enum McpEvent {
 /// One server's slot: a config snapshot, status, tools, restart budget.
 struct McpSlot {
     cfg: McpServerConfig,
+    /// The child's environment, already resolved (stored secrets decrypted, OS
+    /// variables read). Held here because a respawn — after a crash or a
+    /// reconnect — builds the task from the slot, and because it is what a
+    /// re-apply is compared against. Plaintext lives here for as long as the
+    /// server runs; unavoidable, it is what gets handed to the process.
+    envs: Vec<(String, String)>,
     /// The generation this slot's task was spawned in. Events are matched
     /// against **the slot's** epoch, not the manager's: a reconnect bumps the
     /// generation for one server, and the others' in-flight events must still
@@ -99,9 +109,15 @@ pub(super) struct McpEventOutcome {
 }
 
 impl McpSlot {
-    fn new(cfg: McpServerConfig, epoch: u64, status: ServerStatus) -> Self {
+    fn new(
+        cfg: McpServerConfig,
+        envs: Vec<(String, String)>,
+        epoch: u64,
+        status: ServerStatus,
+    ) -> Self {
         Self {
             cfg,
+            envs,
             epoch,
             status,
             tools: Vec::new(),
@@ -160,12 +176,16 @@ pub(super) struct McpManager {
     /// generation are dropped (a late `Exited` from a shut-down server won't
     /// recreate it).
     epoch: u64,
-    /// The settings the servers were last **actually** spawned from. Killing and
-    /// respawning MCP processes (`npx` → node) is the most expensive re-apply on the
-    /// screen, so `flush_restarts` skips it when nothing effective changed — an edit
-    /// and its undo (`Ctrl+Z`) both raise the debounce flag while leaving the config
-    /// exactly as it was applied. `None` before the first apply.
-    applied: Option<McpSettings>,
+    /// The settings **and resolved environment** the servers were last actually
+    /// spawned from. Killing and respawning MCP processes (`npx` → node) is the
+    /// most expensive re-apply on the screen, so `flush_restarts` skips it when
+    /// nothing effective changed — an edit and its undo (`Ctrl+Z`) both raise the
+    /// debounce flag while leaving the config exactly as it was applied. The
+    /// environment is part of the comparison because a stored secret changes no
+    /// setting at all (§9.1); it is compared *resolved* rather than as the whole
+    /// key blob, so changing an unrelated provider key doesn't respawn `npx`.
+    /// `None` before the first apply.
+    applied: Option<(McpSettings, ResolvedEnvs)>,
 }
 
 impl McpManager {
@@ -178,10 +198,13 @@ impl McpManager {
         }
     }
 
-    /// Whether the servers are already running exactly these settings — i.e. whether
-    /// re-applying would change anything. `false` before the first apply.
-    pub(super) fn is_current(&self, settings: &McpSettings) -> bool {
-        self.applied.as_ref().is_some_and(|a| a == settings)
+    /// Whether the servers are already running exactly these settings **and this
+    /// environment** — i.e. whether re-applying would change anything. `false`
+    /// before the first apply.
+    pub(super) fn is_current(&self, settings: &McpSettings, keys: &[ApiKeyEntry]) -> bool {
+        self.applied
+            .as_ref()
+            .is_some_and(|(s, e)| s == settings && *e == resolve_all(settings, keys))
     }
 
     /// (Re)applies settings: shuts down the previous servers (dropping the
@@ -189,14 +212,21 @@ impl McpManager {
     /// again. Tools show up via `Ready` events; the caller immediately
     /// rebuilds the registry (the previous wrappers leave it right away).
     /// `loc` — the UI language (status-reason text).
-    pub(super) fn apply(&mut self, settings: &McpSettings, loc: &'static Locale) {
-        self.applied = Some(settings.clone());
+    pub(super) fn apply(
+        &mut self,
+        settings: &McpSettings,
+        keys: &[ApiKeyEntry],
+        loc: &'static Locale,
+    ) {
+        let mut envs = resolve_all(settings, keys);
+        self.applied = Some((settings.clone(), envs.clone()));
         self.epoch += 1;
         self.slots.clear(); // Dropping the slots shuts down the tasks/processes
         if !settings.enabled {
             return;
         }
         for cfg in settings.servers.iter().filter(|s| s.enabled) {
+            let env = envs.remove(&cfg.id).unwrap_or_default();
             if let Err(reason) = validate_server_config(cfg, loc) {
                 // An invalid id can't serve as a key/tool-name component — a
                 // status slot is only created for a valid id, otherwise just
@@ -204,7 +234,12 @@ impl McpManager {
                 if valid_server_id(&cfg.id) {
                     self.slots.insert(
                         cfg.id.clone(),
-                        McpSlot::new(cfg.clone(), self.epoch, ServerStatus::Disconnected(reason)),
+                        McpSlot::new(
+                            cfg.clone(),
+                            env,
+                            self.epoch,
+                            ServerStatus::Disconnected(reason),
+                        ),
                     );
                 } else {
                     tracing::warn!(id = %cfg.id, %reason, "MCP: server skipped");
@@ -214,12 +249,13 @@ impl McpManager {
             let cancel = CancellationToken::new();
             spawn_server_task(
                 cfg.clone(),
+                env.clone(),
                 self.epoch,
                 cancel.clone(),
                 self.evt_tx.clone(),
                 loc,
             );
-            let mut slot = McpSlot::new(cfg.clone(), self.epoch, ServerStatus::Connecting);
+            let mut slot = McpSlot::new(cfg.clone(), env, self.epoch, ServerStatus::Connecting);
             slot.cancel = cancel;
             self.slots.insert(cfg.id.clone(), slot);
         }
@@ -313,6 +349,7 @@ impl McpManager {
                     slot.status = ServerStatus::Connecting;
                     spawn_server_task(
                         slot.cfg.clone(),
+                        slot.envs.clone(),
                         slot.epoch,
                         cancel,
                         self.evt_tx.clone(),
@@ -379,7 +416,14 @@ impl McpManager {
         slot.cancel = cancel.clone();
         slot.status = ServerStatus::Connecting;
         tracing::info!(%server, "MCP: reconnect requested");
-        spawn_server_task(slot.cfg.clone(), epoch, cancel, evt_tx, loc);
+        spawn_server_task(
+            slot.cfg.clone(),
+            slot.envs.clone(),
+            epoch,
+            cancel,
+            evt_tx,
+            loc,
+        );
         true
     }
 
@@ -460,21 +504,62 @@ fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result
     Ok(())
 }
 
-/// Expands the child's environment map: variable → value from the app's own
-/// environment source variable (R8: no secrets in `settings.json`). A missing
-/// source — warn and skip (the server will say for itself what it's missing).
-fn resolve_env(cfg: &McpServerConfig) -> Vec<(String, String)> {
+/// Expands the child's environment map — the **overrides** on top of what the
+/// process already inherits (`spawn` uses `Command::envs`, not `env_clear`).
+///
+/// Each declared variable has exactly **one** origin, and the row says which:
+/// naming a source (`API_KEY=OTHER_NAME`) takes the value from that OS variable
+/// and nothing else; a bare name takes it from a **stored secret**, and with none
+/// stored the variable is simply left to inheritance. A stored value is
+/// deliberately *not* consulted for a variable that names a source — the user
+/// already said where the value comes from, and letting a secret silently
+/// override that is a hidden state nothing on screen could explain
+/// (docs/history/mcp-server-editor.md §9.5b). `settings.json` holds no secret
+/// under either route.
+///
+/// Decryption happens here rather than below, mirroring `EngineManager`, which
+/// resolves the key and hands the supervisor plaintext.
+fn resolve_env(cfg: &McpServerConfig, keys: &[ApiKeyEntry]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (child_var, source) in &cfg.env {
-        match std::env::var(source) {
-            Ok(v) => out.push((child_var.clone(), v)),
-            Err(_) => tracing::warn!(
+        let value = if source.is_empty() {
+            crate::shared::secrets::stored_key(
+                keys,
+                &SecretKey::McpEnv {
+                    server: cfg.id.clone(),
+                    var: child_var.clone(),
+                }
+                .storage_name(),
+            )
+        } else {
+            std::env::var(source).ok()
+        };
+        match value {
+            Some(v) => out.push((child_var.clone(), v)),
+            // Not an error: the child inherits the app's own environment
+            // (`spawn` adds to it rather than replacing it), so a declared
+            // variable with nothing stored still reaches the server if this
+            // process has it.
+            None => tracing::debug!(
                 server = %cfg.id, var = %child_var, source = %source,
-                "MCP: source variable not found in the environment — skipping"
+                "MCP: no stored value — the variable is left to inheritance"
             ),
         }
     }
     out
+}
+
+/// Every enabled server's resolved environment, by server id — what the servers
+/// were actually spawned with. Compared by [`McpManager::is_current`]: a changed
+/// secret leaves `McpSettings` identical, so comparing the settings alone would
+/// silently keep a server running with the old value (§9.1).
+fn resolve_all(settings: &McpSettings, keys: &[ApiKeyEntry]) -> ResolvedEnvs {
+    settings
+        .servers
+        .iter()
+        .filter(|s| s.enabled)
+        .map(|s| (s.id.clone(), resolve_env(s, keys)))
+        .collect()
 }
 
 /// One server's background task: spawn + handshake + `tools/list` → `Ready`,
@@ -483,6 +568,7 @@ fn resolve_env(cfg: &McpServerConfig) -> Vec<(String, String)> {
 /// shown to a human in the status.
 fn spawn_server_task(
     cfg: McpServerConfig,
+    envs: Vec<(String, String)>,
     epoch: u64,
     cancel: CancellationToken,
     evt_tx: UnboundedSender<McpEvent>,
@@ -494,7 +580,7 @@ fn spawn_server_task(
             // Settings were reapplied during the spawn — quietly exit
             // (dropping the client inside start_server kills the half-built process).
             _ = cancel.cancelled() => return,
-            res = start_server(&cfg, loc) => res,
+            res = start_server(&cfg, &envs, loc) => res,
         };
         match started {
             Ok((client, tools)) => {
@@ -531,10 +617,10 @@ fn spawn_server_task(
 /// as-is (a technical layer, an i18n boundary — like HTTP client wrappers).
 async fn start_server(
     cfg: &McpServerConfig,
+    envs: &[(String, String)],
     loc: &'static Locale,
 ) -> Result<(McpClient, Vec<McpToolInfo>)> {
-    let envs = resolve_env(cfg);
-    let client = McpClient::spawn(&cfg.command, &cfg.args, &envs)
+    let client = McpClient::spawn(&cfg.command, &cfg.args, envs)
         .await
         .with_context(|| loc.tf("ui.err.mcp.server_ctx", &[("id", &cfg.id)]))?;
     tracing::debug!(
@@ -588,6 +674,78 @@ impl super::Orchestrator {
             self.rebuild_registry();
             self.emit_settings();
         }
+    }
+
+    /// Imports servers from an ecosystem `mcpServers` JSON file
+    /// (`AppCommand::ImportMcpServers`). Parsing lives in `features::mcp_import`;
+    /// what happens here is everything that must not happen in `screens`: the
+    /// file's **literal** `env` values are encrypted into this machine's entry
+    /// (§9 S5) and only then does the config gain the servers — so a token from
+    /// someone else's config never reaches `settings.json` in the clear, and never
+    /// travels through the UI at all.
+    ///
+    /// Imported servers arrive disabled (S7), so nothing spawns; the config change
+    /// still goes through the usual debounce.
+    pub(super) fn handle_import_mcp_servers(&mut self, path: String) {
+        let loc = self.ui_locale();
+        let result = std::fs::read_to_string(&path)
+            .with_context(|| loc.tf("mcp.import.err.read", &[("path", &path)]))
+            .and_then(|text| {
+                let existing: Vec<String> = self
+                    .config
+                    .mcp
+                    .servers
+                    .iter()
+                    .map(|s| s.id.clone())
+                    .collect();
+                crate::features::mcp_import::plan_import(&text, &existing, loc)
+            });
+        let plan = match result {
+            Ok(plan) => plan,
+            Err(err) => {
+                tracing::warn!(%path, error = %format!("{err:#}"), "MCP: import failed");
+                let _ = self
+                    .evt_tx
+                    .send(AppEvent::McpImportResult(format!("{err:#}")));
+                return;
+            }
+        };
+        for server in &plan.servers {
+            for (var, value) in &server.secrets {
+                // A failed store reports itself; the variable is still declared,
+                // so the server stays visible and the value can be entered by hand.
+                self.store_secret(
+                    &SecretKey::McpEnv {
+                        server: server.cfg.id.clone(),
+                        var: var.clone(),
+                    }
+                    .storage_name(),
+                    value,
+                );
+            }
+        }
+        let added = !plan.servers.is_empty();
+        self.config
+            .mcp
+            .servers
+            .extend(plan.servers.iter().map(|s| s.cfg.clone()));
+        if added && let Err(err) = self.storage.json().save_config(&self.config) {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                loc.tf("ui.err.save_settings_failed", &[("err", &err.to_string())]),
+            ));
+            return;
+        }
+        if added {
+            self.restarts.mark_mcp();
+        }
+        tracing::info!(
+            %path, added = plan.servers.len(), secrets = plan.secret_count(),
+            "MCP: import"
+        );
+        let _ = self.evt_tx.send(AppEvent::McpImportResult(
+            crate::features::mcp_import::summary(&plan, loc),
+        ));
+        self.emit_settings();
     }
 
     /// Persists a server's TOFU catalog pin into `config.mcp` (written directly, not
@@ -672,6 +830,124 @@ mod tests {
         );
     }
 
+    /// Each declared variable has exactly **one** origin, and the row says which:
+    /// a named source is taken from the OS and a stored value is not consulted for
+    /// it; a bare name is taken from the store. Anything else is a hidden state —
+    /// the settings row would say "take it from CLAUDE_API_KEY" while a secret
+    /// silently overrode it (§9.5b).
+    #[tokio::test]
+    async fn each_variable_has_exactly_one_origin() {
+        if !crate::shared::secrets::scheme_available() {
+            return; // Linux without machine-id: storing secrets is unsupported
+        }
+        // SAFETY: single-threaded test, the variable is scoped to this process.
+        unsafe { std::env::set_var("MINDFORK_TEST_MCP_SRC", "from-os-env") };
+        let mut cfg = server_cfg("fs");
+        cfg.env
+            .insert("SOURCED".into(), "MINDFORK_TEST_MCP_SRC".into());
+        cfg.env.insert("BARE".into(), String::new());
+        cfg.env
+            .insert("MISSING".into(), "MINDFORK_TEST_NO_SUCH_VAR".into());
+
+        // Nothing stored: a named source is read, a bare name is left to
+        // inheritance, and an unreadable source overrides nothing.
+        let mut keys = Vec::new();
+        assert_eq!(
+            resolve_env(&cfg, &keys),
+            vec![("SOURCED".to_string(), "from-os-env".to_string())]
+        );
+
+        // A value stored for **both** variables.
+        for var in ["SOURCED", "BARE"] {
+            crate::shared::secrets::put_key(
+                &mut keys,
+                &SecretKey::McpEnv {
+                    server: "fs".into(),
+                    var: var.into(),
+                }
+                .storage_name(),
+                "from-stored-secret",
+                || "test".to_string(),
+            )
+            .unwrap();
+        }
+        let resolved = resolve_env(&cfg, &keys);
+        assert!(
+            resolved.contains(&("BARE".to_string(), "from-stored-secret".to_string())),
+            "a bare name takes the stored value: {resolved:?}"
+        );
+        assert!(
+            resolved.contains(&("SOURCED".to_string(), "from-os-env".to_string())),
+            "a named source is authoritative — the stored value is not consulted: {resolved:?}"
+        );
+    }
+
+    /// **The trap of §9.1.** A secret change alters no setting, so comparing
+    /// `McpSettings` alone would leave the server running with the old value and
+    /// nothing to notice it — the debounce would skip the re-apply. `is_current`
+    /// therefore compares the *resolved* environment too.
+    #[tokio::test]
+    async fn a_changed_secret_makes_the_servers_not_current() {
+        if !crate::shared::secrets::scheme_available() {
+            return;
+        }
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        let mut cfg = server_cfg("fs");
+        cfg.env.insert("TOKEN".into(), String::new()); // declared, value from a secret
+        let settings = McpSettings {
+            enabled: true,
+            servers: vec![cfg],
+        };
+        let mut keys = Vec::new();
+        m.apply(&settings, &keys, ru());
+        assert!(m.is_current(&settings, &keys), "just applied");
+
+        crate::shared::secrets::put_key(
+            &mut keys,
+            &SecretKey::McpEnv {
+                server: "fs".into(),
+                var: "TOKEN".into(),
+            }
+            .storage_name(),
+            "brand-new-token",
+            || "test".to_string(),
+        )
+        .unwrap();
+        assert!(
+            !m.is_current(&settings, &keys),
+            "the settings are identical, but the value handed to the child changed"
+        );
+        // Applying again picks it up, and the slot carries it for a respawn.
+        m.apply(&settings, &keys, ru());
+        assert!(m.is_current(&settings, &keys));
+        assert_eq!(
+            m.slots["fs"].envs,
+            vec![("TOKEN".to_string(), "brand-new-token".to_string())]
+        );
+    }
+
+    /// An unrelated provider key must **not** respawn `npx` — which is why the
+    /// comparison is against the resolved environment rather than the whole key
+    /// blob (the engines compare the blob; MCP processes are far more expensive).
+    #[tokio::test]
+    async fn an_unrelated_provider_key_leaves_the_servers_current() {
+        if !crate::shared::secrets::scheme_available() {
+            return;
+        }
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        let settings = McpSettings {
+            enabled: true,
+            servers: vec![server_cfg("fs")],
+        };
+        let mut keys = Vec::new();
+        m.apply(&settings, &keys, ru());
+        crate::shared::secrets::put_key(&mut keys, "openai", "sk-unrelated", || "test".to_string())
+            .unwrap();
+        assert!(m.is_current(&settings, &keys));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn restart_budget_caps_within_window() {
         let mut marks = Vec::new();
@@ -702,6 +978,7 @@ mod tests {
                 enabled: true,
                 servers: vec![server_cfg("fs"), server_cfg("gh")],
             },
+            &[],
             ru(),
         );
         let gh_ready = McpEvent::Ready {
@@ -754,6 +1031,7 @@ mod tests {
                 enabled: true,
                 servers: vec![server_cfg("fs")],
             },
+            &[],
             ru(),
         );
         m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
@@ -794,7 +1072,7 @@ mod tests {
             enabled: true,
             servers: vec![server_cfg("fs")],
         };
-        m.apply(&settings, ru());
+        m.apply(&settings, &[], ru());
         assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
 
         // An event from a foreign generation — dropped.
@@ -841,6 +1119,7 @@ mod tests {
                 enabled: true,
                 servers: vec![cfg],
             },
+            &[],
             ru(),
         );
         // The server came up with a CHANGED catalog (a different description) → the tools
@@ -882,6 +1161,7 @@ mod tests {
                 enabled: true,
                 servers: vec![cfg],
             },
+            &[],
             ru(),
         );
         // The catalog matches the pin → registration with no new persist.
@@ -903,6 +1183,7 @@ mod tests {
                 enabled: true,
                 servers: vec![server_cfg("fs")],
             },
+            &[],
             ru(),
         );
         m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
@@ -946,6 +1227,7 @@ mod tests {
                 enabled: true,
                 servers: vec![bad, off],
             },
+            &[],
             ru(),
         );
         // A disabled server gets no slot; an invalid one — Disconnected with a reason.
@@ -961,6 +1243,7 @@ mod tests {
                 enabled: false,
                 servers: vec![server_cfg("fs")],
             },
+            &[],
             ru(),
         );
         assert!(m.snapshot().servers.is_empty());

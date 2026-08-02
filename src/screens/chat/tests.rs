@@ -646,14 +646,7 @@ fn with_confirm() -> ChatScreen {
     let mut s = ChatScreen::new();
     let mut cfg = AppConfig::default();
     cfg.interface.confirm_destructive_keys = true;
-    s.set_settings(
-        cfg,
-        Vec::new(),
-        Vec::new(),
-        Default::default(),
-        Vec::new(),
-        false,
-    );
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
     s
 }
 
@@ -1091,14 +1084,7 @@ fn settings_event_updates_theme_palette() {
     assert_eq!(s.palette, Palette::for_theme(Theme::Auto));
     let mut cfg = AppConfig::default();
     cfg.interface.theme = Theme::Dark;
-    s.set_settings(
-        cfg,
-        vec![],
-        Vec::new(),
-        Default::default(),
-        Vec::new(),
-        false,
-    );
+    s.set_settings(cfg, vec![], Vec::new(), Default::default(), Vec::new());
     assert_eq!(s.palette, Palette::for_theme(Theme::Dark));
 }
 
@@ -1116,7 +1102,6 @@ fn ctrl_p_opens_settings_only_with_snapshot() {
         Vec::new(),
         Default::default(),
         Vec::new(),
-        false,
     );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
@@ -1135,7 +1120,6 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
         Vec::new(),
         Default::default(),
         Vec::new(),
-        false,
     );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('з'), KeyModifiers::CONTROL)),

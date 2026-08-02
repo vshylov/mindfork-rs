@@ -372,6 +372,17 @@ pub fn valid_server_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Whether a child environment variable name is one we can carry: POSIX-shaped
+/// (`[A-Za-z0-9_]`, not starting with a digit). The restriction is what keeps the
+/// flat variable-list settings row parseable and the `mcp-<server>-<VAR>`
+/// secret storage name unambiguous — only the server id may contain `-`
+/// (docs/history/mcp-server-editor.md §9.4).
+pub fn valid_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Resolves a server command the way a shell would, so **one config works on
 /// every platform** (`"command": "npx"` rather than `cmd /c npx …` on Windows).
 ///
@@ -726,6 +737,18 @@ impl JobGuard {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[test]
+    fn env_variable_name_rule() {
+        // POSIX-shaped, and no `-`: the storage name `mcp-<server>-<VAR>` has to
+        // stay unambiguous, and the flat variable-list row parseable.
+        assert!(valid_env_name("GITHUB_TOKEN"));
+        assert!(valid_env_name("a1"));
+        assert!(!valid_env_name(""));
+        assert!(!valid_env_name("1A"));
+        assert!(!valid_env_name("has-dash"));
+        assert!(!valid_env_name("has space"));
+    }
 
     /// A scripted fake server over duplex: a closure decides the reply to
     /// each request. Returns the client's connection + the fake's

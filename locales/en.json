@@ -690,6 +690,10 @@
   "ui.err.mcp.server_ctx": "MCP server {id}",
   "ui.err.mcp.tools_list_ctx": "MCP server {id}: tools/list",
   "ui.err.mcp.empty_catalog": "MCP server {id}: empty tool catalog",
+  "mcp.import.done": "Servers imported: {n} · skipped: {skipped} · secrets stored: {secrets}",
+  "mcp.import.err.read": "could not read the file {path}",
+  "mcp.import.err.bad_json": "the file is not valid JSON",
+  "mcp.import.err.no_servers": "the file has no mcpServers (or servers) section",
   "ui.settings.desc.mcp_enabled": [
     "Master switch for plugin tools (MCP). Servers are configured below (or by",
     "hand in settings.json, the mcp.servers section); their tools appear among",
@@ -700,12 +704,16 @@
   "ui.settings.group.mcp_host": "MCP host",
   "ui.settings.group.mcp_server": "Servers",
   "ui.settings.group.mcp_status": "Status",
+  "ui.settings.group.mcp_import": "Import",
   "ui.settings.value.no_servers": "(no servers)",
   "ui.settings.field.mcp_select": "Server",
   "ui.settings.field.mcp_id": "Identifier",
   "ui.settings.field.mcp_command": "Command",
   "ui.settings.field.mcp_args": "Arguments",
-  "ui.settings.field.mcp_env": "Environment",
+  "ui.settings.field.mcp_env": "Variables",
+  "ui.settings.field.mcp_import": "Import from a file",
+  "ui.settings.value.mcp_source_found": "from {src}: found",
+  "ui.settings.value.mcp_source_missing": "from {src}: not found",
   "ui.settings.field.mcp_server_enabled": "Enabled",
   "ui.settings.field.mcp_timeout": "Call timeout (s)",
   "ui.settings.field.mcp_max_result": "Result limit",
@@ -719,19 +727,39 @@
     "renaming it drops the pinned catalog."
   ],
   "ui.settings.desc.mcp_command": [
-    "The server executable. .bat/.cmd commands are forbidden (BatBadBut,",
-    "CVE-2024-24576): npx/uvx on Windows run as cmd /c npx … (the command",
-    "is cmd), or give a direct path to an exe."
+    "The server executable. A bare name is resolved as a shell would (by",
+    "PATHEXT on Windows), so npx/uvx are written simply as npx — no cmd /c is",
+    "needed, and the same config works on every system."
   ],
   "ui.settings.desc.mcp_args": [
     "Command-line arguments separated by spaces; quote an argument that",
     "contains one: /c npx -y @modelcontextprotocol/server-filesystem \"D:/my work\"."
   ],
   "ui.settings.desc.mcp_env": [
-    "The child process environment as VARIABLE=SOURCE pairs, comma separated.",
-    "The value is the NAME of one of the application's own environment",
-    "variables, not the secret itself — tokens never reach settings.json.",
-    "A missing source is skipped (a warning in the log)."
+    "The environment variables this server needs, comma separated:",
+    "GITHUB_TOKEN, SLACK_TOKEN. Each value is entered in the row below and",
+    "stored machine-bound. A variable already set in the application's own",
+    "environment is inherited by the child without being listed here.",
+    "GITHUB_TOKEN=OTHER_NAME — take the value from a differently named variable;",
+    "such a variable gets no value row, its source is already given."
+  ],
+  "ui.settings.desc.mcp_env_secret": [
+    "This variable's value for the child process: encrypted with THIS computer's",
+    "key (like an API key), so settings.json never holds it in the clear — which",
+    "is why it is entered apart from the list of names above. Enter to enter it",
+    "again (a stored one cannot be shown), Del to delete."
+  ],
+  "ui.settings.desc.mcp_env_source": [
+    "This variable's value comes from the environment variable {src} — there is",
+    "nothing to enter here, its source is given in the list above. The",
+    "application sees the environment it was started with: if you have just set",
+    "the variable, restart the application."
+  ],
+  "ui.settings.desc.mcp_import": [
+    "Path to another MCP client's config (usually claude_desktop_config.json:",
+    "%APPDATA%\\Claude on Windows, ~/.config/Claude on Linux). Servers arrive",
+    "disabled and env values are stored as this computer's secrets; a server",
+    "whose identifier is taken is skipped."
   ],
   "ui.settings.desc.mcp_server_enabled": [
     "Whether this server starts. A server created here is off: nothing is",
@@ -1045,7 +1073,7 @@
   "ui.settings.ui.nothing_found": "  nothing found",
   "ui.settings.ui.search_footer": "Enter — go · ↑↓ — select · Esc — cancel",
   "ui.settings.ui.sections": "Sections",
-  "ui.settings.ui.gate_warn": "The tool is enabled in the profile, but disabled by a global switch — it is unavailable to the model. Enable it in the «Tools» section.",
+  "ui.settings.ui.gate_warn": "The tool is enabled in the profile, but disabled by a global switch — it is unavailable to the model. Enable it in the «{section}» section.",
   "ui.settings.err.int": "an integer is required",
   "ui.settings.err.float": "a number is required",
   "ui.err.profile_name_empty": "Profile name cannot be empty",
