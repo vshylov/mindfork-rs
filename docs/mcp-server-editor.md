@@ -1,6 +1,11 @@
 # MCP servers in the settings window — design plan
 
-**Status:** design, awaiting the user's fork decisions. Closes the groundwork
+**Status:** design accepted — **forks F1–F8 confirmed by the user 2026-08-02,
+all as recommended** (F1(b) a dedicated section, F2(a) a selector, F3(a)
+space-separated with shell quoting, F4(a) the env map stays variable names,
+F5(a) a new server starts disabled, F6 deferred, F7(a) reconnect, F8(a)
+in-editor validation); **scope — stage 1 only**, stage 2 (secrets + JSON
+import) stays a separate decision. Closes the groundwork
 item "server editor UI (currently — edit `settings.json` by hand)"
 ([roadmap](roadmap.md) §Tools, [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md)
 §Consequences). Behaviour — spec §9.6; the host itself is done and unchanged
@@ -192,11 +197,13 @@ snapshot, so it stays visible and editable either way.
 ## 4. Proposed staging
 
 **Stage 1 — the editor** (`feat/mcp-server-editor`): F1(b), F2(a), F3(a),
-F4(a), F5(a), F7(a), F8(a). Literally closes the roadmap item.
+F4(a), F5(a), F7(a), F8(a). Literally closes the roadmap item. **Adopted.**
 
 **Stage 2 — secrets and import** (`feat/mcp-env-secrets`): F4(b) + F6(a).
 Independently valuable, and it is what makes hosted MCP servers configurable
-without touching the OS environment.
+without touching the OS environment. **Not adopted yet** — a separate decision
+once stage 1 has been used against a real server; until then `env` stays a map
+of OS variable names and stays hand-editable in `settings.json` too.
 
 ## 5. Implementation notes (stage 1)
 
