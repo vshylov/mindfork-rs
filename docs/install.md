@@ -503,7 +503,7 @@ takes two steps (double opt-in):
     "id": "fs",                     // slug [a-z0-9-] — part of tool names mcp__fs__*
     "command": "npx",               // the same on every platform (see the note below)
     "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
-    "env": { "GITHUB_TOKEN": "" },  // child variable → NAME of an OS variable, or "" and the value is entered in the app (no secrets in the file either way)
+    "env": { "GITHUB_TOKEN": "" },  // the variables the server needs; "" = the value is entered in the app, a name = take it from that OS variable (no secrets in the file either way)
     "enabled": true,
     "tool_timeout_secs": 60,        // timeout for one call
     "max_result_chars": 20000       // result clip (goes into the prompt)
@@ -522,15 +522,19 @@ tools: 14 · in profile: 0` means the server is up and the model still sees none
 it — step 2 is missing.
 
 **Tokens for a hosted server** (GitHub, Slack, …) are entered in the same section.
-List the variable in the server's environment row — the source may be left empty
-(`GITHUB_TOKEN=`), which only declares it — and a row appears underneath for each
-declared variable: `Enter` opens a masked field for the value, `Del` deletes a stored
-one. The value is **encrypted with this computer's key** (the same storage as the
-cloud API keys, §3.1, and the backup password, §2.2), so it never lands in `settings.json`
-and it is **not** carried along if you copy the file to another machine — enter it
-again there. Naming an operating-system variable in that row is still supported and
-is the way to go for CI, scripted setups and machines where the encryption isn't
-available; when both are present, the value stored in the app wins.
+List the variables the server needs in its "Variables" row, comma separated and by
+name alone (`GITHUB_TOKEN, SLACK_TOKEN`) — a row then appears underneath for each of
+them: `Enter` opens a masked field for the value, `Del` deletes a stored one. The
+value is **encrypted with this computer's key** (the same storage as the cloud API
+keys, §3.1, and the backup password, §2.2), so it never lands in `settings.json` and
+it is **not** carried along if you copy the file to another machine — enter it again
+there.
+
+The list holds only *overrides*: the server already inherits the application's own
+environment, so a variable you have set in the OS reaches it without being listed at
+all — which is what makes CI and scripted setups work unchanged. Write
+`GITHUB_TOKEN=OTHER_NAME` only when the value has to come from a variable with a
+**different** name. When a stored value and a source both exist, the stored one wins.
 
 **Importing an existing configuration.** The "Import from a file" row takes the
 **path** of an `mcpServers` JSON — the format used by `claude_desktop_config.json`

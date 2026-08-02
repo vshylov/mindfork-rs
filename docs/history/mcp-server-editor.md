@@ -557,6 +557,30 @@ the value actually reaches the child process. Acceptance, as in stage 1, is a
 window, and have the assistant call that server's tool — with no OS environment
 variable set.
 
+### 9.5a Revised after the first manual run (S1's UI form)
+
+The user imported a real config (a Cursor one) successfully, and then said the
+variable configuration "looks strange and inconvenient — why type
+`variable=value` pairs and then enter the value in a separate field as well".
+
+Fair, and the phrasing is the evidence: the row's value slot means the **name of
+a source variable**, but it *reads* as `variable=value`, so the field asking for
+the value underneath looks redundant. Checking `McpClient::spawn` settled how
+much of the mechanism was even load-bearing: it uses `Command::envs` with **no**
+`env_clear`, so the child already inherits the whole application environment.
+The `NAME=SOURCE` form is therefore only needed to take a value from a
+*differently named* variable — the same-name case works by inheritance, with no
+configuration at all.
+
+So the row became a **bare list of names** (`GITHUB_TOKEN, SLACK_TOKEN`), with
+`NAME=SOURCE` still accepted and no longer advertised, the label changed from
+"Environment" to "Variables", and the hints were rewritten around "the value goes
+in the row below; a variable already in the app's environment is inherited
+anyway". **No behaviour changed** — only what the field asks for. The
+inheritance claim the new hint makes is now pinned by the live smoke: a variable
+set in the test process and named nowhere in the server's config reaches the
+child (it would go silently untrue if `env_clear` ever appeared).
+
 ### 9.6 Documentation to update on completion
 
 CLAUDE.md journal; CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten

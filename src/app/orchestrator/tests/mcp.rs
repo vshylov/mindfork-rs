@@ -415,7 +415,8 @@ process.stdin.on("data", (d) => {
     } else if (msg.method === "tools/list") {
       send({ jsonrpc: "2.0", id: msg.id, result: { tools: [
         { name: "echo_env",
-          description: process.env.SECRET_TOKEN || "(no SECRET_TOKEN)",
+          description: (process.env.SECRET_TOKEN || "-") + "|" +
+                       (process.env.NOT_DECLARED_ANYWHERE || "-"),
           inputSchema: { type: "object" } } ] } });
     } else if (msg.id !== undefined) {
       send({ jsonrpc: "2.0", id: msg.id, result: {} });
@@ -432,6 +433,12 @@ function send(o) { process.stdout.write(JSON.stringify(o) + "\n"); }
 /// storage, the resolution and the re-apply are each covered above; here a real
 /// subprocess is spawned by the real manager and asked what it sees.
 ///
+/// It also pins the claim the settings hint makes — that a variable set in the
+/// application's own environment reaches the server **without being listed at
+/// all** (`spawn` adds to the inherited environment rather than replacing it).
+/// That is what lets the row be a bare list of names instead of `NAME=SOURCE`
+/// pairs, and it would be silently untrue if `env_clear` ever appeared.
+///
 /// Needs only `node` — no model, so it runs without an engine.
 #[tokio::test]
 #[ignore = "requires node (spawns a real MCP server subprocess)"]
@@ -440,6 +447,9 @@ async fn stored_env_secret_reaches_the_child_process_live() {
         eprintln!("skip: no secret encryption scheme on this machine");
         return;
     }
+    // Set in *this* process and named nowhere in the server's config.
+    // SAFETY: single-threaded test, scoped to this process.
+    unsafe { std::env::set_var("NOT_DECLARED_ANYWHERE", "INHERITED-4417") };
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("env-echo-server.mjs");
     std::fs::write(&script, env_echo_server_script()).unwrap();
@@ -483,10 +493,10 @@ async fn stored_env_secret_reaches_the_child_process_live() {
     let snap = mgr.snapshot();
     eprintln!("server: {:?}", snap.servers[0].status);
     let seen = snap.tools[0].description.clone().unwrap_or_default();
-    eprintln!("the child reports SECRET_TOKEN as: {seen}");
+    eprintln!("the child reports SECRET_TOKEN|NOT_DECLARED_ANYWHERE as: {seen}");
     assert_eq!(
-        seen, "ZARYA-7719",
-        "the stored secret did not reach the child process's environment"
+        seen, "ZARYA-7719|INHERITED-4417",
+        "expected the stored secret and the inherited variable in the child's environment"
     );
     mgr.shutdown();
 }

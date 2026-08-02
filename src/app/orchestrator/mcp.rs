@@ -504,12 +504,14 @@ fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result
     Ok(())
 }
 
-/// Expands the child's environment map. Each declared variable takes its value
-/// from a **stored secret** if this machine has one, otherwise from the OS
-/// environment variable the map names — the exact shape of `api_key` /
-/// `api_key_env` (ADR 0008 §3, docs/history/mcp-server-editor.md §9 S1/S8). Neither
-/// present — warn and skip (the server will say for itself what it's missing);
-/// `settings.json` still holds no secret either way.
+/// Expands the child's environment map — the **overrides** on top of what the
+/// process already inherits (`spawn` uses `Command::envs`, not `env_clear`). Each
+/// declared variable takes its value from a **stored secret** if this machine has
+/// one, otherwise from the OS environment variable the map names when it names a
+/// different one — the shape of `api_key` / `api_key_env` (ADR 0008 §3,
+/// docs/history/mcp-server-editor.md §9 S1/S8). Neither present — nothing is
+/// overridden and inheritance covers the same-name case; `settings.json` still
+/// holds no secret either way.
 ///
 /// Decryption happens here rather than below, mirroring `EngineManager`, which
 /// resolves the key and hands the supervisor plaintext.
@@ -526,9 +528,13 @@ fn resolve_env(cfg: &McpServerConfig, keys: &[ApiKeyEntry]) -> Vec<(String, Stri
         );
         match stored.or_else(|| std::env::var(source).ok()) {
             Some(v) => out.push((child_var.clone(), v)),
-            None => tracing::warn!(
+            // Not an error: the child inherits the app's own environment
+            // (`spawn` adds to it rather than replacing it), so a declared
+            // variable with nothing stored still reaches the server if this
+            // process has it.
+            None => tracing::debug!(
                 server = %cfg.id, var = %child_var, source = %source,
-                "MCP: neither a stored secret nor a source variable — skipping"
+                "MCP: no stored value — the variable is left to inheritance"
             ),
         }
     }

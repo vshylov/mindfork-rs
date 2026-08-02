@@ -374,7 +374,7 @@ pub fn valid_server_id(id: &str) -> bool {
 
 /// Whether a child environment variable name is one we can carry: POSIX-shaped
 /// (`[A-Za-z0-9_]`, not starting with a digit). The restriction is what keeps the
-/// flat `VARIABLE=SOURCE` settings row parseable and the `mcp-<server>-<VAR>`
+/// flat variable-list settings row parseable and the `mcp-<server>-<VAR>`
 /// secret storage name unambiguous — only the server id may contain `-`
 /// (docs/history/mcp-server-editor.md §9.4).
 pub fn valid_env_name(name: &str) -> bool {
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn env_variable_name_rule() {
         // POSIX-shaped, and no `-`: the storage name `mcp-<server>-<VAR>` has to
-        // stay unambiguous, and the flat `VAR=SOURCE` row parseable.
+        // stay unambiguous, and the flat variable-list row parseable.
         assert!(valid_env_name("GITHUB_TOKEN"));
         assert!(valid_env_name("a1"));
         assert!(!valid_env_name(""));

@@ -22,16 +22,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   same data). A server added here starts switched off, so nothing is launched
   while you are still typing its command, and an identifier that would make the
   server invisible is refused as you enter it.
-- **An MCP server's token can be entered in the app.** Under the environment row
-  there is now one row per variable you declared: press `Enter` and type the
-  value into a masked field, `Del` deletes it. The value is encrypted with a key
-  belonging to **this computer** and never appears in the settings file — the
+- **An MCP server's token can be entered in the app.** List the variables the
+  server needs by name (`GITHUB_TOKEN, SLACK_TOKEN`) and a row appears for each:
+  press `Enter` and type the value into a masked field, `Del` deletes it. The
+  value is encrypted with a key belonging to **this computer** and never appears in the settings file — the
   same storage the cloud API keys and the backup password use, so copying the
   configuration elsewhere is still safe (on another computer you enter the value
-  again). Naming one of your OS environment variables instead still works and is
-  used when nothing is stored, so scripted setups are unaffected. Previously a
-  hosted server (GitHub, Slack, …) meant setting a system variable and
-  restarting the application.
+  again). Scripted setups are unaffected: the server inherits the application's
+  own environment, so a variable you already set in the system reaches it
+  without being listed at all. Previously a hosted server (GitHub, Slack, …)
+  meant setting a system variable and restarting the application.
 - **A configuration from another MCP client can be imported.** "Import from a
   file" in the "Plugins" section takes the path of a `mcpServers` JSON —
   Claude Desktop's `claude_desktop_config.json` and the clients that share its

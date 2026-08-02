@@ -3097,13 +3097,31 @@ fn mcp_args_and_env_round_trip_as_text() {
     assert_eq!(parse_args("  a   'b c'  d "), ["a", "b c", "d"]);
     assert_eq!(parse_args(""), Vec::<String>::new());
 
-    let env = std::collections::BTreeMap::from([
+    // The usual form is a bare list of names: the value is entered in the row
+    // below, or simply inherited. `=SOURCE` is the rare "take it from a
+    // differently named variable" case, and both round-trip.
+    let declared = std::collections::BTreeMap::from([
+        ("GITHUB_TOKEN".to_string(), String::new()),
+        ("SLACK_TOKEN".to_string(), String::new()),
+    ]);
+    assert_eq!(join_env_map(&declared), "GITHUB_TOKEN, SLACK_TOKEN");
+    assert_eq!(parse_env_map(&join_env_map(&declared)), declared);
+    let mapped = std::collections::BTreeMap::from([
         ("GITHUB_TOKEN".to_string(), "MINDFORK_PAT".to_string()),
         ("HOME".to_string(), "MY_HOME".to_string()),
     ]);
-    assert_eq!(parse_env_map(&join_env_map(&env)), env);
-    // A half-typed entry doesn't destroy the ones already there.
-    assert_eq!(parse_env_map("A=B, junk, =C, D=").len(), 2);
+    assert_eq!(parse_env_map(&join_env_map(&mapped)), mapped);
+    // Mixed, hand-typed, with spacing.
+    assert_eq!(
+        parse_env_map(" A = B , C "),
+        std::collections::BTreeMap::from([
+            ("A".to_string(), "B".to_string()),
+            ("C".to_string(), String::new()),
+        ])
+    );
+    // A half-typed entry doesn't destroy the ones already there: a nameless one
+    // and one whose name we cannot carry are dropped.
+    assert_eq!(parse_env_map("A=B, =C, has-dash").len(), 1);
 }
 
 #[test]

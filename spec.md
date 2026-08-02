@@ -844,7 +844,7 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   named in `env` remains the **fallback** — which is what keeps MCP usable in CI, in
   scripted setups and on machines with no encryption scheme available. A child
   variable name is restricted to `[A-Za-z0-9_]`: that is what keeps the flat
-  `VARIABLE=SOURCE` row parseable and the storage name unambiguous. The secret never
+  variable-list row parseable and the storage name unambiguous. The secret never
   reaches the UI — the settings snapshot carries presence flags only. Orphaned
   secrets (a server renamed or deleted) are **not** collected automatically: the row
   commits on Enter, so a half-typed edit would destroy a value, and `Ctrl+Z` restores
@@ -892,8 +892,12 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   `K` is how many of them the selected profile has enabled, because a server can be
   up while the model sees nothing (double opt-in), and a row that said only "ready"
   is how a user adds a server and finds it does not work. Arguments are edited
-  as a shell-quoted command line and the environment as `VARIABLE=SOURCE` pairs, both
-  round-tripping through the field. Below the environment row sits **one row per
+  as a shell-quoted command line and the environment as a comma-separated **list of
+  variable names** (`GITHUB_TOKEN, SLACK_TOKEN`), both round-tripping through the
+  field; the `VARIABLE=SOURCE` form remains for the rare case of a differently named
+  source. The list is only *overrides*: a variable already set in the application's
+  own environment reaches the child by inheritance without being listed
+  (`Command::envs` adds, it does not replace). Below the environment row sits **one row per
   declared variable**, showing its secret's status (`configured (this computer)` /
   `not set`), opening an **empty masked editor** on Enter and deleting the stored
   value on `Del` — exactly the "API key" row's behaviour; and an "import from a file"

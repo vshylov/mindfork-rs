@@ -1288,19 +1288,28 @@ pub(super) fn parse_args(s: &str) -> Vec<String> {
 /// neither `,` nor `=`, which is what makes this flat form unambiguous.
 pub(super) fn join_env_map(env: &std::collections::BTreeMap<String, String>) -> String {
     env.iter()
-        .map(|(k, v)| format!("{k}={v}"))
+        .map(|(k, v)| {
+            if v.is_empty() {
+                k.clone()
+            } else {
+                format!("{k}={v}")
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-/// Text back into an MCP server's `env` map. Entries without a `=` or with a
-/// name we cannot carry (`valid_env_name`) are dropped — the field is edited
-/// character by character, so a half-typed entry must not break the ones already
-/// there.
+/// Text back into an MCP server's `env` map. A bare `VARIABLE` declares it with
+/// no source — the usual form, since the value is then entered in the row below
+/// (or simply inherited: the child gets the app's whole environment). The
+/// `VARIABLE=SOURCE` form remains for the rare case of taking the value from a
+/// *differently named* variable. A name we cannot carry (`valid_env_name`) is
+/// dropped — the field is edited character by character, so a half-typed entry
+/// must not break the ones already there.
 pub(super) fn parse_env_map(s: &str) -> std::collections::BTreeMap<String, String> {
     s.split(',')
         .filter_map(|part| {
-            let (k, v) = part.split_once('=')?;
+            let (k, v) = part.split_once('=').unwrap_or((part, ""));
             let (k, v) = (k.trim(), v.trim());
             crate::shared::mcp::valid_env_name(k).then(|| (k.to_string(), v.to_string()))
         })

@@ -11345,6 +11345,24 @@ debounce was done as a separate PR, see below).
   child's `process.env` really line up. Regression: `mcp_filesystem_e2e_live` (14
   tools, the model called `mcp__fs__read_text_file` and used the result) and
   `mcp_reconnect_live` (Ready → reconnect → Ready, same 14) both green.
+- **Follow-up from the manual acceptance run** (the user, 2026-08-02): the import
+  worked — a real Cursor config imported cleanly — but the variable configuration
+  "looks strange and inconvenient: why type `variable=value` pairs and then enter
+  the value in a separate field as well". Fair, and the phrasing is the evidence:
+  the value slot means the **name of a source variable**, and it *reads* as
+  `variable=value`, so the row below asking for the value looks redundant.
+  Checking `McpClient::spawn` settled how much of the mechanism was even
+  load-bearing — it uses `Command::envs` with **no** `env_clear`, so the child
+  already inherits the whole application environment, and `NAME=SOURCE` is only
+  needed to take a value from a *differently named* variable. The row is now a
+  **bare list of names** (`GITHUB_TOKEN, SLACK_TOKEN`), labelled "Variables";
+  `NAME=SOURCE` is still parsed but no longer advertised. **No behaviour
+  changed** — only what the field asks for. The claim the new hint makes is
+  pinned live rather than asserted: the smoke now also sets a variable named
+  **nowhere** in the server's config and the child reports it
+  (`ZARYA-7719|INHERITED-4417`), so an `env_clear` appearing later would fail the
+  test instead of quietly making the hint false.
+
 - **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
   transport, resources/prompts, `list_changed`, deferred schemas.
