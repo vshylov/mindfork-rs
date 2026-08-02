@@ -1,6 +1,8 @@
 # MCP servers in the settings window — design plan
 
-**Status:** stage 1 **done** (2026-08-02); forks accepted — **forks F1–F8 confirmed by the user 2026-08-02,
+**Status:** stage 1 **done and accepted** (2026-08-02) — a real server was
+configured end to end from the settings window with a platform-independent
+command, and the model called its tool. Forks accepted — **forks F1–F8 confirmed by the user 2026-08-02,
 all as recommended** (F1(b) a dedicated section, F2(a) a selector, F3(a)
 space-separated with shell quoting, F4(a) the env map stays variable names,
 F5(a) a new server starts disabled, F6 deferred, F7(a) reconnect, F8(a)
@@ -300,3 +302,9 @@ has fixed twice before (the by-reference attachment block, the `youtube_watch`
 unconfigured path): the UI states a situation without saying what is possible
 next. The row now reads `ready · tools: N · in profile: K` and, when `K` is zero,
 points at the "Profiles" section. The double opt-in itself is unchanged.
+
+Verified after the fixes: the same manual run, redone — `mcp-echo-server`
+authored in the window as `npx` + `-y mcp-echo-server`, the status row reading
+`ready · tools: 1 · in profile: 1`, and the assistant calling
+`mcp__mcp-echo-server__echo` successfully. That closes §6's acceptance criterion,
+the one part of this track no automated test could stand in for.

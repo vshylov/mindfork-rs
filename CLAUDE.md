@@ -11227,8 +11227,13 @@ debounce was done as a separate PR, see below).
     **Live — GO** with a bare `npx` on Windows: `mcp_filesystem_e2e_live` (14
     tools, the model read the file) and `mcp_reconnect_live` (Ready → reconnect →
     Ready, same 14).
-  **Still to do**: the acceptance criterion proper — a manual run configuring a real
-  server **entirely from the settings window**, which needs a real terminal.
+- **Acceptance criterion — met** (manual run by the user, 2026-08-02): a real
+  server configured **entirely from the settings window** — `mcp-echo-server` with
+  the platform-independent `npx` + `-y mcp-echo-server` (no `cmd /c`), the status
+  row reading `ready · tools: 1 · in profile: 1`, and the model calling
+  `mcp__mcp-echo-server__echo` and getting its result back. Every part of the track
+  that only a human at a terminal could exercise is confirmed: authoring, the
+  resolver, the profile-count row, and the tool reaching the model.
 - **A process trap, hit for the second time in this repo** (the journal already
   records it from the vendored-syntaxes work): `git checkout -- <file>` used to revert
   a scripted mutation reverts **all** uncommitted work in that file. It cost the whole
