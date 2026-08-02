@@ -11180,10 +11180,18 @@ debounce was done as a separate PR, see below).
   the slot is reset and a task spawned with a fresh generation, but whether a real
   subprocess is actually torn down and a new one handshakes in its place is a property
   of the process handling. The smoke needs only `npx`, no model, so it runs without an
-  engine. **Still to do**: `mcp_filesystem_e2e_live` (a live model calling an MCP tool
-  — needs an engine, none was reachable) and the acceptance criterion proper, a manual
-  run configuring a real server **entirely from the settings window**, which needs a
-  real terminal.
+  engine. `mcp_filesystem_e2e_live` is green too (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server`, `--jinja`): 14 tools in the catalog, the model called
+  `mcp__fs__read_text_file` and used the result.
+- **Regression — clean** (same stack): **26 of 27** orchestrator e2e live smokes green
+  on the first pass (669 s) — memory/self-model/notes/graph/cross-organ links/RAG/
+  attachments/control tools/i18n/MCP. The one failure was `followup_tool_e2e_live`,
+  where the model simply answered "Привет! 👋" without calling
+  `send_followup_message`; it passed on re-run (`saw_continue=true`, a second bubble).
+  A model-behaviour flake of the class the control-tools entry already records, not a
+  regression: the diff touches **zero** files on the agentic-loop/control-tool path.
+  **Still to do**: the acceptance criterion proper — a manual run configuring a real
+  server **entirely from the settings window**, which needs a real terminal.
 - **A process trap, hit for the second time in this repo** (the journal already
   records it from the vendored-syntaxes work): `git checkout -- <file>` used to revert
   a scripted mutation reverts **all** uncommitted work in that file. It cost the whole
