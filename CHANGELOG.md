@@ -35,6 +35,9 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Appending to a file could silently lose what was appended.** `fs_write` with
+  `append` did not flush before closing the file, so the text sometimes never
+  reached disk — the file simply stayed as it was.
 - **An MCP server's status no longer hides that its tools are switched off.** The
   row now reads `ready · tools: 14 · in profile: 0` and points at the "Profiles"
   section: a server can be running while the model sees none of its tools, because

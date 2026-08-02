@@ -30,6 +30,9 @@
 //! UI statuses are localized by stage 3b).
 
 use std::collections::HashMap;
+// Only the Windows command resolver needs it — an unconditional import is an
+// unused-import error on other targets under `-D warnings`.
+#[cfg(windows)]
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;

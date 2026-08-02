@@ -263,6 +263,15 @@ impl Tool for FsWrite {
 }
 
 /// Appends to the end of a file (creates it if missing).
+///
+/// The `flush` is **required**, not tidiness: `tokio::fs::File` buffers writes
+/// and hands them to a background blocking task, and `Drop` cannot await — so
+/// without it the bytes may not have reached the OS by the time the call
+/// returns, and a read that follows sees the file as it was. It surfaced as an
+/// intermittent CI failure on Linux (`append_adds_to_end`: "a" instead of "ab")
+/// while passing on Windows, which is exactly how a lost race presents.
+/// `tokio::fs::write` on the non-append path is a complete operation and needs
+/// none of this.
 async fn append_to(path: &Path, content: &str) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt;
     let mut file = tokio::fs::OpenOptions::new()
@@ -270,7 +279,8 @@ async fn append_to(path: &Path, content: &str) -> std::io::Result<()> {
         .append(true)
         .open(path)
         .await?;
-    file.write_all(content.as_bytes()).await
+    file.write_all(content.as_bytes()).await?;
+    file.flush().await
 }
 
 /// `fs_list` — lists a directory's content.
@@ -408,6 +418,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.result, "ab");
+        // Several appends in a row: each one has to be visible to the next read,
+        // which is what `append_to`'s flush guarantees. Without it this raced and
+        // failed intermittently on Linux while passing on Windows.
+        for c in ["c", "d", "e"] {
+            w.invoke(
+                &ctx,
+                serde_json::json!({"path": path, "content": c, "append": true}),
+            )
+            .await
+            .unwrap();
+        }
+        let out = FsRead::new(None)
+            .invoke(&ctx, serde_json::json!({"path": path}))
+            .await
+            .unwrap();
+        assert_eq!(out.result, "abcde");
     }
 
     #[tokio::test]
