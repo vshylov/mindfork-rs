@@ -2758,16 +2758,26 @@ fn mcp_env_secret_rows_follow_the_declared_variables() {
         "a server with no env has nothing to store"
     );
 
-    assert!(type_into(&mut s, FieldId::McpEnv, "GITHUB_TOKEN=, OTHER=SRC").is_some());
+    assert!(type_into(&mut s, FieldId::McpEnv, "GITHUB_TOKEN, OTHER, FROM_OS=SRC").is_some());
     let all = s.plugin_fields();
     let rows: Vec<&FieldRow> = all
         .iter()
         .filter(|r| matches!(r.id, FieldId::McpEnvSecret(_)))
         .collect();
-    assert_eq!(rows.len(), 2, "one row per declared variable");
+    assert_eq!(
+        rows.len(),
+        2,
+        "a row per variable declared by name alone — the one naming a source has \
+         its answer already"
+    );
     // The label is the variable name, in the map's order.
     assert_eq!(rows[0].label, "GITHUB_TOKEN");
     assert_eq!(rows[1].label, "OTHER");
+    assert!(
+        !rows.iter().any(|r| r.label == "FROM_OS"),
+        "offering to store a value for a variable that names a source would be two \
+         answers to one question (§9.5b)"
+    );
 
     let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
     assert!(
@@ -2779,9 +2789,11 @@ fn mcp_env_secret_rows_follow_the_declared_variables() {
         var: "GITHUB_TOKEN".into(),
     }]);
     let rows = s.plugin_fields();
+    // Index 1: the map is sorted, so FROM_OS is 0 — and it has no row, which is
+    // exactly why the index must stay the position in the whole map.
     let stored = rows
         .iter()
-        .find(|r| r.id == FieldId::McpEnvSecret(0))
+        .find(|r| r.id == FieldId::McpEnvSecret(1))
         .unwrap();
     assert!(
         matches!(&stored.kind, FieldKind::Text(v) if v == ru.t("ui.settings.value.key_set")),
@@ -2789,8 +2801,10 @@ fn mcp_env_secret_rows_follow_the_declared_variables() {
     );
 
     // Editing: an empty masked editor, and the commit carries the secret out of
-    // the screen rather than into its config.
-    goto_field_again(&mut s, FieldId::McpEnvSecret(1));
+    // the screen rather than into its config. The index is the position in the
+    // whole map (`OTHER` is second alphabetically: FROM_OS, GITHUB_TOKEN, OTHER),
+    // so skipping a row never shifts the addressing.
+    goto_field_again(&mut s, FieldId::McpEnvSecret(2));
     s.handle_key(key(KeyCode::Enter));
     let editor = s.editor.as_ref().expect("the editor is open");
     assert_eq!(editor.input.text(), "", "a stored value cannot be shown");

@@ -581,6 +581,25 @@ inheritance claim the new hint makes is now pinned by the live smoke: a variable
 set in the test process and named nowhere in the server's config reaches the
 child (it would go silently untrue if `env_clear` ever appeared).
 
+### 9.5b One origin per variable (the second follow-up)
+
+Looking at the result, the user said that when a source variable *is* named,
+offering to enter a value as well is unnecessary. It is worse than unnecessary:
+S8 made a stored value **win** over the named source, so the row could say "take
+it from `CLAUDE_API_KEY`" while a secret silently overrode it — a hidden state
+nothing on screen could explain. Hiding the value row alone would have made that
+worse, not better: the override would still happen, with the only thing that
+could reveal it now gone.
+
+So the rule became **one origin per variable, decided by the row**: a bare name
+takes the stored value (and with none stored is left to inheritance);
+`NAME=SOURCE` takes the value from that OS variable and consults no stored value
+— and gets no value row. This narrows S8 rather than reversing it: the fallback
+existed so a shared config could work on a machine with the variable set in the
+OS, and that case uses the variable's own name, which inheritance already covers.
+Only "renamed source **and** a stored value" changes behaviour, and that
+combination is precisely the contradiction.
+
 ### 9.6 Documentation to update on completion
 
 CLAUDE.md journal; CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten

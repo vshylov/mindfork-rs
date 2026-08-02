@@ -737,9 +737,9 @@
     "The environment variables this server needs, comma separated:",
     "GITHUB_TOKEN, SLACK_TOKEN. Each value is entered in the row below and",
     "stored machine-bound. A variable already set in the application's own",
-    "environment is inherited by the child without being listed here;",
-    "GITHUB_TOKEN=OTHER_NAME — when the value must come from a variable",
-    "with a different name."
+    "environment is inherited by the child without being listed here.",
+    "GITHUB_TOKEN=OTHER_NAME — take the value from a differently named variable;",
+    "such a variable gets no value row, its source is already given."
   ],
   "ui.settings.desc.mcp_env_secret": [
     "This variable's value for the child process: encrypted with THIS computer's",

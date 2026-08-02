@@ -69,9 +69,11 @@ Mitigations:
   ([ADR 0008](0008-api-key-storage.md)) under `mcp-<server>-<VARIABLE>` in the
   same per-machine entry as the cloud keys — so R8's actual invariant is
   unchanged: **no secret is written to `settings.json` in plaintext**, and the
-  config stays portable. Resolution mirrors ADR 0008 §3 — a stored secret wins,
-  the named OS variable remains the fallback for CI, scripted setups and
-  machines with no encryption scheme. The same storage is what makes importing
+  config stays portable. Each declared variable has exactly one origin, decided
+  by the row: a bare name takes the stored value (or is left to the environment
+  the child inherits anyway), `VARIABLE=SOURCE` takes it from that OS variable
+  and consults no stored value — CI and scripted setups keep working because
+  they set the variable under its own name. The same storage is what makes importing
   another client's `mcpServers` JSON lossless: those files carry **literal**
   secrets, so the import is parsed by the orchestrator (never by `screens`) and
   each value goes straight into the store. See

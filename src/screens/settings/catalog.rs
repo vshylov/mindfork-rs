@@ -892,11 +892,16 @@ impl SettingsScreen {
         rows
     }
 
-    /// A stored-secret row per variable the selected server declares: the value
-    /// this machine hands the child process, entered in a masked field and kept
-    /// machine-bound (ADR 0008) instead of in an OS environment variable. The
-    /// `env` row above stays the declaration and the fallback source name — a
-    /// stored secret simply wins (docs/history/mcp-server-editor.md §9, S1/S8).
+    /// A stored-secret row per variable the selected server declares **by name
+    /// alone**: the value this machine hands the child process, entered in a
+    /// masked field and kept machine-bound (ADR 0008) instead of in an OS
+    /// environment variable.
+    ///
+    /// A variable that names a source (`API_KEY=OTHER_NAME`) gets **no** row —
+    /// its value comes from that OS variable, and offering to store one as well
+    /// would be offering two answers to one question
+    /// (docs/history/mcp-server-editor.md §9.5b). The index stays the position in
+    /// the whole map, so `secret_field_key` keeps resolving it.
     ///
     /// The label is the variable name — user data, so it can be longer than
     /// `LABEL_CAP`; the value column then just does not grow past the cap, as
@@ -904,9 +909,10 @@ impl SettingsScreen {
     fn mcp_env_secret_rows(&self, srv: &McpServerConfig) -> Vec<FieldRow> {
         let loc = self.loc();
         srv.env
-            .keys()
+            .iter()
             .enumerate()
-            .map(|(idx, var)| {
+            .filter(|(_, (_, source))| source.is_empty())
+            .map(|(idx, (var, _))| {
                 let key = SecretKey::McpEnv {
                     server: srv.id.clone(),
                     var: var.clone(),

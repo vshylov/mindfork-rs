@@ -505,28 +505,36 @@ fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result
 }
 
 /// Expands the child's environment map — the **overrides** on top of what the
-/// process already inherits (`spawn` uses `Command::envs`, not `env_clear`). Each
-/// declared variable takes its value from a **stored secret** if this machine has
-/// one, otherwise from the OS environment variable the map names when it names a
-/// different one — the shape of `api_key` / `api_key_env` (ADR 0008 §3,
-/// docs/history/mcp-server-editor.md §9 S1/S8). Neither present — nothing is
-/// overridden and inheritance covers the same-name case; `settings.json` still
-/// holds no secret either way.
+/// process already inherits (`spawn` uses `Command::envs`, not `env_clear`).
+///
+/// Each declared variable has exactly **one** origin, and the row says which:
+/// naming a source (`API_KEY=OTHER_NAME`) takes the value from that OS variable
+/// and nothing else; a bare name takes it from a **stored secret**, and with none
+/// stored the variable is simply left to inheritance. A stored value is
+/// deliberately *not* consulted for a variable that names a source — the user
+/// already said where the value comes from, and letting a secret silently
+/// override that is a hidden state nothing on screen could explain
+/// (docs/history/mcp-server-editor.md §9.5b). `settings.json` holds no secret
+/// under either route.
 ///
 /// Decryption happens here rather than below, mirroring `EngineManager`, which
 /// resolves the key and hands the supervisor plaintext.
 fn resolve_env(cfg: &McpServerConfig, keys: &[ApiKeyEntry]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (child_var, source) in &cfg.env {
-        let stored = crate::shared::secrets::stored_key(
-            keys,
-            &SecretKey::McpEnv {
-                server: cfg.id.clone(),
-                var: child_var.clone(),
-            }
-            .storage_name(),
-        );
-        match stored.or_else(|| std::env::var(source).ok()) {
+        let value = if source.is_empty() {
+            crate::shared::secrets::stored_key(
+                keys,
+                &SecretKey::McpEnv {
+                    server: cfg.id.clone(),
+                    var: child_var.clone(),
+                }
+                .storage_name(),
+            )
+        } else {
+            std::env::var(source).ok()
+        };
+        match value {
             Some(v) => out.push((child_var.clone(), v)),
             // Not an error: the child inherits the app's own environment
             // (`spawn` adds to it rather than replacing it), so a declared
@@ -822,11 +830,13 @@ mod tests {
         );
     }
 
-    /// A stored secret is what the child gets; the `env` map's value stays the
-    /// fallback source name. The two orders are the whole point of S1/S8 — the
-    /// `api_key` / `api_key_env` shape carried over to MCP.
+    /// Each declared variable has exactly **one** origin, and the row says which:
+    /// a named source is taken from the OS and a stored value is not consulted for
+    /// it; a bare name is taken from the store. Anything else is a hidden state —
+    /// the settings row would say "take it from CLAUDE_API_KEY" while a secret
+    /// silently overrode it (§9.5b).
     #[tokio::test]
-    async fn stored_secret_wins_over_the_env_source() {
+    async fn each_variable_has_exactly_one_origin() {
         if !crate::shared::secrets::scheme_available() {
             return; // Linux without machine-id: storing secrets is unsupported
         }
@@ -834,46 +844,41 @@ mod tests {
         unsafe { std::env::set_var("MINDFORK_TEST_MCP_SRC", "from-os-env") };
         let mut cfg = server_cfg("fs");
         cfg.env
-            .insert("TOKEN".into(), "MINDFORK_TEST_MCP_SRC".into());
-        cfg.env
-            .insert("ONLY_ENV".into(), "MINDFORK_TEST_MCP_SRC".into());
+            .insert("SOURCED".into(), "MINDFORK_TEST_MCP_SRC".into());
+        cfg.env.insert("BARE".into(), String::new());
         cfg.env
             .insert("MISSING".into(), "MINDFORK_TEST_NO_SUCH_VAR".into());
 
-        // Nothing stored yet — every declared variable falls back to its source.
+        // Nothing stored: a named source is read, a bare name is left to
+        // inheritance, and an unreadable source overrides nothing.
         let mut keys = Vec::new();
         assert_eq!(
             resolve_env(&cfg, &keys),
-            vec![
-                ("MISSING".to_string(), "from-os-env".to_string()),
-                ("ONLY_ENV".to_string(), "from-os-env".to_string()),
-                ("TOKEN".to_string(), "from-os-env".to_string()),
-            ]
-            .into_iter()
-            .filter(|(k, _)| k != "MISSING")
-            .collect::<Vec<_>>(),
-            "a variable with neither a secret nor a readable source is skipped"
+            vec![("SOURCED".to_string(), "from-os-env".to_string())]
         );
 
-        crate::shared::secrets::put_key(
-            &mut keys,
-            &SecretKey::McpEnv {
-                server: "fs".into(),
-                var: "TOKEN".into(),
-            }
-            .storage_name(),
-            "from-stored-secret",
-            || "test".to_string(),
-        )
-        .unwrap();
+        // A value stored for **both** variables.
+        for var in ["SOURCED", "BARE"] {
+            crate::shared::secrets::put_key(
+                &mut keys,
+                &SecretKey::McpEnv {
+                    server: "fs".into(),
+                    var: var.into(),
+                }
+                .storage_name(),
+                "from-stored-secret",
+                || "test".to_string(),
+            )
+            .unwrap();
+        }
         let resolved = resolve_env(&cfg, &keys);
         assert!(
-            resolved.contains(&("TOKEN".to_string(), "from-stored-secret".to_string())),
-            "the stored secret must win over the named source: {resolved:?}"
+            resolved.contains(&("BARE".to_string(), "from-stored-secret".to_string())),
+            "a bare name takes the stored value: {resolved:?}"
         );
         assert!(
-            resolved.contains(&("ONLY_ENV".to_string(), "from-os-env".to_string())),
-            "a variable with no stored secret still reads its source"
+            resolved.contains(&("SOURCED".to_string(), "from-os-env".to_string())),
+            "a named source is authoritative — the stored value is not consulted: {resolved:?}"
         );
     }
 

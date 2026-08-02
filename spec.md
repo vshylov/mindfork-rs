@@ -840,9 +840,12 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   ([ADR 0008](docs/decisions/0008-api-key-storage.md)) under the name
   `mcp-<server>-<VARIABLE>` in `config.api_keys` — the same per-machine entry the
   cloud keys and the backup password use, so no new config field and no schema
-  change. Resolution mirrors ADR 0008 §3: **a stored secret wins**, the OS variable
-  named in `env` remains the **fallback** — which is what keeps MCP usable in CI, in
-  scripted setups and on machines with no encryption scheme available. A child
+  change. Each declared variable has exactly **one** origin and the row says which:
+  a bare name takes the stored value (and with none stored is left to inheritance),
+  while `VARIABLE=SOURCE` takes it from that OS variable and a stored value is not
+  consulted for it — the alternative is a row saying "take it from X" while a secret
+  silently overrides it. CI and scripted setups are unaffected: they set the variable
+  under its own name, which the child inherits. A child
   variable name is restricted to `[A-Za-z0-9_]`: that is what keeps the flat
   variable-list row parseable and the storage name unambiguous. The secret never
   reaches the UI — the settings snapshot carries presence flags only. Orphaned

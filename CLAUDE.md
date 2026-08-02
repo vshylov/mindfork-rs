@@ -11363,6 +11363,22 @@ debounce was done as a separate PR, see below).
   (`ZARYA-7719|INHERITED-4417`), so an `env_clear` appearing later would fail the
   test instead of quietly making the hint false.
 
+- **A second follow-up from the same run**, and it was a defect rather than a
+  preference: with a source named (`API_KEY=CLAUDE_API_KEY`) the screen still
+  offered a value row, and S8's "stored wins" meant a secret could silently
+  override the source the row named. Hiding the row alone would have made it
+  worse — the override would remain, minus the only thing that could reveal it.
+  The rule is now **one origin per variable, decided by the row**: a bare name
+  takes the stored value (or is left to inheritance), `NAME=SOURCE` takes it from
+  that OS variable and consults no stored value, and gets no value row. This
+  narrows S8 instead of reversing it — the fallback existed for a shared config
+  on a machine where the variable is set in the OS, and that case uses the
+  variable's own name, which inheritance already covers. The row index stays the
+  position in the whole map, so skipping a row never shifts `secret_field_key`'s
+  addressing (pinned by the test). Two tests had their premise inverted and were
+  rewritten rather than patched: `each_variable_has_exactly_one_origin` replaced
+  `stored_secret_wins_over_the_env_source`.
+
 - **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
   transport, resources/prompts, `list_changed`, deferred schemas.

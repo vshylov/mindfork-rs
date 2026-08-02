@@ -534,7 +534,8 @@ The list holds only *overrides*: the server already inherits the application's o
 environment, so a variable you have set in the OS reaches it without being listed at
 all — which is what makes CI and scripted setups work unchanged. Write
 `GITHUB_TOKEN=OTHER_NAME` only when the value has to come from a variable with a
-**different** name. When a stored value and a source both exist, the stored one wins.
+**different** name; such a variable gets no value row, because you have already said
+where its value comes from.
 
 **Importing an existing configuration.** The "Import from a file" row takes the
 **path** of an `mcpServers` JSON — the format used by `claude_desktop_config.json`
