@@ -1,13 +1,13 @@
 # MCP servers in the settings window — design plan
 
-**Status:** design accepted — **forks F1–F8 confirmed by the user 2026-08-02,
+**Status:** stage 1 **done** (2026-08-02); forks accepted — **forks F1–F8 confirmed by the user 2026-08-02,
 all as recommended** (F1(b) a dedicated section, F2(a) a selector, F3(a)
 space-separated with shell quoting, F4(a) the env map stays variable names,
 F5(a) a new server starts disabled, F6 deferred, F7(a) reconnect, F8(a)
 in-editor validation); **scope — stage 1 only**, stage 2 (secrets + JSON
 import) stays a separate decision. Closes the groundwork
 item "server editor UI (currently — edit `settings.json` by hand)"
-([roadmap](roadmap.md) §Tools, [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md)
+([roadmap](../roadmap.md) §Tools, [ADR 0007](../decisions/0007-plugins-mcp-host-import-format.md)
 §Consequences). Behaviour — spec §9.6; the host itself is done and unchanged
 by this track.
 

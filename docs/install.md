@@ -489,9 +489,12 @@ A custom `wasmer` binary can be set via the `MINDFORK_SANDBOX_WASMER` env variab
 ## 4.2. MCP server tools (plugins)
 
 Custom model tools are attached via external **MCP servers** (stdio; any server
-from the Model Context Protocol ecosystem works). Servers are described in
-`settings.json` (the `mcp` section; the file is in the data root, see §2), and
-enabling them takes two steps (double opt-in):
+from the Model Context Protocol ecosystem works). Servers are configured in the
+settings screen — the **"Plugins"** section: `Ctrl+N` adds a server, the fields
+below it are its command line and environment, `Ctrl+D` deletes it. The same data
+can be edited by hand in `settings.json` (the `mcp` section; the file is in the
+data root, see §2) — which is what the example below shows. Enabling a server
+takes two steps (double opt-in):
 
 ```jsonc
 "mcp": {
@@ -509,8 +512,8 @@ enabling them takes two steps (double opt-in):
 }
 ```
 
-1. Turn on the "MCP servers" master toggle (settings → "Tools" → "Plugins
-   (MCP)") — server statuses are shown there too;
+1. Turn on the "MCP servers" master toggle (settings → "Plugins") — the server
+   editor and the live statuses are in the same section;
 2. turn on the desired tools in the profile (settings → "Profiles", "Plugins
    (MCP)" group; focusing the toggle shows the tool's **full description** from
    the server at the bottom).
@@ -523,7 +526,12 @@ Notes:
 - **The tool catalog is pinned on first startup** (protection against tampering):
   if a server changes its tool set/descriptions after an update, they won't be
   available to the model until you confirm the new catalog (Enter on the server's
-  row in settings).
+  row in settings). With nothing to confirm, the same Enter **reconnects** the
+  server — the way to bring one back after you have fixed whatever it needed.
+- A server added in the settings screen is created **switched off**: fill in the
+  command and arguments, then turn "Enabled" on. Its `env` values are the **names**
+  of environment variables of the application, not the secrets themselves — set the
+  variable in your OS (or your launcher) and name it here.
 - An MCP server is an ordinary program running with your user's rights: only
   connect trusted ones. A server that crashes often (3 crashes in 5 minutes) is
   disabled until you fix the settings; server stderr is written to `logs/`.

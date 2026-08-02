@@ -48,7 +48,11 @@ to installing software; there is no sandbox — same as goose/Zed/Claude Code).
 Mitigations:
 
 - master switch `config.mcp.enabled = false` by default; servers are
-  configured only by the user editing `settings.json` (R6); tools are
+  configured only by the user — R6 said "by editing `settings.json`", and was
+  revisited in 2026-08 once the host had proved itself: the same data is now
+  authored in the settings screen's "Plugins" section
+  ([mcp-server-editor.md](../history/mcp-server-editor.md)), which changes the
+  authoring surface and nothing about the trust model; tools are
   **disabled in profiles by default** → a double opt-in;
 - **TOFU catalog pinning** (rug-pull detector, tool poisoning): a sha256 of
   the tools' names+descriptions+schemas is pinned on first startup
@@ -99,8 +103,8 @@ API was rejected.
   localized); manager status reasons — axis B; client wire errors — a
   technical layer (like the HTTP client wrappers).
 - Groundwork (roadmap): HTTP transport, resources/prompts,
-  `notifications/tools/list_changed`, per-call confirmation for destructive
-  calls, deferred schemas ("tool search"), a UI server editor, a WASM sandbox
+  `notifications/tools/list_changed`, deferred schemas ("tool search"), secrets
+  for the `env` map + JSON import (stage 2 of the editor track), a WASM sandbox
   for untrusted tools, server `instructions` → system prompt.
 
 ## Verification

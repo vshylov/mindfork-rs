@@ -15,6 +15,19 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **MCP servers are configured in the settings window.** A new **"Plugins"**
+  section holds the master switch, the server list and its editor: `Ctrl+N` adds
+  a server, the fields below set its command line and environment, `Ctrl+D`
+  deletes it — no more hand-editing `settings.json` (which still works and is the
+  same data). A server added here starts switched off, so nothing is launched
+  while you are still typing its command, and an identifier that would make the
+  server invisible is refused as you enter it. Environment values are still the
+  **names** of your OS environment variables, not the secrets themselves.
+- **A stuck MCP server can be reconnected from settings.** `Enter` on a server's
+  row confirms a changed tool catalog as before — and, when there is nothing to
+  confirm, restarts the server. Previously a server that had crashed too often
+  could only be brought back by restarting the application.
+
 - **`youtube_watch` can bring back the words, not just a description.** Pass
   `transcript: true` and the assistant also gets a transcript of the speech with
   timestamps. If it is short, it comes straight back in the answer; if it is
