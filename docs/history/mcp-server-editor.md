@@ -600,6 +600,29 @@ OS, and that case uses the variable's own name, which inheritance already covers
 Only "renamed source **and** a stored value" changes behaviour, and that
 combination is precisely the contradiction.
 
+### 9.5c Both routes report themselves (the third follow-up)
+
+With the UI accepted, the user's remaining objection was about the *logic*: a
+fallback plus machine-bound storage means "checking whether the variable exists
+and whether a value was entered on this particular machine".
+
+Half of that had already gone with §9.5b — for a single variable the row now
+decides which route applies, so the two are never both in play. What was left is
+an **asymmetry of visibility**: the stored route reports itself ("configured
+(this computer)" / "not set") while a named source reported nothing, so a missing
+OS variable surfaced only as the server failing to work. That, rather than the
+existence of two mechanisms, is what makes it feel like something has to be
+checked by hand.
+
+So a variable that names a source now gets a **read-only status row** in place of
+the value field it deliberately does not have: `PRESENT — from
+MINDFORK_SRC: found` / `ABSENT — from …: not found`, flagged when missing. The
+description also states what was invisible before: the application sees the
+environment it was **started with**, so a variable set after launch needs a
+restart. Rejected alternatives: leaving it silent (the diagnosis stays indirect)
+and dropping the source form from the UI entirely (it is the only way to rename a
+source, and the user had called the fallback worth keeping).
+
 ### 9.6 Documentation to update on completion
 
 CLAUDE.md journal; CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten

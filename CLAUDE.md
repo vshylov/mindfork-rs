@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-02, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1785 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1786 unit
 tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
 recent change completes the **MCP server editor** track
 ([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
@@ -11330,7 +11330,7 @@ debounce was done as a separate PR, see below).
   screen's config; `Del` deleting; the row dropping unrepresentable names; the
   import row committing a path; and end-to-end through the orchestrator — secrets
   stored as ciphertext with **no plaintext in `settings.json`**, servers disabled,
-  ids sanitized, a re-import a no-op. **1785 unit tests green** (+11), **75
+  ids sanitized, a re-import a no-op. **1786 unit tests green** (+12), **75
   `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
 - **Mutation-tested, and it earned its keep**: nine mutations, eight caught by
   their own tests — the ninth **survived**, exposing that nothing asserted a stored
@@ -11378,6 +11378,21 @@ debounce was done as a separate PR, see below).
   addressing (pinned by the test). Two tests had their premise inverted and were
   rewritten rather than patched: `each_variable_has_exactly_one_origin` replaced
   `stored_secret_wins_over_the_env_source`.
+
+- **A third follow-up, and the objection was about the logic rather than the
+  screen** ("the fallback is good, but values are machine-bound, so you end up
+  checking whether the variable exists *and* whether a key was entered on this
+  particular machine"). Half of that had already gone with the change above —
+  per variable the row decides which route applies, so the two are never both in
+  play. What was left is an **asymmetry of visibility**: the stored route
+  reported itself, a named source reported nothing, and a missing OS variable
+  surfaced only as the server failing to work. A sourced variable now gets a
+  **read-only status row** in place of the value field it deliberately lacks
+  (`from CLAUDE_API_KEY: found / not found`, flagged when missing), and its hint
+  states what was invisible before: the app sees the environment it was
+  **started** with, so a variable set after launch needs a restart.
+  Mutation-tested. Rejected: leaving it silent (the diagnosis stays indirect) and
+  dropping the source form from the UI (it is the only way to rename a source).
 
 - **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP

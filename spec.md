@@ -900,11 +900,16 @@ A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrap
   field; the `VARIABLE=SOURCE` form remains for the rare case of a differently named
   source. The list is only *overrides*: a variable already set in the application's
   own environment reaches the child by inheritance without being listed
-  (`Command::envs` adds, it does not replace). Below the environment row sits **one row per
-  declared variable**, showing its secret's status (`configured (this computer)` /
-  `not set`), opening an **empty masked editor** on Enter and deleting the stored
-  value on `Del` — exactly the "API key" row's behaviour; and an "import from a file"
-  row taking the path of an `mcpServers` JSON.
+  (`Command::envs` adds, it does not replace). Below the variables row sits **one row per
+  declared variable**, saying where its value comes from and whether it is there: a
+  variable declared by name alone shows its secret's status (`configured (this
+  computer)` / `not set`), opens an **empty masked editor** on Enter and deletes the
+  stored value on `Del` — exactly the "API key" row's behaviour; one that names a
+  source shows a **read-only** `from SRC: found / not found` instead (flagged when
+  missing), because it has no value to enter and leaving it silent would make one of
+  the two routes undiagnosable. The app sees the environment it was *started* with, so
+  a variable set after launch reads as missing until a restart. Plus an "import from a
+  file" row taking the path of an `mcpServers` JSON.
   A server created in the UI starts **disabled**, so
   nothing is spawned while its command is still half-typed; the id is validated before
   it commits (slug shape and uniqueness) — an invalid id creates no slot at all, so the
