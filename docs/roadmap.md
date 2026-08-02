@@ -46,19 +46,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 
 ## Tools
 - **MCP host — groundwork** (core is **done**: spec §9.6,
-  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); servers from
-  `settings.json`, double opt-in, TOFU pinning, statuses/descriptions in
-  settings):
+  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); double opt-in,
+  TOFU pinning, statuses/descriptions in settings, and the **server editor**
+  ([mcp-server-editor.md](history/mcp-server-editor.md)) — both stages, so a
+  server is authored, given its tokens and imported from another client's config
+  without leaving the window):
   - HTTP transport (currently stdio only).
   - resources/prompts (currently tools only).
   - `notifications/tools/list_changed` — live catalog re-listing.
   - deferred schemas ("tool search") — context budget with many servers.
   - per-server tool count ceiling.
-  - **stage 2 of the server editor** ([mcp-server-editor.md](history/mcp-server-editor.md)):
-    machine-bound secret values for the `env` map (ADR 0008 storage, no schema
-    change) and lossless import of the ecosystem's `mcpServers` JSON. Stage 1 (the
-    editor itself) is **done**; without stage 2 a hosted server still needs its
-    token in an OS environment variable.
   - server `instructions` → system prompt.
   - non-text result blocks (currently — a placeholder).
   - WASM sandbox for untrusted tools.
@@ -140,9 +137,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   managed-custom-command (supervisor launches an arbitrary sidecar proxy) —
   on demand. See [plugin research §6](research/plugin-system.md).
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
-  additional `scheme`; the same mechanism for the external proxy and MCP
-  server env maps; UI management of other machines' entries ("forget this
-  computer").
+  additional `scheme`; the same mechanism for the external proxy's key (the MCP
+  `env` map half is **done**, spec §9.6); UI management of other machines'
+  entries ("forget this computer") — also where an explicit cleanup of MCP
+  secrets orphaned by a rename or delete belongs.
 - **Retry/backoff on cloud provider network errors** — clients currently
   surface the error body but don't retry (transient 429/5xx/timeouts).
 - **Configurable health-check cadence.** The monitor's intervals

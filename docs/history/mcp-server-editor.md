@@ -1,10 +1,10 @@
 # MCP servers in the settings window — design plan
 
-**Status:** stage 1 **done and accepted** (2026-08-02); **stage 2 (secrets +
-import) — §9, forks S1–S8 accepted 2026-08-02, in implementation.** The file stays in
-`docs/history/` while stage 2 runs: every reference to it (roadmap, ADR 0007,
-CLAUDE.md) already points here, and moving it back and forth would churn those
-links for no gain.
+**Status:** the track is **complete** — stage 1 done and accepted 2026-08-02,
+stage 2 (secrets + import, §9, forks S1–S8 accepted the same day) implemented and
+live-run 2026-08-02. The file stayed in `docs/history/` throughout: every
+reference to it (roadmap, ADR 0007, CLAUDE.md) already points here, and moving it
+back and forth would churn those links for no gain.
 
 Stage 1's acceptance: a real server was configured end to end from the settings
 window with a platform-independent command, and the model called its tool. Forks

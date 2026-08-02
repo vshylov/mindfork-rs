@@ -124,16 +124,28 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-02, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1769 unit
-tests green, 74 `#[ignore]` smokes** (the largest count — log below; the most
-recent change — **MCP servers are configured in the settings window**
-([plan](docs/history/mcp-server-editor.md)): a new "Plugins" section holds the
-master switch, a server editor (`Ctrl+N`/`Ctrl+D` over `config.mcp.servers`) and
-the live statuses; the orchestrator needed nothing for the edits themselves — the
-screen already ships the whole config and `handle_update_config` diffs `config.mcp`
-into the restart debounce — while `Enter` on a status row gained a second meaning,
-**reconnect**, which is the only way back for a server past its restart budget
-since `is_current` stopped re-applying an identical config; before that —
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1785 unit
+tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
+recent change completes the **MCP server editor** track
+([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
+JSON import**: a server's token is typed into a masked row and stored
+machine-bound (ADR 0008, `mcp-<server>-<VAR>`) instead of demanding an OS
+variable, with the named variable kept as the fallback — so ADR 0007 R8's real
+invariant, *no plaintext secret on disk*, is unchanged; another client's
+`mcpServers` config is imported **by path**, parsed by the orchestrator because
+such a file carries literal tokens that must not travel through `screens`. The
+trap the design caught before it shipped: a secret changes no *setting*, so
+`is_current` had to start comparing the **resolved environment** or the debounce
+would leave the server running with the old value — and comparing the resolved
+env rather than the key blob keeps an unrelated OpenAI key from respawning `npx`;
+before that — stage 1 of the same track, **MCP servers are configured in the
+settings window**: a "Plugins" section with the master switch, a server editor
+(`Ctrl+N`/`Ctrl+D` over `config.mcp.servers`) and the live statuses; the
+orchestrator needed nothing for the edits themselves — the screen already ships
+the whole config and `handle_update_config` diffs `config.mcp` into the restart
+debounce — while `Enter` on a status row gained a second meaning, **reconnect**,
+which is the only way back for a server past its restart budget since
+`is_current` stopped re-applying an identical config; before that —
 **spellcheck no longer underlines URLs and email addresses** (an
 address is skipped whole in segmentation, so both the underlining and the
 `Ctrl+G` popup ignore it; a bare domain must be lowercase ASCII, which keeps a
@@ -11239,6 +11251,103 @@ debounce was done as a separate PR, see below).
   a scripted mutation reverts **all** uncommitted work in that file. It cost the whole
   of `apply.rs`, restored by re-running the patch script. The fix is procedural —
   commit before mutating, which is what the second run did.
+
+### Post-M9: MCP servers — secrets for the `env` map and JSON import (stage 2, done)
+
+- **Completes the "MCP servers in the settings window" track** (plan
+  [mcp-server-editor.md](docs/history/mcp-server-editor.md) §9, forks **S1–S8
+  confirmed by the user 2026-08-02, all as recommended**). Stage 1 made a server
+  *authorable* in the window; it still could not be *given a token* — a hosted
+  server (GitHub, Slack) needed an OS environment variable and an app restart,
+  which is the opposite of the track's goal. Behaviour — spec §9.6; **ADR 0007
+  R8 amended** (as stage 1 amended R6) and **ADR 0008** gains its third reuse.
+- **Reading the code first settled four things, and one of them was the whole
+  risk of the stage.** The storage needed no change (`put_key`/`store_secret`
+  take an arbitrary key name — proved by the backup password); the resolution
+  pattern already existed and was exactly right (`resolve_api_key(stored,
+  api_key_env)` — stored wins, env is the fallback); decryption belongs in
+  `McpManager`, mirroring `EngineManager`, which itself calls `stored_key` and
+  hands the spawn layer plaintext. And the trap: **`McpManager::is_current`
+  compares `McpSettings` only**, so changing a secret leaves the config identical,
+  the debounce skips the re-apply, and the server keeps running with the old value
+  with nothing to notice it. The engines had already solved this
+  (`chat_is_current(&settings, keys)`); `is_current` now takes the key blob too.
+  Recorded in the plan §9.1 **before** implementation — it would otherwise have
+  shipped silently.
+- **The comparison is against the *resolved* environment, not the key blob** (a
+  deliberate departure from the engines): killing and respawning `npx`→node is the
+  most expensive re-apply on the screen, so changing an unrelated OpenAI key must
+  not touch it. `applied: Option<(McpSettings, ResolvedEnvs)>`; the slot carries
+  its resolved env because a respawn after a crash or a `reconnect` builds the task
+  from the slot.
+- **S1 — the `env` row keeps its meaning and becomes the declaration.** An empty
+  source (`TOKEN=`) is legal and already parsed; below the row sits **one secret
+  row per declared variable** (status + empty masked editor + `Del` deletes) —
+  the "API key" row's exact behaviour, reused wholesale (`secret_row`,
+  `is_secret_field`, the masked editor). **No new config field and no schema
+  change**: the presence of a secret is a fact about `config.api_keys`, which
+  `handle_update_config` already restores on the way back, so secrets survive
+  every settings edit with no new code.
+- **S2+S3 — one typed `SecretKey`, not a third variant.** `SecretKey { Provider |
+  BackupPassword | McpEnv{server,var} }` + `storage_name()` replaced
+  `SetApiKey`/`SetBackupPassword` with one `SetSecret`, and
+  `api_keys_present`+`backup_password_present` with one `secrets_present`. Typed
+  rather than a raw name because the side effects after storing differ per kind
+  (a provider key re-raises the slots that use it and rebuilds the registry for
+  Gemini; an MCP one marks `mcp`; a backup password needs nothing) — dispatching
+  those by parsing a string is how they drift.
+- **S4 — orphaned secrets are never collected automatically.** A rename or delete
+  orphans them, but the `env` row commits on `Enter`, so a half-typed edit would
+  destroy a value the user then has to re-enter — and `Ctrl+Z` restores the
+  *config* while secrets are deliberately absent from that snapshot, making a
+  garbage collector's mistakes unrecoverable. An orphan is inert ciphertext;
+  cleanup belongs with ADR 0008's "forget this computer" groundwork.
+- **S5–S7 — the import, and why the orchestrator parses it.** A `mcpServers` file
+  carries **literal** secrets, so the row takes a **file path** rather than pasted
+  JSON (a pasted blob would leave live tokens on screen and in the editor's undo
+  buffer) and `features/mcp_import.rs` only *plans* — the orchestrator reads,
+  stores each literal value as a machine-bound secret, and only then extends the
+  config. Imported servers arrive **disabled**; ids are sanitized to our slug with
+  a numeric suffix for collisions *within* the file; an id that **already exists is
+  skipped** (a re-import is a no-op, never an overwrite — a bug caught by its own
+  test, since the first version uniquified before checking and quietly imported a
+  duplicate); non-stdio entries are reported rather than dropped.
+- **Along the way**: `valid_env_name` (POSIX-shaped `[A-Za-z0-9_]`) moved next to
+  `valid_server_id` in `shared/mcp.rs` — it is what keeps the flat `VAR=SOURCE`
+  row parseable *and* `mcp-<server>-<VAR>` unambiguous (only the server id may
+  contain `-`); and the "Command" field's hint stopped claiming `.bat`/`.cmd` are
+  banned — stage 1 removed that ban and the hint still told users to write
+  `cmd /c npx …`.
+- **A design conflict found by a failing test**: `McpEnvSecret` belongs in
+  `is_profile_field` (user data — no `•` "modified" marker, nothing to reset to),
+  but that predicate is also the first gate in `reset_field`, which would have made
+  `Del` a no-op on a secret row. The secret branch now runs **before** it: the two
+  meanings of "has no default" and "Del has a real meaning" are separate.
+- **Tests**: the storage name; a stored secret winning over the source and the
+  source still serving as fallback; `is_current` false when **only** a secret
+  changed; an unrelated provider key leaving the servers current; per-variable rows
+  following the declaration, showing status, never putting the secret into the
+  screen's config; `Del` deleting; the row dropping unrepresentable names; the
+  import row committing a path; and end-to-end through the orchestrator — secrets
+  stored as ciphertext with **no plaintext in `settings.json`**, servers disabled,
+  ids sanitized, a re-import a no-op. **1785 unit tests green** (+11), **75
+  `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **Mutation-tested, and it earned its keep**: nine mutations, eight caught by
+  their own tests — the ninth **survived**, exposing that nothing asserted a stored
+  MCP secret schedules the re-apply, without which the `is_current` fix above is
+  never even consulted. `storing_an_env_secret_schedules_the_reapply` closes it
+  (and fails under that mutation).
+- **Live run — GO** (Gemma 4 31B q4_0, external `llama-server`, `--jinja`; real
+  `npx`): the new smoke `stored_env_secret_reaches_the_child_process_live` spawns a
+  minimal Node MCP server that reports what it sees in **its own environment** —
+  it answered `ZARYA-7719`, the value stored only as a machine-bound secret. That
+  is the one thing unit tests cannot show: that decryption, the spawn env and the
+  child's `process.env` really line up. Regression: `mcp_filesystem_e2e_live` (14
+  tools, the model called `mcp__fs__read_text_file` and used the result) and
+  `mcp_reconnect_live` (Ready → reconnect → Ready, same 14) both green.
+- **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
+  explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
+  transport, resources/prompts, `list_changed`, deferred schemas.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
