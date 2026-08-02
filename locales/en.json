@@ -698,7 +698,7 @@
   ],
   "ui.settings.section.plugins": "Plugins",
   "ui.settings.group.mcp_host": "MCP host",
-  "ui.settings.group.mcp_server": "Server",
+  "ui.settings.group.mcp_server": "Servers",
   "ui.settings.group.mcp_status": "Status",
   "ui.settings.value.no_servers": "(no servers)",
   "ui.settings.field.mcp_select": "Server",
