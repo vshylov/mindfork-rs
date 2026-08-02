@@ -11186,8 +11186,8 @@ debounce was done as a separate PR, see below).
 - **Regression — clean** (same stack): **26 of 27** orchestrator e2e live smokes green
   on the first pass (669 s) — memory/self-model/notes/graph/cross-organ links/RAG/
   attachments/control tools/i18n/MCP. The one failure was `followup_tool_e2e_live`,
-  where the model simply answered "Привет! 👋" without calling
-  `send_followup_message`; it passed on re-run (`saw_continue=true`, a second bubble).
+  where the model simply answered with a bare one-line greeting and never
+  called `send_followup_message`; it passed on re-run (`saw_continue=true`, a second bubble).
   A model-behaviour flake of the class the control-tools entry already records, not a
   regression: the diff touches **zero** files on the agentic-loop/control-tool path.
   **Still to do**: the acceptance criterion proper — a manual run configuring a real
