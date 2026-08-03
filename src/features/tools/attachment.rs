@@ -78,7 +78,20 @@ impl Tool for AttachmentRead {
             .trim();
         // No name (or an unknown one) — list what IS attached instead of a bare
         // error, so the next call can succeed.
-        let Some(att) = ctx.attachments.iter().find(|a| a.matches(name)) else {
+        let hits: Vec<&crate::entities::attachment::Attachment> =
+            ctx.attachments.iter().filter(|a| a.matches(name)).collect();
+        // Several files answer to the same name (two pages of one documentation
+        // site whose `<h1>` is site-wide, say). Taking the first would read a
+        // *different* file than the one asked for and say nothing — so report the
+        // ambiguity with each one's source, which is what tells them apart.
+        if hits.len() > 1 {
+            let sources: Vec<&str> = hits.iter().map(|a| a.source.as_str()).collect();
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.attachment_read.ambiguous",
+                &[("name", name), ("sources", &sources.join(", "))],
+            )));
+        }
+        let Some(att) = hits.into_iter().next() else {
             let names: Vec<&str> = ctx.attachments.iter().map(|a| a.name.as_str()).collect();
             return Ok(ToolOutcome::text(ctx.loc.tf(
                 "tool.attachment_read.unknown",
@@ -341,6 +354,54 @@ mod tests {
             .unwrap()
             .result;
         assert!(out.contains("doc.txt"), "{out}");
+    }
+
+    /// Two files can legitimately answer to one name (two pages of a
+    /// documentation site whose `<h1>` is site-wide). Reading the first one and
+    /// saying nothing would be a silently wrong answer — the class this whole
+    /// change is about — so the ambiguity is reported with what tells them apart.
+    #[tokio::test]
+    async fn an_ambiguous_name_is_reported_instead_of_guessing() {
+        let one = Attachment::new(
+            "V Documentation",
+            "https://docs.example.io/memory.html",
+            "первый файл".into(),
+            11,
+            AttachMode::ByReference,
+        );
+        let two = Attachment::new(
+            "V Documentation",
+            "https://docs.example.io/concurrency.html",
+            "второй файл".into(),
+            11,
+            AttachMode::ByReference,
+        );
+        let (_d, ctx) = ctx_with(vec![one, two]);
+        let out = AttachmentRead
+            .invoke(&ctx, serde_json::json!({"name": "V Documentation"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            out.contains("memory.html"),
+            "the sources must be shown: {out}"
+        );
+        assert!(out.contains("concurrency.html"), "{out}");
+        assert!(
+            !out.contains("первый файл"),
+            "a page was read anyway: {out}"
+        );
+
+        // Addressing by source is unambiguous and still works.
+        let out = AttachmentRead
+            .invoke(
+                &ctx,
+                serde_json::json!({"name": "https://docs.example.io/concurrency.html"}),
+            )
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("второй файл"), "{out}");
     }
 
     #[tokio::test]

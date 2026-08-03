@@ -145,21 +145,52 @@ fn body_to_text(content_type: &str, body: &str) -> Option<PageText> {
     (!text.is_empty()).then(|| PageText {
         truncated: text.chars().count() >= MAX_EXTRACT_CHARS,
         text,
-        title: page_title(body),
+        title: page_name(body),
     })
 }
 
-/// The page's `<title>`, collapsed and clipped — used as the attachment's
-/// display name, so `/file list` and `attachment_read` refer to something a
-/// human recognizes rather than a bare URL.
-fn page_title(body: &str) -> Option<String> {
+/// The page's name for the attachment: **`<h1>` first**, `<title>` second.
+/// Measured on the site from the transcript — `docs.vlang.io` gives every page
+/// the same `<title>` ("V Documentation") while `<h1>` is the actual page
+/// ("Memory management" / "Concurrency"), so taking the title would name two
+/// different pages of one site identically, and `attachment_read` resolves a
+/// name to the **first** match — a silently wrong page.
+fn page_name(body: &str) -> Option<String> {
     let doc = scraper::Html::parse_document(body);
-    let sel = scraper::Selector::parse("title").ok()?;
-    let raw = doc.select(&sel).next()?.text().collect::<String>();
-    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let clipped: String = collapsed.chars().take(NAME_TITLE_CHARS).collect();
-    let t = clipped.trim().to_string();
-    (!t.is_empty()).then_some(t)
+    let pick = |q: &str| -> Option<String> {
+        let sel = scraper::Selector::parse(q).ok()?;
+        let raw = doc.select(&sel).next()?.text().collect::<String>();
+        let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        let clipped: String = collapsed.chars().take(NAME_TITLE_CHARS).collect();
+        let t = clipped.trim().to_string();
+        (!t.is_empty()).then_some(t)
+    };
+    pick("h1").or_else(|| pick("title"))
+}
+
+/// Keeps the display name unique within the chat: a site whose `<h1>` is as
+/// constant as its `<title>` would still collide, so a name already taken by a
+/// **different** page gets the URL's last segment appended. Deterministic (no
+/// counters), so re-fetching the same page produces the same name and replaces
+/// its own attachment rather than piling up copies.
+fn unique_name(base: &str, url: &str, existing: &[Attachment]) -> String {
+    let taken = existing
+        .iter()
+        .any(|a| a.name.eq_ignore_ascii_case(base) && !a.source.eq_ignore_ascii_case(url));
+    match taken.then(|| url_segment(url)).flatten() {
+        Some(seg) => format!("{base} — {seg}"),
+        None => base.to_string(),
+    }
+}
+
+/// The URL's last non-empty path segment, else its host — the shortest thing
+/// that still tells two pages of one site apart.
+fn url_segment(url: &str) -> Option<String> {
+    let without_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let path = without_scheme.split(['?', '#']).next().unwrap_or("");
+    let mut parts = path.split('/').filter(|s| !s.is_empty());
+    let host = parts.next()?;
+    Some(parts.next_back().unwrap_or(host).to_string())
 }
 
 #[async_trait::async_trait]
@@ -312,7 +343,8 @@ impl FetchUrl {
         summarize: bool,
         page: PageText,
     ) -> ToolOutcome {
-        let name = page.title.clone().unwrap_or_else(|| url.to_string());
+        let base = page.title.clone().unwrap_or_else(|| url.to_string());
+        let name = unique_name(&base, url, &ctx.attachments);
         let header = ctx.loc.tf(
             "tool.fetch_url.attachment.header",
             &[("name", &name), ("url", url)],
@@ -612,16 +644,73 @@ mod tests {
     }
 
     #[test]
-    fn the_page_title_becomes_the_attachment_name() {
-        let out = body_to_text(
-            "text/html",
-            "<html><head><title>  Memory\n management  </title></head><body>\
-             <p>Достаточно длинный абзац, чтобы пройти порог отсева фрагментов.</p>\
-             </body></html>",
-        )
-        .unwrap();
+    fn the_attachment_is_named_by_h1_then_title() {
+        // Measured on the site from the transcript: `docs.vlang.io` gives
+        // **every** page the same `<title>` ("V Documentation") while `<h1>`
+        // names the page. Taking the title would give two pages of one site one
+        // name, and `attachment_read` resolves a name to the first match — a
+        // silently wrong page.
+        let page = |head: &str, body: &str| {
+            body_to_text(
+                "text/html",
+                &format!(
+                    "<html><head>{head}</head><body>{body}\
+                     <p>Достаточно длинный абзац, чтобы пройти порог отсева фрагментов.</p>\
+                     </body></html>"
+                ),
+            )
+            .unwrap()
+        };
+        let out = page(
+            "<title>V Documentation</title>",
+            "<h1>Memory management</h1>",
+        );
         assert_eq!(out.title.as_deref(), Some("Memory management"));
         assert!(!out.truncated);
+        // No h1 → the title, collapsed and trimmed as before.
+        let out = page("<title>  Memory\n management  </title>", "");
+        assert_eq!(out.title.as_deref(), Some("Memory management"));
+    }
+
+    #[test]
+    fn a_name_already_taken_by_another_page_gets_the_url_segment() {
+        use crate::entities::attachment::AttachMode;
+        let mine = "https://docs.example.io/memory-management.html";
+        let other = Attachment::new(
+            "V Documentation",
+            "https://docs.example.io/concurrency.html",
+            "x".into(),
+            1,
+            AttachMode::ByReference,
+        );
+        assert_eq!(
+            unique_name("V Documentation", mine, std::slice::from_ref(&other)),
+            "V Documentation — memory-management.html"
+        );
+        // Re-fetching the *same* page keeps the plain name: the attachment it
+        // replaces is its own, so nothing collides and the name stays stable.
+        let same = Attachment::new(
+            "V Documentation",
+            mine,
+            "x".into(),
+            1,
+            AttachMode::ByReference,
+        );
+        assert_eq!(
+            unique_name("V Documentation", mine, &[same]),
+            "V Documentation"
+        );
+        assert_eq!(unique_name("V Documentation", mine, &[]), "V Documentation");
+    }
+
+    #[test]
+    fn url_segment_falls_back_to_the_host() {
+        assert_eq!(
+            url_segment("https://a.io/x/y.html?q=1").as_deref(),
+            Some("y.html")
+        );
+        assert_eq!(url_segment("https://a.io/").as_deref(), Some("a.io"));
+        assert_eq!(url_segment("https://a.io").as_deref(), Some("a.io"));
     }
 
     #[test]

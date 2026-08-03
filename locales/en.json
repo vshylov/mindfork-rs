@@ -484,6 +484,7 @@
   "tool.attachment_read.header": "{name} — page {page} of {total}:",
   "tool.attachment_read.none": "No files are attached to this chat.",
   "tool.attachment_read.unknown": "File \"{name}\" is not attached to this chat. Attached: {names}.",
+  "tool.attachment_read.ambiguous": "The name \"{name}\" matches more than one attachment: {sources}. Pass the exact source in name, otherwise the wrong file would be read.",
   "tool.attachment_read.bad_page": "There is no page {page}: file \"{name}\" has {total} pages.",
   "tool.attachment_search.desc": "Searches by meaning inside the files the user attached to this chat and returns the matching fragments. Use it on a large file marked \"only the beginning is shown\": it is far faster than walking pages with attachment_read, which stays available for reading a specific page or the whole file.",
   "tool.attachment_search.param.query": "What to look for, in your own words — the search is semantic, not by exact substring.",

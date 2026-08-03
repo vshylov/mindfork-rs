@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1811 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1814 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
 recent change gives **`fetch_url` back the page**: extraction keeps section
 headings and code blocks (prose-only extraction turned documentation into text
@@ -11643,12 +11643,40 @@ debounce was done as a separate PR, see below).
   (`live_fetch_without_summarize`, the YouTube dead-end one,
   `live_search_returns_results`) are green — the last one also confirming the
   provider fallback still answers from this IP.
-- **The model-level regression was not run**: the LAN stack
-  (`192.168.1.20:8000/8001`) was unreachable, and the remote HF gate is billed, so
-  launching it unasked was not mine to do. Scope note in mitigation — **no
-  orchestrator code changed**: the effect is generic and its mirroring into the
-  turn snapshot is already covered by `youtube_watch`'s live smoke and by the
-  orchestrator's own attachment tests.
+- **The user's own live re-run confirmed all four in the app** (chat
+  `28cdf212-…`, gpt-5.6): 15 messages instead of 20 — `fetch_url` → **all four**
+  attachment pages read in a single round (the "walk `1..M` and know you read
+  everything" guarantee, doing its job) → one `python_exec` call instead of six,
+  with no `/tmp` write-then-lose and no second download. P4 fired for real: all
+  three searches came back with the "every provider is throttling us" error
+  instead of "no results", so the model got the truth rather than a false
+  negative about the web.
+- **And it exposed one more silent-wrong-answer path, fixed on the same branch.**
+  The attachment was named **"V Documentation"** — the site-wide `<title>`;
+  measured, `docs.vlang.io` gives every page that same title while `<h1>` names
+  the page. Two pages of one site would have shared a name, and
+  `attachment_read` resolves a name with `.find()` — **the first match**,
+  silently reading a different file than the one asked for. Three guards, cheap
+  and layered: the name now comes from **`<h1>` first** (better names, and it
+  removes the collision at its source for the common docs layout); a name
+  already taken by a *different* page gets the URL's last segment appended
+  (deterministic, so re-fetching the same page keeps its name and replaces its
+  own attachment rather than piling up copies); and `attachment_read` **reports
+  an ambiguous name** with each candidate's source instead of guessing —
+  addressing by source keeps working. The first two make a collision unlikely,
+  the third makes it loud when it happens anyway, including for attachments that
+  arrived some other way. Live on the same page: the attachment is now named
+  **"Memory management"** rather than "V Documentation". **1814 unit tests
+  green** (+3), 76 `#[ignore]`; the three new guards mutation-tested
+  (preferring `<title>` over `<h1>`, dropping the disambiguation, dropping the
+  ambiguity check each fail their own test).
+- **Model-level regression — GO** (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server`, `--jinja`), run once the user brought the LAN stack back up:
+  **26 of 26** orchestrator e2e live smokes green in 556 s — memory/self-model/
+  notes/graph/cross-organ links/RAG/attachments/control tools/i18n/MCP/tool
+  confirmation. The right scope even though no orchestrator code changed: a tool
+  now emits an effect on a path that previously never did, and the tool registry
+  sits on every turn.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

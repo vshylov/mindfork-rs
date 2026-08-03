@@ -66,7 +66,12 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   can reach the parts a summary skipped. Previously such a page was silently
   truncated mid-word with nothing saying so, which made a long page
   indistinguishable from a complete one. A ceiling still exists for genuinely
-  enormous pages, and reaching it is now stated in the answer.
+  enormous pages, and reaching it is now stated in the answer. Such an
+  attachment is named after the page's own heading rather than the browser tab
+  title — many documentation sites give every page the same tab title, which
+  would have left two attached pages sharing one name and the assistant reading
+  whichever came first. If two attachments do end up sharing a name, reading one
+  by that name now says so instead of picking one.
 - **`Home` and `End` reach further with each press.** In the input box they
   still go to the start/end of the row you see on screen — but pressing the same
   key again, when the cursor is already there, now goes on to the whole line you

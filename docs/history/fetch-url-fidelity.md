@@ -118,6 +118,33 @@ It then reasonably went to `python_exec` + `requests` — detour three.
   "captcha" cannot be misread. Strictly narrower than adding the markers to
   `is_throttled` itself.
 
+## 4a. Found by the live run, fixed on the same branch
+
+The user re-ran the original request against the fixed build (chat
+`28cdf212-932f-41ac-9e76-0e1c1c3436ce`) and it came out clean: 15 messages
+instead of 20, `fetch_url` → **all four** attachment pages read in one round →
+one `python_exec` call, no re-download. All four fixes visible in the transcript,
+including P4 firing for real — the "every provider is throttling us" error in
+place of "no results".
+
+But the attachment came back named **"V Documentation"**, and that is the
+site-wide `<title>` — measured, `docs.vlang.io` gives every page the same one,
+while `<h1>` is the actual page ("Memory management" / "Concurrency"). Two pages
+of one site would therefore have carried one name, and `attachment_read`
+resolves a name with `.find()` — **the first match**, silently. A wrong page read
+without a word is exactly the failure class this change exists to remove, so:
+
+- **S8 — the name comes from `<h1>` first, `<title>` second.** Better names too,
+  and it fixes the collision at its source for the common documentation layout.
+- **S9 — a name already taken by a *different* page gets the URL's last segment
+  appended.** For a site whose `<h1>` is as constant as its `<title>`. Compared
+  against the turn snapshot and deterministic (no counters), so re-fetching the
+  same page keeps its name and replaces its own attachment.
+- **S10 — `attachment_read` reports an ambiguous name** with each candidate's
+  source, instead of reading the first. The two guards above make a collision
+  unlikely; this one makes it *loud* when it happens anyway, including for
+  attachments that arrived some other way. Addressing by source keeps working.
+
 ## 5. Out of scope
 
 - Tables (`<table>`) in rich extraction — a real gap on some doc sites, but it
@@ -142,10 +169,16 @@ It then reasonably went to `python_exec` + `requests` — detour three.
   unit test: the providers are hardcoded URLs, and a captcha cannot be summoned
   on demand.
 - **P3** — a description string, pinned per locale on the concrete word `/tmp`.
+- **S8–S10 — live GO on the same page**: the attachment is now named
+  **"Memory management"** (its `<h1>`) rather than "V Documentation" (the
+  site-wide `<title>`), with everything else unchanged.
 - **Mutation-tested**: dropping ancestry dedup, neutering the challenge
-  classifier, dropping the attachment effect, removing the `/tmp` sentence, and
-  reverting `fetch_url` to prose extraction each fail exactly their own test.
-- **Not run**: the model-level regression — the LAN stack was unreachable and the
-  remote gate is billed. No orchestrator code changed; the effect is generic and
-  its mirroring into the turn snapshot is already covered by `youtube_watch`'s
-  live smoke and the orchestrator's attachment tests.
+  classifier, dropping the attachment effect, removing the `/tmp` sentence,
+  reverting `fetch_url` to prose extraction, preferring `<title>` over `<h1>`,
+  dropping the name disambiguation, and dropping the ambiguity guard each fail
+  exactly their own test.
+- **Model-level regression — GO** (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server`, `--jinja`): **26 of 26** orchestrator e2e live smokes green in
+  556 s — memory/self-model/notes/graph/cross-organ links/RAG/attachments/control
+  tools/i18n/MCP/tool confirmation. Run once the LAN stack came back up; two
+  cloud-key smokes skipped for want of credentials, as they do.
