@@ -393,6 +393,161 @@ pub(crate) fn extract_readable(html: &str, max_chars: usize) -> String {
     truncate_chars(&out, max_chars)
 }
 
+/// Extracts a page keeping what a *reader* needs and prose extraction throws
+/// away: **headings** (the document's structure) and **code blocks**, in document
+/// order, rendered Markdown-ish (`## Heading`, fenced code with its language).
+///
+/// Only `fetch_url` uses this (fork F1a, docs/history/fetch-url-fidelity.md):
+/// `web_search` budgets 1500 characters per result page for ranking, where
+/// headings and code would spend the budget without helping. On a documentation
+/// page the difference is not cosmetic — with prose-only extraction every "here
+/// is an example:" leads nowhere, which is exactly how one `fetch_url` call
+/// turned into six `python_exec` rounds in the transcript that prompted this.
+///
+/// The result is truncated to `max_chars` characters.
+pub(crate) fn extract_rich(html: &str, max_chars: usize) -> String {
+    let doc = Html::parse_document(html);
+    let scope_sel = Selector::parse("article, main").unwrap();
+    // `pre` covers the standard case (including Prism's `pre.language-x`);
+    // `div[class*="language-"]` covers VitePress/VuePress, which wrap code in a
+    // bare `div` with no `pre` at all — the shape of the page in the transcript.
+    let block_sel = Selector::parse(
+        r#"h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, div[class*="language-"]"#,
+    )
+    .unwrap();
+
+    let collect = |root: scraper::ElementRef| -> Vec<Block> {
+        // A container that already emitted its content must not emit it again
+        // (`div.language-v` wrapping a `pre`). Selection is in document order, so
+        // an ancestor is always seen first — hence "skip if an ancestor emitted".
+        let mut emitted = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for el in root.select(&block_sel) {
+            if in_boilerplate(el) || el.ancestors().any(|a| emitted.contains(&a.id())) {
+                continue;
+            }
+            if let Some(b) = block_from(el) {
+                emitted.insert(el.id());
+                out.push(b);
+            }
+        }
+        out
+    };
+
+    let mut blocks: Vec<Block> = doc.select(&scope_sel).flat_map(collect).collect();
+    if blocks.is_empty() {
+        blocks = collect(doc.root_element());
+    }
+
+    let mut out = String::new();
+    let mut prev: Option<Kind> = None;
+    for b in blocks {
+        if out.chars().count() >= max_chars {
+            break;
+        }
+        if let Some(p) = prev {
+            // Consecutive list items read as a list; everything else gets a blank
+            // line, so headings and fences land as valid Markdown.
+            out.push_str(if p == Kind::Item && b.kind == Kind::Item {
+                "\n"
+            } else {
+                "\n\n"
+            });
+        }
+        out.push_str(&b.text);
+        prev = Some(b.kind);
+    }
+    truncate_chars(&out, max_chars)
+}
+
+/// What a rich-extraction block is — drives only the spacing between blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Heading,
+    Item,
+    Other,
+}
+
+/// One rendered block of rich extraction.
+struct Block {
+    kind: Kind,
+    text: String,
+}
+
+/// Renders one element into a rich-extraction block, or `None` if there's
+/// nothing worth keeping. Headings and code are **exempt** from
+/// [`MIN_FRAGMENT_CHARS`]: that floor exists to drop navigation chrome from
+/// search snippets, and a two-word heading or a one-line example is content.
+fn block_from(el: scraper::ElementRef) -> Option<Block> {
+    let name = el.value().name();
+    if let Some(level) = heading_level(name) {
+        let t = collapse_ws(&el.text().collect::<String>());
+        return (!t.is_empty()).then(|| Block {
+            kind: Kind::Heading,
+            text: format!("{} {t}", "#".repeat(level)),
+        });
+    }
+    if name == "pre" || has_language_class(el) {
+        // Whitespace is the code's meaning — `collapse_ws` would destroy it.
+        let raw = el.text().collect::<String>();
+        let code = raw.trim_matches('\n').trim_end();
+        return (!code.trim().is_empty()).then(|| Block {
+            kind: Kind::Other,
+            text: format!("```{}\n{code}\n```", code_language(el).unwrap_or_default()),
+        });
+    }
+    let t = collapse_ws(&el.text().collect::<String>());
+    if t.chars().count() < MIN_FRAGMENT_CHARS {
+        return None;
+    }
+    Some(if name == "li" {
+        Block {
+            kind: Kind::Item,
+            text: format!("- {t}"),
+        }
+    } else {
+        Block {
+            kind: Kind::Other,
+            text: t,
+        }
+    })
+}
+
+/// `1..=6` for `h1`..`h6`.
+fn heading_level(name: &str) -> Option<usize> {
+    name.strip_prefix('h')
+        .and_then(|n| n.parse().ok())
+        .filter(|l| (1..=6).contains(l))
+}
+
+/// `true` if the element itself carries a `language-*`/`lang-*` class (a code
+/// container in the VitePress/Prism conventions).
+fn has_language_class(el: scraper::ElementRef) -> bool {
+    el.value().classes().any(is_language_class)
+}
+
+fn is_language_class(c: &str) -> bool {
+    c.starts_with("language-") || c.starts_with("lang-")
+}
+
+/// The code block's language: from a `language-*`/`lang-*` class on the element
+/// itself or on an inner `<code>` (`<pre><code class="language-rust">` — the
+/// common highlighter output).
+fn code_language(el: scraper::ElementRef) -> Option<String> {
+    let from = |e: scraper::ElementRef| -> Option<String> {
+        e.value()
+            .classes()
+            .find(|c| is_language_class(c))
+            .and_then(|c| c.split_once('-'))
+            .map(|(_, lang)| lang.to_string())
+            .filter(|l| !l.is_empty())
+    };
+    from(el).or_else(|| {
+        let code_sel = Selector::parse("code").unwrap();
+        el.select(&code_sel).next().and_then(from)
+    })
+}
+
 /// `true` if the element sits inside nav/header/footer/sidebar — this is
 /// boilerplate (a menu/links), not the main content.
 fn in_boilerplate(el: scraper::ElementRef) -> bool {
@@ -471,7 +626,6 @@ impl Tool for WebSearch {
         for provider in PROVIDERS {
             match self.fetch(provider, query, ctx.loc).await {
                 Ok(Some(html)) => {
-                    got_clean_page = true;
                     let r = parse_results(
                         &html,
                         provider.link_sel,
@@ -482,6 +636,19 @@ impl Tool for WebSearch {
                     if !r.is_empty() {
                         results = r;
                         break;
+                    }
+                    // Empty parse: either the query genuinely has no matches, or
+                    // this is an anti-bot challenge served with HTTP 200 (Mojeek
+                    // does exactly that — measured). The check runs only here, on
+                    // an empty parse, so a results page can never be mistaken for
+                    // a challenge (a search for "captcha" keeps working).
+                    if is_challenge_page(&html) {
+                        tracing::debug!(
+                            provider = provider.name,
+                            "web search: anti-bot challenge behind a 200, trying the next provider"
+                        );
+                    } else {
+                        got_clean_page = true;
                     }
                 }
                 Ok(None) => {
@@ -555,6 +722,30 @@ fn is_throttled(status: StatusCode, body: &str) -> bool {
         status,
         StatusCode::ACCEPTED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
     ) || body.contains("anomaly")
+}
+
+/// Phrases an anti-bot interstitial uses. Deliberately whole phrases, not the
+/// word "captcha": this is checked **only on a page that parsed to zero results**
+/// (see the provider loop), so a genuine result set is never at risk — but the
+/// snippets of a *fruitless* search for anti-bot topics could still be, and a
+/// phrase is far less likely to appear there than a single word.
+const CHALLENGE_MARKERS: &[&str] = &[
+    "verification required",
+    "complete the challenge",
+    "unusual traffic",
+    "are you a robot",
+    "enable javascript and cookies",
+];
+
+/// `true` if the body looks like an anti-bot interstitial rather than a results
+/// page. Mojeek serves its captcha with **HTTP 200** and no `anomaly` marker
+/// (measured live), so [`is_throttled`] cannot see it, and without this the
+/// blocked provider counted as "answered, found nothing" — which suppressed the
+/// honest "all providers are throttled" error and told the model the web had
+/// nothing to say. See docs/history/fetch-url-fidelity.md §2 (P4).
+fn is_challenge_page(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    CHALLENGE_MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// Parses a provider's result set: lists of links (`link_q` → `href`), titles
@@ -819,6 +1010,25 @@ mod tests {
         assert!(!is_throttled(StatusCode::OK, FIXTURE));
     }
 
+    /// Mojeek serves its captcha with **HTTP 200** and no `anomaly` marker
+    /// (measured live), so `is_throttled` cannot see it — and without this the
+    /// blocked provider counted as "answered, found nothing", which suppressed
+    /// the honest "all providers are throttled" error. The body below is the
+    /// text of the real interstitial. See docs/history/fetch-url-fidelity.md P4.
+    #[test]
+    fn a_captcha_behind_a_200_is_recognized_as_a_challenge() {
+        let mojeek = "<html><body>Captcha Search Web Images News Verification required \
+             Please complete the challenge to continue. Waiting for verification.</body></html>";
+        assert!(is_challenge_page(mojeek));
+        assert!(is_challenge_page(
+            "<p>We detected UNUSUAL TRAFFIC from your network</p>"
+        ));
+        // A real result set is never a challenge — the check runs only on an
+        // empty parse, but it must not be trigger-happy even so.
+        assert!(!is_challenge_page(FIXTURE));
+        assert!(!is_challenge_page(FIXTURE_MOJEEK));
+    }
+
     #[test]
     fn percent_decode_handles_encoded_url() {
         assert_eq!(
@@ -886,6 +1096,106 @@ mod tests {
     fn extract_readable_truncates_to_max() {
         let text = extract_readable(PAGE_HTML, 20);
         assert!(text.chars().count() <= 20);
+    }
+
+    /// The shape of the page from the transcript that prompted this work
+    /// (docs.vlang.io): **no `<pre>` at all** — VitePress wraps code in a bare
+    /// `div.language-v` — and section titles in `<h2>`. Prose extraction drops
+    /// both, so every "here is an example:" led nowhere and the model went
+    /// hunting for the source elsewhere.
+    const DOC_HTML: &str = r#"
+        <html><head><title>Memory management</title></head><body>
+        <nav><a href="/">Home</a></nav>
+        <main>
+            <h2 id="control">Control <a class="header-anchor">#</a></h2>
+            <p>You can take advantage of V's autofree engine and define a free() method
+               on custom data types, which is what the example below shows:</p>
+            <div class="language-v">struct MyType {}
+
+@[unsafe]
+fn (data &amp;MyType) free() {
+    // ...
+}
+</div>
+            <p>Just as the compiler frees C data types with C's free(), it will statically
+               insert free() calls for your data type at the end of each lifetime.</p>
+        </main>
+        </body></html>
+    "#;
+
+    #[test]
+    fn rich_extraction_keeps_headings_and_code() {
+        let text = extract_rich(DOC_HTML, 10_000);
+        assert!(text.contains("## Control"), "heading missing: {text}");
+        assert!(
+            text.contains("```v"),
+            "code fence with language missing: {text}"
+        );
+        assert!(
+            text.contains("fn (data &MyType) free()"),
+            "the code example itself is missing: {text}"
+        );
+        // Whitespace is the code's meaning — it must survive `collapse_ws`.
+        assert!(
+            text.contains("struct MyType {}\n"),
+            "code was collapsed: {text}"
+        );
+        assert!(text.contains("autofree engine"), "prose missing: {text}");
+        assert!(!text.contains("Home"), "nav leaked in: {text}");
+
+        // Fork F1a: the prose path is what `web_search` ranks on and stays
+        // exactly as it was — neither the heading nor the code appears there.
+        let prose = extract_readable(DOC_HTML, 10_000);
+        assert!(!prose.contains("Control"), "prose path changed: {prose}");
+        assert!(
+            !prose.contains("struct MyType"),
+            "prose path changed: {prose}"
+        );
+    }
+
+    #[test]
+    fn a_wrapped_code_block_is_not_emitted_twice() {
+        // The highlighter output `div.language-* > pre > code` matches two of
+        // our selectors; ancestry dedup keeps the outer one only.
+        let html = r#"<html><body><main>
+            <div class="language-rust"><pre><code class="language-rust">let x = 1;</code></pre></div>
+        </main></body></html>"#;
+        let text = extract_rich(html, 10_000);
+        assert_eq!(text.matches("let x = 1;").count(), 1, "duplicated: {text}");
+        assert_eq!(text.matches("```").count(), 2, "not one fence: {text}");
+    }
+
+    #[test]
+    fn code_language_comes_from_the_inner_code_tag() {
+        // Prism/Rouge put the class on `<code>`, not on `<pre>`.
+        let html = r#"<html><body><main>
+            <pre><code class="language-python">print(1)</code></pre>
+        </main></body></html>"#;
+        assert!(extract_rich(html, 10_000).contains("```python"));
+    }
+
+    #[test]
+    fn short_code_and_headings_survive_the_fragment_floor() {
+        // MIN_FRAGMENT_CHARS exists to drop navigation chrome from search
+        // snippets; a two-word heading and a one-line example are content.
+        let html = r#"<html><body><main>
+            <h3>Control</h3><pre>v -autofree</pre>
+        </main></body></html>"#;
+        let text = extract_rich(html, 10_000);
+        assert!(text.contains("### Control"), "got: {text}");
+        assert!(text.contains("v -autofree"), "got: {text}");
+    }
+
+    #[test]
+    fn rich_extraction_skips_boilerplate_and_truncates() {
+        let html = r#"<html><body>
+            <nav><pre>menu code that is not content</pre></nav>
+            <p>Настоящий содержательный абзац страницы, достаточно длинный для порога.</p>
+        </body></html>"#;
+        let text = extract_rich(html, 10_000);
+        assert!(!text.contains("menu code"), "nav leaked in: {text}");
+        assert!(text.contains("содержательный абзац"));
+        assert!(extract_rich(DOC_HTML, 20).chars().count() <= 20);
     }
 
     #[test]
