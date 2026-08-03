@@ -24,7 +24,7 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   each chat separately** and survives a restart: one conversation can be read with
   everything open while another stays compact. **Expanded, the call is laid out
   properly**: the tool's name on the header line, every argument listed under it
-  one per line, a blank line, then the result. The header line has always been a
+  one per line, a gap, then the result. The header line has always been a
   summary — it cuts a long value at a hundred characters and cannot show a list
   or a nested value at all — so a request could not be read in full anywhere.
 - **MCP servers are configured in the settings window.** A new **"Plugins"**

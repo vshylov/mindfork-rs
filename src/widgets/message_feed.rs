@@ -1253,11 +1253,15 @@ fn push_tool(
     for block in &p.args {
         push_block(lines, block, palette, width, false, opts, loc);
     }
-    // A blank row between the request and the answer: expanded, the argument
-    // list can run for several rows, and without a break it reads as one wall
-    // with the result. Only when there is something on both sides of it.
+    // A gap between the request and the answer: expanded, the argument list can
+    // run for several rows, and without a break it reads as one wall with the
+    // result. The `│` gutter **continues** through it — a bare blank row would
+    // cut the card in two. Only when there is something on both sides of it.
     if !p.args.is_empty() && !p.result.is_empty() {
-        ensure_blank_line(lines);
+        lines.push(Line::from(Span::styled(
+            "│".to_string(),
+            Style::default().fg(palette.muted),
+        )));
     }
     for block in &p.result {
         push_block(lines, block, palette, width, true, opts, loc);
@@ -1603,18 +1607,20 @@ mod tests {
             full.contains(r#"headers: ["a","b"]"#),
             "the argument the header could not carry: {full}"
         );
-        // ...separated from the result by one blank row.
-        let i_last_arg = rows.iter().rposition(|r| r.contains("focus:")).unwrap();
+        // ...separated from the result by exactly one gap row, which **keeps the
+        // `│` gutter**: a bare blank row would cut the card in two.
         let i_result = rows.iter().position(|r| r.contains("└ ok")).unwrap();
-        assert!(i_last_arg < i_result, "arguments come first");
-        assert_eq!(
-            rows[i_last_arg + 1..i_result]
-                .iter()
-                .filter(|r| is_blank_row(r))
-                .count(),
-            1,
-            "one blank row between the request and the answer: {:?}",
-            &rows[i_last_arg..=i_result]
+        let gap = &rows[i_result - 1];
+        assert!(!is_blank_row(gap), "the gutter continues: {gap:?}");
+        assert!(
+            gap.trim_end().ends_with('│'),
+            "gutter only, nothing else on the row: {gap:?}"
+        );
+        // Exactly one: the row above the gap is already an argument.
+        assert!(
+            rows[i_result - 2].contains(": "),
+            "one gap row, then the arguments: {:?}",
+            &rows[i_result - 3..=i_result]
         );
     }
 

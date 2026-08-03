@@ -129,7 +129,7 @@ tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
 recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
 call's arguments and result away while keeping the header that says what ran,
 both kinds of block are **collapsed by default**, an expanded card is laid out
-as name → arguments one per line → blank row → result (the header is a title: it
+as name → arguments one per line → gutter gap → result (the header is a title: it
 truncates, and could never show a structured argument at all), and the
 collapsed/expanded choice is remembered **per chat** (`Chat.feed_view`, the `draft` playbook — no
 migration) instead of being one global flag; before that — **`fetch_url` back the page**: extraction keeps section
@@ -11804,7 +11804,10 @@ debounce was done as a separate PR, see below).
 - **An expanded card is a different presentation, not a longer one** (fork C4,
   the layout specified by the user after the same live look; collapsed
   unchanged): the tool's **name alone** in the header, every argument enumerated
-  below one per line, a blank row, then the result.
+  below one per line, a gap row, then the result. The gap **keeps the card's `│`
+  gutter** (a second round of feedback): drawn blank it read as the end of the
+  card rather than as a break inside it. `│` is WGL4, so compatibility mode
+  needs no substitution — it is already the card's gutter.
   - **Why it was needed**: the header is a *title* — `truncate_header` flattens
     whitespace and cuts at `HEADER_MAX_CHARS = 100`, and `scalar_str` drops
     anything that is not a scalar. So a long query ended in `…` and an
@@ -11841,9 +11844,13 @@ debounce was done as a separate PR, see below).
     `is_big` and becomes a block instead, so a lone long value never reaches the
     truncation), and one widget test anchored on "the first row containing `1`",
     which the argument listing now matches before the result does.
-  - Four mutations, each failing only its own test: `Full` falling back to the
-    compact header, the blank row removed, the blank row appearing with no
-    arguments, and a code argument losing its label.
+  - Five mutations, each failing only its own test: `Full` falling back to the
+    compact header, the gap row removed, the gap appearing with no arguments, a
+    code argument losing its label, and the gap drawn blank instead of guttered.
+  - One more sloppy anchor caught by its own failure: the gap test first looked
+    for "the row after the last argument" by name, but the listing is
+    **alphabetical**, so the name it picked was the *first* argument. Anchored on
+    the result row instead.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

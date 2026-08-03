@@ -69,7 +69,9 @@ no arguments *and* no result gets no pill — there is nothing to hide.
 
 Added after the first live look (**user's decision, 2026-08-03**): collapsed
 stays exactly as it is; expanded shows **the tool's name in the header, the
-arguments enumerated below, then a blank row, then the result**.
+arguments enumerated below, then a gap row, then the result**. The gap keeps the
+card's `│` gutter (a second round of feedback): a blank row there reads as the
+end of the card rather than as a break inside it.
 
 The reason it needed saying: the header is a *title*. `truncate_header` flattens
 whitespace and cuts at `HEADER_MAX_CHARS = 100`, and `scalar_str` drops anything

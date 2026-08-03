@@ -1407,7 +1407,8 @@ this?"*; this screen answers *"where exactly, and take me there."*
   **Expanded, the card is a different presentation, not a longer one**: the
   header carries the tool's **name alone**, every argument is enumerated below as
   one `key: value` line each (untruncated; arrays/objects as compact JSON — the
-  header can carry neither), then a blank row, then the result. A value that
+  header can carry neither), then a gap row, then the result. The gap **keeps the
+  `│` gutter** rather than being blank — a blank row would cut the card in two. A value that
   cannot share a line with its key — code, a large or multiline string — goes
   under a `key:` label as its own block, so `python_exec`'s code keeps its
   highlighting and still says which argument it is. Field order is
