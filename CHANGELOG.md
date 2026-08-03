@@ -15,6 +15,18 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Tool calls in the feed fold away, like "thoughts".** `Ctrl+O` collapses and
+  expands them; collapsed, a call keeps its header — the tool's name and a short
+  argument — so you still see *what* ran, while the arguments and the result move
+  out of the way. **Collapsed is the new default**, so a turn full of tool work
+  reads as the reply it produced. The collapsed/expanded choice for both kinds of
+  block (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls) is now remembered **for
+  each chat separately** and survives a restart: one conversation can be read with
+  everything open while another stays compact. **Expanded, the call is laid out
+  properly**: the tool's name on the header line, every argument listed under it
+  one per line, a gap, then the result. The header line has always been a
+  summary — it cuts a long value at a hundred characters and cannot show a list
+  or a nested value at all — so a request could not be read in full anywhere.
 - **MCP servers are configured in the settings window.** A new **"Plugins"**
   section holds the master switch, the server list and its editor: `Ctrl+N` adds
   a server, the fields below set its command line and environment, `Ctrl+D`
@@ -92,6 +104,9 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Two labels in the feed ignored the interface language** and were always
+  Russian: the heading above an **expanded** "thoughts" block, and the exit-code
+  line under a `python_exec` console.
 - **Web search no longer reports "nothing found" when it was actually blocked.**
   One of the search engines serves its "prove you are human" page with an
   ordinary success status, so it counted as a normal answer that happened to

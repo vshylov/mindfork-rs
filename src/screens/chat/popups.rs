@@ -229,6 +229,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+Home/End", "ui.help.doc_move"),
     ("Ctrl+P", "ui.help.settings"),
     ("Ctrl+T", "ui.help.thoughts"),
+    ("Ctrl+O", "ui.help.tool_calls"),
     ("Ctrl+G", "ui.help.spell"),
     ("Ctrl+B", "ui.help.emoji"),
     ("Ctrl+W", "ui.help.mouse_toggle"),
@@ -676,9 +677,11 @@ pub(super) fn render_tool_confirm(
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    use crate::features::tools::present::{ToolBlock, present};
+    use crate::features::tools::present::{ArgDetail, ToolBlock, present};
 
-    let shown = present(&pending.name, &pending.arguments, "");
+    // Compact: this is a decision prompt, not a viewer — long arguments are cut
+    // with "…" here (the card in the feed is where the call is read in full).
+    let shown = present(&pending.name, &pending.arguments, "", ArgDetail::Compact);
     let header = match &shown.header_suffix {
         Some(suffix) => format!("{}({suffix})", pending.name),
         None => pending.name.clone(),

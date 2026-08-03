@@ -4,7 +4,7 @@
 use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
-use crate::entities::chat::ChatSummary;
+use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 pub use crate::features::chat_search::FeedFocus;
@@ -34,6 +34,11 @@ pub enum AppCommand {
     /// on every input change; the orchestrator writes it to the chat file with a debounce.
     /// See spec §11.7.
     SetDraft(String),
+    /// Save the feed's collapse state on the active chat (`Ctrl+T` — "thoughts",
+    /// `Ctrl+O` — tool calls). Like [`AppCommand::SetDraft`]: written with the
+    /// save debounce, `modified_at` untouched — a view toggle must not bump the
+    /// chat up the list. See spec §11.3, docs/feed-collapse.md.
+    SetFeedView(FeedView),
     /// Regenerate the last assistant reply: delete everything after the last
     /// user message and restart generation from the same request.
     RegenerateLast,
@@ -278,6 +283,10 @@ pub enum AppEvent {
         title: String,
         messages: Vec<Message>,
         draft: String,
+        /// The chat's stored collapse state for the feed's foldable blocks
+        /// ("thoughts"/tool calls) — the counterpart of `draft` for the view
+        /// (spec §11.3).
+        feed_view: FeedView,
         /// Put the feed on this message instead of the tail, and highlight the
         /// query inside it (a jump from a search hit, `AppCommand::OpenChatAt`).
         /// `None` — every other activation, which must not highlight anything.

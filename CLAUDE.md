@@ -124,9 +124,15 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1814 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1833 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
-recent change gives **`fetch_url` back the page**: extraction keeps section
+recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
+call's arguments and result away while keeping the header that says what ran,
+both kinds of block are **collapsed by default**, an expanded card is laid out
+as name → arguments one per line → gutter gap → result (the header is a title: it
+truncates, and could never show a structured argument at all), and the
+collapsed/expanded choice is remembered **per chat** (`Chat.feed_view`, the `draft` playbook — no
+migration) instead of being one global flag; before that — **`fetch_url` back the page**: extraction keeps section
 headings and code blocks (prose-only extraction turned documentation into text
 whose every "here is an example:" led nowhere), and a page over the attachment
 budget lands as a **chat attachment** instead of being cut silently at 12 000
@@ -11678,9 +11684,178 @@ debounce was done as a separate PR, see below).
   now emits an effect on a path that previously never did, and the tool registry
   sits on every turn.
 
+### Post-M9: collapsible tool calls, and the collapse state per chat (done)
+
+- **Asked for directly**: tool calls should fold away the way "thoughts" already
+  do, be **collapsed by default**, and the collapsed/expanded state should be
+  remembered **per chat** — for both kinds of block. Plan with forks C1–C3 —
+  [docs/feed-collapse.md](docs/feed-collapse.md) (**user's decision, 2026-08-03**,
+  both questions as recommended). Behaviour — spec §11.3. Branch
+  `feat/feed-collapse`.
+- **Reading the code decided the shape and made it small.** Per-chat UI state
+  already has a playbook — `Chat.draft` (spec §11.7): a field on `Chat`
+  (`#[serde(default)]`, **no migration**), an `AppCommand`, a field in
+  `ChatActivated`, written with the save debounce and **without touching
+  `modified_at`**. Everything here follows it, so the per-chat half needed no new
+  mechanism, only a second traveller on an existing road.
+- **One place it deliberately departs from that playbook**: the toggle returns
+  `ChatIntent::SetFeedView` **straight from `handle_key`** instead of raising a
+  dirty flag the loop picks up. `draft_dirty`/`take_dirty_draft` exists because
+  typing is continuous and must not send a command per keystroke; a `Ctrl+O` press
+  is discrete, so the flag machinery would be ceremony.
+- **`FeedView { thoughts, tools }`, a named type rather than two bools** (C1): it
+  travels through a command, an event, a chat field and the feed's render-cache
+  key — a bare `(bool, bool)` is exactly the pair that gets swapped by accident.
+  `Copy + Eq + Hash`, both `false` = collapsed, and
+  `skip_serializing_if = "FeedView::is_default"` so a chat nobody expanded
+  anything in writes no new key at all.
+- **`Ctrl+O` for tools** (C2, `Ctrl+T` being taken). The candidates were narrowed
+  by what the terminal itself claims — `Ctrl+I` is Tab, `Ctrl+H` Backspace,
+  `Ctrl+M`/`Ctrl+J` Enter — leaving `o`/`l`/`d` free in both the chat screen and
+  `InputBox::on_key`. `Ctrl+L` carries "clear screen" from shells and `Ctrl+D`
+  reads as EOF on unix, so `Ctrl+O` ("output"), which has no prior meaning.
+  Layout-independent through `keys::hotkey_char`, as every other Ctrl shortcut.
+- **What a collapsed call looks like** (C3): the card's **header stays**
+  (`⚒ name(args)` — *what* ran is the informative half) and only the argument and
+  result blocks fold away; the header then carries the same pill the collapsed
+  thoughts block uses (marker, label, keycap), appended to its **last row** rather
+  than pushed as a line of its own, so a call is one line collapsed and one line
+  of header expanded. Overflowing the width is safe — `build_message_block` wraps
+  every body line afterwards. A call with **nothing to hide** (no arguments, no
+  result yet) gets no pill, mirroring `push_thoughts` on empty thoughts: promising
+  something behind a pill that hides nothing is the small lie this project keeps
+  finding and closing.
+- **A test of mine was wrong about the code, and the code was right.**
+  `tool_card_is_collapsed_by_default` first asserted that a short argument
+  disappears — it doesn't: the presenter (`features/tools/present.rs`) puts a
+  short scalar into the **header suffix** (`note_save(секрет)`) and only <!-- cyrillic-ok -->
+  multi-line/long values into a block. That is the collapsed card's one-line
+  summary working as designed, so the assertion moved to a multi-line
+  `python_exec` argument, which is genuinely a block.
+- **Tests**: collapsed by default (header kept, arguments and result gone, pill
+  present, **exactly one row per call**), the toggle revealing them and hiding
+  them again (and dropping the pill when expanded — the `⚒` header is the marker
+  then), no pill when there is nothing to reveal, the pill localized across every
+  built-in locale; the two keys reporting the whole new view and staying
+  independent (plus `Ctrl+щ`, the physical `O`); activation applying the chat's
+  stored state; and at the orchestrator level the write rules (flagged for saving,
+  `modified_at` untouched, an identical state a no-op) plus a full round trip
+  through the real `run` loop — expand in chat A, a new chat B opens collapsed,
+  switching back restores A, and the choice is still on disk after a restart. The
+  existing `cache_matches_fresh_render` gained the tools flag, so the cache is
+  checked against all four combinations, and the entity has its own serde test for
+  the no-migration claim, and one pinning both formerly-hardcoded labels across
+  locales, plus nine for the expanded layout. **1833 unit tests green**
+  (+19), 76
+  `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/i18n gates
+  clean.
+- **All seven load-bearing behaviours were mutation-tested** — never collapsing,
+  dropping the "nothing to hide" guard, taking the state out of the cache key,
+  bumping `modified_at`, activation ignoring the stored state, the key not
+  reporting it back, and dropping `skip_serializing_if` — each fails its own test
+  and only that one. (One mutation landed on the *first* `if !expanded` in the
+  file, which is `push_thoughts` — so the thoughts tests got audited for free.)
+- **A live run isn't required** (AGENTS.md §3): rendering, key handling and a
+  per-chat field — no engine, memory, tool or provider path is touched. Two
+  things were nonetheless checked against reality rather than reasoned about: the
+  collapsed and expanded forms were **dumped side by side and read** before the
+  tests were written (which is what showed the pill sits on the header rather
+  than needing a line of its own), and a throwaway probe ran **all 182 chat files
+  of the real dev data root** through the new type — every one loads as collapsed
+  and writes back **without** a `feed_view` key, i.e. the additive claim holds on
+  actual user data, not just on a fixture.
+- **The `git checkout <file>` trap bit for a third time** (already recorded twice
+  in this journal): reverting a mutation that way discarded the *whole*
+  uncommitted change in `input.rs`, not just the mutated line, and the suite
+  stayed red until it was re-applied by hand. Back the file up first — `cp` — or
+  commit before mutating.
+- **Two unlocalized strings found next door and fixed on the user's say-so**
+  (they were spotted here and first recorded as groundwork; the user asked for
+  them in the same change): the **expanded** thoughts label
+  (`format!("{} мысли", …)`, while the collapsed pill correctly used <!-- cyrillic-ok -->
+  `ui.feed.thoughts`) and the console exit-code label in `push_console`
+  (`"код возврата: {code}"`). Both showed Russian under an `en` interface. <!-- cyrillic-ok -->
+  - **The exit-code label got its own key rather than reusing
+    `python.console.exit`**: that one is **axis A** — the label the *model* reads
+    inside the tool result, written in the profile's language — while the feed
+    re-renders it for the *human* after `present::parse_console` has stripped it,
+    which is **axis B**. Same text today, different axis, so a Russian interface
+    reading an English-profile chat now says "код возврата: 3" rather than <!-- cyrillic-ok -->
+    inheriting the agent's language. New key `ui.feed.exit_code`; `push_block`/
+    `push_console` gained the locale to reach it.
+  - **Why the gate missed them, checked rather than assumed**: `cyrillic_scan.py`
+    sets `in_test` on the first `#[cfg(test)]` it sees and **never unsets it**,
+    and `message_feed.rs` has `#[cfg(test)]` **test accessors** at line ~564 — so
+    every production line below them was scanned as test code, where Cyrillic in
+    code position is legitimate fixture data. The strings are fixed; the
+    scanner's blind spot is recorded in the roadmap (an attribute on a single
+    item shouldn't mean "the rest of the file is tests").
+  - Pinned by `expanded_thoughts_and_exit_code_are_localized`, which renders an
+    **English-profile tool result under a Russian interface** and vice versa, and
+    asserts no Cyrillic leaks into an `en` feed. Mutation-tested: restoring
+    either literal fails it.
+- **The collapsed pill reads like the thoughts pill** (asked for after the first
+  live look): `▸ детали · Ctrl+O` against `▸ мысли · 9 стр. · Ctrl+T` — the <!-- cyrillic-ok -->
+  separator is explicit here, since the thoughts pill gets its own from inside
+  `ui.feed.thoughts_lines` and this pill has no count to show. The first
+  mutation run **survived** — nothing asserted the separator — so
+  `tool_card_is_collapsed_by_default` gained the assertion, which then failed
+  under the same mutation.
+- **An expanded card is a different presentation, not a longer one** (fork C4,
+  the layout specified by the user after the same live look; collapsed
+  unchanged): the tool's **name alone** in the header, every argument enumerated
+  below one per line, a gap row, then the result. The gap **keeps the card's `│`
+  gutter** (a second round of feedback): drawn blank it read as the end of the
+  card rather than as a break inside it. `│` is WGL4, so compatibility mode
+  needs no substitution — it is already the card's gutter.
+  - **Why it was needed**: the header is a *title* — `truncate_header` flattens
+    whitespace and cuts at `HEADER_MAX_CHARS = 100`, and `scalar_str` drops
+    anything that is not a scalar. So a long query ended in `…` and an
+    **array/object argument never appeared at all, in either mode**. That second
+    half was the more interesting find: `set_sampling`'s `samplers`/
+    `dry_sequence_breakers` and any MCP tool with structured arguments were
+    simply invisible.
+  - **`ArgDetail::{Compact, Full}` on the presenter**, split into
+    `compact_args`/`full_args` rather than one function with a flag threaded
+    through it — they are genuinely different presentations. It belongs there and
+    not in the widget: which field is code, which is large, what may be folded
+    into a header is knowledge `features/tools/present.rs` already owns, and the
+    widget stays generic (spec §11.3).
+  - **A value that cannot share a line with its key** — code, a large or
+    multiline string — goes under a `key:` label as its own block, so
+    `python_exec`'s code keeps its highlighting *and* is still named. Field order
+    is `serde_json::Map`'s (alphabetical): the wire format does not preserve the
+    model's own order for us, and stability is what matters for something read
+    repeatedly. The doc comment says so, after checking `Cargo.toml` for
+    `preserve_order` rather than assuming arrival order.
+  - **My first attempt was conditional** — keep the compact header, and add the
+    missing detail only when it truncated or dropped something. The user replaced
+    it with the layout above, and was right: the conditional version made a
+    card's structure depend on how long its values happened to be, so two
+    neighbouring calls could look different for no visible reason.
+  - The confirmation popup (§9.8) keeps `Compact` — a decision prompt, not a
+    viewer, which is the decision the journal already recorded for it.
+  - The existing presenter tests describe the compact form, so they got a
+    **shadowing `present`** in `mod tests` (the `calc`/`datetime` precedent) —
+    zero call-site churn, and `Full` has its own seven.
+  - **A probe over realistic calls came before the tests**, and it corrected two
+    fixtures I would otherwise have written wrong: a truncation needs **two**
+    medium values whose join overflows (any single scalar over the ceiling is
+    `is_big` and becomes a block instead, so a lone long value never reaches the
+    truncation), and one widget test anchored on "the first row containing `1`",
+    which the argument listing now matches before the result does.
+  - Five mutations, each failing only its own test: `Full` falling back to the
+    compact header, the gap row removed, the gap appearing with no arguments, a
+    code argument losing its label, and the gap drawn blank instead of guttered.
+  - One more sloppy anchor caught by its own failure: the gap test first looked
+    for "the row after the last argument" by name, but the listing is
+    **alphabetical**, so the name it picked was the *first* argument. Anchored on
+    the result row instead.
+
 ### Deferred beyond M3
-- **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
-  collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.
+- **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
+  calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored
+  per chat; folding one *particular* block still needs a way to select it.
   **Account for the mouse toggle** (`Ctrl+W`, see post-M9): per-message selection/copy
   in the feed must coexist with wheel capture — either as in-app selection
   (mouse clicks go to the app when capture is on), or relying on native

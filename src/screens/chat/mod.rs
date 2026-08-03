@@ -21,7 +21,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
-use crate::entities::chat::ChatSummary;
+use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
@@ -137,6 +137,11 @@ pub enum ChatIntent {
     /// the wheel scrolls the feed (text selection — with Shift); `false` —
     /// native mouse selection. See spec §11.3.
     SetMouseCapture(bool),
+    /// The feed's collapse state changed (`Ctrl+T` — "thoughts", `Ctrl+O` —
+    /// tool calls). Stored **per chat**, like the draft: the orchestrator writes
+    /// it to the active chat and hands it back on activation. See spec §11.3,
+    /// docs/feed-collapse.md.
+    SetFeedView(FeedView),
     /// Write text to the system clipboard (`Ctrl+C` copy / `Ctrl+X` cut the
     /// input box's selection). A UI-layer side effect — `runtime` writes via
     /// `arboard` (doesn't go through the orchestrator: the text is already at

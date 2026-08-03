@@ -1396,7 +1396,34 @@ this?"*; this screen answers *"where exactly, and take me there."*
 ### 11.3. The message feed
 
 - Incremental streaming of the assistant's latest response (the text and the "thoughts" stream separately).
-- **Collapsible blocks**: "thoughts" (CoT) and each tool call (name, arguments, result) — expand/collapse via a key on the selected block.
+- **Collapsible blocks**: "thoughts" (CoT, `Ctrl+T`) and tool calls (`Ctrl+O`).
+  Both are **collapsed by default** — the feed is scanned for the reply, and
+  reasoning/tool plumbing is detail you ask for. Collapsing a tool call keeps its
+  header (`⚒ name(args)` — *what* ran, plus a short scalar argument as the
+  one-line summary the presenter puts there) and folds away the argument and
+  result blocks; the header then carries the same pill the collapsed "thoughts"
+  block uses — marker, label and the key that opens it. A call with nothing to
+  hide (no arguments, no result yet) gets no pill.
+  **Expanded, the card is a different presentation, not a longer one**: the
+  header carries the tool's **name alone**, every argument is enumerated below as
+  one `key: value` line each (untruncated; arrays/objects as compact JSON — the
+  header can carry neither), then a gap row, then the result. The gap **keeps the
+  `│` gutter** rather than being blank — a blank row would cut the card in two. A value that
+  cannot share a line with its key — code, a large or multiline string — goes
+  under a `key:` label as its own block, so `python_exec`'s code keeps its
+  highlighting and still says which argument it is. Field order is
+  `serde_json::Map`'s (alphabetical), which the wire format does not let us
+  improve on. The detail level is [`ArgDetail`] on the presenter — the
+  dangerous-tool confirmation popup (§9.8) stays `Compact`, being a decision
+  prompt rather than a viewer.
+  **The state is stored per chat** (`Chat.feed_view`, the [`Chat::draft`
+  playbook](#117-input-box)): the toggle returns the new state as an intent, the
+  orchestrator writes it to the active chat with the save debounce and **without
+  touching `modified_at`** (folding a block away isn't a change to the
+  conversation), and hands it back in `AppEvent::ChatActivated`. So one chat can
+  be read with everything expanded while another stays compact, and the choice
+  survives a restart. Per-*message* collapse (a key on the selected block) —
+  deferred; both flags are part of the feed's render-cache key.
 - **Tool cards** (`⚒ name(…)`) show arguments/results meaningfully rather than as raw JSON: a presenter (`features/tools/present.rs`) produces a compact header (`name(value)`/`name(k=v, …)`) and blocks — `python_exec` draws a highlighted Python code block and a console (stdout/stderr/exit code in separate colors), `fs_read`/`fs_write` — content highlighted by the path's extension, prose tools (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, short arguments — inline. Knowledge about tools lives in the tools layer; `message_feed` stays generic, reusing `markdown::highlight_code`. A card gets a **rail extension underneath it** (the colored `▌` gutter continues under the result) regardless of whether assistant text follows — so the rail doesn't cut off at the result when the call ends the turn.
 - A per-message Markdown toggle.
 - **Role headers** (`✦ ASSISTANT` / `❯ YOU`) show the profile's **custom names** when set
@@ -1809,12 +1836,14 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+Backspace`/`Ctrl+Delete` | delete the word left/right of the cursor |
 | `Home`/`End` | a ladder of stops (§11.5): `Home` — the row's text, its start, then the whole line's; `End` — the row's end, then the line's |
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
+| `Ctrl+T` | collapse/expand "thoughts" in the feed (per chat, §11.3) |
+| `Ctrl+O` | collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3) |
 | `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
 | click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
 | `Ctrl+B` | the emoji picker popup (inserted into the input box at the cursor; remembers the last choice) |
 | `PageUp`/`PageDown` / mouse wheel | scroll the feed |
 | `e` (on a message) | edit the message |
-| `Space`/`Tab` (on a block) | collapse/expand "thoughts"/a tool block |
+| `Space`/`Tab` (on a block) | collapse/expand a **single** block — deferred; today `Ctrl+T`/`Ctrl+O` act on the whole feed |
 | `F1` / `?` | the help/"about" dialog (tabbed, see below) |
 
 **The help/"about" dialog (`F1`/`?`)** — a modal popup in the KDE/Qt style:

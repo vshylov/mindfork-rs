@@ -49,13 +49,15 @@ impl ChatScreen {
     /// Rebuilds the feed for a chat. `focus` — a domain message to put the view
     /// on together with the query to highlight inside it
     /// (`AppCommand::OpenChatAt`); `None` — the usual "show the tail", with
-    /// nothing highlighted.
+    /// nothing highlighted. `feed_view` — the chat's stored collapse state
+    /// ("thoughts"/tool calls, spec §11.3).
     pub fn activate_chat(
         &mut self,
         id: Uuid,
         title: String,
         messages: &[Message],
         draft: &str,
+        feed_view: FeedView,
         focus: Option<FeedFocus>,
     ) {
         // Switching chats resets the generation state: "orphaned" chunks of the
@@ -71,6 +73,9 @@ impl ChatScreen {
         self.gen_context = None;
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
+        // The collapse state belongs to the chat, so it is applied **before**
+        // the feed is built: the block cache is keyed on it (spec §11.3).
+        self.feed_view.set_view(feed_view);
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
         // The feed was replaced wholesale — recompute "is there a risk" from scratch (from

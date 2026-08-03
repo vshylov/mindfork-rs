@@ -10,6 +10,7 @@ use super::title::salvage_title_source;
 use super::*;
 
 use crate::app::events::RagProgress;
+use crate::entities::chat::FeedView;
 use crate::entities::message::{Message, MessageRole};
 use crate::features::profiles::ProfileEdit;
 use crate::shared::api::{ChatChunk, Embedder, EngineBackend};

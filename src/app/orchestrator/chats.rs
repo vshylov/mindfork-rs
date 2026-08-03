@@ -4,6 +4,7 @@
 use uuid::Uuid;
 
 use crate::app::events::{AppEvent, FeedFocus};
+use crate::entities::chat::FeedView;
 
 use super::Orchestrator;
 
@@ -20,6 +21,22 @@ impl Orchestrator {
                 return;
             }
             chat.draft = text;
+            self.mark_dirty(active_id);
+        }
+    }
+
+    /// Saves the feed's collapse state on the active chat (`Ctrl+T`/`Ctrl+O`).
+    /// Same rules as the draft above: debounced write, `modified_at` untouched —
+    /// folding a block away isn't a change to the conversation. See spec §11.3.
+    pub(super) fn handle_set_feed_view(&mut self, view: FeedView) {
+        let Some(active_id) = self.active_id else {
+            return;
+        };
+        if let Some(chat) = self.chat_mut(active_id) {
+            if chat.feed_view == view {
+                return;
+            }
+            chat.feed_view = view;
             self.mark_dirty(active_id);
         }
     }

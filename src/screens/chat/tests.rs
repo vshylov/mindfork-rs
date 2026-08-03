@@ -228,7 +228,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
         Message::user("привет"),
         Message::assistant("здравствуйте"),
     ];
-    s.activate_chat(id, "Чат".into(), &messages, "", None);
+    s.activate_chat(id, "Чат".into(), &messages, "", FeedView::default(), None);
     assert_eq!(s.active_chat, Some(id));
     assert!(!s.generating);
     assert!(s.current_gen.is_none());
@@ -253,7 +253,14 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         .map(|i| Message::user(format!("реплика-{i}")))
         .collect();
     let target = messages[8].id;
-    s.activate_chat(gen_id(), "Чат".into(), &messages, "", focus_on(target));
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        focus_on(target),
+    );
     assert_eq!(s.feed_view.anchor(), Some(8));
     assert_eq!(s.feed_view.marker(), Some(8));
     // The jump itself is applied by the next render — the row only exists there
@@ -266,7 +273,14 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
 
     // Without a focus — the usual tail.
     let mut s = ChatScreen::new();
-    s.activate_chat(gen_id(), "Чат".into(), &messages, "", None);
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+    );
     assert_eq!(s.feed_view.anchor(), None);
     assert_eq!(s.feed_view.marker(), None);
     term.draw(|f| s.render(f)).unwrap();
@@ -289,6 +303,7 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
         "Чат".into(),
         &messages,
         "",
+        FeedView::default(),
         Some(FeedFocus {
             message: messages[2].id,
             query: "маркер".into(),
@@ -299,7 +314,14 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
 
     // A plain activation must also clear the previous jump's query, or it would
     // light up whatever now sits at that index.
-    s.activate_chat(gen_id(), "Чат".into(), &messages, "", None);
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+    );
     assert_eq!(s.feed_view.marker(), None);
     assert_eq!(s.feed_view.highlight(), None);
 }
@@ -316,13 +338,27 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         .map(|i| Message::user(format!("первый-{i}")))
         .collect();
     let stale = first[8].id;
-    s.activate_chat(gen_id(), "Первый".into(), &first, "", focus_on(stale));
+    s.activate_chat(
+        gen_id(),
+        "Первый".into(),
+        &first,
+        "",
+        FeedView::default(),
+        focus_on(stale),
+    );
     assert_eq!(s.feed_view.marker(), Some(8));
 
     let second: Vec<Message> = (0..12)
         .map(|i| Message::user(format!("второй-{i}")))
         .collect();
-    s.activate_chat(gen_id(), "Второй".into(), &second, "", focus_on(stale));
+    s.activate_chat(
+        gen_id(),
+        "Второй".into(),
+        &second,
+        "",
+        FeedView::default(),
+        focus_on(stale),
+    );
     assert_eq!(
         s.feed_view.anchor(),
         None,
@@ -386,6 +422,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         "Чат".into(),
         &[Message::assistant("обычный текст")],
         "",
+        FeedView::default(),
         None,
     );
     clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
@@ -402,6 +439,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         "Чат".into(),
         &[Message::assistant("## 🗂️ Хэш")],
         "",
+        FeedView::default(),
         None,
     );
     emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
@@ -473,12 +511,19 @@ fn shift_and_alt_enter_insert_newline_not_send() {
 fn activate_chat_loads_draft_without_marking_dirty() {
     let mut s = ChatScreen::new();
     // Activating a chat with a saved draft loads it into the input box...
-    s.activate_chat(gen_id(), "Чат".into(), &[], "недописанный текст", None);
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[],
+        "недописанный текст",
+        FeedView::default(),
+        None,
+    );
     assert_eq!(s.input.text(), "недописанный текст");
     // ...but doesn't mark the draft "dirty" (otherwise it would be sent right back).
     assert_eq!(s.take_dirty_draft(), None);
     // Switching to a chat with no draft clears the input box.
-    s.activate_chat(gen_id(), "Новый".into(), &[], "", None);
+    s.activate_chat(gen_id(), "Новый".into(), &[], "", FeedView::default(), None);
     assert!(s.input.is_empty());
     assert_eq!(s.take_dirty_draft(), None);
 }
@@ -1137,7 +1182,7 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
 fn rename_chat_updates_title_bar_of_active_chat() {
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.activate_chat(id, "Старое".into(), &[], "", None);
+    s.activate_chat(id, "Старое".into(), &[], "", FeedView::default(), None);
     s.rename_chat(id, "Новое".into());
     assert_eq!(s.title, "Новое");
     // A foreign chat doesn't touch the active chat's header.
@@ -1154,7 +1199,7 @@ fn f5_copies_active_chat_in_main_window() {
         None
     );
     let id = gen_id();
-    s.activate_chat(id, "Чат".into(), &[], "", None);
+    s.activate_chat(id, "Чат".into(), &[], "", FeedView::default(), None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
         Some(ChatIntent::CopyChat(id))
@@ -1248,6 +1293,63 @@ fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
         !s.feed_view.is_following(),
         "scrolling up disables tail-following"
     );
+}
+
+#[test]
+fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
+    // Both toggles are independent and both report the whole view back, so the
+    // orchestrator can store it on the chat (spec §11.3, docs/feed-collapse.md).
+    let mut s = ChatScreen::new();
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::SetFeedView(FeedView {
+            thoughts: true,
+            tools: false
+        }))
+    );
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::SetFeedView(FeedView {
+            thoughts: true,
+            tools: true
+        }))
+    );
+    // ...and back, one at a time.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::SetFeedView(FeedView {
+            thoughts: false,
+            tools: true
+        }))
+    );
+    // Layout-independent: Ctrl+щ is the physical O.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('щ'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::SetFeedView(FeedView::default()))
+    );
+}
+
+#[test]
+fn activating_a_chat_applies_its_stored_collapse_state() {
+    // The state belongs to the chat, so switching to one that had things
+    // expanded shows them expanded — without a keypress.
+    let mut s = ChatScreen::new();
+    let expanded = FeedView {
+        thoughts: true,
+        tools: true,
+    };
+    s.activate_chat(gen_id(), "Чат".into(), &[], "", expanded, None);
+    assert_eq!(s.feed_view.view(), expanded);
+    // ...and switching to a chat that never expanded anything collapses again.
+    s.activate_chat(
+        gen_id(),
+        "Другой".into(),
+        &[],
+        "",
+        FeedView::default(),
+        None,
+    );
+    assert_eq!(s.feed_view.view(), FeedView::default());
 }
 
 #[test]
@@ -1563,6 +1665,7 @@ fn every_feed_mutator_marks_content_change() {
         "Чат".into(),
         &[Message::assistant("привет 😀")],
         "",
+        FeedView::default(),
         None,
     );
     assert!(s.take_full_redraw(), "activate_chat");
@@ -2277,7 +2380,7 @@ fn activating_a_chat_closes_the_search() {
     type_str(&mut s, "маркер");
     assert!(s.search.is_some());
 
-    s.activate_chat(gen_id(), "Чат".into(), &[], "", None);
+    s.activate_chat(gen_id(), "Чат".into(), &[], "", FeedView::default(), None);
     assert!(
         s.search.is_none(),
         "the search must not survive a feed rebuild"

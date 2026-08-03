@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::entities::chat::Chat;
+use crate::entities::chat::{Chat, FeedView};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
@@ -320,6 +320,9 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         messages,
         sampling_override: None,
         draft: String::new(),
+        // View state isn't part of the exchange format either — an imported chat
+        // opens with everything collapsed, like a new one.
+        feed_view: FeedView::default(),
         // The import format (v1) carries no attachments — see docs/import-format.md.
         attachments: Vec::new(),
         deleted: Vec::new(),

@@ -230,7 +230,9 @@ src/
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
 │
 ├─ widgets/                 composite UI blocks (FSD "widgets")
-│  ├─ message_feed.rs       feed: markdown, thoughts, inline tool blocks, scroll, wrap,
+│  ├─ message_feed.rs       feed: markdown, collapsible thoughts (Ctrl+T) and tool
+│  │                        cards (Ctrl+O) — both collapsed by default, the state
+│  │                        per chat (`FeedView`, spec §11.3), scroll, wrap,
 │  │                        jump to a message (pending_focus/anchor/marker, §4),
 │  │                        in-feed search (Ctrl+F): highlight scope, match list and
 │  │                        next/prev to the matched line — see the invariant in §4
@@ -256,7 +258,11 @@ src/
 │  │  ├─ mcp.rs             McpTool: wrapper for an MCP server tool (id mcp__srv__tool,
 │  │  │                     clip/timeout/cancel) + McpSnapshot/catalog_hash (TOFU)
 │  │  ├─ present.rs         call presentation for the feed (ToolPresentation): highlighted
-│  │  │                     code / python console / compact header instead of raw JSON
+│  │  │                     code / python console / compact header instead of raw JSON.
+│  │  │                     `ArgDetail` picks the presentation: Compact (a collapsed card,
+│  │  │                     the confirmation popup) folds what fits into the header; Full
+│  │  │                     (an expanded card) puts the name alone there and enumerates
+│  │  │                     every argument below, one `key: value` line each
 │  │  ├─ rag.rs             rag_add/rag_search: chunking, embedding, kNN, stitching
 │  │  ├─ notes/             notes. God object broken up (docs/history/refactoring-god-objects.md,
 │  │  │                     stage 4; external surface `notes::*` preserved via re-export
@@ -327,7 +333,8 @@ src/
 │  ├─ attachment.rs         Attachment/AttachMode/AttachmentInfo — a file attached
 │  │                        to a chat (text snapshot, budget in estimated tokens);
 │  │                        AttachmentChunk/AttachmentHit — its semantic index
-│  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft
+│  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
+│  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
 │  ├─ note.rs               Note
@@ -488,6 +495,8 @@ flowchart LR
 ### Commands and events (the contract)
 
 `AppCommand` (UI → orchestrator) includes: `SendMessage`, `SetDraft`,
+`SetFeedView` (which of the feed's foldable blocks are expanded — stored per
+chat, the `SetDraft` playbook, §11.3 of the spec),
 `RegenerateLast`, `DeleteLastExchange`, `Cancel`, `Impersonate`/
 `CancelImpersonation`, `NewChat`, `SwitchChat`, `RenameChat`/`AutoRenameChat`,
 `CloneChat`, `CopyChat`, `DeleteChat`, `CreateProfile`/`DeleteProfile`,
@@ -513,7 +522,8 @@ byte ranges to highlight, plus the echoed query and a `total` that may exceed th
 hits carried, since they are capped at `HIT_CAP`; the screen shows "showing N of
 M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ProfileList`, `Settings`,
-`ChatActivated` (which gained an optional `focus: Option<Uuid>` — the message to
+`ChatActivated` (which carries `feed_view` — the chat's stored collapse state,
+the counterpart of `draft` for the view — and an optional `focus: Option<Uuid>` — the message to
 put the feed on; `None` for every activation but a jump), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
