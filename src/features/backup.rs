@@ -51,11 +51,20 @@
 //! and the key derivation is fixed by the format at PBKDF2-HMAC-SHA1/1000, which
 //! is weak against offline brute force of a short password — hence the settings
 //! hint asking for a passphrase. See docs/history/backup-password.md §2.
+//!
+//! **Both paths report progress** through a `progress` callback of already
+//! localized lines (the `sandbox_setup::setup` shape): packing a real data root
+//! takes seconds, and a CLI that prints nothing until it is done is
+//! indistinguishable from one that has hung — the more so right after the
+//! password prompt, where the echo-less input leaves the user unsure it was
+//! taken at all. The `features` layer has no TUI, so the CLI command decides
+//! where the lines go (`println!`) and a non-interactive caller passes `|_| {}`.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
@@ -221,6 +230,61 @@ pub fn check_password(archive: &Path, password: Option<&str>) -> Result<ArchiveP
     }
 }
 
+/// How often the entry-by-entry counter is reported while packing/unpacking.
+///
+/// Long enough that a small data root finishes in silence (the ticker only
+/// speaks once the loop has been running this long), short enough that a slow
+/// one keeps moving on screen.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The "N / M entries" counter of a packing/unpacking loop, rate-limited.
+///
+/// A phase label alone still leaves seconds of silence on a real data root
+/// (~300 chat files here), so the loops count themselves out loud. It is
+/// deliberately *not* a byte counter: the honest one would have to reach inside
+/// the copy of a single large file (`data.db`), and the entry count is what
+/// answers "is it moving?" for the bulk of the time.
+struct EntryProgress {
+    total: usize,
+    done: usize,
+    last: Instant,
+    interval: Duration,
+}
+
+impl EntryProgress {
+    fn new(total: usize) -> Self {
+        Self::every(total, PROGRESS_INTERVAL)
+    }
+
+    /// Same, with an explicit interval — the seam the tests use instead of
+    /// sleeping.
+    fn every(total: usize, interval: Duration) -> Self {
+        Self {
+            total,
+            done: 0,
+            // Counted from the start, so a fast loop never reports at all.
+            last: Instant::now(),
+            interval,
+        }
+    }
+
+    /// Counts one entry and reports it, at most once per interval.
+    fn tick(&mut self, loc: &Locale, progress: &mut impl FnMut(&str)) {
+        self.done += 1;
+        if self.last.elapsed() < self.interval {
+            return;
+        }
+        self.last = Instant::now();
+        progress(&loc.tf(
+            "backup.progress.entries",
+            &[
+                ("done", &self.done.to_string()),
+                ("total", &self.total.to_string()),
+            ],
+        ));
+    }
+}
+
 /// Creates a backup of user data.
 ///
 /// `output` — path to the archive to create (`None` → an auto-name in
@@ -228,7 +292,8 @@ pub fn check_password(archive: &Path, password: Option<&str>) -> Result<ArchiveP
 /// store). `fs_root` — the file-tool sandbox directory from the config
 /// (included only when it lies inside the data root). `password` — encrypts
 /// every data entry with AES-256 (`None`/empty → a plain archive). Returns the
-/// path to the created archive.
+/// path to the created archive. `progress` receives localized lines for a
+/// caller that displays them (`|_| {}` to stay silent).
 pub fn create_backup(
     paths: &Paths,
     output: Option<PathBuf>,
@@ -236,6 +301,7 @@ pub fn create_backup(
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
+    mut progress: impl FnMut(&str),
 ) -> Result<PathBuf> {
     let out_path = match output {
         Some(p) => p,
@@ -244,9 +310,21 @@ pub fn create_backup(
     // A compacted copy is packed in place of the live database (see the module
     // doc); `None` — there is none, or it couldn't be compacted, and the raw
     // files go in instead. The scratch file lives until the archive is written.
+    if paths.data_db().is_file() {
+        progress(loc.t("backup.progress.compacting"));
+    }
     let compact = compacted_db(paths, &out_path);
     let entries = gather_entries(paths, fs_root, compact.as_ref().map(TempDb::path), loc)?;
-    write_zip(&out_path, &entries, level, normalize(password), loc).with_context(|| {
+    progress(loc.t("backup.progress.packing"));
+    write_zip(
+        &out_path,
+        &entries,
+        level,
+        normalize(password),
+        loc,
+        &mut progress,
+    )
+    .with_context(|| {
         loc.tf(
             "backup.ctx.create_archive",
             &[("path", &out_path.display().to_string())],
@@ -272,9 +350,11 @@ pub fn restore_backup(
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
+    mut progress: impl FnMut(&str),
 ) -> Result<RestoreOutcome> {
     let password = normalize(password);
     // 1. Validate the archive before any destructive action.
+    progress(loc.t("backup.progress.checking"));
     validate_archive(archive, password, loc).with_context(|| {
         loc.tf(
             "backup.ctx.validate",
@@ -282,8 +362,11 @@ pub fn restore_backup(
         )
     })?;
 
-    // 2. Auto-copy of the prior data, if any.
+    // 2. Auto-copy of the prior data, if any. Normally the longest step, so it
+    // says so before it starts; the path it produced is the caller's to report
+    // once it exists (`RestoreOutcome::Restored`), which is where it is useful.
     let pre_restore = if has_existing_data(paths) {
+        progress(loc.t("backup.progress.pre_restore"));
         let path = create_backup(
             paths,
             Some(default_backup_path(paths, "pre-restore")),
@@ -291,6 +374,7 @@ pub fn restore_backup(
             fs_root,
             password,
             loc,
+            &mut progress,
         )
         .with_context(|| loc.t("backup.ctx.pre_restore").to_string())?;
         Some(path)
@@ -300,8 +384,10 @@ pub fn restore_backup(
 
     // 3. Clear + unpack.
     let attempt = (|| -> Result<()> {
+        progress(loc.t("backup.progress.clearing"));
         clear_user_data(paths, fs_root, loc)?;
-        extract_archive(paths, archive, password, loc)
+        progress(loc.t("backup.progress.extracting"));
+        extract_archive(paths, archive, password, loc, &mut progress)
     })();
 
     match attempt {
@@ -311,6 +397,9 @@ pub fn restore_backup(
             // so a compaction failure must not turn a successful restore into a
             // rollback (the rollback path unpacks a pre-restore copy, which
             // `create_backup` already compacted).
+            if paths.data_db().is_file() {
+                progress(loc.t("backup.progress.compacting"));
+            }
             compact_restored_db(paths);
             Ok(RestoreOutcome::Restored { pre_restore })
         }
@@ -318,8 +407,9 @@ pub fn restore_backup(
             // 4. Roll back to the just-created pre-restore copy.
             Some(backup) => {
                 let rollback = (|| -> Result<()> {
+                    progress(loc.t("backup.progress.rolling_back"));
                     clear_user_data(paths, fs_root, loc)?;
-                    extract_archive(paths, backup, password, loc)
+                    extract_archive(paths, backup, password, loc, &mut progress)
                 })();
                 match rollback {
                     Ok(()) => Ok(RestoreOutcome::RolledBack {
@@ -529,6 +619,7 @@ fn write_zip(
     level: i64,
     password: Option<&str>,
     loc: &Locale,
+    progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -561,7 +652,11 @@ fn write_zip(
         None => plain,
     };
 
+    let mut ticker = EntryProgress::new(entries.len());
     for e in entries {
+        // Counted as the entry starts, not as it finishes: the unpacking loop
+        // skips entries with `continue`, and both loops read the same way.
+        ticker.tick(loc, progress);
         zip.start_file(e.name.as_str(), options)
             .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", &e.name)]))?;
         let mut src = File::open(&e.abs).with_context(|| {
@@ -629,6 +724,7 @@ fn extract_archive(
     archive: &Path,
     password: Option<&str>,
     loc: &Locale,
+    progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let file = File::open(archive).with_context(|| {
         loc.tf(
@@ -638,7 +734,9 @@ fn extract_archive(
     })?;
     let mut zip =
         ZipArchive::new(file).with_context(|| loc.t("backup.ctx.read_archive").to_string())?;
+    let mut ticker = EntryProgress::new(zip.len());
     for i in 0..zip.len() {
+        ticker.tick(loc, progress);
         let mut entry = match password {
             Some(pw) => zip.by_index_decrypt(i, pw.as_bytes())?,
             None => zip.by_index(i)?,
@@ -864,7 +962,7 @@ mod tests {
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
         assert!(out.starts_with(paths.backups_dir()));
         let names = archive_names(&out);
 
@@ -900,7 +998,7 @@ mod tests {
         fs::create_dir_all(&inside).unwrap();
         fs::write(inside.join("note.txt"), b"hi").unwrap();
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, Some(&inside), None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, Some(&inside), None, ru(), |_| {}).unwrap();
         assert!(archive_names(&out).contains(&"sandbox/note.txt".to_string()));
 
         // Outside the root — not included.
@@ -909,7 +1007,8 @@ mod tests {
         fs::write(outside.path().join("secret.txt"), b"no").unwrap();
         seed_data(outside_root.path());
         let paths2 = Paths::with_root(outside_root.path());
-        let out2 = create_backup(&paths2, None, 0, Some(outside.path()), None, ru()).unwrap();
+        let out2 =
+            create_backup(&paths2, None, 0, Some(outside.path()), None, ru(), |_| {}).unwrap();
         assert!(
             !archive_names(&out2)
                 .iter()
@@ -925,7 +1024,16 @@ mod tests {
         fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
         let src_paths = Paths::with_root(src.path());
         let archive_path = src.path().join("backups").join("snap.zip");
-        create_backup(&src_paths, Some(archive_path.clone()), 9, None, None, ru()).unwrap();
+        create_backup(
+            &src_paths,
+            Some(archive_path.clone()),
+            9,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         // Target with different data.
         let dst = tempfile::tempdir().unwrap();
@@ -934,7 +1042,7 @@ mod tests {
         fs::write(dst.path().join("chats").join("stale.json"), b"{}").unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
-        let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru()).unwrap();
+        let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru(), |_| {}).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => {
                 // The prior data existed, so a pre-restore copy was created.
@@ -963,7 +1071,7 @@ mod tests {
         let bad = dst.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
 
-        let err = restore_backup(&paths, &bad, None, None, ru());
+        let err = restore_backup(&paths, &bad, None, None, ru(), |_| {});
         assert!(
             err.is_err(),
             "a corrupted archive should give Err before any cleanup"
@@ -985,12 +1093,13 @@ mod tests {
             None,
             None,
             ru(),
+            |_| {},
         )
         .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => assert!(pre_restore.is_none()),
             _ => panic!("expected a Restored with no pre-restore"),
@@ -1026,7 +1135,7 @@ mod tests {
         fs::create_dir_all(dst.path().join("blocker")).unwrap();
 
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
         match outcome {
             RestoreOutcome::RolledBack { pre_restore, .. } => assert!(pre_restore.exists()),
             _ => panic!("expected RolledBack on an unpack failure"),
@@ -1037,6 +1146,205 @@ mod tests {
             b"{\"from\":\"original\"}"
         );
         assert!(dst.path().join("chats").join("a.json").exists());
+    }
+
+    /// Position of `key`'s message in the progress log, or `None`.
+    fn step(log: &[String], key: &str) -> Option<usize> {
+        let text = ru().t(key);
+        log.iter().position(|line| line == text)
+    }
+
+    /// Which step of the log `key` is, failing with the whole log when absent —
+    /// a missing phase is otherwise reported as a bare `None`.
+    fn step_at(log: &[String], key: &str) -> usize {
+        step(log, key).unwrap_or_else(|| panic!("{key} was never reported; log: {log:#?}"))
+    }
+
+    #[test]
+    fn restore_announces_every_phase_in_order() {
+        // The defect this guards: the CLI used to print nothing until the whole
+        // restore was over, so a data root that takes seconds to pack looked
+        // like a hung program — right after an echo-less password prompt.
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive = src.path().join("snap.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive.clone()),
+            9,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        seed_data(dst.path());
+        let paths = Paths::with_root(dst.path());
+        let mut log = Vec::new();
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |m| {
+            log.push(m.to_string())
+        })
+        .unwrap();
+        assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+
+        // The order is the contract: each label names the step that follows it.
+        let order = [
+            "backup.progress.checking",
+            "backup.progress.pre_restore",
+            "backup.progress.packing",
+            "backup.progress.clearing",
+            "backup.progress.extracting",
+        ]
+        .map(|key| step_at(&log, key));
+        assert!(
+            order.windows(2).all(|w| w[0] < w[1]),
+            "phases out of order: {log:#?}"
+        );
+        // The prior root had a database, so both compaction points spoke up:
+        // once for the pre-restore copy, once for what was unpacked.
+        assert_eq!(
+            log.iter()
+                .filter(|l| *l == ru().t("backup.progress.compacting"))
+                .count(),
+            2,
+            "{log:#?}"
+        );
+    }
+
+    #[test]
+    fn restore_into_an_empty_root_does_not_announce_a_pre_restore_copy() {
+        // Nothing to save — saying otherwise would describe work never done.
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive = src.path().join("snap.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive.clone()),
+            9,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        let mut log = Vec::new();
+        restore_backup(
+            &Paths::with_root(dst.path()),
+            &archive,
+            None,
+            None,
+            ru(),
+            |m| log.push(m.to_string()),
+        )
+        .unwrap();
+
+        assert!(
+            step(&log, "backup.progress.pre_restore").is_none(),
+            "{log:#?}"
+        );
+        assert!(
+            step(&log, "backup.progress.extracting").is_some(),
+            "{log:#?}"
+        );
+    }
+
+    #[test]
+    fn a_rollback_says_so() {
+        use std::io::Write;
+
+        // Same crafted archive as `restore_rolls_back_on_extraction_failure`: a
+        // file entry colliding with a surviving directory of the same name.
+        let work = tempfile::tempdir().unwrap();
+        let archive = work.path().join("evil.zip");
+        {
+            let f = File::create(&archive).unwrap();
+            let mut zip = ZipWriter::new(f);
+            let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zip.start_file("settings.json", opts).unwrap();
+            zip.write_all(b"{}").unwrap();
+            zip.start_file("blocker", opts).unwrap();
+            zip.write_all(b"x").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let dst = tempfile::tempdir().unwrap();
+        seed_data(dst.path());
+        fs::create_dir_all(dst.path().join("blocker")).unwrap();
+
+        let mut log = Vec::new();
+        let outcome = restore_backup(
+            &Paths::with_root(dst.path()),
+            &archive,
+            None,
+            None,
+            ru(),
+            |m| log.push(m.to_string()),
+        )
+        .unwrap();
+        assert!(matches!(outcome, RestoreOutcome::RolledBack { .. }));
+        // The longest silence of all is the one where the data is being put
+        // back: it must not look like the program died mid-restore.
+        assert!(
+            step_at(&log, "backup.progress.rolling_back")
+                > step_at(&log, "backup.progress.extracting"),
+            "{log:#?}"
+        );
+    }
+
+    #[test]
+    fn backup_announces_compaction_and_packing() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let mut log = Vec::new();
+        create_backup(
+            &Paths::with_root(dir.path()),
+            None,
+            9,
+            None,
+            None,
+            ru(),
+            |m| log.push(m.to_string()),
+        )
+        .unwrap();
+        assert!(
+            step_at(&log, "backup.progress.compacting") < step_at(&log, "backup.progress.packing"),
+            "{log:#?}"
+        );
+    }
+
+    #[test]
+    fn the_entry_counter_stays_quiet_until_its_interval_passes() {
+        // A small data root packs in milliseconds; counting it out loud would
+        // be noise, so the ticker only speaks for a loop that actually drags.
+        let mut log = Vec::new();
+        let mut ticker = EntryProgress::every(3, Duration::from_secs(3600));
+        for _ in 0..3 {
+            ticker.tick(ru(), &mut |m: &str| log.push(m.to_string()));
+        }
+        assert!(log.is_empty(), "{log:#?}");
+    }
+
+    #[test]
+    fn the_entry_counter_reports_progress_out_of_the_total() {
+        let mut log = Vec::new();
+        let mut ticker = EntryProgress::every(3, Duration::ZERO);
+        for _ in 0..3 {
+            ticker.tick(ru(), &mut |m: &str| log.push(m.to_string()));
+        }
+        assert_eq!(log.len(), 3, "{log:#?}");
+        assert!(log[0].contains('1') && log[0].contains('3'), "{}", log[0]);
+        assert!(log[2].contains('3'), "{}", log[2]);
+        // No unsubstituted placeholder left in either language.
+        for lang in Lang::ALL {
+            let mut ticker = EntryProgress::every(7, Duration::ZERO);
+            let mut line = String::new();
+            ticker.tick(locale(*lang), &mut |m: &str| line = m.to_string());
+            assert!(!line.contains('{'), "{lang:?}: {line}");
+        }
     }
 
     #[test]
@@ -1059,7 +1367,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 0, None, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 0, None, None, ru(), |_| {}).unwrap();
         // The archive is valid and opens.
         validate_archive(&out, None, ru()).unwrap();
     }
@@ -1069,7 +1377,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
 
         assert!(archive_names(&out).contains(&MANIFEST_NAME.to_string()));
         let m = read_manifest(&out)
@@ -1125,7 +1433,7 @@ mod tests {
         let live_len = fs::metadata(dir.path().join("data.db")).unwrap().len();
 
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db".to_string()), "{names:?}");
@@ -1165,7 +1473,7 @@ mod tests {
         fs::write(dir.path().join("data.db-wal"), b"wal bytes").unwrap();
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, None, ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db-wal".to_string()), "{names:?}");
@@ -1197,7 +1505,7 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
 
         let restored = dst.path().join("data.db");
@@ -1223,12 +1531,13 @@ mod tests {
             None,
             None,
             ru(),
+            |_| {},
         )
         .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         assert_eq!(fs::read(dst.path().join("data.db")).unwrap(), b"SQLITE");
     }
@@ -1237,11 +1546,20 @@ mod tests {
     fn restore_does_not_extract_manifest_into_root() {
         let src = tempfile::tempdir().unwrap();
         seed_data(src.path());
-        let out = create_backup(&Paths::with_root(src.path()), None, 9, None, None, ru()).unwrap();
+        let out = create_backup(
+            &Paths::with_root(src.path()),
+            None,
+            9,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &out, None, None, ru()).unwrap();
+        let outcome = restore_backup(&paths, &out, None, None, ru(), |_| {}).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         // Data was restored, but the internal manifest didn't land in the root.
         assert!(dst.path().join("settings.json").exists());
@@ -1266,7 +1584,7 @@ mod tests {
         .unwrap();
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, Some(PW), ru()).unwrap();
+        let out = create_backup(&paths, None, 9, None, Some(PW), ru(), |_| {}).unwrap();
 
         // Level 0 (store) so the marker would be literally present if unencrypted —
         // deflate could otherwise hide it and make this test lie.
@@ -1277,6 +1595,7 @@ mod tests {
             None,
             None,
             ru(),
+            |_| {},
         )
         .unwrap();
         let has_marker = |p: &Path| {
@@ -1308,6 +1627,7 @@ mod tests {
             None,
             Some(PW),
             ru(),
+            |_| {},
         )
         .unwrap();
         let plain = create_backup(
@@ -1317,6 +1637,7 @@ mod tests {
             None,
             None,
             ru(),
+            |_| {},
         )
         .unwrap();
 
@@ -1355,6 +1676,7 @@ mod tests {
                 None,
                 password,
                 ru(),
+                |_| {},
             )
             .unwrap();
 
@@ -1362,7 +1684,7 @@ mod tests {
             let paths = Paths::with_root(dst.path());
             // The restore always holds the password — for the plain archive it
             // must simply be ignored.
-            let outcome = restore_backup(&paths, &archive, None, Some(PW), ru()).unwrap();
+            let outcome = restore_backup(&paths, &archive, None, Some(PW), ru(), |_| {}).unwrap();
             assert!(
                 matches!(outcome, RestoreOutcome::Restored { .. }),
                 "password={password:?}"
@@ -1391,6 +1713,7 @@ mod tests {
             None,
             Some(PW),
             ru(),
+            |_| {},
         )
         .unwrap();
 
@@ -1400,7 +1723,7 @@ mod tests {
             fs::write(dst.path().join("settings.json"), b"{\"from\":\"original\"}").unwrap();
             let paths = Paths::with_root(dst.path());
 
-            let err = restore_backup(&paths, &archive, None, password, ru());
+            let err = restore_backup(&paths, &archive, None, password, ru(), |_| {});
             assert!(err.is_err(), "password={password:?} should be refused");
             // Nothing was cleared, and no pre-restore copy was even made.
             assert_eq!(
@@ -1421,8 +1744,16 @@ mod tests {
     fn manifest_is_readable_without_the_password() {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
-        let out =
-            create_backup(&Paths::with_root(dir.path()), None, 9, None, Some(PW), ru()).unwrap();
+        let out = create_backup(
+            &Paths::with_root(dir.path()),
+            None,
+            9,
+            None,
+            Some(PW),
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         let m = read_manifest(&out)
             .unwrap()
@@ -1441,8 +1772,16 @@ mod tests {
     fn an_empty_password_produces_a_plain_archive() {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
-        let out =
-            create_backup(&Paths::with_root(dir.path()), None, 9, None, Some(""), ru()).unwrap();
+        let out = create_backup(
+            &Paths::with_root(dir.path()),
+            None,
+            9,
+            None,
+            Some(""),
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(
             check_password(&out, None).unwrap(),
             ArchivePassword::NotNeeded
@@ -1464,6 +1803,7 @@ mod tests {
             None,
             Some(PW),
             ru(),
+            |_| {},
         )
         .unwrap();
 
@@ -1472,7 +1812,7 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         let RestoreOutcome::Restored {
             pre_restore: Some(pre),
-        } = restore_backup(&paths, &archive, None, Some(PW), ru()).unwrap()
+        } = restore_backup(&paths, &archive, None, Some(PW), ru(), |_| {}).unwrap()
         else {
             panic!("expected a Restored with a pre-restore copy");
         };
@@ -1489,8 +1829,16 @@ mod tests {
     fn a_corrupted_encrypted_entry_is_detected() {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
-        let out =
-            create_backup(&Paths::with_root(dir.path()), None, 0, None, Some(PW), ru()).unwrap();
+        let out = create_backup(
+            &Paths::with_root(dir.path()),
+            None,
+            0,
+            None,
+            Some(PW),
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         let mut bytes = fs::read(&out).unwrap();
         // Inside the first entry's payload: past its local header, before the
@@ -1506,7 +1854,7 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         // Either the pre-flight check or the extraction rejects it — what must
         // never happen is a silent success with mangled content.
-        let refused = match restore_backup(&paths, &corrupt, None, Some(PW), ru()) {
+        let refused = match restore_backup(&paths, &corrupt, None, Some(PW), ru(), |_| {}) {
             Err(_) => true,
             Ok(RestoreOutcome::Restored { .. }) => false,
             Ok(_) => true,

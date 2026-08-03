@@ -321,8 +321,12 @@ fn run_backup(
         cfg.fs_root.as_deref(),
         password.as_deref(),
         loc,
-    )
-    .with_context(|| loc.t("cli.ctx.backup").to_string())?;
+        |msg| println!("{msg}"),
+    );
+    // Whatever the outcome: keys pressed during the packing were typed at us,
+    // not at the shell that inherits the terminal when we exit.
+    features::terminal_input::discard_type_ahead();
+    let out = out.with_context(|| loc.t("cli.ctx.backup").to_string())?;
     if password.is_some() {
         println!("{}", loc.t("cli.backup.encrypted"));
     }
@@ -353,7 +357,7 @@ fn resolve_restore_password(
     loc: &Locale,
 ) -> anyhow::Result<Option<String>> {
     use crate::features::backup::ArchivePassword;
-    use crate::features::password_prompt;
+    use crate::features::terminal_input;
 
     let mut current = password;
     for _ in 0..PASSWORD_ATTEMPTS {
@@ -365,13 +369,13 @@ fn resolve_restore_password(
         match status {
             ArchivePassword::NotNeeded | ArchivePassword::Ok => return Ok(current),
             ArchivePassword::Required | ArchivePassword::Wrong => {
-                if !password_prompt::is_interactive() {
+                if !terminal_input::is_interactive() {
                     return Ok(current);
                 }
                 if status == ArchivePassword::Wrong {
                     eprintln!("{}", loc.t("backup.err.wrong_password"));
                 }
-                match password_prompt::read_password(loc.t("cli.restore.password_prompt"))? {
+                match terminal_input::read_password(loc.t("cli.restore.password_prompt"))? {
                     Some(entered) => current = Some(entered),
                     // Cancelled: hand back what we had, so the refusal is the
                     // regular localized one rather than a bare exit.
@@ -419,10 +423,18 @@ fn run_restore(
         cfg.fs_root.as_deref(),
         password.as_deref(),
         loc,
-    )?;
+        |msg| println!("{msg}"),
+    );
+    // Whatever the outcome: keys pressed during the restore were typed at us
+    // (an impatient `Enter` after the password prompt, above all), not at the
+    // shell that inherits the terminal when we exit.
+    features::terminal_input::discard_type_ahead();
+    let outcome = outcome?;
 
     match outcome {
         RestoreOutcome::Restored { pre_restore } => {
+            // Where the previous data went, repeated after the progress lines
+            // have scrolled past: this is the path to undo a restore with.
             if let Some(pre) = pre_restore {
                 println!(
                     "{}",
@@ -431,7 +443,6 @@ fn run_restore(
                         &[("path", &pre.display().to_string())]
                     )
                 );
-                println!("{}", loc.t("cli.restore.cleared"));
             }
             println!(
                 "{}",

@@ -73,6 +73,18 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **`backup` and `restore` no longer look like they have hung.** Packing or
+  unpacking real data takes seconds, and until now the commands printed nothing
+  until it was all over — hardest to read right after `restore` asks for the
+  password, where nothing is echoed either, so there is no sign the password was
+  taken. Each step now says what it is doing before it does it (checking the
+  archive, saving the previous data, clearing, restoring, compacting the
+  database), and packing/unpacking counts its files as it goes.
+- **Keys pressed while `backup`/`restore` was working no longer land in the
+  shell.** They used to sit in the terminal's buffer untouched and be replayed as
+  commands the moment the program exited — pressing `Enter` a few times while
+  waiting produced a few stray prompts afterwards. They are discarded on the way
+  out: they were typed at mindfork, not at the shell.
 - **The settings panel no longer explains the wrong thing.** The line about a
   tool being "disabled by a global switch" used to appear under **any** row
   flagged for attention — an MCP server whose tool catalog had changed, or an
