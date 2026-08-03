@@ -123,10 +123,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-08-02, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1787 unit
+## Status (as of 2026-08-03, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1789 unit
 tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
-recent change completes the **MCP server editor** track
+recent change is a small input-box refinement: **`Home`/`End` reach the whole
+logical line on a second press** (a wrapped line's on-screen row first, the line
+itself if the cursor is already at that boundary — the step is chosen by
+position, not by counting presses, so nothing has to reset it); before that —
+the change that completes the **MCP server editor** track
 ([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
 JSON import**: a server's token is typed into a masked row and stored
 machine-bound (ADR 0008, `mcp-<server>-<VAR>`) instead of demanding an OS
@@ -11412,6 +11416,46 @@ debounce was done as a separate PR, see below).
 - **Groundwork** (roadmap): the external proxy's key via the same mechanism; an
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
   transport, resources/prompts, `list_changed`, deferred schemas.
+
+### Post-M9: `Home`/`End` reach the whole logical line on a second press (done)
+
+- **Asked for directly**: `End` moves to the end of the row a wrapped line was
+  broken into, and there was no way short of `Ctrl+End` — which leaves for the
+  end of the *whole text* — to reach the end of the line itself. Same for
+  `Home`. Branch `feat/input-home-end-toggle` (a simple task by AGENTS.md §1:
+  one widget, no cross-layer contract, no new dependency — no design doc).
+- **The two steps are told apart by the cursor's position, not by counting
+  presses**: `move_home`/`move_end` compute the visual-row boundary as before
+  and, **if the cursor is already there**, hand out the logical-line boundary
+  instead. Stateless, so nothing has to be reset by the seven other things that
+  move the cursor (typing, paste, undo, a mouse click, `activate_chat`) — a
+  press counter would need clearing at every one of them, and forgetting one is
+  a silent bug. It also does the useful thing when the cursor reached the row
+  boundary **by typing** rather than by `Home`, which is the common case at the
+  end of a line; that is the same "smart Home" rule large editors use.
+- **The boundaries coincide where you would expect them to**, so no case needs a
+  special branch: on a line's first visual row the row start *is* the line
+  start, on its last row likewise for the end — the second step is simply a
+  no-op there. `single_line` mode (settings fields, chat rename) and the
+  pre-first-render fallback (`last_width == 0`, the wrapping isn't known yet)
+  already went straight to the logical boundary and are untouched.
+- **The second step stops at its own line** — it uses `self.lines[self.row]`,
+  never the visual-row table, so it cannot run past a real `\n` into a
+  neighbouring line (pinned by its own test, since a wrapped line's row table
+  spans the whole text).
+- **A pre-existing invariant kept the change small**: `col_for_visual` already
+  rolls back off a soft wrap (`is_soft`), so the first `End` never yields a
+  position that renders at the start of the *next* row — which is what makes
+  "already at the row boundary" a well-defined comparison.
+- **Tests**: the full ladder in both directions (row boundary → line boundary →
+  a third press staying put) and the "stays on its own logical line" guard; the
+  existing `home_end_act_on_visual_row` is unchanged and still green — the first
+  press behaves exactly as before. **Mutation-tested**: reverting either toggle
+  fails exactly the two new tests and nothing else. **1789 unit tests green**
+  (+2), 75 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
+  clean.
+- **A live run isn't required** (AGENTS.md §3): cursor movement inside one
+  widget — no engine, memory, tool or provider path is touched.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

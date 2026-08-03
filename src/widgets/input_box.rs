@@ -1102,8 +1102,14 @@ impl InputBox {
         self.col = col;
     }
 
-    /// `Home` — to the start of the current **visual** row (not the whole
-    /// logical line). Before the first render — to the start of the logical line.
+    /// `Home` — to the start of the current **visual** row; **pressing it again**
+    /// (the cursor is already there) goes on to the start of the whole logical
+    /// line. Before the first render — straight to the logical start.
+    ///
+    /// The two steps are told apart by the cursor's position, not by counting
+    /// presses: "already at the row boundary → take the line boundary" needs no
+    /// extra state, and it also does the useful thing when the cursor got to the
+    /// boundary by typing rather than by `Home`. See spec §11.5.
     fn move_home(&mut self) {
         self.goal_col = None;
         if self.single_line {
@@ -1116,33 +1122,43 @@ impl InputBox {
         }
         let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
-        self.col = vrows[vrow].1;
+        let row_start = vrows[vrow].1;
+        // On the line's first visual row the two boundaries coincide, so the
+        // second step is a no-op there — nothing to toggle.
+        self.col = if self.col == row_start { 0 } else { row_start };
     }
 
-    /// `End` — to the end of the current **visual** row. On a soft wrap, lands
-    /// on the row's last position (doesn't slide into the start of the next
-    /// one, see `is_soft`). Before the first render — to the end of the logical
-    /// line.
+    /// `End` — to the end of the current **visual** row; **pressing it again**
+    /// goes on to the end of the whole logical line (mirrors [`Self::move_home`]).
+    /// On a soft wrap the first step lands on the row's last position (doesn't
+    /// slide into the start of the next one, see `is_soft`). Before the first
+    /// render — straight to the logical end.
     fn move_end(&mut self) {
         self.goal_col = None;
+        let line_end = self.lines[self.row].len();
         if self.single_line {
-            self.col = self.lines[self.row].len(); // a single-line field — to the end of the value
+            self.col = line_end; // a single-line field — to the end of the value
             return;
         }
         if self.last_width == 0 {
-            self.col = self.lines[self.row].len();
+            self.col = line_end;
             return;
         }
         let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
         let (li, start, end) = vrows[vrow];
-        self.col = col_for_visual(
+        let row_end = col_for_visual(
             &self.lines[li],
             start,
             end,
             usize::MAX,
             is_soft(&vrows, vrow),
         );
+        self.col = if self.col == row_end {
+            line_end
+        } else {
+            row_end
+        };
     }
 
     /// A logical up/down transition (a fallback before the first render, when
@@ -2322,6 +2338,46 @@ mod tests {
         assert_eq!(ib.cursor(), (0, 8)); // end of the first two words, doesn't slide into the start of the last one
         assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0)); // start of the top row
+    }
+
+    #[test]
+    fn repeated_home_end_reach_the_whole_logical_line() {
+        let mut ib = InputBox::new();
+        // At width 8 the line wraps into two rows — the first two words [0, 9)
+        // and the last one [9, 12). The cursor starts inside the bottom row.
+        ib.set_text("один два три");
+        render_at(&mut ib, 8);
+        ib.row = 0;
+        ib.col = 10;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 9)); // start of the bottom row
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0)); // second press — start of the whole line
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 8)); // end of the top row (soft wrap)
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 12)); // second press — end of the whole line
+        // A third press stays put: the line boundary is the last step.
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 12));
+    }
+
+    #[test]
+    fn repeated_home_end_stay_on_their_own_logical_line() {
+        // The second step must not run past a real line break into a neighbour.
+        let mut ib = InputBox::new();
+        ib.set_text("aaa\nодин два три\nbbb");
+        render_at(&mut ib, 8);
+        ib.row = 1;
+        ib.col = 10; // on the wrapped line's bottom row
+        for _ in 0..3 {
+            assert!(ib.on_key(k(KeyCode::Home)).handled());
+        }
+        assert_eq!(ib.cursor(), (1, 0));
+        for _ in 0..3 {
+            assert!(ib.on_key(k(KeyCode::End)).handled());
+        }
+        assert_eq!(ib.cursor(), (1, 12));
     }
 
     #[test]

@@ -459,6 +459,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Ctrl+U` | write a message on the user's behalf (impersonation) |
 | `Ctrl+K` | clear all input text (undo with `Ctrl+Z`) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit |
+| `Home` / `End` | start/end of the on-screen row of a wrapped line; press again — of the whole line |
 | `Ctrl+T` | collapse/expand "thoughts" |
 | `Ctrl+G` | in the input box: spellcheck suggestions |
 | `Ctrl+B` | emoji picker popup (inserts at the cursor position) |

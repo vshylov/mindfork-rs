@@ -224,6 +224,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
     ("Ctrl+←/→", "ui.help.word_move"),
     ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+    ("Home/End", "ui.help.line_move"),
     ("Ctrl+Home/End", "ui.help.doc_move"),
     ("Ctrl+P", "ui.help.settings"),
     ("Ctrl+T", "ui.help.thoughts"),
