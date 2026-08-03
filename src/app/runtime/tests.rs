@@ -1,6 +1,7 @@
 //! Runtime tests (input batching, chunk_batch). See mod.rs.
 
 use super::*;
+use crate::entities::chat::FeedView;
 use crate::features::chat_search_sort::SortMode;
 
 fn key(code: KeyCode) -> Event {
@@ -634,6 +635,7 @@ fn character_names_event_reaches_the_feed() {
         "chat".into(),
         &[Message::user("hi")],
         "",
+        FeedView::default(),
         None,
     );
     let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
@@ -676,6 +678,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
         title: "чат".into(),
         messages: Vec::new(),
         draft: String::new(),
+        feed_view: FeedView::default(),
         focus: None,
     }
 }

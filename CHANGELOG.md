@@ -15,6 +15,14 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Tool calls in the feed fold away, like "thoughts".** `Ctrl+O` collapses and
+  expands them; collapsed, a call keeps its header — the tool's name and a short
+  argument — so you still see *what* ran, while the arguments and the result move
+  out of the way. **Collapsed is the new default**, so a turn full of tool work
+  reads as the reply it produced. The collapsed/expanded choice for both kinds of
+  block (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls) is now remembered **for
+  each chat separately** and survives a restart: one conversation can be read with
+  everything open while another stays compact.
 - **MCP servers are configured in the settings window.** A new **"Plugins"**
   section holds the master switch, the server list and its editor: `Ctrl+N` adds
   a server, the fields below set its command line and environment, `Ctrl+D`

@@ -106,6 +106,7 @@ pub(super) fn apply_event(
             title,
             messages,
             draft,
+            feed_view,
             focus,
         } => {
             // THE clearing funnel for the search back-stack. Every route that
@@ -133,7 +134,7 @@ pub(super) fn apply_event(
                     list.set_active(Some(id));
                 }
             }
-            screen.activate_chat(id, title, &messages, &draft, focus);
+            screen.activate_chat(id, title, &messages, &draft, feed_view, focus);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
@@ -373,6 +374,12 @@ pub(super) fn dispatch(
             } else {
                 execute!(stdout(), DisableMouseCapture)
             };
+            return false;
+        }
+        // The feed's collapse state (`Ctrl+T`/`Ctrl+O`) — stored per chat, so it
+        // goes to the orchestrator (the sole writer of `Chat`), not applied here.
+        ChatIntent::SetFeedView(view) => {
+            let _ = cmd_tx.send(AppCommand::SetFeedView(view));
             return false;
         }
         // Copying to the clipboard is intercepted earlier — in `process_input_batch`

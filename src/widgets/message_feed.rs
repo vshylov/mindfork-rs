@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use uuid::Uuid;
 
+use crate::entities::chat::FeedView;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
@@ -181,8 +182,11 @@ pub struct MessageFeed {
     scroll: usize,
     /// Follow the tail (auto-scroll to bottom on new content).
     follow: bool,
-    /// Show the expanded "thoughts" block.
-    show_thoughts: bool,
+    /// Which foldable blocks are expanded — "thoughts" (`Ctrl+T`) and tool
+    /// calls (`Ctrl+O`). Per chat: the screen loads it on activation and sends
+    /// every toggle back to the orchestrator, which stores it on the chat
+    /// (spec §11.3, docs/feed-collapse.md).
+    view: FeedView,
     /// Flag "the feed was just scrolled by the user" — the loop, on it, does a
     /// full terminal repaint (like on resize). Needed because of artifacts in
     /// some terminals (Command Prompt/conhost) on VS16 emoji (`🕸️`,
@@ -282,7 +286,9 @@ pub enum HighlightScope {
 struct CacheKey {
     width: usize,
     palette: Palette,
-    show_thoughts: bool,
+    /// Collapsing either kind of block reshapes every message — hence the whole
+    /// view state, not just the thoughts flag it grew out of.
+    view: FeedView,
     table_row_separators: bool,
     render_mermaid: bool,
     /// Interface language (axis B): role headers/the "thoughts" pill/the placeholder
@@ -327,7 +333,7 @@ impl MessageFeed {
         Self {
             scroll: 0,
             follow: true,
-            show_thoughts: false,
+            view: FeedView::default(),
             scrolled: false,
             // Mirrors the config defaults (`InterfaceSettings::default`): before the
             // first settings snapshot arrives, the feed renders as the default config.
@@ -375,9 +381,28 @@ impl MessageFeed {
         std::mem::take(&mut self.scrolled)
     }
 
-    /// Toggles showing "thoughts" blocks.
+    /// Toggles showing "thoughts" blocks (`Ctrl+T`).
     pub fn toggle_thoughts(&mut self) {
-        self.show_thoughts = !self.show_thoughts;
+        self.view.thoughts = !self.view.thoughts;
+    }
+
+    /// Toggles showing tool-call arguments and results (`Ctrl+O`). The card's
+    /// header stays visible either way — see [`push_tool`].
+    pub fn toggle_tools(&mut self) {
+        self.view.tools = !self.view.tools;
+    }
+
+    /// The current collapse state — sent back to the orchestrator after a
+    /// toggle, so it is stored on the chat (spec §11.3).
+    pub fn view(&self) -> FeedView {
+        self.view
+    }
+
+    /// Applies the chat's stored collapse state (on activation). [`CacheKey`]
+    /// compares it by value, so switching to a chat that happens to agree costs
+    /// no re-render.
+    pub fn set_view(&mut self, view: FeedView) {
+        self.view = view;
     }
 
     /// Scroll up (turns off "follow the tail").
@@ -699,11 +724,11 @@ impl MessageFeed {
                 palette.muted_style(),
             ))];
         }
-        // Reset the cache on a change to width/palette/thoughts display/language (affects blocks).
+        // Reset the cache on a change to width/palette/collapse state/language (affects blocks).
         let key = CacheKey {
             width,
             palette: *palette,
-            show_thoughts: self.show_thoughts,
+            view: self.view,
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
             lang: loc.lang(),
@@ -738,7 +763,7 @@ impl MessageFeed {
                     item,
                     palette,
                     width,
-                    self.show_thoughts,
+                    self.view,
                     opts,
                     loc,
                     &self.role_names,
@@ -800,8 +825,10 @@ impl MessageFeed {
 
 /// Builds one message's contribution to the feed: width-wrapped lines with a colored
 /// role rail + a trailing separator (if the body doesn't already end on a blank line).
-/// A pure function of (`item`, `palette`, `width`, `show_thoughts`, `opts`, `names`) —
-/// the basis of the cache. `opts` — base markdown-render flags (tables/mermaid from
+/// A pure function of (`item`, `palette`, `width`, `view`, `opts`, `names`) —
+/// the basis of the cache. `view` — which foldable blocks are expanded (both
+/// kinds reshape the block, hence both are in [`CacheKey`]). `opts` — base
+/// markdown-render flags (tables/mermaid from
 /// settings; `soft_break_as_newline` is added on by `push_body` for the user).
 /// `names` — the profile's custom role names (empty field → the localized header).
 /// `marked` — this is the jump target ([`MessageFeed::focus_message`]): the rail
@@ -813,7 +840,7 @@ fn build_message_block(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
-    show_thoughts: bool,
+    view: FeedView,
     opts: markdown::RenderOpts,
     loc: &'static Locale,
     names: &CharacterNames,
@@ -861,8 +888,8 @@ fn build_message_block(
                 palette.assistant_soft,
             ));
             content_from = body.len();
-            push_thoughts(&mut body, &item.thoughts, show_thoughts, palette, loc);
-            push_assistant_body(&mut body, item, palette, inner, opts);
+            push_thoughts(&mut body, &item.thoughts, view.thoughts, palette, loc);
+            push_assistant_body(&mut body, item, palette, inner, view.tools, opts, loc);
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
     }
@@ -1086,7 +1113,9 @@ fn push_assistant_body(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
+    tools_expanded: bool,
     opts: markdown::RenderOpts,
+    loc: &'static Locale,
 ) {
     let text = item.text.as_str();
     let mut pos = 0usize;
@@ -1099,7 +1128,7 @@ fn push_assistant_body(
         // A blank line before the call (collapses if the previous one is already blank —
         // e.g. between two consecutive calls).
         ensure_blank_line(lines);
-        push_tool(lines, tool, palette, width, opts);
+        push_tool(lines, tool, palette, width, tools_expanded, opts, loc);
         // A blank (railed) line AFTER the card — so the rail continues under
         // the result regardless of whether text/another call follows. Adjacent
         // `ensure_blank_line` calls collapse (a no-op before the next call/text),
@@ -1153,12 +1182,20 @@ fn push_markdown_fragment(
 /// tool's color, then argument and result blocks prepared by the presenter
 /// [`present`] (highlighted code, console output, markdown prose, plain
 /// text). Everything **wraps by width** (not truncated). See spec §11.3.
+///
+/// When `expanded` is false (the default, `Ctrl+O`) only the header is drawn,
+/// with the collapsed pill's marker and keycap appended — so the feed still says
+/// *what* ran, and the arguments/results are one keystroke away. The pill is
+/// omitted when the presenter produced nothing to hide (a call with no arguments
+/// and no result yet), mirroring [`push_thoughts`] on empty thoughts.
 fn push_tool(
     lines: &mut Vec<Line<'static>>,
     tool: &FeedToolCall,
     palette: &Palette,
     width: usize,
+    expanded: bool,
     opts: markdown::RenderOpts,
+    loc: &'static Locale,
 ) {
     let head_style = Style::default()
         .fg(palette.tool_soft)
@@ -1180,6 +1217,27 @@ fn push_tool(
         width,
         head_style,
     );
+    if !expanded {
+        // Nothing to reveal — no pill (an argument-less call whose result hasn't
+        // arrived yet).
+        if p.args.is_empty() && p.result.is_empty() {
+            return;
+        }
+        // Appended to the header's **last** row rather than pushed as a line of
+        // its own: one line per call collapsed, same as expanded. Overflowing the
+        // width is safe — `build_message_block` wraps every body line afterwards.
+        let muted = palette.muted_style();
+        if let Some(line) = lines.last_mut() {
+            line.spans
+                .push(Span::styled(format!("  {} ", glyphs.collapsed), muted));
+            line.spans.push(Span::styled(
+                loc.t("ui.feed.tool_details").to_string(),
+                muted.add_modifier(Modifier::ITALIC),
+            ));
+            line.spans.push(palette.keycap("Ctrl+O"));
+        }
+        return;
+    }
     for block in &p.args {
         push_block(lines, block, palette, width, false, opts);
     }
@@ -1371,6 +1429,15 @@ mod tests {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
+    /// A feed with tool cards **expanded** — the arguments/results are collapsed
+    /// by default (`Ctrl+O`), so every test that asserts on a card's contents
+    /// has to ask for them.
+    fn feed_with_tools() -> MessageFeed {
+        let mut feed = MessageFeed::new();
+        feed.toggle_tools();
+        feed
+    }
+
     fn msg(role: FeedRole, text: &str, thoughts: &str) -> FeedMessage {
         FeedMessage {
             role,
@@ -1384,7 +1451,7 @@ mod tests {
 
     #[test]
     fn tool_blocks_render() {
-        let mut feed = MessageFeed::new();
+        let mut feed = feed_with_tools();
         let mut m = msg(FeedRole::Assistant, "готово", "");
         m.tools.push(FeedToolCall {
             name: "note_save".into(),
@@ -1399,6 +1466,110 @@ mod tests {
             .collect();
         assert!(joined.contains("⚒") && joined.contains("note_save"));
         assert!(joined.contains("Заметка сохранена"));
+    }
+
+    /// Every span of a rendered feed, joined — the shape most of these tests
+    /// assert on.
+    fn joined(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect()
+    }
+
+    #[test]
+    fn tool_card_is_collapsed_by_default() {
+        // The default (`Ctrl+O`, spec §11.3): the header says WHAT ran, the
+        // arguments and result are folded away behind the pill.
+        let mut feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "готово", "");
+        m.tools.push(FeedToolCall {
+            name: "python_exec".into(),
+            // Multi-line, so the presenter puts it in a *block* rather than the
+            // header suffix — a short scalar argument stays in the header on
+            // purpose, as the call's one-line summary.
+            arguments: "{\"code\":\"a = 1\\nprint(a)\"}".into(),
+            result: "stdout:\n1".into(),
+            text_offset: m.text.len(),
+        });
+        let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
+        assert!(out.contains("python_exec"), "the header stays: {out}");
+        assert!(!out.contains("print(a)"), "arguments hidden: {out}");
+        assert!(!out.contains("stdout"), "result hidden: {out}");
+        // The pill mirrors the thoughts one: marker + label + the key that opens it.
+        let glyphs = Palette::default().glyphs();
+        assert!(out.contains(glyphs.collapsed), "collapsed marker: {out}");
+        assert!(out.contains("детали") && out.contains("Ctrl+O"), "{out}");
+        // Exactly one line per call — the pill rides the header, it isn't a
+        // second line of its own.
+        let card_rows = feed
+            .build_lines(&[m], &Palette::default(), 80, ru())
+            .iter()
+            .filter(|l| joined(std::slice::from_ref(l)).contains("python_exec"))
+            .count();
+        assert_eq!(card_rows, 1, "one row per collapsed call");
+    }
+
+    #[test]
+    fn toggle_tools_reveals_arguments_and_result() {
+        let mut feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "готово", "");
+        m.tools.push(FeedToolCall {
+            name: "note_save".into(),
+            arguments: "{\"content\":\"x\"}".into(),
+            result: "Заметка сохранена".into(),
+            text_offset: m.text.len(),
+        });
+        feed.toggle_tools();
+        let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
+        assert!(out.contains("Заметка сохранена"), "{out}");
+        // Expanded, the `⚒` header is the marker — no pill, no keycap.
+        assert!(!out.contains("Ctrl+O"), "no pill when expanded: {out}");
+        // ...and back.
+        feed.toggle_tools();
+        let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
+        assert!(!out.contains("Заметка сохранена"), "{out}");
+    }
+
+    #[test]
+    fn collapsed_card_with_nothing_to_hide_has_no_pill() {
+        // A call with no arguments whose result hasn't arrived yet: there is
+        // nothing behind the pill, so promising one would be a lie (the same
+        // rule `push_thoughts` follows for empty thoughts).
+        let mut feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "", "");
+        m.tools.push(FeedToolCall {
+            name: "current_time".into(),
+            arguments: String::new(),
+            result: String::new(),
+            text_offset: 0,
+        });
+        let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
+        assert!(out.contains("current_time"), "the header stays: {out}");
+        assert!(
+            !out.contains("Ctrl+O"),
+            "nothing to reveal — no pill: {out}"
+        );
+    }
+
+    #[test]
+    fn collapse_pill_is_localized_for_all_langs() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let mut feed = MessageFeed::new();
+            let mut m = msg(FeedRole::Assistant, "ok", "");
+            m.tools.push(FeedToolCall {
+                name: "note_save".into(),
+                arguments: "{}".into(),
+                result: "saved".into(),
+                text_offset: m.text.len(),
+            });
+            let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, loc));
+            assert!(
+                out.contains(loc.t("ui.feed.tool_details")),
+                "{lang:?}: {out}"
+            );
+        }
     }
 
     #[test]
@@ -1518,7 +1689,7 @@ mod tests {
     fn python_tool_renders_highlighted_code_and_console() {
         // python_exec: the argument code — as a highlighted block (RGB colors), the result —
         // as a stdout console section with content.
-        let mut feed = MessageFeed::new();
+        let mut feed = feed_with_tools();
         let mut m = msg(FeedRole::Assistant, "готово", "");
         m.tools.push(FeedToolCall {
             name: "python_exec".into(),
@@ -1550,7 +1721,7 @@ mod tests {
 
     #[test]
     fn python_stderr_uses_error_color() {
-        let mut feed = MessageFeed::new();
+        let mut feed = feed_with_tools();
         let palette = Palette::default();
         let mut m = msg(FeedRole::Assistant, "", "");
         m.tools.push(FeedToolCall {
@@ -1655,7 +1826,7 @@ mod tests {
         // python_exec). A RAILED gap should follow the card (the rail continues
         // under the result), not a railless inter-message separator, and exactly
         // one (no double gap).
-        let mut feed = MessageFeed::new();
+        let mut feed = feed_with_tools();
         let mut m = msg(FeedRole::Assistant, "Считаю.", "");
         m.tools.push(FeedToolCall {
             name: "python_exec".into(),
@@ -1701,7 +1872,7 @@ mod tests {
 
     #[test]
     fn long_tool_result_wraps_not_truncated() {
-        let mut feed = MessageFeed::new();
+        let mut feed = feed_with_tools();
         let mut m = msg(FeedRole::Assistant, "ок", "");
         let long = "слово ".repeat(40); // ~240 characters — definitely wider than the narrow feed
         m.tools.push(FeedToolCall {
@@ -2647,7 +2818,7 @@ mod tests {
     }
 
     /// A warm cache gives line-for-line identical output to a fresh render — across
-    /// scenarios, widths, palettes, and thoughts-display state.
+    /// scenarios, widths, palettes, and collapse state (both kinds).
     #[test]
     fn cache_matches_fresh_render() {
         let tool_msg = {
@@ -2675,25 +2846,24 @@ mod tests {
         for messages in &scenarios {
             for width in [40usize, 80] {
                 for palette in [Palette::default(), Palette::default().with_compat(true)] {
-                    for show in [false, true] {
-                        let mut warm = MessageFeed::new();
-                        if show {
-                            warm.toggle_thoughts();
-                        }
-                        // warm the cache with repeated calls
-                        let _ = warm.build_lines(messages, &palette, width, ru());
-                        let _ = warm.build_lines(messages, &palette, width, ru());
-                        let warm_lines = warm.build_lines(messages, &palette, width, ru());
+                    for thoughts in [false, true] {
+                        for tools in [false, true] {
+                            let view = FeedView { thoughts, tools };
+                            let mut warm = MessageFeed::new();
+                            warm.set_view(view);
+                            // warm the cache with repeated calls
+                            let _ = warm.build_lines(messages, &palette, width, ru());
+                            let _ = warm.build_lines(messages, &palette, width, ru());
+                            let warm_lines = warm.build_lines(messages, &palette, width, ru());
 
-                        let mut fresh = MessageFeed::new();
-                        if show {
-                            fresh.toggle_thoughts();
-                        }
-                        let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
+                            let mut fresh = MessageFeed::new();
+                            fresh.set_view(view);
+                            let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
 
-                        let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
-                        let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
-                        assert_eq!(w, f, "cache diverged: width={width} show={show}");
+                            let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
+                            let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+                            assert_eq!(w, f, "cache diverged: width={width} view={view:?}");
+                        }
                     }
                 }
             }

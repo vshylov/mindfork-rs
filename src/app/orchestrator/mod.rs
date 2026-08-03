@@ -501,6 +501,7 @@ impl Orchestrator {
             AppCommand::Impersonate { seed } => self.handle_impersonate(seed),
             AppCommand::CancelImpersonation => self.handle_cancel_impersonation(),
             AppCommand::SetDraft(text) => self.handle_set_draft(text),
+            AppCommand::SetFeedView(view) => self.handle_set_feed_view(view),
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
@@ -835,6 +836,7 @@ impl Orchestrator {
             title: chat.title.clone(),
             messages: chat.messages.clone(),
             draft: chat.draft.clone(),
+            feed_view: chat.feed_view,
             focus,
         });
         self.emit_character_names();

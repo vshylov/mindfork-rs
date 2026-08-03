@@ -104,6 +104,92 @@ fn set_draft_persists_to_active_chat_without_bumping_modified() {
     assert!(!orch.saves.is_dirty(id));
 }
 
+#[test]
+fn set_feed_view_persists_to_active_chat_without_bumping_modified() {
+    // The same rules as the draft above: the collapse state is stored on the
+    // chat, flagged for saving, and does NOT bump it up the list — folding a
+    // block away isn't a change to the conversation (spec §11.3).
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    let modified = chat.modified_at;
+    orch.chats.push(chat);
+    orch.active_id = Some(id);
+
+    let view = FeedView {
+        thoughts: true,
+        tools: true,
+    };
+    orch.handle_set_feed_view(view);
+    let c = orch.chats.iter().find(|c| c.id == id).unwrap();
+    assert_eq!(c.feed_view, view);
+    assert_eq!(
+        c.modified_at, modified,
+        "collapsing a block doesn't bump the chat up the list"
+    );
+    assert!(orch.saves.is_dirty(id), "the chat is flagged for saving");
+
+    // The same state again — a no-op, no re-flagging (and so no needless write).
+    orch.saves.take();
+    orch.handle_set_feed_view(view);
+    assert!(!orch.saves.is_dirty(id));
+}
+
+#[tokio::test]
+async fn feed_view_is_per_chat_and_survives_a_reopen() {
+    // The point of storing it on the chat: expanding in one chat leaves another
+    // alone, and the choice is still there after a restart.
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+
+    let activated = |e: &AppEvent| matches!(e, AppEvent::ChatActivated { .. });
+    let first = match wait_for(&mut evt_rx, activated).await.unwrap() {
+        AppEvent::ChatActivated {
+            id, feed_view: v, ..
+        } => {
+            assert_eq!(v, FeedView::default(), "a fresh chat opens collapsed");
+            id
+        }
+        _ => unreachable!(),
+    };
+
+    let expanded = FeedView {
+        thoughts: true,
+        tools: true,
+    };
+    cmd_tx.send(AppCommand::SetFeedView(expanded)).unwrap();
+
+    // A second chat is unaffected — the state is per chat, not global.
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    let second = match wait_for(&mut evt_rx, activated).await.unwrap() {
+        AppEvent::ChatActivated {
+            id, feed_view: v, ..
+        } => {
+            assert_eq!(v, FeedView::default(), "the new chat is its own");
+            id
+        }
+        _ => unreachable!(),
+    };
+    assert_ne!(first, second);
+
+    // Switching back hands the stored state to the UI.
+    cmd_tx.send(AppCommand::SwitchChat(first)).unwrap();
+    match wait_for(&mut evt_rx, activated).await.unwrap() {
+        AppEvent::ChatActivated { feed_view: v, .. } => assert_eq!(v, expanded),
+        _ => unreachable!(),
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened.json().load_chat(first).unwrap().unwrap();
+    assert_eq!(chat.feed_view, expanded, "the choice survives a restart");
+}
+
 #[tokio::test]
 async fn draft_persists_and_clears_on_send() {
     let backend = Arc::new(MockBackend::scripted(vec![

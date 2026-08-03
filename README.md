@@ -56,8 +56,9 @@ Architecture — **Feature-Sliced Design (FSD)**.
   toggle) and **Unicode approximation of LaTeX**
   inside `$…$`/`\(…\)` (Greek letters, arrows, operators, fractions, roots,
   functions `\log`/`\sin`/…, subscripts/superscripts — no rasterization, friendly to
-  a JupyterLab terminal), a collapsible **"thoughts" (CoT)** block (`Ctrl+T`), and
-  **tool blocks** (tool call name/arguments/result).
+  a JupyterLab terminal), and collapsible **"thoughts" (CoT)** (`Ctrl+T`) and
+  **tool call** (`Ctrl+O`) blocks — both collapsed by default, with the choice
+  remembered per chat.
 - A custom **multiline input box** (`Shift+Enter` — line break, `Enter` — send) with
   word wrap, precise cursor positioning, **fast multiline paste from the clipboard**
   (`Ctrl+V` — line breaks are kept as text, not sent), **clear input with undo**
@@ -460,7 +461,8 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Ctrl+K` | clear all input text (undo with `Ctrl+Z`) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit |
 | `Home` / `End` | a ladder: `Home` — the text on the on-screen row, its start, then the whole line's; `End` — the row's end, then the line's |
-| `Ctrl+T` | collapse/expand "thoughts" |
+| `Ctrl+T` | collapse/expand "thoughts" (remembered per chat) |
+| `Ctrl+O` | collapse/expand tool calls — the header stays, the arguments/result fold away (per chat) |
 | `Ctrl+G` | in the input box: spellcheck suggestions |
 | `Ctrl+B` | emoji picker popup (inserts at the cursor position) |
 | `Ctrl+W` | toggle: mouse wheel ↔ text selection |

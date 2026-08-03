@@ -229,6 +229,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+Home/End", "ui.help.doc_move"),
     ("Ctrl+P", "ui.help.settings"),
     ("Ctrl+T", "ui.help.thoughts"),
+    ("Ctrl+O", "ui.help.tool_calls"),
     ("Ctrl+G", "ui.help.spell"),
     ("Ctrl+B", "ui.help.emoji"),
     ("Ctrl+W", "ui.help.mouse_toggle"),

@@ -35,6 +35,12 @@ pub struct Chat {
     /// chat; empty for a new chat. See spec §11.7.
     #[serde(default)]
     pub draft: String,
+    /// Which of the feed's foldable blocks are expanded in this chat
+    /// (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls). Per chat, like
+    /// [`Chat::draft`]: additive field, old chat files read without migration,
+    /// and a chat nobody expanded writes no new key. See spec §11.3.
+    #[serde(default, skip_serializing_if = "FeedView::is_default")]
+    pub feed_view: FeedView,
     /// Files attached to the chat (`/file attach`). Their text is injected into
     /// the request's system prompt on every turn, so `/file remove` genuinely
     /// removes them from what the model sees. Additive field — old chat files
@@ -63,6 +69,34 @@ pub struct Chat {
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
+}
+
+/// Which of the feed's foldable blocks are expanded — the view state of one chat
+/// (see [`Chat::feed_view`], spec §11.3).
+///
+/// Both default to `false` = **collapsed**: the feed is scanned for the reply,
+/// and reasoning/tool plumbing is detail you ask for. A named type rather than
+/// two loose bools because it travels through a command, an event and the feed's
+/// render-cache key, where a bare `(bool, bool)` is exactly the pair that gets
+/// swapped by accident.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FeedView {
+    /// Show the "thoughts" (CoT) block expanded (`Ctrl+T`).
+    #[serde(default)]
+    pub thoughts: bool,
+    /// Show tool-call arguments and results (`Ctrl+O`). The card's header
+    /// (`⚒ name(args)`) is drawn either way — collapsing hides the detail, not
+    /// the fact that a tool ran.
+    #[serde(default)]
+    pub tools: bool,
+}
+
+impl FeedView {
+    /// Everything collapsed — the default. Lets `serde` skip the field entirely
+    /// for a chat the user never expanded anything in.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A snapshot of a deleted exchange (`Ctrl+E`/`Ctrl+R`). This is **not** a message
@@ -124,6 +158,7 @@ impl Chat {
             messages: Vec::new(),
             sampling_override: None,
             draft: String::new(),
+            feed_view: FeedView::default(),
             attachments: Vec::new(),
             deleted: Vec::new(),
             reflected_upto: None,
@@ -186,6 +221,32 @@ pub struct ChatSummary {
 mod tests {
     use super::*;
     use crate::entities::message::Message;
+
+    #[test]
+    fn feed_view_reads_old_chat_files_and_stays_out_of_new_ones() {
+        // Additive field, no migration (ADR 0006 F12): a chat file written
+        // before it existed loads with everything collapsed...
+        let p = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&p, "Чат");
+        let mut json: serde_json::Value = serde_json::to_value(&chat).unwrap();
+        assert!(
+            json.get("feed_view").is_none(),
+            "a chat nobody expanded anything in writes no new key: {json}"
+        );
+        let back: Chat = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back.feed_view, FeedView::default());
+
+        // ...and an expanded one round-trips.
+        let mut expanded = chat;
+        expanded.feed_view = FeedView {
+            thoughts: true,
+            tools: false,
+        };
+        json = serde_json::to_value(&expanded).unwrap();
+        assert!(json.get("feed_view").is_some());
+        let back: Chat = serde_json::from_value(json).unwrap();
+        assert_eq!(back.feed_view, expanded.feed_view);
+    }
 
     #[test]
     fn from_profile_copies_fields_but_not_sampling() {

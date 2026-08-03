@@ -166,12 +166,22 @@ impl ChatScreen {
                     return None;
                 }
                 // Collapsing "thoughts" (spec §11.3).
+                // Collapsing "thoughts" (spec §11.3). The new state goes back to
+                // the orchestrator, which stores it on the chat — the collapse
+                // state is per chat, like the draft (docs/feed-collapse.md).
                 't' => {
                     self.feed_view.toggle_thoughts();
-                    // Collapsing "thoughts" reshapes all feed blocks — the
-                    // same kind of content change as streaming/a note.
+                    // Collapsing reshapes all feed blocks — the same kind of
+                    // content change as streaming/a note.
                     self.mark_feed_changed();
-                    return None;
+                    return Some(ChatIntent::SetFeedView(self.feed_view.view()));
+                }
+                // Collapsing tool calls (spec §11.3) — the header stays, the
+                // arguments and results fold away.
+                'o' => {
+                    self.feed_view.toggle_tools();
+                    self.mark_feed_changed();
+                    return Some(ChatIntent::SetFeedView(self.feed_view.view()));
                 }
                 // The toggle between wheel scrolling ↔ mouse text selection
                 // (spec §11.3). `Ctrl+M` doesn't work for this: the terminal

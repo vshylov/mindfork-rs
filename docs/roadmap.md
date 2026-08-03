@@ -74,7 +74,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   current `sublimehq/Packages` (198 syntaxes, newer versions of what we ship).
 - **Per-message collapse/select/copy** — explicitly deferred past M3, noted
   "account for the mouse toggle `Ctrl+W`". Selecting a single message,
-  copying a single block.
+  copying a single block. Collapsing itself is done for the *whole feed*
+  (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls, stored per chat, spec §11.3);
+  what is still missing is a way to fold one *particular* block, which needs
+  block selection first.
+- **`message_feed.rs`: two production strings never got localized** — the
+  expanded "thoughts" label and the console exit-code line show Russian under an
+  `en` interface. `tools/cyrillic_scan.py` misses them because a `#[cfg(test)]`
+  **test accessor** early in the file makes it treat everything below as test
+  code; worth fixing the scanner's `in_test` rule at the same time.
 - **Horizontal scroll for wide tables** (instead of the current clip with
   "…") — groundwork from ADR 0003.
 - **Mermaid: whitelist expansion** — flowchart/sequence already render
