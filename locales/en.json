@@ -545,6 +545,8 @@
   "ui.help.undo_redo": "undo / redo edit",
   "ui.help.word_move": "cursor by words",
   "ui.help.word_delete": "delete word left/right",
+  "ui.help.line_home": "to the text, the row start, then the whole line's",
+  "ui.help.line_end": "to the row end, then the whole line's",
   "ui.help.doc_move": "to start/end of input text",
   "ui.help.settings": "settings screen",
   "ui.help.thoughts": "collapse/expand thinking",

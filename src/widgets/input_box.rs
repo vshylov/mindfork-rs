@@ -1102,8 +1102,16 @@ impl InputBox {
         self.col = col;
     }
 
-    /// `Home` — to the start of the current **visual** row (not the whole
-    /// logical line). Before the first render — to the start of the logical line.
+    /// `Home` — a **ladder of stops** (see [`Self::home_stops`]), nearest first:
+    /// the text on the current **visual** row, that row's start, and on to the
+    /// whole logical line. Each press takes the next stop; the last one stays
+    /// put. Before the first render — straight to the logical start.
+    ///
+    /// The steps are told apart by the cursor's position, not by counting
+    /// presses: "already at a stop → take the next one" needs no extra state
+    /// (nothing to reset in the many other places that move the cursor), and it
+    /// also does the useful thing when the cursor reached a stop by typing
+    /// rather than by `Home`. See spec §11.5.
     fn move_home(&mut self) {
         self.goal_col = None;
         if self.single_line {
@@ -1116,33 +1124,76 @@ impl InputBox {
         }
         let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
-        self.col = vrows[vrow].1;
+        let stops = self.home_stops(&vrows, vrow);
+        self.col = match stops.iter().position(|&s| s == self.col) {
+            // At a stop already — the next one; at the last one — stay put.
+            Some(i) => *stops.get(i + 1).unwrap_or(&self.col),
+            // Anywhere else on the row — the nearest stop.
+            None => stops[0],
+        };
     }
 
-    /// `End` — to the end of the current **visual** row. On a soft wrap, lands
-    /// on the row's last position (doesn't slide into the start of the next
-    /// one, see `is_soft`). Before the first render — to the end of the logical
-    /// line.
+    /// The `Home` stops for visual row `vrow`, ordered nearest (rightmost)
+    /// first and deduplicated — so a line with no indentation keeps exactly the
+    /// two steps "row start → line start", and an indented one gains the
+    /// first-non-blank stop that `Home` is expected to have in an editor.
+    ///
+    /// The line's own first non-blank is only a stop when it lies **before** the
+    /// row's start, i.e. on the way left: on the line's first row it is already
+    /// the row's own first non-blank (deduplicated away), and in the pathological
+    /// case of indentation wider than the field it would otherwise make `Home`
+    /// jump forward.
+    fn home_stops(&self, vrows: &[VisualRow], vrow: usize) -> Vec<usize> {
+        let (li, start, end) = vrows[vrow];
+        let line = &self.lines[li];
+        let line_text = first_non_blank(line, 0, line.len());
+        let mut candidates = vec![first_non_blank(line, start, end), start];
+        if line_text < start {
+            candidates.push(line_text);
+        }
+        candidates.push(0);
+        // Deduplicated by value, not just against the neighbour: an indented
+        // first row yields row-text, row-start, line-start = text, 0, 0.
+        let mut stops: Vec<usize> = Vec::with_capacity(candidates.len());
+        for stop in candidates {
+            if !stops.contains(&stop) {
+                stops.push(stop);
+            }
+        }
+        stops
+    }
+
+    /// `End` — to the end of the current **visual** row; **pressing it again**
+    /// goes on to the end of the whole logical line (mirrors [`Self::move_home`]).
+    /// On a soft wrap the first step lands on the row's last position (doesn't
+    /// slide into the start of the next one, see `is_soft`). Before the first
+    /// render — straight to the logical end.
     fn move_end(&mut self) {
         self.goal_col = None;
+        let line_end = self.lines[self.row].len();
         if self.single_line {
-            self.col = self.lines[self.row].len(); // a single-line field — to the end of the value
+            self.col = line_end; // a single-line field — to the end of the value
             return;
         }
         if self.last_width == 0 {
-            self.col = self.lines[self.row].len();
+            self.col = line_end;
             return;
         }
         let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
         let (li, start, end) = vrows[vrow];
-        self.col = col_for_visual(
+        let row_end = col_for_visual(
             &self.lines[li],
             start,
             end,
             usize::MAX,
             is_soft(&vrows, vrow),
         );
+        self.col = if self.col == row_end {
+            line_end
+        } else {
+            row_end
+        };
     }
 
     /// A logical up/down transition (a fallback before the first render, when
@@ -1582,6 +1633,17 @@ fn col_at_width(line: &[char], target: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Index of the first non-whitespace character in `[start, end)` — the `Home`
+/// stop "where the text begins" (see [`InputBox::home_stops`]). A range that is
+/// entirely whitespace has nothing to skip to, so it yields `start` and
+/// collapses into the row/line-start stop rather than sending the cursor to the
+/// far end of the blanks.
+fn first_non_blank(line: &[char], start: usize, end: usize) -> usize {
+    (start..end)
+        .find(|&i| !line[i].is_whitespace())
+        .unwrap_or(start)
 }
 
 /// Visual row `idx` is a soft wrap (not the last row of its logical line),
@@ -2322,6 +2384,97 @@ mod tests {
         assert_eq!(ib.cursor(), (0, 8)); // end of the first two words, doesn't slide into the start of the last one
         assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0)); // start of the top row
+    }
+
+    #[test]
+    fn repeated_home_end_reach_the_whole_logical_line() {
+        let mut ib = InputBox::new();
+        // At width 8 the line wraps into two rows — the first two words [0, 9)
+        // and the last one [9, 12). The cursor starts inside the bottom row.
+        ib.set_text("один два три");
+        render_at(&mut ib, 8);
+        ib.row = 0;
+        ib.col = 10;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 9)); // start of the bottom row
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0)); // second press — start of the whole line
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 8)); // end of the top row (soft wrap)
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 12)); // second press — end of the whole line
+        // A third press stays put: the line boundary is the last step.
+        assert!(ib.on_key(k(KeyCode::End)).handled());
+        assert_eq!(ib.cursor(), (0, 12));
+    }
+
+    #[test]
+    fn home_stops_at_the_text_before_the_indentation() {
+        let mut ib = InputBox::new();
+        ib.set_text("    hello");
+        render_at(&mut ib, 20); // fits on one row: row start == line start
+        ib.row = 0;
+        ib.col = 7;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 4)); // where the text begins
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0)); // second press — past the indentation
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0)); // the line's start is the last stop
+        // From inside the indentation the nearest stop is still the text.
+        ib.col = 2;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn home_ladder_on_an_indented_wrapped_line() {
+        let mut ib = InputBox::new();
+        // Width 8, indentation 4: the rows are [0, 9) and [9, 16), and the
+        // line's text starts at 4 — three distinct stops from the bottom row.
+        ib.set_text("    один два три");
+        render_at(&mut ib, 8);
+        ib.row = 0;
+        ib.col = 14;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 9)); // the bottom row's start
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 4)); // the line's text, not its very start
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0));
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn home_on_a_blank_row_falls_through_to_the_starts() {
+        // Nothing to skip to: an all-whitespace row must not send the cursor to
+        // the far end of its blanks.
+        let mut ib = InputBox::new();
+        ib.set_text("      ");
+        render_at(&mut ib, 20);
+        ib.row = 0;
+        ib.col = 3;
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert_eq!(ib.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn repeated_home_end_stay_on_their_own_logical_line() {
+        // The second step must not run past a real line break into a neighbour.
+        let mut ib = InputBox::new();
+        ib.set_text("aaa\nодин два три\nbbb");
+        render_at(&mut ib, 8);
+        ib.row = 1;
+        ib.col = 10; // on the wrapped line's bottom row
+        for _ in 0..3 {
+            assert!(ib.on_key(k(KeyCode::Home)).handled());
+        }
+        assert_eq!(ib.cursor(), (1, 0));
+        for _ in 0..3 {
+            assert!(ib.on_key(k(KeyCode::End)).handled());
+        }
+        assert_eq!(ib.cursor(), (1, 12));
     }
 
     #[test]

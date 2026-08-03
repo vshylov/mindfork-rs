@@ -51,6 +51,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   confirm, restarts the server. Previously a server that had crashed too often
   could only be brought back by restarting the application.
 
+### Changed
+
+- **`Home` and `End` reach further with each press.** In the input box they
+  still go to the start/end of the row you see on screen — but pressing the same
+  key again, when the cursor is already there, now goes on to the whole line you
+  typed. Previously a line broken across several rows by word wrap could only be
+  traversed with `Ctrl+Home`/`Ctrl+End`, which jump to the ends of the entire
+  text. `Home` also stops at the **first non-space character** before the line's
+  very beginning, so an indented line is entered at its text.
+
 ### Security
 
 - An MCP server's token, whether typed in or imported from another client's

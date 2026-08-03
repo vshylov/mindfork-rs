@@ -1592,6 +1592,28 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   - **Rendering errors in the TUI**: incorrect words are highlighted with a style (`UNDERLINED`/color) in the input area; a **suggestion popup** (a hotkey on the word under the cursor) offers options from `Suggester` + an "Add to dictionary" item.
   - A personal dictionary — `personal_dictionary.txt` (global), grown at runtime (`Dictionary::add`).
   - **Rendering underlines** — solved by our own input widget ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): errors are drawn per-span with `UNDERLINED`/color over our own `InputBox`, with no dependency on a third-party diagnostics API.
+- **Cursor navigation over a wrapped line**: `↑/↓` move by **visual row** (a
+  wrapped line's parts are separate rows), keeping the column across short rows
+  (goal-column). `Home`/`End` act on the visual row first, and **pressing them
+  again** — when the cursor is already at that stop — goes on to the whole
+  **logical** line (the rule of large editors: the row is what you see, the line
+  is what you edited). `Home` has one more stop ahead of those, the one editors
+  call "smart home": **the first non-whitespace character**, so an indented line
+  is entered at its text rather than at its indentation. The full ladder, nearest
+  first: the row's text → the row's start → the line's text (only when that lies
+  *before* the row's start, i.e. from a later row of a wrapped line — otherwise
+  it is already the row's own text stop) → the line's start; stops that coincide
+  collapse, so an unindented line keeps exactly the two steps. `End` has two
+  stops (the row's end, then the line's) — trailing whitespace is not a thing
+  worth a stop. The step is chosen by the cursor's **position** rather than by
+  counting presses: no state to reset in the many other places that move the
+  cursor, and it also does the useful thing when the cursor reached a stop by
+  typing. The last stop stays put (the whole text is `Ctrl+Home`/`Ctrl+End`); a
+  row that is entirely whitespace has no text stop. In **single-line** mode
+  (settings fields, chat rename) `Home`/`End` always span the whole value — a
+  path or URL that starts with an accidental space is easier to fix from column
+  0. Before the first render the wrapping isn't known (the width comes from the
+  last render), so everything falls back to the logical line.
 - **Emoji picker popup** (`Ctrl+B`): a grid of popular emoji, arrow-key navigation, `Enter` inserts the selected one into the input box at the cursor (safe for multi-scalar clusters like `❤️`/`👍🏽`), `Esc` closes it; the popup remembers the last choice. Any action in the popup (moving the selection or closing it) requests a **full redraw** from the loop: a wide emoji occupies two cells, and when the glyph leaves its spot, `ratatui`'s per-cell diff doesn't repaint its **trailing** cell (in both buffers it's a default space), and the terminal doesn't clear the second half of a wide glyph itself — a "hanging" fragment was left on screen (visible via the selection background). The full redraw uses the same "sentinel buffer" technique as scrolling the feed with VS16 emoji (§11.3) — it rewrites every cell without `ESC[2J`, i.e. without flicker. **The popup's own emoji set is kept free of VS16 clusters** (`❤️`/`✌️` were replaced with `💖`/`🤞`; the "exactly 2 columns, no U+FE0F" invariant is pinned by a gate test): for VS16, `ratatui` additionally sends the glyph's trailing cell to the terminal, and the `crossterm` backend tracks position by cell number without accounting for its width — that trailing write happens without a `MoveTo`, lands one column to the right, and shifts the rest of the row (an adjacent wide emoji goes dark, the popup's border drifts). Under a full redraw, where "changed" cells are all of them, this shows up on every frame.
 - **Line breaks on unix terminals**: the legacy encoding sends the same CR for both `Shift+Enter` and `Enter`, so on a "bare" terminal a line break was unavailable. On unix, `runtime` enables the **kitty keyboard protocol** at the `DISAMBIGUATE_ESCAPE_CODES` level (`crossterm::event::PushKeyboardEnhancementFlags`) if the terminal supports it (`supports_keyboard_enhancement()`) — then modifiers on special keys (`Enter`/arrows/…) are reported, `Shift+Enter` is distinguishable from `Enter`, and `Shift`+arrows from plain arrows (bringing keyboard selection to life). Flags are cleared on exit and in the panic hook. Printable input and a lone `Shift`+character aren't touched by the protocol (text comes through as-is) → the layout-independent Ctrl-shortcut parsing and typing `?`/emoji don't regress. Not needed on Windows (the Console API reports modifiers). For terminals **without** the protocol — **`Alt+Enter`** gives the same line break (it arrives as `Enter`+`ALT` via the meta-prefix `ESC`, recognized even on legacy terminals); accepted in every multiline field (chat, the system message/greeting in settings, the self-model editor).
 
@@ -1783,6 +1805,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit (coalesced snapshots) |
 | `Ctrl+←`/`Ctrl+→` | move the cursor by word (across line boundaries) |
 | `Ctrl+Backspace`/`Ctrl+Delete` | delete the word left/right of the cursor |
+| `Home`/`End` | a ladder of stops (§11.5): `Home` — the row's text, its start, then the whole line's; `End` — the row's end, then the line's |
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
 | `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
 | click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
