@@ -100,6 +100,9 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Two labels in the feed ignored the interface language** and were always
+  Russian: the heading above an **expanded** "thoughts" block, and the exit-code
+  line under a `python_exec` console.
 - **Web search no longer reports "nothing found" when it was actually blocked.**
   One of the search engines serves its "prove you are human" page with an
   ordinary success status, so it counted as a normal answer that happened to

@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1823 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1824 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
 recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
 call's arguments and result away while keeping the header that says what ran,
@@ -11742,7 +11742,8 @@ debounce was done as a separate PR, see below).
   switching back restores A, and the choice is still on disk after a restart. The
   existing `cache_matches_fresh_render` gained the tools flag, so the cache is
   checked against all four combinations, and the entity has its own serde test for
-  the no-migration claim. **1823 unit tests green** (+9), 76
+  the no-migration claim, and one pinning both formerly-hardcoded labels across
+  locales. **1824 unit tests green** (+10), 76
   `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/i18n gates
   clean.
 - **All seven load-bearing behaviours were mutation-tested** — never collapsing,
@@ -11765,20 +11766,38 @@ debounce was done as a separate PR, see below).
   uncommitted change in `input.rs`, not just the mutated line, and the suite
   stayed red until it was re-applied by hand. Back the file up first — `cp` — or
   commit before mutating.
-- **Spotted while in here, deliberately not bundled** (a separate fix): two
-  production strings in `message_feed.rs` are hardcoded Russian rather than
-  localized — the **expanded** thoughts label (`format!("{} мысли", …)`, while the <!-- cyrillic-ok -->
-  collapsed pill correctly uses `ui.feed.thoughts`) and the console exit-code
-  label in `push_console` (`"код возврата: {code}"`, which `python.rs` localizes <!-- cyrillic-ok -->
-  through `python.console.exit`). So an `en` interface shows Russian in both.
-  **Why the gate missed them, checked rather than assumed**: `cyrillic_scan.py`
-  sets `in_test` on the first `#[cfg(test)]` it sees and never unsets it, and
-  `message_feed.rs` has `#[cfg(test)]` **test accessors** at line ~564 — so every
-  production line below them is scanned as if it were test code, where Cyrillic
-  in code position is legitimate fixture data. A blind spot worth closing (an
-  attribute on a single item shouldn't mean "the rest of the file is tests"), but
-  that is the i18n/tooling track, not this one — and both fixes change existing
-  assertions.
+- **Two unlocalized strings found next door and fixed on the user's say-so**
+  (they were spotted here and first recorded as groundwork; the user asked for
+  them in the same change): the **expanded** thoughts label
+  (`format!("{} мысли", …)`, while the collapsed pill correctly used <!-- cyrillic-ok -->
+  `ui.feed.thoughts`) and the console exit-code label in `push_console`
+  (`"код возврата: {code}"`). Both showed Russian under an `en` interface. <!-- cyrillic-ok -->
+  - **The exit-code label got its own key rather than reusing
+    `python.console.exit`**: that one is **axis A** — the label the *model* reads
+    inside the tool result, written in the profile's language — while the feed
+    re-renders it for the *human* after `present::parse_console` has stripped it,
+    which is **axis B**. Same text today, different axis, so a Russian interface
+    reading an English-profile chat now says "код возврата: 3" rather than <!-- cyrillic-ok -->
+    inheriting the agent's language. New key `ui.feed.exit_code`; `push_block`/
+    `push_console` gained the locale to reach it.
+  - **Why the gate missed them, checked rather than assumed**: `cyrillic_scan.py`
+    sets `in_test` on the first `#[cfg(test)]` it sees and **never unsets it**,
+    and `message_feed.rs` has `#[cfg(test)]` **test accessors** at line ~564 — so
+    every production line below them was scanned as test code, where Cyrillic in
+    code position is legitimate fixture data. The strings are fixed; the
+    scanner's blind spot is recorded in the roadmap (an attribute on a single
+    item shouldn't mean "the rest of the file is tests").
+  - Pinned by `expanded_thoughts_and_exit_code_are_localized`, which renders an
+    **English-profile tool result under a Russian interface** and vice versa, and
+    asserts no Cyrillic leaks into an `en` feed. Mutation-tested: restoring
+    either literal fails it.
+- **The collapsed pill reads like the thoughts pill** (asked for after the first
+  live look): `▸ детали · Ctrl+O` against `▸ мысли · 9 стр. · Ctrl+T` — the <!-- cyrillic-ok -->
+  separator is explicit here, since the thoughts pill gets its own from inside
+  `ui.feed.thoughts_lines` and this pill has no count to show. The first
+  mutation run **survived** — nothing asserted the separator — so
+  `tool_card_is_collapsed_by_default` gained the assertion, which then failed
+  under the same mutation.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

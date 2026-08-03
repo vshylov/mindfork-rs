@@ -1090,7 +1090,7 @@ fn push_thoughts(
         return;
     }
     lines.push(Line::from(Span::styled(
-        format!("{} мысли", glyphs.expanded),
+        format!("{} {}", glyphs.expanded, loc.t("ui.feed.thoughts")),
         muted.add_modifier(Modifier::ITALIC),
     )));
     for t in thoughts.lines() {
@@ -1234,15 +1234,19 @@ fn push_tool(
                 loc.t("ui.feed.tool_details").to_string(),
                 muted.add_modifier(Modifier::ITALIC),
             ));
+            // The same ` · ` the thoughts pill puts before its keycap (there it
+            // arrives inside `ui.feed.thoughts_lines`, which this pill has no
+            // counterpart for — there is no count to show).
+            line.spans.push(Span::styled(" · ", muted));
             line.spans.push(palette.keycap("Ctrl+O"));
         }
         return;
     }
     for block in &p.args {
-        push_block(lines, block, palette, width, false, opts);
+        push_block(lines, block, palette, width, false, opts, loc);
     }
     for block in &p.result {
-        push_block(lines, block, palette, width, true, opts);
+        push_block(lines, block, palette, width, true, opts, loc);
     }
 }
 
@@ -1256,6 +1260,7 @@ fn push_block(
     width: usize,
     is_result: bool,
     opts: markdown::RenderOpts,
+    loc: &'static Locale,
 ) {
     let gutter_style = Style::default().fg(palette.muted);
     match block {
@@ -1276,7 +1281,7 @@ fn push_block(
             let rendered = markdown::render_with(text, body_w, palette, opts);
             push_gutter_lines(lines, rendered.lines, "└ ", "  ", gutter_style, width);
         }
-        ToolBlock::Console(c) => push_console(lines, c, palette, width),
+        ToolBlock::Console(c) => push_console(lines, c, palette, width, loc),
     }
 }
 
@@ -1288,6 +1293,7 @@ fn push_console(
     console: &present::Console,
     palette: &Palette,
     width: usize,
+    loc: &'static Locale,
 ) {
     let label = Style::default().fg(palette.muted);
     let out_style = Style::default().fg(palette.text);
@@ -1302,11 +1308,15 @@ fn push_console(
     }
     if let Some(code) = console.exit {
         let warn = Style::default().fg(palette.warning);
+        // The **interface** language (axis B), not the profile's: the tool
+        // result carried the label in the agent's language and `parse_console`
+        // stripped it (`present::exit_labels`), so what is drawn here is chrome
+        // for the reader — hence `ui.feed.exit_code`, not `python.console.exit`.
         push_wrapped(
             lines,
             "└ ",
             "  ",
-            &format!("код возврата: {code}"),
+            &format!("{} {code}", loc.t("ui.feed.exit_code")),
             width,
             warn,
         );
@@ -1499,7 +1509,10 @@ mod tests {
         // The pill mirrors the thoughts one: marker + label + the key that opens it.
         let glyphs = Palette::default().glyphs();
         assert!(out.contains(glyphs.collapsed), "collapsed marker: {out}");
-        assert!(out.contains("детали") && out.contains("Ctrl+O"), "{out}");
+        // Label, then the same ` · ` the thoughts pill puts before its keycap,
+        // then the key — the two pills have to read alike.
+        assert!(out.contains("детали · "), "label, separator, keycap: {out}");
+        assert!(out.contains("Ctrl+O"), "{out}");
         // Exactly one line per call — the pill rides the header, it isn't a
         // second line of its own.
         let card_rows = feed
@@ -1570,6 +1583,56 @@ mod tests {
                 "{lang:?}: {out}"
             );
         }
+    }
+
+    #[test]
+    fn expanded_thoughts_and_exit_code_are_localized() {
+        // Both labels used to be hardcoded Russian: an `en` interface showed
+        // "мысли" above an expanded CoT block and "код возврата:" under a <!-- cyrillic-ok -->
+        // python console. They follow the **interface** language (axis B) — the
+        // tool result's own label was in the agent's language and the presenter
+        // already stripped it.
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let mut feed = feed_with_tools();
+            feed.toggle_thoughts();
+            let mut m = msg(FeedRole::Assistant, "ok", "reasoning");
+            m.tools.push(FeedToolCall {
+                name: "python_exec".into(),
+                arguments: r#"{"code":"import sys; sys.exit(3)"}"#.into(),
+                result: format!("stderr:\nboom\n\n{} 3", loc.t("python.console.exit")),
+                text_offset: m.text.len(),
+            });
+            let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
+            // Rendered under `ru()` above on purpose: the labels must follow the
+            // locale handed to the feed, not the one the tool result was written
+            // in — so an `en` result under a `ru` interface still reads Russian.
+            assert!(out.contains(ru().t("ui.feed.thoughts")), "{lang:?}: {out}");
+            assert!(
+                out.contains(&format!("{} 3", ru().t("ui.feed.exit_code"))),
+                "{lang:?}: {out}"
+            );
+        }
+        // ...and the same feed under an `en` interface has no Russian in either.
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let mut feed = feed_with_tools();
+        feed.toggle_thoughts();
+        let mut m = msg(FeedRole::Assistant, "ok", "reasoning");
+        m.tools.push(FeedToolCall {
+            name: "python_exec".into(),
+            arguments: r#"{"code":"x"}"#.into(),
+            result: format!("stdout:\nhi\n\n{} 3", en.t("python.console.exit")),
+            text_offset: m.text.len(),
+        });
+        let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, en));
+        assert!(
+            !out.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)),
+            "Cyrillic leaked into an en feed: {out}"
+        );
+        assert!(
+            out.contains("exit code: 3") && out.contains("thinking"),
+            "{out}"
+        );
     }
 
     #[test]
