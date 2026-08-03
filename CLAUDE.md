@@ -124,12 +124,13 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1789 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1792 unit
 tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
-recent change is a small input-box refinement: **`Home`/`End` reach the whole
-logical line on a second press** (a wrapped line's on-screen row first, the line
-itself if the cursor is already at that boundary — the step is chosen by
-position, not by counting presses, so nothing has to reset it); before that —
+recent change is a small input-box refinement: **`Home`/`End` became a ladder of
+stops** — a wrapped line's on-screen row first, then the whole logical line, with
+`Home` additionally stopping at the line's first non-whitespace character; the
+step is chosen by the cursor's position, not by counting presses, so nothing has
+to reset it); before that —
 the change that completes the **MCP server editor** track
 ([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
 JSON import**: a server's token is typed into a masked row and stored
@@ -11417,43 +11418,61 @@ debounce was done as a separate PR, see below).
   explicit cleanup of orphaned MCP secrets, with "forget this computer"; HTTP
   transport, resources/prompts, `list_changed`, deferred schemas.
 
-### Post-M9: `Home`/`End` reach the whole logical line on a second press (done)
+### Post-M9: `Home`/`End` as a ladder of stops (done)
 
-- **Asked for directly**: `End` moves to the end of the row a wrapped line was
+- **Asked for directly**: `End` moved to the end of the row a wrapped line was
   broken into, and there was no way short of `Ctrl+End` — which leaves for the
-  end of the *whole text* — to reach the end of the line itself. Same for
-  `Home`. Branch `feat/input-home-end-toggle` (a simple task by AGENTS.md §1:
-  one widget, no cross-layer contract, no new dependency — no design doc).
-- **The two steps are told apart by the cursor's position, not by counting
-  presses**: `move_home`/`move_end` compute the visual-row boundary as before
-  and, **if the cursor is already there**, hand out the logical-line boundary
-  instead. Stateless, so nothing has to be reset by the seven other things that
+  end of the *whole text* — to reach the end of the line itself; same for
+  `Home`. Then, on the same branch, **`Home` was asked to stop at the first
+  non-whitespace character first** ("smart home"). Branch
+  `feat/input-home-end-toggle` (a simple task by AGENTS.md §1: one widget, no
+  cross-layer contract, no new dependency — no design doc).
+- **The steps are told apart by the cursor's position, not by counting
+  presses.** `move_home`/`move_end` compute the ladder of stops and hand out
+  **the next one after where the cursor already is** (the first stop if it is at
+  none). Stateless, so nothing has to be reset by the many other things that
   move the cursor (typing, paste, undo, a mouse click, `activate_chat`) — a
   press counter would need clearing at every one of them, and forgetting one is
-  a silent bug. It also does the useful thing when the cursor reached the row
-  boundary **by typing** rather than by `Home`, which is the common case at the
-  end of a line; that is the same "smart Home" rule large editors use.
-- **The boundaries coincide where you would expect them to**, so no case needs a
-  special branch: on a line's first visual row the row start *is* the line
-  start, on its last row likewise for the end — the second step is simply a
-  no-op there. `single_line` mode (settings fields, chat rename) and the
-  pre-first-render fallback (`last_width == 0`, the wrapping isn't known yet)
-  already went straight to the logical boundary and are untouched.
-- **The second step stops at its own line** — it uses `self.lines[self.row]`,
-  never the visual-row table, so it cannot run past a real `\n` into a
-  neighbouring line (pinned by its own test, since a wrapped line's row table
-  spans the whole text).
+  a silent bug. It also does the useful thing when the cursor reached a stop
+  **by typing** rather than by `Home`, which is the common case at the end of a
+  line; that is the rule large editors use.
+- **The `Home` ladder, and why the third stop is conditional**
+  (`home_stops`): the row's first non-blank → the row's start → **the line's**
+  first non-blank → the line's start, deduplicated by value. The line-level text
+  stop is only included when it lies **before** the row's start, i.e. on the way
+  left from a later row of a wrapped line: on the line's first row it is already
+  the row's own text stop, and in the pathological case of indentation wider
+  than the field it would make `Home` jump *forward*. With the guard every case
+  came out sane, checked by probing the real stop lists rather than by reasoning
+  alone — an unindented line collapses to the two steps it had before, an
+  indented wrapped line gets three from its bottom row.
+- **The other boundaries coincide where you would expect them to**, so no case
+  needs a special branch: on a line's last visual row the row end *is* the line
+  end, so `End`'s second step is simply a no-op there. `End` deliberately gets
+  **no** trailing-whitespace stop (nobody indents the right margin), and
+  `single_line` mode keeps `Home` at column 0 — a settings path that starts with
+  an accidental space is easier to fix from there than from its text.
+- **A whitespace-only row has nothing to skip to**, so `first_non_blank` yields
+  the range's start and the stop collapses instead of throwing the cursor to the
+  far end of the blanks.
+- **The line-level steps stop at their own line** — they use
+  `self.lines[self.row]`, never the visual-row table, so they cannot run past a
+  real `\n` into a neighbouring line (pinned by its own test, since a wrapped
+  line's row table spans the whole text).
 - **A pre-existing invariant kept the change small**: `col_for_visual` already
   rolls back off a soft wrap (`is_soft`), so the first `End` never yields a
   position that renders at the start of the *next* row — which is what makes
-  "already at the row boundary" a well-defined comparison.
-- **Tests**: the full ladder in both directions (row boundary → line boundary →
-  a third press staying put) and the "stays on its own logical line" guard; the
-  existing `home_end_act_on_visual_row` is unchanged and still green — the first
-  press behaves exactly as before. **Mutation-tested**: reverting either toggle
-  fails exactly the two new tests and nothing else. **1789 unit tests green**
-  (+2), 75 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
-  clean.
+  "already at a stop" a well-defined comparison.
+- **Tests**: the full ladder in both directions (row → line → a further press
+  staying put), the "stays on its own logical line" guard, the indented line
+  (including `Home` pressed from *inside* the indentation), the indented wrapped
+  line's three-step ladder, and the all-blank row; the existing
+  `home_end_act_on_visual_row` is unchanged and still green — an unindented
+  line's first press behaves exactly as before. **Mutation-tested**: dropping
+  the row-text stop, the line-text stop, the blank-row fallback or either
+  toggle fails exactly its own test(s) and nothing else. **1792 unit tests
+  green** (+5), 75 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/
+  `link_check` clean.
 - **A live run isn't required** (AGENTS.md §3): cursor movement inside one
   widget — no engine, memory, tool or provider path is touched.
 
