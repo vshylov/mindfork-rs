@@ -677,9 +677,11 @@ pub(super) fn render_tool_confirm(
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    use crate::features::tools::present::{ToolBlock, present};
+    use crate::features::tools::present::{ArgDetail, ToolBlock, present};
 
-    let shown = present(&pending.name, &pending.arguments, "");
+    // Compact: this is a decision prompt, not a viewer — long arguments are cut
+    // with "…" here (the card in the feed is where the call is read in full).
+    let shown = present(&pending.name, &pending.arguments, "", ArgDetail::Compact);
     let header = match &shown.header_suffix {
         Some(suffix) => format!("{}({suffix})", pending.name),
         None => pending.name.clone(),

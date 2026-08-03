@@ -1404,6 +1404,17 @@ this?"*; this screen answers *"where exactly, and take me there."*
   result blocks; the header then carries the same pill the collapsed "thoughts"
   block uses — marker, label and the key that opens it. A call with nothing to
   hide (no arguments, no result yet) gets no pill.
+  **Expanded, the card is a different presentation, not a longer one**: the
+  header carries the tool's **name alone**, every argument is enumerated below as
+  one `key: value` line each (untruncated; arrays/objects as compact JSON — the
+  header can carry neither), then a blank row, then the result. A value that
+  cannot share a line with its key — code, a large or multiline string — goes
+  under a `key:` label as its own block, so `python_exec`'s code keeps its
+  highlighting and still says which argument it is. Field order is
+  `serde_json::Map`'s (alphabetical), which the wire format does not let us
+  improve on. The detail level is [`ArgDetail`] on the presenter — the
+  dangerous-tool confirmation popup (§9.8) stays `Compact`, being a decision
+  prompt rather than a viewer.
   **The state is stored per chat** (`Chat.feed_view`, the [`Chat::draft`
   playbook](#117-input-box)): the toggle returns the new state as an intent, the
   orchestrator writes it to the active chat with the save debounce and **without

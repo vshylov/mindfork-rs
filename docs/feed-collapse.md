@@ -65,6 +65,39 @@ The pill is shown **only when collapsed** (there is something to reveal), same
 as the thoughts pill; when expanded the `⚒` header is the marker. A call with
 no arguments *and* no result gets no pill — there is nothing to hide.
 
+### C4 — what an expanded card looks like → **the layout the user specified**
+
+Added after the first live look (**user's decision, 2026-08-03**): collapsed
+stays exactly as it is; expanded shows **the tool's name in the header, the
+arguments enumerated below, then a blank row, then the result**.
+
+The reason it needed saying: the header is a *title*. `truncate_header` flattens
+whitespace and cuts at `HEADER_MAX_CHARS = 100`, and `scalar_str` drops anything
+that is not a scalar — so a long query ends in `…` and an array/object argument
+never appears at all, in either mode. Collapsed that is the right summary;
+expanded it was a lie.
+
+Implemented as `ArgDetail::{Compact, Full}` on the presenter — the two are
+**different presentations, not one with a flag threaded through it**
+(`compact_args`/`full_args`), because which field is code, which is large, and
+what may be folded into a header is knowledge that already lives in
+`features/tools/present.rs`; the widget stays generic.
+
+`Full`: header suffix `None`; one `key: value` line per field, untruncated;
+arrays/objects as compact JSON; a value that cannot share a line with its key
+(code, a large or multiline string) under a `key:` label as its own block, so
+code keeps its highlighting *and* is still named. Field order is
+`serde_json::Map`'s — alphabetical, since the wire format does not preserve the
+model's own order for us.
+
+A first attempt added the missing detail **conditionally** (only when the header
+truncated or dropped something) and kept the compact header. It was rejected on
+sight: the layout then depended on how long the values happened to be, so two
+neighbouring calls could look structurally different for no reason the reader
+could see. Unconditional is both simpler and more predictable.
+
+The confirmation popup (§9.8) keeps `Compact`: a decision prompt, not a viewer.
+
 ## 3. Shape
 
 - `entities/chat.rs`: `FeedView { thoughts: bool, tools: bool }`

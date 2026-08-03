@@ -124,12 +124,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1824 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1833 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
 recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
 call's arguments and result away while keeping the header that says what ran,
-both kinds of block are **collapsed by default**, and the collapsed/expanded
-choice is remembered **per chat** (`Chat.feed_view`, the `draft` playbook — no
+both kinds of block are **collapsed by default**, an expanded card is laid out
+as name → arguments one per line → blank row → result (the header is a title: it
+truncates, and could never show a structured argument at all), and the
+collapsed/expanded choice is remembered **per chat** (`Chat.feed_view`, the `draft` playbook — no
 migration) instead of being one global flag; before that — **`fetch_url` back the page**: extraction keeps section
 headings and code blocks (prose-only extraction turned documentation into text
 whose every "here is an example:" led nowhere), and a page over the attachment
@@ -11743,7 +11745,8 @@ debounce was done as a separate PR, see below).
   existing `cache_matches_fresh_render` gained the tools flag, so the cache is
   checked against all four combinations, and the entity has its own serde test for
   the no-migration claim, and one pinning both formerly-hardcoded labels across
-  locales. **1824 unit tests green** (+10), 76
+  locales, plus nine for the expanded layout. **1833 unit tests green**
+  (+19), 76
   `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/i18n gates
   clean.
 - **All seven load-bearing behaviours were mutation-tested** — never collapsing,
@@ -11798,6 +11801,49 @@ debounce was done as a separate PR, see below).
   mutation run **survived** — nothing asserted the separator — so
   `tool_card_is_collapsed_by_default` gained the assertion, which then failed
   under the same mutation.
+- **An expanded card is a different presentation, not a longer one** (fork C4,
+  the layout specified by the user after the same live look; collapsed
+  unchanged): the tool's **name alone** in the header, every argument enumerated
+  below one per line, a blank row, then the result.
+  - **Why it was needed**: the header is a *title* — `truncate_header` flattens
+    whitespace and cuts at `HEADER_MAX_CHARS = 100`, and `scalar_str` drops
+    anything that is not a scalar. So a long query ended in `…` and an
+    **array/object argument never appeared at all, in either mode**. That second
+    half was the more interesting find: `set_sampling`'s `samplers`/
+    `dry_sequence_breakers` and any MCP tool with structured arguments were
+    simply invisible.
+  - **`ArgDetail::{Compact, Full}` on the presenter**, split into
+    `compact_args`/`full_args` rather than one function with a flag threaded
+    through it — they are genuinely different presentations. It belongs there and
+    not in the widget: which field is code, which is large, what may be folded
+    into a header is knowledge `features/tools/present.rs` already owns, and the
+    widget stays generic (spec §11.3).
+  - **A value that cannot share a line with its key** — code, a large or
+    multiline string — goes under a `key:` label as its own block, so
+    `python_exec`'s code keeps its highlighting *and* is still named. Field order
+    is `serde_json::Map`'s (alphabetical): the wire format does not preserve the
+    model's own order for us, and stability is what matters for something read
+    repeatedly. The doc comment says so, after checking `Cargo.toml` for
+    `preserve_order` rather than assuming arrival order.
+  - **My first attempt was conditional** — keep the compact header, and add the
+    missing detail only when it truncated or dropped something. The user replaced
+    it with the layout above, and was right: the conditional version made a
+    card's structure depend on how long its values happened to be, so two
+    neighbouring calls could look different for no visible reason.
+  - The confirmation popup (§9.8) keeps `Compact` — a decision prompt, not a
+    viewer, which is the decision the journal already recorded for it.
+  - The existing presenter tests describe the compact form, so they got a
+    **shadowing `present`** in `mod tests` (the `calc`/`datetime` precedent) —
+    zero call-site churn, and `Full` has its own seven.
+  - **A probe over realistic calls came before the tests**, and it corrected two
+    fixtures I would otherwise have written wrong: a truncation needs **two**
+    medium values whose join overflows (any single scalar over the ceiling is
+    `is_big` and becomes a block instead, so a lone long value never reaches the
+    truncation), and one widget test anchored on "the first row containing `1`",
+    which the argument listing now matches before the result does.
+  - Four mutations, each failing only its own test: `Full` falling back to the
+    compact header, the blank row removed, the blank row appearing with no
+    arguments, and a code argument losing its label.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

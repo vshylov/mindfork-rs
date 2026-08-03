@@ -22,7 +22,11 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   reads as the reply it produced. The collapsed/expanded choice for both kinds of
   block (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls) is now remembered **for
   each chat separately** and survives a restart: one conversation can be read with
-  everything open while another stays compact.
+  everything open while another stays compact. **Expanded, the call is laid out
+  properly**: the tool's name on the header line, every argument listed under it
+  one per line, a blank line, then the result. The header line has always been a
+  summary — it cuts a long value at a hundred characters and cannot show a list
+  or a nested value at all — so a request could not be read in full anywhere.
 - **MCP servers are configured in the settings window.** A new **"Plugins"**
   section holds the master switch, the server list and its editor: `Ctrl+N` adds
   a server, the fields below set its command line and environment, `Ctrl+D`

@@ -258,7 +258,11 @@ src/
 │  │  ├─ mcp.rs             McpTool: wrapper for an MCP server tool (id mcp__srv__tool,
 │  │  │                     clip/timeout/cancel) + McpSnapshot/catalog_hash (TOFU)
 │  │  ├─ present.rs         call presentation for the feed (ToolPresentation): highlighted
-│  │  │                     code / python console / compact header instead of raw JSON
+│  │  │                     code / python console / compact header instead of raw JSON.
+│  │  │                     `ArgDetail` picks the presentation: Compact (a collapsed card,
+│  │  │                     the confirmation popup) folds what fits into the header; Full
+│  │  │                     (an expanded card) puts the name alone there and enumerates
+│  │  │                     every argument below, one `key: value` line each
 │  │  ├─ rag.rs             rag_add/rag_search: chunking, embedding, kNN, stitching
 │  │  ├─ notes/             notes. God object broken up (docs/history/refactoring-god-objects.md,
 │  │  │                     stage 4; external surface `notes::*` preserved via re-export

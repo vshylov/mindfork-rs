@@ -1200,7 +1200,15 @@ fn push_tool(
     let head_style = Style::default()
         .fg(palette.tool_soft)
         .add_modifier(Modifier::BOLD);
-    let p = present::present(&tool.name, &tool.arguments, &tool.result);
+    // Expanded, the reader has asked to see the call — so the request is shown
+    // in full (the header alone truncates and cannot carry structured
+    // arguments). Collapsed, the header *is* the summary. See spec §11.3.
+    let detail = if expanded {
+        present::ArgDetail::Full
+    } else {
+        present::ArgDetail::Compact
+    };
+    let p = present::present(&tool.name, &tool.arguments, &tool.result, detail);
     let header = match &p.header_suffix {
         Some(suffix) => format!("{}({suffix})", tool.name),
         None => tool.name.clone(),
@@ -1244,6 +1252,12 @@ fn push_tool(
     }
     for block in &p.args {
         push_block(lines, block, palette, width, false, opts, loc);
+    }
+    // A blank row between the request and the answer: expanded, the argument
+    // list can run for several rows, and without a break it reads as one wall
+    // with the result. Only when there is something on both sides of it.
+    if !p.args.is_empty() && !p.result.is_empty() {
+        ensure_blank_line(lines);
     }
     for block in &p.result {
         push_block(lines, block, palette, width, true, opts, loc);
@@ -1542,6 +1556,90 @@ mod tests {
         feed.toggle_tools();
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         assert!(!out.contains("Заметка сохранена"), "{out}");
+    }
+
+    #[test]
+    fn expanding_a_card_shows_the_request_in_full() {
+        // The header is a title — it truncates at 100 characters and cannot
+        // carry a structured argument at all. Collapsed that is the summary the
+        // reader asked for; expanded it would be a lie, so the rest is listed
+        // below in full (spec §11.3).
+        let mut feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "", "");
+        m.tools.push(FeedToolCall {
+            name: "fetch_url".into(),
+            arguments: concat!(
+                r#"{"url":"https://example.org/a/very/long/path/that/goes/on/and/on/well/past/any/header","#,
+                r#""focus":"memory management modes","headers":["a","b"]}"#
+            )
+            .into(),
+            result: "ok".into(),
+            text_offset: 0,
+        });
+        let collapsed = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 100, ru()));
+        assert!(collapsed.contains('…'), "collapsed truncates: {collapsed}");
+        assert!(
+            !collapsed.contains("past/any/header"),
+            "collapsed stays a summary: {collapsed}"
+        );
+
+        feed.toggle_tools();
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 100, ru()));
+        let full = rows.join("");
+        // Expanded: the header is the tool's name alone...
+        let head = rows.iter().find(|r| r.contains("fetch_url")).unwrap();
+        assert!(
+            !head.contains('(') && !head.contains('…'),
+            "the name alone: {head:?}"
+        );
+        // ...and every argument is listed below, whole.
+        assert!(
+            full.contains(
+                "https://example.org/a/very/long/path/that/goes/on/and/on/well/past/any/header"
+            ),
+            "the whole URL: {full}"
+        );
+        assert!(
+            full.contains(r#"headers: ["a","b"]"#),
+            "the argument the header could not carry: {full}"
+        );
+        // ...separated from the result by one blank row.
+        let i_last_arg = rows.iter().rposition(|r| r.contains("focus:")).unwrap();
+        let i_result = rows.iter().position(|r| r.contains("└ ok")).unwrap();
+        assert!(i_last_arg < i_result, "arguments come first");
+        assert_eq!(
+            rows[i_last_arg + 1..i_result]
+                .iter()
+                .filter(|r| is_blank_row(r))
+                .count(),
+            1,
+            "one blank row between the request and the answer: {:?}",
+            &rows[i_last_arg..=i_result]
+        );
+    }
+
+    #[test]
+    fn a_card_with_no_arguments_gets_no_blank_row() {
+        // The separator only exists to part two things; with nothing on one side
+        // it would be a stray gap.
+        let mut feed = feed_with_tools();
+        let mut m = msg(FeedRole::Assistant, "", "");
+        m.tools.push(FeedToolCall {
+            name: "current_time".into(),
+            arguments: "{}".into(),
+            result: "12:00".into(),
+            text_offset: 0,
+        });
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 60, ru()));
+        let i_head = rows
+            .iter()
+            .position(|r| r.contains("current_time"))
+            .unwrap();
+        assert!(
+            rows[i_head + 1].contains("12:00"),
+            "the result follows the header directly: {:?}",
+            &rows[i_head..]
+        );
     }
 
     #[test]
@@ -1899,7 +1997,9 @@ mod tests {
         });
         let next = msg(FeedRole::User, "дальше", "");
         let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
-        let i_result = rows.iter().position(|r| r.contains('1')).unwrap();
+        // From the **end**: the argument listing shows the code too (`print(1)`),
+        // so a forward search for "1" finds the request, not the result.
+        let i_result = rows.iter().rposition(|r| r.contains('1')).unwrap();
         let i_next = rows.iter().position(|r| r.contains("дальше")).unwrap();
         // Between the result and the next message's header — exactly one blank
         // line, and it carries a rail (not a railless separator `[]`).

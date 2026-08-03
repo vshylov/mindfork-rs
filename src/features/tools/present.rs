@@ -56,6 +56,23 @@ pub struct Console {
     pub exit: Option<i32>,
 }
 
+/// How much of a call's **arguments** to show.
+///
+/// The header (`name(…)`) is a title: it flattens whitespace, truncates past
+/// [`HEADER_MAX_CHARS`] and can only carry scalars, so a long query is cut and a
+/// structured argument (an array/object) does not appear in it at all. That is
+/// the right summary for a collapsed card, and the wrong thing when the reader
+/// has explicitly asked to see the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgDetail {
+    /// The header only — a summary. A collapsed card, and the dangerous-tool
+    /// confirmation popup (a decision prompt, not a viewer).
+    Compact,
+    /// Everything. The header stays the title, and whatever it could not carry
+    /// is listed below **in full** — see [`ToolPresentation::args`].
+    Full,
+}
+
 /// How to show a tool call in the feed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolPresentation {
@@ -67,10 +84,11 @@ pub struct ToolPresentation {
     pub result: Vec<ToolBlock>,
 }
 
-/// Builds the presentation of a call to `name` with serialized `arguments` and `result`.
-pub fn present(name: &str, arguments: &str, result: &str) -> ToolPresentation {
+/// Builds the presentation of a call to `name` with serialized `arguments` and
+/// `result`. `detail` decides how much of the arguments is shown — see [`ArgDetail`].
+pub fn present(name: &str, arguments: &str, result: &str, detail: ArgDetail) -> ToolPresentation {
     let val: Option<Value> = serde_json::from_str(arguments).ok();
-    let (header_suffix, args) = present_args(name, arguments, val.as_ref());
+    let (header_suffix, args) = present_args(name, arguments, val.as_ref(), detail);
     let result = present_result(name, val.as_ref(), result);
     ToolPresentation {
         header_suffix,
@@ -80,7 +98,26 @@ pub fn present(name: &str, arguments: &str, result: &str) -> ToolPresentation {
 }
 
 /// The header + argument blocks.
-fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, Vec<ToolBlock>) {
+///
+/// The two detail levels are genuinely different presentations, not one with a
+/// flag sprinkled through it: [`ArgDetail::Compact`] folds what it can into the
+/// header line, [`ArgDetail::Full`] puts the tool's **name alone** in the header
+/// and enumerates every argument below.
+fn present_args(
+    name: &str,
+    raw: &str,
+    val: Option<&Value>,
+    detail: ArgDetail,
+) -> (Option<String>, Vec<ToolBlock>) {
+    match detail {
+        ArgDetail::Compact => compact_args(name, raw, val),
+        ArgDetail::Full => (None, full_args(name, raw, val)),
+    }
+}
+
+/// A summary: as much as fits on the header line, nothing below except a value
+/// too large for it (code, a long string).
+fn compact_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, Vec<ToolBlock>) {
     // The arguments aren't a JSON object (a parse failure, an array, a scalar): show the
     // raw text inline, as before, with no blocks.
     let Some(Value::Object(map)) = val else {
@@ -95,25 +132,17 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         );
     };
 
-    // A tool's special "code field": python — `code` (python), fs_write — `content`
-    // (language by `path`'s extension).
-    let code_field: Option<(&str, String)> = match name {
-        "python_exec" => Some(("code", "python".into())),
-        "fs_write" => Some(("content", ext_lang(map.get("path")))),
-        _ => None,
-    };
-
     let mut blocks = Vec::new();
     let mut consumed: Option<String> = None;
-    if let Some((field, lang)) = &code_field
-        && let Some(Value::String(code)) = map.get(*field)
+    if let Some((field, lang)) = code_field(name, map)
+        && let Some(Value::String(code)) = map.get(field)
         && !code.trim().is_empty()
     {
         blocks.push(ToolBlock::Code {
-            lang: lang.clone(),
+            lang,
             text: code.clone(),
         });
-        consumed = Some((*field).to_string());
+        consumed = Some(field.to_string());
     }
     // No special field → show the large string field as a separate Plain block
     // (e.g. `content` for note_save, `text` for rag_add).
@@ -142,6 +171,70 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         }
     }
     (header_from_pairs(&pairs), blocks)
+}
+
+/// The whole request: one `key: value` line per field, untruncated; a value that
+/// cannot share a line with its key — code, a large or multiline string — goes
+/// under a `key:` label as its own block, so code keeps its highlighting. Arrays
+/// and objects (which the header cannot represent at all) are shown as compact
+/// JSON.
+///
+/// Field order is `serde_json::Map`'s, i.e. **alphabetical** (a `BTreeMap`
+/// without the `preserve_order` feature) — not the order the model wrote them
+/// in, which the wire format does not preserve for us. Stable either way, which
+/// is what matters for something read repeatedly.
+fn full_args(name: &str, raw: &str, val: Option<&Value>) -> Vec<ToolBlock> {
+    let Some(Value::Object(map)) = val else {
+        // Not a JSON object (a parse failure, an array, a bare scalar): the raw
+        // text is all there is, and it is shown whole.
+        let t = raw.trim();
+        return if t.is_empty() {
+            Vec::new()
+        } else {
+            vec![ToolBlock::Plain(t.to_string())]
+        };
+    };
+    let code = code_field(name, map);
+    let mut blocks = Vec::new();
+    for (k, v) in map.iter() {
+        match v {
+            // A field with a language of its own (python's `code`, fs_write's
+            // `content`) — highlighted, under its label.
+            Value::String(s)
+                if code.as_ref().is_some_and(|(f, _)| *f == k) && !s.trim().is_empty() =>
+            {
+                blocks.push(ToolBlock::Plain(format!("{k}:")));
+                blocks.push(ToolBlock::Code {
+                    lang: code.as_ref().map(|(_, l)| l.clone()).unwrap_or_default(),
+                    text: s.clone(),
+                });
+            }
+            // Anything multiline or long enough that `key: value` would not read
+            // as one line.
+            Value::String(s) if is_big(s) => {
+                blocks.push(ToolBlock::Plain(format!("{k}:")));
+                blocks.push(ToolBlock::Plain(s.clone()));
+            }
+            _ => blocks.push(ToolBlock::Plain(match scalar_str(v) {
+                // An empty/whitespace scalar prints as JSON (`k: ""`) — `k: `
+                // alone reads as a rendering glitch rather than as the value.
+                Some(s) if !s.trim().is_empty() => format!("{k}: {s}"),
+                _ => format!("{k}: {v}"),
+            })),
+        }
+    }
+    blocks
+}
+
+/// A tool's "code field": the argument that is source text, and the language to
+/// highlight it in — python's `code`, `fs_write`'s `content` (by the path's
+/// extension).
+fn code_field(name: &str, map: &serde_json::Map<String, Value>) -> Option<(&'static str, String)> {
+    match name {
+        "python_exec" => Some(("code", "python".into())),
+        "fs_write" => Some(("content", ext_lang(map.get("path")))),
+        _ => None,
+    }
 }
 
 /// Result blocks.
@@ -258,17 +351,16 @@ fn join_trim(lines: &[&str]) -> String {
 /// A compact header from short pairs: 0 — none; 1 — just the value (a path/query/
 /// id is self-sufficient); ≥2 — `k=v, …` (otherwise the values would be ambiguous).
 fn header_from_pairs(pairs: &[(String, String)]) -> Option<String> {
-    match pairs.len() {
-        0 => None,
-        1 => Some(truncate_header(&pairs[0].1)),
-        _ => Some(truncate_header(
-            &pairs
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )),
-    }
+    let raw = match pairs.len() {
+        0 => return None,
+        1 => pairs[0].1.clone(),
+        _ => pairs
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    Some(truncate_header(&raw))
 }
 
 /// A scalar JSON value as a string (objects/arrays/null → `None`).
@@ -296,6 +388,7 @@ fn ext_lang(path: Option<&Value>) -> String {
 
 /// Flattens to one line and truncates the header suffix to [`HEADER_MAX_CHARS`] characters.
 fn truncate_header(s: &str) -> String {
+    // The header is one line by construction.
     let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= HEADER_MAX_CHARS {
         flat
@@ -308,6 +401,149 @@ fn truncate_header(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tests below describe the **compact** presentation — the collapsed
+    /// card and the confirmation popup. Shadows [`super::present`] so adding the
+    /// detail level cost no call-site churn; `ArgDetail::Full` has its own tests.
+    fn present(name: &str, arguments: &str, result: &str) -> ToolPresentation {
+        super::present(name, arguments, result, ArgDetail::Compact)
+    }
+
+    /// The text of every argument block, joined — what the reader sees under the
+    /// header.
+    fn arg_text(p: &ToolPresentation) -> String {
+        p.args
+            .iter()
+            .map(|b| match b {
+                ToolBlock::Code { text, .. }
+                | ToolBlock::Plain(text)
+                | ToolBlock::Markdown(text) => text.clone(),
+                ToolBlock::Console(_) => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn full_detail_puts_the_name_alone_in_the_header_and_lists_the_arguments() {
+        // Expanded, the header is just the tool's name and every argument is
+        // enumerated below — including the ones the compact header could have
+        // carried, so the layout doesn't depend on how long the values happen
+        // to be (spec §11.3).
+        let args = r#"{"url":"http://x/y","summarize":true}"#;
+        let compact = present("fetch_url", args, "ok");
+        assert_eq!(
+            compact.header_suffix.as_deref(),
+            Some("summarize=true, url=http://x/y"),
+            "collapsed folds them into the header"
+        );
+        assert!(compact.args.is_empty());
+
+        let full = super::present("fetch_url", args, "ok", ArgDetail::Full);
+        assert_eq!(full.header_suffix, None, "the name alone");
+        assert_eq!(
+            arg_text(&full),
+            "summarize: true\nurl: http://x/y",
+            "one line per argument"
+        );
+    }
+
+    #[test]
+    fn full_detail_shows_a_value_the_header_would_truncate() {
+        // The header cuts at HEADER_MAX_CHARS; the listing does not. The
+        // truncation needs **two** medium values whose joined form overflows —
+        // any single scalar over the ceiling is `is_big` and becomes a block of
+        // its own instead, so a lone long value never reaches the truncation.
+        let url = "http://example.org/a/fairly/long/path/that/still/fits/on/its/own";
+        let focus = "memory management modes and their pitfalls";
+        let args = format!(r#"{{"url":"{url}","focus":"{focus}","summarize":true}}"#);
+        assert!(
+            present("fetch_url", &args, "")
+                .header_suffix
+                .unwrap()
+                .ends_with('…'),
+            "the premise: this one truncates"
+        );
+        let text = arg_text(&super::present("fetch_url", &args, "", ArgDetail::Full));
+        assert!(text.contains(&format!("url: {url}")), "whole: {text}");
+        assert!(text.contains(&format!("focus: {focus}")), "whole: {text}");
+    }
+
+    #[test]
+    fn full_detail_shows_arguments_the_header_cannot_carry() {
+        // Arrays and objects are not scalars, so the header drops them entirely
+        // — until now the request was simply unreadable in either mode.
+        let args = r#"{"temperature":0.8,"samplers":["top_k","min_p"],"nested":{"a":1}}"#;
+        let compact = present("set_sampling", args, "ok");
+        assert_eq!(compact.header_suffix.as_deref(), Some("0.8"));
+        assert!(compact.args.is_empty());
+
+        let full = super::present("set_sampling", args, "ok", ArgDetail::Full);
+        assert_eq!(full.header_suffix, None);
+        let text = arg_text(&full);
+        assert!(text.contains(r#"samplers: ["top_k","min_p"]"#), "{text}");
+        assert!(text.contains(r#"nested: {"a":1}"#), "{text}");
+        assert!(text.contains("temperature: 0.8"), "{text}");
+    }
+
+    #[test]
+    fn full_detail_labels_a_code_argument_and_keeps_its_highlighting() {
+        // A value that cannot share a line with its key goes under a `key:`
+        // label as its own block — so python code is still highlighted, and the
+        // listing still says which argument it is.
+        let full = super::present(
+            "python_exec",
+            r#"{"code":"print(1)","timeout":30}"#,
+            "",
+            ArgDetail::Full,
+        );
+        assert_eq!(
+            full.args,
+            vec![
+                ToolBlock::Plain("code:".into()),
+                ToolBlock::Code {
+                    lang: "python".into(),
+                    text: "print(1)".into()
+                },
+                ToolBlock::Plain("timeout: 30".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn full_detail_labels_a_large_string_argument() {
+        let long = "текст ".repeat(40);
+        let args = format!(r#"{{"content":{},"tags":"a"}}"#, serde_json::json!(long));
+        let full = super::present("note_save", &args, "", ArgDetail::Full);
+        assert_eq!(
+            full.args,
+            vec![
+                ToolBlock::Plain("content:".into()),
+                ToolBlock::Plain(long),
+                ToolBlock::Plain("tags: a".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn full_detail_covers_arguments_that_are_not_a_json_object() {
+        // A parse failure / a bare scalar: the raw text is all there is, and the
+        // header cuts it at the same ceiling — so it is shown whole below.
+        let long = "x".repeat(HEADER_MAX_CHARS + 40);
+        assert!(present("t", &long, "").args.is_empty());
+        let full = super::present("t", &long, "", ArgDetail::Full);
+        assert_eq!(full.header_suffix, None);
+        assert_eq!(arg_text(&full), long, "the raw arguments, whole");
+        // Empty arguments produce nothing at all.
+        assert!(super::present("t", "", "", ArgDetail::Full).args.is_empty());
+    }
+
+    #[test]
+    fn full_detail_shows_an_empty_value_as_json() {
+        // `k: ` alone reads as a rendering glitch rather than as the value.
+        let full = super::present("t", r#"{"focus":"","n":1}"#, "", ArgDetail::Full);
+        assert_eq!(arg_text(&full), "focus: \"\"\nn: 1");
+    }
 
     #[test]
     fn python_shows_code_block_and_console() {
