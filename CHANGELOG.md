@@ -53,6 +53,20 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Changed
 
+- **A fetched page keeps its code examples.** `fetch_url` used to hand the
+  assistant prose only — section headings and every code block were dropped
+  before it ever saw the page. On documentation that is not a cosmetic loss:
+  each "here is an example:" led nowhere, so the assistant concluded the page had
+  arrived damaged and went looking for the source elsewhere, spending several
+  tool calls on it. Headings and code (fenced, with the language) now come
+  through in their place in the text.
+- **A page too large for one answer is attached to the chat instead of being
+  cut.** It arrives as an ordinary attachment — visible in `/file list`, read
+  page by page and searchable by meaning — so nothing is lost and the assistant
+  can reach the parts a summary skipped. Previously such a page was silently
+  truncated mid-word with nothing saying so, which made a long page
+  indistinguishable from a complete one. A ceiling still exists for genuinely
+  enormous pages, and reaching it is now stated in the answer.
 - **`Home` and `End` reach further with each press.** In the input box they
   still go to the start/end of the row you see on screen — but pressing the same
   key again, when the cursor is already there, now goes on to the whole line you
@@ -73,6 +87,17 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **Web search no longer reports "nothing found" when it was actually blocked.**
+  One of the search engines serves its "prove you are human" page with an
+  ordinary success status, so it counted as a normal answer that happened to
+  contain no results — and that suppressed the honest "every search engine is
+  refusing us right now" message. The assistant was told the web knows nothing
+  about the subject and, quite reasonably, went off inventing ways around it.
+- **The assistant is told that Python code does not carry over between calls.**
+  Each `python_exec` call gets a fresh sandbox: files written by one call —
+  `/tmp` included — are gone by the next. Nothing said so, so the assistant would
+  download a large file in one call and find it missing in the next, then
+  download it again.
 - **`backup` and `restore` no longer look like they have hung.** Packing or
   unpacking real data takes seconds, and until now the commands printed nothing
   until it was all over — hardest to read right after `restore` asks for the

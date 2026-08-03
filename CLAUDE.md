@@ -124,9 +124,16 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1798 unit
-tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
-recent change makes **`backup`/`restore` narrate their work**: every phase
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1811 unit
+tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
+recent change gives **`fetch_url` back the page**: extraction keeps section
+headings and code blocks (prose-only extraction turned documentation into text
+whose every "here is an example:" led nowhere), and a page over the attachment
+budget lands as a **chat attachment** instead of being cut silently at 12 000
+characters mid-word — with two neighbours of the same defect class fixed
+alongside, `web_search` reporting "no results" while a provider served a captcha
+behind HTTP 200, and `python_exec` not saying that each call gets a fresh
+sandbox; before that — **`backup`/`restore` narrate their work**: every phase
 announces itself before it runs and the packing/unpacking loops count their
 entries, so a restore that takes twenty seconds no longer looks like a hung
 program — least of all right after the echo-less password prompt; and keys
@@ -11541,6 +11548,107 @@ debounce was done as a separate PR, see below).
   here** — it needs a real console, and `IsTerminal` is false in a piped
   harness — so it is left for the user's interactive check, the same boundary
   the MCP command resolver's wiring sits behind.
+
+### Post-M9: page fidelity for `fetch_url` (+ two neighbouring traps) (done)
+
+- **Specified by one real chat, not by a roadmap item.** The user pasted
+  `https://docs.vlang.io/memory-management.html` and asked the assistant to read
+  it and compare V's memory-management modes. One `fetch_url` call turned into 20
+  messages — 3 fruitless `web_search`es and **6** `python_exec` rounds, including
+  downloading the same 16 MB tarball of the V repository **twice**. Reading the
+  transcript against the code found four causes, and they chain. Plan with forks
+  F1–F2 — [docs/history/fetch-url-fidelity.md](docs/history/fetch-url-fidelity.md)
+  (**user's decision 2026-08-03: all four, F1(a) `fetch_url` only, F2(b) attach**);
+  behaviour — spec §9.3.1. Branch `feat/fetch-url-fidelity`.
+- **P1, the root cause — extraction threw away the code.** `extract_readable`
+  selects `p, li`, and the page was measured rather than assumed: **0 `<pre>`**
+  (VitePress wraps code in a bare `<div class="language-v">`), section titles in
+  `<h2>` — both dropped whole. The result the model received has visible holes
+  ("…define a `free()` method on custom data types:" straight into the next
+  paragraph). Documentation whose every "here is an example:" leads nowhere reads
+  as **arriving damaged**, so the model went looking for the source elsewhere —
+  and every later detour follows from that one inference.
+- **`extract_rich` is `fetch_url`'s alone** (F1a): `web_search` budgets 1500
+  characters per result page for **ranking**, where headings and code spend the
+  budget without helping. Pinned by a test asserting the prose path is unchanged.
+  Rich extraction keeps document order (one selector run), renders Markdown-ish
+  (`## Heading`, fenced code with the language from a `language-*` class on the
+  element or its inner `<code>`), preserves whitespace inside code (`collapse_ws`
+  is right for prose and destroys code), exempts code and headings from
+  `MIN_FRAGMENT_CHARS` (that floor exists to drop navigation chrome from
+  snippets; a two-word heading is content), and **dedupes by ancestry** — a
+  `div.language-*` wrapping a `<pre>` matches two selectors and must not emit its
+  content twice.
+- **P2 — the text was cut at 12 000 characters, silently, mid-word.** The
+  recorded result is exactly 12 000 characters and ends on `…final out`. Nothing
+  marked it partial and nothing could fetch the rest, so a long page was
+  indistinguishable from a complete one. Now a page over the budget **is attached
+  to the chat** (F2b): `ChatEffect::AddAttachment` already existed (built for
+  `youtube_watch(transcript:)`), and an attachment is already paged
+  (`attachment_read`) and searchable (`attachment_search`) — this is the
+  mechanism's second consumer, not a new one.
+- **The threshold is `attachments.max_file_tokens`, exactly as `youtube_watch`
+  uses it**, and one consequence carries over for free: an attachment made this
+  way is **always by reference**, because inline requires `est <=
+  max_file_tokens` — the other side of the same comparison. The mode still goes
+  through `decide_mode`, so it cannot drift from what `/file attach` decides.
+  `summarize=true` still summarizes (from the head — the summarizer is a
+  single-turn subagent) **and** attaches: a summary alone would repeat P2 in a
+  politer form, since the model would have no way to reach what the summary
+  skipped. A far higher hard ceiling stays (400 000 characters) and is now
+  **announced** when reached, closing P2 at both ends.
+- **P3 — `python_exec` gives a fresh sandbox per call and never said so.**
+  `WasmerSandbox::run` creates a `JobDir` per run and drops it; only `/w` and
+  `/sp` are mounted and the guest's `/tmp` dies with the process. The description
+  said "no access to the machine's files" and nothing about state. Same defect
+  class the journal already records twice (the by-reference attachment block,
+  `youtube_watch`'s unconfigured path): the message describes a situation without
+  saying what is possible next. Fixed in the description, with a test pinning
+  that it names **`/tmp`** — the concrete path a model reaches for — in every
+  built-in locale.
+- **P4 — `web_search` said "no results" three times while it was blocked.**
+  Measured live from this machine on the transcript's own queries: DDG lite 202 +
+  `anomaly` (detected), Ecosia 403 (detected), **Mojeek HTTP 200 with
+  "Verification required. Please complete the challenge"** — invisible to
+  `is_throttled`, so `got_clean_page` was set and the honest "all providers are
+  throttled" error was suppressed. The model was told the web knows nothing about
+  V's memory management and, quite reasonably, went to `python_exec` +
+  `requests`. The check (`is_challenge_page`) runs **only on a page that parsed to
+  zero results**, so a genuine result set can never be mistaken for a challenge —
+  strictly narrower than adding the markers to `is_throttled` itself.
+- **Tests**: rich extraction against the transcript's real markup shape (heading,
+  fenced code with language, whitespace preserved, nav dropped — plus the prose
+  path asserted **unchanged**, which is what fork F1a means); no double emission
+  of a wrapped block; language from an inner `<code>`; short code/headings
+  surviving the floor; the attachment path (whole text, by reference, named by
+  `<title>` with the URL as fallback, the result naming `attachment_read`/
+  `attachment_search` and the page count); summarizing from the head while still
+  attaching; the ceiling announced on both branches; the captcha classifier
+  against the real interstitial text and against two results-page fixtures.
+  **1811 unit tests green** (+13), **76 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check`/i18n gates clean.
+  **Mutation-tested**: dropping ancestry dedup, neutering the challenge
+  classifier, dropping the attachment effect, removing the `/tmp` sentence, and
+  reverting `fetch_url` to prose extraction each fail exactly their own test.
+  One gap recorded rather than faked — the provider loop's three-line branch has
+  no unit test, since the providers are hardcoded URLs and a captcha cannot be
+  summoned on demand; the classifier it calls is what the test pins.
+- **Live run — GO** (network only, no model needed):
+  `live_documentation_page_keeps_its_code` against the same page the transcript
+  used — **18 907 characters** extracted (against the 12 000 truncated before),
+  carrying `## Control`, a fenced ```v block and `fn (data &MyType) free()`, and
+  landing as a **4-page by-reference attachment** whose result points at
+  `attachment_read`. That is the pair of claims only a live fetch can settle,
+  since both depend on the real markup. The other three network smokes
+  (`live_fetch_without_summarize`, the YouTube dead-end one,
+  `live_search_returns_results`) are green — the last one also confirming the
+  provider fallback still answers from this IP.
+- **The model-level regression was not run**: the LAN stack
+  (`192.168.1.20:8000/8001`) was unreachable, and the remote HF gate is billed, so
+  launching it unasked was not mine to do. Scope note in mitigation — **no
+  orchestrator code changed**: the effect is generic and its mirroring into the
+  turn snapshot is already covered by `youtube_watch`'s live smoke and by the
+  orchestrator's own attachment tests.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

@@ -272,8 +272,13 @@ src/
 │  │  │  └─ self_notes.rs   self-note (@self) subsystem: recent/relevant, graph
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ python.rs          python_exec (subprocess, timeout)
-│  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot)
+│  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot,
+│  │  │                     incl. a captcha served behind HTTP 200) + two
+│  │  │                     extractions: extract_readable (prose, for ranking)
+│  │  │                     and extract_rich (+headings/code, for fetch_url)
 │  │  ├─ fetch.rs           fetch_url (page fetch + summarization via the engine;
+│  │  │                     a page over the attachment budget is attached to the
+│  │  │                     chat instead of being cut — ChatEffect::AddAttachment;
 │  │  │                     a YouTube link is answered with metadata + a pointer
 │  │  │                     to youtube_watch instead of "no readable text")
 │  │  ├─ youtube.rs         youtube_watch: what a video says and shows. Free

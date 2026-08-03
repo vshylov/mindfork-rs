@@ -401,6 +401,22 @@ mod tests {
         );
     }
 
+    /// Every call gets a fresh `JobDir` and the guest's `/tmp` dies with the
+    /// process, so nothing survives between calls — and the description used to
+    /// say only "no access to the machine's files". The model in the transcript
+    /// that prompted this (docs/history/fetch-url-fidelity.md, P3) wrote a 16 MB
+    /// download to `/tmp` and lost it: one wasted round plus 16 MB fetched twice.
+    /// Naming `/tmp` is the load-bearing part — that is the path a model reaches
+    /// for — so the claim is pinned in every built-in locale.
+    #[test]
+    fn the_sandbox_description_says_state_does_not_survive_a_call() {
+        let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
+        for lang in Lang::ALL {
+            let d = wasmer(sb.clone(), true).description(crate::shared::i18n::locale(*lang));
+            assert!(d.contains("/tmp"), "{lang:?} does not name /tmp: {d}");
+        }
+    }
+
     /// Real execution in the sandbox (manual): requires an installed `wasmer`
     /// (env `MINDFORK_SANDBOX_WASMER` or a binary in `data/sandbox/`) and network for the
     /// first download of `python/python`. `cargo test -- --ignored`.

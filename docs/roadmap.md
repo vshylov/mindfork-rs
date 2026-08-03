@@ -293,6 +293,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   to be absolute: measured live, the same model numbered a clip from zero on one
   run and absolutely on the next, so the shift is decided rather than applied
   blindly. See [youtube-transcript.md](history/youtube-transcript.md), spec §9.9.
+- **Page fidelity for `fetch_url`** (complete): a fetched page keeps its
+  **headings and code blocks** (`extract_rich`, `fetch_url` only — `web_search`'s
+  1500-character budget exists for ranking), and a page over the attachment
+  budget becomes a **chat attachment** instead of being cut silently at 12 000
+  characters mid-word. Along the way, two neighbours of the same defect class:
+  `web_search` stopped reporting "no results" when a provider was actually
+  serving a captcha behind HTTP 200, and `python_exec` now says that each call
+  gets a fresh sandbox (nothing, `/tmp` included, survives a call). Specified by
+  one real transcript in which a single page fetch turned into six `python_exec`
+  rounds and 16 MB downloaded twice. See
+  [fetch-url-fidelity.md](history/fetch-url-fidelity.md), spec §9.3.1.
+  **Groundwork:** tables in rich extraction (needs a layout decision — Markdown
+  table vs flattened rows); a persistent per-chat scratch directory for
+  `python_exec` (its own lifecycle and cleanup questions).
 - **YouTube: what a video says and shows** (stage 1, complete): `youtube_watch`
   describes a video's frames *and* audio with timestamps, narrowed by `focus`,
   and `start`/`end` clip a long one to a segment. It calls **Gemini out of band**
