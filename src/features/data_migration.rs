@@ -147,6 +147,9 @@ fn run_with(
         None,
         password.as_deref(),
         loc,
+        // Silent: this runs on startup, before the TUI, where a stream of
+        // progress lines would only look like noise before the app appears.
+        |_| {},
     )
     .map_err(|e| {
         anyhow!(

@@ -124,13 +124,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1792 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1798 unit
 tests green, 75 `#[ignore]` smokes** (the largest count — log below; the most
-recent change is a small input-box refinement: **`Home`/`End` became a ladder of
-stops** — a wrapped line's on-screen row first, then the whole logical line, with
-`Home` additionally stopping at the line's first non-whitespace character; the
-step is chosen by the cursor's position, not by counting presses, so nothing has
-to reset it); before that —
+recent change makes **`backup`/`restore` narrate their work**: every phase
+announces itself before it runs and the packing/unpacking loops count their
+entries, so a restore that takes twenty seconds no longer looks like a hung
+program — least of all right after the echo-less password prompt; and keys
+pressed while it worked are discarded instead of being replayed by the shell on
+exit); before that — a small input-box refinement: **`Home`/`End` became a ladder
+of stops** — a wrapped line's on-screen row first, then the whole logical line,
+with `Home` additionally stopping at the line's first non-whitespace character;
+the step is chosen by the cursor's position, not by counting presses, so nothing
+has to reset it; before that —
 the change that completes the **MCP server editor** track
 ([plan](docs/history/mcp-server-editor.md)) with **secrets for the `env` map and
 JSON import**: a server's token is typed into a masked row and stored
@@ -11475,6 +11480,67 @@ debounce was done as a separate PR, see below).
   `link_check` clean.
 - **A live run isn't required** (AGENTS.md §3): cursor movement inside one
   widget — no engine, memory, tool or provider path is touched.
+
+### Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
+
+- **Reported from a real password-protected restore**: after typing the password
+  and pressing `Enter` the program printed a newline and then **sat silent for
+  ten seconds**, after which all three result lines appeared at once; and the
+  `Enter`s pressed during that silence were replayed by `cmd` afterwards as
+  three empty prompts. Branch `fix/restore-progress-and-typeahead` (a simple task
+  by AGENTS.md §1: one feature module and the CLI, no cross-layer contract, no
+  new dependency — no design doc).
+- **Two defects with one symptom, and the second one made the first worse.**
+  Every message was written *after* the work (`cli.restore.pre_saved`,
+  `cli.restore.cleared`), so the whole restore ran mute; and a password prompt
+  echoes nothing, so the one moment the user most needs a sign of life is the
+  one where the program looked dead. Pressing `Enter` is then the natural thing
+  to try — and those keystrokes sat in the console input buffer with nobody
+  reading them, so on exit the shell inherited and replayed them.
+- **Progress is a callback of already-localized lines**, the shape
+  `sandbox_setup::setup` already uses: `features` has no TUI, so the CLI decides
+  where the lines go (`println!`) and `data_migration` — which runs at startup,
+  before the TUI — passes `|_| {}`. Each phase announces itself **before** it
+  runs (checking → pre-restore copy → compacting → packing → clearing →
+  unpacking → compacting), which is what makes it feedback rather than a log.
+- **The entry loops count themselves out** (`EntryProgress`, `N of M`, at most
+  once per 500 ms, counted from the loop's start so a small data root finishes
+  in silence). Deliberately **not** a byte counter: the measured shape of a real
+  root is ~300 small chat files plus one 26 MB `data.db`, so entry counting
+  answers "is it moving?" for the bulk of the time, while an honest byte counter
+  would have to reach inside the copy of a single file — recorded as groundwork
+  rather than done.
+- **The keystrokes are discarded on the way out**
+  (`features/terminal_input.rs::discard_type_ahead`, the module renamed from
+  `password_prompt.rs` — it is now terminal input for the CLI generally). Safe
+  because there is no other consumer: the CLI has finished reading by then, and
+  the keys were typed at us. Gated on stdin being a terminal, so a pipe or a CI
+  job keeps its input; called on **both** commands and on every outcome
+  (including a rollback), since the shell inherits the terminal either way.
+- **One message survived the rewrite for a reason**: the path of the pre-restore
+  copy is still printed at the end (`cli.restore.pre_saved`), because that is the
+  path you undo a restore with and by then the progress lines have scrolled past.
+  The phase label above it therefore names no path — it is announced before the
+  copy exists. `cli.restore.cleared` became a progress line and its key was
+  deleted (the i18n gate fails on a dead key).
+- **Tests**: the phase order on a real restore (the contract is that each label
+  precedes its step), a pre-restore copy **not** announced when the root is
+  empty, the rollback announcing itself, `backup` announcing compaction before
+  packing, and the ticker staying quiet under its interval / counting `N of M`
+  with no unsubstituted placeholder in either language. **Mutation-tested**:
+  dropping the clearing label, dropping the rollback label, or ignoring the
+  throttle each fails exactly its own test. **1798 unit tests green** (+6), 75
+  `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **No live model run is required** (AGENTS.md §3) — no engine, memory or tool
+  path is touched. What stands in for it, as in the compaction and password work,
+  is the **real CLI against a copy of the real data root** (321 chats, 26 MB
+  database, 58 MB): `backup --password` narrated 331 entries and finished in
+  15.7 s, `restore` narrated every phase of its 21.4 s and left the data intact
+  (321 chats, the database restored), and a restore with no password still
+  refuses before touching anything. The **type-ahead half cannot be tested from
+  here** — it needs a real console, and `IsTerminal` is false in a piped
+  harness — so it is left for the user's interactive check, the same boundary
+  the MCP command resolver's wiring sits behind.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

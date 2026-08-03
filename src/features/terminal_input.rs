@@ -1,16 +1,19 @@
-//! Reading a backup password from the terminal without echoing it.
+//! Terminal input for the CLI commands (no TUI): the hidden backup-password
+//! prompt, and discarding whatever was typed while a long command was running.
 //!
-//! Used by the CLI `restore` path (docs/history/backup-password.md §4 F6): restoring a
-//! foreign archive on a fresh machine is exactly the case where there is no
-//! stored password, and the only alternative would be `--password` on the
-//! command line — which lands in the shell history and the process list.
+//! The prompt is used by the CLI `restore` path (docs/history/backup-password.md
+//! §4 F6): restoring a foreign archive on a fresh machine is exactly the case
+//! where there is no stored password, and the only alternative would be
+//! `--password` on the command line — which lands in the shell history and the
+//! process list.
 //!
 //! No new dependency: `crossterm` is already used by the TUI, and raw mode is
-//! what suppresses the echo. The prompt is **skipped when stdin is not a
+//! what suppresses the echo. Both functions are **skipped when stdin is not a
 //! terminal** (a pipe, a CI job, a service): prompting there would hang forever
-//! instead of failing with a message.
+//! instead of failing with a message, and discarding would eat piped input.
 
 use std::io::{IsTerminal, Write};
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
@@ -40,6 +43,37 @@ pub fn read_password(prompt: &str) -> std::io::Result<Option<String>> {
     println!();
 
     result
+}
+
+/// A backstop against an unresponsive terminal: a drain can't outlive this many
+/// events. Real type-ahead is a handful of keystrokes.
+const MAX_DISCARDED_EVENTS: usize = 4096;
+
+/// Discards keystrokes typed while a long command was running.
+///
+/// Packing or unpacking a real data root takes seconds, and keys pressed in the
+/// meantime — an impatient `Enter` after the password prompt, most of all — sit
+/// in the console input buffer untouched. They were typed at *us*, but nothing
+/// here reads them, so on exit the shell inherits them and replays them as its
+/// own command line. Discarding is the standard fix, and it is safe because
+/// there is no other consumer: the CLI is done reading by the time this runs.
+///
+/// Deliberately silent about failures — a terminal we can't poll is exactly the
+/// case where there is nothing to discard.
+pub fn discard_type_ahead() {
+    if !is_interactive() {
+        return;
+    }
+    for _ in 0..MAX_DISCARDED_EVENTS {
+        match event::poll(Duration::ZERO) {
+            Ok(true) => {
+                if event::read().is_err() {
+                    return;
+                }
+            }
+            _ => return,
+        }
+    }
 }
 
 /// Reads characters until Enter, in raw mode (nothing is echoed).

@@ -306,10 +306,12 @@ src/
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
-│  │                        password — spec §12.3)
+│  │                        password — spec §12.3); reports phase progress through a
+│  │                        callback, the CLI prints it (sandbox_setup's shape)
 │  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
 │  │                        corruption gates, pre-migration backup, control-parse
-│  ├─ password_prompt.rs    hidden terminal input of the backup password (CLI restore)
+│  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
+│  │                        discarding keys typed while a long command was running
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup
 │  └─ import.rs             import from the neutral mindfork-import format
