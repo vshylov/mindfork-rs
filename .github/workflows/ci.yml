@@ -6,9 +6,10 @@
 #
 # Runner minutes: the full matrix runs on pull requests (the real gate); on
 # push-to-main the Windows entry only builds, to leave a warm cache behind —
-# see the comment on the matrix below. That build costs ~15 billable minutes per
-# merge and buys back the ~7.5 minutes of cold compile every pull request used
-# to pay, which is the trade this workflow deliberately makes.
+# see the comment on the matrix below. Measured on the first such run: 9m31s of
+# build plus 1m06s to save, i.e. ~19 billable minutes per merge (Windows bills at
+# 2x), buying back the ~7.5 minutes of cold compile every pull request used to
+# pay. That is the trade this workflow deliberately makes.
 name: CI
 
 on:

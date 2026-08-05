@@ -12100,6 +12100,15 @@ three findings are invisible from the workflow's own status):
   `RealTimeProtectionEnabled = False` predicts. The remaining ~6 minutes of cold
   compile go on the *next* pull request, once this merge leaves a warm Windows
   cache behind.
+- **Confirmed after the merge** (2026-08-05): the warming run left
+  `v0-rust-test-Windows_NT-x64-2afb1257-dc2e291a`, 445 MB, on
+  `refs/heads/main` — the **same key** the pull-request job looks for, which was
+  the whole point. It cost 9m31s of build plus 1m06s to save, i.e. **~19
+  billable minutes** per merge rather than the ~15 estimated beforehand; the
+  estimate in the workflow header was corrected to the measured figure. What is
+  *not* yet measured is how much rebuild remains on a warm pull request — though
+  the mechanism itself is not in doubt, since the Linux `lint` job already
+  restores `main`'s cache on every pull request and runs a full clippy in 1m17s.
 - **A hypothesis of mine that the measurement killed — twice over.** I
   attributed the runner being ~8x slower than a local Windows box at the same
   four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
