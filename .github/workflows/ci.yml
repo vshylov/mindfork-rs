@@ -112,7 +112,18 @@ jobs:
         run: python3 tools/link_check.py --list
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
+      # A cache belongs to the branch that wrote it, so with the default
+      # `save-if: true` every PR branch stores its own 0.3-0.6 GB copy of the
+      # same thing. The repository cap is 10 GB and it was already over it
+      # (10.37 GB in 21 caches, five near-identical copies of one key), which
+      # evicts by age — including the caches that matter — and turns later runs
+      # cold: exactly the minutes this workflow is otherwise careful about.
+      # Saving only from `main` keeps one copy per job; a pull request still
+      # *restores* it, because GitHub lets a branch read its base branch's
+      # caches.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: System dependencies (ALSA — speech playback /tts)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Formatting
@@ -152,7 +163,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
+      # Save only from `main` (see the comment in `lint`) — with one exception:
+      # the `main` matrix is deliberately Linux-only, so a Windows cache would
+      # never be written at all and every pull request would rebuild from
+      # scratch on the runner that bills at 2x. There it keeps saving per branch.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' || runner.os == 'Windows' }}
       # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
       - name: System dependencies (ALSA — speech playback /tts)
         if: runner.os == 'Linux'
@@ -193,7 +210,12 @@ jobs:
       # in rust-toolchain.toml, so a developer checkout does not download them.
       - name: LLVM tools (for cargo-llvm-cov)
         run: rustup component add llvm-tools-preview
+      # Save only from `main` (see the comment in `lint`). This job's cache is
+      # the largest of the three — it holds both the instrumented and the plain
+      # build — so it is also the one that most needs to exist exactly once.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: System dependencies (ALSA — speech playback /tts)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: taiki-e/install-action@cargo-llvm-cov
