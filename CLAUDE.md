@@ -12272,6 +12272,48 @@ three findings are invisible from the workflow's own status):
   tool or provider behaviour changes. No CHANGELOG entry — internal tests
   (§4).
 
+### Post-M9: orchestrator fixtures — two convertible, the rest not (done)
+
+- **Asked as a follow-up to the tool-test change**: with `features::tools::*`
+  moved off disk, `app::orchestrator::*` became the dominant remaining cost —
+  **384.5s of the 876.1s** CI per-test sum in the nextest probe, against tools'
+  419.1s. The question was whether the same trick applies.
+- **Mostly it does not, and finding out *why* is the useful part.** The
+  orchestrator fixtures split three ways:
+  - `spawn_orch_at` — **two-phase** tests that restart the app on one data root.
+    An in-memory database dies with its connection, so phase two would start
+    from an empty `cache.db` and exercise the index *rebuild* path instead of
+    the *restore* one: the test keeps passing while covering something else.
+  - `spawn_orch_cfg`/`spawn_orch` — single-phase, so they *look* convertible.
+    They are not: roughly thirty tests built on them reopen storage afterwards
+    (`let reopened = Storage::open(Paths::with_root(&root))`) to assert what
+    actually reached disk. That idiom is how this suite checks persistence at
+    all.
+  - `bare_orch_rx` and `orchestrator::rag::test_deps` — no test on either
+    reopens storage, verified by scanning every test file rather than assumed.
+    **Converted.**
+- **The measurement that settled it, and the near-miss worth recording.**
+  Converting `spawn_orch_cfg` failed **6 tests** outright — and, far more
+  interesting, **2 more kept passing for the wrong reason**:
+  `removing_an_attachment_drops_its_index` and `an_inline_file_is_not_indexed`
+  assert an *absence*, and against an always-empty reopened store they pass
+  whether or not the code works. A green suite would have hidden that, which is
+  exactly why the conversion was reverted rather than patched test-by-test: the
+  hazard is not the six that shout, it is the two that do not. The reasoning
+  sits in `spawn_orch_cfg`'s doc comment so the next person does not rediscover
+  it by breaking something.
+- **Measured** (locally, four threads, per-test sums): `app::orchestrator::*`
+  **78.9s → 54.0s (−32%)**, whole-suite sum **140.2s → 113.4s (−19%)** on top of
+  the tool-test change. The two heaviest converted tests —
+  `reflection::reflect_failures_alert_once_then_reset` (7.80s on CI) and
+  `rag::index_source_reports_chunk_progress_in_subbatches` (9.07s on CI) — both
+  drop to **0.01s**. Cumulatively with the previous entry the per-test sum goes
+  231.3s → 113.4s (−51%).
+- **1835 unit tests green**, 76 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3):
+  test fixtures only; `Storage::open_in_memory` is `#[cfg(test)]`. No CHANGELOG
+  entry — internal tests (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

@@ -46,6 +46,15 @@ fn spawn_orch_cfg(
     tokio::task::JoinHandle<()>,
 ) {
     let dir = tempfile::tempdir().unwrap();
+    // Deliberately **file-backed**, even though this fixture never restarts:
+    // roughly thirty tests built on it reopen storage afterwards
+    // (`Storage::open(Paths::with_root(&root))`) to assert what reached disk.
+    // In-memory would not merely fail them — the ones asserting *absence*
+    // (`removing_an_attachment_drops_its_index`, `an_inline_file_is_not_indexed`)
+    // would keep passing against an always-empty store, i.e. pass vacuously.
+    // Measured while trying: 6 of those tests failed outright and 2 more passed
+    // for the wrong reason. `bare_orch_rx` and `orchestrator::rag::test_deps`
+    // are in memory because no test on them reopens storage.
     let (cmd_tx, evt_rx, handle) = spawn_orch_at(dir.path(), backend, config);
     (dir, cmd_tx, evt_rx, handle)
 }
@@ -53,6 +62,11 @@ fn spawn_orch_cfg(
 /// Like [`spawn_orch_cfg`], but on an **existing** data root — for two-phase
 /// tests that restart the app on the same data (what survived to disk, what a
 /// fresh bootstrap makes of it).
+///
+/// Deliberately **file-backed**, unlike [`spawn_orch_cfg`]: an in-memory
+/// database dies with its connection, so a second phase would silently start
+/// from an empty `cache.db` and exercise the *rebuild* path instead of the
+/// restore one — the test would still pass while covering something else.
 fn spawn_orch_at(
     root: &std::path::Path,
     backend: Option<Arc<dyn EngineBackend>>,
@@ -100,7 +114,8 @@ fn bare_orch() -> (tempfile::TempDir, Orchestrator) {
 /// Like [`bare_orch`], but also returns the event receiver (to check emission).
 fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEvent>) {
     let dir = tempfile::tempdir().unwrap();
-    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    // In-memory: a bare orchestrator is built directly and never restarted.
+    let storage = Arc::new(Storage::open_in_memory(Paths::with_root(dir.path())).unwrap());
     let (evt_tx, evt_rx) = unbounded_channel();
     let (done_tx, _done_rx) = unbounded_channel();
     let (status_tx, _status_rx) = unbounded_channel();
