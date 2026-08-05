@@ -12093,8 +12093,11 @@ three findings are invisible from the workflow's own status):
   non-test build. Locally at the runner's four threads: the compaction tests
   **19.35s → 0.49s**, the full suite **68.67s → 45.36s**.
 - **Measured result**, still with a cold cache since `main` had not yet saved
-  one: job **19m00s → 15m00s / 16m22s** over two runs, test run **549.1s →
-  359.1s / 469.0s**, cache save **1m51s → 2s**. The remaining ~6 minutes of cold
+  one: job **19m00s → 15m00s / 16m22s / 15m29s** over three runs, test run
+  **549.1s → 359.1s / 469.0s / 376.5s**, cache save **1m51s → 2s**. The third
+  run is the one with the Defender step already removed, and it lands between
+  the other two — confirming the removal cost nothing, as
+  `RealTimeProtectionEnabled = False` predicts. The remaining ~6 minutes of cold
   compile go on the *next* pull request, once this merge leaves a warm Windows
   cache behind.
 - **A hypothesis of mine that the measurement killed — twice over.** I
@@ -12109,12 +12112,13 @@ three findings are invisible from the workflow's own status):
   so excluding paths from a scanner that is not running buys nothing; the step
   was removed and the comment now warns against re-adding it without checking
   that flag. The residual gap is the runner's CPU and disk.
-- **Runner variance is large enough to matter when reading these numbers.** Two
-  runs of *identical* code gave test runs of 359.1s and 469.0s — a 30% spread.
-  So the honest attribution is that the controlled local measurement
-  (68.67s → 45.36s at four threads) is the trustworthy one, and single-run CI
-  comparisons here should not be read to two significant figures. Worth knowing
-  before anyone tunes this workflow against one green run.
+- **Runner variance is large enough to matter when reading these numbers.**
+  Three post-fix runs gave test runs of 359.1s, 469.0s and 376.5s — a 30%
+  spread, with the middle one an outlier. So the honest attribution is that the
+  controlled local measurement (68.67s → 45.36s at four threads) is the
+  trustworthy one, and single-run CI comparisons here should not be read to two
+  significant figures. Worth knowing before anyone tunes this workflow against
+  one green run.
 - **cargo-nextest — evaluated and rejected, measured rather than reasoned.**
   Slower here at both parallelism levels: **46.3s vs 37.4s** at full parallelism
   and **52.3s vs 45.4s** at the runner's four threads. The reason is structural:
