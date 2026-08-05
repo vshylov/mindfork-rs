@@ -182,11 +182,13 @@ jobs:
   # — hence the toolchain and ALSA here — and imports the LCOV report produced
   # right above it by `cargo llvm-cov`.
   #
-  # Advisory, not a gate: the job reports the analysis and does not wait for the
-  # quality-gate verdict, so a Sonar outage or a fresh batch of findings cannot
-  # redden a PR (the same posture as audit.yml). The verdict is visible in the
-  # PR decoration and on sonarcloud.io. To make it blocking, add
-  # `-Dsonar.qualitygate.wait=true` to the scan arguments.
+  # Blocking: `sonar.qualitygate.wait` (sonar-project.properties) makes the
+  # scanner wait for the server to process the report and fail on a failed gate.
+  # It started advisory on purpose — a new analyzer on a 1833-test codebase can
+  # surface a batch of findings at once — and was flipped once the first analyses
+  # came back clean. The gate judges *new* code, so the existing backlog cannot
+  # redden a PR; what can is new uncovered code, new issues, or an analysis the
+  # server rejects (which used to pass silently).
   #
   # Runner minutes: reuses the `changes` gate, so a docs-only PR skips it (there
   # is no new code to analyze). The two builds it does (instrumented for

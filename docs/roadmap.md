@@ -190,14 +190,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   Minor, and the full gate always needs chat.
 - **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
   wrapping, brute-force memory cosine — a performance regression detector.
-- **SonarQube Cloud: make the gate blocking** — the `sonar` job in `ci.yml` is
-  deliberately advisory for now (it does not pass `sonar.qualitygate.wait`), so
-  the first batch of findings on a 1833-test codebase cannot redden every PR.
-  Once that batch is triaged, flipping it is one argument. Alongside it: a
+- **SonarQube Cloud leftovers** — the gate is blocking as of 2026-08-05
+  (`sonar.qualitygate.wait`, see the journal), so what remains is smaller: a
   quality-gate badge in the README (a **private** project's badge needs a token
-  to render for anonymous readers), and — if the first measurements say the
-  duplicated instrumented test run is the expensive half — folding the coverage
-  run into the Linux `test` job instead of a job of its own.
+  to render for anonymous readers), and — if the measurements say the duplicated
+  instrumented test run is the expensive half — folding the coverage run into the
+  Linux `test` job instead of a job of its own. Also unreviewed: the project's
+  **New Code definition**, which now decides what the gate judges.
 
 ## Multilingualism (i18n)
 
