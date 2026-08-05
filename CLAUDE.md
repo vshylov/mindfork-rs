@@ -11999,6 +11999,13 @@ three findings are invisible from the workflow's own status):
   the action, but run on a tag, a dispatch, or a `packaging/**` PR, so they are
   not what churns — and two of them are rare *and* expensive, where a cold build
   hurts most.
+- **Along the way**: `sonar.python.version=3.10, 3.11, 3.12` in
+  `sonar-project.properties` — the only WARN the scan emits is the Python
+  analyzer saying it assumes "all of Python 3" for `tools/*.py`. The list is what
+  actually runs them (3.10 on the development machine, 3.12 on the ubuntu-24.04
+  runner), not a guess. It rides this PR because that one already pays for a full
+  test run and is the same CI plumbing; a docs-only PR would not have carried it,
+  since `sonar-project.properties` is deliberately outside the docs allowlist.
 - **Verification is deferred to the merge, on purpose**: the property is "a PR
   branch stops writing Linux caches", which cannot be observed before the change
   is on `main` — `gh cache list` after the next PR is the check. The YAML parses
