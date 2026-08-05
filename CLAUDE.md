@@ -12105,10 +12105,18 @@ three findings are invisible from the workflow's own status):
   `refs/heads/main` — the **same key** the pull-request job looks for, which was
   the whole point. It cost 9m31s of build plus 1m06s to save, i.e. **~19
   billable minutes** per merge rather than the ~15 estimated beforehand; the
-  estimate in the workflow header was corrected to the measured figure. What is
-  *not* yet measured is how much rebuild remains on a warm pull request — though
-  the mechanism itself is not in doubt, since the Linux `lint` job already
-  restores `main`'s cache on every pull request and runs a full clippy in 1m17s.
+  estimate in the workflow header was corrected to the measured figure.
+- **The warm pull request, measured** (run 31033936114 — this very docs PR,
+  which touches `.github/workflows/ci.yml` and is therefore deliberately outside
+  the docs-only allowlist, so it ran the full matrix and served as the
+  measurement without anyone having to manufacture a throwaway PR). The Windows
+  job went **19m00s → 9m11s**, and the breakdown is where the shape of it shows:
+  cache restore 4s (a miss) → **32s** (a real 445 MB restore), compile **7m31s →
+  1m45s**, cache save 1m51s → 1s, test run 549.1s → 386.1s. The compile figure
+  is the one that matters — it is exactly the predicted behaviour, dependencies
+  coming from the cache and only our own crate rebuilding, which is also what
+  the Linux `lint` job had been demonstrating on every pull request all along.
+  **CI wall clock is now bounded by Windows at ~9 minutes rather than ~19.**
 - **A hypothesis of mine that the measurement killed — twice over.** I
   attributed the runner being ~8x slower than a local Windows box at the same
   four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
