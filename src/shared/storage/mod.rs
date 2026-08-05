@@ -36,6 +36,30 @@ impl Storage {
         Ok(Self { json, db, cache })
     }
 
+    /// Like [`Storage::open`], but with both SQLite halves in memory — for
+    /// tests that need a working store rather than a durable one.
+    ///
+    /// The JSON repository still uses `paths`, so anything that reads or writes
+    /// config/profiles/chats behaves exactly as before; only `data.db` and
+    /// `cache.db` stop being files. That is deliberate: the two SQLite halves
+    /// are what a tool test actually exercises, and they are also what costs —
+    /// every write is an fsync, which is why the tests that go through this are
+    /// the ones a slow disk punishes hardest (measured on the Windows CI
+    /// runner: notes/RAG tests run 8–19x slower than locally, against a 3.9x
+    /// median for the suite).
+    ///
+    /// Not suitable for anything that reopens storage or asserts on the files
+    /// themselves — an in-memory database dies with its connection. Backup,
+    /// migration and compaction tests therefore keep using [`Storage::open`].
+    #[cfg(test)]
+    pub fn open_in_memory(paths: Paths) -> Result<Self> {
+        Ok(Self {
+            json: JsonStore::new(paths),
+            db: Db::open_in_memory()?,
+            cache: CacheDb::open_in_memory()?,
+        })
+    }
+
     /// JSON repository (config/profiles/chats).
     pub fn json(&self) -> &JsonStore {
         &self.json
@@ -72,6 +96,52 @@ mod tests {
     use super::*;
     use crate::entities::chat::Chat;
     use crate::entities::profile::Profile;
+
+    /// The in-memory facade must behave like the real one *and* touch no disk.
+    /// The second half is the whole point and is invisible from a passing test,
+    /// so it is pinned here. (That the tool testkit actually *uses* this is a
+    /// separate claim, pinned by `tool_context_storage_touches_no_disk` in
+    /// `features::tools` — a test cannot see which constructor its caller
+    /// picked.)
+    #[test]
+    fn in_memory_storage_works_but_writes_no_database_files() {
+        use crate::entities::note::Note;
+        use crate::entities::rag::RagDocument;
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let storage = Storage::open_in_memory(paths.clone()).unwrap();
+        let profile = Uuid::new_v4();
+
+        // Both SQLite halves are real: schema applied, sqlite-vec registered.
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "заметка", vec![]))
+            .unwrap();
+        storage
+            .db()
+            .rag_insert(&RagDocument::new(profile, "s", "документ", vec![1.0, 0.0]))
+            .unwrap();
+        assert_eq!(
+            storage
+                .db()
+                .note_list(profile, None, &[], None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            storage
+                .db()
+                .rag_search(profile, &[1.0, 0.0], 5)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        assert!(!paths.data_db().exists(), "data.db must not be created");
+        assert!(!paths.cache_db().exists(), "cache.db must not be created");
+    }
 
     #[test]
     fn notes_and_rag_isolated_by_profile_via_facade() {

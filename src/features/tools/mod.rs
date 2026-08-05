@@ -624,7 +624,7 @@ pub(crate) mod testkit {
         lang: crate::shared::i18n::Lang,
     ) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let storage = Arc::new(Storage::open_in_memory(Paths::with_root(dir.path())).unwrap());
         let deps = ToolDeps {
             storage: storage.clone(),
             engine: Arc::new(MockBackend::scripted(vec![])),
@@ -694,7 +694,7 @@ pub(crate) mod testkit {
         embedder: Arc<dyn Embedder>,
     ) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let storage = Arc::new(Storage::open_in_memory(Paths::with_root(dir.path())).unwrap());
         let deps = ToolDeps {
             storage: storage.clone(),
             engine,
@@ -708,6 +708,38 @@ pub(crate) mod testkit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ~1200 tests built on [`testkit::ctx_with_storage`] run against an
+    /// in-memory store on purpose: they exercise SQLite, and on a slow disk
+    /// every write is an fsync — measured on the Windows CI runner, the
+    /// notes/RAG tests that go through here ran 8–19x slower than locally
+    /// against a 3.9x median for the suite, and moving them off disk cut
+    /// `features::tools::*` from 103.3s to 16.4s locally.
+    ///
+    /// Switching the testkit back to [`Storage::open`] would hand all of that
+    /// back and **no other test would fail**, which is exactly why this one
+    /// exists.
+    #[test]
+    fn tool_context_storage_touches_no_disk() {
+        let (dir, storage, _ctx) = testkit::ctx_with_storage(Uuid::new_v4());
+
+        // A real write, so this cannot pass by simply never touching the store.
+        storage
+            .db()
+            .note_insert(&crate::entities::note::Note::new(
+                Uuid::new_v4(),
+                "заметка",
+                vec![],
+            ))
+            .unwrap();
+
+        let paths = crate::shared::paths::Paths::with_root(dir.path());
+        assert!(
+            !paths.data_db().exists(),
+            "the tool testkit must not create data.db — see the doc comment above"
+        );
+        assert!(!paths.cache_db().exists(), "nor cache.db");
+    }
 
     struct Echo;
 

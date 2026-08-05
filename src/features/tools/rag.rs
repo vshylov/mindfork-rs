@@ -1055,9 +1055,9 @@ mod tests {
         // (different profiles in one storage).
         let dir = tempfile::tempdir().unwrap();
         let storage = std::sync::Arc::new(
-            crate::shared::storage::Storage::open(crate::shared::paths::Paths::with_root(
-                dir.path(),
-            ))
+            crate::shared::storage::Storage::open_in_memory(
+                crate::shared::paths::Paths::with_root(dir.path()),
+            )
             .unwrap(),
         );
         let engine: std::sync::Arc<dyn crate::shared::api::EngineBackend> =
