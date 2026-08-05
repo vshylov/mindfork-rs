@@ -12092,19 +12092,29 @@ three findings are invisible from the workflow's own status):
   rowid after it. `Db::batch` is `#[cfg(test)]`, so it does not exist in a
   non-test build. Locally at the runner's four threads: the compaction tests
   **19.35s → 0.49s**, the full suite **68.67s → 45.36s**.
-- **Measured result** (run 31026026505), still with a cold cache since `main`
-  had not yet saved one: job **19m00s → 15m00s**, test run **549.1s → 359.1s**,
-  cache save **1m51s → 2s**. The remaining ~6 minutes of cold compile go on the
-  *next* pull request, once this merge leaves a warm Windows cache behind.
-- **A hypothesis of mine that the measurement killed.** I attributed the runner
-  being ~8x slower than a local Windows box at the same four-thread parallelism
-  (37s local vs 549s) mostly to Defender scanning every file rustc writes, and
-  wrote that into the workflow as the step's rationale. The data says otherwise:
-  the test run improved **−34.6%**, and the fixture fix alone had predicted
-  **−33.9%** locally — the fixtures account for all of it, and compile even
-  drifted +35s. So the residual gap is the runner's CPU and disk, not AV. The
-  comment was corrected rather than left standing, and the step now logs
-  `RealTimeProtectionEnabled` so one more run settles whether to keep it at all.
+- **Measured result**, still with a cold cache since `main` had not yet saved
+  one: job **19m00s → 15m00s / 16m22s** over two runs, test run **549.1s →
+  359.1s / 469.0s**, cache save **1m51s → 2s**. The remaining ~6 minutes of cold
+  compile go on the *next* pull request, once this merge leaves a warm Windows
+  cache behind.
+- **A hypothesis of mine that the measurement killed — twice over.** I
+  attributed the runner being ~8x slower than a local Windows box at the same
+  four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
+  file rustc writes, and wrote that into the workflow as the exclusion step's
+  rationale. First the arithmetic undercut it: the test run improved 34.6% while
+  the fixture fix alone had predicted 33.9% locally, leaving nothing for
+  Defender to explain. Then the direct check settled it — the step was made to
+  log `Get-MpComputerStatus`, and the runner answered
+  **`RealTimeProtectionEnabled = False`**. Defender is already off on the image,
+  so excluding paths from a scanner that is not running buys nothing; the step
+  was removed and the comment now warns against re-adding it without checking
+  that flag. The residual gap is the runner's CPU and disk.
+- **Runner variance is large enough to matter when reading these numbers.** Two
+  runs of *identical* code gave test runs of 359.1s and 469.0s — a 30% spread.
+  So the honest attribution is that the controlled local measurement
+  (68.67s → 45.36s at four threads) is the trustworthy one, and single-run CI
+  comparisons here should not be read to two significant figures. Worth knowing
+  before anyone tunes this workflow against one green run.
 - **cargo-nextest — evaluated and rejected, measured rather than reasoned.**
   Slower here at both parallelism levels: **46.3s vs 37.4s** at full parallelism
   and **52.3s vs 45.4s** at the runner's four threads. The reason is structural:
