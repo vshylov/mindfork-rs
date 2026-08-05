@@ -123,8 +123,8 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-08-03, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1833 unit
+## Status (as of 2026-08-05, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1835 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
 recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
 call's arguments and result away while keeping the header that says what ran,
@@ -12160,13 +12160,9 @@ three findings are invisible from the workflow's own status):
   - **Shape**: a long flat tail rather than a few fat tests — the top 10 are
     12.6% of the total and it takes **100 tests to reach 47%**. So there is no
     single test to fix; the tail is the aggregate.
-- **Groundwork that follows from it** (not done — a facade change, deliberately
-  not bundled into a CI PR): `ctx_with_storage` hands every tool test a
-  file-backed SQLite, and most of them never need a file. `Db::open_in_memory`
-  already exists but `Storage::open` takes a `Paths` and has no in-memory path,
-  so giving the facade one and switching the tests that do not need durability
-  would attack exactly the tests measured worst here. Until then the ~9-to-~18
-  minute spread is the runner's disk and is not worth chasing further.
+- **Groundwork that follows from it** — **done**, see the next entry:
+  `ctx_with_storage` handed every tool test a file-backed SQLite that almost
+  none of them need.
 - **A hypothesis of mine that the measurement killed — twice over.** I
   attributed the runner being ~8x slower than a local Windows box at the same
   four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
@@ -12205,6 +12201,60 @@ three findings are invisible from the workflow's own status):
   live run required** (AGENTS.md §3): CI configuration and a `#[cfg(test)]`
   fixture — no engine, memory, tool or provider path is touched. No CHANGELOG
   entry — dev infrastructure with no user-visible effect (§4).
+
+### Post-M9: tool tests run against in-memory storage (done)
+
+- **The follow-up the CI diagnostic pointed at**, asked for as its own PR
+  (branch `refactor/tool-tests-in-memory-storage`). The nextest probe had shown
+  that the Windows runner's penalty is **disk**, not CPU: a 3.9x median per-test
+  ratio against local, but **8–19x** for every one of the worst offenders — all
+  of them notes/rag/search tests reaching storage through the tools testkit,
+  which built a tempdir plus a **file-backed** SQLite. Almost none of them need
+  a file.
+- **The change is three lines of substance.** `Db::open_in_memory` and
+  `CacheDb::open_in_memory` already existed; the facade was the only gap, so
+  `Storage::open_in_memory(paths)` joins them and keeps `JsonStore` on the real
+  `paths` — chats/profiles/config behave exactly as before, only `data.db` and
+  `cache.db` stop being files. The two testkit constructors
+  (`ctx_with_storage_lang`, `ctx_with_backends`) and one test that shares a
+  single `Arc<Storage>` between two profiles now call it.
+- **No call site changed.** Both helpers keep returning the `TempDir` — the JSON
+  half still needs a root, and callers keep it alive — so all ~126 uses across
+  16 files are untouched. Checked rather than assumed that nothing depended on
+  the files: only two tests bind the directory handle at all, and both merely
+  pass it through; no tool test references `data.db`/`cache.db` or reopens
+  storage.
+- **Measured, locally at the runner's four threads**: full suite **40.68s →
+  24.09s** (−41%), and at full parallelism **37.4s → 16.41s** (−56%). Per-test,
+  the sum over `features::tools::*` goes **103.3s → 16.4s (−84%)**, and the
+  individual tests CI measured worst collapse from ~1s to **0.03s** —
+  `consolidation_overview_uses_the_calibrated_threshold` (18.75s on CI) 1.34s →
+  0.03s, `note_cite_source_links_and_recall_shows_it` (14.52s on CI) 0.90s →
+  0.03s. Those are exactly the tests the runner's disk was punishing 8–19x, so
+  the CI effect should be larger than the local one.
+- **Two guards, because the win is invisible to every other test.** Switching
+  the testkit back to `Storage::open` would hand all the fsyncs back and nothing
+  would fail. So `tool_context_storage_touches_no_disk` (`features::tools`)
+  writes a real note through the testkit's storage and asserts neither database
+  file appears — **mutation-tested**: reverting the testkit fails it with the
+  message naming the cause — and `in_memory_storage_works_but_writes_no_database_files`
+  (`shared::storage`) pins the facade itself, both that the SQLite halves are
+  real (schema applied, sqlite-vec registered, note and vector round-trip) and
+  that no file is created. The first test's doc comment originally claimed the
+  second one's coverage; corrected, since a test cannot see which constructor
+  its caller picked.
+- **Deliberately unchanged**: backup, migration and compaction tests keep
+  `Storage::open` — they assert on the files themselves, and an in-memory
+  database dies with its connection. The orchestrator fixtures also keep it:
+  they genuinely exercise persistence (`flush_saves`, restart scenarios, the
+  search-cache reconciliation that reads chat files), and two of the CI-worst
+  tests are theirs, so that is a separate question rather than an oversight.
+- **1835 unit tests green** (+2 guards), 76 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean. **No live run required**
+  (AGENTS.md §3): a test-only storage path — `Storage::open_in_memory` is
+  `#[cfg(test)]` and does not exist in a non-test build, and no engine, memory,
+  tool or provider behaviour changes. No CHANGELOG entry — internal tests
+  (§4).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
