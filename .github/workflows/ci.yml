@@ -7,8 +7,8 @@
 # Runner minutes: the full matrix runs on pull requests (the real gate); on
 # push-to-main the Windows entry only builds, to leave a warm cache behind —
 # see the comment on the matrix below. That build costs ~15 billable minutes per
-# merge and buys back ~9 minutes of wall clock on every pull request, which is
-# the trade this workflow deliberately makes.
+# merge and buys back the ~7.5 minutes of cold compile every pull request used
+# to pay, which is the trade this workflow deliberately makes.
 name: CI
 
 on:
@@ -163,12 +163,17 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      # Windows runners ship Defender with real-time protection on, and it scans
-      # every file rustc writes and every process the tests spawn; Linux runners
-      # have no AV at all. That is most of the otherwise unexplained gap — the
-      # same suite is 41s on Linux and 37s on a local Windows box, but 549s here.
-      # Exclusions need admin, which the runner has. Best effort: a failure here
-      # must not fail the job, it only makes it slow again.
+      # Defender exclusions, kept as cheap insurance rather than as a proven win.
+      # The theory was that real-time scanning of everything rustc writes
+      # explains the runner being ~8x slower than a local Windows box at the same
+      # four-thread parallelism (37s local vs 549s here). Measured, it does not:
+      # adding these changed the test run by no more than run-to-run noise — the
+      # -35% that run actually gained is fully accounted for by the fsync fix in
+      # the seeding fixtures, which had predicted -34% locally. So the residual
+      # gap is the runner's CPU and disk, not AV. The step costs ~7s and the
+      # status line below says whether real-time protection is even on, so the
+      # next run settles whether to keep it at all. Best effort: a failure here
+      # must never fail the job.
       - name: Exclude the build directories from Defender (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -181,6 +186,10 @@ jobs:
           # (`mindfork_rs-<hash>.exe`) cannot be listed here — it is covered by
           # the workspace path exclusion above instead.
           Add-MpPreference -ExclusionProcess "rustc.exe", "cargo.exe", "link.exe"
+          # If this reports False, the exclusions above are provably pointless
+          # and the whole step can go.
+          $s = Get-MpComputerStatus
+          "RealTimeProtectionEnabled = $($s.RealTimeProtectionEnabled)"
       # Save only from `main` (see the comment in `lint`). The Windows exception
       # that used to live here was worse than useless: `main` never built
       # Windows, so nothing was ever saved to a ref a pull request can read

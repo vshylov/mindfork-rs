@@ -190,12 +190,27 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   Minor, and the full gate always needs chat.
 - **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
   wrapping, brute-force memory cosine — a performance regression detector.
+- **cargo-nextest — evaluated and rejected** (2026-08-05, measured, so that it
+  is not re-litigated from first principles). Locally on Windows it is *slower*
+  than `cargo test`: 46.3s against 37.4s at full parallelism and 52.3s against
+  45.4s at the runner's four threads. The reason is structural rather than
+  incidental — this is a single binary crate whose 1833 tests live in one
+  executable, and nextest runs each test in its own process, which Windows
+  charges for. It also does nothing about compilation, which was the larger half
+  of the Windows job. Its one genuinely attractive feature here is
+  `--partition` sharding, but that multiplies the compile cost across shards,
+  i.e. it trades away exactly what the cache warming just bought. Worth
+  revisiting only if the crate is ever split, or if the suite grows enough that
+  sharding beats a warm single build.
 - **SonarQube Cloud leftovers** — the gate is blocking as of 2026-08-05
   (`sonar.qualitygate.wait`, see the journal), so what remains is smaller: a
   quality-gate badge in the README (a **private** project's badge needs a token
   to render for anonymous readers), and — if the measurements say the duplicated
   instrumented test run is the expensive half — folding the coverage run into the
-  Linux `test` job instead of a job of its own. Also unreviewed: the project's
+  Linux `test` job instead of a job of its own. On that last one there is now a
+  measurement: the whole `sonar` job runs in ~3.5 min against the Windows job's
+  19, so it was never on the critical path and merging it would buy wall clock
+  only once Windows drops below it. Also unreviewed: the project's
   **New Code definition**, which now decides what the gate judges.
 - **Make the checks *required*** — "blocking" currently stops at the job: a failed
   gate reddens `SonarQube Cloud`, but GitHub still lets a red pull request be
