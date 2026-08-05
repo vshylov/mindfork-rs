@@ -1,2 +1,4 @@
 /target
 __pycache__/
+# Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).
+/lcov.info
