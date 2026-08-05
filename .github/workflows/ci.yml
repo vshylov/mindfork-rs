@@ -4,8 +4,11 @@
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
 #
-# Runner minutes: the full matrix runs on pull requests (the real gate); the
-# push-to-main run is trimmed to Linux — see the comment on the matrix below.
+# Runner minutes: the full matrix runs on pull requests (the real gate); on
+# push-to-main the Windows entry only builds, to leave a warm cache behind —
+# see the comment on the matrix below. That build costs ~15 billable minutes per
+# merge and buys back ~9 minutes of wall clock on every pull request, which is
+# the trade this workflow deliberately makes.
 name: CI
 
 on:
@@ -148,34 +151,60 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both OSes on a pull request; on `main` — Linux only. GitHub runs
-        # `pull_request` against the *merge result* (`refs/pull/N/merge`), so the
-        # push-to-main run re-tests code that has already passed, and
-        # `windows-latest` bills at 2x (~16 of the 20 billable minutes per run).
-        # The Linux run is kept on `main` so the README badge stays live and a
-        # semantic conflict between two separately-green PRs is still caught.
-        os: >-
-          ${{ github.event_name == 'push'
-              && fromJSON('["ubuntu-latest"]')
-              || fromJSON('["ubuntu-latest","windows-latest"]') }}
+        # Both OSes on both events — but on `main` the Windows entry only
+        # *builds* (see the `Tests` step). GitHub runs `pull_request` against the
+        # *merge result*, so re-running the Windows suite on `main` would re-test
+        # code that has already passed; what `main` is here for is to leave a
+        # warm Windows cache behind, which is the single biggest cost on a pull
+        # request (measured: 7m31s of cold compile out of a 19-minute job).
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      # Save only from `main` (see the comment in `lint`) — with one exception:
-      # the `main` matrix is deliberately Linux-only, so a Windows cache would
-      # never be written at all and every pull request would rebuild from
-      # scratch on the runner that bills at 2x. There it keeps saving per branch.
+      # Windows runners ship Defender with real-time protection on, and it scans
+      # every file rustc writes and every process the tests spawn; Linux runners
+      # have no AV at all. That is most of the otherwise unexplained gap — the
+      # same suite is 41s on Linux and 37s on a local Windows box, but 549s here.
+      # Exclusions need admin, which the runner has. Best effort: a failure here
+      # must not fail the job, it only makes it slow again.
+      - name: Exclude the build directories from Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-MpPreference -ExclusionPath `
+            "${{ github.workspace }}", "$env:USERPROFILE\.cargo", `
+            "$env:USERPROFILE\.rustup", "${{ runner.temp }}"
+          # Process exclusions match by bare name, so the test binary
+          # (`mindfork_rs-<hash>.exe`) cannot be listed here — it is covered by
+          # the workspace path exclusion above instead.
+          Add-MpPreference -ExclusionProcess "rustc.exe", "cargo.exe", "link.exe"
+      # Save only from `main` (see the comment in `lint`). The Windows exception
+      # that used to live here was worse than useless: `main` never built
+      # Windows, so nothing was ever saved to a ref a pull request can read
+      # (GitHub scopes a cache to the branch that wrote it, and only lets a
+      # branch read its *base*). Every PR therefore paid a full cold build and
+      # then spent 1m51s saving 445 MB to its own `refs/pull/N/merge`, which no
+      # other run could ever restore and which dies with the PR.
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || runner.os == 'Windows' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
       - name: System dependencies (ALSA — speech playback /tts)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      # On `main` the Windows entry builds without running: the suite already
+      # passed on the pull request, and building is what fills the cache. This
+      # keeps the same job id — and therefore the same rust-cache key, which
+      # embeds it (`v0-rust-test-Windows_NT-…`) — so a pull request restores
+      # exactly what `main` saved. A separate warming job would silently write a
+      # different key and warm nothing.
       - name: Tests
-        run: cargo test
+        run: >-
+          ${{ (github.event_name == 'push' && runner.os == 'Windows')
+              && 'cargo test --no-run' || 'cargo test' }}
 
   # SonarQube Cloud analysis (project `vshylov_mindfork-rs`, configuration in
   # sonar-project.properties). The Sonar Rust analyzer runs `cargo clippy` itself
