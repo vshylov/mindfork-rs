@@ -12006,12 +12006,54 @@ three findings are invisible from the workflow's own status):
   runner), not a guess. It rides this PR because that one already pays for a full
   test run and is the same CI plumbing; a docs-only PR would not have carried it,
   since `sonar-project.properties` is deliberately outside the docs allowlist.
-- **Verification is deferred to the merge, on purpose**: the property is "a PR
-  branch stops writing Linux caches", which cannot be observed before the change
-  is on `main` — `gh cache list` after the next PR is the check. The YAML parses
-  and all three `save-if` expressions render as intended; **1833 unit tests**
-  unchanged (no Rust code touched); no live run required (AGENTS.md §3) and no
-  CHANGELOG entry — dev infrastructure with no user-visible effect (§4).
+- **Verification had to wait for the merge** — the property is "a PR branch stops
+  writing Linux caches", which cannot be observed while the change is still on a
+  branch. **Confirmed the same day** (2026-08-05), and earlier than expected,
+  because a stacked PR already carried the rule: `gh cache list` by ref shows
+  `refs/pull/259/merge` and `refs/pull/260/merge` holding **only** the Windows
+  test cache, while `refs/pull/258/merge` — from before the change — still has a
+  `sonar` copy, and the Linux trio (`lint` 317 MB, `sonar` 634 MB, `test-Linux`
+  515 MB) now exists once, under `refs/heads/main`. Usage went **10.37 GB / 21
+  caches → 9.65 GB / 19** and keeps falling as older per-branch copies age out.
+  The YAML parses and all three `save-if` expressions render as intended; **1833
+  unit tests** unchanged (no Rust code touched); no live run required (AGENTS.md
+  §3) and no CHANGELOG entry — dev infrastructure with no user-visible effect (§4).
+- **A property of the docs-only classifier, learned the same day**: it reads the
+  **whole PR file list**, not the last push. Merging a CI branch into a docs PR
+  therefore makes that PR non-docs-only, and it correctly runs the full matrix —
+  which is what happened when this stack was merged child-first.
+
+### Post-M9: the SonarQube quality gate became blocking (done)
+
+- **Closes the groundwork item opened when the analysis was set up**: the job was
+  advisory on purpose (a new analyzer on a 1833-test codebase can surface a batch
+  of findings at once, and a gate that reddens every PR on day one stops being
+  read), to be flipped once the first analyses were triaged. They came back clean
+  — PR #258 `Quality Gate passed` with 0 new issues, `main` likewise once it had
+  a baseline — so the reason to wait was gone. Branch `ci/sonar-blocking-gate`.
+- **`sonar.qualitygate.wait=true`** in `sonar-project.properties` (not an
+  argument in the workflow: analysis parameters live in one place). The scanner
+  now polls the compute-engine task and fails the job on a failed gate.
+- **The bigger half is not enforcement, it is honesty about the upload.** The
+  first live run showed the failure mode this closes: `ANALYSIS SUCCESSFUL` in
+  the scanner log means *the report was uploaded*, processing is asynchronous,
+  and the report was then **rejected** server-side (over the organization's LOC
+  quota) while `ci.yml` still reported success. Waiting makes the job answer "was
+  this analysis accepted and did it pass" instead of "did the scan run" — the
+  distinction that previously only the Sonar app's own commit check could make.
+- **What can and cannot redden a PR**: the gate judges **new** code, so the
+  existing backlog never blocks; what blocks is new uncovered code (Coverage on
+  New Code, which the `cargo llvm-cov` step feeds), new issues, or an analysis the
+  server refuses. Worth knowing the corollary: the project's **New Code
+  definition** now has teeth, since it decides what "new" means.
+- **Cost**: the job waits for processing, which measured ~2–5 s on this project
+  (`sonar.qualitygate.timeout` defaults to 300 s and is deliberately left alone).
+- **Verification**: the YAML and properties parse; **1833 unit tests** unchanged
+  (no Rust code touched); no live run required (AGENTS.md §3) — no engine, memory,
+  tool or provider path exists here. The change is self-verifying in a way the
+  previous ones were not: if the gate did not actually block, this PR's own
+  `sonar` job would not be reporting a verdict at all. No CHANGELOG entry — dev
+  infrastructure with no user-visible effect (§4).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
