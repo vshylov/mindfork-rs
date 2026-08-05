@@ -12232,6 +12232,22 @@ three findings are invisible from the workflow's own status):
   0.03s, `note_cite_source_links_and_recall_shows_it` (14.52s on CI) 0.90s →
   0.03s. Those are exactly the tests the runner's disk was punishing 8–19x, so
   the CI effect should be larger than the local one.
+- **Measured on CI, and it closed the diagnosis** (run 31045675223): the Windows
+  job went **9m11s → 5m59s** and its test phase **386.1s → 189.9s (−51%)**,
+  against the original cold-cache **19m00s / 549.1s**. Two details make this
+  more than a speedup. The CI gain (−51%) **exceeded the local one** (−41%),
+  which is what the disk hypothesis predicted, since the runner charges more for
+  exactly the I/O that was removed. And in the same run **Linux barely moved** —
+  38.7s against 41.0s before — because a Linux runner was never paying that
+  penalty. A change that helps one OS 2x and the other not at all is the
+  signature of the cause being the disk, not the code, so this run is both the
+  fix and the confirmation of the earlier diagnosis.
+- **Where CI now stands overall**: from ~19–20 minutes at the start of this work
+  to **~6**, via three independent fixes — the warm Windows cache (compile 7m31s
+  → ~1m45s), the fsync fix in the seeding fixtures, and this one. The 927s tail
+  observed earlier should also shrink, since it was the disk-bound tests that
+  were most exposed to a slow instance, but that is a claim about variance and
+  needs more than one run to assert.
 - **Two guards, because the win is invisible to every other test.** Switching
   the testkit back to `Storage::open` would hand all the fsyncs back and nothing
   would fail. So `tool_context_storage_touches_no_disk` (`features::tools`)
