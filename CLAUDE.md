@@ -12116,7 +12116,30 @@ three findings are invisible from the workflow's own status):
   is the one that matters — it is exactly the predicted behaviour, dependencies
   coming from the cache and only our own crate rebuilding, which is also what
   the Linux `lint` job had been demonstrating on every pull request all along.
-  **CI wall clock is now bounded by Windows at ~9 minutes rather than ~19.**
+  **The compile half of the win is structural and reproducible; see the next
+  entry for why the total is not.**
+- **The second warm run corrected that headline, and it is worth keeping the
+  correction rather than the claim.** Run 31034769688, the very next push to the
+  same branch, came in at **18m26s** — the cache behaved exactly as designed
+  (48s restore, compile **1m36s**, confirming the structural fix twice over),
+  but the **test phase took 926.8s against 386.1s** on identical code. Two
+  pieces of evidence in that same run rule out "a uniformly slow machine": the
+  Linux job ran the suite in its usual **44.6s**, and the Windows *compile* in
+  the very same job was fast. So it is the Windows test phase specifically.
+  Collected figures for it, post-fixture-fix: **359.1 / 469.0 / 376.5 / 386.1 /
+  926.8s** — four clustered around ~390s and one 2.4x outlier. The honest
+  summary is therefore: compile reliably drops ~7m31s → ~1m40s, the cache save
+  reliably drops 1m51s → ~1s, and the total lands anywhere between **~9 and ~18
+  minutes** depending on how the test phase happens to run. The earlier "~9
+  minutes" was one lucky sample stated as a result.
+- **Lead, not a conclusion**: the suite is fsync- and tempdir-heavy even after
+  the fixture fix, and a handful of tests exercise real localhost TCP timeouts
+  (`probe()` against a closed port costs ~2s on Windows — already recorded in
+  the embed-probe entry). Either an I/O-latency spike on the runner or a
+  timeout-sensitive test could produce this tail; distinguishing them needs
+  per-test timings from CI, which stable libtest will not give
+  (`--report-time` is nightly-only) — nextest could be run once for that
+  purpose without adopting it.
 - **A hypothesis of mine that the measurement killed — twice over.** I
   attributed the runner being ~8x slower than a local Windows box at the same
   four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
