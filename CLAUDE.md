@@ -11969,6 +11969,50 @@ three findings are invisible from the workflow's own status):
 - **Timing**: 7 min 51 s cold, **4 min 06 s** warm (analysis itself ~1 min; the
   analyzer's own Clippy run is the bulk of the rest).
 
+### Post-M9: one Actions cache per job instead of one per branch (done)
+
+- **Found while reading the logs of the SonarQube PR**, not by looking for it:
+  the repository's Actions cache stood at **10.37 GB in 21 caches against a
+  10 GB cap**, i.e. GitHub was already evicting by age. The listing showed the
+  cause — five and six near-identical copies of the same key
+  (`v0-rust-test-Windows_NT-x64-2afb1257-…`). A cache belongs to **the branch
+  that wrote it**, so with `save-if` at its default every PR branch stores its
+  own copy of the same build. Branch `ci/cache-save-on-main`.
+- **Why it costs minutes rather than just space**: eviction is by age and
+  repository-wide, so a stream of per-branch copies pushes out the caches that
+  every run depends on, and the next `lint`/`test`/`sonar` builds from scratch.
+  That is the same currency the trimmed matrix and the docs-only skip were
+  bought with.
+- **`save-if: ${{ github.ref == 'refs/heads/main' }}`** on the three `ci.yml`
+  jobs: one copy per job, written by the push-to-`main` run, and a pull request
+  still *restores* it — GitHub lets a branch read its base branch's caches. Per
+  PR this drops what gets written from ~1.9 GB (lint 317 MB + Linux test 515 MB
+  + sonar 634 MB + Windows test 445 MB) to just the Windows one.
+- **Windows is the deliberate exception** (`|| runner.os == 'Windows'`), and
+  getting it wrong would have been worse than the bug: the `main` matrix is
+  Linux-only *by design* (the minutes work — `pull_request` already runs against
+  the merge result, and Windows bills at 2x), so nothing would ever write a
+  Windows cache and **every** PR would rebuild it from scratch on the expensive
+  runner. Seeding it by adding Windows to the `main` matrix would cost ~16
+  billable minutes per merge — precisely what was removed.
+- **Scoped to `ci.yml`**: `packaging.yml`/`release.yml`/`e2e-live.yml` also use
+  the action, but run on a tag, a dispatch, or a `packaging/**` PR, so they are
+  not what churns — and two of them are rare *and* expensive, where a cold build
+  hurts most.
+- **Along the way**: `sonar.python.version=3.10, 3.11, 3.12` in
+  `sonar-project.properties` — the only WARN the scan emits is the Python
+  analyzer saying it assumes "all of Python 3" for `tools/*.py`. The list is what
+  actually runs them (3.10 on the development machine, 3.12 on the ubuntu-24.04
+  runner), not a guess. It rides this PR because that one already pays for a full
+  test run and is the same CI plumbing; a docs-only PR would not have carried it,
+  since `sonar-project.properties` is deliberately outside the docs allowlist.
+- **Verification is deferred to the merge, on purpose**: the property is "a PR
+  branch stops writing Linux caches", which cannot be observed before the change
+  is on `main` — `gh cache list` after the next PR is the check. The YAML parses
+  and all three `save-if` expressions render as intended; **1833 unit tests**
+  unchanged (no Rust code touched); no live run required (AGENTS.md §3) and no
+  CHANGELOG entry — dev infrastructure with no user-visible effect (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored
