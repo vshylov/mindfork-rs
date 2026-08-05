@@ -12116,7 +12116,57 @@ three findings are invisible from the workflow's own status):
   is the one that matters — it is exactly the predicted behaviour, dependencies
   coming from the cache and only our own crate rebuilding, which is also what
   the Linux `lint` job had been demonstrating on every pull request all along.
-  **CI wall clock is now bounded by Windows at ~9 minutes rather than ~19.**
+  **The compile half of the win is structural and reproducible; see the next
+  entry for why the total is not.**
+- **The second warm run corrected that headline, and it is worth keeping the
+  correction rather than the claim.** Run 31034769688, the very next push to the
+  same branch, came in at **18m26s** — the cache behaved exactly as designed
+  (48s restore, compile **1m36s**, confirming the structural fix twice over),
+  but the **test phase took 926.8s against 386.1s** on identical code. Two
+  pieces of evidence in that same run rule out "a uniformly slow machine": the
+  Linux job ran the suite in its usual **44.6s**, and the Windows *compile* in
+  the very same job was fast. So it is the Windows test phase specifically.
+  Collected figures for it, post-fixture-fix: **359.1 / 469.0 / 376.5 / 386.1 /
+  926.8s** — four clustered around ~390s and one 2.4x outlier. The honest
+  summary is therefore: compile reliably drops ~7m31s → ~1m40s, the cache save
+  reliably drops 1m51s → ~1s, and the total lands anywhere between **~9 and ~18
+  minutes** depending on how the test phase happens to run. The earlier "~9
+  minutes" was one lucky sample stated as a result.
+- **The lead was chased and settled: it is disk I/O, not a timeout-sensitive
+  test.** A throwaway workflow on its own branch (`push`-triggered, so it needed
+  no pull request and could not touch `ci.yml`) ran the suite once under nextest
+  purely for its per-test timings — the reason nextest was borrowed rather than
+  adopted, since stable libtest has no `--report-time`. Run 31043133962, a
+  *normal* instance (438.2s wall against 52.3s local, the usual ~8x), joined
+  against local per-test times for all 1833 tests:
+  - **The timeout hypothesis is dead.** The genuinely timeout-bound tests are
+    **1.0x** — `embed_external_url_is_available` 2.068s on CI against 2.065s
+    locally, `wait_until_ready_bails_on_early_exit` 2.074s against 2.068s. A
+    fixed 2s timeout is a wall-clock constant and does not stretch on a slow
+    machine, so those tests cost the same everywhere and cannot produce a tail.
+  - **The slowdown is broad but *not* uniform, and it tracks I/O.** Median
+    per-test ratio **3.9x** (p10 2.2, p90 6.0), while the worst offenders run
+    **8–19x**: `consolidation_overview_uses_the_calibrated_threshold` 18.75s
+    against 1.34s, `note_cite_source_links_and_recall_shows_it` 14.52s against
+    0.90s, and so on — every one of them a notes/rag/search test that goes
+    through `ctx_with_storage`, which builds a **tempdir plus a file-backed
+    SQLite** (`Storage::open(Paths::with_root(…))`). CPU-bound tests sit at the
+    3.9x median; disk-bound ones are penalised several times over.
+  - **Parallel efficiency corroborates it**: the per-test times sum to 876.1s
+    against a 438.2s wall, i.e. only **2.0x** from four cores, where locally the
+    same suite gets **4.4x** (231.3s over 52.3s). Losing more than half the
+    parallelism is the signature of contention on one shared resource — four
+    concurrent fsync-heavy tests serialising on the disk — not of a slow CPU.
+  - **Shape**: a long flat tail rather than a few fat tests — the top 10 are
+    12.6% of the total and it takes **100 tests to reach 47%**. So there is no
+    single test to fix; the tail is the aggregate.
+- **Groundwork that follows from it** (not done — a facade change, deliberately
+  not bundled into a CI PR): `ctx_with_storage` hands every tool test a
+  file-backed SQLite, and most of them never need a file. `Db::open_in_memory`
+  already exists but `Storage::open` takes a `Paths` and has no in-memory path,
+  so giving the facade one and switching the tests that do not need durability
+  would attack exactly the tests measured worst here. Until then the ~9-to-~18
+  minute spread is the runner's disk and is not worth chasing further.
 - **A hypothesis of mine that the measurement killed — twice over.** I
   attributed the runner being ~8x slower than a local Windows box at the same
   four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
