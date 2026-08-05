@@ -197,6 +197,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   instrumented test run is the expensive half — folding the coverage run into the
   Linux `test` job instead of a job of its own. Also unreviewed: the project's
   **New Code definition**, which now decides what the gate judges.
+- **Make the checks *required*** — "blocking" currently stops at the job: a failed
+  gate reddens `SonarQube Cloud`, but GitHub still lets a red pull request be
+  merged, because that is branch protection's job and it is **unavailable for a
+  private repository on the Free plan** (the API answers 403; noticed earlier
+  while looking for required checks during the runner-minutes work). So today the
+  gate is a signal plus discipline, not mechanical enforcement. On GitHub Pro or
+  Team it is one setting — mark `SonarQube Cloud`, `Tests`, and `Lints` required.
 
 ## Multilingualism (i18n)
 
