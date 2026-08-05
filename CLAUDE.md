@@ -11922,6 +11922,97 @@ debounce was done as a separate PR, see below).
   Linux `test` job if the first measurements say the duplicated test run is the
   expensive half.
 
+**What the first live runs found** (2026-08-05, recorded because two of the
+three findings are invisible from the workflow's own status):
+
+- **The job was green while the analysis had failed.** On the PR everything
+  passed — Quality Gate, 0 new issues — but the push-to-`main` analysis was
+  **rejected server-side**, and `ci.yml` reported success anyway. Not a bug:
+  `ANALYSIS SUCCESSFUL` in the scanner log means *the report was uploaded*, and
+  processing is asynchronous (the next log line says so). That is the exact blind
+  spot of the advisory posture. What surfaces it is the Sonar app's **own** check
+  on the commit, `SonarCloud Code Analysis` — it read "❌ The last analysis has
+  failed" while ours read green. So the pair is: our job answers "did the scan
+  run", that check answers "was the report accepted". Enabling
+  `sonar.qualitygate.wait` would collapse the two — the scanner then waits for the
+  CE task and fails on it — which is a second argument for the groundwork item
+  above, beyond gate enforcement.
+- **The cause was the organization's LOC quota, and two wrong hypotheses were
+  discarded on evidence before it.** `Administration → Background Tasks → Show
+  error details` gave it verbatim: the free plan allows **50 000 lines per
+  organization**, 14 143 were already used, and this analysis brought **81 411**
+  (`rust=80 174, py=1 237`). The first guess — that the project's Main Branch was
+  named something other than `main` — was refuted by the Branches page (`main` is
+  the main branch, simply never analyzed). The second — that exclusions could fit
+  the project into the remaining 35 857 — was refuted by **measuring**: `src` is
+  80 059 ncloc, of which `**/tests.rs` is 6 692 and inline `#[cfg(test)]` modules
+  are **24 729**, and the latter cannot be excluded at all because `sonar.exclusions`
+  works per *file*, not per region. Even production-only (48 638) does not fit.
+  So it was a plan decision, not a configuration one: **Team, $34/month for up to
+  100k LOC** (user's decision) — 81 411 used, ~18 600 of headroom.
+- **Exclusions deliberately not added** despite fitting the option as offered:
+  trimming `**/tests.rs` + `tools/` buys 7 900 lines while 24 729 lines of inline
+  test modules keep counting, i.e. it makes the analysis *inconsistent* (some test
+  code counted, some not) for less than half the headroom already available. The
+  lever stays documented for whenever 100k is approached.
+- **Re-running the analysis needed no commit**: `gh run rerun <id> --job <sonar>`
+  re-ran only that job against the same commit, so lint and the tests were not
+  paid for twice. Afterwards the check became **"Quality Gate not computed"**
+  (`neutral`) — the normal state of a *first* main-branch analysis, since there is
+  no new-code baseline to compare against yet.
+- **The open question is closed: coverage really is imported.** `main` reports
+  **85.2%**, against 86.3% line coverage measured locally — the gap is the ~1 240
+  Python lines in `tools/`, which have no coverage report and therefore land in
+  the denominator as uncovered. That distinguishes a working import from the
+  silent failure mode it could not otherwise be told apart from ("0.0% Coverage on
+  New Code" on a PR that touches no Rust looks identical either way).
+- **Timing**: 7 min 51 s cold, **4 min 06 s** warm (analysis itself ~1 min; the
+  analyzer's own Clippy run is the bulk of the rest).
+
+### Post-M9: one Actions cache per job instead of one per branch (done)
+
+- **Found while reading the logs of the SonarQube PR**, not by looking for it:
+  the repository's Actions cache stood at **10.37 GB in 21 caches against a
+  10 GB cap**, i.e. GitHub was already evicting by age. The listing showed the
+  cause — five and six near-identical copies of the same key
+  (`v0-rust-test-Windows_NT-x64-2afb1257-…`). A cache belongs to **the branch
+  that wrote it**, so with `save-if` at its default every PR branch stores its
+  own copy of the same build. Branch `ci/cache-save-on-main`.
+- **Why it costs minutes rather than just space**: eviction is by age and
+  repository-wide, so a stream of per-branch copies pushes out the caches that
+  every run depends on, and the next `lint`/`test`/`sonar` builds from scratch.
+  That is the same currency the trimmed matrix and the docs-only skip were
+  bought with.
+- **`save-if: ${{ github.ref == 'refs/heads/main' }}`** on the three `ci.yml`
+  jobs: one copy per job, written by the push-to-`main` run, and a pull request
+  still *restores* it — GitHub lets a branch read its base branch's caches. Per
+  PR this drops what gets written from ~1.9 GB (lint 317 MB + Linux test 515 MB
+  + sonar 634 MB + Windows test 445 MB) to just the Windows one.
+- **Windows is the deliberate exception** (`|| runner.os == 'Windows'`), and
+  getting it wrong would have been worse than the bug: the `main` matrix is
+  Linux-only *by design* (the minutes work — `pull_request` already runs against
+  the merge result, and Windows bills at 2x), so nothing would ever write a
+  Windows cache and **every** PR would rebuild it from scratch on the expensive
+  runner. Seeding it by adding Windows to the `main` matrix would cost ~16
+  billable minutes per merge — precisely what was removed.
+- **Scoped to `ci.yml`**: `packaging.yml`/`release.yml`/`e2e-live.yml` also use
+  the action, but run on a tag, a dispatch, or a `packaging/**` PR, so they are
+  not what churns — and two of them are rare *and* expensive, where a cold build
+  hurts most.
+- **Along the way**: `sonar.python.version=3.10, 3.11, 3.12` in
+  `sonar-project.properties` — the only WARN the scan emits is the Python
+  analyzer saying it assumes "all of Python 3" for `tools/*.py`. The list is what
+  actually runs them (3.10 on the development machine, 3.12 on the ubuntu-24.04
+  runner), not a guess. It rides this PR because that one already pays for a full
+  test run and is the same CI plumbing; a docs-only PR would not have carried it,
+  since `sonar-project.properties` is deliberately outside the docs allowlist.
+- **Verification is deferred to the merge, on purpose**: the property is "a PR
+  branch stops writing Linux caches", which cannot be observed before the change
+  is on `main` — `gh cache list` after the next PR is the check. The YAML parses
+  and all three `save-if` expressions render as intended; **1833 unit tests**
+  unchanged (no Rust code touched); no live run required (AGENTS.md §3) and no
+  CHANGELOG entry — dev infrastructure with no user-visible effect (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored
