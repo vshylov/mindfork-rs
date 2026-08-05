@@ -719,14 +719,16 @@ mod tests {
         );
     }
 
-    /// A file-backed storage on a tempdir + a deterministic embedder for
-    /// indexing tests. The directory guard is returned — keep it alive for the
-    /// test's duration (Storage holds an open connection to the DB file inside
-    /// the directory).
+    /// Storage on a tempdir + a deterministic embedder for indexing tests. The
+    /// SQLite halves are in memory — these tests index and query within one
+    /// `Storage`, so nothing needs a file, and indexing is exactly the
+    /// fsync-heavy work a slow disk punishes. The directory guard is still
+    /// returned: the JSON half uses it.
     fn test_deps() -> (tempfile::TempDir, Arc<Storage>, Arc<dyn Embedder>) {
         let dir = tempfile::tempdir().unwrap();
-        let storage =
-            Arc::new(Storage::open(crate::shared::paths::Paths::with_root(dir.path())).unwrap());
+        let storage = Arc::new(
+            Storage::open_in_memory(crate::shared::paths::Paths::with_root(dir.path())).unwrap(),
+        );
         let embedder: Arc<dyn Embedder> = Arc::new(crate::shared::api::mock::MockEmbedder::new(16));
         (dir, storage, embedder)
     }
