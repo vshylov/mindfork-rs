@@ -11852,6 +11852,76 @@ debounce was done as a separate PR, see below).
     **alphabetical**, so the name it picked was the *first* argument. Anchored on
     the result row instead.
 
+### Post-M9: SonarQube Cloud analysis in CI (done)
+
+- **Asked for directly**: the project side on sonarcloud.io was already set up
+  (`SONAR_TOKEN` present in the repository secrets), only CI was missing. Branch
+  `ci/sonarcloud` (the `ci/` prefix has precedent —
+  `ci/reduce-actions-minutes`). A simple task by AGENTS.md §1 — CI configuration,
+  no cross-layer contract and no code — so no design doc; the three genuine
+  forks were put to the user instead (**decided 2026-08-05**).
+- **Rust is a first-party Sonar analyzer now**, not the old community plugin, and
+  that decided the shape: it **runs `cargo clippy` itself** (hence the toolchain
+  and ALSA in the job) and imports coverage as LCOV or Cobertura
+  (`sonar.rust.lcov.reportPaths`). So the job is deliberately *not* wired to our
+  own `cargo clippy --all-targets -- -D warnings` gate: the analyzer's own run
+  carries the 85 Clippy rules mapped to first-party Sonar rules, and mixing the
+  two report paths is documented to **duplicate** issues.
+- **Forks, all as recommended.** (1) **Coverage on** — `cargo llvm-cov` produces
+  `lcov.info` in the same job; it is the metric every quality-gate condition is
+  built around, and without it "Coverage on New Code" is simply `n/a`. (2) The
+  job is **advisory** — it does not wait for the verdict
+  (`sonar.qualitygate.wait` is left off), the same posture as `audit.yml`: a new
+  analyzer on a 1833-test codebase will surface a batch of findings at once, and
+  a gate that reddens every PR on day one stops being read. (3) Project key
+  `vshylov_mindfork-rs` / organization `vshylov` — the standard GitHub-import
+  scheme.
+- **The minutes policy is respected rather than worked around**: the job takes
+  `needs: changes`, so the docs-only PRs this repo produces constantly skip it
+  (there is no new code to analyze), and it carries the same two guards as
+  `test` — `!= 'true'` for the *value* and `!cancelled()` for the *job*, since a
+  failed `needs` skips a dependent job whatever `if` says. It runs on `push:
+  main` as well, deliberately: main is the baseline the "new code" comparison is
+  made against.
+- **Two builds in one job, and that is not an oversight**: the instrumented
+  coverage build and the analyzer's plain clippy build have different
+  fingerprints, so no arrangement makes them share one. Feeding the analyzer an
+  external clippy report instead would still cost a second build (different
+  RUSTFLAGS again) *and* add the duplicate-issue risk above — so the simpler
+  option wins. `cargo llvm-cov` keeps its own `target/llvm-cov-target`, so it
+  cannot poison the normal target dir (the journal already records what a
+  poisoned `target/` looks like: seven tests "failing" on paths baked in from
+  another tree).
+- **`llvm-tools-preview` is added in the job, not in `rust-toolchain.toml`** — a
+  developer checkout should not download the LLVM tools for a component only CI
+  uses.
+- **Two things the user has to keep true on the Sonar side** (recorded because
+  neither is visible from this repo): **Automatic Analysis must stay off** for
+  the project — CI-based analysis refuses to run while it is enabled — and the
+  repository is **private**, which on SonarQube Cloud is a paid plan rather than
+  the free public tier.
+- **The coverage step was run locally rather than left to CI to discover** — it
+  is the step most likely to fail, and a failure there costs runner minutes to
+  learn: `cargo llvm-cov --workspace --lcov` ran the suite under instrumentation
+  (**1833 passed, 76 ignored**, 41 s) and produced a 2 MB `lcov.info` over 166
+  files, **87.0% region / 86.3% line** coverage. One detail confirmed rather than
+  assumed: the report's `SF:` paths are **absolute**, which resolves correctly
+  because they sit inside the scanner's base directory — the scan runs in the
+  same workspace. Instrumented artifacts go to `target/llvm-cov-target`, so the
+  ordinary `target/` is untouched.
+- **Verification of the rest**: the workflow YAML parses and the `sonar` job's
+  steps and guards are as intended; `cyrillic_scan`/`link_check` clean; **1833
+  unit tests** unchanged (no Rust code touched). **No live model run is
+  required** (AGENTS.md §3) — no engine, memory, tool or provider path exists in
+  this change. What only the first CI run can settle is the analyzer's own clippy
+  invocation and the upload. No CHANGELOG entry — dev infrastructure with no
+  user-visible effect (§4).
+- **Groundwork**: turning the gate blocking once the first analysis is triaged;
+  a quality-gate badge in the README (a private project's badge does not render
+  for anonymous readers without a token); and folding the coverage run into the
+  Linux `test` job if the first measurements say the duplicated test run is the
+  expensive half.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored
