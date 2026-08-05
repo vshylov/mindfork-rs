@@ -12309,6 +12309,26 @@ three findings are invisible from the workflow's own status):
   `rag::index_source_reports_chunk_progress_in_subbatches` (9.07s on CI) — both
   drop to **0.01s**. Cumulatively with the previous entry the per-test sum goes
   231.3s → 113.4s (−51%).
+- **Confirmed on CI, and it closes the whole CI track.** The Windows test phase
+  measured **258.2s** on the tool-test PR's run and **129.2s** on this one — the
+  two safe fixtures halved it again, because they were exactly where the
+  runner's disk charged most. End to end the Windows job went **19m00s →
+  4m56s**, and its test phase **549.1s → 129.2s** (4.3x). Post-merge `main` is
+  green in under five minutes, with its Windows job at 2m42s since it only
+  builds.
+- **A cache detail worth knowing** (it looks like a bug and is not): the Windows
+  cache on `main` keeps its original timestamp and is *not* re-saved after these
+  merges. Its key is a fingerprint of the **dependencies**, which source-only
+  changes do not touch, and GitHub cache keys are immutable — so rust-cache
+  correctly skips saving and the existing entry keeps serving. It only rotates
+  when `Cargo.lock` or the toolchain moves.
+- **Where the CI work ended up overall**: ~19–20 minutes → ~5, from four
+  independent fixes — the warm Windows cache (compile 7m31s → ~1m45s), the
+  ~800-fsync seeding fixtures, in-memory storage for the tool tests, and the two
+  safe orchestrator fixtures — plus the removed useless cache save. The runner's
+  variance (359 / 469 / 376 / 386 / 927s on identical code, back when the base
+  was 4x higher) has not gone away; the base is simply much lower now, and
+  whether the tail shrank proportionally needs several more runs to claim.
 - **1835 unit tests green**, 76 `#[ignore]`, clippy `-D warnings`/fmt/
   `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3):
   test fixtures only; `Storage::open_in_memory` is `#[cfg(test)]`. No CHANGELOG
