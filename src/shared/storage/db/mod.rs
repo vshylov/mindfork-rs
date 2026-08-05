@@ -57,6 +57,30 @@ impl Db {
         Self::from_conn(Connection::open_in_memory()?)
     }
 
+    /// Runs `f` with everything it writes inside **one** explicit transaction —
+    /// a fixture accelerator for tests that seed a file-backed DB, not a
+    /// production primitive.
+    ///
+    /// Every write method takes the lock itself and runs in autocommit, i.e. one
+    /// implicit transaction (one fsync) per statement — and both `rag_insert` and
+    /// `delete_matching` issue two statements per row, so seeding a few hundred
+    /// rows costs a four-figure number of fsyncs. The transaction is *opened and
+    /// committed around* `f` rather than held across it: [`Mutex`] is not
+    /// reentrant, so the lock must be released before `f` calls back into `Db` —
+    /// but a transaction belongs to the **connection**, not to the lock, so the
+    /// writes in between join it regardless.
+    ///
+    /// Not panic-safe by design: a panic inside `f` leaves the transaction open,
+    /// and dropping the connection at the end of the test rolls it back. Use it
+    /// for seeding, not around assertions.
+    #[cfg(test)]
+    pub(crate) fn batch<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.conn.lock().unwrap().execute_batch("BEGIN").unwrap();
+        let out = f();
+        self.conn.lock().unwrap().execute_batch("COMMIT").unwrap();
+        out
+    }
+
     fn from_conn(conn: Connection) -> Result<Self> {
         let mut conn = conn;
         migrate(&mut conn)?;
@@ -672,29 +696,35 @@ mod compact_tests {
     /// some of them deleted, which is what leaves pages behind for compaction
     /// to reclaim. Returns the profile whose two surviving chunks must still be
     /// searchable afterwards.
+    ///
+    /// The two phases are batched (see [`Db::batch`]) but kept as **separate**
+    /// transactions: the file has to grow to hold every row and only then have
+    /// pages freed, which is what leaves a freelist behind.
     fn fragmented_db(path: &std::path::Path) -> Uuid {
         let profile = Uuid::new_v4();
         let db = Db::open(path).unwrap();
-        for i in 0..200 {
-            let text = format!("scratch {i} {}", "x".repeat(500));
-            db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
-                .unwrap();
-        }
-        db.rag_insert(&RagDocument::new(
-            profile,
-            "keep",
-            "the kept chunk",
-            vec![1.0, 0.0],
-        ))
-        .unwrap();
-        db.rag_insert(&RagDocument::new(
-            profile,
-            "keep",
-            "another kept",
-            vec![0.9, 0.1],
-        ))
-        .unwrap();
-        db.rag_delete_by_source(profile, "scratch").unwrap();
+        db.batch(|| {
+            for i in 0..200 {
+                let text = format!("scratch {i} {}", "x".repeat(500));
+                db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
+                    .unwrap();
+            }
+            db.rag_insert(&RagDocument::new(
+                profile,
+                "keep",
+                "the kept chunk",
+                vec![1.0, 0.0],
+            ))
+            .unwrap();
+            db.rag_insert(&RagDocument::new(
+                profile,
+                "keep",
+                "another kept",
+                vec![0.9, 0.1],
+            ))
+            .unwrap();
+        });
+        db.batch(|| db.rag_delete_by_source(profile, "scratch").unwrap());
         profile
     }
 

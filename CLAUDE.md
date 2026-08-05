@@ -12055,6 +12055,90 @@ three findings are invisible from the workflow's own status):
   `sonar` job would not be reporting a verdict at all. No CHANGELOG entry — dev
   infrastructure with no user-visible effect (§4).
 
+### Post-M9: cutting the Windows CI job from 19 minutes (done)
+
+- **Asked directly**: CI was taking up to 20 minutes, most of it Windows tests —
+  and whether to move to `cargo-nextest`. Branch `ci/windows-speedup`. A simple
+  task by AGENTS.md §1 (CI configuration plus a test-only fixture change, no
+  cross-layer contract), so no design doc; the one genuine fork — billable
+  minutes versus wall clock — was put to the user instead (**decided
+  2026-08-05**, warm the cache on `main`).
+- **The Windows job was the entire CI wall clock.** Everything else finishes
+  inside 4 minutes, so 19 minutes *was* the Windows job. Measured on run
+  31016421114 rather than estimated: **7m31s cold compile + 9m09s test run +
+  1m51s cache save**.
+- **The cache was never warm, and the cause was precise.** The `rust-cache` step
+  completed in **4 seconds** — a miss, not a restore. The `main` matrix was
+  Linux-only, so a Windows cache was never written to a ref a pull request can
+  read: GitHub scopes a cache to the branch that wrote it and only lets a branch
+  read its **base**. So every PR paid a full cold build and then spent 1m51s
+  saving 445 MB to its own `refs/pull/N/merge`, which nothing could ever restore
+  and which dies with the PR — the cache list showed eight such copies. Checked
+  the obvious escape hatch too: a *second* run on the same branch was also cold.
+  Now `main` builds Windows without running the suite (it already passed on the
+  PR; building is what fills the cache), **kept in the same job** because
+  rust-cache embeds the job id in the key — visible in the key names themselves
+  (`v0-rust-test-…`, `v0-rust-lint-…`, `v0-rust-sonar-…`). A separate warming job
+  would have silently written a key the test job could never restore, i.e.
+  warmed nothing while looking correct.
+- **~800 fsyncs in two seeding fixtures.** `fragmented_db` and backup's
+  `seed_fragmented_db` inserted 200 rows through `rag_insert`, which issues two
+  statements in autocommit — and `delete_matching` loops the same way, so
+  batching only the inserts would have fixed half of it. Now one transaction per
+  phase, and deliberately **two** phases: the file has to grow and only *then*
+  have pages freed, or no freelist is left behind and the tests stop testing
+  anything. Assertions untouched and verified to still hold with margin — 48% of
+  the file is free pages before the vacuum, and the vec0 index still joins by
+  rowid after it. `Db::batch` is `#[cfg(test)]`, so it does not exist in a
+  non-test build. Locally at the runner's four threads: the compaction tests
+  **19.35s → 0.49s**, the full suite **68.67s → 45.36s**.
+- **Measured result**, still with a cold cache since `main` had not yet saved
+  one: job **19m00s → 15m00s / 16m22s / 15m29s** over three runs, test run
+  **549.1s → 359.1s / 469.0s / 376.5s**, cache save **1m51s → 2s**. The third
+  run is the one with the Defender step already removed, and it lands between
+  the other two — confirming the removal cost nothing, as
+  `RealTimeProtectionEnabled = False` predicts. The remaining ~6 minutes of cold
+  compile go on the *next* pull request, once this merge leaves a warm Windows
+  cache behind.
+- **A hypothesis of mine that the measurement killed — twice over.** I
+  attributed the runner being ~8x slower than a local Windows box at the same
+  four-thread parallelism (37s local vs 549s) mostly to Defender scanning every
+  file rustc writes, and wrote that into the workflow as the exclusion step's
+  rationale. First the arithmetic undercut it: the test run improved 34.6% while
+  the fixture fix alone had predicted 33.9% locally, leaving nothing for
+  Defender to explain. Then the direct check settled it — the step was made to
+  log `Get-MpComputerStatus`, and the runner answered
+  **`RealTimeProtectionEnabled = False`**. Defender is already off on the image,
+  so excluding paths from a scanner that is not running buys nothing; the step
+  was removed and the comment now warns against re-adding it without checking
+  that flag. The residual gap is the runner's CPU and disk.
+- **Runner variance is large enough to matter when reading these numbers.**
+  Three post-fix runs gave test runs of 359.1s, 469.0s and 376.5s — a 30%
+  spread, with the middle one an outlier. So the honest attribution is that the
+  controlled local measurement (68.67s → 45.36s at four threads) is the
+  trustworthy one, and single-run CI comparisons here should not be read to two
+  significant figures. Worth knowing before anyone tunes this workflow against
+  one green run.
+- **cargo-nextest — evaluated and rejected, measured rather than reasoned.**
+  Slower here at both parallelism levels: **46.3s vs 37.4s** at full parallelism
+  and **52.3s vs 45.4s** at the runner's four threads. The reason is structural:
+  this is a single binary crate whose 1833 tests live in one executable, and
+  nextest runs each test in its own process, which Windows charges for. It also
+  does nothing about compilation, which was the larger half of the job. Its one
+  attractive feature here, `--partition` sharding, multiplies the compile cost
+  across shards — exactly what the cache warming just bought back. It did earn
+  its keep once, though: its per-test timings are what found the five slow tests,
+  since `--report-time` needs nightly on stable libtest.
+- **A bug caught by validating the YAML rather than by eye**: the matrix was
+  first written `os: '["ubuntu-latest","windows-latest"]'`, which GitHub expands
+  only inside a `${{ }}` expression — as a plain string it would have produced a
+  single matrix entry with that literal name.
+- **1833 unit tests green** (count unchanged — a fixture optimization), 76
+  `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean. **No
+  live run required** (AGENTS.md §3): CI configuration and a `#[cfg(test)]`
+  fixture — no engine, memory, tool or provider path is touched. No CHANGELOG
+  entry — dev infrastructure with no user-visible effect (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

@@ -925,19 +925,23 @@ mod tests {
         let path = root.join("data.db");
         let _ = fs::remove_file(&path);
         let db = Db::open(&path).unwrap();
-        for i in 0..200 {
-            let text = format!("scratch {i} {}", "x".repeat(500));
-            db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
-                .unwrap();
-        }
-        db.rag_insert(&RagDocument::new(
-            profile,
-            "keep",
-            "the kept chunk",
-            vec![1.0, 0.0],
-        ))
-        .unwrap();
-        db.rag_delete_by_source(profile, "scratch").unwrap();
+        // Batched (see `Db::batch`), but in two transactions: the file has to
+        // grow to hold every row and only then have pages freed.
+        db.batch(|| {
+            for i in 0..200 {
+                let text = format!("scratch {i} {}", "x".repeat(500));
+                db.rag_insert(&RagDocument::new(profile, "scratch", text, vec![0.0, 1.0]))
+                    .unwrap();
+            }
+            db.rag_insert(&RagDocument::new(
+                profile,
+                "keep",
+                "the kept chunk",
+                vec![1.0, 0.0],
+            ))
+            .unwrap();
+        });
+        db.batch(|| db.rag_delete_by_source(profile, "scratch").unwrap());
         profile
     }
 
