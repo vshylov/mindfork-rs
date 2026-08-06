@@ -736,50 +736,61 @@ mod tests {
     /// `[a-z0-9_]` separated by dots, entirely between quotes) from every `.rs` under
     /// `src/`. A shared scanner for the direct and reverse key gates.
     fn dotted_literals_in_src() -> std::collections::BTreeSet<String> {
-        use std::path::Path;
-        fn scan(s: &str, out: &mut std::collections::BTreeSet<String>) {
-            let bytes = s.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                let Some(p) = s[i..].find('"') else { break };
-                let start = i + p + 1; // past the opening quote; always > i (progress)
-                let mut j = start;
-                let mut dots = 0usize;
-                while j < bytes.len() {
-                    let c = bytes[j] as char;
-                    if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' {
-                        j += 1;
-                    } else if c == '.' {
-                        dots += 1;
-                        j += 1;
-                    } else {
-                        break;
-                    }
-                }
-                // The literal in full (a quote follows), ≥2 segments, doesn't end in a dot.
-                if j < bytes.len()
-                    && bytes[j] as char == '"'
-                    && dots >= 1
-                    && bytes[j - 1] as char != '.'
-                {
-                    out.insert(s[start..j].to_string());
-                }
-                i = j; // j ≥ start > the previous i — the loop always makes progress
-            }
-        }
-        fn visit(dir: &Path, out: &mut std::collections::BTreeSet<String>) {
-            for entry in std::fs::read_dir(dir).unwrap().flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    visit(&path, out);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    scan(&std::fs::read_to_string(&path).unwrap_or_default(), out);
-                }
-            }
-        }
         let mut out = std::collections::BTreeSet::new();
         visit(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
         out
+    }
+
+    /// The scanner half of [`dotted_literals_in_src`]: one file's text → the
+    /// dotted literals in it.
+    fn scan(s: &str, out: &mut std::collections::BTreeSet<String>) {
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let Some(p) = s[i..].find('"') else { break };
+            let start = i + p + 1; // past the opening quote; always > i (progress)
+            let (j, dots) = key_run(bytes, start);
+            // The literal in full (a quote follows), ≥2 segments, doesn't end in a dot.
+            if j < bytes.len()
+                && bytes[j] as char == '"'
+                && dots >= 1
+                && bytes[j - 1] as char != '.'
+            {
+                out.insert(s[start..j].to_string());
+            }
+            i = j; // j ≥ start > the previous i — the loop always makes progress
+        }
+    }
+
+    /// Reads a run of key characters (`[a-z0-9_.]`) starting at `start`;
+    /// returns the index just past the run and the number of dots in it.
+    fn key_run(bytes: &[u8], start: usize) -> (usize, usize) {
+        let mut j = start;
+        let mut dots = 0usize;
+        while j < bytes.len() {
+            let c = bytes[j] as char;
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' {
+                j += 1;
+            } else if c == '.' {
+                dots += 1;
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        (j, dots)
+    }
+
+    /// Recursively feeds every `.rs` under `dir` through [`scan`].
+    fn visit(dir: &Path, out: &mut std::collections::BTreeSet<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                scan(&std::fs::read_to_string(&path).unwrap_or_default(), out);
+            }
+        }
     }
 
     /// Top-level prefixes (`ui`, `tool`, …) actually present in the bundle — used to

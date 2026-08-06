@@ -373,34 +373,13 @@ fn run_loop(
             );
             dirty = true;
         }
-        // Spellcheck settings received/changed — (re)load dictionaries in the background.
-        if let Some((enabled, selected)) = screen.spell_config() {
-            spell.maybe_reload(enabled, selected);
-        }
-        // A finished (re)load — plug in the checker (a disabled one flags nothing).
-        if let Some(checker) = spell.poll() {
-            screen.set_spellchecker(checker);
-            dirty = true;
-        }
-        // A debounced spellcheck recheck: the loop runs every tick (the `poll`
-        // timeout) even when it isn't drawing, so this is exactly where the debounce
-        // wakeup happens. We repaint only when the highlighting actually got
-        // recomputed. Chat input isn't active on the settings screen — skip it.
-        if active.is_chat() && screen.maybe_recheck_spelling() {
-            dirty = true;
-        }
-        // The rename field (`F2`) on the chat-list screen is also spellchecked — the
-        // checker is borrowed from the chat screen (the owner). See spec §11.5.
-        if let ActiveScreen::ChatList(list) = &mut active
-            && let Some(spell) = screen.spellchecker()
-            && list.recheck_spelling(spell)
-        {
+        if spellcheck_upkeep(&mut spell, &mut screen, &mut active) {
             dirty = true;
         }
         // While background RAG indexing or impersonation is running — repaint every
         // tick for the spinner animation (outside them, idle ticks don't repaint —
         // `dirty`).
-        if active.is_chat() && (screen.is_rag_active() || screen.is_impersonating()) {
+        if spinner_frame_needed(&active, &screen) {
             dirty = true;
         }
         // The input-box draft changed — save it on the active chat (the orchestrator
@@ -409,115 +388,191 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
-            // The status bar's `Esc` hint, derived from the back-stack for this
-            // frame (see `esc_target`). The stash only ever changes while
-            // handling an event or a keypress, i.e. in an iteration that is
-            // already `dirty`, so the hint is never a frame behind.
-            screen.set_esc_target(esc_target(&back));
-            // The frame is wrapped in synchronized output (DEC private mode 2026):
-            // `?2026h` before drawing, `?2026l` after — the terminal buffers everything
-            // in between and applies the frame ATOMICALLY. Without this, the hardware
-            // cursor was visible at intermediate write states: ratatui writes the diff
-            // with the cursor visible (the terminal cursor = the write position) and
-            // returns it to the input box via separate writes AFTER the diff
-            // (`show_cursor`/`set_cursor_position` on CrosstermBackend are `execute!`
-            // with an immediate flush; a large diff is also chopped up by stdout's small
-            // buffer). Windows Terminal renders asynchronously and would show the cursor
-            // at the diff's last written cell: during generation that's the token
-            // counter (the status bar's bottom lines are written last), during RAG
-            // indexing — the banner spinner. The cursor "jumped" between the input box
-            // and these cells at the frame rate (~20/s).
-            //
-            // Terminals without 2026 support (conhost's compat mode) ignore the
-            // unfamiliar private mode — graceful degradation (the jump stays, as
-            // before). The draw error is propagated AFTER lifting the mode, so the
-            // terminal doesn't stay in buffering mode. See spec §4.4.1.
-            // A FULL repaint is needed wherever a wide glyph leaves its spot or
-            // appears at a new one, leaving a "hanging" artifact: a cell-by-cell diff
-            // sometimes doesn't send that glyph's trailing half, sometimes sends it
-            // without `MoveTo` and shifts the row (open upstream issue ratatui#2651).
-            // Every cell needs to be explicitly rewritten, including spaces in empty
-            // spots.
-            //
-            // The "how" mechanics — in `ui::prime_full_redraw` (a sentinel in the
-            // buffer + `swap_buffers` without flushing to the screen, instead of
-            // `terminal.clear()` with its flickering `ESC[2J`). The internal swap
-            // inside `draw` restores the invariant "back buffer = screen".
-            //
-            // Two triggers:
-            //  * the chat screen — scrolling/a feed change with risk-group glyphs and
-            //    closing the emoji/spellcheck popups (`take_full_redraw`);
-            //  * SCREEN SWITCH — the frame's content changes wholesale, and a VS16
-            //    glyph (`❤️`, `🗂️`) on the new screen lands where a foreign character
-            //    used to be. Then the diff sends its trailing half (the character did
-            //    change), the backend prints half without `MoveTo`, and the rest of
-            //    the row shifts right — after a feed with `❤️`, returning from the
-            //    chat list/`F3` left an extra space, which only went away on scroll
-            //    (which triggers this same repaint). Confirmed by
-            //    `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
-            //
-            // Outside these cases, plain text always goes through the regular diff.
-            // See spec §11.3, §11.5.
-            let requested = if matches!(active, ActiveScreen::Chat) {
-                screen.take_full_redraw()
-            } else {
-                false
-            };
-            let now_screen = std::mem::discriminant(&active);
-            let switched = now_screen != last_screen;
-            last_screen = now_screen;
-            if requested || switched {
-                crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
-                terminal.swap_buffers();
-            }
-            let _ = execute!(stdout(), BeginSynchronizedUpdate);
-            let drawn = match &mut active {
-                ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame)),
-                ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
-                ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
-                ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
-                ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
-            };
-            let _ = execute!(stdout(), EndSynchronizedUpdate);
-            drawn?;
+            draw_frame(terminal, &mut screen, &mut active, &back, &mut last_screen)?;
             dirty = false;
         }
-        if event::poll(TICK)? {
-            // Any terminal event (input, scroll, resize) may change the view.
-            dirty = true;
-            // Drain ALL currently available events at once. On Windows a clipboard
-            // paste arrives as a batch of regular key events (there's no Event::Paste
-            // there — see above). Without batching this is a repaint per character
-            // (laggy), and an Enter inside the text = a send. We coalesce the batch in
-            // `process_input_batch`.
-            let mut batch = Vec::new();
-            collect_press(&mut batch, event::read()?);
-            while event::poll(Duration::ZERO)? {
-                collect_press(&mut batch, event::read()?);
-            }
-            // Looks like a paste (a burst of events in one drain) — we chase its tail
-            // with a short pause-detector (`PASTE_GAP`), so a large paste made of
-            // several console chunks gets collected into ONE batch. Otherwise a chunk
-            // boundary breaks the run and a lone `Enter` slips through as a send
-            // (Windows).
-            if batch.len() >= PASTE_BURST {
-                while event::poll(PASTE_GAP)? {
-                    collect_press(&mut batch, event::read()?);
-                }
-            }
-            if process_input_batch(
-                batch,
-                &mut screen,
-                &mut active,
-                &mut back,
-                cmd_tx,
-                &mut clipboard,
-            ) {
-                quit = true;
-            }
+        if handle_input_tick(
+            &mut screen,
+            &mut active,
+            &mut back,
+            cmd_tx,
+            &mut clipboard,
+            &mut dirty,
+        )? {
+            quit = true;
         }
     }
     Ok(())
+}
+
+/// Per-tick spellcheck maintenance: dictionary (re)loading per settings, plugging
+/// in a finished checker, the debounced recheck of the chat input, and the
+/// chat-list rename field's recheck. Returns `true` when the highlighting or the
+/// checker actually changed and a repaint is needed.
+fn spellcheck_upkeep(
+    spell: &mut SpellLoader,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+) -> bool {
+    let mut dirty = false;
+    // Spellcheck settings received/changed — (re)load dictionaries in the background.
+    if let Some((enabled, selected)) = screen.spell_config() {
+        spell.maybe_reload(enabled, selected);
+    }
+    // A finished (re)load — plug in the checker (a disabled one flags nothing).
+    if let Some(checker) = spell.poll() {
+        screen.set_spellchecker(checker);
+        dirty = true;
+    }
+    // A debounced spellcheck recheck: the loop runs every tick (the `poll`
+    // timeout) even when it isn't drawing, so this is exactly where the debounce
+    // wakeup happens. We repaint only when the highlighting actually got
+    // recomputed. Chat input isn't active on the settings screen — skip it.
+    if active.is_chat() && screen.maybe_recheck_spelling() {
+        dirty = true;
+    }
+    // The rename field (`F2`) on the chat-list screen is also spellchecked — the
+    // checker is borrowed from the chat screen (the owner). See spec §11.5.
+    if let ActiveScreen::ChatList(list) = active
+        && let Some(spell) = screen.spellchecker()
+        && list.recheck_spelling(spell)
+    {
+        dirty = true;
+    }
+    dirty
+}
+
+/// Whether a spinner animation is on screen (background RAG indexing or
+/// impersonation on the chat screen) — those frames repaint every tick.
+fn spinner_frame_needed(active: &ActiveScreen, screen: &ChatScreen) -> bool {
+    active.is_chat() && (screen.is_rag_active() || screen.is_impersonating())
+}
+
+/// Draws one frame for the active screen (the `dirty` branch of [`run_loop`]'s
+/// tick): the `Esc` hint, the full-repaint decision (`last_screen` tracks which
+/// screen was drawn in the previous frame), and the draw itself wrapped in
+/// synchronized output. The comments inside are load-bearing.
+fn draw_frame(
+    terminal: &mut DefaultTerminal,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    back: &Option<SearchReturn>,
+    last_screen: &mut std::mem::Discriminant<ActiveScreen>,
+) -> Result<()> {
+    // The status bar's `Esc` hint, derived from the back-stack for this
+    // frame (see `esc_target`). The stash only ever changes while
+    // handling an event or a keypress, i.e. in an iteration that is
+    // already `dirty`, so the hint is never a frame behind.
+    screen.set_esc_target(esc_target(back));
+    // The frame is wrapped in synchronized output (DEC private mode 2026):
+    // `?2026h` before drawing, `?2026l` after — the terminal buffers everything
+    // in between and applies the frame ATOMICALLY. Without this, the hardware
+    // cursor was visible at intermediate write states: ratatui writes the diff
+    // with the cursor visible (the terminal cursor = the write position) and
+    // returns it to the input box via separate writes AFTER the diff
+    // (`show_cursor`/`set_cursor_position` on CrosstermBackend are `execute!`
+    // with an immediate flush; a large diff is also chopped up by stdout's small
+    // buffer). Windows Terminal renders asynchronously and would show the cursor
+    // at the diff's last written cell: during generation that's the token
+    // counter (the status bar's bottom lines are written last), during RAG
+    // indexing — the banner spinner. The cursor "jumped" between the input box
+    // and these cells at the frame rate (~20/s).
+    //
+    // Terminals without 2026 support (conhost's compat mode) ignore the
+    // unfamiliar private mode — graceful degradation (the jump stays, as
+    // before). The draw error is propagated AFTER lifting the mode, so the
+    // terminal doesn't stay in buffering mode. See spec §4.4.1.
+    // A FULL repaint is needed wherever a wide glyph leaves its spot or
+    // appears at a new one, leaving a "hanging" artifact: a cell-by-cell diff
+    // sometimes doesn't send that glyph's trailing half, sometimes sends it
+    // without `MoveTo` and shifts the row (open upstream issue ratatui#2651).
+    // Every cell needs to be explicitly rewritten, including spaces in empty
+    // spots.
+    //
+    // The "how" mechanics — in `ui::prime_full_redraw` (a sentinel in the
+    // buffer + `swap_buffers` without flushing to the screen, instead of
+    // `terminal.clear()` with its flickering `ESC[2J`). The internal swap
+    // inside `draw` restores the invariant "back buffer = screen".
+    //
+    // Two triggers:
+    //  * the chat screen — scrolling/a feed change with risk-group glyphs and
+    //    closing the emoji/spellcheck popups (`take_full_redraw`);
+    //  * SCREEN SWITCH — the frame's content changes wholesale, and a VS16
+    //    glyph (`❤️`, `🗂️`) on the new screen lands where a foreign character
+    //    used to be. Then the diff sends its trailing half (the character did
+    //    change), the backend prints half without `MoveTo`, and the rest of
+    //    the row shifts right — after a feed with `❤️`, returning from the
+    //    chat list/`F3` left an extra space, which only went away on scroll
+    //    (which triggers this same repaint). Confirmed by
+    //    `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
+    //
+    // Outside these cases, plain text always goes through the regular diff.
+    // See spec §11.3, §11.5.
+    let requested = if matches!(active, ActiveScreen::Chat) {
+        screen.take_full_redraw()
+    } else {
+        false
+    };
+    let now_screen = std::mem::discriminant(active);
+    let switched = now_screen != *last_screen;
+    *last_screen = now_screen;
+    if requested || switched {
+        crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
+        terminal.swap_buffers();
+    }
+    let _ = execute!(stdout(), BeginSynchronizedUpdate);
+    let drawn = match active {
+        ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame)),
+        ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
+        ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
+        ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
+        ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
+    };
+    let _ = execute!(stdout(), EndSynchronizedUpdate);
+    drawn?;
+    Ok(())
+}
+
+/// One input tick: polls the terminal for [`TICK`], collects the available
+/// events into a batch (chasing a paste's tail — see the comments inside) and
+/// processes it. Sets `dirty` when any terminal event arrived; returns `true`
+/// if quitting was requested.
+fn handle_input_tick(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+    dirty: &mut bool,
+) -> Result<bool> {
+    if !event::poll(TICK)? {
+        return Ok(false);
+    }
+    // Any terminal event (input, scroll, resize) may change the view.
+    *dirty = true;
+    // Drain ALL currently available events at once. On Windows a clipboard
+    // paste arrives as a batch of regular key events (there's no Event::Paste
+    // there — see `run`). Without batching this is a repaint per character
+    // (laggy), and an Enter inside the text = a send. We coalesce the batch in
+    // `process_input_batch`.
+    let mut batch = Vec::new();
+    collect_press(&mut batch, event::read()?);
+    while event::poll(Duration::ZERO)? {
+        collect_press(&mut batch, event::read()?);
+    }
+    // Looks like a paste (a burst of events in one drain) — we chase its tail
+    // with a short pause-detector (`PASTE_GAP`), so a large paste made of
+    // several console chunks gets collected into ONE batch. Otherwise a chunk
+    // boundary breaks the run and a lone `Enter` slips through as a send
+    // (Windows).
+    if batch.len() >= PASTE_BURST {
+        while event::poll(PASTE_GAP)? {
+            collect_press(&mut batch, event::read()?);
+        }
+    }
+    Ok(process_input_batch(
+        batch, screen, active, back, cmd_tx, clipboard,
+    ))
 }
 
 // ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 7) ----------

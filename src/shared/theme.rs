@@ -408,26 +408,8 @@ impl Palette {
             .iter()
             .map(|(key, desc, _)| keycap_width(key) + 1 + str_width(desc))
             .collect();
-        const GAP: usize = 3; // gap between columns
-
-        // Column widths for `cols` columns (row-major layout).
-        let col_widths = |cols: usize| -> Vec<usize> {
-            let mut w = vec![0usize; cols];
-            for (i, cw) in cell_w.iter().enumerate() {
-                w[i % cols] = w[i % cols].max(*cw);
-            }
-            w
-        };
-        // Pick the max number of columns that fits the width (→ fewest rows).
-        let mut cols = 1;
-        for c in (1..=n).rev() {
-            let total: usize = col_widths(c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
-            if total <= width {
-                cols = c;
-                break;
-            }
-        }
-        let widths = col_widths(cols);
+        let cols = grid_cols(&cell_w, width);
+        let widths = grid_col_widths(&cell_w, cols);
 
         // Lay out into rows; pad each cell out to the column width, so columns
         // line up vertically.
@@ -435,15 +417,7 @@ impl Palette {
         for row in items.chunks(cols) {
             let mut spans: Vec<Span<'static>> = Vec::new();
             for (c, (key, desc, danger)) in row.iter().enumerate() {
-                let cap = if *danger {
-                    Span::styled(
-                        format!(" {key} "),
-                        Style::new().fg(self.keycap_danger).bg(self.keycap_bg),
-                    )
-                } else {
-                    self.keycap(*key)
-                };
-                spans.push(cap);
+                spans.push(self.grid_keycap(key, *danger));
                 spans.push(Span::styled(format!(" {desc}"), self.muted_style()));
                 let used = keycap_width(key) + 1 + str_width(desc);
                 let pad = widths[c].saturating_sub(used) + if c + 1 < cols { GAP } else { 0 };
@@ -455,6 +429,44 @@ impl Palette {
         }
         lines
     }
+
+    /// A grid cell's "keycap": `danger` marks a "dangerous" key (e.g. delete)
+    /// in red, otherwise the ordinary [`Palette::keycap`].
+    fn grid_keycap(&self, key: &str, danger: bool) -> Span<'static> {
+        if danger {
+            Span::styled(
+                format!(" {key} "),
+                Style::new().fg(self.keycap_danger).bg(self.keycap_bg),
+            )
+        } else {
+            self.keycap(key)
+        }
+    }
+}
+
+const GAP: usize = 3; // gap between hotkey-grid columns
+
+/// Column widths for `cols` columns (row-major layout).
+fn grid_col_widths(cell_w: &[usize], cols: usize) -> Vec<usize> {
+    let mut w = vec![0usize; cols];
+    for (i, cw) in cell_w.iter().enumerate() {
+        w[i % cols] = w[i % cols].max(*cw);
+    }
+    w
+}
+
+/// Picks the max number of columns that fits the width (→ fewest rows).
+fn grid_cols(cell_w: &[usize], width: usize) -> usize {
+    let mut cols = 1;
+    for c in (1..=cell_w.len()).rev() {
+        let total: usize =
+            grid_col_widths(cell_w, c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
+        if total <= width {
+            cols = c;
+            break;
+        }
+    }
+    cols
 }
 
 /// Visible width of a line in terminal columns.

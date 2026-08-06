@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::shared::api::contract::{ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
 // ---------- request ----------
 
@@ -156,44 +156,7 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
             ApiRole::User => items.push(json!({
                 "type": "message", "role": "user", "content": m.content,
             })),
-            ApiRole::Assistant => {
-                // The current turn's reasoning item (only if there's an id — only
-                // OpenAI Responses carries it; other backends have thinking.id == None).
-                if let Some(tb) = &m.thinking
-                    && let Some(id) = &tb.id
-                {
-                    // `summary` is a REQUIRED field of a reasoning item in the Responses API
-                    // (otherwise 400 `Missing required parameter: 'input[N].summary'`). Send an
-                    // empty array: the meaning is carried by `encrypted_content`, and the summary text
-                    // isn't needed for resending (and for an unverified org it's empty, §7a
-                    // docs/research/openai-responses-client.md).
-                    items.push(json!({
-                        "type": "reasoning",
-                        "id": id,
-                        "summary": [],
-                        "encrypted_content": tb.signature,
-                    }));
-                }
-                if !m.content.is_empty() {
-                    items.push(json!({
-                        "type": "message", "role": "assistant", "content": m.content,
-                    }));
-                }
-                for tc in &m.tool_calls {
-                    // arguments — a JSON string; an argument-less call → an empty object.
-                    let args = if tc.arguments.is_empty() {
-                        "{}"
-                    } else {
-                        tc.arguments.as_str()
-                    };
-                    items.push(json!({
-                        "type": "function_call",
-                        "call_id": tc.id,
-                        "name": tc.name,
-                        "arguments": args,
-                    }));
-                }
-            }
+            ApiRole::Assistant => push_assistant_items(m, &mut items),
             ApiRole::Tool => items.push(json!({
                 "type": "function_call_output",
                 "call_id": m.tool_call_id.clone().unwrap_or_default(),
@@ -202,6 +165,47 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
         }
     }
     items
+}
+
+/// An assistant turn's `input` items: the reasoning item (which must precede
+/// the calls), the text message, then the `function_call` items.
+fn push_assistant_items(m: &ApiMessage, items: &mut Vec<Value>) {
+    // The current turn's reasoning item (only if there's an id — only
+    // OpenAI Responses carries it; other backends have thinking.id == None).
+    if let Some(tb) = &m.thinking
+        && let Some(id) = &tb.id
+    {
+        // `summary` is a REQUIRED field of a reasoning item in the Responses API
+        // (otherwise 400 `Missing required parameter: 'input[N].summary'`). Send an
+        // empty array: the meaning is carried by `encrypted_content`, and the summary text
+        // isn't needed for resending (and for an unverified org it's empty, §7a
+        // docs/research/openai-responses-client.md).
+        items.push(json!({
+            "type": "reasoning",
+            "id": id,
+            "summary": [],
+            "encrypted_content": tb.signature,
+        }));
+    }
+    if !m.content.is_empty() {
+        items.push(json!({
+            "type": "message", "role": "assistant", "content": m.content,
+        }));
+    }
+    for tc in &m.tool_calls {
+        // arguments — a JSON string; an argument-less call → an empty object.
+        let args = if tc.arguments.is_empty() {
+            "{}"
+        } else {
+            tc.arguments.as_str()
+        };
+        items.push(json!({
+            "type": "function_call",
+            "call_id": tc.id,
+            "name": tc.name,
+            "arguments": args,
+        }));
+    }
 }
 
 // ---------- streaming events ----------

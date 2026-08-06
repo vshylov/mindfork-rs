@@ -12443,6 +12443,46 @@ three findings are invisible from the workflow's own status):
   memory, tool or provider path is touched (the precedent set by the whole
   settings-redesign track). No CHANGELOG entry — internal refactor (§4).
 
+### Post-M9: SonarQube backlog — stage 3 (runtime and shared) (done)
+
+- **Stage 3** (`refactor/sonar-runtime-shared`, stacked on stage 2). Twelve
+  `rust:S3776` functions across `app/runtime`, `shared`, `entities`,
+  `features/spellcheck` and `main.rs` — again **all closed by extraction, none
+  by Accept**: the three flagged going in as "may be inherent" (the raw-HTML
+  state machine, both cloud wire translations) each turned out to have a seam
+  the existing structure had already drawn.
+- **Runtime** (2 agents in parallel over disjoint files, as in stage 2):
+  `run_loop` (**46**) → `spellcheck_upkeep`/`spinner_frame_needed`/
+  `draw_frame`/`handle_input_tick` — tick ordering and the `dirty` semantics
+  untouched, the load-bearing comments (synchronized output, full-redraw
+  triggers, paste batching) traveling with their code; `apply_event` (29) →
+  seven arm-body helpers, the match itself staying the dispatcher;
+  `process_input_batch` (17) → `handle_key_event`.
+- **Shared**: `markdown/html.rs::html_block_to_lines` (28) → `apply_tag` — the
+  split follows the seam the `DROPPED_ELEMENTS`/`LINE_BREAKING`/
+  `WORD_SEPARATING` tables already drew, so the scanner itself (indices,
+  quotes, comments, the unterminated-`<` fallback) stays one piece;
+  `i18n.rs::dotted_literals_in_src` (22 — a *test-module* gate scanner, the
+  runtime fallback chain untouched) → nested fns lifted + `key_run`;
+  `theme.rs::hotkey_grid` (20) → `grid_col_widths`/`grid_cols`/`grid_keycap`;
+  `mcp.rs::read_loop` (18) → `deliver_reply`/`answer_server_request`;
+  `gemini/wire.rs::thinking_config` (22) → `gemini3_level`/`gemini25_budget` —
+  extracted rather than Accepted because the per-generation split is exactly
+  the seam and all three thinking-config tests pin it (both 2.5-Pro clamps
+  included); `responses/wire.rs::build_input` (17) → `push_assistant_items`,
+  pinned by the reasoning-item-ordering tests.
+- **The rest**: `dict.rs::load_dir` (19) → `load_entry`;
+  `entities/self_model.rs::apply_edit` (19) → `assign_trimmed`/`assign_list`/
+  `set_goal_text`/`clear_all` (now essentially the dispatch);
+  `main.rs::apply_env_overrides` (16) → `apply_engine_env`/`apply_embed_env`.
+- **No test edited**: **1835 passed / 0 failed**, 76 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean. **No live run
+  required** (AGENTS.md §3): the two wire-file extractions are
+  byte-identical request-shape moves pinned by their own wire unit tests, and
+  the cloud protocols additionally ride the `MINDFORK_GEMINI_KEY`/
+  `MINDFORK_OPENAI_KEY` smokes outside CI; nothing else touches an engine,
+  memory or tool path. No CHANGELOG entry — internal refactor (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

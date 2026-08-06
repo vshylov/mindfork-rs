@@ -66,33 +66,7 @@ fn load_dir(
     match fs::read_dir(dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
-                let aff = entry.path();
-                if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
-                    continue;
-                }
-                // Filter by the selected dictionaries (by the file's base name).
-                let stem = aff.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-                if !selected.is_empty() && !selected.iter().any(|s| s == stem) {
-                    continue;
-                }
-                // The name is already loaded (from a higher-priority directory) — don't reload it.
-                if loaded.contains(stem) {
-                    continue;
-                }
-                let dic = aff.with_extension("dic");
-                if !dic.exists() {
-                    continue;
-                }
-                match load_pair(&aff, &dic) {
-                    Ok(dict) => {
-                        tracing::info!(dict = %aff.display(), "dictionary loaded");
-                        loaded.insert(stem.to_string());
-                        dicts.push(dict);
-                    }
-                    Err(err) => {
-                        tracing::warn!(dict = %aff.display(), error = %err, "dictionary skipped");
-                    }
-                }
+                load_entry(&entry.path(), selected, loaded, dicts);
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -100,6 +74,42 @@ fn load_dir(
         }
         Err(err) => {
             tracing::warn!(dir = %dir.display(), error = %err, "failed to read the dictionary directory");
+        }
+    }
+}
+
+/// Loads one directory entry when it is a selected, not-yet-loaded `.aff` with
+/// a `.dic` next to it; anything else is skipped without an error.
+fn load_entry(
+    aff: &Path,
+    selected: &[String],
+    loaded: &mut HashSet<String>,
+    dicts: &mut Vec<Dictionary>,
+) {
+    if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
+        return;
+    }
+    // Filter by the selected dictionaries (by the file's base name).
+    let stem = aff.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    if !selected.is_empty() && !selected.iter().any(|s| s == stem) {
+        return;
+    }
+    // The name is already loaded (from a higher-priority directory) — don't reload it.
+    if loaded.contains(stem) {
+        return;
+    }
+    let dic = aff.with_extension("dic");
+    if !dic.exists() {
+        return;
+    }
+    match load_pair(aff, &dic) {
+        Ok(dict) => {
+            tracing::info!(dict = %aff.display(), "dictionary loaded");
+            loaded.insert(stem.to_string());
+            dicts.push(dict);
+        }
+        Err(err) => {
+            tracing::warn!(dict = %aff.display(), error = %err, "dictionary skipped");
         }
     }
 }
