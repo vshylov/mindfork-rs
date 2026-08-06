@@ -12517,15 +12517,18 @@ three findings are invisible from the workflow's own status):
   `mcp_import.rs` (18).
 - **No test edited**: **1835 passed / 0 failed**, 76 `#[ignore]`, clippy
   `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean — the exact
-  pre-change baseline. **Live run — pending** (AGENTS.md §3): this stage
-  touches the agentic loop and every tool path, so the 26 orchestrator e2e
-  smokes against the live pair (Gemma 4 31B q4_0 + bge-m3, external
-  `llama-server --jinja`) are the stage's remaining gate; the LAN stack was
-  unreachable at implementation time (both `192.168.1.20` servers timing
-  out), so the run happens when the stack is back up —
-  `cargo test e2e_live -- --ignored --nocapture --test-threads=1` plus the
-  MCP/attachment/confirmation smokes, and the result gets recorded here
-  before the PR merges.
+  pre-change baseline. **Live run — GO** (AGENTS.md §3): this stage touches
+  the agentic loop and every tool path, and the LAN stack was unreachable at
+  implementation time (both `192.168.1.20` servers timing out) — so the gate
+  ran through the **remote HF runner** (`tools/e2e_hf.py run`, the exact
+  scenario it was built for): Gemma 4 31B q4_0 on nvidia-l40s + bge-m3 and
+  the alternate e5 embedder on T4s, llama.cpp `server-cuda`. **76 passed /
+  0 failed** — the *entire* `#[ignore]` suite, not just the orchestrator
+  e2e set: memory/self-model/notes/graph/cross-organ links/RAG/attachments/
+  control tools/tool confirmation/MCP (a real `npx server-filesystem`,
+  14 tools)/i18n/web/fetch, plus the four model-change smokes on the
+  alternate embedder. Ready in 139 s, suite 1151 s, total 1290 s; all three
+  endpoints deleted and verified gone, `list` empty.
 - **With this stage the backlog burn-down is code-complete**: 57 open issues
   at the end of stage 0 → 0 expected after the four stage merges re-analyze
   on `main` (48 Rust + 9 Python fixed across stages 1–4).
