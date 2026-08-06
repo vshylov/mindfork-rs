@@ -305,38 +305,14 @@ fn reconcile(storage: &Storage) -> (usize, usize, usize) {
             unchanged += 1;
             continue;
         }
-        match storage.json().load_chat(file.id) {
-            // A hidden chat is dropped rather than indexed: the chat list never
-            // shows it, so neither should search. But it is recorded with *no
-            // messages* instead of being forgotten — `forget_chat` also drops the
-            // bookkeeping, so the next pass would find no record, parse the file
-            // again, and drop it again, on every startup forever. Soft delete is
-            // the only delete here (spec §12.3), so that set only grows: measured
-            // on the real corpus, 43 of 171 chats were re-parsed every pass.
-            // Indexing an empty message set removes any rows it already had and
-            // records the file state, so the next pass skips it on the stat alone.
-            Ok(Some(chat)) if chat.is_hidden => match write_indexed(storage, file, was, &[]) {
-                Ok(true) => forgotten += 1,
-                Ok(false) => unchanged += 1,
-                Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
-                        "search index: failed to drop a hidden chat"),
-            },
-            Ok(Some(chat)) => match write_indexed(storage, file, was, &indexed_messages(&chat)) {
-                Ok(true) => reindexed += 1,
-                Ok(false) => {
-                    unchanged += 1;
-                    tracing::debug!(chat = %file.id,
-                        "search index: a fresher write won, leaving this chat alone");
-                }
-                Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
-                    "search index: failed to index a chat"),
-            },
-            // The file vanished between the walk and the read — the "file gone"
-            // branch below will pick it up on the next run.
-            Ok(None) => {}
-            Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
-                "search index: skipped an unreadable chat file"),
-        }
+        reconcile_file(
+            storage,
+            file,
+            was,
+            &mut reindexed,
+            &mut forgotten,
+            &mut unchanged,
+        );
     }
 
     // Indexed, but the file is gone (deleted outside the app, or a restore that
@@ -354,6 +330,51 @@ fn reconcile(storage: &Storage) -> (usize, usize, usize) {
         "chat search index reconciled"
     );
     (reindexed, forgotten, unchanged)
+}
+
+/// One file's reconciliation step: reads the chat and writes it into the index
+/// (or drops a hidden one), bumping the counter that matches the outcome. A
+/// failure is logged and skipped — one corrupt file must not cost the pass.
+fn reconcile_file(
+    storage: &Storage,
+    file: &crate::shared::storage::json::ChatFileInfo,
+    was: Option<(i64, u64)>,
+    reindexed: &mut usize,
+    forgotten: &mut usize,
+    unchanged: &mut usize,
+) {
+    match storage.json().load_chat(file.id) {
+        // A hidden chat is dropped rather than indexed: the chat list never
+        // shows it, so neither should search. But it is recorded with *no
+        // messages* instead of being forgotten — `forget_chat` also drops the
+        // bookkeeping, so the next pass would find no record, parse the file
+        // again, and drop it again, on every startup forever. Soft delete is
+        // the only delete here (spec §12.3), so that set only grows: measured
+        // on the real corpus, 43 of 171 chats were re-parsed every pass.
+        // Indexing an empty message set removes any rows it already had and
+        // records the file state, so the next pass skips it on the stat alone.
+        Ok(Some(chat)) if chat.is_hidden => match write_indexed(storage, file, was, &[]) {
+            Ok(true) => *forgotten += 1,
+            Ok(false) => *unchanged += 1,
+            Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
+                    "search index: failed to drop a hidden chat"),
+        },
+        Ok(Some(chat)) => match write_indexed(storage, file, was, &indexed_messages(&chat)) {
+            Ok(true) => *reindexed += 1,
+            Ok(false) => {
+                *unchanged += 1;
+                tracing::debug!(chat = %file.id,
+                    "search index: a fresher write won, leaving this chat alone");
+            }
+            Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
+                "search index: failed to index a chat"),
+        },
+        // The file vanished between the walk and the read — the "file gone"
+        // pass in [`reconcile`] will pick it up on the next run.
+        Ok(None) => {}
+        Err(err) => tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
+            "search index: skipped an unreadable chat file"),
+    }
 }
 
 /// The reconciliation's write step, factored out because the guard on it is the

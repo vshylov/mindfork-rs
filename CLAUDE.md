@@ -12483,6 +12483,53 @@ three findings are invisible from the workflow's own status):
   `MINDFORK_OPENAI_KEY` smokes outside CI; nothing else touches an engine,
   memory or tool path. No CHANGELOG entry — internal refactor (§4).
 
+### Post-M9: SonarQube backlog — stage 4 (orchestrator and tools) (done)
+
+- **The final code stage** (`refactor/sonar-orchestrator-tools`, stacked on
+  stage 3): nineteen `rust:S3776` functions on the engine/memory/tool paths —
+  the most concurrency-critical part of the backlog, so the brief to both
+  subagents was "fewer, larger, verbatim-moved helpers" with the invariants
+  named up front. Again **all closed by extraction, none by Accept** — across
+  the whole triage, the only functions whose complexity proved genuinely
+  inherent were the seven identified up front in stage 0.
+- **Orchestrator** (8): `generation.rs::spawn_generation` (**50**, the
+  agentic loop) — the per-turn state moved into a private `TurnLoop` struct
+  whose methods carry the loop verbatim (`run` / `tool_round` /
+  `execute_call` / `resolve_call_result`, following the module's existing
+  parameter-struct pattern — `GenSpawn`, `ConfirmGate`); channel order,
+  effect timing, the confirmation round-trip, control-tool recognition,
+  `sync_attachments` mirroring and the thinking-signature accumulation all
+  moved unchanged. `tool_loop.rs::run_rounds` (19) → `read_round`/
+  `invoke_allowed`; `tts.rs` ×3 (18/18/22) → `append_pieces`/
+  `split_giant_word`/`synth_chunk` (the synthesize-ahead pipeline and
+  pause/cancel semantics verbatim); `rag.rs::spawn_rag_rebuild` (26) — split
+  along its own numbered phases into `gather_rebuild_sources`/
+  `prepare_rebuild`; `reembed.rs::drain_store` (16) → `write_batch`, with
+  both loop guards and the vector-then-stamp ordering staying where they
+  were; `search.rs::reconcile` (17) → `reconcile_file` (the hidden-chat
+  rationale comment traveling whole).
+- **Tools/features** (11): `web.rs` ×2 (20/21 — provider order, throttling
+  detection and best-effort degradation verbatim), `youtube.rs` (16),
+  `self_model.rs` ×2 (**40**/22 — the atomic `self_model_update` closures now
+  call helpers from *inside* the closure, so the atomicity boundary is
+  untouched), `rag.rs` ×3 (20/23/22 — the chunk/stitch algorithms had natural
+  seams after all), `notes/recall.rs` (21), `notes/self_notes.rs` (29),
+  `mcp_import.rs` (18).
+- **No test edited**: **1835 passed / 0 failed**, 76 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean — the exact
+  pre-change baseline. **Live run — pending** (AGENTS.md §3): this stage
+  touches the agentic loop and every tool path, so the 26 orchestrator e2e
+  smokes against the live pair (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server --jinja`) are the stage's remaining gate; the LAN stack was
+  unreachable at implementation time (both `192.168.1.20` servers timing
+  out), so the run happens when the stack is back up —
+  `cargo test e2e_live -- --ignored --nocapture --test-threads=1` plus the
+  MCP/attachment/confirmation smokes, and the result gets recorded here
+  before the PR merges.
+- **With this stage the backlog burn-down is code-complete**: 57 open issues
+  at the end of stage 0 → 0 expected after the four stage merges re-analyze
+  on `main` (48 Rust + 9 Python fixed across stages 1–4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

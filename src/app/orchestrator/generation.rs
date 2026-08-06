@@ -574,11 +574,11 @@ fn spawn_generation(spawn: GenSpawn) {
     let GenSpawn {
         backend,
         registry,
-        mut ctx,
+        ctx,
         mut request,
         cancel,
         confirm_dangerous,
-        mut confirm_rx,
+        confirm_rx,
         id,
         chat_id,
         max_rounds,
@@ -631,257 +631,31 @@ fn spawn_generation(spawn: GenSpawn) {
             reasoning: None,
         });
 
-        let mut messages: Vec<Message> = Vec::new();
-        let mut effects: Vec<ChatEffect> = Vec::new();
-        // Discarded by the "rewrite" tool (for the deleted archive).
-        let mut deleted: Vec<Message> = Vec::new();
-        let mut round: u32 = 0;
-        // Tools the user approved "for the rest of this turn" (fork F4). The turn
-        // is the natural unit — it is the scope of one user request and it ends by
-        // itself, so nothing outlives it and no standing permission accumulates.
-        let mut allowed_for_turn: HashSet<ToolId> = HashSet::new();
-        // Cumulative reply-token counter across all agentic-loop rounds — the
-        // live indicator keeps growing from round to round.
-        let mut total_tokens: u64 = 0;
-        // Cumulative reasoning tokens ("thoughts") across rounds.
-        let mut total_reasoning: u32 = 0;
-        // The next domain assistant message starts a new bubble (after
-        // `send_followup_message`). See spec §9.3.
-        let mut pending_new_bubble = false;
-        let reason;
-
-        let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
-
-        loop {
-            let out = stream_round(
-                &backend,
-                request.clone(),
-                &cancel,
-                id,
-                &evt_tx,
-                total_tokens,
-                total_reasoning,
-                ui_loc,
-            )
-            .await;
-            total_tokens += out.tokens;
-            total_reasoning += out.reasoning_tokens;
-
-            // A round with tool calls — execute and continue the loop.
-            if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
-                if round >= max_rounds {
-                    // Limit reached: DON'T execute new calls, ask the model instead
-                    // to sum up what's already been gathered — a final round WITHOUT
-                    // tools. Otherwise (the previous behavior) `out` would only
-                    // contain an intent to call more tools with empty text →
-                    // `finalize_message` returned `None`, and the user got no reply
-                    // at all, even though enough data had accumulated over the
-                    // previous rounds. Tools are removed from the request, so the
-                    // model must answer with text (the stream goes into the feed).
-                    let _ = evt_tx.send(AppEvent::Error(ctx.loc.tf(
-                        "loop.round_limit_reached",
-                        &[("max_rounds", &max_rounds.to_string())],
-                    )));
-                    request.tools.clear();
-                    // The final round's token counter is emitted by `stream_round` itself
-                    // (from `base = total_*`); after that we `break`, no need to accumulate.
-                    let final_out = stream_round(
-                        &backend,
-                        request.clone(),
-                        &cancel,
-                        id,
-                        &evt_tx,
-                        total_tokens,
-                        total_reasoning,
-                        ui_loc,
-                    )
-                    .await;
-                    if let Some(mut m) =
-                        finalize_message(&final_out, &ctx, engine_mode, &model_name)
-                    {
-                        m.new_bubble = pending_new_bubble;
-                        messages.push(m);
-                    }
-                    // The finish reason comes from the final round (usually Stop; on
-                    // user cancellation/a stream error — Cancelled/Error), not an
-                    // artificial Stop.
-                    reason = final_out.reason;
-                    break;
-                }
-                round += 1;
-
-                // Conversation control tools (spec §9.3) are recognized only if
-                // they're actually enabled in the profile — otherwise a plain
-                // refusal below. `rewrite` discards the current round; `followup`
-                // starts a new bubble.
-                let rewrite = out
-                    .calls
-                    .iter()
-                    .any(|c| c.name == control::REWRITE_CURRENT_ID && allowed_has(&c.name));
-                let followup = out
-                    .calls
-                    .iter()
-                    .any(|c| c.name == control::SEND_FOLLOWUP_ID && allowed_has(&c.name));
-
-                // The assistant turn with calls — into the request history (also
-                // needed for inference in the next continuation/rewrite round). With
-                // extended thinking (Anthropic) we attach a thinking block with a
-                // signature: an assistant turn with tool_use in the same turn is
-                // required to carry it, otherwise the next request → 400. The
-                // signature exists only if the model actually returned "thoughts";
-                // other backends ignore the field.
-                let thinking = out.thinking_ref.clone().map(|r| ThinkingBlock {
-                    text: out.thoughts.clone(),
-                    signature: r.signature,
-                    id: r.id,
-                });
-                request.messages.push(
-                    ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
-                        .with_thinking(thinking),
-                );
-                let mut records: Vec<ToolCallRecord> = Vec::new();
-                let mut tool_msgs: Vec<Message> = Vec::new();
-                for call in &out.calls {
-                    // A no-argument call gives an empty argument string — we store it
-                    // as an empty OBJECT, not `Null`: otherwise serializing the history
-                    // entry gives `"null"`, and strict providers (Anthropic) expect an
-                    // object in `input` (see shared/api/anthropic/wire.rs). An object is
-                    // also safer for invoke (deserializing a struct from `null` panics).
-                    let args: serde_json::Value = serde_json::from_str(&call.arguments)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                    let is_control = control::is_control_tool(&call.name);
-                    let result = if !allowed_has(&call.name) {
-                        // Protection: the tool is disabled globally/in the profile.
-                        ctx.loc.tf("loop.tool_disabled", &[("name", &call.name)])
-                    } else if is_control {
-                        // A control tool: the result is "permission" (the model will
-                        // see it in the next round). Executed by the loop, not
-                        // through the registry.
-                        control::control_permission_text(&call.name, ctx.loc)
-                    } else if rewrite {
-                        // This round is being discarded — side-effect tools aren't executed.
-                        ctx.loc.t("loop.rewrite_skipped").to_string()
-                    } else if let Some(refusal) = confirm_call(
-                        ConfirmGate {
-                            enabled: confirm_dangerous,
-                            registry: &registry,
-                            evt_tx: &evt_tx,
-                            cancel: &cancel,
-                            id,
-                            loc: ctx.loc,
-                        },
-                        call,
-                        &mut allowed_for_turn,
-                        &mut confirm_rx,
-                    )
-                    .await
-                    {
-                        // Declined, or the turn was cancelled while the popup was
-                        // open. Either way the loop carries on and the model is
-                        // told (fork F5) — ending the turn here would throw away
-                        // the text already streamed.
-                        refusal
-                    } else {
-                        // Execution under a `select!` with the cancellation token: Esc
-                        // doesn't wait for a long-running tool (MCP/network) to finish.
-                        // Tools that read `ctx.cancel` terminate themselves (MCP sends
-                        // the server notifications/cancelled); this is a safety net
-                        // for the rest.
-                        let invoked = tokio::select! {
-                            _ = cancel.cancelled() => None,
-                            res = registry.invoke(&call.name, &ctx, args.clone()) => Some(res),
-                        };
-                        match invoked {
-                            None => ctx.loc.t("loop.tool_cancelled").to_string(),
-                            Some(Ok(outcome)) => {
-                                effects.extend(outcome.effects);
-                                outcome.result
-                            }
-                            Some(Err(err)) => ctx.loc.tf(
-                                "loop.tool_error",
-                                &[("name", &call.name), ("err", &err.to_string())],
-                            ),
-                        }
-                    };
-                    // A UI tool block — only for regular executed calls (the internal
-                    // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
-                    if !is_control && !rewrite {
-                        let _ = evt_tx.send(AppEvent::ToolCall {
-                            generation_id: id,
-                            name: call.name.clone(),
-                            arguments: call.arguments.clone(),
-                            result: result.clone(),
-                        });
-                    }
-                    request.messages.push(ApiMessage::tool(&call.id, &result));
-                    records.push(ToolCallRecord {
-                        id: call.id.clone(),
-                        name: call.name.clone(),
-                        arguments: args,
-                        result: Some(result.clone()),
-                        // The thought signature (Gemini 3) is persisted — needed on history replay.
-                        thought_signature: call.thought_signature.clone(),
-                    });
-                    tool_msgs.push(tool_message(call, result));
-                }
-
-                // The round's domain assistant message (text + thoughts + tool blocks).
-                let mut am = Message::assistant(out.text.clone());
-                if !out.thoughts.is_empty() {
-                    am.thoughts = Some(out.thoughts.clone());
-                }
-                am.tool_calls = records;
-
-                if rewrite {
-                    // Discard the round: assistant + tool messages → the deleted archive.
-                    // The live feed clears the current bubble for the rewritten reply.
-                    // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
-                    deleted.push(am);
-                    deleted.extend(tool_msgs);
-                    let _ = evt_tx.send(AppEvent::AssistantRewrite { generation_id: id });
-                } else {
-                    // assistant BEFORE this round's tool messages.
-                    am.new_bubble = std::mem::take(&mut pending_new_bubble);
-                    messages.push(am);
-                    messages.extend(tool_msgs);
-                    if followup {
-                        // The next assistant message — as a separate bubble.
-                        pending_new_bubble = true;
-                        let _ = evt_tx.send(AppEvent::AssistantContinue { generation_id: id });
-                    }
-                }
-                // An attachment a tool produced this round (a video transcript,
-                // spec §9.9) is mirrored into the turn's snapshot, so
-                // `attachment_read`/`attachment_search` find it in the **next
-                // round** — which is when the model, having just been told it
-                // exists, will ask for it. Without this the tool result would be
-                // an instruction the turn cannot carry out: the effect itself is
-                // applied to `Chat` by the orchestrator only when the turn ends
-                // (docs/history/youtube-transcript.md §3 F1).
-                //
-                // Once per round, not per call: within a round the model has
-                // already issued its calls, so finer granularity would buy
-                // nothing. The loop still never touches `Chat` — this is its own
-                // snapshot.
-                sync_attachments(&mut ctx, &effects);
-
-                // The turn was cancelled while tools were executing — what's
-                // accumulated is already saved above, don't start the next round.
-                if cancel.is_cancelled() {
-                    reason = FinishReason::Cancelled;
-                    break;
-                }
-                continue;
-            }
-
-            // The final round (Stop/Length/Cancelled/Error, or no calls).
-            if let Some(mut m) = finalize_message(&out, &ctx, engine_mode, &model_name) {
-                m.new_bubble = pending_new_bubble;
-                messages.push(m);
-            }
-            reason = out.reason;
-            break;
-        }
+        let mut turn = TurnLoop {
+            backend,
+            registry,
+            ctx,
+            request,
+            cancel,
+            confirm_dangerous,
+            confirm_rx,
+            id,
+            max_rounds,
+            allowed,
+            engine_mode,
+            model_name,
+            ui_loc,
+            evt_tx: evt_tx.clone(),
+            messages: Vec::new(),
+            effects: Vec::new(),
+            deleted: Vec::new(),
+            round: 0,
+            allowed_for_turn: HashSet::new(),
+            total_tokens: 0,
+            total_reasoning: 0,
+            pending_new_bubble: false,
+        };
+        let reason = turn.run().await;
 
         let _ = evt_tx.send(AppEvent::Finished {
             generation_id: id,
@@ -890,11 +664,345 @@ fn spawn_generation(spawn: GenSpawn) {
         let _ = done_tx.send(GenResult {
             id,
             chat_id,
-            messages,
-            effects,
-            deleted,
+            messages: turn.messages,
+            effects: turn.effects,
+            deleted: turn.deleted,
         });
     });
+}
+
+/// The agentic-loop task's per-turn state. Moved verbatim out of
+/// [`spawn_generation`]'s async block (Sonar S3776): the loop itself is
+/// [`Self::run`], one tool round is [`Self::tool_round`], one call —
+/// [`Self::execute_call`] / [`Self::resolve_call_result`]. The struct follows
+/// the module's parameter-struct pattern ([`GenSpawn`], [`ConfirmGate`]); it
+/// still never touches `Chat` — results go back through [`GenResult`].
+struct TurnLoop {
+    backend: Arc<dyn EngineBackend>,
+    registry: Arc<ToolRegistry>,
+    ctx: ToolContext,
+    request: ChatRequest,
+    cancel: CancellationToken,
+    confirm_dangerous: bool,
+    confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
+    id: Uuid,
+    max_rounds: u32,
+    allowed: Vec<ToolId>,
+    engine_mode: ServerMode,
+    model_name: Option<String>,
+    ui_loc: &'static crate::shared::i18n::Locale,
+    evt_tx: UnboundedSender<AppEvent>,
+    /// New domain messages accumulated across the turn's rounds.
+    messages: Vec<Message>,
+    /// Tool effects accumulated across the turn's rounds.
+    effects: Vec<ChatEffect>,
+    /// Discarded by the "rewrite" tool (for the deleted archive).
+    deleted: Vec<Message>,
+    round: u32,
+    /// Tools the user approved "for the rest of this turn" (fork F4). The turn
+    /// is the natural unit — it is the scope of one user request and it ends by
+    /// itself, so nothing outlives it and no standing permission accumulates.
+    allowed_for_turn: HashSet<ToolId>,
+    /// Cumulative reply-token counter across all agentic-loop rounds — the
+    /// live indicator keeps growing from round to round.
+    total_tokens: u64,
+    /// Cumulative reasoning tokens ("thoughts") across rounds.
+    total_reasoning: u32,
+    /// The next domain assistant message starts a new bubble (after
+    /// `send_followup_message`). See spec §9.3.
+    pending_new_bubble: bool,
+}
+
+impl TurnLoop {
+    /// Is the tool in the turn's effectively allowed set (profile ∩ global
+    /// switches)?
+    fn allowed_has(&self, name: &str) -> bool {
+        self.allowed.iter().any(|t| t == name)
+    }
+
+    /// The agentic loop itself: stream → on `finish_reason=ToolCalls` execute
+    /// tools → a new request, up to `max_rounds`. Returns the turn's finish
+    /// reason.
+    async fn run(&mut self) -> FinishReason {
+        loop {
+            let out = stream_round(
+                &self.backend,
+                self.request.clone(),
+                &self.cancel,
+                self.id,
+                &self.evt_tx,
+                self.total_tokens,
+                self.total_reasoning,
+                self.ui_loc,
+            )
+            .await;
+            self.total_tokens += out.tokens;
+            self.total_reasoning += out.reasoning_tokens;
+
+            // A round with tool calls — execute and continue the loop.
+            if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
+                if let Some(reason) = self.tool_round(out).await {
+                    return reason;
+                }
+                continue;
+            }
+
+            // The final round (Stop/Length/Cancelled/Error, or no calls).
+            if let Some(mut m) =
+                finalize_message(&out, &self.ctx, self.engine_mode, &self.model_name)
+            {
+                m.new_bubble = self.pending_new_bubble;
+                self.messages.push(m);
+            }
+            return out.reason;
+        }
+    }
+
+    /// One round that ended in tool calls: the round-limit final round, the
+    /// control-tool recognition, executing every call, and assembling the
+    /// round's domain messages. `Some(reason)` ends the turn; `None` — run the
+    /// next round.
+    async fn tool_round(&mut self, out: RoundOutput) -> Option<FinishReason> {
+        if self.round >= self.max_rounds {
+            // Limit reached: DON'T execute new calls, ask the model instead
+            // to sum up what's already been gathered — a final round WITHOUT
+            // tools. Otherwise (the previous behavior) `out` would only
+            // contain an intent to call more tools with empty text →
+            // `finalize_message` returned `None`, and the user got no reply
+            // at all, even though enough data had accumulated over the
+            // previous rounds. Tools are removed from the request, so the
+            // model must answer with text (the stream goes into the feed).
+            let _ = self.evt_tx.send(AppEvent::Error(self.ctx.loc.tf(
+                "loop.round_limit_reached",
+                &[("max_rounds", &self.max_rounds.to_string())],
+            )));
+            self.request.tools.clear();
+            // The final round's token counter is emitted by `stream_round` itself
+            // (from `base = total_*`); after that the turn ends, no need to accumulate.
+            let final_out = stream_round(
+                &self.backend,
+                self.request.clone(),
+                &self.cancel,
+                self.id,
+                &self.evt_tx,
+                self.total_tokens,
+                self.total_reasoning,
+                self.ui_loc,
+            )
+            .await;
+            if let Some(mut m) =
+                finalize_message(&final_out, &self.ctx, self.engine_mode, &self.model_name)
+            {
+                m.new_bubble = self.pending_new_bubble;
+                self.messages.push(m);
+            }
+            // The finish reason comes from the final round (usually Stop; on
+            // user cancellation/a stream error — Cancelled/Error), not an
+            // artificial Stop.
+            return Some(final_out.reason);
+        }
+        self.round += 1;
+
+        // Conversation control tools (spec §9.3) are recognized only if
+        // they're actually enabled in the profile — otherwise a plain
+        // refusal below. `rewrite` discards the current round; `followup`
+        // starts a new bubble.
+        let rewrite = out
+            .calls
+            .iter()
+            .any(|c| c.name == control::REWRITE_CURRENT_ID && self.allowed_has(&c.name));
+        let followup = out
+            .calls
+            .iter()
+            .any(|c| c.name == control::SEND_FOLLOWUP_ID && self.allowed_has(&c.name));
+
+        // The assistant turn with calls — into the request history (also
+        // needed for inference in the next continuation/rewrite round). With
+        // extended thinking (Anthropic) we attach a thinking block with a
+        // signature: an assistant turn with tool_use in the same turn is
+        // required to carry it, otherwise the next request → 400. The
+        // signature exists only if the model actually returned "thoughts";
+        // other backends ignore the field.
+        let thinking = out.thinking_ref.clone().map(|r| ThinkingBlock {
+            text: out.thoughts.clone(),
+            signature: r.signature,
+            id: r.id,
+        });
+        self.request.messages.push(
+            ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
+                .with_thinking(thinking),
+        );
+        let mut records: Vec<ToolCallRecord> = Vec::new();
+        let mut tool_msgs: Vec<Message> = Vec::new();
+        for call in &out.calls {
+            self.execute_call(call, rewrite, &mut records, &mut tool_msgs)
+                .await;
+        }
+
+        // The round's domain assistant message (text + thoughts + tool blocks).
+        let mut am = Message::assistant(out.text.clone());
+        if !out.thoughts.is_empty() {
+            am.thoughts = Some(out.thoughts.clone());
+        }
+        am.tool_calls = records;
+
+        if rewrite {
+            // Discard the round: assistant + tool messages → the deleted archive.
+            // The live feed clears the current bubble for the rewritten reply.
+            // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
+            self.deleted.push(am);
+            self.deleted.extend(tool_msgs);
+            let _ = self.evt_tx.send(AppEvent::AssistantRewrite {
+                generation_id: self.id,
+            });
+        } else {
+            // assistant BEFORE this round's tool messages.
+            am.new_bubble = std::mem::take(&mut self.pending_new_bubble);
+            self.messages.push(am);
+            self.messages.extend(tool_msgs);
+            if followup {
+                // The next assistant message — as a separate bubble.
+                self.pending_new_bubble = true;
+                let _ = self.evt_tx.send(AppEvent::AssistantContinue {
+                    generation_id: self.id,
+                });
+            }
+        }
+        // An attachment a tool produced this round (a video transcript,
+        // spec §9.9) is mirrored into the turn's snapshot, so
+        // `attachment_read`/`attachment_search` find it in the **next
+        // round** — which is when the model, having just been told it
+        // exists, will ask for it. Without this the tool result would be
+        // an instruction the turn cannot carry out: the effect itself is
+        // applied to `Chat` by the orchestrator only when the turn ends
+        // (docs/history/youtube-transcript.md §3 F1).
+        //
+        // Once per round, not per call: within a round the model has
+        // already issued its calls, so finer granularity would buy
+        // nothing. The loop still never touches `Chat` — this is its own
+        // snapshot.
+        sync_attachments(&mut self.ctx, &self.effects);
+
+        // The turn was cancelled while tools were executing — what's
+        // accumulated is already saved above, don't start the next round.
+        if self.cancel.is_cancelled() {
+            return Some(FinishReason::Cancelled);
+        }
+        None
+    }
+
+    /// Executes one tool call: resolves its result (gates/confirmation/the
+    /// actual invocation), emits the UI tool block, and records the call into
+    /// the request history + the round's domain records.
+    async fn execute_call(
+        &mut self,
+        call: &ApiToolCall,
+        rewrite: bool,
+        records: &mut Vec<ToolCallRecord>,
+        tool_msgs: &mut Vec<Message>,
+    ) {
+        // A no-argument call gives an empty argument string — we store it
+        // as an empty OBJECT, not `Null`: otherwise serializing the history
+        // entry gives `"null"`, and strict providers (Anthropic) expect an
+        // object in `input` (see shared/api/anthropic/wire.rs). An object is
+        // also safer for invoke (deserializing a struct from `null` panics).
+        let args: serde_json::Value =
+            serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
+        let is_control = control::is_control_tool(&call.name);
+        let result = self
+            .resolve_call_result(call, &args, is_control, rewrite)
+            .await;
+        // A UI tool block — only for regular executed calls (the internal
+        // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
+        if !is_control && !rewrite {
+            let _ = self.evt_tx.send(AppEvent::ToolCall {
+                generation_id: self.id,
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                result: result.clone(),
+            });
+        }
+        self.request
+            .messages
+            .push(ApiMessage::tool(&call.id, &result));
+        records.push(ToolCallRecord {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: args,
+            result: Some(result.clone()),
+            // The thought signature (Gemini 3) is persisted — needed on history replay.
+            thought_signature: call.thought_signature.clone(),
+        });
+        tool_msgs.push(tool_message(call, result));
+    }
+
+    /// One call's result text: the disabled/control/rewrite gates, the
+    /// confirmation round-trip (spec §9.8), and the invocation under a
+    /// `select!` with the turn's cancellation token — moved verbatim from the
+    /// loop body.
+    async fn resolve_call_result(
+        &mut self,
+        call: &ApiToolCall,
+        args: &serde_json::Value,
+        is_control: bool,
+        rewrite: bool,
+    ) -> String {
+        if !self.allowed_has(&call.name) {
+            // Protection: the tool is disabled globally/in the profile.
+            self.ctx
+                .loc
+                .tf("loop.tool_disabled", &[("name", &call.name)])
+        } else if is_control {
+            // A control tool: the result is "permission" (the model will
+            // see it in the next round). Executed by the loop, not
+            // through the registry.
+            control::control_permission_text(&call.name, self.ctx.loc)
+        } else if rewrite {
+            // This round is being discarded — side-effect tools aren't executed.
+            self.ctx.loc.t("loop.rewrite_skipped").to_string()
+        } else if let Some(refusal) = confirm_call(
+            ConfirmGate {
+                enabled: self.confirm_dangerous,
+                registry: &self.registry,
+                evt_tx: &self.evt_tx,
+                cancel: &self.cancel,
+                id: self.id,
+                loc: self.ctx.loc,
+            },
+            call,
+            &mut self.allowed_for_turn,
+            &mut self.confirm_rx,
+        )
+        .await
+        {
+            // Declined, or the turn was cancelled while the popup was
+            // open. Either way the loop carries on and the model is
+            // told (fork F5) — ending the turn here would throw away
+            // the text already streamed.
+            refusal
+        } else {
+            // Execution under a `select!` with the cancellation token: Esc
+            // doesn't wait for a long-running tool (MCP/network) to finish.
+            // Tools that read `ctx.cancel` terminate themselves (MCP sends
+            // the server notifications/cancelled); this is a safety net
+            // for the rest.
+            let invoked = tokio::select! {
+                _ = self.cancel.cancelled() => None,
+                res = self.registry.invoke(&call.name, &self.ctx, args.clone()) => Some(res),
+            };
+            match invoked {
+                None => self.ctx.loc.t("loop.tool_cancelled").to_string(),
+                Some(Ok(outcome)) => {
+                    self.effects.extend(outcome.effects);
+                    outcome.result
+                }
+                Some(Err(err)) => self.ctx.loc.tf(
+                    "loop.tool_error",
+                    &[("name", &call.name), ("err", &err.to_string())],
+                ),
+            }
+        }
+    }
 }
 
 /// Rebuilds the turn's attachment snapshot from the `AddAttachment` effects the

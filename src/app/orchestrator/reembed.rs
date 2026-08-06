@@ -288,19 +288,8 @@ async fn drain_store(
             }
         };
 
-        let mut written = 0usize;
-        for (row, embedding) in rows.iter().zip(embeddings) {
-            match store.write(storage.db(), row, &embedding) {
-                Ok(()) => {
-                    written += 1;
-                    *done += 1;
-                }
-                Err(err) => {
-                    errors += 1;
-                    tracing::warn!(?store, rowid = row.rowid, error = %err, "re-embed: failed to write a vector");
-                }
-            }
-        }
+        let (written, write_errors) = write_batch(store, storage, &rows, embeddings, done);
+        errors += write_errors;
         // A batch that wrote nothing leaves the queue unchanged, so the next
         // fetch returns the same rows — the loop would never end. Stop this
         // store instead; the rows stay foreign and a later run can retry them.
@@ -322,6 +311,34 @@ async fn drain_store(
         errors,
         fatal: None,
     }
+}
+
+/// Writes one batch's vectors back (each row: vector, then generation stamp —
+/// `Store::write` delegates to the DB primitives that keep that order).
+/// Returns `(written, errors)`: a failed row is counted and logged, never
+/// fatal — it stays foreign and a later run can retry it.
+fn write_batch(
+    store: Store,
+    storage: &Arc<Storage>,
+    rows: &[ReembedRow],
+    embeddings: Vec<Vec<f32>>,
+    done: &mut usize,
+) -> (usize, usize) {
+    let mut written = 0usize;
+    let mut errors = 0usize;
+    for (row, embedding) in rows.iter().zip(embeddings) {
+        match store.write(storage.db(), row, &embedding) {
+            Ok(()) => {
+                written += 1;
+                *done += 1;
+            }
+            Err(err) => {
+                errors += 1;
+                tracing::warn!(?store, rowid = row.rowid, error = %err, "re-embed: failed to write a vector");
+            }
+        }
+    }
+    (written, errors)
 }
 
 #[cfg(test)]

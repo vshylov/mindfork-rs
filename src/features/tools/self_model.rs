@@ -8,7 +8,9 @@ use anyhow::Result;
 use chrono::Utc;
 
 use crate::entities::profile::ToolId;
-use crate::entities::self_model::{GoalMatch, GoalStatus, NarrativeSegment, SelfModel};
+use crate::entities::self_model::{
+    GoalMatch, GoalStatus, NarrativeSegment, SelfModel, SelfModelParams,
+};
 use crate::shared::api::EmbedRole;
 use crate::shared::i18n::Locale;
 
@@ -393,166 +395,221 @@ impl Tool for UpdateSelfModel {
         // inside the atomic edit (captured by `&mut`); writing the model happens
         // under one mutex acquisition, while scars → self-notes happen afterward
         // (the closure has no access to storage/async).
-        let mut unresolved: Vec<String> = Vec::new();
-        let mut scars: Vec<String> = Vec::new();
-        // Whether the self-description changed — for the size line in the echo
-        // (the size gate, stage 2).
-        let mut summary_changed = false;
-        // Edit deltas for a compact echo (stage 4): what was actually added/closed
-        // — instead of a full render_full (that stays with get_self_model). Goals
-        // are named by #id — the same handle used later to close them.
-        let mut added_goals: Vec<(String, uuid::Uuid)> = Vec::new();
-        let mut completed: Vec<uuid::Uuid> = Vec::new();
-        let mut abandoned: Vec<uuid::Uuid> = Vec::new();
+        let mut deltas = SelfModelEditDeltas::default();
         let params = ctx.self_model_params;
         let loc = ctx.loc; // &'static — copy so the closure doesn't borrow ctx
-        let (model, changed) =
-            ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-                let mut changed = false;
-                if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
-                    let s = s.trim().to_string();
-                    if m.summary != s {
-                        m.summary = s;
-                        changed = true;
-                        summary_changed = true;
-                    }
-                }
-                for g in str_array(&args, "add_goals") {
-                    let before = m.goals.len();
-                    m.add_goal(g);
-                    // add_goal ignores empty ones — record only what was actually added.
-                    if m.goals.len() != before {
-                        let goal = m.goals.last().expect("just added");
-                        added_goals.push((goal.description.clone(), goal.id));
-                        changed = true;
-                    }
-                }
-                // Goals are closed by #id/a full id — resolve the handle among the
-                // model's goals.
-                for h in str_array(&args, "complete_goals") {
-                    match m.match_goal(&h) {
-                        GoalMatch::One(id) => {
-                            if m.set_goal_status(id, GoalStatus::Completed) {
-                                completed.push(id);
-                                changed = true;
-                            }
-                        }
-                        GoalMatch::None => unresolved.push(h),
-                        GoalMatch::Ambiguous => unresolved
-                            .push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)])),
-                    }
-                }
-                for h in str_array(&args, "abandon_goals") {
-                    match m.match_goal(&h) {
-                        GoalMatch::One(id) => {
-                            if m.set_goal_status(id, GoalStatus::Abandoned) {
-                                abandoned.push(id);
-                                changed = true;
-                            }
-                        }
-                        GoalMatch::None => unresolved.push(h),
-                        GoalMatch::Ambiguous => unresolved
-                            .push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)])),
-                    }
-                }
-                // Folding old closed goals: fold returns scars (texts) — we'll
-                // write them as self-notes after the atomic edit (a cap on closed
-                // goals: the structure doesn't grow, the "biography" is preserved
-                // as an observation).
-                scars = m.fold_closed_goals(params.max_closed_goals, loc);
-                if !scars.is_empty() {
-                    changed = true;
-                }
-                changed
-            })?;
+        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            apply_self_model_edit(m, &args, params, loc, &mut deltas)
+        })?;
 
         // Scars from folded closed goals → self-notes (observations). Best-effort.
-        for scar in &scars {
+        for scar in &deltas.scars {
             let _ =
                 notes::create_note(ctx, scar.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await;
         }
 
         if !changed {
             let mut msg = ctx.loc.t("selfmodel.result.nothing").to_string();
-            if !unresolved.is_empty() {
+            if !deltas.unresolved.is_empty() {
                 msg.push('\n');
                 msg.push_str(&ctx.loc.tf(
                     "tool.update_self_model.goals_not_found",
-                    &[("list", &unresolved.join(", "))],
+                    &[("list", &deltas.unresolved.join(", "))],
                 ));
             }
             return Ok(ToolOutcome::text(msg));
         }
-        // Delta echo (stage 4): only what changed, without a full render_full (a
-        // full read — get_self_model's job). Saves tokens and doesn't "anchor" the
-        // model on the essay genre.
-        use crate::entities::self_model::short_id;
-        let mut msg = ctx
-            .loc
-            .t("tool.update_self_model.result.updated")
-            .to_string();
-        // Feedback about description size (stage 2): always on a summary edit, so
-        // the model sees growth even before exceeding the target. See
-        // docs/summary-as-snapshot.md.
-        if summary_changed {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.size",
-                &[
-                    ("n", &model.summary.chars().count().to_string()),
-                    ("target", &params.summary_target_chars.to_string()),
-                ],
-            ));
-        }
-        if !added_goals.is_empty() {
-            let list: Vec<String> = added_goals
-                .iter()
-                .map(|(d, id)| format!("#{} {d}", short_id(id)))
-                .collect();
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.added_goals",
-                &[("list", &list.join("; "))],
-            ));
-        }
-        if !completed.is_empty() {
-            let ids: Vec<String> = completed
-                .iter()
-                .map(|id| format!("#{}", short_id(id)))
-                .collect();
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.completed",
-                &[("list", &ids.join(", "))],
-            ));
-        }
-        if !abandoned.is_empty() {
-            let ids: Vec<String> = abandoned
-                .iter()
-                .map(|id| format!("#{}", short_id(id)))
-                .collect();
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.abandoned",
-                &[("list", &ids.join(", "))],
-            ));
-        }
-        if !scars.is_empty() {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.folded",
-                &[("n", &scars.len().to_string())],
-            ));
-        }
-        if !unresolved.is_empty() {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_self_model.goals_not_found_paren",
-                &[("list", &unresolved.join(", "))],
-            ));
-        }
-        Ok(ToolOutcome::text(msg))
+        Ok(ToolOutcome::text(update_self_model_echo(
+            ctx.loc, &model, params, &deltas,
+        )))
     }
+}
+
+/// Side data of `update_self_model`'s atomic edit, collected inside the
+/// `self_model_update` closure (captured by `&mut`) and consumed afterward.
+#[derive(Default)]
+struct SelfModelEditDeltas {
+    /// Unresolved goal handles (misses and, localized, ambiguities).
+    unresolved: Vec<String>,
+    /// Scars from folded closed goals — written as self-notes after the edit.
+    scars: Vec<String>,
+    /// Whether the self-description changed — for the size line in the echo
+    /// (the size gate, stage 2).
+    summary_changed: bool,
+    /// Edit deltas for a compact echo (stage 4): what was actually added/closed
+    /// — instead of a full render_full (that stays with get_self_model). Goals
+    /// are named by #id — the same handle used later to close them.
+    added_goals: Vec<(String, uuid::Uuid)>,
+    completed: Vec<uuid::Uuid>,
+    abandoned: Vec<uuid::Uuid>,
+}
+
+/// The body of `update_self_model`'s atomic edit. Runs INSIDE the
+/// `self_model_update` closure — one mutex acquisition, no storage/async access
+/// here (the atomicity boundary is load-bearing). Returns whether the model
+/// changed.
+fn apply_self_model_edit(
+    m: &mut SelfModel,
+    args: &serde_json::Value,
+    params: SelfModelParams,
+    loc: &Locale,
+    d: &mut SelfModelEditDeltas,
+) -> bool {
+    let mut changed = false;
+    if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
+        let s = s.trim().to_string();
+        if m.summary != s {
+            m.summary = s;
+            changed = true;
+            d.summary_changed = true;
+        }
+    }
+    for g in str_array(args, "add_goals") {
+        let before = m.goals.len();
+        m.add_goal(g);
+        // add_goal ignores empty ones — record only what was actually added.
+        if m.goals.len() != before {
+            let goal = m.goals.last().expect("just added");
+            d.added_goals.push((goal.description.clone(), goal.id));
+            changed = true;
+        }
+    }
+    // Goals are closed by #id/a full id — resolve the handle among the
+    // model's goals.
+    changed |= close_goals(
+        m,
+        args,
+        "complete_goals",
+        GoalStatus::Completed,
+        loc,
+        &mut d.completed,
+        &mut d.unresolved,
+    );
+    changed |= close_goals(
+        m,
+        args,
+        "abandon_goals",
+        GoalStatus::Abandoned,
+        loc,
+        &mut d.abandoned,
+        &mut d.unresolved,
+    );
+    // Folding old closed goals: fold returns scars (texts) — we'll
+    // write them as self-notes after the atomic edit (a cap on closed
+    // goals: the structure doesn't grow, the "biography" is preserved
+    // as an observation).
+    d.scars = m.fold_closed_goals(params.max_closed_goals, loc);
+    if !d.scars.is_empty() {
+        changed = true;
+    }
+    changed
+}
+
+/// Closes goals from the `key` string array by #id/full-id handle (see
+/// `SelfModel::match_goal`): closed ids go into `closed`, misses/ambiguities
+/// into `unresolved`. Returns whether anything actually changed.
+fn close_goals(
+    m: &mut SelfModel,
+    args: &serde_json::Value,
+    key: &str,
+    status: GoalStatus,
+    loc: &Locale,
+    closed: &mut Vec<uuid::Uuid>,
+    unresolved: &mut Vec<String>,
+) -> bool {
+    let mut changed = false;
+    for h in str_array(args, key) {
+        match m.match_goal(&h) {
+            GoalMatch::One(id) => {
+                if m.set_goal_status(id, status) {
+                    closed.push(id);
+                    changed = true;
+                }
+            }
+            GoalMatch::None => unresolved.push(h),
+            GoalMatch::Ambiguous => {
+                unresolved.push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)]))
+            }
+        }
+    }
+    changed
+}
+
+/// Delta echo (stage 4): only what changed, without a full render_full (a
+/// full read — get_self_model's job). Saves tokens and doesn't "anchor" the
+/// model on the essay genre.
+fn update_self_model_echo(
+    loc: &Locale,
+    model: &SelfModel,
+    params: SelfModelParams,
+    d: &SelfModelEditDeltas,
+) -> String {
+    use crate::entities::self_model::short_id;
+    let mut msg = loc.t("tool.update_self_model.result.updated").to_string();
+    // Feedback about description size (stage 2): always on a summary edit, so
+    // the model sees growth even before exceeding the target. See
+    // docs/summary-as-snapshot.md.
+    if d.summary_changed {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.size",
+            &[
+                ("n", &model.summary.chars().count().to_string()),
+                ("target", &params.summary_target_chars.to_string()),
+            ],
+        ));
+    }
+    if !d.added_goals.is_empty() {
+        let list: Vec<String> = d
+            .added_goals
+            .iter()
+            .map(|(desc, id)| format!("#{} {desc}", short_id(id)))
+            .collect();
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.added_goals",
+            &[("list", &list.join("; "))],
+        ));
+    }
+    if !d.completed.is_empty() {
+        let ids: Vec<String> = d
+            .completed
+            .iter()
+            .map(|id| format!("#{}", short_id(id)))
+            .collect();
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.completed",
+            &[("list", &ids.join(", "))],
+        ));
+    }
+    if !d.abandoned.is_empty() {
+        let ids: Vec<String> = d
+            .abandoned
+            .iter()
+            .map(|id| format!("#{}", short_id(id)))
+            .collect();
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.abandoned",
+            &[("list", &ids.join(", "))],
+        ));
+    }
+    if !d.scars.is_empty() {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.folded",
+            &[("n", &d.scars.len().to_string())],
+        ));
+    }
+    if !d.unresolved.is_empty() {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_self_model.goals_not_found_paren",
+            &[("list", &d.unresolved.join(", "))],
+        ));
+    }
+    msg
 }
 
 /// `update_user_model` — edits the representation of the interlocutor.
@@ -592,152 +649,183 @@ impl Tool for UpdateUserModel {
         // Removal/note-presence flags are collected inside the atomic edit
         // (captured by `&mut`); the write happens under one mutex acquisition
         // (protection against a race).
-        let mut removed_traits = false;
-        let mut removed_interests = false;
-        let mut replaced_dynamic = false;
-        let mut has_note = false;
-        // The revision scar (`note`) is collected inside the closure, but written
-        // **after** — as a self-note (observation), not into the model blob
-        // (async/storage are outside the closure).
-        let mut note_scar: Option<String> = None;
+        //
         // The near-duplicate-traits gate (Step C): needs a snapshot of the traits
         // BEFORE adding — collected inside the atomic edit (captured by `&mut`),
         // the embedding happens after.
         let requested_traits = str_array(&args, "add_traits");
-        let mut existing_before_traits: Vec<String> = Vec::new();
+        let mut deltas = UserModelEditDeltas::default();
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-            let mut changed = false;
-
-            // Lists — merge (add/remove with dedup), not replacement: an edit
-            // doesn't zero out the accumulated representation (a common
-            // "overwritten by mood" bug).
-            existing_before_traits = m.user_model.perceived_traits.clone();
-            changed |= m.user_model.add_traits(requested_traits.clone());
-            removed_traits = m
-                .user_model
-                .remove_traits(&str_array(&args, "remove_traits"));
-            changed |= removed_traits;
-            changed |= m
-                .user_model
-                .add_interests(str_array(&args, "add_interests"));
-            removed_interests = m
-                .user_model
-                .remove_interests(&str_array(&args, "remove_interests"));
-            changed |= removed_interests;
-            if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
-                let s = s.trim().to_string();
-                if m.user_model.relationship_dynamic != s {
-                    // Replacing a NON-EMPTY dynamic — a substantial revision
-                    // (unlike initial population); ask to leave a trace (a scar),
-                    // like traits.
-                    replaced_dynamic = !m.user_model.relationship_dynamic.trim().is_empty();
-                    m.user_model.relationship_dynamic = s;
-                    changed = true;
-                }
-            }
-            // Revision scar: save `note` (what changed and why) — it goes out as
-            // an "about self" observation note, so a change of opinion about the
-            // interlocutor leaves a trace (traits are flat — the "biography" of
-            // their changes lives in observations).
-            note_scar = args
-                .get("note")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            has_note = note_scar.is_some();
-            changed
+            apply_user_model_edit(m, &args, &requested_traits, &mut deltas)
         })?;
 
         // Scar → self-note (observation). Best-effort. `note` by itself doesn't
         // count as a model change (it's a separate note), but makes the call
         // meaningful.
-        if let Some(scar) = &note_scar {
+        if let Some(scar) = &deltas.note_scar {
             let _ =
                 notes::create_note(ctx, scar.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await;
         }
 
-        if !changed && !has_note {
+        if !changed && !deltas.has_note {
             return Ok(ToolOutcome::text(ctx.loc.t("selfmodel.result.nothing")));
         }
         // Actually-added traits (new after dedup, no within-batch repeats) —
         // compare them against the prior ones via the near-duplicate gate
         // (embedding only if there's something to compare; softly empty if the
         // embedder is unavailable).
-        let mut added_traits: Vec<String> = Vec::new();
-        for t in &requested_traits {
-            let lc = t.to_lowercase();
-            let known = existing_before_traits
-                .iter()
-                .any(|x| x.to_lowercase() == lc)
-                || added_traits.iter().any(|x| x.to_lowercase() == lc);
-            if !known {
-                added_traits.push(t.clone());
-            }
-        }
-        let dup_pairs = near_duplicate_traits(ctx, &added_traits, &existing_before_traits).await;
+        let added_traits = newly_added_traits(&requested_traits, &deltas.existing_before_traits);
+        let dup_pairs =
+            near_duplicate_traits(ctx, &added_traits, &deltas.existing_before_traits).await;
 
-        // Delta echo (stage 4): compact final lists of the interlocutor model
-        // instead of a full render_full (a full read — get_self_model's job). The
-        // lists are short by construction (merge with dedup), so we show them in full.
-        let mut msg = ctx
-            .loc
-            .t("tool.update_user_model.result.updated")
-            .to_string();
-        let u = &model.user_model;
-        if !u.perceived_traits.is_empty() {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_user_model.traits",
-                &[("list", &u.perceived_traits.join(", "))],
-            ));
-        }
-        if !u.current_interests.is_empty() {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_user_model.interests",
-                &[("list", &u.current_interests.join(", "))],
-            ));
-        }
-        if !u.relationship_dynamic.trim().is_empty() {
-            msg.push('\n');
-            msg.push_str(&ctx.loc.tf(
-                "tool.update_user_model.relationship",
-                &[("dyn", u.relationship_dynamic.trim())],
-            ));
-        }
-        // Confirmation of the revision scar (if `note` was passed) — its text is visible.
-        if let Some(scar) = &note_scar {
-            msg.push('\n');
-            msg.push_str(
-                &ctx.loc
-                    .tf("tool.update_user_model.scar_saved", &[("scar", scar)]),
-            );
-        }
-        // The related-traits gate (Step C): a topically close trait already
-        // exists. bge-m3 groups traits by dimension (paraphrases AND antonyms), so
-        // we ask the model to DECIDE: is this a duplicate (merge via
-        // remove_traits) or a contradiction (record via add_insight) — a mirror
-        // of the add_insight gate, but over the flat trait list (integration
-        // instead of accumulation).
-        if !dup_pairs.is_empty() {
-            msg.push('\n');
-            msg.push_str(ctx.loc.t("tool.update_user_model.gate.related"));
-            for (added, existing) in &dup_pairs {
-                msg.push_str(&format!("\n- «{added}» ≈ «{existing}»"));
-            }
-        }
-        // Removing a trait/interest or replacing a non-empty dynamic — a revision
-        // of judgment. No reason recorded → remind to leave a trace as an
-        // observation (a scar) rather than changing it silently (a shift in
-        // relationship dynamic is the most significant revision of the
-        // interlocutor model).
-        if (removed_traits || removed_interests || replaced_dynamic) && !has_note {
-            msg.push('\n');
-            msg.push_str(ctx.loc.t("tool.update_user_model.nudge_note"));
-        }
-        Ok(ToolOutcome::text(msg))
+        Ok(ToolOutcome::text(update_user_model_echo(
+            ctx.loc, &model, &deltas, &dup_pairs,
+        )))
     }
+}
+
+/// Side data of `update_user_model`'s atomic edit, collected inside the
+/// `self_model_update` closure (captured by `&mut`) and consumed afterward.
+#[derive(Default)]
+struct UserModelEditDeltas {
+    removed_traits: bool,
+    removed_interests: bool,
+    replaced_dynamic: bool,
+    has_note: bool,
+    /// The revision scar (`note`) is collected inside the closure, but written
+    /// **after** — as a self-note (observation), not into the model blob
+    /// (async/storage are outside the closure).
+    note_scar: Option<String>,
+    /// A snapshot of the traits BEFORE adding — for the near-duplicate gate.
+    existing_before_traits: Vec<String>,
+}
+
+/// The body of `update_user_model`'s atomic edit. Runs INSIDE the
+/// `self_model_update` closure — one mutex acquisition, no storage/async access
+/// here (the atomicity boundary is load-bearing). Returns whether the model
+/// changed.
+fn apply_user_model_edit(
+    m: &mut SelfModel,
+    args: &serde_json::Value,
+    requested_traits: &[String],
+    d: &mut UserModelEditDeltas,
+) -> bool {
+    let mut changed = false;
+
+    // Lists — merge (add/remove with dedup), not replacement: an edit
+    // doesn't zero out the accumulated representation (a common
+    // "overwritten by mood" bug).
+    d.existing_before_traits = m.user_model.perceived_traits.clone();
+    changed |= m.user_model.add_traits(requested_traits.to_vec());
+    d.removed_traits = m
+        .user_model
+        .remove_traits(&str_array(args, "remove_traits"));
+    changed |= d.removed_traits;
+    changed |= m.user_model.add_interests(str_array(args, "add_interests"));
+    d.removed_interests = m
+        .user_model
+        .remove_interests(&str_array(args, "remove_interests"));
+    changed |= d.removed_interests;
+    if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
+        let s = s.trim().to_string();
+        if m.user_model.relationship_dynamic != s {
+            // Replacing a NON-EMPTY dynamic — a substantial revision
+            // (unlike initial population); ask to leave a trace (a scar),
+            // like traits.
+            d.replaced_dynamic = !m.user_model.relationship_dynamic.trim().is_empty();
+            m.user_model.relationship_dynamic = s;
+            changed = true;
+        }
+    }
+    // Revision scar: save `note` (what changed and why) — it goes out as
+    // an "about self" observation note, so a change of opinion about the
+    // interlocutor leaves a trace (traits are flat — the "biography" of
+    // their changes lives in observations).
+    d.note_scar = args
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    d.has_note = d.note_scar.is_some();
+    changed
+}
+
+/// Requested traits that are new against the prior list (case-insensitive
+/// dedup, no within-batch repeats).
+fn newly_added_traits(requested: &[String], existing: &[String]) -> Vec<String> {
+    let mut added: Vec<String> = Vec::new();
+    for t in requested {
+        let lc = t.to_lowercase();
+        let known = existing.iter().any(|x| x.to_lowercase() == lc)
+            || added.iter().any(|x| x.to_lowercase() == lc);
+        if !known {
+            added.push(t.clone());
+        }
+    }
+    added
+}
+
+/// Delta echo (stage 4): compact final lists of the interlocutor model
+/// instead of a full render_full (a full read — get_self_model's job). The
+/// lists are short by construction (merge with dedup), so we show them in full.
+fn update_user_model_echo(
+    loc: &Locale,
+    model: &SelfModel,
+    d: &UserModelEditDeltas,
+    dup_pairs: &[(String, String)],
+) -> String {
+    let mut msg = loc.t("tool.update_user_model.result.updated").to_string();
+    let u = &model.user_model;
+    if !u.perceived_traits.is_empty() {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_user_model.traits",
+            &[("list", &u.perceived_traits.join(", "))],
+        ));
+    }
+    if !u.current_interests.is_empty() {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_user_model.interests",
+            &[("list", &u.current_interests.join(", "))],
+        ));
+    }
+    if !u.relationship_dynamic.trim().is_empty() {
+        msg.push('\n');
+        msg.push_str(&loc.tf(
+            "tool.update_user_model.relationship",
+            &[("dyn", u.relationship_dynamic.trim())],
+        ));
+    }
+    // Confirmation of the revision scar (if `note` was passed) — its text is visible.
+    if let Some(scar) = &d.note_scar {
+        msg.push('\n');
+        msg.push_str(&loc.tf("tool.update_user_model.scar_saved", &[("scar", scar)]));
+    }
+    // The related-traits gate (Step C): a topically close trait already
+    // exists. bge-m3 groups traits by dimension (paraphrases AND antonyms), so
+    // we ask the model to DECIDE: is this a duplicate (merge via
+    // remove_traits) or a contradiction (record via add_insight) — a mirror
+    // of the add_insight gate, but over the flat trait list (integration
+    // instead of accumulation).
+    if !dup_pairs.is_empty() {
+        msg.push('\n');
+        msg.push_str(loc.t("tool.update_user_model.gate.related"));
+        for (added, existing) in dup_pairs {
+            msg.push_str(&format!("\n- «{added}» ≈ «{existing}»"));
+        }
+    }
+    // Removing a trait/interest or replacing a non-empty dynamic — a revision
+    // of judgment. No reason recorded → remind to leave a trace as an
+    // observation (a scar) rather than changing it silently (a shift in
+    // relationship dynamic is the most significant revision of the
+    // interlocutor model).
+    if (d.removed_traits || d.removed_interests || d.replaced_dynamic) && !d.has_note {
+        msg.push('\n');
+        msg.push_str(loc.t("tool.update_user_model.nudge_note"));
+    }
+    msg
 }
 
 // `consolidate_narrative` was removed: observations moved into notes (Tier 1),

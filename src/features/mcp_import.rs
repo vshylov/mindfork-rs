@@ -104,24 +104,7 @@ pub fn plan_import(json: &str, existing_ids: &[String], loc: &Locale) -> Result<
             })
             .unwrap_or_default();
 
-        // Every literal value becomes a stored secret and the variable is
-        // declared with an empty source (S5). A variable whose name we cannot
-        // represent is dropped: the flat editor row and the secret's storage
-        // name both need `[A-Za-z0-9_]`.
-        let mut env = BTreeMap::new();
-        let mut secrets = Vec::new();
-        if let Some(vars) = entry.get("env").and_then(|v| v.as_object()) {
-            for (var, value) in vars {
-                if !valid_env_name(var) {
-                    continue;
-                }
-                env.insert(var.clone(), String::new());
-                let value = value.as_str().unwrap_or("").to_string();
-                if !value.is_empty() {
-                    secrets.push((var.clone(), value));
-                }
-            }
-        }
+        let (env, secrets) = plan_env(entry);
         taken.push(id.clone());
         plan.servers.push(ImportedServer {
             cfg: McpServerConfig {
@@ -139,6 +122,28 @@ pub fn plan_import(json: &str, existing_ids: &[String], loc: &Locale) -> Result<
         });
     }
     Ok(plan)
+}
+
+/// Plans one entry's `env` map: every literal value becomes a stored secret
+/// and the variable is declared with an empty source (S5). A variable whose
+/// name we cannot represent is dropped: the flat editor row and the secret's
+/// storage name both need `[A-Za-z0-9_]`.
+fn plan_env(entry: &serde_json::Value) -> (BTreeMap<String, String>, Vec<(String, String)>) {
+    let mut env = BTreeMap::new();
+    let mut secrets = Vec::new();
+    if let Some(vars) = entry.get("env").and_then(|v| v.as_object()) {
+        for (var, value) in vars {
+            if !valid_env_name(var) {
+                continue;
+            }
+            env.insert(var.clone(), String::new());
+            let value = value.as_str().unwrap_or("").to_string();
+            if !value.is_empty() {
+                secrets.push((var.clone(), value));
+            }
+        }
+    }
+    (env, secrets)
 }
 
 /// A one-line localized summary of what an import did (axis B — a human reads it).

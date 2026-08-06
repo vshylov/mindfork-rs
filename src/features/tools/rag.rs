@@ -375,14 +375,8 @@ fn break_long(s: &str, max: usize) -> Vec<String> {
     for word in s.split_whitespace() {
         let wlen = clen(word);
         if wlen > max {
-            if !cur.is_empty() {
-                out.push(std::mem::take(&mut cur));
-                cur_len = 0;
-            }
-            let chars: Vec<char> = word.chars().collect();
-            for w in chars.chunks(max) {
-                out.push(w.iter().collect());
-            }
+            flush_window(&mut cur, &mut cur_len, &mut out);
+            out.extend(tear_word(word, max));
             continue;
         }
         let add = if cur.is_empty() { wlen } else { wlen + 1 };
@@ -405,6 +399,20 @@ fn break_long(s: &str, max: usize) -> Vec<String> {
     out
 }
 
+/// Pushes the current word window into `out` and resets it (a no-op when empty).
+fn flush_window(cur: &mut String, cur_len: &mut usize, out: &mut Vec<String>) {
+    if !cur.is_empty() {
+        out.push(std::mem::take(cur));
+        *cur_len = 0;
+    }
+}
+
+/// Tears a single word longer than the ceiling by character (a last resort).
+fn tear_word(word: &str, max: usize) -> Vec<String> {
+    let chars: Vec<char> = word.chars().collect();
+    chars.chunks(max).map(|w| w.iter().collect()).collect()
+}
+
 /// Packs units into chunks up to the target size, starting each next one with the
 /// tail of the previous one (overlap ≤ `overlap` characters, on unit boundaries).
 fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
@@ -416,23 +424,7 @@ fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
         let add = if cur.is_empty() { ulen } else { ulen + 1 };
         if !cur.is_empty() && cur_len + add > target {
             chunks.push(cur.join("\n"));
-            // The tail for overlap: the last units within `overlap` characters
-            // (at least one — otherwise the loop wouldn't advance).
-            let mut tail: Vec<&str> = Vec::new();
-            let mut tlen = 0usize;
-            for &u in cur.iter().rev() {
-                let a = if tail.is_empty() {
-                    clen(u)
-                } else {
-                    clen(u) + 1
-                };
-                if tlen + a > overlap && !tail.is_empty() {
-                    break;
-                }
-                tail.push(u);
-                tlen += a;
-            }
-            tail.reverse();
+            let (tail, tlen) = overlap_tail(&cur, overlap);
             cur = tail;
             cur_len = tlen;
         }
@@ -446,6 +438,28 @@ fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
         chunks.push(cur.join("\n"));
     }
     chunks
+}
+
+/// The tail for overlap: the last units within `overlap` characters
+/// (at least one — otherwise the packing loop wouldn't advance). Returns the
+/// tail (in original order) and its length in characters.
+fn overlap_tail<'a>(cur: &[&'a str], overlap: usize) -> (Vec<&'a str>, usize) {
+    let mut tail: Vec<&str> = Vec::new();
+    let mut tlen = 0usize;
+    for &u in cur.iter().rev() {
+        let a = if tail.is_empty() {
+            clen(u)
+        } else {
+            clen(u) + 1
+        };
+        if tlen + a > overlap && !tail.is_empty() {
+            break;
+        }
+        tail.push(u);
+        tlen += a;
+    }
+    tail.reverse();
+    (tail, tlen)
 }
 
 /// Splits markdown into `(heading, body)` sections by ATX headings, without
@@ -466,30 +480,41 @@ fn split_sections(text: &str) -> Vec<(String, String)> {
             body.push('\n');
             continue;
         }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fence = Some(if trimmed.starts_with("```") {
-                "```"
-            } else {
-                "~~~"
-            });
+        if let Some(f) = fence_open(trimmed) {
+            fence = Some(f);
             body.push_str(line);
             body.push('\n');
             continue;
         }
         if is_atx_heading(trimmed) {
-            if !heading.is_empty() || !body.trim().is_empty() {
-                sections.push((std::mem::take(&mut heading), std::mem::take(&mut body)));
-            }
+            flush_section(&mut sections, &mut heading, &mut body);
             heading = trimmed.trim_end().to_string();
         } else {
             body.push_str(line);
             body.push('\n');
         }
     }
-    if !heading.is_empty() || !body.trim().is_empty() {
-        sections.push((heading, body));
-    }
+    flush_section(&mut sections, &mut heading, &mut body);
     sections
+}
+
+/// The fence delimiter a line opens (``` or ~~~), if any.
+fn fence_open(trimmed: &str) -> Option<&'static str> {
+    if trimmed.starts_with("```") {
+        Some("```")
+    } else if trimmed.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    }
+}
+
+/// Pushes the accumulated `(heading, body)` section, if it has any content, and
+/// resets both accumulators.
+fn flush_section(sections: &mut Vec<(String, String)>, heading: &mut String, body: &mut String) {
+    if !heading.is_empty() || !body.trim().is_empty() {
+        sections.push((std::mem::take(heading), std::mem::take(body)));
+    }
 }
 
 /// Is this a markdown ATX-heading line (`#`..`######` + a space)?

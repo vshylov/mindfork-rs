@@ -267,6 +267,64 @@ impl WebSearch {
             }
         }
     }
+
+    /// Goes through providers in order: the first one to return a non-empty
+    /// result set wins. On throttling, moves to the next one right away
+    /// (retrying a sticky per-IP throttle is pointless). Returns the results,
+    /// `got_clean_page` — at least one provider returned a normal
+    /// (non-challenge) page: then emptiness is a genuine "no results", not
+    /// throttling — and the last provider error, if any.
+    async fn run_providers(
+        &self,
+        query: &str,
+        max: usize,
+        loc: &crate::shared::i18n::Locale,
+    ) -> (Vec<SearchResult>, bool, Option<anyhow::Error>) {
+        let mut got_clean_page = false;
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut results = Vec::new();
+        for provider in PROVIDERS {
+            match self.fetch(provider, query, loc).await {
+                Ok(Some(html)) => {
+                    let r = parse_results(
+                        &html,
+                        provider.link_sel,
+                        provider.title_sel,
+                        provider.snippet_sel,
+                        max,
+                    );
+                    if !r.is_empty() {
+                        results = r;
+                        break;
+                    }
+                    // Empty parse: either the query genuinely has no matches, or
+                    // this is an anti-bot challenge served with HTTP 200 (Mojeek
+                    // does exactly that — measured). The check runs only here, on
+                    // an empty parse, so a results page can never be mistaken for
+                    // a challenge (a search for "captcha" keeps working).
+                    if is_challenge_page(&html) {
+                        tracing::debug!(
+                            provider = provider.name,
+                            "web search: anti-bot challenge behind a 200, trying the next provider"
+                        );
+                    } else {
+                        got_clean_page = true;
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        provider = provider.name,
+                        "web search: throttled, trying the next provider"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(provider = provider.name, error = %err, "web search: provider error");
+                    last_err = Some(err);
+                }
+            }
+        }
+        (results, got_clean_page, last_err)
+    }
 }
 
 /// Reorders results by decreasing similarity of their content to the query
@@ -416,29 +474,38 @@ pub(crate) fn extract_rich(html: &str, max_chars: usize) -> String {
     )
     .unwrap();
 
-    let collect = |root: scraper::ElementRef| -> Vec<Block> {
-        // A container that already emitted its content must not emit it again
-        // (`div.language-v` wrapping a `pre`). Selection is in document order, so
-        // an ancestor is always seen first — hence "skip if an ancestor emitted".
-        let mut emitted = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for el in root.select(&block_sel) {
-            if in_boilerplate(el) || el.ancestors().any(|a| emitted.contains(&a.id())) {
-                continue;
-            }
-            if let Some(b) = block_from(el) {
-                emitted.insert(el.id());
-                out.push(b);
-            }
-        }
-        out
-    };
-
-    let mut blocks: Vec<Block> = doc.select(&scope_sel).flat_map(collect).collect();
+    let mut blocks: Vec<Block> = doc
+        .select(&scope_sel)
+        .flat_map(|root| collect_blocks(root, &block_sel))
+        .collect();
     if blocks.is_empty() {
-        blocks = collect(doc.root_element());
+        blocks = collect_blocks(doc.root_element(), &block_sel);
     }
 
+    join_blocks(blocks, max_chars)
+}
+
+/// Collects rich-extraction blocks under `root`, in document order.
+fn collect_blocks(root: scraper::ElementRef, block_sel: &Selector) -> Vec<Block> {
+    // A container that already emitted its content must not emit it again
+    // (`div.language-v` wrapping a `pre`). Selection is in document order, so
+    // an ancestor is always seen first — hence "skip if an ancestor emitted".
+    let mut emitted = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for el in root.select(block_sel) {
+        if in_boilerplate(el) || el.ancestors().any(|a| emitted.contains(&a.id())) {
+            continue;
+        }
+        if let Some(b) = block_from(el) {
+            emitted.insert(el.id());
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Joins rich-extraction blocks into the final text, truncated to `max_chars`.
+fn join_blocks(blocks: Vec<Block>, max_chars: usize) -> String {
     let mut out = String::new();
     let mut prev: Option<Kind> = None;
     for b in blocks {
@@ -615,71 +682,10 @@ impl Tool for WebSearch {
             .and_then(|v| v.as_bool())
             .unwrap_or(self.fetch_content_default);
 
-        // Go through providers in order: the first one to return a non-empty result set
-        // wins. On throttling, move to the next one right away (retrying a sticky
-        // per-IP throttle is pointless). `got_clean_page` — at least one provider
-        // returned a normal (non-challenge) page: then emptiness is a genuine "no
-        // results", not throttling.
-        let mut got_clean_page = false;
-        let mut last_err: Option<anyhow::Error> = None;
-        let mut results = Vec::new();
-        for provider in PROVIDERS {
-            match self.fetch(provider, query, ctx.loc).await {
-                Ok(Some(html)) => {
-                    let r = parse_results(
-                        &html,
-                        provider.link_sel,
-                        provider.title_sel,
-                        provider.snippet_sel,
-                        max,
-                    );
-                    if !r.is_empty() {
-                        results = r;
-                        break;
-                    }
-                    // Empty parse: either the query genuinely has no matches, or
-                    // this is an anti-bot challenge served with HTTP 200 (Mojeek
-                    // does exactly that — measured). The check runs only here, on
-                    // an empty parse, so a results page can never be mistaken for
-                    // a challenge (a search for "captcha" keeps working).
-                    if is_challenge_page(&html) {
-                        tracing::debug!(
-                            provider = provider.name,
-                            "web search: anti-bot challenge behind a 200, trying the next provider"
-                        );
-                    } else {
-                        got_clean_page = true;
-                    }
-                }
-                Ok(None) => {
-                    tracing::debug!(
-                        provider = provider.name,
-                        "web search: throttled, trying the next provider"
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(provider = provider.name, error = %err, "web search: provider error");
-                    last_err = Some(err);
-                }
-            }
-        }
+        let (mut results, got_clean_page, last_err) = self.run_providers(query, max, ctx.loc).await;
 
         if results.is_empty() {
-            if got_clean_page {
-                // A normal page with no results — that's genuinely empty.
-                return Ok(ToolOutcome::text(
-                    ctx.loc.t("tool.web_search.result.no_results"),
-                ));
-            }
-            // No provider returned a normal page: throttling and/or
-            // network errors. Return an error (not "no results"), so the
-            // model retries the request later instead of reporting it found nothing.
-            if let Some(err) = last_err {
-                return Err(
-                    err.context(ctx.loc.t("tool.web_search.err.all_unavailable").to_string())
-                );
-            }
-            anyhow::bail!(ctx.loc.t("tool.web_search.err.throttled"));
+            return no_results_outcome(got_clean_page, last_err, ctx.loc);
         }
         // Content extraction + reranking (unless disabled by the argument).
         // Fetching pages and embedding are "best effort": on failure the
@@ -689,28 +695,56 @@ impl Tool for WebSearch {
             rerank_by_embeddings(ctx.embedder.as_ref(), query, &mut results).await;
         }
 
-        let mut out = format!(
-            "{}\n",
-            ctx.loc.tf(
-                "tool.web_search.result.header",
-                &[("n", &results.len().to_string())]
-            )
-        );
-        for (i, r) in results.iter().enumerate() {
-            out.push_str(&format!("{}. {} — {}\n", i + 1, r.title, r.url));
-            if !r.snippet.is_empty() {
-                out.push_str(&format!("   {}\n", r.snippet));
-            }
-            if !r.content.is_empty() {
-                out.push_str("   ");
-                out.push_str(ctx.loc.t("tool.web_search.result.content_label"));
-                out.push('\n');
-                out.push_str(&r.content);
-                out.push('\n');
-            }
-        }
-        Ok(ToolOutcome::text(out.trim_end().to_string()))
+        Ok(ToolOutcome::text(format_results(&results, ctx.loc)))
     }
+}
+
+/// The outcome when every provider came back empty: a genuine "no results" when
+/// at least one normal page was seen, otherwise an explicit error.
+fn no_results_outcome(
+    got_clean_page: bool,
+    last_err: Option<anyhow::Error>,
+    // `&'static` (like `ToolContext.loc`) — `bail!` embeds the borrowed message.
+    loc: &'static crate::shared::i18n::Locale,
+) -> Result<ToolOutcome> {
+    if got_clean_page {
+        // A normal page with no results — that's genuinely empty.
+        return Ok(ToolOutcome::text(
+            loc.t("tool.web_search.result.no_results"),
+        ));
+    }
+    // No provider returned a normal page: throttling and/or
+    // network errors. Return an error (not "no results"), so the
+    // model retries the request later instead of reporting it found nothing.
+    if let Some(err) = last_err {
+        return Err(err.context(loc.t("tool.web_search.err.all_unavailable").to_string()));
+    }
+    anyhow::bail!(loc.t("tool.web_search.err.throttled"));
+}
+
+/// Formats the result list into the tool's text result.
+fn format_results(results: &[SearchResult], loc: &crate::shared::i18n::Locale) -> String {
+    let mut out = format!(
+        "{}\n",
+        loc.tf(
+            "tool.web_search.result.header",
+            &[("n", &results.len().to_string())]
+        )
+    );
+    for (i, r) in results.iter().enumerate() {
+        out.push_str(&format!("{}. {} — {}\n", i + 1, r.title, r.url));
+        if !r.snippet.is_empty() {
+            out.push_str(&format!("   {}\n", r.snippet));
+        }
+        if !r.content.is_empty() {
+            out.push_str("   ");
+            out.push_str(loc.t("tool.web_search.result.content_label"));
+            out.push('\n');
+            out.push_str(&r.content);
+            out.push('\n');
+        }
+    }
+    out.trim_end().to_string()
 }
 
 /// A sign of anti-bot throttling/blocking by the provider: `HTTP 202` (a DDG

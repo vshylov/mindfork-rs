@@ -18,8 +18,10 @@ use uuid::Uuid;
 use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
+use crate::shared::api::contract::ChatStream;
 use crate::shared::api::{
-    ApiMessage, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason, ToolCallAccumulator,
+    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
+    ToolCallAccumulator,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
@@ -144,25 +146,10 @@ async fn run_rounds(
     cancel: &CancellationToken,
     max_rounds: u32,
 ) -> Result<(), anyhow::Error> {
-    let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
     let mut round: u32 = 0;
     loop {
-        let mut stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
-        let mut acc = ToolCallAccumulator::default();
-        let mut text = String::new();
-        let mut reason = FinishReason::Stop;
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                ChatChunk::ToolCall(d) => acc.push(d),
-                ChatChunk::Text(t) => text.push_str(&t),
-                ChatChunk::Finished(r) => {
-                    reason = r;
-                    break;
-                }
-                ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Usage(_) => {}
-            }
-        }
-        let calls = acc.finish();
+        let stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
+        let (text, calls, reason) = read_round(stream).await;
         // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
             break;
@@ -175,21 +162,56 @@ async fn run_rounds(
         for call in &calls {
             let args: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
-            let result = if allowed_has(&call.name) {
-                match registry.invoke(&call.name, ctx, args).await {
-                    Ok(o) => o.result,
-                    Err(e) => ctx.loc.tf(
-                        "loop.tool_error",
-                        &[("name", &call.name), ("err", &e.to_string())],
-                    ),
-                }
-            } else {
-                ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)])
-            };
+            let result = invoke_allowed(registry, ctx, allowed, call, args).await;
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }
     }
     Ok(())
+}
+
+/// Consumes one round's stream into its text, accumulated tool calls, and
+/// finish reason; `Thoughts`/`ThoughtsSignature`/`Usage` are tolerated and
+/// ignored (a silent task has no UI to stream them to).
+async fn read_round(mut stream: ChatStream) -> (String, Vec<ApiToolCall>, FinishReason) {
+    let mut acc = ToolCallAccumulator::default();
+    let mut text = String::new();
+    let mut reason = FinishReason::Stop;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            ChatChunk::ToolCall(d) => acc.push(d),
+            ChatChunk::Text(t) => text.push_str(&t),
+            ChatChunk::Finished(r) => {
+                reason = r;
+                break;
+            }
+            ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Usage(_) => {}
+        }
+    }
+    (text, acc.finish(), reason)
+}
+
+/// One call's result: the invocation when the tool is in the task's allowed
+/// set, otherwise a localized refusal; an invocation error becomes result text
+/// (the model reads it), never a panic.
+async fn invoke_allowed(
+    registry: &Arc<ToolRegistry>,
+    ctx: &ToolContext,
+    allowed: &[ToolId],
+    call: &ApiToolCall,
+    args: serde_json::Value,
+) -> String {
+    let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
+    if allowed_has(&call.name) {
+        match registry.invoke(&call.name, ctx, args).await {
+            Ok(o) => o.result,
+            Err(e) => ctx.loc.tf(
+                "loop.tool_error",
+                &[("name", &call.name), ("err", &e.to_string())],
+            ),
+        }
+    } else {
+        ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)])
+    }
 }
 
 #[cfg(test)]

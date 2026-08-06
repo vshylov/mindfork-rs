@@ -510,6 +510,44 @@ impl YoutubeWatch {
         }
         out
     }
+
+    /// The length gate. Only a *segment* is charged when bounds are given, so
+    /// that is what gets measured against the ceiling. `Err(text)` — the
+    /// refusal; `Ok((end_secs, note))` — the (possibly clipped) end bound plus
+    /// an optional note about the clip.
+    fn length_gate(
+        &self,
+        loc: &Locale,
+        duration: Option<u32>,
+        start: Option<u32>,
+        end: Option<u32>,
+    ) -> std::result::Result<(Option<u32>, Option<String>), String> {
+        let mut end_secs = end;
+        let mut note: Option<String> = None;
+        if self.max_minutes > 0 {
+            let cap = self.max_minutes * 60;
+            match (duration, start, end) {
+                (_, s, Some(e)) if e.saturating_sub(s.unwrap_or(0)) > cap => {
+                    return Err(too_long(loc, e.saturating_sub(s.unwrap_or(0)), cap));
+                }
+                (Some(d), s, None) if d.saturating_sub(s.unwrap_or(0)) > cap => {
+                    return Err(too_long(loc, d.saturating_sub(s.unwrap_or(0)), cap));
+                }
+                (None, s, None) => {
+                    // Length unknown (metadata failed): clip to the ceiling rather
+                    // than write a blank cheque — and say so, so the answer is not
+                    // silently about the first part only.
+                    end_secs = Some(s.unwrap_or(0) + cap);
+                    note = Some(loc.tf(
+                        "tool.youtube_watch.result.unknown_length",
+                        &[("minutes", &self.max_minutes.to_string())],
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok((end_secs, note))
+    }
 }
 
 /// Percent-encodes just enough for the oEmbed query (`:` `/` `?` `=` `&`). Not a
@@ -601,40 +639,10 @@ impl Tool for YoutubeWatch {
             return Ok(ToolOutcome::text(out));
         };
 
-        // The length gate. Only a *segment* is charged when bounds are given, so
-        // that is what gets measured against the ceiling.
-        let mut end_secs = end;
-        let mut note: Option<String> = None;
-        if self.max_minutes > 0 {
-            let cap = self.max_minutes * 60;
-            match (meta.duration_secs, start, end) {
-                (_, s, Some(e)) if e.saturating_sub(s.unwrap_or(0)) > cap => {
-                    return Ok(ToolOutcome::text(too_long(
-                        ctx.loc,
-                        e.saturating_sub(s.unwrap_or(0)),
-                        cap,
-                    )));
-                }
-                (Some(d), s, None) if d.saturating_sub(s.unwrap_or(0)) > cap => {
-                    return Ok(ToolOutcome::text(too_long(
-                        ctx.loc,
-                        d.saturating_sub(s.unwrap_or(0)),
-                        cap,
-                    )));
-                }
-                (None, s, None) => {
-                    // Length unknown (metadata failed): clip to the ceiling rather
-                    // than write a blank cheque — and say so, so the answer is not
-                    // silently about the first part only.
-                    end_secs = Some(s.unwrap_or(0) + cap);
-                    note = Some(ctx.loc.tf(
-                        "tool.youtube_watch.result.unknown_length",
-                        &[("minutes", &self.max_minutes.to_string())],
-                    ));
-                }
-                _ => {}
-            }
-        }
+        let (end_secs, note) = match self.length_gate(ctx.loc, meta.duration_secs, start, end) {
+            Ok(v) => v,
+            Err(text) => return Ok(ToolOutcome::text(text)),
+        };
 
         let task = match focus {
             Some(f) => ctx
@@ -698,68 +706,84 @@ impl Tool for YoutubeWatch {
             return Ok(ToolOutcome::text(out));
         }
 
-        let (description, transcript) = split_transcript(&answer.text);
+        transcript_outcome(ctx, &answer, &meta, &id, start, end_secs, out)
+    }
+}
+
+/// The transcript half of the answer (stage 2): splits it off the description,
+/// then hands it back inline when it fits the attachment budget, otherwise as a
+/// chat attachment. `out` already carries the header/note.
+fn transcript_outcome(
+    ctx: &ToolContext,
+    answer: &crate::shared::video::VideoAnswer,
+    meta: &VideoMeta,
+    id: &str,
+    start: Option<u32>,
+    end_secs: Option<u32>,
+    mut out: String,
+) -> Result<ToolOutcome> {
+    let url = watch_url(id);
+    let (description, transcript) = split_transcript(&answer.text);
+    out.push('\n');
+    out.push_str(description.trim());
+    let Some(body) = transcript else {
+        // The marker never came, or nothing followed it (a video with no
+        // speech). Report it — a silent absence reads as "there were no
+        // words", which is a different claim.
         out.push('\n');
-        out.push_str(description.trim());
-        let Some(body) = transcript else {
-            // The marker never came, or nothing followed it (a video with no
-            // speech). Report it — a silent absence reads as "there were no
-            // words", which is a different claim.
-            out.push('\n');
-            out.push_str(ctx.loc.t("tool.youtube_watch.result.no_transcript"));
-            return Ok(ToolOutcome::text(out));
-        };
+        out.push_str(ctx.loc.t("tool.youtube_watch.result.no_transcript"));
+        return Ok(ToolOutcome::text(out));
+    };
 
-        let segment = segment_label(start, end_secs);
-        // The provider numbers a clip from zero whatever the prompt asks (measured
-        // live), so the header's claim is made true here rather than hoped for.
-        let body = absolute_timestamps(&body, start.unwrap_or(0));
-        let header = transcript_header(&meta, &url, segment.as_deref(), answer.truncated, ctx.loc);
-        let text = format!("{header}\n\n{body}");
-        let est = crate::shared::tokens::estimate_text(&text) as usize;
+    let segment = segment_label(start, end_secs);
+    // The provider numbers a clip from zero whatever the prompt asks (measured
+    // live), so the header's claim is made true here rather than hoped for.
+    let body = absolute_timestamps(&body, start.unwrap_or(0));
+    let header = transcript_header(meta, &url, segment.as_deref(), answer.truncated, ctx.loc);
+    let text = format!("{header}\n\n{body}");
+    let est = crate::shared::tokens::estimate_text(&text) as usize;
 
-        // Small enough to read at once → straight into the result: the model needs
-        // no second call, and attaching would put the same text in the pinned
-        // block *and* in the history. The threshold is the attachment budget
-        // itself (fork F2), which is also why an attached transcript is always by
-        // reference: inline requires `est <= max_file_tokens`, and this branch is
-        // exactly the other side of that.
-        if est <= ctx.attachment_cfg.max_file_tokens {
-            out.push('\n');
-            out.push_str(&text);
-            if answer.truncated {
-                out.push('\n');
-                out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));
-            }
-            return Ok(ToolOutcome::text(out));
-        }
-
-        let name = transcript_name(&meta, &id, segment.as_deref(), ctx.loc);
-        let source = transcript_source(&id, segment.as_deref());
-        // Through the shared rule rather than hardcoding `ByReference`: that is a
-        // *consequence* of the threshold above, not something this line should
-        // assume on its own — and the orchestrator decides `/file attach` the
-        // same way, so the two cannot drift.
-        let used = inline_tokens_excluding(&ctx.attachments, &source);
-        let mode = decide_mode(est, used, &ctx.attachment_cfg);
-        let bytes = text.len();
-        let attachment = Attachment::new(name.clone(), source, text, bytes, mode);
-        let pages = attachment.page_count(ctx.attachment_cfg.page_tokens);
-
+    // Small enough to read at once → straight into the result: the model needs
+    // no second call, and attaching would put the same text in the pinned
+    // block *and* in the history. The threshold is the attachment budget
+    // itself (fork F2), which is also why an attached transcript is always by
+    // reference: inline requires `est <= max_file_tokens`, and this branch is
+    // exactly the other side of that.
+    if est <= ctx.attachment_cfg.max_file_tokens {
         out.push('\n');
-        out.push_str(&ctx.loc.tf(
-            "tool.youtube_watch.result.transcript_attached",
-            &[("name", &name), ("pages", &pages.to_string())],
-        ));
+        out.push_str(&text);
         if answer.truncated {
             out.push('\n');
             out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));
         }
-        Ok(ToolOutcome::with_effects(
-            out,
-            vec![ChatEffect::AddAttachment(Box::new(attachment))],
-        ))
+        return Ok(ToolOutcome::text(out));
     }
+
+    let name = transcript_name(meta, id, segment.as_deref(), ctx.loc);
+    let source = transcript_source(id, segment.as_deref());
+    // Through the shared rule rather than hardcoding `ByReference`: that is a
+    // *consequence* of the threshold above, not something this line should
+    // assume on its own — and the orchestrator decides `/file attach` the
+    // same way, so the two cannot drift.
+    let used = inline_tokens_excluding(&ctx.attachments, &source);
+    let mode = decide_mode(est, used, &ctx.attachment_cfg);
+    let bytes = text.len();
+    let attachment = Attachment::new(name.clone(), source, text, bytes, mode);
+    let pages = attachment.page_count(ctx.attachment_cfg.page_tokens);
+
+    out.push('\n');
+    out.push_str(&ctx.loc.tf(
+        "tool.youtube_watch.result.transcript_attached",
+        &[("name", &name), ("pages", &pages.to_string())],
+    ));
+    if answer.truncated {
+        out.push('\n');
+        out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));
+    }
+    Ok(ToolOutcome::with_effects(
+        out,
+        vec![ChatEffect::AddAttachment(Box::new(attachment))],
+    ))
 }
 
 fn too_long(loc: &Locale, secs: u32, cap: u32) -> String {
