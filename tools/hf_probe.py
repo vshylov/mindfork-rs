@@ -78,6 +78,42 @@ def held_permissions(granted):
     return out
 
 
+def _granted_permissions(body):
+    """(role, granted permission names) from a whoami response."""
+    auth = (body.get("auth") or {}).get("accessToken") or {}
+    fine = auth.get("fineGrained") or {}
+    granted = list(fine.get("global") or [])
+    for scope in fine.get("scoped") or []:
+        granted += list(scope.get("permissions") or [])
+    return auth.get("role", "?"), granted
+
+
+def _report_fine_grained(granted):
+    """Print the held/missing table; returns the missing [(label, what)]."""
+    missing = []
+    print()
+    for label, what, held, wire in held_permissions(granted):
+        print(f"  [{'ok     ' if held else 'MISSING'}] {label:<34} ({wire})")
+        if not held:
+            missing.append((label, what))
+    if missing:
+        print("\n  -> tick these in https://huggingface.co/settings/tokens -> your token")
+        print("     -> Edit -> User Permissions -> Inference (or use the `Inference` preset):")
+        for label, what in missing:
+            print(f"       [x] {label:<34} ({what})")
+    return missing
+
+
+def _print_403_advice(ns):
+    print("\n  -> 403 from the management API. In order of likelihood:")
+    print("     1. the token lacks 'Manage Inference Endpoints' (see above);")
+    print("     2. no payment method on the account that owns the namespace —")
+    print("        Inference Endpoints requires a card on file, and Hub credits")
+    print("        do not substitute for one. Check https://huggingface.co/settings/billing;")
+    print(f"     3. `{ns}` is an org and the token is not approved for it")
+    print("        (org policies can hold a fine-grained token in Pending).")
+
+
 def cmd_doctor(args):
     """Pinpoint a 403: token role, granted permissions, and the management API."""
     print("\n=== 1. whoami ===")
@@ -89,27 +125,13 @@ def cmd_doctor(args):
     if not hf.ok(status):
         return hf.EXIT_FAILED
 
-    auth = (body.get("auth") or {}).get("accessToken") or {}
-    role = auth.get("role", "?")
-    fine = auth.get("fineGrained") or {}
-    granted = list(fine.get("global") or [])
-    for scope in fine.get("scoped") or []:
-        granted += list(scope.get("permissions") or [])
+    role, granted = _granted_permissions(body)
     print(f"\n  user: {body.get('name')} ({body.get('type')})   token role: {role}")
     print(f"  granted permissions: {granted or '(none reported)'}")
 
     missing = []
     if role == "fineGrained":
-        print()
-        for label, what, held, wire in held_permissions(granted):
-            print(f"  [{'ok     ' if held else 'MISSING'}] {label:<34} ({wire})")
-            if not held:
-                missing.append((label, what))
-        if missing:
-            print("\n  -> tick these in https://huggingface.co/settings/tokens -> your token")
-            print("     -> Edit -> User Permissions -> Inference (or use the `Inference` preset):")
-            for label, what in missing:
-                print(f"       [x] {label:<34} ({what})")
+        missing = _report_fine_grained(granted)
     elif role in ("read",):
         print("  -> a `read` token cannot manage endpoints. Use fine-grained (preferred) or `write`.")
 
@@ -118,13 +140,7 @@ def cmd_doctor(args):
     status, listing = hf.http("GET", f"{hf.API}/{ns}")
     hf.show(status, listing, limit=1500)
     if status == 403:
-        print("\n  -> 403 from the management API. In order of likelihood:")
-        print("     1. the token lacks 'Manage Inference Endpoints' (see above);")
-        print("     2. no payment method on the account that owns the namespace —")
-        print("        Inference Endpoints requires a card on file, and Hub credits")
-        print("        do not substitute for one. Check https://huggingface.co/settings/billing;")
-        print(f"     3. `{ns}` is an org and the token is not approved for it")
-        print("        (org policies can hold a fine-grained token in Pending).")
+        _print_403_advice(ns)
         return hf.EXIT_FAILED
     if status == 401:
         print("  -> 401: the token is not being accepted at all by this API.")
@@ -177,36 +193,8 @@ def run_suite(command, chat_url, embed_url):
     return code
 
 
-def probe_chat(url, checks):
-    """U1 (which file got loaded), U2 (context), U3 (jinja), U4 (SSE), U6 (auth)."""
-    print(f"\n=== chat checks against {url} ===")
-    hf.wait_healthy(url)
-
-    # U6 — authenticated really means authenticated. Without the header this must
-    # not be a 200; a public endpoint would silently pass every other check.
-    status, _ = hf.http("GET", f"{url}/v1/models", timeout=30, auth=False)
-    checks.record("U6", "unauthenticated request rejected", status in (401, 403), f"HTTP {status}")
-
-    # U5-adjacent — does /health survive the router? Decides whether the two
-    # supervisor smokes keep their meaning (docs/history/remote-e2e-hf.md §4).
-    status, _ = hf.http("GET", f"{url}/health", timeout=30)
-    checks.record("U5b", "/health reachable", hf.ok(status), f"HTTP {status}")
-
-    # U1 + U2 — /props tells us which file llama.cpp actually loaded and the
-    # context it ended up with. This is the real answer to U1, whatever the
-    # create payload looked like.
-    status, body = hf.http("GET", f"{url}/props", timeout=60)
-    if hf.ok(status) and isinstance(body, dict):
-        settings = body.get("default_generation_settings") or {}
-        n_ctx = settings.get("n_ctx") or body.get("n_ctx")
-        model = body.get("model_path") or settings.get("model") or "?"
-        checks.record("U1", "loaded model file", hf.CHAT_GGUF in str(model), str(model))
-        checks.record("U2", "effective context", bool(n_ctx), f"n_ctx={n_ctx}")
-    else:
-        checks.record("U1", "loaded model file", False, f"/props HTTP {status}")
-        checks.record("U2", "effective context", False, "unknown (/props unavailable)")
-
-    # U3 — jinja/tool calling. Most of the 44 orchestrator smokes depend on it.
+def _check_tool_calling(url, checks):
+    """U3 — jinja/tool calling. Most of the 44 orchestrator smokes depend on it."""
     tools = [
         {
             "type": "function",
@@ -240,8 +228,10 @@ def probe_chat(url, checks):
         called = bool((choice.get("message") or {}).get("tool_calls"))
     checks.record("U3", "tool calling (LLAMA_ARG_JINJA)", called, f"finish_reason={reason or f'HTTP {status}'}")
 
-    # U4 — SSE through the router: time to first byte, and whether a longer
-    # generation survives. Streamed by hand so TTFB is real, not buffered.
+
+def _check_streaming(url, checks):
+    """U4 — SSE through the router: time to first byte, and whether a longer
+    generation survives. Streamed by hand so TTFB is real, not buffered."""
     print("  [ .. ] U4 streaming …")
     req = urllib.request.Request(
         f"{url}/v1/chat/completions",
@@ -270,6 +260,39 @@ def probe_chat(url, checks):
     total = time.time() - start
     detail = f"ttfb={ttfb:.1f}s, events={events}, total={total:.1f}s" if ttfb else f"no data ({err})"
     checks.record("U4", "SSE streaming", events > 5 and not err, detail + (f" err={err}" if err else ""))
+
+
+def probe_chat(url, checks):
+    """U1 (which file got loaded), U2 (context), U3 (jinja), U4 (SSE), U6 (auth)."""
+    print(f"\n=== chat checks against {url} ===")
+    hf.wait_healthy(url)
+
+    # U6 — authenticated really means authenticated. Without the header this must
+    # not be a 200; a public endpoint would silently pass every other check.
+    status, _ = hf.http("GET", f"{url}/v1/models", timeout=30, auth=False)
+    checks.record("U6", "unauthenticated request rejected", status in (401, 403), f"HTTP {status}")
+
+    # U5-adjacent — does /health survive the router? Decides whether the two
+    # supervisor smokes keep their meaning (docs/history/remote-e2e-hf.md §4).
+    status, _ = hf.http("GET", f"{url}/health", timeout=30)
+    checks.record("U5b", "/health reachable", hf.ok(status), f"HTTP {status}")
+
+    # U1 + U2 — /props tells us which file llama.cpp actually loaded and the
+    # context it ended up with. This is the real answer to U1, whatever the
+    # create payload looked like.
+    status, body = hf.http("GET", f"{url}/props", timeout=60)
+    if hf.ok(status) and isinstance(body, dict):
+        settings = body.get("default_generation_settings") or {}
+        n_ctx = settings.get("n_ctx") or body.get("n_ctx")
+        model = body.get("model_path") or settings.get("model") or "?"
+        checks.record("U1", "loaded model file", hf.CHAT_GGUF in str(model), str(model))
+        checks.record("U2", "effective context", bool(n_ctx), f"n_ctx={n_ctx}")
+    else:
+        checks.record("U1", "loaded model file", False, f"/props HTTP {status}")
+        checks.record("U2", "effective context", False, "unknown (/props unavailable)")
+
+    _check_tool_calling(url, checks)
+    _check_streaming(url, checks)
 
 
 def probe_embed(url, checks):
@@ -319,22 +342,40 @@ def cmd_inspect(args):
     return hf.EXIT_OK if hf.ok(status) else hf.EXIT_FAILED
 
 
+def _run_embed_only(args, stamp, checks):
+    """--embed-only: create, probe and summarize just the embedding endpoint."""
+    name = f"e2e-probe-embed-{stamp}"
+    if hf.create(hf.apply_overrides(hf.embed_payload(name, args), args.set), args.dry_run) is None:
+        return hf.EXIT_OK if args.dry_run else hf.EXIT_FAILED
+    url = hf.wait_running(name, args.timeout)
+    if url:
+        probe_embed(url, checks)
+    else:
+        checks.record("U5", "embedding endpoint reached running", False, "see above")
+    checks.summary()
+    return hf.EXIT_FAILED if checks.failed() else hf.EXIT_OK
+
+
+def _create_and_probe_embed(args, stamp, checks):
+    """Create the embedding endpoint and probe it. Returns its URL, or None."""
+    name = f"e2e-probe-embed-{stamp}"
+    if hf.create(hf.apply_overrides(hf.embed_payload(name, args), args.set)) is None:
+        return None
+    url = hf.wait_running(name, args.timeout)
+    if url:
+        probe_embed(url, checks)
+    else:
+        checks.record("U5", "embedding endpoint reached running", False, "see above")
+    return url
+
+
 def cmd_run(args):
     stamp = time.strftime("%m%d-%H%M%S")
     checks = Checks()
     started = time.time()
 
     if args.embed_only:
-        name = f"e2e-probe-embed-{stamp}"
-        if hf.create(hf.apply_overrides(hf.embed_payload(name, args), args.set), args.dry_run) is None:
-            return hf.EXIT_OK if args.dry_run else hf.EXIT_FAILED
-        url = hf.wait_running(name, args.timeout)
-        if url:
-            probe_embed(url, checks)
-        else:
-            checks.record("U5", "embedding endpoint reached running", False, "see above")
-        checks.summary()
-        return hf.EXIT_FAILED if checks.failed() else hf.EXIT_OK
+        return _run_embed_only(args, stamp, checks)
 
     chat_name = f"e2e-probe-chat-{stamp}"
     payload = hf.apply_overrides(hf.chat_payload(chat_name, args), args.set)
@@ -354,13 +395,7 @@ def cmd_run(args):
 
     embed_url = None
     if not args.chat_only:
-        embed_name = f"e2e-probe-embed-{stamp}"
-        if hf.create(hf.apply_overrides(hf.embed_payload(embed_name, args), args.set)) is not None:
-            embed_url = hf.wait_running(embed_name, args.timeout)
-            if embed_url:
-                probe_embed(embed_url, checks)
-            else:
-                checks.record("U5", "embedding endpoint reached running", False, "see above")
+        embed_url = _create_and_probe_embed(args, stamp, checks)
 
     suite_code = 0
     if args.suite and chat_url:

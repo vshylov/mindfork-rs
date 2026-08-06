@@ -12334,6 +12334,66 @@ three findings are invisible from the workflow's own status):
   test fixtures only; `Storage::open_in_memory` is `#[cfg(test)]`. No CHANGELOG
   entry — internal tests (§4).
 
+### Post-M9: SonarQube backlog — triage + stage 1 (Python tools) (done)
+
+- **The 114-issue initial-analysis backlog was triaged** (user decisions
+  2026-08-06): the ~49 `rust:S2208` wildcard-import issues are the **documented
+  `use super::*` convention** from the god-object split playbook
+  (docs/history/refactoring-god-objects.md, architecture.md §3) — **Accepted in
+  Sonar**, not "fixed"; the ~61 `S3776` cognitive-complexity issues are
+  **triaged**: refactor the genuinely tangled functions, Accept the deliberate
+  table/parser shapes. Staged as one bookkeeping pass + four fix PRs
+  (Python tools → UI screens/widgets → runtime/shared → orchestrator/tools).
+- **Stage 0 — Sonar bookkeeping, no code** (57 status changes via the MCP):
+  49 × S2208 Accepted; `python:S5332` (link_check.py:49) **False Positive** —
+  the flagged `http://` is the `SKIP_SCHEME` tuple used to *skip* external
+  links, not a request; 7 deliberate-shape S3776 Accepted with rationale —
+  `settings/spec.rs::field_spec` (147 — the single-source-of-truth access
+  table, SOLID stage 3.2; splitting it recreates the four scattered matches it
+  replaced), `markdown/latex.rs` ×4 (63/37/25/25 — converter tables),
+  `calc.rs::tokenize` (31 — the recursive-descent evaluator),
+  `wrap.rs::wrap_ranges` (29 — the hot-path width algorithm). **57 open
+  issues remain** (48 Rust S3776 + 9 Python), which is what stages 1–4 burn
+  down.
+- **Stage 1 — `fix/sonar-python-tools`** (this entry's branch). The one real
+  defect: `link_check.py`'s `CODE_SPAN` regex `` (`+)[^`]*?\1 `` is
+  super-linear (S8786 — the greedy opener + backreference retries every
+  opener length at every position). Replaced with a **linear manual scanner**
+  (`blank_code_spans` + `_close_run`: an opening run of k backticks closes at
+  the next run of ≥ k, an unclosed run stays literal). **Parity measured, not
+  assumed**: over the whole 40k-line markdown corpus the 328 line-level
+  diffs are all bare ``` fence lines (handled by the fence branch *before*
+  spans, so unreachable) or inline mentions of triple-backtick fences, where
+  the new behaviour is closer to CommonMark — and the tool's verdict on the
+  repo is unchanged (clean).
+- **Eight Python complexity refactors, all pure extractions** (dev scripts;
+  behaviour pinned by offline probes rather than eyeballing):
+  `cyrillic_scan.py::print_fmt_spans` (36) → per-state steps
+  (`_find_macro`/`_open_quote`/`_close_literal` — a step returning `None` for
+  the position ends the line, the returned state carries over);
+  `cyrillic_scan.py::main` (40) → `scan_file`/`_line_flagged`/`report`;
+  `e2e_hf.py::cmd_run` (41) → `Plan`/`print_plan`/`dry_run`/
+  `create_endpoints`/`bring_up_all`; `cmd_sweep` (16) → `sweep_verdict` (the
+  fail-safe "unknown createdAt → keep" reasoning moved into its docstring);
+  `hf_api.py::cleanup` (20) → `_keep_endpoints`/`_verify_deletions` (the
+  "a name leaves CREATED only once proven gone" invariant untouched — the
+  verifier mutates, never rebinds); `hf_probe.py::cmd_doctor` (35) →
+  `_granted_permissions`/`_report_fine_grained`/`_print_403_advice`;
+  `probe_chat` (20) → `_check_tool_calling`/`_check_streaming`; `cmd_run`
+  (30) → `_run_embed_only`/`_create_and_probe_embed`.
+- **Verification** (the HF scripts have no offline entry beyond argparse, so
+  the extracted pure parts were probed directly): `py_compile` on all five
+  files; every `--help` path; `scan_file` against 11 cases including the
+  cross-line print-macro tracker, the value-argument exemption and the
+  `cyrillic-ok` markers; `blank_code_spans` against 7 cases plus the
+  pathological 5000-backtick input the old regex choked on; `sweep_verdict`
+  against 6 cases including both fail-safe unknowns and the
+  fractional-second timestamp; full repo runs of `link_check` and
+  `cyrillic_scan` — both still clean. **1835 unit tests green** (no Rust
+  touched), clippy `-D warnings`/fmt clean. **No live run required**
+  (AGENTS.md §3): dev tooling — no engine, memory or tool path. No CHANGELOG
+  entry — internal tooling (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

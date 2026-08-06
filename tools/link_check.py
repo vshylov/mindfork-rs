@@ -44,9 +44,47 @@ from pathlib import Path
 # are not used anywhere in this repo; add them here if that changes.
 LINK = re.compile(r"\]\(\s*([^)\s]+)")
 FENCE = re.compile(r"^\s*(```|~~~)")
-# One or more backticks, the shortest run that closes with the same count.
-CODE_SPAN = re.compile(r"(`+)[^`]*?\1")
 SKIP_SCHEME = ("http://", "https://", "mailto:", "data:", "//")
+
+
+def _close_run(line: str, start: int, k: int) -> int:
+    """Start of the next backtick run of length >= k at/after `start`, or -1."""
+    p = start
+    while (p := line.find("`", p)) != -1:
+        q = p
+        while q < len(line) and line[q] == "`":
+            q += 1
+        if q - p >= k:
+            return p
+        p = q
+    return -1
+
+
+def blank_code_spans(line: str) -> str:
+    """Remove inline code spans, keeping the surrounding text.
+
+    Replaces the old ``(`+)[^`]*?\\1`` regex, whose opener/backreference pair
+    backtracked super-linearly on backtick-heavy lines (python:S8786). Manual
+    scan instead: an opening run of k backticks is closed by the next run of at
+    least k (k of them are consumed), and an unclosed run stays literal text.
+    """
+    out, i = [], 0
+    while i < len(line):
+        p = line.find("`", i)
+        if p == -1:
+            out.append(line[i:])
+            break
+        j = p
+        while j < len(line) and line[j] == "`":
+            j += 1
+        close = _close_run(line, j, j - p)
+        if close == -1:
+            out.append(line[i:j])  # unclosed run: literal text, keep scanning
+            i = j
+        else:
+            out.append(line[i:p])  # drop the opener, the body and k closing ticks
+            i = close + (j - p)
+    return "".join(out)
 
 
 def tracked_markdown():
@@ -71,7 +109,7 @@ def strip_code(lines):
             fence = m.group(1)
             out.append("")
             continue
-        out.append(CODE_SPAN.sub("", line))
+        out.append(blank_code_spans(line))
     return out
 
 
