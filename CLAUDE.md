@@ -12394,6 +12394,55 @@ three findings are invisible from the workflow's own status):
   (AGENTS.md §3): dev tooling — no engine, memory or tool path. No CHANGELOG
   entry — internal tooling (§4).
 
+### Post-M9: SonarQube backlog — stage 2 (UI screens and widgets) (done)
+
+- **Stage 2 of the backlog burn-down** (`refactor/sonar-ui`, stacked on stage 1
+  — every stage adds a journal entry here, so independent branches would
+  conflict; the linear-stack precedent from the installers track). Seventeen
+  `rust:S3776` functions across the UI layer reduced below the threshold by
+  **mechanical, behavior-preserving helper extraction** — and, notably, **none
+  needed an Accept**: unlike `field_spec` or the LaTeX tables, every one of
+  these had natural seams (a popup branch, a render section, a per-arm body).
+  Delegated to three parallel subagents over disjoint file clusters, each with
+  the constraints spelled out (extraction only, comments travel with the code,
+  tests must pass unedited, no tree copies — the poisoned-`target/` lesson).
+- **Chat screens + self-model** (4): `chat/input.rs::handle_key` (**62**, the
+  worst offender of the whole backlog) split into a modal router, the
+  Ctrl-shortcut ladder, the plain-key match and per-slash-command helpers —
+  routing order preserved (the tool-confirmation popup stays checked before
+  the generation gate); `chat/render.rs::render` (24) → input-area/overlay
+  helpers; `chat/rag.rs::set_rag_progress` (21) → per-arm helpers;
+  `self_model.rs::render` (20) → row-expansion/row-drawing/editor-popup.
+- **Settings screens** (6): `render_fields` (**47**) → `desc_panel_height`/
+  `render_fields_header`/`build_field_items`/`render_desc_panel`/
+  `group_toggle_counts`; `render` (18) → `footer_hints`/`render_editor_popup`;
+  `handle_key_inner` (24) → `is_quit_key` + `plugins_list_key`/
+  `profiles_list_key` (returning `Option<Option<_>>` — "consumed?" × result,
+  because the originals' `_ => {}` arms fall through to the rest of the
+  dispatcher) + `navigation_key`; `handle_fields_key` (18) → `field_enter`;
+  `helpers::render_field_line` (25) → `field_value_and_style`/`row_marker`;
+  `helpers::parse_args` (26) → `read_double_quoted`/`read_single_quoted`
+  (taking `&mut impl Iterator<Item = char>`, so the tokenizer state machine is
+  untouched).
+- **Widgets** (7): `message_feed::from_messages` (21) → `merge_round`;
+  `build_lines` (20) → `refresh_cached_block`/`highlight_block_tail` (the
+  `CachedBlock` invariants moved verbatim); `highlight_line` (19) →
+  `span_cut_points`; `status_bar::lines` (26) → `state_spans`/
+  `token_counter_span`/`hotkey_list`; `status_bar::right_grid` (25) —
+  triaged rather than assumed: the *algorithm* (`grid_layout`) was already its
+  own under-threshold function, so the renderer split cleanly along
+  row-lead/cell seams (`push_row_lead`/`push_hotkey_cell`) and no Accept was
+  needed; `chat_list::on_key_search` (28) → `on_ctrl_search`/`open_selected`/
+  `select_down`/`start_rename`; `input_box::on_key` (17) →
+  `on_ctrl_shortcut`/`on_edit_key` (mutator calls moved untouched, so the
+  `touch()`/`record_undo` sequencing is byte-identical).
+- **No test was edited anywhere** — the 1835-test suite is the safety net the
+  whole stage leans on, and it stayed green as-is: **1835 passed / 0 failed**,
+  76 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+  **No live run required** (AGENTS.md §3): pure UI refactor — no engine,
+  memory, tool or provider path is touched (the precedent set by the whole
+  settings-redesign track). No CHANGELOG entry — internal refactor (§4).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

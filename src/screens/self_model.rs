@@ -493,33 +493,39 @@ impl SelfModelScreen {
         let rows = self.rows();
         let sel = self.selected.min(rows.len().saturating_sub(1));
 
-        // Expand each logical line into visual rows, tracking for every
-        // row the index of its logical line and where the selected row starts.
-        let mut visual: Vec<(usize, Line<'static>)> = Vec::new();
-        let mut sel_start = 0usize;
-        let mut sel_height = 1usize;
-        for (ri, (line, _)) in rows.iter().enumerate() {
-            let start = visual.len();
-            if ri == sel {
-                sel_start = start;
-            }
-            let mut wrapped = wrap_line(line, content_width);
-            if wrapped.is_empty() {
-                wrapped.push(Line::from(String::new())); // an empty separator
-            }
-            if ri == sel {
-                sel_height = wrapped.len();
-            }
-            for vl in wrapped {
-                visual.push((ri, vl));
-            }
-        }
+        let (visual, sel_start, sel_height) = expand_visual_rows(&rows, sel, content_width);
 
         let view_h = list_area.height as usize;
         self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
 
-        // Draw the visible visual rows. The selected row gets a backdrop across the whole
-        // row width (the base `Paragraph` colors the whole area) and a `▌` marker; others get an indent.
+        self.draw_visual_rows(frame, list_area, &visual, sel);
+
+        // The bottom area (below the panel, outside the border): the clear confirmation or the
+        // hotkey grid (computed above).
+        if self.confirm_clear {
+            let warn = Style::new().fg(palette.warning);
+            frame.render_widget(
+                Paragraph::new(Line::styled(loc.t("ui.self_model.confirm_clear"), warn)),
+                status_area,
+            );
+        } else {
+            frame.render_widget(Paragraph::new(hotkeys), status_area);
+        }
+
+        self.render_editor_popup(frame, area);
+    }
+
+    /// Draws the visible visual rows. The selected row gets a backdrop across the whole
+    /// row width (the base `Paragraph` colors the whole area) and a `▌` marker; others get an indent.
+    fn draw_visual_rows(
+        &self,
+        frame: &mut Frame,
+        list_area: Rect,
+        visual: &[(usize, Line<'static>)],
+        sel: usize,
+    ) {
+        let palette = self.palette;
+        let view_h = list_area.height as usize;
         for (offset, (ri, line)) in visual.iter().enumerate().skip(self.scroll).take(view_h) {
             let y = list_area.y + (offset - self.scroll) as u16;
             let row = Rect {
@@ -542,20 +548,13 @@ impl SelfModelScreen {
             }
             frame.render_widget(para, row);
         }
+    }
 
-        // The bottom area (below the panel, outside the border): the clear confirmation or the
-        // hotkey grid (computed above).
-        if self.confirm_clear {
-            let warn = Style::new().fg(palette.warning);
-            frame.render_widget(
-                Paragraph::new(Line::styled(loc.t("ui.self_model.confirm_clear"), warn)),
-                status_area,
-            );
-        } else {
-            frame.render_widget(Paragraph::new(hotkeys), status_area);
-        }
-
-        // The editor drawn on top — with a real cursor. Always multiline (text wraps).
+    /// The editor drawn on top — with a real cursor. Always multiline (text wraps).
+    /// A no-op when no editor is open.
+    fn render_editor_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let palette = self.palette;
+        let loc = self.loc;
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
             let title = loc.t("ui.editor.multiline_footer");
@@ -566,6 +565,36 @@ impl SelfModelScreen {
                 .render(frame, popup, RenderOpts::focused(title), &palette);
         }
     }
+}
+
+/// Expands each logical line into visual rows wrapped to `content_width`,
+/// tracking for every row the index of its logical line; returns the rows
+/// plus where the selected row starts and how many visual rows it takes.
+fn expand_visual_rows(
+    rows: &[(Line<'static>, RowAction)],
+    sel: usize,
+    content_width: usize,
+) -> (Vec<(usize, Line<'static>)>, usize, usize) {
+    let mut visual: Vec<(usize, Line<'static>)> = Vec::new();
+    let mut sel_start = 0usize;
+    let mut sel_height = 1usize;
+    for (ri, (line, _)) in rows.iter().enumerate() {
+        let start = visual.len();
+        if ri == sel {
+            sel_start = start;
+        }
+        let mut wrapped = wrap_line(line, content_width);
+        if wrapped.is_empty() {
+            wrapped.push(Line::from(String::new())); // an empty separator
+        }
+        if ri == sel {
+            sel_height = wrapped.len();
+        }
+        for vl in wrapped {
+            visual.push((ri, vl));
+        }
+    }
+    (visual, sel_start, sel_height)
 }
 
 /// Builds an edit intent from the editor's commit (or `None` if the edit is empty).

@@ -143,6 +143,13 @@ impl ChatScreen {
             self.loc,
         );
 
+        self.render_input_area(frame, input_area);
+        self.render_overlays(frame);
+    }
+
+    /// Renders whatever stands in the input row: the impersonation preview,
+    /// the in-feed search field, or the input box itself.
+    fn render_input_area(&mut self, frame: &mut Frame, input_area: Rect) {
         // During impersonation the input box is hidden — a streaming reply
         // preview sits in its place. See spec §11.8.
         if let Some(imp) = &self.impersonation {
@@ -201,7 +208,12 @@ impl ChatScreen {
                 &self.palette,
             );
         }
+    }
 
+    /// Renders the popups drawn over the whole screen (the profile picker,
+    /// spellcheck suggestions, the emoji picker, the tool confirmation, the
+    /// `Ctrl+R`/`Ctrl+E` confirmation, help) — in stacking order.
+    fn render_overlays(&mut self, frame: &mut Frame) {
         if let Some(overlay) = &self.profile_overlay {
             overlay.render(frame, frame.area(), &self.palette, self.loc);
         }

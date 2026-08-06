@@ -281,73 +281,18 @@ impl ChatListState {
         // any layout (see shared::keys). Any other Ctrl+character is swallowed,
         // so it doesn't end up in the search line.
         if ctrl && let Some(physical) = keys::hotkey_char(&key) {
-            return match physical {
-                // Quitting works from the chat list too; moved to Ctrl+Q/F10 (Ctrl+C
-                // is freed up). See docs/history/input-selection-undo-mouse.md §B.
-                'q' => ChatListAction::Quit,
-                'n' => ChatListAction::New,
-                'd' => match self.selected_id() {
-                    Some(id) => ChatListAction::Clone(id),
-                    None => ChatListAction::None,
-                },
-                // Auto-title the selected chat, done by the model.
-                'r' => match self.selected_id() {
-                    Some(id) => ChatListAction::AutoRename(id),
-                    None => ChatListAction::None,
-                },
-                // Toggle title ↔ content search. Switching *into* content mode
-                // asks for results right away, so the mode takes effect on the
-                // text already typed; switching back needs no round-trip (the
-                // title filter is local).
-                'f' => {
-                    self.scope = self.scope.toggled();
-                    self.selected = 0;
-                    match self.scope {
-                        SearchScope::Content => self.search_action(),
-                        SearchScope::Title => ChatListAction::None,
-                    }
-                }
-                // Go from "which chats mention this" to "where exactly": the
-                // message-level results screen. Content mode only — in title
-                // mode the query is a title substring, which is not a thing to
-                // search message text for; the hint is hidden there too, so no
-                // advertised key is a no-op.
-                'g' => match self.scope {
-                    SearchScope::Content => ChatListAction::SearchMessages {
-                        query: self.query.clone(),
-                        sort: self.sort,
-                    },
-                    SearchScope::Title => ChatListAction::None,
-                },
-                _ => ChatListAction::None,
-            };
+            return self.on_ctrl_search(physical);
         }
         match key.code {
             KeyCode::F(10) => ChatListAction::Quit, // a second way to quit
             KeyCode::Esc => ChatListAction::Close,
-            // In content mode the chat is opened **at its first match** rather
-            // than at the tail: the user asked where this text is, so landing
-            // on it is strictly more useful than landing at the end of the
-            // conversation (stage 2a's jump). Title mode is unchanged.
-            KeyCode::Enter => match (self.selected_id(), self.scope) {
-                (Some(id), SearchScope::Content) if !self.query.trim().is_empty() => {
-                    ChatListAction::OpenFirstMatch {
-                        chat: id,
-                        query: self.query.clone(),
-                    }
-                }
-                (Some(id), _) => ChatListAction::Switch(id),
-                (None, _) => ChatListAction::None,
-            },
+            KeyCode::Enter => self.open_selected(),
             KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
                 ChatListAction::None
             }
             KeyCode::Down => {
-                let len = self.visible().len();
-                if len > 0 {
-                    self.selected = (self.selected + 1).min(len - 1);
-                }
+                self.select_down(1);
                 ChatListAction::None
             }
             // Paged selection movement: step by a "page" (fixed,
@@ -357,10 +302,7 @@ impl ChatListState {
                 ChatListAction::None
             }
             KeyCode::PageDown => {
-                let len = self.visible().len();
-                if len > 0 {
-                    self.selected = (self.selected + PAGE_STEP).min(len - 1);
-                }
+                self.select_down(PAGE_STEP);
                 ChatListAction::None
             }
             // Jump to the first/last chat.
@@ -378,18 +320,7 @@ impl ChatListState {
                 ChatListAction::None
             }
             KeyCode::F(2) => {
-                if let Some(chat) = self.visible().get(self.selected) {
-                    // A single-line `InputBox` with the current title (cursor at the end).
-                    // `set_single_line` — before `set_text` (the single-line invariant).
-                    let mut input = InputBox::new();
-                    input.set_single_line(true);
-                    input.set_text(&chat.title);
-                    self.mode = Mode::Rename {
-                        id: chat.id,
-                        input: Box::new(input),
-                        spell_dirty: true,
-                    };
-                }
+                self.start_rename();
                 ChatListAction::None
             }
             // Copy the whole conversation of the selected chat to the clipboard.
@@ -414,6 +345,93 @@ impl ChatListState {
                 self.query_changed()
             }
             _ => ChatListAction::None,
+        }
+    }
+
+    /// A Ctrl shortcut in search mode, matched by "physical" Latin key
+    /// (see [`Self::on_key_search`]).
+    fn on_ctrl_search(&mut self, physical: char) -> ChatListAction {
+        match physical {
+            // Quitting works from the chat list too; moved to Ctrl+Q/F10 (Ctrl+C
+            // is freed up). See docs/history/input-selection-undo-mouse.md §B.
+            'q' => ChatListAction::Quit,
+            'n' => ChatListAction::New,
+            'd' => match self.selected_id() {
+                Some(id) => ChatListAction::Clone(id),
+                None => ChatListAction::None,
+            },
+            // Auto-title the selected chat, done by the model.
+            'r' => match self.selected_id() {
+                Some(id) => ChatListAction::AutoRename(id),
+                None => ChatListAction::None,
+            },
+            // Toggle title ↔ content search. Switching *into* content mode
+            // asks for results right away, so the mode takes effect on the
+            // text already typed; switching back needs no round-trip (the
+            // title filter is local).
+            'f' => {
+                self.scope = self.scope.toggled();
+                self.selected = 0;
+                match self.scope {
+                    SearchScope::Content => self.search_action(),
+                    SearchScope::Title => ChatListAction::None,
+                }
+            }
+            // Go from "which chats mention this" to "where exactly": the
+            // message-level results screen. Content mode only — in title
+            // mode the query is a title substring, which is not a thing to
+            // search message text for; the hint is hidden there too, so no
+            // advertised key is a no-op.
+            'g' => match self.scope {
+                SearchScope::Content => ChatListAction::SearchMessages {
+                    query: self.query.clone(),
+                    sort: self.sort,
+                },
+                SearchScope::Title => ChatListAction::None,
+            },
+            _ => ChatListAction::None,
+        }
+    }
+
+    /// `Enter`: opens the selected chat. In content mode the chat is opened
+    /// **at its first match** rather than at the tail: the user asked where
+    /// this text is, so landing on it is strictly more useful than landing at
+    /// the end of the conversation (stage 2a's jump). Title mode is unchanged.
+    fn open_selected(&self) -> ChatListAction {
+        match (self.selected_id(), self.scope) {
+            (Some(id), SearchScope::Content) if !self.query.trim().is_empty() => {
+                ChatListAction::OpenFirstMatch {
+                    chat: id,
+                    query: self.query.clone(),
+                }
+            }
+            (Some(id), _) => ChatListAction::Switch(id),
+            (None, _) => ChatListAction::None,
+        }
+    }
+
+    /// Moves the selection down by `step`, clamped to the list's last item.
+    fn select_down(&mut self, step: usize) {
+        let len = self.visible().len();
+        if len > 0 {
+            self.selected = (self.selected + step).min(len - 1);
+        }
+    }
+
+    /// `F2`: switches into rename mode for the selected chat (a no-op on an
+    /// empty list).
+    fn start_rename(&mut self) {
+        if let Some(chat) = self.visible().get(self.selected) {
+            // A single-line `InputBox` with the current title (cursor at the end).
+            // `set_single_line` — before `set_text` (the single-line invariant).
+            let mut input = InputBox::new();
+            input.set_single_line(true);
+            input.set_text(&chat.title);
+            self.mode = Mode::Rename {
+                id: chat.id,
+                input: Box::new(input),
+                spell_dirty: true,
+            };
         }
     }
 
