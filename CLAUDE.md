@@ -12533,6 +12533,70 @@ three findings are invisible from the workflow's own status):
   at the end of stage 0 → 0 expected after the four stage merges re-analyze
   on `main` (48 Rust + 9 Python fixed across stages 1–4).
 
+### Post-M9: the quality gate stopped judging new-code coverage (done)
+
+- **Found by the four backlog PRs meeting the blocking gate** — the first time
+  the decision "make the gate blocking" (2026-08-05) met a pure refactor of
+  legacy code. Three of the four failed, and the shape of the failure is the
+  whole story: **zero new issues on all four**, ratings A, duplication 0%, and
+  the *only* failing condition `new_coverage ≥ 80` — #269 at 0.0%, #271 at
+  66.2%, #272 at 72.5%, with #270 passing at 96.1%. Analysis read through the
+  SonarQube MCP server (registered in the user-scope Claude Code config this
+  session) plus the REST API for the per-file breakdown the MCP tools do not
+  expose.
+- **Not a coverage regression, and that was measured rather than argued.**
+  Overall project coverage: `main` 85.2%, the four PRs 85.2 / 85.3 / 85.2 /
+  85.2. What changed is the *ledger*: extraction rewrites lines, so branches
+  that had been uncovered for a long time stop being "old code" and start
+  counting against the gate. Cross-checked against the repo's own `lcov.info`
+  baseline, taken from `main` **before** these branches, and it matches file by
+  file — `app/runtime/mod.rs` 29.6% on main → 63 of 63 new lines uncovered,
+  `main.rs` 8.4% → 6 of 6, `orchestrator/tool_loop.rs` 26.7% → 27 of 27,
+  `runtime/input.rs` 52.9% → 19 of 19.
+- **The concentration is not a coincidence**: high cognitive complexity lives
+  exactly where unit tests cannot reach — the TUI loop (needs a real terminal),
+  the network/audio/cloud paths, the background tasks. Refactoring the most
+  complex function in a file preferentially rewrites its *uncovered* half. And
+  the percentage understates reality for those files: `web.rs`, `tts.rs`,
+  `youtube.rs`, `tool_loop.rs` **are** tested — by the 76 `#[ignore]` live
+  smokes (stage 4 ran 76/76 on the remote HF runner), which `cargo llvm-cov`
+  does not execute. "Uncovered" there means "covered only by the live gate".
+- **The fork that decided the design: `sonar.qualitygate.wait=true` does two
+  jobs**, and the journal records the *second* as the reason it was enabled —
+  it waits for server-side processing, which is what caught the report the
+  server later rejected over the LOC quota while the job stayed green. So the
+  obvious response ("make the gate non-blocking") would have thrown that away
+  as collateral, since one flag carries both meanings. Four options were
+  weighed: `wait=false` (loses the upload check), `continue-on-error` on the
+  job (loses it too, and leaves a verdict that is visible but unread), coverage
+  exclusions on `src` (inflates the number and hides real gaps in Rust code
+  that *is* testable), and a custom gate.
+- **Decision (user, 2026-08-06): a custom gate, blocking kept.** The built-in
+  `Sonar way` cannot be edited (`isBuiltIn=true`; the organization has only the
+  two built-ins), so the applied gate is now **"Sonar way without new-code
+  coverage"** — its five other conditions, verified read-back to be identical
+  to the source. The reasoning is marginal value: `clippy -D warnings`, 1835
+  tests, `cyrillic_scan`, `link_check` and `cargo deny` already block, and what
+  Sonar adds on top is cognitive complexity, security hotspots and duplication
+  — which is what produced the 114-issue backlog and still blocks. Coverage is
+  a metric the project already measures, stable at 85.2% and printed on every
+  PR; blocking on it in a codebase with a deliberately untestable core was
+  blocking on an accounting artifact.
+- **The cost is stated rather than glossed** (in `sonar-project.properties` and
+  the roadmap): a genuinely untested new feature can now pass the gate. What
+  remains against that is the reported number and AGENTS.md §3.
+- **`sonar.coverage.exclusions=tools/**` — done for measurement honesty, not
+  for the gate** (which no longer judges coverage). The Rust-only lcov report
+  cannot cover Python, so ~1240 lines of dev scripts sat in the denominator as
+  100% uncovered, dragging the reported figure down for files that have no test
+  harness by design. Coverage-only: they stay in `sonar.sources` and keep being
+  analyzed for issues, so stage 1's nine Python findings are unaffected.
+- **No CHANGELOG entry** — dev infrastructure with no user-visible effect
+  (AGENTS.md §4), consistent with every other Sonar/CI entry. No Rust code
+  touched, so the suite is unchanged at **1835 unit tests**, 76 `#[ignore]`.
+  **No live run required** (§3): no engine, memory, tool or provider path
+  exists in this change.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

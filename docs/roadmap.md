@@ -203,7 +203,8 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   revisiting only if the crate is ever split, or if the suite grows enough that
   sharding beats a warm single build.
 - **SonarQube Cloud leftovers** — the gate is blocking as of 2026-08-05
-  (`sonar.qualitygate.wait`, see the journal), so what remains is smaller: a
+  (`sonar.qualitygate.wait`, see the journal) and since 2026-08-06 runs the
+  custom **"Sonar way without new-code coverage"**, so what remains is smaller: a
   quality-gate badge in the README (a **private** project's badge needs a token
   to render for anonymous readers), and — if the measurements say the duplicated
   instrumented test run is the expensive half — folding the coverage run into the
@@ -211,7 +212,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   measurement: the whole `sonar` job runs in ~3.5 min against the Windows job's
   19, so it was never on the critical path and merging it would buy wall clock
   only once Windows drops below it. Also unreviewed: the project's
-  **New Code definition**, which now decides what the gate judges.
+  **New Code definition**, which decides what the gate judges — less pressing now
+  that coverage is not one of the conditions, but it still scopes the issue and
+  duplication checks.
+- **Coverage is measured but no longer enforced** — dropping `new_coverage` from
+  the gate closed a structural false alarm, at the price that a genuinely
+  untested new feature can pass. Two things would restore enforcement without
+  bringing the false alarm back, neither cheap enough to do on spec: teaching CI
+  to run the `#[ignore]` live suite under instrumentation (it needs a real
+  engine, so the honest home is the remote HF runner, not every PR), and a
+  coverage view that separates "untestable here" from "untested" instead of
+  folding both into one percentage.
 - **Make the checks *required*** — "blocking" currently stops at the job: a failed
   gate reddens `SonarQube Cloud`, but GitHub still lets a red pull request be
   merged, because that is branch protection's job and it is **unavailable for a
