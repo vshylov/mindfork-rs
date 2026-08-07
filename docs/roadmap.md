@@ -36,9 +36,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   is sent on every request (`build_conversation_digest` only exists for
   titles). For local models with 8k context this hits a ceiling; a candidate
   is auto-summarizing old messages past a token threshold, next to the
-  existing token counter. **Researched** (mechanics map, provider overflow
-  behavior, forks F1–F10 with recommendations, probe plan) — decision pending:
-  [history-compression.md](research/history-compression.md).
+  existing token counter. **Researched, forks F1–F10 decided by the user
+  2026-08-07** (rolling summary, messages retained; foldable summary at the
+  feed boundary; read-back tools as a committed stage; on by default with a
+  full off switch) — [history-compression.md](research/history-compression.md).
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
   into `system` is stable within a day — a direct candidate for prompt

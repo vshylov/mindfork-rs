@@ -1,7 +1,8 @@
 # Research: conversation history compression (rolling summary)
 
 > Research for roadmap §"Context and tokens" item #1 ("Most valuable next").
-> Status: **forks pending the user's decision** (§8). No code yet.
+> Status: **forks decided by the user 2026-08-07** (§8) — F8(c), F9(b), F10 with
+> a full off switch, the rest as recommended. Next step: stage 0 (the probe, §9).
 > Prepared 2026-08-07, branch `docs/history-compression-research`.
 > Closely related roadmap item: #2 **prompt caching** — the two must compose (§3.3).
 
@@ -281,7 +282,7 @@ The header (axis A, `prompt.compact.*`) frames the block as **data, not
 instructions** (the attachments precedent) and — the thrice-learned house
 lesson — **states what is and isn't reachable**: stage 1 wording says plainly
 that older messages were summarized and their verbatim text is not
-retrievable; the stage-2 read-back tools (F9) change that sentence to name
+retrievable; the stage-3 read-back tools (F9b) change that sentence to name
 them. A block that describes a situation without saying what's possible sends
 the model improvising (`fs_read`, `web_search`, six `python_exec` rounds — the
 journal has three case studies).
@@ -324,9 +325,12 @@ error hint gains a pointer at `/compact` (today it is a bare
 `generation_failed`).
 
 ### 6.5 UI
-- **Feed divider** at the boundary: a muted line at index `upto` — "older
-  messages are summarized for the model" — so the user knows *why* the model
-  no longer quotes early text verbatim. The feed already maps message ids
+- **Feed divider + collapsible summary** at the boundary (F8c): a muted line
+  at index `upto` — "older messages are summarized for the model" — carrying
+  the summary itself as a foldable block that **expands together with the CoT
+  ("thoughts") blocks**: it reads the existing per-chat `FeedView.thoughts`
+  flag (`Ctrl+T`), so no new hotkey and no new `FeedView` field. Collapsed by
+  default, like every foldable block. The feed already maps message ids
   (`FeedMessage::message_ids`); no new plumbing class.
 - The token counter visibly drops after a compaction — no extra chip needed;
   the roll itself can show the quiet `BackgroundKind` chip like reflection.
@@ -362,23 +366,26 @@ summary).
 
 ---
 
-## 8. Forks — for the user's decision
+## 8. Forks — **decided by the user 2026-08-07**
 
-- **F1 — mechanism.**
+F8, F9 and F10 were decided with refinements (spelled out below); everything
+else — as recommended.
+
+- **F1 — mechanism.** **Decision: (a).**
   - (a) **Rolling summary, messages retained; request-side only** —
     *recommended* (§3c: the only shape that always fits; every invariant
     survives untouched).
   - (b) Hard truncation window (no model call) — silent amnesia, rejected §3b.
   - (c) Compact-into-new-chat — an escape hatch, not a mechanism; groundwork.
 
-- **F2 — where the summary sits in the request.**
+- **F2 — where the summary sits in the request.** **Decision: (a).**
   - (a) **A block in `system`, after the persona** — *recommended*
     (System-role messages are dropped by every consumer — §5.5; system is
     already the home of injected blocks, handled by every provider wire).
   - (b) A synthetic first user message — muddy role semantics, alternation
     hazards, a new display flag.
 
-- **F3 — one mechanism or two.**
+- **F3 — one mechanism or two.** **Decision: (a).**
   - (a) **Summarization only** — *recommended*; the digest already compresses
     tool bulk (§1.3) on its way into the summary.
   - (b) A cheaper first rung — eliding old tool-result bodies before any
@@ -386,12 +393,12 @@ summary).
     `ToolCallRecord.result`). Real, but a second mechanism with its own
     corners; note as groundwork.
 
-- **F4 — trigger.**
+- **F4 — trigger.** **Decision: (a).**
   - (a) **Auto at threshold + manual `/compact`** — *recommended* (auto is
     what saves the 8k user; manual is the escape hatch and the test lever).
   - (b) Manual only. (c) Auto only.
 
-- **F5 — context-budget source for external servers.**
+- **F5 — context-budget source for external servers.** **Decision: (a).**
   - (a) **`/props` auto-discovery (llama.cpp), explicit setting as fallback**
     — *recommended*: the primary audience runs external llama-server (the dev
     stack itself does), and discovery removes the "changed `-c`, forgot the
@@ -399,43 +406,57 @@ summary).
   - (b) Explicit setting only — simpler, one more thing to keep in sync.
   - Cloud is an explicit setting either way, else the feature is inactive.
 
-- **F6 — the summarizer engine.**
+- **F6 — the summarizer engine.** **Decision: (a).**
   - (a) **The chat engine itself** — *recommended*: works fully local (the 8k
     audience *is* the local audience), no new provider, no new key. The ADR
     0009 out-of-band pattern (a separate cloud slot) buys nothing here.
   - (b) A separately configurable engine — config surface for a niche want;
     groundwork at most.
 
-- **F7 — task shape.**
+- **F7 — task shape.** **Decision: (a).**
   - (a) **Single-turn digest→summary, `title.rs` pattern** (own typed
     channel, timeout, salvage, `reasoning_budget=0`) — *recommended*.
   - (b) A `SilentLoop` tool-based loop — wrong fit: it cannot return text
     (§5.4), and a summarizer needs no tools.
 
-- **F8 — visibility in the feed.**
-  - (a) **A muted divider at the boundary** — *recommended*: cheap, honest,
-    answers "why doesn't it remember X verbatim".
-  - (b) Nothing (token counter only). (c) Divider + expandable summary view
-    (`Ctrl+O`-style) — nice, later.
+- **F8 — visibility in the feed.** **Decision: (c), refined** — the divider
+  carries the summary as a foldable block, and it **expands together with the
+  CoT ("thoughts") blocks**: the same `Ctrl+T` / per-chat `FeedView.thoughts`
+  state, no separate toggle and no new `FeedView` field (§6.5). Collapsed by
+  default, like every foldable block.
+  - (a) A muted divider at the boundary only.
+  - (b) Nothing (token counter only).
+  - (c) Divider + expandable summary view.
 
-- **F9 — is the compressed range reachable?**
-  - (a) Stage 1: **summary only, with the block honestly saying verbatim text
-    is not retrievable** — *recommended as the MVP boundary*.
-  - (b) Stage 2: **`history_read`/`history_search` tools** over the compressed
-    range — the `attachment_read`/`attachment_search` shape (pagination over a
-    digest of old exchanges; the chat-scoped vec0 index infrastructure already
+- **F9 — is the compressed range reachable?** **Decision: (b)** — the
+  read-back tools are **in scope for the track**, as their own stage after the
+  core lands (§10, stage 3). Until they land, the stage-1 block wording
+  honestly says the verbatim text is not retrievable; once they land, it names
+  them (§6.2).
+  - (a) Summary only, with the block honestly saying verbatim text is not
+    retrievable — the stage-1 boundary while (b) is being built.
+  - (b) **`history_read`/`history_search` tools** over the compressed range —
+    the `attachment_read`/`attachment_search` shape (pagination over a digest
+    of old exchanges; the chat-scoped vec0 index infrastructure already
     exists). Turns compression from lossy into paged; the block then names the
-    tools. *Recommended as the follow-up stage*, not MVP.
+    tools.
 
-- **F10 — default state.**
-  - (a) **On by default where a budget is known** (managed; external once
-    `/props` answers), inactive where it isn't — *recommended*: what it
-    prevents (a hard 400 / silent shift) is strictly worse than what it does,
-    and the divider keeps it visible. Auto-title is the "on by default"
-    precedent; the off-by-default precedents (python, control tools, confirm)
-    are risk gates, which this is not.
-  - (b) Off by default, opt-in — conservative; condemns the default-config 8k
-    user to the 400 until they find the setting.
+- **F10 — default state.** **Decision: (a), refined** — active where a budget
+  is known and **on by default**, but the feature must be **fully switchable
+  off** in settings. Recorded interpretation (to be confirmed on reading):
+  a master toggle "History compression", default **on**; when **off**, the
+  feature is inert — no auto trigger **and no splice**, `build_request` sends
+  the full history exactly as today, and `/compact` refuses with a localized
+  pointer at the setting. The stored `Compaction` **survives the flip** (the
+  messages were never touched, so off→on→off is lossless in both directions).
+  - (a) On by default where a budget is known (managed; external once
+    `/props` answers), inactive where it isn't — what it prevents (a hard
+    400 / silent shift) is strictly worse than what it does, and the divider
+    keeps it visible. Auto-title is the "on by default" precedent; the
+    off-by-default precedents (python, control tools, confirm) are risk
+    gates, which this is not.
+  - (b) Off by default, opt-in — condemns the default-config 8k user to the
+    400 until they find the setting.
 
 ---
 
@@ -455,9 +476,10 @@ The house pattern: measure before building. All against the live stack
    - **Go criterion**: the model answers both from the summary alone —
      including after **two consecutive rolls** (summary-of-summary) — and the
      summary respects its token budget.
-   - **No-go**: identifiers reliably lost → the mechanism without F9's
-     read-back tools is not honest enough; re-scope (F9 moves into MVP, or
-     the summarizer prompt/budget needs rework).
+   - **No-go**: identifiers reliably lost → the summary alone is not honest
+     enough as an interim state; re-scope — the F9(b) read-back tools move
+     from stage 3 into the MVP, and/or the summarizer prompt/budget is
+     reworked.
 4. **Latency**: one roll's wall time on the live stack (informational — it's
    background — but it calibrates the threshold headroom).
 
@@ -467,17 +489,22 @@ The house pattern: measure before building. All against the live stack
 
 - **Stage 1 — core** (`feat/history-compaction`): `Chat.compaction` +
   request splice + digest variant with tool activity + the roll task
-  (title pattern) + `/compact` + feed divider + clamping + i18n
-  (`prompt.compact.*`) + unit tests + the planted-fact live smoke.
-  Spec §6.2/§6.6 bullets, §9.x or §11.x section; architecture §5/§11.
-- **Stage 2 — auto** : `GenResult` carries usage → `maybe_auto_compact` in the
+  (title pattern) + `/compact` + the feed divider with the foldable summary
+  block (F8c, follows `Ctrl+T`) + the master toggle (F10 — off must be fully
+  inert) + clamping + i18n (`prompt.compact.*`) + unit tests + the
+  planted-fact live smoke. Spec §6.2/§6.6 bullets, §9.x or §11.x section;
+  architecture §5/§11.
+- **Stage 2 — auto**: `GenResult` carries usage → `maybe_auto_compact` in the
   `handle_done` tail + budget resolution (`/props` discovery per F5) +
   settings UI ("Memory" → "Context") + the 400-error hint naming `/compact` +
   `BackgroundKind::Compaction` chip/failure streak.
-- **Stage 3 — optional / groundwork**: F9 read-back tools; expandable summary
-  view (F8c); impersonation reusing the summary; F3(b) tool-result eliding;
-  compact-into-new-chat (F1c); prompt-caching alignment (roadmap #2 lands its
-  breakpoints around the now-stable prefix).
+- **Stage 3 — read-back tools** (committed by F9(b)): `history_read`/
+  `history_search` over the compressed range, the `attachment_read`/
+  `attachment_search` shape; the summary block's wording switches from "not
+  retrievable" to naming the tools.
+- **Groundwork (not committed)**: impersonation reusing the summary; F3(b)
+  tool-result eliding; compact-into-new-chat (F1c); prompt-caching alignment
+  (roadmap #2 lands its breakpoints around the now-stable prefix).
 
 ---
 
