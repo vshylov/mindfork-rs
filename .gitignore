@@ -2,3 +2,10 @@
 __pycache__/
 # Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).
 /lcov.info
+# Editor state. Written by VS Code / Cursor when the SonarQube IDE extension
+# binds the workspace; its `connectionId` names a connection local to one
+# machine, and the only shareable part -- the project key -- is already in
+# `sonar-project.properties`, which is what CI and the tooling read. A binding
+# meant to be shared belongs in the portable `.sonarlint/connectedMode.json`
+# instead.
+/.vscode/
