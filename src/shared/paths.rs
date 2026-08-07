@@ -200,6 +200,16 @@ impl Paths {
         }
     }
 
+    /// Overrides the default language (tests only). [`Paths::with_root`] uses
+    /// `Lang::default()`, which is the same value `AppConfig` deserializes to —
+    /// so a test asserting that a language was *seeded* from here would pass
+    /// even with the seeding removed. This makes such a test able to fail.
+    #[cfg(test)]
+    pub fn with_default_language(mut self, lang: Lang) -> Self {
+        self.default_language = lang;
+        self
+    }
+
     /// Root data directory.
     pub fn root(&self) -> &Path {
         &self.root

@@ -93,6 +93,17 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   original reason (no OS sandbox), but "enabled but assets not installed" is
   worse than "disabled"; enabling is a deliberate step after `sandbox setup`.
   Revisit as it gets more field use.
+  **Amended (2026-08-07):** the default is unchanged, and so is the invariant —
+  what changed is *where* the deliberate step can be taken.
+  `sandbox setup --enable-python` turns the setting on **after** a successful
+  provisioning (never on failure — the flag is applied past the `?`), and the
+  Windows installer's opt-in checkbox passes it, so ticking a box that names both
+  effects is the deliberate act. The flip is done by the **app**, not the
+  installer: `settings.json` is user data in a data root whose location only
+  `Paths::resolve` knows, and it carries the same two precautions the TUI takes —
+  the ADR 0006 downgrade guard before writing, and seeding `interface.language`
+  from `defaults.json` when the file is created here (that seeding is gated on the
+  file's absence, so creating one without it would lose the installer's choice).
 
 ### 6. Compatibility shim
 

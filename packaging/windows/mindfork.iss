@@ -81,10 +81,11 @@ en.DirSub=Where should the data be saved?
 ru.DirSub=Куда сохранять данные?
 en.DirPrompt=Select a directory for the application data, then click Next.
 ru.DirPrompt=Укажите каталог для данных приложения, затем нажмите «Далее».
-; The optional Python sandbox (ADR 0005). Off by default, matching
-; tools.python_enabled=false: enabling the tool stays a deliberate step.
-en.SandboxTask=Install the Python sandbox (downloads ~300 MB)
-ru.SandboxTask=Установить Python-песочницу (загрузка ~300 МБ)
+; The optional Python sandbox (ADR 0005). Off by default; ticking it is the
+; deliberate act that both provisions the sandbox and switches the tool on, so
+; the label says both — it changes a security-relevant setting.
+en.SandboxTask=Install the Python sandbox and enable Python execution (downloads ~300 MB)
+ru.SandboxTask=Установить Python-песочницу и включить выполнение Python (загрузка ~300 МБ)
 en.SandboxStatus=Installing the Python sandbox (this may take several minutes)...
 ru.SandboxStatus=Установка Python-песочницы (может занять несколько минут)…
 
@@ -115,6 +116,10 @@ Name: "installsandbox"; Description: "{cm:SandboxTask}"; Flags: unchecked
 
 ; The optional Python sandbox for the `python_exec` tool (ADR 0005): `sandbox setup`
 ; downloads wasmer + CPython + the wheels into `<data>/sandbox/` from the lock list.
+; `--enable-python` then switches `tools.python_enabled` on in settings.json — done by
+; the app, not from here: the installer must not write user data (it would have to
+; re-implement the data-root resolution in Pascal and could clobber an existing config),
+; and the flag only takes effect after the assets are actually in place.
 ; Notes on the flags:
 ;  * Inno processes [Run] entries BEFORE CurStepChanged(ssPostInstall) — measured,
 ;    not assumed — which is why defaults.json is written from AfterInstall on the
@@ -129,7 +134,7 @@ Name: "installsandbox"; Description: "{cm:SandboxTask}"; Flags: unchecked
 ;    of a [Run] entry). The sandbox is optional and re-runnable at any time with
 ;    `mindfork-rs sandbox setup`; the error stays visible in the console.
 [Run]
-Filename: "{app}\mindfork-rs.exe"; Parameters: "sandbox setup"; WorkingDir: "{app}"; \
+Filename: "{app}\mindfork-rs.exe"; Parameters: "sandbox setup --enable-python"; WorkingDir: "{app}"; \
   StatusMsg: "{cm:SandboxStatus}"; Tasks: installsandbox; \
   Flags: waituntilterminated runasoriginaluser
 

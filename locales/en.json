@@ -1266,6 +1266,7 @@
   "cli.help.opt.backup.password": "Encrypt the archive with this password (default: the one from the settings, if set).",
   "cli.help.opt.restore.password": "Password for an encrypted archive (default: the one from the settings; otherwise you are prompted).",
   "cli.help.opt.sandbox.force": "Re-download/reinstall everything, even if already present.",
+  "cli.help.opt.sandbox.enable_python": "After a successful setup, turn on Python execution in the settings.",
   "cli.help.opt.locales.output": "Destination file (an existing file is not overwritten).",
   "cli.help.arg.restore.archive": "Path to the backup archive.",
   "cli.help.arg.import.file": "A mindfork-import file (see docs/import-format.md).",
@@ -1290,6 +1291,7 @@
   "cli.ctx.init_logging": "initializing logging",
   "cli.ctx.log_dir": "creating log directory {path}",
   "cli.ctx.build_runtime": "building the tokio runtime",
+  "cli.ctx.enable_python": "enabling Python execution in the settings",
   "cli.ctx.open_storage": "opening storage",
   "cli.ctx.backup": "creating the backup",
   "cli.ctx.import": "importing from {file}",
@@ -1309,6 +1311,7 @@
   "cli.locales.file_exists": "file already exists: {path} — specify another path (built-in bundles are not overwritten)",
   "cli.locales.exported": "Language bundle '{code}' exported to {path}.",
   "cli.import.done": "Import complete: {profiles} profiles, {chats} chats.",
+  "cli.sandbox.python_enabled": "Python execution is enabled in the settings.",
   "cli.import.lamellama_removed": "the import-lamellama command has been removed: LameLLaMA import is now done by an external converter that emits a mindfork-import file (see docs/import-format.md); then run: mindfork-rs import <file>",
   "ui.lang.name": "English"
 }

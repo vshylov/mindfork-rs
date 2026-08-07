@@ -1522,6 +1522,7 @@
   "cli.help.opt.backup.password": "Зашифровать архив этим паролем (по умолчанию — пароль из настроек, если задан).",
   "cli.help.opt.restore.password": "Пароль зашифрованного архива (по умолчанию — пароль из настроек; иначе будет запрошен).",
   "cli.help.opt.sandbox.force": "Перекачать/переустановить всё, даже если уже на месте.",
+  "cli.help.opt.sandbox.enable_python": "После успешной установки включить выполнение Python в настройках.",
   "cli.help.opt.locales.output": "Файл назначения (существующий не перезаписывается).",
   "cli.help.arg.restore.archive": "Путь к архиву резервной копии.",
   "cli.help.arg.import.file": "Файл формата mindfork-import (см. docs/import-format.md).",
@@ -1546,6 +1547,7 @@
   "cli.ctx.init_logging": "инициализация логирования",
   "cli.ctx.log_dir": "создание каталога логов {path}",
   "cli.ctx.build_runtime": "создание среды выполнения tokio",
+  "cli.ctx.enable_python": "включение выполнения Python в настройках",
   "cli.ctx.open_storage": "открытие хранилища",
   "cli.ctx.backup": "создание резервной копии",
   "cli.ctx.import": "импорт из {file}",
@@ -1565,6 +1567,7 @@
   "cli.locales.file_exists": "файл уже существует: {path} — укажите другой путь (вшитые бандлы не перезаписываем)",
   "cli.locales.exported": "Бандл языка «{code}» экспортирован в {path}.",
   "cli.import.done": "Импорт завершён: профилей {profiles}, чатов {chats}.",
+  "cli.sandbox.python_enabled": "Выполнение Python включено в настройках.",
   "cli.import.lamellama_removed": "команда import-lamellama удалена: импорт LameLLaMA теперь выполняет внешний конвертер, создающий файл формата mindfork-import (см. docs/import-format.md); затем: mindfork-rs import <файл>",
   "ui.lang.name": "Русский"
 }

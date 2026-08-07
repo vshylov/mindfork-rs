@@ -131,8 +131,11 @@ fn real_main(
             run_restore(paths, &archive, password, loc)?;
             Ok(ExitCode::SUCCESS)
         }
-        CliCommand::SandboxSetup { force } => {
-            run_sandbox_setup(paths, force, loc)?;
+        CliCommand::SandboxSetup {
+            force,
+            enable_python,
+        } => {
+            run_sandbox_setup(paths, force, enable_python, loc)?;
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::LocalesExport { code, output } => {
@@ -516,7 +519,12 @@ fn run_restore(
 
 /// CLI: installing/updating the Python sandbox (downloading wasmer + python.webc +
 /// packages into `data/sandbox/`). Needs its own tokio runtime (network async).
-fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result<()> {
+fn run_sandbox_setup(
+    paths: &Paths,
+    force: bool,
+    enable_python: bool,
+    loc: &Locale,
+) -> anyhow::Result<()> {
     // Single-instance guard: don't reinstall the sandbox while the app is
     // running (it could read the binary/assets being replaced during indexing/startup).
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.sandbox"))?;
@@ -531,7 +539,44 @@ fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result
         loc,
         |msg| println!("{msg}"),
     ))?;
+    // Only after a successful provisioning: `?` above means we never get here
+    // otherwise, which is what keeps ADR 0005 §5's "enabled but not provisioned is
+    // worse than disabled" true.
+    if enable_python {
+        enable_python_tool(paths, loc)?;
+        println!("{}", loc.t("cli.sandbox.python_enabled"));
+    }
     Ok(())
+}
+
+/// Turns `tools.python_enabled` on in `settings.json` (`sandbox setup --enable-python`,
+/// which the Windows installer's checkbox passes). This is the only CLI path that writes
+/// **user** data, so it takes the same two precautions the TUI does before touching it:
+///
+///  * [`features::data_migration::run`] first — the downgrade guard. Without it a
+///    `settings.json` from a newer version would be read leniently and rewritten,
+///    silently dropping the fields this build doesn't know about;
+///  * a config created from scratch here seeds `interface.language` from
+///    `defaults.json`, mirroring `run_tui`: that seeding is gated on the file's
+///    *absence*, so creating one without it would lose the language the installer
+///    just asked the user for.
+fn enable_python_tool(paths: &Paths, loc: &Locale) -> anyhow::Result<()> {
+    features::data_migration::run(paths, loc)?;
+    let store = JsonStore::new(paths.clone());
+    let fresh = !paths.settings_file().exists();
+    let mut config = store
+        .load_config()
+        .with_context(|| loc.t("cli.ctx.enable_python").to_string())?;
+    if config.tools.python_enabled && !fresh {
+        return Ok(()); // already on — don't rewrite the user's file for nothing
+    }
+    if fresh {
+        config.interface.language = paths.default_language();
+    }
+    config.tools.python_enabled = true;
+    store
+        .save_config(&config)
+        .with_context(|| loc.t("cli.ctx.enable_python").to_string())
 }
 
 /// CLI: exports a locale bundle to a template file. `i18n::init` was already called in `main` (the
@@ -691,6 +736,109 @@ fn apply_embed_env(config: &mut AppConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sandbox setup --enable-python` on a data root that has never been used:
+    /// settings.json is created with the tool on — and, critically, with the
+    /// interface language seeded from defaults.json. `run_tui` only seeds it when
+    /// the file is **absent**, so creating one here without seeding would silently
+    /// discard the language the installer just asked the user for.
+    #[test]
+    fn enable_python_on_a_fresh_root_keeps_the_installer_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path()).with_default_language(Lang::En);
+        assert!(!paths.settings_file().exists());
+
+        enable_python_tool(&paths, i18n::locale(Lang::En)).unwrap();
+
+        let cfg = JsonStore::new(paths.clone()).load_config().unwrap();
+        assert!(cfg.tools.python_enabled, "the tool was not enabled");
+        assert_eq!(
+            cfg.interface.language,
+            Lang::En,
+            "the installer's language choice was lost by creating settings.json"
+        );
+    }
+
+    /// An existing config is edited, not replaced: unrelated settings survive.
+    #[test]
+    fn enable_python_preserves_an_existing_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let store = JsonStore::new(paths.clone());
+        let mut cfg = AppConfig::default();
+        cfg.interface.language = Lang::En;
+        cfg.max_tool_rounds = 7;
+        store.save_config(&cfg).unwrap();
+
+        enable_python_tool(&paths, i18n::locale(Lang::Ru)).unwrap();
+
+        let after = store.load_config().unwrap();
+        assert!(after.tools.python_enabled);
+        assert_eq!(after.max_tool_rounds, 7, "an unrelated setting was reset");
+        assert_eq!(
+            after.interface.language,
+            Lang::En,
+            "an existing language was overwritten by the defaults.json seeding"
+        );
+    }
+
+    /// Already on → the user's file is not rewritten at all. Asserted against a
+    /// hand-written minimal config, because re-saving a config loaded from a file
+    /// this program wrote reproduces it byte for byte — so a full `AppConfig`
+    /// fixture could not tell a rewrite from a no-op.
+    #[test]
+    fn enable_python_is_a_no_op_when_already_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let minimal = br#"{"schema_version":1,"tools":{"python_enabled":true}}"#;
+        std::fs::write(paths.settings_file(), minimal).unwrap();
+
+        enable_python_tool(&paths, i18n::locale(Lang::Ru)).unwrap();
+
+        assert_eq!(
+            std::fs::read(paths.settings_file()).unwrap(),
+            minimal,
+            "settings.json was rewritten (and a hand-edited file expanded) for nothing"
+        );
+    }
+
+    /// A corrupt settings.json is refused, not replaced with defaults.
+    #[test]
+    fn enable_python_refuses_a_corrupt_config_without_touching_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        std::fs::write(paths.settings_file(), b"{ this is not json").unwrap();
+
+        assert!(enable_python_tool(&paths, i18n::locale(Lang::Ru)).is_err());
+        assert_eq!(
+            std::fs::read(paths.settings_file()).unwrap(),
+            b"{ this is not json",
+            "a corrupt config was overwritten instead of being reported"
+        );
+    }
+
+    /// A settings.json written by a **newer** version is refused rather than
+    /// rewritten. This is what the `data_migration::run` call in `enable_python_tool`
+    /// is for, and the case a corrupt-file test cannot cover: such a file is valid
+    /// JSON, so it would be read leniently and saved back **without the fields this
+    /// build does not know about** (ADR 0006 F10 — the downgrade guard).
+    #[test]
+    fn enable_python_refuses_a_config_from_a_newer_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let from_the_future = format!(
+            r#"{{"schema_version":{},"tools":{{"python_enabled":false}},"a_setting_we_do_not_know":42}}"#,
+            crate::shared::storage::schema::SETTINGS_SCHEMA + 1
+        );
+        std::fs::write(paths.settings_file(), &from_the_future).unwrap();
+
+        assert!(enable_python_tool(&paths, i18n::locale(Lang::Ru)).is_err());
+        assert_eq!(
+            std::fs::read_to_string(paths.settings_file()).unwrap(),
+            from_the_future,
+            "a newer config was rewritten, dropping the fields this build cannot see"
+        );
+    }
 
     /// Precedence for the run's one effective password: the argument wins over
     /// the stored setting, and an empty value means "no password" from either

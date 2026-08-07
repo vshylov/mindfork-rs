@@ -12686,6 +12686,50 @@ three findings are invisible from the workflow's own status):
   inside the data root the uninstaller promises not to touch (in portable mode,
   right next to the user's chats), and it is re-downloadable rather than ours to
   delete — noted in the script's comment so the omission reads as a decision.
+- **Follow-up asked for after the first review: the checkbox now also enables the
+  tool** (`tools.python_enabled`), so ticking it gives a working `python_exec`
+  rather than a provisioned sandbox the user then has to go and switch on. The
+  label says both, since it changes a security-relevant setting. **ADR 0005 §5
+  amended** (2026-08-07) — the default and the invariant are unchanged; what moved
+  is *where* the deliberate act can be taken.
+- **The installer deliberately does not write it.** `python_enabled` lives in
+  `settings.json` — user data, in a data root whose location only `Paths::resolve`
+  knows (system/portable/path) — so writing it from Pascal would mean
+  re-implementing that resolution *and* risking an existing config. Instead the CLI
+  grew `sandbox setup --enable-python`, which the `[Run]` entry passes: it reuses
+  the real path resolution, and because the flag is applied **past the `?`** on
+  `setup(...)`, a failed download leaves the tool off — ADR 0005 §5's "enabled but
+  not provisioned is worse than disabled", preserved by construction rather than by
+  a comment. Long-form flag only: it changes a security-relevant setting, so it
+  should be spelled out at the call site.
+- **Reading the startup path first caught a trap worth recording.** `run_tui` seeds
+  `interface.language` from `defaults.json` **only when `settings.json` is absent**
+  (`main.rs`, axis B). So a CLI that *creates* `settings.json` during installation
+  would have silently discarded the language the installer had just asked the user
+  for — the wizard's own choice, lost by the step meant to help. `enable_python_tool`
+  therefore mirrors that seeding, and carries the other precaution the app takes
+  before writing user data: **`data_migration::run` first**, so a `settings.json`
+  from a newer version is refused instead of being read leniently and saved back
+  **without the fields this build cannot see** (ADR 0006 F10).
+- **Mutation testing earned its keep three times over here**, and two of the three
+  first attempts were *my tests being wrong*, not the code: (1) the language
+  assertion was **vacuous**, because `Paths::with_root` defaults to `Ru` — the same
+  value `AppConfig` deserializes to — so it passed with the seeding removed; fixed
+  by a `#[cfg(test)] with_default_language` builder. (2) The "already enabled →
+  don't rewrite" test compared bytes of a file this program had itself written, and
+  a rewrite reproduces those bytes exactly; it only became able to fail once the
+  fixture was a **hand-written minimal config** that a rewrite would expand. (3) The
+  corrupt-config test never exercised the migration guard at all — `load_config`
+  errors on corrupt JSON by itself; the guard's real job is the **downgrade** case,
+  which is *valid* JSON, so it needed its own test. A fourth lesson, mechanical: the
+  first two attempts at that mutation silently patched the **wrong call site**
+  (`data_migration::run` appears three times with identical indentation), so the
+  mutation must be anchored on the enclosing function signature.
+- **Verified against the real binary and the real dev data root**, not only in
+  tests: `--enable-python` took `python_enabled` **false → true** while leaving
+  `interface.language` and `max_tool_rounds` untouched; a plain `sandbox setup` left
+  it **false** (the opt-in default holds); and the run was idempotent against an
+  already-provisioned sandbox. The dev config was backed up and restored.
 - **Follow-up, spotted by the user while the installer was being tested**:
   English sat *second* on the "Application language" page, and now leads — matching
   the `[Languages]` order. A two-line change with a trap in it: `WriteDefaults`

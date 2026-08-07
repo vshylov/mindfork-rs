@@ -476,13 +476,20 @@ For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`,
 and packages into `data/sandbox/`; ~300 MB on disk):
 
 ```bash
-mindfork-rs sandbox setup          # --force — re-download
+mindfork-rs sandbox setup                    # --force — re-download
+mindfork-rs sandbox setup --enable-python    # …and switch the tool on afterwards
 ```
 
-The **Windows installer** can do this for you: the "Additional tasks" page has an
-*Install the Python sandbox* checkbox (off by default). It runs exactly the command
-above right after the files are copied, in a console window that shows the download
-progress. If the download fails, the installation still succeeds — the sandbox is
+`--enable-python` turns on "Python execution" (`tools.python_enabled`) in the
+settings **after** a successful setup — never on failure, so the tool is never
+enabled without its assets. Without the flag the setting is left alone, and the
+default stays off.
+
+The **Windows installer** can do all of this for you: the "Additional tasks" page
+has an *Install the Python sandbox and enable Python execution* checkbox (off by
+default), which runs exactly the second command above right after the files are
+copied, in a console window that shows the download progress. If the download
+fails, the installation still succeeds and the tool stays off — the sandbox is
 optional and the command can be re-run at any time. The **Linux packages
 (deb/rpm/pkg.tar.zst) deliberately don't offer this**: they install
 non-interactively as root, while the sandbox lives in the *user's* data directory
