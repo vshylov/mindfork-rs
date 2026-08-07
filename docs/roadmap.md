@@ -36,7 +36,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   is sent on every request (`build_conversation_digest` only exists for
   titles). For local models with 8k context this hits a ceiling; a candidate
   is auto-summarizing old messages past a token threshold, next to the
-  existing token counter.
+  existing token counter. **Researched, forks F1–F10 decided 2026-08-07**
+  (rolling summary, messages retained; foldable summary at the feed boundary;
+  read-back tools as a committed stage; on by default with a full off switch),
+  and **stage 0 measured — GO**: two rolls of summary-of-summary preserved a
+  planted identifier and a decision *with its reason* on the live 31B, and the
+  probe caught the requirement that the length limit live in the prompt rather
+  than in `max_tokens`. Ready for stage 1 —
+  [history-compression.md](research/history-compression.md).
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
   into `system` is stable within a day — a direct candidate for prompt
