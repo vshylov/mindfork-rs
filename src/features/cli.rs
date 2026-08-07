@@ -46,8 +46,14 @@ pub enum CliCommand {
     /// Import from a mindfork-import format file (`import <file>`).
     /// Format spec — docs/import-format.md.
     Import { file: PathBuf },
-    /// Install the Python sandbox (`sandbox setup [--force]`).
-    SandboxSetup { force: bool },
+    /// Install the Python sandbox (`sandbox setup [--force] [--enable-python]`).
+    SandboxSetup {
+        force: bool,
+        /// Turn `tools.python_enabled` on in `settings.json` **after** a successful
+        /// provisioning (ADR 0005 §5: enabling stays a deliberate act, and never
+        /// happens without the assets). Used by the Windows installer's checkbox.
+        enable_python: bool,
+    },
     /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
     /// Show help (general or for a subcommand).
@@ -177,6 +183,7 @@ fn parse_sandbox(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
 
 fn parse_sandbox_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     let mut force = false;
+    let mut enable_python = false;
     for &a in toks {
         match a {
             "-h" | "--help" => {
@@ -185,11 +192,17 @@ fn parse_sandbox_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String
                 });
             }
             "-f" | "--force" => force = true,
+            // Long form only, deliberately: it changes a security-relevant setting,
+            // so it should be spelled out at the call site.
+            "--enable-python" => enable_python = true,
             _ if a.starts_with('-') => return Err(unknown_option(loc, a)),
             _ => return Err(unexpected_arg(loc, a)),
         }
     }
-    Ok(CliCommand::SandboxSetup { force })
+    Ok(CliCommand::SandboxSetup {
+        force,
+        enable_python,
+    })
 }
 
 fn parse_locales(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -419,10 +432,12 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::SandboxSetup) => format!(
             "{d}\n\n{usage} mindfork-rs sandbox setup [OPTIONS]\n\n{options}\n\
-             {f:<18}{cf}\n{h:<18}{ch}",
+             {f:<20}{cf}\n{e:<20}{ce}\n{h:<20}{ch}",
             d = loc.t("cli.help.cmd.sandbox.setup"),
             f = "  -f, --force",
             cf = loc.t("cli.help.opt.sandbox.force"),
+            e = "  --enable-python",
+            ce = loc.t("cli.help.opt.sandbox.enable_python"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
         ),
@@ -571,14 +586,42 @@ mod tests {
     fn sandbox_setup_force() {
         assert_eq!(
             p(&["sandbox", "setup"]).unwrap(),
-            CliCommand::SandboxSetup { force: false }
+            CliCommand::SandboxSetup {
+                force: false,
+                enable_python: false,
+            }
         );
         assert_eq!(
             p(&["sandbox", "setup", "--force"]).unwrap(),
-            CliCommand::SandboxSetup { force: true }
+            CliCommand::SandboxSetup {
+                force: true,
+                enable_python: false,
+            }
         );
         assert!(p(&["sandbox"]).is_err()); // no subcommand
         assert!(p(&["sandbox", "teardown"]).is_err()); // unknown subcommand
+    }
+
+    #[test]
+    fn sandbox_setup_enable_python() {
+        // The flag the Windows installer's checkbox passes. Off unless asked for —
+        // the default must never enable the tool (ADR 0005 §5).
+        assert_eq!(
+            p(&["sandbox", "setup", "--enable-python"]).unwrap(),
+            CliCommand::SandboxSetup {
+                force: false,
+                enable_python: true,
+            }
+        );
+        assert_eq!(
+            p(&["sandbox", "setup", "--force", "--enable-python"]).unwrap(),
+            CliCommand::SandboxSetup {
+                force: true,
+                enable_python: true,
+            }
+        );
+        // Long form only — no short alias to fat-finger.
+        assert!(p(&["sandbox", "setup", "-e"]).is_err());
     }
 
     #[test]
@@ -675,5 +718,10 @@ mod tests {
                 "{topic:?}: the option name ran into its description"
             );
         }
+        // Sandbox setup: `--enable-python` is the longest option there.
+        assert!(
+            render_help(Some(HelpTopic::SandboxSetup), loc).contains("--enable-python  "),
+            "the option name ran into its description"
+        );
     }
 }
