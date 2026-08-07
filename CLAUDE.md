@@ -124,9 +124,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-07, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1835 unit
-tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
-recent change lets the **Windows installer provision the Python sandbox** — an
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1897 unit
+tests green, 77 `#[ignore]` smokes** (the largest count — log below; the most
+recent change is **history compression, stage 1**: `/compact` folds the older
+part of a chat into a rolling summary so a long conversation keeps fitting the
+model's context window — `chat.messages` is never edited, only what the request
+carries, so the feed still shows everything and marks the boundary with a
+foldable divider; before that — the **Windows installer provisions the Python
+sandbox** — an
 opt-in checkbox on the "Additional tasks" page running the existing
 `sandbox setup`; the Linux packages deliberately get nothing (non-interactive,
 and a root-run maintainer script cannot populate a per-user data directory), and
@@ -12753,6 +12758,97 @@ three findings are invisible from the workflow's own status):
   the options on a `CreateInputOptionPage` are **not** child radio-button windows —
   Inno owner-draws them inside one `TNewCheckListBox` — so enumerating controls
   finds nothing and a picture is the only way to read that list.
+
+### Post-M9: history compression — stage 1 (core, `/compact`) (done)
+
+- **The first stage of the "history compression" track** (research + forks
+  [docs/research/history-compression.md](docs/research/history-compression.md),
+  decided by the user 2026-08-07; **stage 0's probe returned GO**, §9a there).
+  Behaviour — spec §6.7. Branch `feat/history-compaction`, stacked on the
+  research branch. The whole conversation was sent on every request, so a long
+  chat eventually hit the model's context ceiling — measured on the live stack:
+  llama-server answers **HTTP 400 before the SSE stream starts**, and
+  `--context-shift` does not rescue an oversized prompt (it evicts during
+  generation, discarding the **system prompt first**).
+- **The decision that dissolves most of the hard problems: compression changes
+  what a *request* carries, never what the chat holds.** `Chat.messages` is
+  untouched, so the feed, full-text search, the `F5` export, TTS, the reflection
+  watermark and content indexing all keep working with no changes at all. That
+  single constraint is why stage 1 is additive almost everywhere.
+- **`Chat.compaction: Option<Compaction>`** (`summary`/`upto`/`boundary_id`/
+  `compacted_at`/`rolls`; additive, no migration — ADR 0006 F12). `upto` is a
+  fast path only: `Chat::compaction_view(enabled)` **re-finds the boundary by
+  `boundary_id`** on every read, so an edit that shifts indices cannot leave the
+  summary silently covering the wrong span, and a boundary that is gone makes the
+  summary inert (the full history is sent) rather than pinned to whatever now
+  occupies that index.
+- **The cut always lands on a `User` message** (`features::compaction::plan_cut`,
+  snapping back from the tail budget). Not cosmetic: cutting inside an assistant
+  turn would separate it from its tool results, breaking Anthropic's strict
+  alternation and Gemini 3's per-call thought-signature replay.
+- **The digest carries tool activity** — a deliberate difference from the title
+  digest. Tool results are persisted in history, replayed on every turn and
+  invisible in the feed, so they are the largest hidden cost in a long chat; a
+  digest that dropped them would compress the cheap half. (The agent that built
+  it also established which source is real: `ToolCallRecord.result` is populated
+  unconditionally at the one production site; the `Tool`-message fallback is
+  reachable only for imported or hand-edited chats.)
+- **The roll is `title.rs`'s shape, not `tool_loop.rs`'s** — one single-turn
+  request, no history, no tools, reasoning muted (`reasoning_budget = 0`), result
+  back on a typed channel. `SilentLoop` was the wrong fit by construction: its
+  done channel carries `Result<(), String>`, and a summary is precisely the text.
+- **Two prompt requirements came from stage 0's measurements, not from taste**:
+  the length limit is stated **in words inside the prompt** (`max_tokens` is only
+  a safety net far above it — measured, a bare cap truncates mid-sentence instead
+  of making the model prioritize), and the roll template tells the model to drop
+  what later parts superseded (without that, the summary **grows with every
+  roll**). `finish_reason == Length` is logged as "the summary was cut" rather
+  than silently accepted.
+- **Fork F10 — on by default, and *inert* when off**: no splice (the request is
+  byte-for-byte what it was before the feature existed), `/compact` refuses with
+  a pointer at the setting, no divider — and the stored summary is **kept**, so
+  off then on then off is lossless in both directions.
+- **UI**: `/compact`; a muted divider at the boundary carrying the summary as a
+  foldable block that expands **together with the "thoughts" blocks** (`Ctrl+T`,
+  fork F8c) — no new hotkey and no new `FeedView` field; a quiet status-bar chip
+  while a roll runs; three fields in a new "Context" group opening the "Memory"
+  settings section. New `AppEvent::Notice` — a plain informational note in the
+  feed, the counterpart of `Error`, since "nothing to compress yet" is not a
+  failure.
+- **Three defects found during the work, each by something other than reading
+  the code.** (1) `inject_compaction` used `summary?`, which returns `None` from
+  the function and therefore **dropped the persona** whenever no summary existed
+  — caught by a *pre-existing* request test, which is exactly what a regression
+  suite is for. (2) A roll finishing for a **non-active** chat would overwrite
+  the open chat's boundary and post its note in the wrong conversation — found by
+  the agent building the feed, closed with the same `chat_id` staleness guard the
+  streaming events already use. (3) The new bundle prefix `compact.` made the
+  i18n gate read the scratch filename `"compact.db"` (`shared/storage/db`) as a
+  key; fixed at the source by naming the two model-facing keys `compaction.*`
+  rather than adding a scanner exception.
+- **Delegation note** (the hazard is now twice-observed): an agent finished
+  writing a file it owned *after* I had edited the same file, silently reverting
+  the key rename inside it. Re-apply and re-verify after an agent completes.
+- **1897 unit tests green** (+62), **77 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **Live run — GO** (Gemma 4 31B q4_0, external `llama-server`, `--jinja`):
+  `compaction_preserves_a_planted_fact_e2e_live` — an identifier planted early,
+  12 messages folded, and the model still answers `ZARYA-8823` when those
+  messages are no longer sent verbatim (44 s). **The first version of this smoke
+  was wrong and was fixed**: the control question was asked *last*, so its own
+  answer stayed in the verbatim tail and the final assertion could have been
+  satisfied by reading that instead of the summary. The control now runs
+  immediately after the seed so both fall behind the boundary, and the test
+  additionally asserts the summary itself carries the identifier.
+- **One honest observation from that run**: on this fixture the summary came out
+  extremely terse (42 characters for 12 messages) — it kept the identifier and
+  dropped the generic Q&A entirely. Defensible under the prompt (that filler
+  contains no decisions, constraints or open questions), but a reminder that a
+  summary is lossy for anything not decision-shaped, which is the case stage 3's
+  read-back tools (fork F9b) exist to answer.
+- **Next**: stage 2 — the automatic trigger (`GenResult` carries `usage`, budget
+  resolution from `/props` and from the 400 body, the threshold in settings, the
+  overflow error naming `/compact`); stage 3 — `history_read`/`history_search`.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

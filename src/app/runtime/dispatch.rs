@@ -95,10 +95,11 @@ pub(super) fn apply_event(
             draft,
             feed_view,
             focus,
+            compaction,
         } => {
             clear_search_return_if_left(back, id);
             close_or_mark_chat_list(active, id);
-            screen.activate_chat(id, title, &messages, &draft, feed_view, focus);
+            screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
@@ -173,6 +174,25 @@ pub(super) fn apply_event(
             }
         }
         AppEvent::Error(message) => screen.push_error(&message),
+        AppEvent::Notice(message) => screen.push_note(&message),
+        // A roll can finish for a chat the user has since switched away from.
+        // Applying it would clear the open chat's own boundary and post the note
+        // in the wrong conversation — the same staleness the `generation_id`
+        // guards close for streaming events.
+        AppEvent::Compacted {
+            chat_id,
+            boundary,
+            summary,
+            folded,
+        } => {
+            if screen.active_chat() == Some(chat_id) {
+                let note = screen
+                    .loc()
+                    .tf("ui.compact.done", &[("count", &folded.to_string())]);
+                screen.set_compaction(Some((boundary, summary)));
+                screen.push_note(&note);
+            }
+        }
     }
 }
 
@@ -302,6 +322,7 @@ fn apply_background_task(screen: &mut ChatScreen, kind: BackgroundKind, on: bool
         BackgroundKind::Reflection => screen.set_reflecting(on),
         BackgroundKind::Consolidation => screen.set_consolidating(on),
         BackgroundKind::SelfConsolidation => screen.set_self_consolidating(on),
+        BackgroundKind::Compaction => screen.set_compacting(on),
     }
 }
 
@@ -382,6 +403,7 @@ pub(super) fn dispatch(
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::Reindex => AppCommand::Reindex,
+        ChatIntent::Compact => AppCommand::Compact,
         ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,

@@ -42,7 +42,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   and **stage 0 measured — GO**: two rolls of summary-of-summary preserved a
   planted identifier and a decision *with its reason* on the live 31B, and the
   probe caught the requirement that the length limit live in the prompt rather
-  than in `max_tokens`. Ready for stage 1 —
+  than in `max_tokens`. **Stage 1 (core) is done** — `/compact` folds the older
+  part of a chat into a rolling summary, the feed marks the boundary with a
+  foldable divider, and the master switch makes the whole thing inert when off
+  (spec §6.7). **Remaining stages:** 2 — the automatic trigger (`GenResult`
+  carries `usage`, budget resolution via `/props` and the 400 body, settings for
+  the threshold, an error hint naming `/compact`); 3 — the `history_read`/
+  `history_search` read-back tools (fork F9b), after which the summary block's
+  wording stops saying the verbatim text is unreachable and names them. See
   [history-compression.md](research/history-compression.md).
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection

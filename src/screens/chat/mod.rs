@@ -106,6 +106,12 @@ pub enum ChatIntent {
     /// attachments and every profile's knowledge base. See
     /// docs/research/embedding-model-change-reindex.md §8.1.
     Reindex,
+    /// Fold the earlier part of this conversation into a rolling summary
+    /// (command `/compact`). Top-level rather than a subcommand: it is the
+    /// whole operation, and there is nothing else to name. Messages are never
+    /// deleted — only what a request carries changes. See spec §6.7,
+    /// docs/research/history-compression.md §6.5.
+    Compact,
     /// Attach a file to the chat (command `/file attach <path>`). See
     /// docs/file-attachments.md.
     FileAttach {
@@ -428,6 +434,9 @@ pub struct ChatScreen {
     /// is running (a quiet indicator). See
     /// docs/history/self-model-consolidation.md.
     self_consolidating: bool,
+    /// Whether a background history compaction is running (a quiet indicator).
+    /// See spec §6.7, docs/research/history-compression.md §6.5.
+    compacting: bool,
     /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
     /// status bar.
     speaking: bool,
@@ -503,6 +512,7 @@ impl ChatScreen {
             reflecting: false,
             consolidating: false,
             self_consolidating: false,
+            compacting: false,
             speaking: false,
             esc_target: EscTarget::default(),
             rag: None,
@@ -607,6 +617,12 @@ impl ChatScreen {
         self.self_consolidating = active;
     }
 
+    /// Sets/clears the active history-compaction flag (`/compact` or the
+    /// automatic roll) — a quiet status-bar indicator. See spec §6.7.
+    pub fn set_compacting(&mut self, active: bool) {
+        self.compacting = active;
+    }
+
     /// Sets/clears the active-speech flag (`/tts`) — a status-bar chip.
     pub fn set_speaking(&mut self, active: bool) {
         self.speaking = active;
@@ -634,6 +650,9 @@ impl ChatScreen {
         }
         if self.self_consolidating {
             parts.push(self.loc.t("ui.chat.bg.self_consolidate"));
+        }
+        if self.compacting {
+            parts.push(self.loc.t("ui.chat.bg.compact"));
         }
         (!parts.is_empty()).then(|| parts.join(" · "))
     }

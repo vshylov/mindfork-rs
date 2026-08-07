@@ -139,6 +139,9 @@ pub enum AppCommand {
     /// otherwise only come back on re-attach. See
     /// docs/research/embedding-model-change-reindex.md §8.1.
     Reindex,
+    /// Compress the older part of the active chat into a rolling summary
+    /// (`/compact`, spec §6.7). Refused when the master switch is off.
+    Compact,
     /// Attach a file to the active chat (the `/file attach <path>` command).
     /// Reading/extracting the text runs as a background task; the result arrives
     /// as a `FileProgress` event. See docs/file-attachments.md, spec §9.7.
@@ -292,6 +295,12 @@ pub enum AppEvent {
         /// `None` — every other activation, which must not highlight anything.
         /// See docs/history/chat-search-stage2.md §3 and §4a S3(b).
         focus: Option<FeedFocus>,
+        /// The rolling summary and the id of the first message still sent
+        /// verbatim, when this chat has been compacted **and** the feature is on
+        /// — what the feed needs to draw the boundary (spec §6.7). `None` when
+        /// there is no summary or the master switch is off, so turning the
+        /// switch off also removes the divider.
+        compaction: Option<(Uuid, String)>,
     },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),
@@ -392,6 +401,22 @@ pub enum AppEvent {
     BackgroundTask { kind: BackgroundKind, active: bool },
     /// An error (for showing in UI).
     Error(String),
+    /// A plain informational note in the feed — the counterpart of [`AppEvent::Error`]
+    /// for an outcome that is not a failure ("nothing to compress yet"). Rendered
+    /// with `push_note`, not `push_error`.
+    Notice(String),
+    /// A compaction finished: the chat's older messages are now represented in the
+    /// request by a rolling summary (spec §6.7). Carries what the feed needs to
+    /// draw the boundary — `boundary` is the id of the first message still sent
+    /// verbatim — plus `folded`, how many messages the summary now covers, for the
+    /// confirmation note. `chat.messages` is unchanged, so the feed keeps showing
+    /// everything; only a divider appears.
+    Compacted {
+        chat_id: Uuid,
+        boundary: Uuid,
+        summary: String,
+        folded: usize,
+    },
 }
 
 /// The kind of background task for the status-bar indicator
@@ -407,4 +432,7 @@ pub enum BackgroundKind {
     /// observations, compress a bloated description, link contradictions. See
     /// docs/history/self-model-consolidation.md.
     SelfConsolidation,
+    /// Compressing the older part of a conversation into a rolling summary
+    /// (`/compact`, spec §6.7).
+    Compaction,
 }

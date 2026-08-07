@@ -15,6 +15,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **History compression (`/compact`).** A long conversation eventually stops fitting
+  the model's context window — the engine then refuses the request outright. The
+  older part of a chat can now be folded into a rolling summary that is sent in
+  place of those messages. **Nothing is deleted**: the feed, search and export still
+  show the whole conversation; only what the request carries changes, and the feed
+  marks the boundary with a divider you can unfold (together with the "thoughts"
+  blocks, `Ctrl+T`) to read the summary. On by default where it can act, and fully
+  switchable off in settings → "Memory" → "Context" — off, the whole history is sent
+  exactly as before.
 - **The Windows installer can set up the Python sandbox for you.** A new
   *Install the Python sandbox and enable Python execution* checkbox on the
   "Additional tasks" page (off by default) installs it during the installation and

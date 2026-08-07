@@ -215,6 +215,15 @@ pub struct MessageFeed {
     /// [`MessageFeed::set_role_names`]). An unset field falls back to the localized
     /// header (`YOU`/`ASSISTANT`). See spec §11.3.
     role_names: CharacterNames,
+    /// The history-compaction boundary: `(the id of the first message still sent
+    /// verbatim, the rolling summary)`. `None` — nothing is folded, and the feed
+    /// looks exactly as it did before the feature existed.
+    ///
+    /// Only the *request* is shortened — `chat.messages` is never edited, so the
+    /// feed still shows every message; the boundary is drawn purely to explain
+    /// why the model no longer quotes the early text (spec §6.7,
+    /// docs/research/history-compression.md §6.5, fork F8c).
+    compaction: Option<(Uuid, String)>,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -309,6 +318,13 @@ struct CacheKey {
     /// clearing the marker has to reset the cache. Only the **marker** belongs
     /// here; the scroll anchor is not a rendering input.
     marker: Option<usize>,
+    /// The compaction boundary and its summary: both are drawn into the boundary
+    /// message's cached block, so a fresh compaction (or a `/compact` that only
+    /// rewrites the summary) has to reset the cache — otherwise the divider
+    /// would keep showing the previous roll. The collapse state needs no field
+    /// of its own: the summary folds with the "thoughts" blocks, and `view` is
+    /// already here (fork F8c).
+    compaction: Option<(Uuid, String)>,
     //
     // The searched query is deliberately **absent**: it is applied *after* the
     // cache, so changing it costs no re-render. In-feed search types into a
@@ -347,6 +363,7 @@ impl MessageFeed {
             table_row_separators: false,
             render_mermaid: true,
             role_names: CharacterNames::default(),
+            compaction: None,
             cache: Vec::new(),
             cache_key: None,
             pending_focus: None,
@@ -379,6 +396,31 @@ impl MessageFeed {
     /// `interface.render_mermaid`). Changing the value invalidates the cache via [`CacheKey`].
     pub fn set_render_mermaid(&mut self, on: bool) {
         self.render_mermaid = on;
+    }
+
+    /// Sets (or clears) the history-compaction boundary: `(the id of the first
+    /// message still sent verbatim, the rolling summary)`. Changing it
+    /// invalidates the render cache via [`CacheKey`].
+    ///
+    /// An id this chat's feed doesn't contain draws **nothing** — the boundary
+    /// is a domain message id, and the projection drops `Tool`/`System` messages
+    /// entirely, so it can legitimately resolve to no block. Guessing a position
+    /// would be worse than staying quiet: the divider's whole job is to say
+    /// *where* verbatim history resumes.
+    pub fn set_compaction(&mut self, compaction: Option<(Uuid, String)>) {
+        self.compaction = compaction;
+    }
+
+    /// The feed block the compaction boundary falls on (`None` — nothing folded,
+    /// or the boundary message isn't shown in this feed).
+    ///
+    /// Resolved the same way [`Self::focus_message`] resolves a jump: through
+    /// [`FeedMessage::message_ids`], which is the projection's own id mapping —
+    /// an agentic round's assistant messages merge many-to-one, so a boundary
+    /// landing on a later round must still find its bubble.
+    fn boundary_index(&self, messages: &[FeedMessage]) -> Option<usize> {
+        let (id, _) = self.compaction.as_ref()?;
+        messages.iter().position(|m| m.message_ids.contains(id))
     }
 
     /// Takes (and resets) the "scrolled by user" flag. The `app/runtime` loop,
@@ -741,6 +783,7 @@ impl MessageFeed {
             lang: loc.lang(),
             role_names: self.role_names.clone(),
             marker: self.marker,
+            compaction: self.compaction.clone(),
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -759,10 +802,13 @@ impl MessageFeed {
             render_mermaid: self.render_mermaid,
             ..Default::default()
         };
+        // Resolved once per frame, before the loop: the id → block mapping is a
+        // property of the whole projection, not of one block.
+        let boundary = self.boundary_index(messages);
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut found: Vec<usize> = Vec::new();
         for (idx, item) in messages.iter().enumerate() {
-            self.refresh_cached_block(idx, item, palette, width, opts, loc);
+            self.refresh_cached_block(idx, item, palette, width, opts, loc, boundary == Some(idx));
             // The block goes in query-free; the highlight is applied to the
             // *clones* below, which is what keeps it out of the cache.
             let at = lines.len();
@@ -790,6 +836,14 @@ impl MessageFeed {
 
     /// Recomputes message `idx`'s block in the render cache when its fingerprint
     /// no longer matches; an unchanged message keeps its cached block as-is.
+    ///
+    /// `at_boundary` — this block is where verbatim history resumes, so it is
+    /// preceded by the compaction divider. Passed as a flag rather than as the
+    /// summary itself so the caller doesn't have to hold a borrow of `self`
+    /// across the `&mut self` call; the text is read here. The summary rides
+    /// [`CacheKey`], so a changed one clears the cache and the block is rebuilt —
+    /// the fingerprint (a property of the *message*) stays out of it.
+    #[allow(clippy::too_many_arguments)]
     fn refresh_cached_block(
         &mut self,
         idx: usize,
@@ -798,10 +852,14 @@ impl MessageFeed {
         width: usize,
         opts: markdown::RenderOpts,
         loc: &'static Locale,
+        at_boundary: bool,
     ) {
         let fp = message_fingerprint(item);
         let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
         if !hit {
+            let summary = at_boundary
+                .then(|| self.compaction.as_ref().map(|(_, s)| s.as_str()))
+                .flatten();
             // A streaming/changed message — recompute only its block.
             let (block, content_from) = build_message_block(
                 item,
@@ -812,6 +870,7 @@ impl MessageFeed {
                 loc,
                 &self.role_names,
                 self.marker == Some(idx),
+                summary,
             );
             let cb = CachedBlock {
                 fingerprint: fp,
@@ -867,7 +926,9 @@ fn highlight_block_tail(
 /// `marked` — this is the jump target ([`MessageFeed::focus_message`]): the rail
 /// is drawn in the accent color to mark the whole message. `highlight` — the
 /// query recolored inside it (fork S3(b), see [`highlight_line`]); `None` for
-/// every message but the marked one.
+/// every message but the marked one. `compaction` — the rolling summary, when
+/// this block is where verbatim history resumes: the divider is drawn **above**
+/// the block (see [`push_compaction_boundary`]).
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -878,6 +939,7 @@ fn build_message_block(
     loc: &'static Locale,
     names: &CharacterNames,
     marked: bool,
+    compaction: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -936,6 +998,16 @@ fn build_message_block(
     // header ends in **output** rows (the highlight pass runs post-cache and so
     // cannot use `content_from`, an index into the unwrapped `body`).
     let mut out: Vec<Line<'static>> = Vec::new();
+    // The compaction divider sits **above** the block and belongs to neither
+    // message, so it goes in railless and at the full panel width — like the
+    // inter-message separator below. Being pushed before `content_row` is
+    // measured also keeps it out of the highlight pass, deliberately: the
+    // divider's label is chrome, and the summary is derived text no message
+    // contains, so lighting it up would offer a match the search screen cannot
+    // jump to.
+    if let Some(summary) = compaction {
+        push_compaction_boundary(&mut out, summary, view.thoughts, width, palette, loc);
+    }
     let mut content_row = None;
     for (i, line) in body.into_iter().enumerate() {
         if i == content_from {
@@ -1096,6 +1168,75 @@ fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
     let mut out = Line::from(spans);
     out.alignment = line.alignment;
     out
+}
+
+/// Adds the history-compaction boundary: a muted divider saying that everything
+/// above is represented to the model by a summary rather than verbatim, carrying
+/// that summary as a foldable block.
+///
+/// The summary folds with the CoT ("thoughts") blocks — same `Ctrl+T`, same
+/// per-chat `FeedView.thoughts` state, no new hotkey and no new field (fork
+/// **F8c**, docs/research/history-compression.md §6.5). Collapsed by default,
+/// like every foldable block: collapsed the row ends on the same
+/// `· keycap` pill the thoughts/tool cards use, expanded the keycap drops away
+/// and the summary follows on a `│ ` gutter.
+///
+/// Lines go out **railless and at the full panel width**: the boundary belongs
+/// between messages, not to one — the same reasoning as the inter-message
+/// separator. They are not wrapped here; `render`'s second pass does that, as it
+/// does for the thoughts block.
+fn push_compaction_boundary(
+    lines: &mut Vec<Line<'static>>,
+    summary: &str,
+    expanded: bool,
+    width: usize,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
+    let muted = palette.muted_style();
+    let glyphs = palette.glyphs();
+    let marker = if expanded {
+        glyphs.expanded
+    } else {
+        glyphs.collapsed
+    };
+    let mut spans = vec![
+        Span::styled(format!("{marker} "), muted),
+        Span::styled(
+            loc.t("ui.feed.compacted").to_string(),
+            muted.add_modifier(Modifier::ITALIC),
+        ),
+    ];
+    if !expanded {
+        // The same ` · ` + keycap the collapsed thoughts and tool pills end on
+        // (there the separator arrives inside `ui.feed.thoughts_lines`, which
+        // this pill has no counterpart for — there is no count to show).
+        spans.push(Span::styled(" · ", muted));
+        spans.push(palette.keycap("Ctrl+T"));
+    }
+    // Fill out to the panel width with the rule glyph, so the row reads as a
+    // divider rather than as a stray line of text — `rule()` in
+    // `shared::markdown` stretches `---` the same way. A prefix that already
+    // fills the width simply gets no fill; the outer wrap handles the overflow.
+    let used: usize = spans
+        .iter()
+        .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+        .sum();
+    if let Some(pad) = width.checked_sub(used + 1).filter(|p| *p > 0) {
+        spans.push(Span::styled(format!(" {}", "─".repeat(pad)), muted));
+    }
+    lines.push(Line::from(spans));
+    if !expanded || summary.is_empty() {
+        return;
+    }
+    for t in summary.lines() {
+        lines.push(Line::from(Span::styled(
+            format!("│ {t}"),
+            muted.add_modifier(Modifier::ITALIC),
+        )));
+    }
+    // Keep the summary from gluing onto the role header of the message below.
+    lines.push(Line::from(""));
 }
 
 /// Adds the "thoughts" block: collapsed — a "pill" with a line count and a key hint,
@@ -3052,25 +3193,39 @@ mod tests {
             vec![tool_msg],
         ];
         for messages in &scenarios {
-            for width in [40usize, 80] {
-                for palette in [Palette::default(), Palette::default().with_compat(true)] {
-                    for thoughts in [false, true] {
-                        for tools in [false, true] {
-                            let view = FeedView { thoughts, tools };
-                            let mut warm = MessageFeed::new();
-                            warm.set_view(view);
-                            // warm the cache with repeated calls
-                            let _ = warm.build_lines(messages, &palette, width, ru());
-                            let _ = warm.build_lines(messages, &palette, width, ru());
-                            let warm_lines = warm.build_lines(messages, &palette, width, ru());
+            // The compaction boundary reshapes the block it lands on, so it is a
+            // cache input like the collapse state — covered here too.
+            let folded = Some((messages[0].message_ids[0], "ранее обсудили X".to_string()));
+            for compaction in [None, folded] {
+                for width in [40usize, 80] {
+                    for palette in [Palette::default(), Palette::default().with_compat(true)] {
+                        for thoughts in [false, true] {
+                            for tools in [false, true] {
+                                let view = FeedView { thoughts, tools };
+                                let mut warm = MessageFeed::new();
+                                warm.set_view(view);
+                                warm.set_compaction(compaction.clone());
+                                // warm the cache with repeated calls
+                                let _ = warm.build_lines(messages, &palette, width, ru());
+                                let _ = warm.build_lines(messages, &palette, width, ru());
+                                let warm_lines = warm.build_lines(messages, &palette, width, ru());
 
-                            let mut fresh = MessageFeed::new();
-                            fresh.set_view(view);
-                            let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
+                                let mut fresh = MessageFeed::new();
+                                fresh.set_view(view);
+                                fresh.set_compaction(compaction.clone());
+                                let fresh_lines =
+                                    fresh.build_lines(messages, &palette, width, ru());
 
-                            let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
-                            let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
-                            assert_eq!(w, f, "cache diverged: width={width} view={view:?}");
+                                let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
+                                let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+                                assert_eq!(
+                                    w,
+                                    f,
+                                    "cache diverged: width={width} view={view:?} \
+                                     compaction={}",
+                                    compaction.is_some()
+                                );
+                            }
                         }
                     }
                 }
@@ -3147,5 +3302,243 @@ mod tests {
         let w: Vec<_> = warm.iter().map(line_sig).collect();
         let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
         assert_eq!(w, f);
+    }
+
+    // ---------- history-compaction boundary (spec §6.7, fork F8c) ----------
+
+    /// The divider's localized label — the row the boundary is found by.
+    fn compacted_label() -> &'static str {
+        ru().t("ui.feed.compacted")
+    }
+
+    /// The index of the compaction divider among rendered rows.
+    fn divider_row(rows: &[String]) -> Option<usize> {
+        rows.iter().position(|r| r.contains(compacted_label()))
+    }
+
+    /// The divider sits **immediately above** the block where verbatim history
+    /// resumes — that placement is the whole message ("everything above is a
+    /// summary"), so it is asserted positionally rather than by mere presence.
+    /// And it is drawn only when a compaction is set: an untouched chat must
+    /// look exactly as it did before the feature existed.
+    #[test]
+    fn compaction_divider_precedes_the_boundary_block() {
+        let messages = numbered(4);
+        let boundary = messages[2].message_ids[0];
+
+        let mut plain = MessageFeed::new();
+        let rows = row_texts(&plain.build_lines(&messages, &Palette::default(), 80, ru()));
+        assert!(
+            divider_row(&rows).is_none(),
+            "no compaction — no divider: {rows:?}"
+        );
+
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((boundary, "ранее обсудили X".into())));
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        let at = divider_row(&rows).expect("the divider must be drawn");
+        let target = rows
+            .iter()
+            .position(|r| r.contains("сообщение-2"))
+            .expect("the boundary message must still be shown");
+        let previous = rows
+            .iter()
+            .position(|r| r.contains("сообщение-1"))
+            .expect("the folded messages are still shown — only the request shrinks");
+        assert!(
+            previous < at && at < target,
+            "the divider belongs between the folded part and the boundary block, \
+             got previous={previous} divider={at} target={target}: {rows:?}"
+        );
+    }
+
+    /// Collapsed by default, like every foldable block, and folded by the CoT
+    /// toggle rather than one of its own (fork **F8c**): the pill names `Ctrl+T`,
+    /// and `toggle_thoughts` is what reveals the summary.
+    #[test]
+    fn compaction_summary_folds_with_the_thoughts_blocks() {
+        let messages = numbered(3);
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((
+            messages[1].message_ids[0],
+            "ранее обсудили X".into(),
+        )));
+
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        let at = divider_row(&rows).expect("the divider must be drawn");
+        assert!(
+            !rows.iter().any(|r| r.contains("ранее обсудили X")),
+            "collapsed by default — the summary must not be on screen: {rows:?}"
+        );
+        assert!(
+            rows[at].contains("Ctrl+T"),
+            "the collapsed pill names the key that reveals it: {:?}",
+            rows[at]
+        );
+
+        feed.toggle_thoughts();
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        let at = divider_row(&rows).expect("the divider stays when expanded");
+        assert!(
+            rows.iter().any(|r| r.contains("ранее обсудили X")),
+            "Ctrl+T must reveal the summary: {rows:?}"
+        );
+        assert!(
+            !rows[at].contains("Ctrl+T"),
+            "expanded, the keycap drops away (as the thoughts block does): {:?}",
+            rows[at]
+        );
+    }
+
+    /// A boundary the feed can't place draws **nothing**. The id is a domain
+    /// message id and the projection drops `Tool`/`System` messages entirely, so
+    /// this is reachable in principle — and guessing a position would put the
+    /// divider where verbatim history does *not* resume, which is worse than
+    /// staying quiet.
+    #[test]
+    fn compaction_with_an_unknown_boundary_draws_nothing() {
+        let messages = numbered(3);
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((Uuid::new_v4(), "ранее обсудили X".into())));
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        assert!(divider_row(&rows).is_none(), "{rows:?}");
+        assert!(
+            !rows.iter().any(|r| r.contains("ранее обсудили X")),
+            "{rows:?}"
+        );
+    }
+
+    /// A merged agentic bubble carries every round's id, so a boundary landing on
+    /// a *later* round must still find the bubble — the reason the resolution goes
+    /// through `message_ids` rather than through a position.
+    #[test]
+    fn compaction_boundary_resolves_through_a_merged_bubble() {
+        use crate::entities::message::Message;
+        let user = Message::user("вопрос");
+        let r1 = Message::assistant("Ищу.");
+        let r2 = Message::assistant("Готово.");
+        let second_round = r2.id;
+        let messages = FeedMessage::from_messages(&[user, r1, r2]);
+        assert_eq!(messages.len(), 2, "the rounds merge into one bubble");
+
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((second_round, "ранее обсудили X".into())));
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        let at = divider_row(&rows).expect("a merged round's id must still resolve");
+        let bubble = rows.iter().position(|r| r.contains("Ищу.")).unwrap();
+        assert!(
+            at < bubble,
+            "the divider precedes the whole bubble: {rows:?}"
+        );
+    }
+
+    /// The summary rides `CacheKey`, so a fresh roll over the same boundary has to
+    /// repaint. Without it the divider would keep showing the previous summary —
+    /// invisible to every other assertion, since the block's own fingerprint
+    /// never changed.
+    #[test]
+    fn changing_the_summary_invalidates_the_cache() {
+        let messages = numbered(3);
+        let boundary = messages[1].message_ids[0];
+        let mut feed = MessageFeed::new();
+        feed.toggle_thoughts(); // show the summary itself, not just the pill
+        feed.set_compaction(Some((boundary, "первое резюме".into())));
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        assert!(rows.iter().any(|r| r.contains("первое резюме")), "{rows:?}");
+
+        feed.set_compaction(Some((boundary, "второе резюме".into())));
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        assert!(rows.iter().any(|r| r.contains("второе резюме")), "{rows:?}");
+        assert!(
+            !rows.iter().any(|r| r.contains("первое резюме")),
+            "stale cache: {rows:?}"
+        );
+
+        // Clearing it takes the divider away again.
+        feed.set_compaction(None);
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::default(), 80, ru()));
+        assert!(divider_row(&rows).is_none(), "{rows:?}");
+    }
+
+    /// The divider fills the panel exactly, so it reads as one rule rather than
+    /// as a stray line of text — in both glyph sets and both collapse states.
+    ///
+    /// A panel too narrow for the label is covered separately below: the row is
+    /// then left long and the outer wrap deals with it, exactly as it does for
+    /// the "thoughts" pill.
+    #[test]
+    fn compaction_divider_fills_the_panel_width() {
+        let messages = numbered(2);
+        for width in [60usize, 80] {
+            for palette in [Palette::default(), Palette::default().with_compat(true)] {
+                for expanded in [false, true] {
+                    let mut feed = MessageFeed::new();
+                    if expanded {
+                        feed.toggle_thoughts();
+                    }
+                    feed.set_compaction(Some((
+                        messages[1].message_ids[0],
+                        "ранее обсудили X".into(),
+                    )));
+                    let lines = feed.build_lines(&messages, &palette, width, ru());
+                    let rows = row_texts(&lines);
+                    let at = divider_row(&rows).expect("the divider must be drawn");
+                    assert_eq!(
+                        line_width(&lines[at]),
+                        width,
+                        "the divider must span the panel at width={width} \
+                         expanded={expanded} compat={}: {:?}",
+                        palette.compat,
+                        rows[at]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whatever the panel width, every row the divider produces fits it once the
+    /// feed's own wrap pass has run — the invariant `render` relies on (a longer
+    /// row would spill past the panel border).
+    ///
+    /// Measured **trimmed**: `wrap_ranges` lets a word-boundary space hang one
+    /// column past the edge, which every other block lives with too (it is what
+    /// `trim_row_trailing_ws` exists for in the table and code-block paths) and
+    /// which draws nothing. Asserting on the untrimmed width would be asserting
+    /// a promise the wrap has never made.
+    #[test]
+    fn compaction_divider_respects_the_wrap_invariant_when_cramped() {
+        let messages = numbered(2);
+        for width in [20usize, 30, 46] {
+            for expanded in [false, true] {
+                let mut feed = MessageFeed::new();
+                if expanded {
+                    feed.toggle_thoughts();
+                }
+                feed.set_compaction(Some((
+                    messages[1].message_ids[0],
+                    "ранее обсудили X, а также Y и Z, и это довольно длинное резюме".into(),
+                )));
+                let lines = feed.build_lines(&messages, &Palette::default(), width, ru());
+                for line in &lines {
+                    for wrapped in wrap::wrap_line(line, width) {
+                        let text: String = row_texts(std::slice::from_ref(&wrapped)).remove(0);
+                        let w = wrap::display_width(&text.trim_end().chars().collect::<Vec<_>>());
+                        assert!(
+                            w <= width,
+                            "row {w} columns wide at width={width} \
+                             expanded={expanded}: {text:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A rendered line's width in columns.
+    fn line_width(line: &Line<'static>) -> usize {
+        line.spans
+            .iter()
+            .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+            .sum()
     }
 }

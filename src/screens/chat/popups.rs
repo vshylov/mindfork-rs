@@ -255,6 +255,9 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // Sits next to the knowledge-base commands, but is deliberately top-level:
     // it re-embeds notes, attachments and every profile's base at once.
     ("/reindex", "ui.help.reindex"),
+    // Chat-scoped, unlike the two above — but still top-level, and it belongs
+    // with the other "housekeeping" commands rather than among the attachments.
+    ("/compact", "ui.help.compact"),
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
@@ -782,6 +785,32 @@ mod tests {
         assert!(text.contains("/reindex"), "the command label: {text}");
         assert!(
             text.contains("пересобрать все векторы"),
+            "the localized description: {text}"
+        );
+    }
+
+    #[test]
+    fn compact_is_listed_in_the_commands_tab() {
+        // AGENTS.md §3 — a new command has to be discoverable in `F1`, or it
+        // exists only for whoever read the source.
+        let pos = HELP_COMMANDS
+            .iter()
+            .position(|(k, _)| *k == "/compact")
+            .expect("/compact is missing from HELP_COMMANDS");
+        let reindex = HELP_COMMANDS
+            .iter()
+            .position(|(k, _)| *k == "/reindex")
+            .expect("/reindex is missing from HELP_COMMANDS");
+        assert_eq!(
+            pos,
+            reindex + 1,
+            "/compact belongs with the other housekeeping commands"
+        );
+
+        let text = commands_tab_text();
+        assert!(text.contains("/compact"), "the command label: {text}");
+        assert!(
+            text.contains("свернуть раннюю часть"),
             "the localized description: {text}"
         );
     }

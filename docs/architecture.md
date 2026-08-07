@@ -161,6 +161,11 @@ src/
 │  │  │                     settings edits (a series of edits → one restart)
 │  │  ├─ generation.rs      send/regenerate/delete exchange + the agentic-loop task
 │  │  ├─ chats.rs           chat list (new/switch/rename/clone/copy/delete) + draft
+│  │  ├─ compaction.rs      history compression (`/compact`): one single-turn roll
+│  │  │                     (the title.rs shape — its text comes back on a typed
+│  │  │                     channel), the boundary re-found by message id. Never
+│  │  │                     edits `chat.messages` — only what a request carries,
+│  │  │                     spec §6.7
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor
 │  │  ├─ title.rs           chat auto-title (background task)
@@ -309,6 +314,11 @@ src/
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
+│  ├─ compaction.rs        history compression, pure part: the digest (which,
+│  │                       unlike the title one, carries tool activity — the
+│  │                       invisible bulk of a long chat), the cut planner
+│  │                       (snapped to a User boundary) and the two prompts
+│  ├─ compact_command.rs   /compact parser
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)
 │  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
@@ -509,7 +519,8 @@ feed on one of its messages** — a jump from a search hit) and
 `OpenChatAtFirstMatch { chat, query }` (`Enter` in the list's content mode; the
 orchestrator resolves *which* message, since only it holds both the index and the
 chat and can therefore order the matches by real chat position),
-`Tts`/`TtsStop`, `Quit`.
+`Tts`/`TtsStop`, `Compact` (fold the earlier part of the active chat into a
+rolling summary — §6.7 of the spec), `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
@@ -534,9 +545,12 @@ feed's headers — sent on activation and after a profile edit, §10 of the spec
 attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`,
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
 screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
-status-bar indicator for background reflection/consolidation), `TtsActive`
+status-bar indicator for background reflection/consolidation/compression), `TtsActive`
 (speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
-`Error`.
+`Error`, `Notice` (a plain informational note in the feed — the
+counterpart of `Error` for an outcome that is not a failure) and `Compacted`
+(a rolling summary was made: the feed draws its boundary divider; `chat.messages`
+is unchanged, so nothing else moves).
 
 `TokenUsage { completion, context, context_exact, reasoning }` — the live token
 counter: the reply (`completion`, accumulated across agentic-loop rounds) and the

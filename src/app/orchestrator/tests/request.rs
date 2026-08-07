@@ -4,7 +4,7 @@
 use super::*;
 use crate::app::orchestrator::request::inject_attachments;
 use crate::entities::attachment::{AttachMode, Attachment};
-use crate::shared::config::AttachmentSettings;
+use crate::shared::config::{AttachmentSettings, CompactionSettings};
 
 fn ru() -> &'static crate::shared::i18n::Locale {
     crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
@@ -32,6 +32,7 @@ fn build_request_puts_system_aside_and_maps_roles() {
         SamplingConfig::default(),
         vec![],
         &AttachmentSettings::default(),
+        &CompactionSettings::default(),
         NO_INDEX,
         ru(),
     );
@@ -52,6 +53,7 @@ fn build_request_appends_attached_files_to_system() {
         SamplingConfig::default(),
         vec![],
         &AttachmentSettings::default(),
+        &CompactionSettings::default(),
         NO_INDEX,
         ru(),
     );
@@ -223,4 +225,96 @@ fn block_is_localized_for_all_langs() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// History compression (spec §6.7): the request carries a summary plus the
+// verbatim tail, while `chat.messages` stays whole.
+// ---------------------------------------------------------------------------
+
+/// A chat of `n` user/assistant pairs, compacted at message index `upto`.
+fn compacted_chat(n: usize, upto: usize, summary: &str) -> Chat {
+    let p = Profile::new("X", "Ты — X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    for i in 0..n {
+        chat.push_message(Message::user(format!("вопрос {i}")));
+        chat.push_message(Message::assistant(format!("ответ {i}")));
+    }
+    chat.compaction = Some(crate::entities::chat::Compaction {
+        summary: summary.into(),
+        upto,
+        boundary_id: chat.messages[upto].id,
+        compacted_at: chrono::Utc::now(),
+        rolls: 1,
+    });
+    chat
+}
+
+#[test]
+fn compaction_replaces_the_prefix_with_a_summary_block() {
+    let chat = compacted_chat(5, 6, "Ранее: обсудили хранилище, выбрали SQLite.");
+    let req = build_request(
+        &chat,
+        SamplingConfig::default(),
+        vec![],
+        &AttachmentSettings::default(),
+        &CompactionSettings::default(),
+        NO_INDEX,
+        ru(),
+    );
+    // The persona stays first, the block is appended after it — ordered by
+    // volatility so the most stable content keeps its prefix (spec §6.6).
+    let system = req.system.expect("system with the summary block");
+    assert!(system.starts_with("Ты — X."), "{system}");
+    assert!(system.contains("выбрали SQLite"), "{system}");
+    // Only the verbatim tail is sent, and the whole history is still on the chat.
+    assert_eq!(req.messages.len(), 4);
+    assert_eq!(chat.messages.len(), 10);
+}
+
+#[test]
+fn the_master_switch_off_makes_compression_inert() {
+    // Fork F10: off means the request is byte-for-byte what it was before the
+    // feature existed — no block, no truncation — and the stored summary is
+    // merely dormant, never discarded.
+    let chat = compacted_chat(5, 6, "Ранее: выбрали SQLite.");
+    let off = CompactionSettings {
+        enabled: false,
+        ..Default::default()
+    };
+    let req = build_request(
+        &chat,
+        SamplingConfig::default(),
+        vec![],
+        &AttachmentSettings::default(),
+        &off,
+        NO_INDEX,
+        ru(),
+    );
+    assert_eq!(req.system.as_deref(), Some("Ты — X."));
+    assert_eq!(req.messages.len(), 10);
+    assert!(
+        chat.compaction.is_some(),
+        "the summary must survive the flip"
+    );
+}
+
+#[test]
+fn a_vanished_boundary_falls_back_to_the_whole_history() {
+    // The boundary is re-found by id. If the message is gone the summary can no
+    // longer be placed, so the full history is sent rather than a summary
+    // silently covering the wrong span.
+    let mut chat = compacted_chat(5, 6, "Ранее: выбрали SQLite.");
+    chat.messages.remove(6);
+    let req = build_request(
+        &chat,
+        SamplingConfig::default(),
+        vec![],
+        &AttachmentSettings::default(),
+        &CompactionSettings::default(),
+        NO_INDEX,
+        ru(),
+    );
+    assert_eq!(req.system.as_deref(), Some("Ты — X."));
+    assert_eq!(req.messages.len(), 9);
 }

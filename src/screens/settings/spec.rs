@@ -85,6 +85,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         NotesRecallIncludesSelf => {
             toggle(|c| c.notes.recall_includes_self = !c.notes.recall_includes_self)
         }
+        CompactEnabled => toggle(|c| c.compaction.enabled = !c.compaction.enabled),
         ICopyThoughts => toggle(|c| c.copy.copy_thoughts = !c.copy.copy_thoughts),
         ICopyToolCalls => toggle(|c| c.copy.copy_tool_calls = !c.copy.copy_tool_calls),
         ICopyToolResults => toggle(|c| c.copy.copy_tool_results = !c.copy.copy_tool_results),
@@ -478,6 +479,18 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         NotesAutoConsolidate => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.notes.auto_consolidate_every = v;
+            }
+        }),
+        // History compression (spec §6.7). Same sanitization as the neighbours:
+        // an empty or non-numeric entry keeps the previous value.
+        CompactWords => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.compaction.summary_words = v;
+            }
+        }),
+        CompactTail => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.compaction.tail_tokens = v;
             }
         }),
         IDicts => text(|c, t| {

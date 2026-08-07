@@ -1958,3 +1958,123 @@ async fn tool_confirmation_e2e_live() {
     eprintln!("file written: {written:?}");
     assert!(written.contains("ZARYA-5150"));
 }
+
+/// History compression end to end (spec §6.7): a fact stated early must survive
+/// being folded into the rolling summary and still be answerable once those
+/// messages are no longer sent verbatim.
+///
+/// The probe (docs/research/history-compression.md §9a) established this against
+/// the raw API; this smoke is the same question asked **through the
+/// orchestrator**, so it covers the parts the probe could not: the cut planner,
+/// the digest, the request splice and the stored boundary.
+///
+/// The load-bearing detail is the **control**: the same question is asked once
+/// before compacting. Without it, a failure cannot be told apart from "this
+/// model would not have answered anyway".
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn compaction_preserves_a_planted_fact_e2e_live() {
+    use crate::shared::config::CompactionSettings;
+    const CODE: &str = "ZARYA-8823";
+    let config = AppConfig {
+        compaction: CompactionSettings {
+            enabled: true,
+            summary_words: 250,
+            // A small verbatim tail, so a handful of exchanges is enough to push
+            // the planted fact out of the part that is still sent literally.
+            tail_tokens: 120,
+        },
+        ..Default::default()
+    };
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // The fact goes in first. The control question is asked **immediately
+    // after** it, on purpose: both exchanges then land inside the folded region,
+    // so the verbatim tail that survives compaction contains no mention of the
+    // code. Asking the control last (the obvious order) would leave its own
+    // answer in the tail and the final assertion could be satisfied by reading
+    // that instead of the summary — the test would pass without testing.
+    let (reply, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Запомни: внутренний код сборки нашего проекта — {CODE}.              Просто подтверди, что запомнил."
+        ),
+    )
+    .await;
+    eprintln!("seed reply: {reply}");
+
+    // Control: answerable while the whole history is still sent.
+    let (before, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Назови внутренний код сборки нашего проекта. Ответь только кодом.",
+    )
+    .await;
+    eprintln!("control answer: {before}");
+    assert!(
+        before.contains(CODE),
+        "control failed — the model cannot answer even with the full history,          so this run says nothing about compression: {before}"
+    );
+
+    // Unrelated turns, so the two exchanges above fall behind the verbatim tail.
+    for topic in [
+        "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
+        "В двух предложениях: чем отличается кэш от буфера?",
+        "В двух предложениях: что такое идемпотентность запроса?",
+        "В двух предложениях: зачем нужны миграции схемы?",
+    ] {
+        let (r, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
+        eprintln!("filler reply: {}", r.chars().take(80).collect::<String>());
+    }
+
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let compacted = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
+    })
+    .await
+    .unwrap();
+    let AppEvent::Compacted {
+        summary, folded, ..
+    } = compacted
+    else {
+        panic!("compaction failed: {compacted:?}");
+    };
+    eprintln!(
+        "folded {folded} messages into {} chars:\n{summary}",
+        summary.len()
+    );
+
+    // The real question: the planted fact is now only reachable through the
+    // summary, because those messages are no longer sent verbatim.
+    let (after, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Ещё раз: назови внутренний код сборки нашего проекта. Ответь только кодом.",
+    )
+    .await;
+    eprintln!("answer after compaction: {after}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Both the seed and the control exchange must be inside the folded region,
+    // or the code would still be sitting in the verbatim tail.
+    assert!(
+        folded >= 4,
+        "the seed and control exchanges must be behind the boundary, folded {folded}"
+    );
+    assert!(
+        summary.contains(CODE),
+        "the summary must carry the identifier verbatim: {summary}"
+    );
+    assert!(
+        after.contains(CODE),
+        "the fact is now reachable only through the summary and must survive it: {after}"
+    );
+}

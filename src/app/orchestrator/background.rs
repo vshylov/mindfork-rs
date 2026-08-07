@@ -109,5 +109,6 @@ fn kind_label(loc: &'static Locale, kind: BackgroundKind) -> &'static str {
         BackgroundKind::Reflection => "ui.err.bg_reflection",
         BackgroundKind::Consolidation => "ui.err.bg_consolidation",
         BackgroundKind::SelfConsolidation => "ui.err.bg_self_consolidation",
+        BackgroundKind::Compaction => "ui.err.bg_compaction",
     })
 }

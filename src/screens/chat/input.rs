@@ -296,8 +296,8 @@ impl ChatScreen {
     }
 
     /// `Enter` on the input box: slash commands (`/rag`, `/reindex`,
-    /// `/file`, `/tts`) are intercepted and never go out as messages;
-    /// anything else is sent (unless a turn is already generating).
+    /// `/compact`, `/file`, `/tts`) are intercepted and never go out as
+    /// messages; anything else is sent (unless a turn is already generating).
     fn handle_enter(&mut self) -> Option<ChatIntent> {
         let text = self.input.text();
         if text.trim().is_empty() {
@@ -307,6 +307,9 @@ impl ChatScreen {
             return intent;
         }
         if let Some(intent) = self.try_reindex_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_compact_command(&text) {
             return intent;
         }
         if let Some(intent) = self.try_file_command(&text) {
@@ -355,6 +358,23 @@ impl ChatScreen {
         self.mark_input_changed();
         Some(match parsed {
             Ok(()) => Some(ChatIntent::Reindex),
+            Err(msg) => {
+                self.push_note(&msg);
+                None
+            }
+        })
+    }
+
+    /// The history-compaction command (`/compact`) — not a message either, and
+    /// also background work. It takes no arguments; a malformed one leaves a
+    /// hint instead of going out to the model. See spec §6.7. Returns `None`
+    /// when the text is not a `/compact` command.
+    fn try_compact_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        let parsed = crate::features::compact_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(()) => Some(ChatIntent::Compact),
             Err(msg) => {
                 self.push_note(&msg);
                 None
@@ -665,7 +685,7 @@ impl ChatScreen {
     }
 
     /// Whether the current input is a command (`/rag …`, `/tts …`,
-    /// `/reindex`). Such text is highlighted yellow and isn't spellchecked. See
+    /// `/reindex`, `/compact`). Such text is highlighted yellow and isn't spellchecked. See
     /// spec §11.5.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
@@ -678,6 +698,7 @@ impl ChatScreen {
         let text = self.input.text();
         crate::features::rag_command::parse(&text, self.loc).is_some()
             || crate::features::reindex_command::parse(&text, self.loc).is_some()
+            || crate::features::compact_command::parse(&text, self.loc).is_some()
             || crate::features::file_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
@@ -784,6 +805,48 @@ mod tests {
         // Prose that merely mentions the word isn't.
         s.input.clear();
         type_str(&mut s, "please reindex the base");
+        assert!(!s.input_is_command());
+    }
+
+    #[test]
+    fn compact_command_intercepted_on_enter() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/compact");
+        assert_eq!(enter(&mut s), Some(ChatIntent::Compact));
+        assert!(s.input.is_empty(), "the field is cleared after the command");
+        assert!(
+            !s.feed.iter().any(|m| m.role == FeedRole::User),
+            "a command must not go out as a message"
+        );
+    }
+
+    #[test]
+    fn invalid_compact_command_shows_note_and_does_not_send() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/compact now");
+        assert_eq!(enter(&mut s), None, "a malformed command isn't sent");
+        assert!(
+            s.feed.iter().any(|m| m.role == FeedRole::Note),
+            "the syntax hint goes into the feed as a note"
+        );
+        assert!(!s.feed.iter().any(|m| m.role == FeedRole::User));
+    }
+
+    #[test]
+    fn compact_input_is_recognized_as_command() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/compact");
+        assert!(
+            s.input_is_command(),
+            "the input box highlights it and skips spellcheck"
+        );
+        // A malformed one is recognized too — it's still a command, not prose.
+        s.input.clear();
+        type_str(&mut s, "/compact now");
+        assert!(s.input_is_command());
+        // Prose that merely mentions the word isn't.
+        s.input.clear();
+        type_str(&mut s, "please compact the history");
         assert!(!s.input_is_command());
     }
 }

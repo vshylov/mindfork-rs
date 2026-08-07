@@ -218,6 +218,7 @@ impl Orchestrator {
         // Copied out before the `chat_mut` borrow below (config can't be read
         // while `Chat` is mutably borrowed). `AttachmentSettings` is `Copy`.
         let attach_cfg = self.config.attachments;
+        let compact_cfg = self.config.compaction.clone();
         // Which attached files have a semantic index — the pinned block only
         // offers `attachment_search` for those (spec §9.7). One indexed lookup,
         // and only when the chat has attachments at all.
@@ -266,6 +267,7 @@ impl Orchestrator {
                 sampling.clone(),
                 schemas,
                 &attach_cfg,
+                &compact_cfg,
                 &indexed,
                 profile_loc,
             );

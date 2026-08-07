@@ -637,6 +637,7 @@ fn character_names_event_reaches_the_feed() {
         "",
         FeedView::default(),
         None,
+        None,
     );
     let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
     term.draw(|f| screen.render(f)).unwrap();
@@ -680,6 +681,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
         draft: String::new(),
         feed_view: FeedView::default(),
         focus: None,
+        compaction: None,
     }
 }
 

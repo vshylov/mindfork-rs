@@ -66,9 +66,40 @@ pub struct Chat {
     /// filtering behavioral signals by window). `None`/old files — never ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflected_at: Option<DateTime<Utc>>,
+    /// The rolling summary of the older part of the conversation, when one has
+    /// been made. `messages` is **never** edited by compression — this only
+    /// changes what a request carries (see [`Chat::compaction_view`]), so the
+    /// feed, search, export and every other consumer keep seeing the whole
+    /// history. Additive field — old chat files read without migration
+    /// (ADR 0006 F12). See docs/research/history-compression.md, spec §6.7.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<Compaction>,
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
+}
+
+/// A rolling summary covering `messages[..upto]`.
+///
+/// `upto` is a fast path, not the source of truth: the boundary is identified by
+/// `boundary_id`, so an edit that shifts indices cannot silently make the
+/// summary cover the wrong span. See [`Chat::compaction_view`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Compaction {
+    /// The summary text, as the model wrote it.
+    pub summary: String,
+    /// How many leading messages the summary covers. Always an exchange
+    /// boundary — the message at this index is a `User` one — so a request never
+    /// splits an assistant turn from its tool results.
+    pub upto: usize,
+    /// The id of `messages[upto]` when the summary was written. The boundary is
+    /// re-found by this id on every read; if the message is gone the summary is
+    /// treated as stale and ignored.
+    pub boundary_id: Uuid,
+    pub compacted_at: DateTime<Utc>,
+    /// How many times the summary has been rolled forward (1 = first
+    /// compaction). Diagnostic: summary-of-summary degrades with depth.
+    pub rolls: u32,
 }
 
 /// Which of the feed's foldable blocks are expanded — the view state of one chat
@@ -161,6 +192,7 @@ impl Chat {
             feed_view: FeedView::default(),
             attachments: Vec::new(),
             deleted: Vec::new(),
+            compaction: None,
             reflected_upto: None,
             reflected_at: None,
             is_hidden: false,
@@ -193,6 +225,39 @@ impl Chat {
         );
     }
 
+    /// What a request should carry: the rolling summary and the index the
+    /// verbatim messages start at, or `None` to send the whole history.
+    ///
+    /// `enabled` is the master switch (`config.compaction.enabled`, fork F10):
+    /// when off this returns `None` unconditionally, so the feature is inert and
+    /// the stored summary is merely dormant — nothing is discarded.
+    ///
+    /// The boundary is re-found **by id**, not trusted from `upto`. `Ctrl+E` and
+    /// `Ctrl+R` truncate at the tail, so the boundary normally survives and the
+    /// stored index is still right; the id lookup is what keeps the rare case
+    /// honest. If the boundary message is gone the summary can no longer be
+    /// placed, so it is ignored (the full history is sent) and the next
+    /// compaction rebuilds it — a temporarily longer prompt, never a summary
+    /// silently covering the wrong span.
+    pub fn compaction_view(&self, enabled: bool) -> Option<(&str, usize)> {
+        if !enabled {
+            return None;
+        }
+        let c = self.compaction.as_ref()?;
+        // The fast path: the stored index still points at the same message.
+        let upto = if self
+            .messages
+            .get(c.upto)
+            .is_some_and(|m| m.id == c.boundary_id)
+        {
+            c.upto
+        } else {
+            self.messages.iter().position(|m| m.id == c.boundary_id)?
+        };
+        // A summary covering nothing is not worth a block in the prompt.
+        (upto > 0).then_some((c.summary.as_str(), upto))
+    }
+
     /// A short chat card (for the list/overlay, without copying messages).
     pub fn summary(&self) -> ChatSummary {
         ChatSummary {
@@ -221,6 +286,73 @@ pub struct ChatSummary {
 mod tests {
     use super::*;
     use crate::entities::message::Message;
+
+    /// A chat of `n` user/assistant pairs with a summary covering `[..upto]`.
+    fn compacted(n: usize, upto: usize) -> Chat {
+        let p = Profile::new("P", "sys");
+        let mut chat = Chat::from_profile(&p, "c");
+        for i in 0..n {
+            chat.push_message(Message::user(format!("u{i}")));
+            chat.push_message(Message::assistant(format!("a{i}")));
+        }
+        chat.compaction = Some(Compaction {
+            summary: "ранее обсудили X".into(),
+            upto,
+            boundary_id: chat.messages[upto].id,
+            compacted_at: Utc::now(),
+            rolls: 1,
+        });
+        chat
+    }
+
+    #[test]
+    fn compaction_view_is_inert_when_the_switch_is_off() {
+        // Fork F10: off must not merely stop compacting — it must stop *using*
+        // what is stored, so the request is what it was before the feature.
+        let chat = compacted(4, 4);
+        assert_eq!(chat.compaction_view(false), None);
+        assert_eq!(chat.compaction_view(true), Some(("ранее обсудили X", 4)));
+    }
+
+    #[test]
+    fn compaction_view_refinds_the_boundary_after_an_index_shift() {
+        // `upto` is a fast path; the id is the truth. Deleting a message ahead of
+        // the boundary shifts every later index, and trusting the stored number
+        // would silently move the summary's coverage.
+        let mut chat = compacted(4, 4);
+        chat.messages.remove(0);
+        assert_eq!(chat.compaction_view(true), Some(("ранее обсудили X", 3)));
+    }
+
+    #[test]
+    fn compaction_view_drops_a_summary_whose_boundary_is_gone() {
+        let mut chat = compacted(4, 4);
+        chat.messages.remove(4);
+        assert_eq!(chat.compaction_view(true), None);
+    }
+
+    #[test]
+    fn compaction_view_ignores_a_summary_that_covers_nothing() {
+        let mut chat = compacted(4, 4);
+        let first = chat.messages[0].id;
+        chat.compaction.as_mut().unwrap().upto = 0;
+        chat.compaction.as_mut().unwrap().boundary_id = first;
+        assert_eq!(chat.compaction_view(true), None);
+    }
+
+    #[test]
+    fn compaction_reads_old_chat_files_and_stays_out_of_new_ones() {
+        // Additive field, no migration (ADR 0006 F12).
+        let p = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&p, "c");
+        let json = serde_json::to_value(&chat).unwrap();
+        assert!(
+            json.get("compaction").is_none(),
+            "a chat that was never compacted must write no new key"
+        );
+        let back: Chat = serde_json::from_value(json).unwrap();
+        assert!(back.compaction.is_none());
+    }
 
     #[test]
     fn feed_view_reads_old_chat_files_and_stays_out_of_new_ones() {

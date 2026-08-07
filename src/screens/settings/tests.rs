@@ -2276,6 +2276,106 @@ fn memory_section_gathers_rag_notes_self_model() {
     assert!(tool_ids.contains(&FieldId::MaxToolRounds));
 }
 
+/// History compression (spec §6.7) is surfaced as the **first** group of "Memory" —
+/// it is about the current conversation, ahead of the long-term memory groups.
+#[test]
+fn memory_section_opens_with_the_context_group() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Memory);
+    let rows = s.fields();
+    let ids: Vec<FieldId> = rows.iter().map(|f| f.id).collect();
+    for id in [
+        FieldId::CompactEnabled,
+        FieldId::CompactWords,
+        FieldId::CompactTail,
+    ] {
+        assert!(ids.contains(&id), "\"Memory\" is missing {id:?}");
+        assert!(
+            field_desc(&s, id).is_some(),
+            "{id:?} carries no description"
+        );
+    }
+    // The group is the section's first, and the three fields are contiguous in it.
+    let group = rows[0].group;
+    assert_eq!(group, "Контекст", "the Context group opens the section");
+    let ctx: Vec<FieldId> = rows
+        .iter()
+        .filter(|f| f.group == group)
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(
+        ctx,
+        vec![
+            FieldId::CompactEnabled,
+            FieldId::CompactWords,
+            FieldId::CompactTail
+        ]
+    );
+    // …and it comes before the long-term memory groups.
+    let rag_at = rows
+        .iter()
+        .position(|f| f.id == FieldId::RagTarget)
+        .unwrap();
+    let last_ctx = rows
+        .iter()
+        .rposition(|f| f.id == FieldId::CompactTail)
+        .unwrap();
+    assert!(last_ctx < rag_at, "Context sits ahead of the RAG group");
+}
+
+/// The master switch persists into the working config (on by default → off).
+#[test]
+fn compaction_toggle_persists() {
+    let mut s = screen();
+    assert!(s.config.compaction.enabled, "on by default");
+    match s.toggle_field(FieldId::CompactEnabled) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.compaction.enabled),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(!s.config.compaction.enabled);
+}
+
+/// Both numeric fields commit a value and reject a non-numeric entry without
+/// corrupting the config (they go through the `field_spec` access table, so
+/// validation and `Del`-reset come from the same place as their neighbours).
+#[test]
+fn compaction_numeric_fields_commit_and_validate() {
+    // Types a value into `id` after a rejected non-numeric entry; returns the
+    // committed config so each field asserts on its own path.
+    fn edit(id: FieldId, typed: &str) -> AppConfig {
+        let mut s = screen();
+        goto_section(&mut s, Section::Memory);
+        goto_field(&mut s, id);
+        assert_eq!(field_num_kind(id), Some(NumKind::Int), "{id:?} is an int");
+
+        // A non-numeric entry keeps the editor open and flags the error.
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        s.handle_key(key(KeyCode::Char('x')));
+        assert!(s.handle_key(key(KeyCode::Enter)).is_none(), "{id:?}");
+        assert!(s.editor.as_ref().is_some_and(|e| e.error.is_some()));
+
+        // Fixing it commits normally.
+        s.handle_key(ctrl('k'));
+        for c in typed.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        match s.handle_key(key(KeyCode::Enter)) {
+            Some(SettingsIntent::SaveConfig(c)) => *c,
+            other => panic!("{id:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+
+    assert_eq!(
+        edit(FieldId::CompactWords, "400").compaction.summary_words,
+        400
+    );
+    assert_eq!(
+        edit(FieldId::CompactTail, "4096").compaction.tail_tokens,
+        4096
+    );
+}
+
 #[test]
 fn fields_carry_group_headers() {
     // The section's fields are marked with semantic groups (group headers in the UI).

@@ -326,6 +326,7 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         // The import format (v1) carries no attachments — see docs/import-format.md.
         attachments: Vec::new(),
         deleted: Vec::new(),
+        compaction: None,
         reflected_upto: None,
         reflected_at: None,
         is_hidden: false,
