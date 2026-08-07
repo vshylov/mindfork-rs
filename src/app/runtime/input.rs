@@ -175,35 +175,8 @@ pub(super) fn process_input_batch(
                 active.handle_paste(screen, &text);
             }
             Chunk::Event(Event::Key(key)) => {
-                // Take the intent off the active screen (the borrow ends at the
-                // owned `AnyIntent` value), then dispatch through a single ownership —
-                // otherwise `active`/`screen` borrows would conflict.
-                let intent = match active {
-                    ActiveScreen::Chat => screen.handle_key(key).map(AnyIntent::Chat),
-                    ActiveScreen::ChatList(list) => list.handle_key(key).map(AnyIntent::List),
-                    ActiveScreen::Settings(settings) => {
-                        settings.handle_key(key).map(AnyIntent::Settings)
-                    }
-                    ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
-                    ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
-                };
-                match intent {
-                    // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
-                    // a UI-layer side effect: we already have the text, no need to go to the orchestrator.
-                    // The `arboard` slot is here (`dispatch` doesn't have it). Success is silent,
-                    // a failure (headless Linux with no X11) — a note in the feed.
-                    Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
-                        if let Err(e) = write_clipboard(clipboard, &text) {
-                            let loc = screen.loc();
-                            screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &e)]));
-                        }
-                    }
-                    Some(intent) => {
-                        if dispatch_any(intent, cmd_tx, screen, active, back) {
-                            quit = true;
-                        }
-                    }
-                    None => {}
+                if handle_key_event(key, screen, active, back, cmd_tx, clipboard) {
+                    quit = true;
                 }
             }
             // The mouse wheel scrolls the chat feed. On the list/settings (which have their own
@@ -213,4 +186,42 @@ pub(super) fn process_input_batch(
         }
     }
     quit
+}
+
+/// Handles one key event: takes the intent off the active screen and dispatches
+/// it — including the `CopyToClipboard` special case, a UI-layer side effect
+/// executed right here. Returns `true` if quitting was requested.
+fn handle_key_event(
+    key: KeyEvent,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    back: &mut Option<SearchReturn>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
+    // Take the intent off the active screen (the borrow ends at the
+    // owned `AnyIntent` value), then dispatch through a single ownership —
+    // otherwise `active`/`screen` borrows would conflict.
+    let intent = match active {
+        ActiveScreen::Chat => screen.handle_key(key).map(AnyIntent::Chat),
+        ActiveScreen::ChatList(list) => list.handle_key(key).map(AnyIntent::List),
+        ActiveScreen::Settings(settings) => settings.handle_key(key).map(AnyIntent::Settings),
+        ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
+        ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
+    };
+    match intent {
+        // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
+        // a UI-layer side effect: we already have the text, no need to go to the orchestrator.
+        // The `arboard` slot is here (`dispatch` doesn't have it). Success is silent,
+        // a failure (headless Linux with no X11) — a note in the feed.
+        Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
+            if let Err(e) = write_clipboard(clipboard, &text) {
+                let loc = screen.loc();
+                screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &e)]));
+            }
+            false
+        }
+        Some(intent) => dispatch_any(intent, cmd_tx, screen, active, back),
+        None => false,
+    }
 }

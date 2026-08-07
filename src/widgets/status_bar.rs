@@ -162,129 +162,14 @@ fn lines(
     palette: &Palette,
     loc: &'static Locale,
 ) -> Vec<Line<'static>> {
-    // Copy fields (refs/scalars) — unpacked into locals, the body below is unchanged.
-    let statuses = model.statuses;
-    let generating = model.generating;
-    let tokens = model.tokens;
-    let context = model.context;
-    let context_exact = model.context_exact;
-    let reasoning = model.reasoning;
-    let mouse_scroll = model.mouse_scroll;
-    let background = model.background;
-    let speaking = model.speaking;
-    let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
-    let muted = palette.muted_style();
-
-    // --- "state": server chips + generation + token counter ---
-    // The chat server is always shown (with the disconnect reason — it blocks
-    // generation); embeddings and impersonation — separate chips, only when configured
-    // (`NotConfigured`, including impersonation in `shared`, → the chip is hidden).
-    let mut state = chat_chip(&statuses.chat, palette, loc);
-    for chip in [
-        secondary_chip(loc.t("ui.status.chip.embed"), &statuses.embed, palette),
-        secondary_chip(
-            loc.t("ui.status.chip.imp"),
-            &statuses.impersonation,
-            palette,
-        ),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        state.push(Span::raw("  ")); // gap between chips
-        state.extend(chip);
-    }
-
-    if generating {
-        state.push(sep());
-        state.push(Span::styled(
-            format!(
-                "{} {}",
-                palette.glyphs().busy,
-                loc.t("ui.status.generating")
-            ),
-            palette.accent_style(),
-        ));
-    }
-    // The combined token counter (conversation + reply): bright during generation (grows
-    // live), muted afterward (the last turn's final result). Marked with `~` while the
-    // conversation (prompt) is a client-side estimate, i.e. before the exact number arrives from the server's `usage`.
-    if tokens > 0 || context.is_some() {
-        state.push(sep());
-        let total = context.unwrap_or(0) + tokens;
-        let approx = if context.is_some() && !context_exact {
-            "~"
-        } else {
-            ""
-        };
-        // Reasoning tokens ("thoughts") — a separate annotation, they're included in the total.
-        let reason = if reasoning > 0 {
-            loc.tf("ui.status.reasoning", &[("n", &reasoning.to_string())])
-        } else {
-            String::new()
-        };
-        let label = loc.tf(
-            "ui.status.tokens",
-            &[
-                ("approx", approx),
-                ("total", &total.to_string()),
-                ("reason", &reason),
-            ],
-        );
-        if generating {
-            state.push(Span::styled(label, palette.accent_style()));
-        } else {
-            state.push(Span::styled(label, muted));
-        }
-    }
-    // A quiet indicator of a background task (auto-reflection/consolidation) — muted,
-    // the `✻` glyph (compat — `*`) width 1 column (the grid layout doesn't "shift").
-    if let Some(hint) = background {
-        state.push(sep());
-        state.push(Span::styled(
-            format!("{} {hint}", palette.glyphs().background),
-            muted,
-        ));
-    }
-    // A quiet speaking indicator — in the same muted style. The `♪` note (U+266A)
-    // is in WGL4 and width 1 column, so it isn't replaced in compat mode
-    // (like the feed's `▌` rails and the `█` scrollbar). See spec §11.9.
-    if speaking {
-        state.push(sep());
-        state.push(Span::styled(
-            format!("{SPEAKING_GLYPH} {}", loc.t("ui.status.speaking")),
-            muted,
-        ));
-    }
-    // Attached files (`/file attach`): a quiet chip — they are re-sent on every
-    // turn, so their standing cost must be visible without opening anything.
-    if let Some(files) = model.attachments {
-        state.push(sep());
-        state.push(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
-    }
+    let state = state_spans(model, palette, loc);
     let state_w = spans_width(&state);
 
-    // Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
-    let mouse_desc = if mouse_scroll {
-        loc.t("ui.status.mouse.scroll")
-    } else {
-        loc.t("ui.status.mouse.select")
-    };
-    let mut hotkeys: Vec<(&str, &str)> = vec![("Ctrl+W", mouse_desc)];
-    hotkeys.extend(HOTKEYS.iter().map(|(key, default)| {
-        // `Esc` is the one hint whose meaning moves with the state; the rest are
-        // fixed. Keeping it in the const preserves one ordered list.
-        let desc_key = if *key == ESC_KEY {
-            model.esc_target.hint_key()
-        } else {
-            *default
-        };
-        (*key, loc.t(desc_key))
-    }));
+    let hotkeys = hotkey_list(model, loc);
     let n = hotkeys.len();
     // In "scroll" mode, highlight the mouse toggle's description (index 0) with the
     // `accent` color — the same one that highlights markdown headings in the feed.
-    let accent_idx = mouse_scroll.then_some(0usize);
+    let accent_idx = model.mouse_scroll.then_some(0usize);
 
     // Each cell's width: "key" (+2 for padding) + a space + the description.
     let cell_w: Vec<usize> = hotkeys
@@ -324,6 +209,139 @@ fn lines(
         &hotkeys, &cell_w, cols, width, None, accent_idx, palette,
     ));
     out
+}
+
+/// The "state" cluster on the left of the top row: server chips + generation +
+/// token counter + the quiet background/speaking/attachment chips.
+///
+/// The chat server is always shown (with the disconnect reason — it blocks
+/// generation); embeddings and impersonation — separate chips, only when configured
+/// (`NotConfigured`, including impersonation in `shared`, → the chip is hidden).
+fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> Vec<Span<'static>> {
+    let statuses = model.statuses;
+    let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
+    let muted = palette.muted_style();
+
+    let mut state = chat_chip(&statuses.chat, palette, loc);
+    for chip in [
+        secondary_chip(loc.t("ui.status.chip.embed"), &statuses.embed, palette),
+        secondary_chip(
+            loc.t("ui.status.chip.imp"),
+            &statuses.impersonation,
+            palette,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        state.push(Span::raw("  ")); // gap between chips
+        state.extend(chip);
+    }
+
+    if model.generating {
+        state.push(sep());
+        state.push(Span::styled(
+            format!(
+                "{} {}",
+                palette.glyphs().busy,
+                loc.t("ui.status.generating")
+            ),
+            palette.accent_style(),
+        ));
+    }
+    if let Some(counter) = token_counter_span(model, palette, loc) {
+        state.push(sep());
+        state.push(counter);
+    }
+    // A quiet indicator of a background task (auto-reflection/consolidation) — muted,
+    // the `✻` glyph (compat — `*`) width 1 column (the grid layout doesn't "shift").
+    if let Some(hint) = model.background {
+        state.push(sep());
+        state.push(Span::styled(
+            format!("{} {hint}", palette.glyphs().background),
+            muted,
+        ));
+    }
+    // A quiet speaking indicator — in the same muted style. The `♪` note (U+266A)
+    // is in WGL4 and width 1 column, so it isn't replaced in compat mode
+    // (like the feed's `▌` rails and the `█` scrollbar). See spec §11.9.
+    if model.speaking {
+        state.push(sep());
+        state.push(Span::styled(
+            format!("{SPEAKING_GLYPH} {}", loc.t("ui.status.speaking")),
+            muted,
+        ));
+    }
+    // Attached files (`/file attach`): a quiet chip — they are re-sent on every
+    // turn, so their standing cost must be visible without opening anything.
+    if let Some(files) = model.attachments {
+        state.push(sep());
+        state.push(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
+    }
+    state
+}
+
+/// The combined token counter (conversation + reply): bright during generation (grows
+/// live), muted afterward (the last turn's final result). Marked with `~` while the
+/// conversation (prompt) is a client-side estimate, i.e. before the exact number arrives from the server's `usage`.
+/// `None` — nothing to count yet (the counter is hidden).
+fn token_counter_span(
+    model: &StatusModel,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Option<Span<'static>> {
+    if model.tokens == 0 && model.context.is_none() {
+        return None;
+    }
+    let total = model.context.unwrap_or(0) + model.tokens;
+    let approx = if model.context.is_some() && !model.context_exact {
+        "~"
+    } else {
+        ""
+    };
+    // Reasoning tokens ("thoughts") — a separate annotation, they're included in the total.
+    let reason = if model.reasoning > 0 {
+        loc.tf(
+            "ui.status.reasoning",
+            &[("n", &model.reasoning.to_string())],
+        )
+    } else {
+        String::new()
+    };
+    let label = loc.tf(
+        "ui.status.tokens",
+        &[
+            ("approx", approx),
+            ("total", &total.to_string()),
+            ("reason", &reason),
+        ],
+    );
+    if model.generating {
+        Some(Span::styled(label, palette.accent_style()))
+    } else {
+        Some(Span::styled(label, palette.muted_style()))
+    }
+}
+
+/// Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
+fn hotkey_list(model: &StatusModel, loc: &'static Locale) -> Vec<(&'static str, &'static str)> {
+    let mouse_desc = if model.mouse_scroll {
+        loc.t("ui.status.mouse.scroll")
+    } else {
+        loc.t("ui.status.mouse.select")
+    };
+    let mut hotkeys: Vec<(&'static str, &'static str)> = vec![("Ctrl+W", mouse_desc)];
+    hotkeys.extend(HOTKEYS.iter().map(|(key, default)| {
+        // `Esc` is the one hint whose meaning moves with the state; the rest are
+        // fixed. Keeping it in the const preserves one ordered list.
+        let desc_key = if *key == ESC_KEY {
+            model.esc_target.hint_key()
+        } else {
+            *default
+        };
+        (*key, loc.t(desc_key))
+    }));
+    hotkeys
 }
 
 /// The glyph and color of a server's status for the status line's chip. Glyphs are width 1
@@ -428,42 +446,65 @@ fn right_grid(
     let mut out: Vec<Line<'static>> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         let mut spans: Vec<Span<'static>> = Vec::new();
-        // The left margin: on the top row — the status pill, the rest (and other rows) —
-        // spaces (the grid is right-aligned).
-        if r == 0
-            && let Some(state) = state.take()
-        {
-            let state_w = spans_width(&state);
-            spans.extend(state);
-            if lead > state_w {
-                spans.push(Span::raw(" ".repeat(lead - state_w)));
-            }
-        } else if lead > 0 {
-            spans.push(Span::raw(" ".repeat(lead)));
-        }
+        push_row_lead(&mut spans, r, &mut state, lead);
         // Columns: a cell is padded out to the column's width (+ a gap, except the last),
         // an empty column — entirely spaces (this way columns line up vertically).
         for (c, cell) in row.iter().enumerate() {
             let gap = if c + 1 < cols { GAP } else { 0 };
             match cell {
-                Some(i) => {
-                    let (key, desc) = hotkeys[*i];
-                    if accent_idx == Some(*i) {
-                        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
-                    } else {
-                        spans.extend(palette.hint(key, desc));
-                    }
-                    let pad = colw[c].saturating_sub(cell_w[*i]) + gap;
-                    if pad > 0 {
-                        spans.push(Span::raw(" ".repeat(pad)));
-                    }
-                }
+                Some(i) => push_hotkey_cell(
+                    &mut spans,
+                    hotkeys[*i],
+                    accent_idx == Some(*i),
+                    colw[c].saturating_sub(cell_w[*i]) + gap,
+                    palette,
+                ),
                 None => spans.push(Span::raw(" ".repeat(colw[c] + gap))),
             }
         }
         out.push(Line::from(spans));
     }
     out
+}
+
+/// The left margin of grid row `r`: on the top row — the status pill (taken out
+/// of `state`), the rest (and other rows) — spaces (the grid is right-aligned).
+fn push_row_lead(
+    spans: &mut Vec<Span<'static>>,
+    r: usize,
+    state: &mut Option<Vec<Span<'static>>>,
+    lead: usize,
+) {
+    if r == 0
+        && let Some(pill) = state.take()
+    {
+        let state_w = spans_width(&pill);
+        spans.extend(pill);
+        if lead > state_w {
+            spans.push(Span::raw(" ".repeat(lead - state_w)));
+        }
+    } else if lead > 0 {
+        spans.push(Span::raw(" ".repeat(lead)));
+    }
+}
+
+/// One occupied grid cell: the hint (its description accent-highlighted when
+/// `accented`) followed by `pad` spaces out to the column's width + gap.
+fn push_hotkey_cell(
+    spans: &mut Vec<Span<'static>>,
+    (key, desc): (&str, &str),
+    accented: bool,
+    pad: usize,
+    palette: &Palette,
+) {
+    if accented {
+        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
+    } else {
+        spans.extend(palette.hint(key, desc));
+    }
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad)));
+    }
 }
 
 /// The visible width of a string in terminal columns.

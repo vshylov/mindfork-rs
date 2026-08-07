@@ -210,67 +210,95 @@ def bring_up(kind, name, args):
     return url
 
 
-def cmd_run(args):
-    started = time.time()
-    ident = args.run_id or run_id()
-    chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{ident}")
-    embed_name = args.reuse_embed or hf.safe_name(f"e2e-embed-{ident}")
-    alt_name = args.reuse_alt_embed or hf.safe_name(f"e2e-alt-{ident}")
-    want_embed = not args.no_embed
-    # The alternate embedder is a *second* model, so it needs the first one to
-    # compare against — every smoke that reads MINDFORK_EMBED_URL_ALT also reads
-    # MINDFORK_EMBED_URL.
-    want_alt = want_embed and not args.no_alt_embed
+class Plan:
+    """The run's endpoint names and which of them are wanted."""
 
-    # Printed before anything is created: this is the trail an orphan is found by.
-    print(f"\nrun id: {ident}")
-    print(f"  chat  endpoint: {chat_name}{'  (reused)' if args.reuse_chat else ''}")
-    if want_embed:
-        print(f"  embed endpoint: {embed_name}{'  (reused)' if args.reuse_embed else ''}")
-    if want_alt:
-        print(f"  alt   endpoint: {alt_name}{'  (reused)' if args.reuse_alt_embed else ''}")
+    def __init__(self, args):
+        self.ident = args.run_id or run_id()
+        self.chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{self.ident}")
+        self.embed_name = args.reuse_embed or hf.safe_name(f"e2e-embed-{self.ident}")
+        self.alt_name = args.reuse_alt_embed or hf.safe_name(f"e2e-alt-{self.ident}")
+        self.want_embed = not args.no_embed
+        # The alternate embedder is a *second* model, so it needs the first one
+        # to compare against — every smoke that reads MINDFORK_EMBED_URL_ALT
+        # also reads MINDFORK_EMBED_URL.
+        self.want_alt = self.want_embed and not args.no_alt_embed
+
+
+def print_plan(plan, args):
+    """Printed before anything is created: the trail an orphan is found by."""
+    print(f"\nrun id: {plan.ident}")
+    print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
+    if plan.want_embed:
+        print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
+    if plan.want_alt:
+        print(f"  alt   endpoint: {plan.alt_name}{'  (reused)' if args.reuse_alt_embed else ''}")
     print(f"  command: {cargo_command(args)}", flush=True)
 
+
+def dry_run(plan, args):
+    hf.create(hf.apply_overrides(hf.chat_payload(plan.chat_name, args), args.set), True)
+    if plan.want_embed:
+        hf.create(hf.apply_overrides(hf.embed_payload(plan.embed_name, args), args.set), True)
+    if plan.want_alt:
+        hf.create(hf.apply_overrides(alt_payload(plan.alt_name, args), args.set), True)
+    print(f"\n--dry-run: nothing created. Would run:\n  $ {cargo_command(args)}")
+    return hf.EXIT_OK
+
+
+def create_endpoints(plan, args):
+    """Create what is not reused, all before waiting for any: deploy is ~21 s
+    (chat) and ~84 s (embed), and they overlap. False when a create failed."""
+    if not args.reuse_chat:
+        payload = hf.apply_overrides(hf.chat_payload(plan.chat_name, args), args.set)
+        if hf.create(payload) is None:
+            return False
+    if plan.want_embed and not args.reuse_embed:
+        payload = hf.apply_overrides(hf.embed_payload(plan.embed_name, args), args.set)
+        if hf.create(payload) is None:
+            return False
+    if plan.want_alt and not args.reuse_alt_embed:
+        if hf.create(hf.apply_overrides(alt_payload(plan.alt_name, args), args.set)) is None:
+            return False
+    return True
+
+
+def bring_up_all(plan, args):
+    """(chat_url, embed_url, alt_embed_url), or None when any endpoint failed."""
+    chat_url = bring_up("chat", plan.chat_name, args)
+    if not chat_url:
+        return None
+    embed_url = None
+    if plan.want_embed:
+        embed_url = bring_up("embed", plan.embed_name, args)
+        if not embed_url:
+            return None
+    alt_embed_url = None
+    if plan.want_alt:
+        alt_embed_url = bring_up("alt embed", plan.alt_name, args)
+        if not alt_embed_url:
+            return None
+    return chat_url, embed_url, alt_embed_url
+
+
+def cmd_run(args):
+    started = time.time()
+    plan = Plan(args)
+    print_plan(plan, args)
+
     if args.dry_run:
-        hf.create(hf.apply_overrides(hf.chat_payload(chat_name, args), args.set), True)
-        if want_embed:
-            hf.create(hf.apply_overrides(hf.embed_payload(embed_name, args), args.set), True)
-        if want_alt:
-            hf.create(hf.apply_overrides(alt_payload(alt_name, args), args.set), True)
-        print(f"\n--dry-run: nothing created. Would run:\n  $ {cargo_command(args)}")
-        return hf.EXIT_OK
+        return dry_run(plan, args)
 
     if not args.no_prebuild and prebuild(args) != 0:
         print("\nprebuild failed — no endpoint was created, nothing was billed.")
         return hf.EXIT_FAILED
 
-    # Create both before waiting for either: deploy is ~21 s (chat) and ~84 s
-    # (embed), and they overlap.
-    if not args.reuse_chat:
-        payload = hf.apply_overrides(hf.chat_payload(chat_name, args), args.set)
-        if hf.create(payload) is None:
-            return hf.EXIT_FAILED
-    if want_embed and not args.reuse_embed:
-        payload = hf.apply_overrides(hf.embed_payload(embed_name, args), args.set)
-        if hf.create(payload) is None:
-            return hf.EXIT_FAILED
-    if want_alt and not args.reuse_alt_embed:
-        if hf.create(hf.apply_overrides(alt_payload(alt_name, args), args.set)) is None:
-            return hf.EXIT_FAILED
-
-    chat_url = bring_up("chat", chat_name, args)
-    if not chat_url:
+    if not create_endpoints(plan, args):
         return hf.EXIT_FAILED
-    embed_url = None
-    if want_embed:
-        embed_url = bring_up("embed", embed_name, args)
-        if not embed_url:
-            return hf.EXIT_FAILED
-    alt_embed_url = None
-    if want_alt:
-        alt_embed_url = bring_up("alt embed", alt_name, args)
-        if not alt_embed_url:
-            return hf.EXIT_FAILED
+    urls = bring_up_all(plan, args)
+    if urls is None:
+        return hf.EXIT_FAILED
+    chat_url, embed_url, alt_embed_url = urls
     ready = time.time()
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
@@ -279,9 +307,9 @@ def cmd_run(args):
     )
 
     print("\n=== summary ===")
-    print(f"  chat  {chat_name}  {chat_url}")
-    print(f"  embed {embed_name}  {embed_url or '(none)'}")
-    print(f"  alt   {alt_name}  {alt_embed_url or '(none)'}")
+    print(f"  chat  {plan.chat_name}  {chat_url}")
+    print(f"  embed {plan.embed_name}  {embed_url or '(none)'}")
+    print(f"  alt   {plan.alt_name}  {alt_embed_url or '(none)'}")
     print(f"  ready in {ready - started:.0f}s, suite {suite_time:.0f}s, total {time.time() - started:.0f}s")
     print(f"  suite exit={code}")
     if args.keep:
@@ -308,6 +336,29 @@ def parse_time(value):
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 
+def sweep_verdict(item, prefix, now, limit):
+    """(verdict, name, state, detail) for one endpoint.
+
+    Verdicts: "skip" (not ours), "unknown" (unreadable createdAt — deliberately
+    fail-safe towards *keeping* it: deleting an endpoint whose age we cannot
+    establish could kill a run that is still using it, destroying real work for
+    a false red, whereas a leak is already money-bounded by scale-to-zero),
+    "keep" (young), "delete" (past the limit). `detail` is the raw createdAt
+    for "unknown" and the age in minutes for "keep"/"delete".
+    """
+    name = item.get("name", "")
+    st = item.get("status") or {}
+    state = st.get("state", "?")
+    if not name.startswith(prefix):
+        return "skip", name, state, None
+    created = parse_time(st.get("createdAt"))
+    if created is None:
+        return "unknown", name, state, st.get("createdAt")
+    age = now - created
+    mins = age.total_seconds() / 60
+    return ("keep" if age < limit else "delete"), name, state, mins
+
+
 def cmd_sweep(args):
     """Delete orphaned `e2e-*` endpoints older than the age limit.
 
@@ -325,32 +376,19 @@ def cmd_sweep(args):
 
     print(f"sweep: prefix {args.prefix!r}, older than {args.max_age_minutes} min, {len(items)} endpoint(s)")
     for item in items:
-        name = item.get("name", "")
-        st = item.get("status") or {}
-        state = st.get("state", "?")
-        if not name.startswith(args.prefix):
+        verdict, name, state, detail = sweep_verdict(item, args.prefix, now, limit)
+        if verdict == "skip":
             print(f"  skip  {name:<34} {state:<14} (not {args.prefix}*)")
-            continue
-        created = parse_time(st.get("createdAt"))
-        if created is None:
-            # Deliberately fail-safe towards *keeping* it. Deleting an endpoint
-            # whose age we cannot establish could kill a run that is still using
-            # it — destroying real work for a false red — whereas a leak is
-            # already money-bounded by scale-to-zero. Loud, not silent.
+        elif verdict == "unknown":
             unknown.append(name)
-            print(f"  KEEP  {name:<34} {state:<14} !! unreadable createdAt {st.get('createdAt')!r}")
-            continue
-        age = now - created
-        mins = age.total_seconds() / 60
-        if age < limit:
-            print(f"  keep  {name:<34} {state:<14} {mins:.0f} min old")
-            continue
-        print(f"  DELETE {name:<33} {state:<14} {mins:.0f} min old", flush=True)
-        doomed.append(name)
-        if args.dry_run:
-            continue
-        if not hf.delete_one(name):
-            failed.append(name)
+            print(f"  KEEP  {name:<34} {state:<14} !! unreadable createdAt {detail!r}")
+        elif verdict == "keep":
+            print(f"  keep  {name:<34} {state:<14} {detail:.0f} min old")
+        else:
+            print(f"  DELETE {name:<33} {state:<14} {detail:.0f} min old", flush=True)
+            doomed.append(name)
+            if not args.dry_run and not hf.delete_one(name):
+                failed.append(name)
 
     if args.dry_run:
         print(f"\n--dry-run: would delete {len(doomed)}")

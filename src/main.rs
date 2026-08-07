@@ -632,6 +632,12 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
 /// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`,
 ///   `MINDFORK_EMBED_PORT`) — the embedding server.
 fn apply_env_overrides(config: &mut AppConfig) {
+    apply_engine_env(config);
+    apply_embed_env(config);
+}
+
+/// The chat-server half of [`apply_env_overrides`].
+fn apply_engine_env(config: &mut AppConfig) {
     if let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") {
         config.engine.mode = ServerMode::External;
         config.engine.external.url = Some(url);
@@ -660,7 +666,10 @@ fn apply_env_overrides(config: &mut AppConfig) {
             config.engine.managed.port = port;
         }
     }
+}
 
+/// The embedding-server half of [`apply_env_overrides`].
+fn apply_embed_env(config: &mut AppConfig) {
     if let Ok(url) = std::env::var("MINDFORK_EMBED_URL") {
         config.embed.mode = ServerMode::External;
         config.embed.external.url = Some(url);

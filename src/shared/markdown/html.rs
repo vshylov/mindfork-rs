@@ -89,27 +89,7 @@ pub(super) fn html_block_to_lines(raw: &str) -> Vec<String> {
                 continue;
             };
             i = next;
-            let tag = Tag::parse(&inner);
-
-            if let Some(open) = &skip_until {
-                if tag.closing && tag.name == *open {
-                    skip_until = None;
-                }
-                continue;
-            }
-            if !tag.closing && !tag.self_closing && DROPPED_ELEMENTS.contains(&tag.name.as_str()) {
-                skip_until = Some(tag.name);
-                continue;
-            }
-            if tag.name == "img" && !tag.closing {
-                push_image(&mut cur, &inner);
-                continue;
-            }
-            if LINE_BREAKING.contains(&tag.name.as_str()) {
-                flush(&mut cur, &mut out);
-            } else if WORD_SEPARATING.contains(&tag.name.as_str()) {
-                push_char(&mut cur, ' ');
-            }
+            apply_tag(&inner, &mut cur, &mut out, &mut skip_until);
             continue;
         }
         if skip_until.is_none() {
@@ -119,6 +99,39 @@ pub(super) fn html_block_to_lines(raw: &str) -> Vec<String> {
     }
     flush(&mut cur, &mut out);
     out
+}
+
+/// Applies one parsed tag to the extraction state — what a tag *means* for the
+/// output: ending or entering a dropped element, printing an image, breaking
+/// the line or separating words. The scanner itself (indices, quotes,
+/// comments) stays in [`html_block_to_lines`].
+fn apply_tag(
+    inner: &str,
+    cur: &mut String,
+    out: &mut Vec<String>,
+    skip_until: &mut Option<String>,
+) {
+    let tag = Tag::parse(inner);
+
+    if let Some(open) = &*skip_until {
+        if tag.closing && tag.name == *open {
+            *skip_until = None;
+        }
+        return;
+    }
+    if !tag.closing && !tag.self_closing && DROPPED_ELEMENTS.contains(&tag.name.as_str()) {
+        *skip_until = Some(tag.name);
+        return;
+    }
+    if tag.name == "img" && !tag.closing {
+        push_image(cur, inner);
+        return;
+    }
+    if LINE_BREAKING.contains(&tag.name.as_str()) {
+        flush(cur, out);
+    } else if WORD_SEPARATING.contains(&tag.name.as_str()) {
+        push_char(cur, ' ');
+    }
 }
 
 /// Whether the block carries a forced break and nothing else — a lone `<br>`,

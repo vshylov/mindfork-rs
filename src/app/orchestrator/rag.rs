@@ -314,137 +314,12 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             let _ = evt_tx.send(AppEvent::RagProgress(p));
         };
 
-        // 1. Gather sources: what's currently in the DB + their stored text.
-        let infos = match storage.db().rag_list_sources(profile_id) {
-            Ok(v) => v,
-            Err(err) => {
-                send(RagProgress::Failed(
-                    loc.tf("ui.err.rag_read_kb", &[("err", &err.to_string())]),
-                ));
-                return;
-            }
+        let Some((sources, missing)) = gather_rebuild_sources(&storage, profile_id, loc, &evt_tx)
+        else {
+            return;
         };
-        if infos.is_empty() {
-            send(RagProgress::Failed(loc.t("ui.err.rag_kb_empty").into()));
+        if !prepare_rebuild(&embedder, &storage, profile_id, loc, &evt_tx).await {
             return;
-        }
-        let stored: HashMap<String, String> = match storage.db().rag_stored_sources(profile_id) {
-            Ok(v) => v.into_iter().map(|s| (s.source, s.content)).collect(),
-            Err(err) => {
-                send(RagProgress::Failed(
-                    loc.tf("ui.err.rag_read_sources", &[("err", &err.to_string())]),
-                ));
-                return;
-            }
-        };
-
-        // 2. Resolve each source's content: stored text takes priority,
-        //    otherwise try reading the file by path (legacy data predating text storage).
-        let mut sources: Vec<(String, String)> = Vec::new();
-        let mut missing = 0usize;
-        for info in &infos {
-            if let Some(content) = stored.get(&info.source) {
-                sources.push((info.source.clone(), content.clone()));
-                continue;
-            }
-            let path = std::path::Path::new(&info.source);
-            if path.is_file()
-                && crate::features::rag_ingest::is_supported(path)
-                && let Ok(content) = read_source_text(path)
-            {
-                sources.push((info.source.clone(), content));
-            } else {
-                // The source isn't stored and there's no file — this source can't be recovered.
-                missing += 1;
-                tracing::warn!(source = %info.source, "RAG rebuild: source unavailable, skipping it");
-            }
-        }
-        if sources.is_empty() {
-            send(RagProgress::Failed(
-                loc.t("ui.err.rag_no_source_text").into(),
-            ));
-            return;
-        }
-
-        // 3. Embedder precheck and determining the new dimensionality.
-        let new_dim = match embedder
-            .embed(vec!["ping".into()], EmbedRole::Passage)
-            .await
-        {
-            Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
-            Err(err) => {
-                send(RagProgress::Failed(loc.tf(
-                    "ui.err.rag_embedder_unavailable",
-                    &[("err", &err.to_string())],
-                )));
-                return;
-            }
-        };
-        if new_dim == 0 {
-            send(RagProgress::Failed(loc.t("ui.err.rag_empty_vector").into()));
-            return;
-        }
-
-        // 4. If the dimensionality changed (a different embedding model), the
-        //    vectors table needs to be recreated — but it's shared across the
-        //    whole DB. If other profiles have documents, refuse (don't overwrite
-        //    someone else's data); otherwise reset it.
-        let current_dim = storage.db().rag_dimension().unwrap_or(None);
-        let dim_changed = matches!(current_dim, Some(d) if d != new_dim);
-        if dim_changed {
-            match storage.db().rag_other_profiles_have_docs(profile_id) {
-                Ok(true) => {
-                    send(RagProgress::Failed(loc.t("ui.err.rag_dim_conflict").into()));
-                    return;
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    send(RagProgress::Failed(loc.tf(
-                        "ui.err.rag_profiles_check",
-                        &[("err", &err.to_string())],
-                    )));
-                    return;
-                }
-            }
-        }
-
-        // 5. Drop the profile's previous chunks (sources are kept); on a
-        //    dimensionality change, additionally reset the vectors table (it's
-        //    recreated on the first insert).
-        if let Err(err) = storage.db().rag_delete_all_for_profile(profile_id) {
-            send(RagProgress::Failed(
-                loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
-            ));
-            return;
-        }
-        // From here on the base holds no chunks from a previous embedding model —
-        // every one that follows is written by the current one. So the "stale"
-        // mark is lifted here rather than at the end: it stays correct even if the
-        // rebuild is cancelled or some sources fail, since nothing old survives
-        // either way (see `embed_guard`).
-        if let Err(err) = storage.db().clear_rag_stale_profile(profile_id) {
-            tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
-        }
-        if dim_changed {
-            // The dimensionality is shared with the chat attachment index
-            // (`meta.rag_dim`), so its chunks go too — they were embedded by the
-            // old model and their vectors are dropped with the table. Derived
-            // data: re-attaching the file rebuilds it, and `attachment_read`
-            // (the guaranteed path) is unaffected. See spec §9.7.
-            match storage.db().reset_vectors() {
-                Ok(0) => {}
-                Ok(dropped) => tracing::warn!(
-                    dropped,
-                    "embedding dimensionality changed: the chat attachment index was dropped too"
-                ),
-                Err(err) => {
-                    send(RagProgress::Failed(loc.tf(
-                        "ui.err.rag_reset_vectors",
-                        &[("err", &err.to_string())],
-                    )));
-                    return;
-                }
-            }
         }
 
         let total = sources.len();
@@ -498,6 +373,172 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             cancelled: cancel.is_cancelled(),
         });
     });
+}
+
+/// Steps 1–2 of the rebuild: gathers the profile's sources and resolves each
+/// one's content. `None` — failed or nothing to rebuild, already reported via
+/// [`RagProgress`]. The second element is the number of unrecoverable sources
+/// (counted into the rebuild's errors).
+fn gather_rebuild_sources(
+    storage: &Arc<Storage>,
+    profile_id: Uuid,
+    loc: &'static Locale,
+    evt_tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
+) -> Option<(Vec<(String, String)>, usize)> {
+    let send = |p: RagProgress| {
+        let _ = evt_tx.send(AppEvent::RagProgress(p));
+    };
+
+    // 1. Gather sources: what's currently in the DB + their stored text.
+    let infos = match storage.db().rag_list_sources(profile_id) {
+        Ok(v) => v,
+        Err(err) => {
+            send(RagProgress::Failed(
+                loc.tf("ui.err.rag_read_kb", &[("err", &err.to_string())]),
+            ));
+            return None;
+        }
+    };
+    if infos.is_empty() {
+        send(RagProgress::Failed(loc.t("ui.err.rag_kb_empty").into()));
+        return None;
+    }
+    let stored: HashMap<String, String> = match storage.db().rag_stored_sources(profile_id) {
+        Ok(v) => v.into_iter().map(|s| (s.source, s.content)).collect(),
+        Err(err) => {
+            send(RagProgress::Failed(
+                loc.tf("ui.err.rag_read_sources", &[("err", &err.to_string())]),
+            ));
+            return None;
+        }
+    };
+
+    // 2. Resolve each source's content: stored text takes priority,
+    //    otherwise try reading the file by path (legacy data predating text storage).
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut missing = 0usize;
+    for info in &infos {
+        if let Some(content) = stored.get(&info.source) {
+            sources.push((info.source.clone(), content.clone()));
+            continue;
+        }
+        let path = std::path::Path::new(&info.source);
+        if path.is_file()
+            && crate::features::rag_ingest::is_supported(path)
+            && let Ok(content) = read_source_text(path)
+        {
+            sources.push((info.source.clone(), content));
+        } else {
+            // The source isn't stored and there's no file — this source can't be recovered.
+            missing += 1;
+            tracing::warn!(source = %info.source, "RAG rebuild: source unavailable, skipping it");
+        }
+    }
+    if sources.is_empty() {
+        send(RagProgress::Failed(
+            loc.t("ui.err.rag_no_source_text").into(),
+        ));
+        return None;
+    }
+    Some((sources, missing))
+}
+
+/// Steps 3–5 of the rebuild: the embedder precheck, the dimensionality-change
+/// guard (the vectors table is shared across the whole DB), and dropping the
+/// profile's previous chunks. `false` — failed, already reported via
+/// [`RagProgress`].
+async fn prepare_rebuild(
+    embedder: &Arc<dyn Embedder>,
+    storage: &Arc<Storage>,
+    profile_id: Uuid,
+    loc: &'static Locale,
+    evt_tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
+) -> bool {
+    let send = |p: RagProgress| {
+        let _ = evt_tx.send(AppEvent::RagProgress(p));
+    };
+
+    // 3. Embedder precheck and determining the new dimensionality.
+    let new_dim = match embedder
+        .embed(vec!["ping".into()], EmbedRole::Passage)
+        .await
+    {
+        Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
+        Err(err) => {
+            send(RagProgress::Failed(loc.tf(
+                "ui.err.rag_embedder_unavailable",
+                &[("err", &err.to_string())],
+            )));
+            return false;
+        }
+    };
+    if new_dim == 0 {
+        send(RagProgress::Failed(loc.t("ui.err.rag_empty_vector").into()));
+        return false;
+    }
+
+    // 4. If the dimensionality changed (a different embedding model), the
+    //    vectors table needs to be recreated — but it's shared across the
+    //    whole DB. If other profiles have documents, refuse (don't overwrite
+    //    someone else's data); otherwise reset it.
+    let current_dim = storage.db().rag_dimension().unwrap_or(None);
+    let dim_changed = matches!(current_dim, Some(d) if d != new_dim);
+    if dim_changed {
+        match storage.db().rag_other_profiles_have_docs(profile_id) {
+            Ok(true) => {
+                send(RagProgress::Failed(loc.t("ui.err.rag_dim_conflict").into()));
+                return false;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                send(RagProgress::Failed(loc.tf(
+                    "ui.err.rag_profiles_check",
+                    &[("err", &err.to_string())],
+                )));
+                return false;
+            }
+        }
+    }
+
+    // 5. Drop the profile's previous chunks (sources are kept); on a
+    //    dimensionality change, additionally reset the vectors table (it's
+    //    recreated on the first insert).
+    if let Err(err) = storage.db().rag_delete_all_for_profile(profile_id) {
+        send(RagProgress::Failed(
+            loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
+        ));
+        return false;
+    }
+    // From here on the base holds no chunks from a previous embedding model —
+    // every one that follows is written by the current one. So the "stale"
+    // mark is lifted here rather than at the end: it stays correct even if the
+    // rebuild is cancelled or some sources fail, since nothing old survives
+    // either way (see `embed_guard`).
+    if let Err(err) = storage.db().clear_rag_stale_profile(profile_id) {
+        tracing::warn!(error = %err, "failed to clear the stale knowledge-base mark");
+    }
+    if dim_changed {
+        // The dimensionality is shared with the chat attachment index
+        // (`meta.rag_dim`), so its chunks go too — they were embedded by the
+        // old model and their vectors are dropped with the table. Derived
+        // data: re-attaching the file rebuilds it, and `attachment_read`
+        // (the guaranteed path) is unaffected. See spec §9.7.
+        match storage.db().reset_vectors() {
+            Ok(0) => {}
+            Ok(dropped) => tracing::warn!(
+                dropped,
+                "embedding dimensionality changed: the chat attachment index was dropped too"
+            ),
+            Err(err) => {
+                send(RagProgress::Failed(loc.tf(
+                    "ui.err.rag_reset_vectors",
+                    &[("err", &err.to_string())],
+                )));
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Reads a source for indexing, extracting plain text by format:

@@ -800,7 +800,39 @@ pub(super) fn render_field_line(
     selected: bool,
     palette: &Palette,
 ) -> Line<'static> {
-    let (value, value_style) = match &f.kind {
+    let (value, value_style) = field_value_and_style(f, palette);
+    let (value, vw) = truncate_to_width(&value, value_w.max(1));
+    // Pad the label with spaces up to the column width by real width in columns
+    // (Rust `{:<N}` counts characters, not columns — for CJK/emoji that drifts).
+    let pad = label_col.saturating_sub(label_width(&f.label));
+    let marker = row_marker(selected, modified, palette);
+    let mut spans = vec![
+        marker,
+        Span::styled(f.label.clone(), palette.muted_style()),
+        Span::raw(" ".repeat(pad + 1)),
+        Span::styled(value, value_style),
+    ];
+    // An inline hint (the tool's description) right of the value — in the remaining width.
+    if let Some(hint) = f.hint {
+        let remaining = value_w.saturating_sub(vw + 2);
+        if remaining >= 2 {
+            let (h, _) = truncate_to_width(hint, remaining);
+            let style = if f.warn {
+                Style::new().fg(palette.warning)
+            } else {
+                palette.muted_style()
+            };
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(h, style));
+        }
+    }
+    Line::from(spans)
+}
+
+/// A field's displayed value and its style, by kind (the color coding described
+/// on [`render_field_line`]).
+fn field_value_and_style(f: &FieldRow, palette: &Palette) -> (String, Style) {
+    match &f.kind {
         FieldKind::Toggle(on) => {
             // Gate: a tool enabled in the profile but disabled globally — in
             // warning color (it has no effect), not green.
@@ -828,44 +860,23 @@ pub(super) fn render_field_line(
             };
             (v.clone(), style)
         }
-    };
-    let (value, vw) = truncate_to_width(&value, value_w.max(1));
-    // Pad the label with spaces up to the column width by real width in columns
-    // (Rust `{:<N}` counts characters, not columns — for CJK/emoji that drifts).
-    let pad = label_col.saturating_sub(label_width(&f.label));
+    }
+}
+
+/// A field row's 2-cell left marker.
+fn row_marker(selected: bool, modified: bool, palette: &Palette) -> Span<'static> {
     // The left column (2 cells), fixed — fields look indented under the
     // group header. The selected field gets a green rail `▌` (like the active section
     // in the left menu); otherwise a "modified vs. default" marker `•`, otherwise
     // empty. The rail on the selected row takes priority over the marker (the field
     // is in focus anyway; step away and `•` returns).
-    let marker = if selected {
+    if selected {
         Span::styled("▌ ", Style::new().fg(palette.success))
     } else if modified {
         Span::styled("• ", Style::new().fg(palette.accent))
     } else {
         Span::raw("  ")
-    };
-    let mut spans = vec![
-        marker,
-        Span::styled(f.label.clone(), palette.muted_style()),
-        Span::raw(" ".repeat(pad + 1)),
-        Span::styled(value, value_style),
-    ];
-    // An inline hint (the tool's description) right of the value — in the remaining width.
-    if let Some(hint) = f.hint {
-        let remaining = value_w.saturating_sub(vw + 2);
-        if remaining >= 2 {
-            let (h, _) = truncate_to_width(hint, remaining);
-            let style = if f.warn {
-                Style::new().fg(palette.warning)
-            } else {
-                palette.muted_style()
-            };
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(h, style));
-        }
     }
-    Line::from(spans)
 }
 
 /// Truncates a string to `max` columns, adding "…" (WGL4-safe). Returns the
@@ -1258,31 +1269,11 @@ pub(super) fn parse_args(s: &str) -> Vec<String> {
             }
             '"' => {
                 started = true;
-                while let Some(c) = chars.next() {
-                    match c {
-                        '"' => break,
-                        '\\' => match chars.next() {
-                            // Only the two characters `join_args` escapes; any
-                            // other backslash stays literal (Windows paths).
-                            Some(n @ ('\\' | '"')) => cur.push(n),
-                            Some(n) => {
-                                cur.push('\\');
-                                cur.push(n);
-                            }
-                            None => cur.push('\\'),
-                        },
-                        c => cur.push(c),
-                    }
-                }
+                read_double_quoted(&mut chars, &mut cur);
             }
             '\'' => {
                 started = true;
-                for c in chars.by_ref() {
-                    if c == '\'' {
-                        break;
-                    }
-                    cur.push(c);
-                }
+                read_single_quoted(&mut chars, &mut cur);
             }
             c => {
                 started = true;
@@ -1294,6 +1285,37 @@ pub(super) fn parse_args(s: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Reads a `"…"` run (opening quote already consumed) into `cur`, undoing the
+/// `\\`/`\"` escapes [`join_args`] produces.
+fn read_double_quoted(chars: &mut impl Iterator<Item = char>, cur: &mut String) {
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.next() {
+                // Only the two characters `join_args` escapes; any
+                // other backslash stays literal (Windows paths).
+                Some(n @ ('\\' | '"')) => cur.push(n),
+                Some(n) => {
+                    cur.push('\\');
+                    cur.push(n);
+                }
+                None => cur.push('\\'),
+            },
+            c => cur.push(c),
+        }
+    }
+}
+
+/// Reads a `'…'` run (opening quote already consumed) into `cur`, literally.
+fn read_single_quoted(chars: &mut impl Iterator<Item = char>, cur: &mut String) {
+    for c in chars {
+        if c == '\'' {
+            break;
+        }
+        cur.push(c);
+    }
 }
 
 /// An MCP server's `env` map as text: `CHILD=SOURCE, CHILD2=SOURCE2`. Both

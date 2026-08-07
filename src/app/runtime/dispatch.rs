@@ -3,6 +3,13 @@
 
 use super::*;
 
+use crate::entities::profile::Profile;
+use crate::entities::self_model::SelfModel;
+use crate::features::chat_search::SearchGroup;
+use crate::features::tools::mcp::McpSnapshot;
+use crate::shared::config::AppConfig;
+use crate::shared::secrets::SecretKey;
+
 /// Applies an orchestrator event to the chat screen (a read-only projection).
 /// A settings snapshot, when the settings screen is open, additionally
 /// refreshes its working copy (reflects profile creation/deletion).
@@ -52,24 +59,10 @@ pub(super) fn apply_event(
             query,
             groups,
             total,
-        } => match active {
-            ActiveScreen::Search(search) => search.set_results(query, groups, total),
-            _ => {
-                *active = ActiveScreen::Search(Box::new(SearchScreen::new(
-                    query,
-                    groups,
-                    total,
-                    screen.palette(),
-                    screen.loc(),
-                )))
-            }
-        },
+        } => show_message_search_results(screen, active, query, groups, total),
         // A list-operation error: into its status area, if the screen is open; otherwise
         // (a late auto-title reply after the list is closed) — as a note in the feed.
-        AppEvent::ChatListError(message) => match active {
-            ActiveScreen::ChatList(list) => list.set_error(message),
-            _ => screen.push_error(&message),
-        },
+        AppEvent::ChatListError(message) => report_chat_list_error(screen, active, message),
         // Writing to the clipboard is a UI-layer side effect; the write itself and
         // routing the confirmation/error are factored into `deliver_clipboard`
         // (`apply_event` doesn't know about `arboard`).
@@ -82,20 +75,14 @@ pub(super) fn apply_event(
             mcp,
             secrets_present,
         } => {
-            match active {
-                ActiveScreen::Settings(settings) => {
-                    settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
-                    settings.set_mcp(mcp.clone());
-                    settings.set_secrets_present(secrets_present.clone());
-                }
-                // The theme/compatibility mode/UI language may have changed — refresh the
-                // palette and locale of open overlay screens (list/self-model) in one broadcast.
-                other => other.set_theme(
-                    Palette::for_theme(config.interface.theme)
-                        .with_compat(config.interface.terminal_compat),
-                    crate::shared::i18n::locale(config.interface.language),
-                ),
-            }
+            refresh_settings_screens(
+                active,
+                &config,
+                &profiles,
+                &language_locked,
+                &mcp,
+                &secrets_present,
+            );
             screen.set_settings(*config, profiles, language_locked, mcp, secrets_present);
         }
         // Always applied to the chat screen (like `ChatList`): the names must be
@@ -109,31 +96,8 @@ pub(super) fn apply_event(
             feed_view,
             focus,
         } => {
-            // THE clearing funnel for the search back-stack. Every route that
-            // opens a chat — picking one in the list, `Ctrl+N`, a clone, a jump
-            // from a hit, restoring the last chat at startup — ends here, so
-            // this is the one place that can honestly say the results are no
-            // longer where the user came from. Enumerating the routes by hand
-            // instead would rot silently the moment a new one is added.
-            //
-            // The test is "a *different* chat": a re-activation of the same one
-            // (regeneration, deleting an exchange, a repeat jump) rebuilds the
-            // feed without leaving the chat, and must keep the way back.
-            if back.as_ref().is_some_and(|ret| ret.chat != id) {
-                *back = None;
-            }
-            if let ActiveScreen::ChatList(list) = active {
-                if list.take_pending_new_chat() {
-                    // Activation of a just-created chat arrived (`Ctrl+N` in
-                    // the list) — close the list and show the new chat. This makes
-                    // the old→new transition atomic, with no intermediate flash.
-                    *active = ActiveScreen::Chat;
-                } else {
-                    // Deleting the active chat while the list is open changes the active one —
-                    // refresh its marker in the list.
-                    list.set_active(Some(id));
-                }
-            }
+            clear_search_return_if_left(back, id);
+            close_or_mark_chat_list(active, id);
             screen.activate_chat(id, title, &messages, &draft, feed_view, focus);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
@@ -190,24 +154,7 @@ pub(super) fn apply_event(
         AppEvent::Attachments(items) => screen.set_attachments(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
-        // Deliberately exhaustive by variant rather than a `_` catch-all: this
-        // arm *replaces* the active screen, so a new screen that forgot about
-        // it would be silently stolen by an unrelated late event
-        // (docs/history/chat-search-stage2.md §1.6). Every future variant has to say
-        // whether it may be replaced.
-        AppEvent::SelfModelView(model) => match active {
-            ActiveScreen::SelfModel(view) => view.set_model(*model),
-            // A results list the user is reading must not be swapped out from
-            // under them by a stale reply to a request they have left behind.
-            ActiveScreen::Search(_) => {}
-            ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
-                *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
-                    *model,
-                    screen.palette(),
-                    screen.loc(),
-                )))
-            }
-        },
+        AppEvent::SelfModelView(model) => show_self_model(screen, active, *model),
         // The "self-model" changed in the background/via tools — refresh ONLY the open
         // `F3` screen (re-request a fresh snapshot); ignored when closed.
         AppEvent::SelfModelChanged => {
@@ -216,11 +163,7 @@ pub(super) fn apply_event(
             }
         }
         AppEvent::TtsActive(on) => screen.set_speaking(on),
-        AppEvent::BackgroundTask { kind, active: on } => match kind {
-            BackgroundKind::Reflection => screen.set_reflecting(on),
-            BackgroundKind::Consolidation => screen.set_consolidating(on),
-            BackgroundKind::SelfConsolidation => screen.set_self_consolidating(on),
-        },
+        AppEvent::BackgroundTask { kind, active: on } => apply_background_task(screen, kind, on),
         // The import runs from the settings screen and its outcome is shown
         // there, on the import row itself — a note in the feed would sit behind
         // the screen the user is standing on.
@@ -230,6 +173,135 @@ pub(super) fn apply_event(
             }
         }
         AppEvent::Error(message) => screen.push_error(&message),
+    }
+}
+
+/// The `MessageSearchResults` arm of [`apply_event`]: refreshes an open results
+/// screen in place, or opens a new one on the reply.
+fn show_message_search_results(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    query: String,
+    groups: Vec<SearchGroup>,
+    total: usize,
+) {
+    match active {
+        ActiveScreen::Search(search) => search.set_results(query, groups, total),
+        _ => {
+            *active = ActiveScreen::Search(Box::new(SearchScreen::new(
+                query,
+                groups,
+                total,
+                screen.palette(),
+                screen.loc(),
+            )))
+        }
+    }
+}
+
+/// The `ChatListError` arm of [`apply_event`]: routes a list-operation error
+/// into the open list's status area, or as a note in the feed.
+fn report_chat_list_error(screen: &mut ChatScreen, active: &mut ActiveScreen, message: String) {
+    match active {
+        ActiveScreen::ChatList(list) => list.set_error(message),
+        _ => screen.push_error(&message),
+    }
+}
+
+/// The screen-refresh half of the `Settings` arm of [`apply_event`]: an open
+/// settings screen gets the fresh working copy; other overlay screens get the
+/// theme/locale broadcast. The chat's own snapshot is updated by the caller
+/// (`set_settings` consumes the event's values).
+fn refresh_settings_screens(
+    active: &mut ActiveScreen,
+    config: &AppConfig,
+    profiles: &[Profile],
+    language_locked: &[Uuid],
+    mcp: &McpSnapshot,
+    secrets_present: &[SecretKey],
+) {
+    match active {
+        ActiveScreen::Settings(settings) => {
+            settings.refresh(config.clone(), profiles.to_vec(), language_locked.to_vec());
+            settings.set_mcp(mcp.clone());
+            settings.set_secrets_present(secrets_present.to_vec());
+        }
+        // The theme/compatibility mode/UI language may have changed — refresh the
+        // palette and locale of open overlay screens (list/self-model) in one broadcast.
+        other => other.set_theme(
+            Palette::for_theme(config.interface.theme)
+                .with_compat(config.interface.terminal_compat),
+            crate::shared::i18n::locale(config.interface.language),
+        ),
+    }
+}
+
+/// Drops the search back-stack when a chat activation means the user left the
+/// chat the results led to (see [`SearchReturn`]).
+fn clear_search_return_if_left(back: &mut Option<SearchReturn>, id: Uuid) {
+    // THE clearing funnel for the search back-stack. Every route that
+    // opens a chat — picking one in the list, `Ctrl+N`, a clone, a jump
+    // from a hit, restoring the last chat at startup — ends here, so
+    // this is the one place that can honestly say the results are no
+    // longer where the user came from. Enumerating the routes by hand
+    // instead would rot silently the moment a new one is added.
+    //
+    // The test is "a *different* chat": a re-activation of the same one
+    // (regeneration, deleting an exchange, a repeat jump) rebuilds the
+    // feed without leaving the chat, and must keep the way back.
+    if back.as_ref().is_some_and(|ret| ret.chat != id) {
+        *back = None;
+    }
+}
+
+/// The open chat list's reaction to a chat activation: close it for a
+/// just-created chat (`Ctrl+N` in the list), otherwise refresh its
+/// active-chat marker.
+fn close_or_mark_chat_list(active: &mut ActiveScreen, id: Uuid) {
+    if let ActiveScreen::ChatList(list) = active {
+        if list.take_pending_new_chat() {
+            // Activation of a just-created chat arrived (`Ctrl+N` in
+            // the list) — close the list and show the new chat. This makes
+            // the old→new transition atomic, with no intermediate flash.
+            *active = ActiveScreen::Chat;
+        } else {
+            // Deleting the active chat while the list is open changes the active one —
+            // refresh its marker in the list.
+            list.set_active(Some(id));
+        }
+    }
+}
+
+/// The `SelfModelView` arm of [`apply_event`]: opens the `F3` screen or
+/// refreshes the already-open one in place.
+fn show_self_model(screen: &mut ChatScreen, active: &mut ActiveScreen, model: Option<SelfModel>) {
+    // Deliberately exhaustive by variant rather than a `_` catch-all: this
+    // match *replaces* the active screen, so a new screen that forgot about
+    // it would be silently stolen by an unrelated late event
+    // (docs/history/chat-search-stage2.md §1.6). Every future variant has to say
+    // whether it may be replaced.
+    match active {
+        ActiveScreen::SelfModel(view) => view.set_model(model),
+        // A results list the user is reading must not be swapped out from
+        // under them by a stale reply to a request they have left behind.
+        ActiveScreen::Search(_) => {}
+        ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
+            *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+                model,
+                screen.palette(),
+                screen.loc(),
+            )))
+        }
+    }
+}
+
+/// The `BackgroundTask` arm of [`apply_event`]: routes the activity flag to the
+/// matching status-bar indicator.
+fn apply_background_task(screen: &mut ChatScreen, kind: BackgroundKind, on: bool) {
+    match kind {
+        BackgroundKind::Reflection => screen.set_reflecting(on),
+        BackgroundKind::Consolidation => screen.set_consolidating(on),
+        BackgroundKind::SelfConsolidation => screen.set_self_consolidating(on),
     }
 }
 

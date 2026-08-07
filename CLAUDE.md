@@ -12334,6 +12334,269 @@ three findings are invisible from the workflow's own status):
   test fixtures only; `Storage::open_in_memory` is `#[cfg(test)]`. No CHANGELOG
   entry — internal tests (§4).
 
+### Post-M9: SonarQube backlog — triage + stage 1 (Python tools) (done)
+
+- **The 114-issue initial-analysis backlog was triaged** (user decisions
+  2026-08-06): the ~49 `rust:S2208` wildcard-import issues are the **documented
+  `use super::*` convention** from the god-object split playbook
+  (docs/history/refactoring-god-objects.md, architecture.md §3) — **Accepted in
+  Sonar**, not "fixed"; the ~61 `S3776` cognitive-complexity issues are
+  **triaged**: refactor the genuinely tangled functions, Accept the deliberate
+  table/parser shapes. Staged as one bookkeeping pass + four fix PRs
+  (Python tools → UI screens/widgets → runtime/shared → orchestrator/tools).
+- **Stage 0 — Sonar bookkeeping, no code** (57 status changes via the MCP):
+  49 × S2208 Accepted; `python:S5332` (link_check.py:49) **False Positive** —
+  the flagged `http://` is the `SKIP_SCHEME` tuple used to *skip* external
+  links, not a request; 7 deliberate-shape S3776 Accepted with rationale —
+  `settings/spec.rs::field_spec` (147 — the single-source-of-truth access
+  table, SOLID stage 3.2; splitting it recreates the four scattered matches it
+  replaced), `markdown/latex.rs` ×4 (63/37/25/25 — converter tables),
+  `calc.rs::tokenize` (31 — the recursive-descent evaluator),
+  `wrap.rs::wrap_ranges` (29 — the hot-path width algorithm). **57 open
+  issues remain** (48 Rust S3776 + 9 Python), which is what stages 1–4 burn
+  down.
+- **Stage 1 — `fix/sonar-python-tools`** (this entry's branch). The one real
+  defect: `link_check.py`'s `CODE_SPAN` regex `` (`+)[^`]*?\1 `` is
+  super-linear (S8786 — the greedy opener + backreference retries every
+  opener length at every position). Replaced with a **linear manual scanner**
+  (`blank_code_spans` + `_close_run`: an opening run of k backticks closes at
+  the next run of ≥ k, an unclosed run stays literal). **Parity measured, not
+  assumed**: over the whole 40k-line markdown corpus the 328 line-level
+  diffs are all bare ``` fence lines (handled by the fence branch *before*
+  spans, so unreachable) or inline mentions of triple-backtick fences, where
+  the new behaviour is closer to CommonMark — and the tool's verdict on the
+  repo is unchanged (clean).
+- **Eight Python complexity refactors, all pure extractions** (dev scripts;
+  behaviour pinned by offline probes rather than eyeballing):
+  `cyrillic_scan.py::print_fmt_spans` (36) → per-state steps
+  (`_find_macro`/`_open_quote`/`_close_literal` — a step returning `None` for
+  the position ends the line, the returned state carries over);
+  `cyrillic_scan.py::main` (40) → `scan_file`/`_line_flagged`/`report`;
+  `e2e_hf.py::cmd_run` (41) → `Plan`/`print_plan`/`dry_run`/
+  `create_endpoints`/`bring_up_all`; `cmd_sweep` (16) → `sweep_verdict` (the
+  fail-safe "unknown createdAt → keep" reasoning moved into its docstring);
+  `hf_api.py::cleanup` (20) → `_keep_endpoints`/`_verify_deletions` (the
+  "a name leaves CREATED only once proven gone" invariant untouched — the
+  verifier mutates, never rebinds); `hf_probe.py::cmd_doctor` (35) →
+  `_granted_permissions`/`_report_fine_grained`/`_print_403_advice`;
+  `probe_chat` (20) → `_check_tool_calling`/`_check_streaming`; `cmd_run`
+  (30) → `_run_embed_only`/`_create_and_probe_embed`.
+- **Verification** (the HF scripts have no offline entry beyond argparse, so
+  the extracted pure parts were probed directly): `py_compile` on all five
+  files; every `--help` path; `scan_file` against 11 cases including the
+  cross-line print-macro tracker, the value-argument exemption and the
+  `cyrillic-ok` markers; `blank_code_spans` against 7 cases plus the
+  pathological 5000-backtick input the old regex choked on; `sweep_verdict`
+  against 6 cases including both fail-safe unknowns and the
+  fractional-second timestamp; full repo runs of `link_check` and
+  `cyrillic_scan` — both still clean. **1835 unit tests green** (no Rust
+  touched), clippy `-D warnings`/fmt clean. **No live run required**
+  (AGENTS.md §3): dev tooling — no engine, memory or tool path. No CHANGELOG
+  entry — internal tooling (§4).
+
+### Post-M9: SonarQube backlog — stage 2 (UI screens and widgets) (done)
+
+- **Stage 2 of the backlog burn-down** (`refactor/sonar-ui`, stacked on stage 1
+  — every stage adds a journal entry here, so independent branches would
+  conflict; the linear-stack precedent from the installers track). Seventeen
+  `rust:S3776` functions across the UI layer reduced below the threshold by
+  **mechanical, behavior-preserving helper extraction** — and, notably, **none
+  needed an Accept**: unlike `field_spec` or the LaTeX tables, every one of
+  these had natural seams (a popup branch, a render section, a per-arm body).
+  Delegated to three parallel subagents over disjoint file clusters, each with
+  the constraints spelled out (extraction only, comments travel with the code,
+  tests must pass unedited, no tree copies — the poisoned-`target/` lesson).
+- **Chat screens + self-model** (4): `chat/input.rs::handle_key` (**62**, the
+  worst offender of the whole backlog) split into a modal router, the
+  Ctrl-shortcut ladder, the plain-key match and per-slash-command helpers —
+  routing order preserved (the tool-confirmation popup stays checked before
+  the generation gate); `chat/render.rs::render` (24) → input-area/overlay
+  helpers; `chat/rag.rs::set_rag_progress` (21) → per-arm helpers;
+  `self_model.rs::render` (20) → row-expansion/row-drawing/editor-popup.
+- **Settings screens** (6): `render_fields` (**47**) → `desc_panel_height`/
+  `render_fields_header`/`build_field_items`/`render_desc_panel`/
+  `group_toggle_counts`; `render` (18) → `footer_hints`/`render_editor_popup`;
+  `handle_key_inner` (24) → `is_quit_key` + `plugins_list_key`/
+  `profiles_list_key` (returning `Option<Option<_>>` — "consumed?" × result,
+  because the originals' `_ => {}` arms fall through to the rest of the
+  dispatcher) + `navigation_key`; `handle_fields_key` (18) → `field_enter`;
+  `helpers::render_field_line` (25) → `field_value_and_style`/`row_marker`;
+  `helpers::parse_args` (26) → `read_double_quoted`/`read_single_quoted`
+  (taking `&mut impl Iterator<Item = char>`, so the tokenizer state machine is
+  untouched).
+- **Widgets** (7): `message_feed::from_messages` (21) → `merge_round`;
+  `build_lines` (20) → `refresh_cached_block`/`highlight_block_tail` (the
+  `CachedBlock` invariants moved verbatim); `highlight_line` (19) →
+  `span_cut_points`; `status_bar::lines` (26) → `state_spans`/
+  `token_counter_span`/`hotkey_list`; `status_bar::right_grid` (25) —
+  triaged rather than assumed: the *algorithm* (`grid_layout`) was already its
+  own under-threshold function, so the renderer split cleanly along
+  row-lead/cell seams (`push_row_lead`/`push_hotkey_cell`) and no Accept was
+  needed; `chat_list::on_key_search` (28) → `on_ctrl_search`/`open_selected`/
+  `select_down`/`start_rename`; `input_box::on_key` (17) →
+  `on_ctrl_shortcut`/`on_edit_key` (mutator calls moved untouched, so the
+  `touch()`/`record_undo` sequencing is byte-identical).
+- **No test was edited anywhere** — the 1835-test suite is the safety net the
+  whole stage leans on, and it stayed green as-is: **1835 passed / 0 failed**,
+  76 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+  **No live run required** (AGENTS.md §3): pure UI refactor — no engine,
+  memory, tool or provider path is touched (the precedent set by the whole
+  settings-redesign track). No CHANGELOG entry — internal refactor (§4).
+
+### Post-M9: SonarQube backlog — stage 3 (runtime and shared) (done)
+
+- **Stage 3** (`refactor/sonar-runtime-shared`, stacked on stage 2). Twelve
+  `rust:S3776` functions across `app/runtime`, `shared`, `entities`,
+  `features/spellcheck` and `main.rs` — again **all closed by extraction, none
+  by Accept**: the three flagged going in as "may be inherent" (the raw-HTML
+  state machine, both cloud wire translations) each turned out to have a seam
+  the existing structure had already drawn.
+- **Runtime** (2 agents in parallel over disjoint files, as in stage 2):
+  `run_loop` (**46**) → `spellcheck_upkeep`/`spinner_frame_needed`/
+  `draw_frame`/`handle_input_tick` — tick ordering and the `dirty` semantics
+  untouched, the load-bearing comments (synchronized output, full-redraw
+  triggers, paste batching) traveling with their code; `apply_event` (29) →
+  seven arm-body helpers, the match itself staying the dispatcher;
+  `process_input_batch` (17) → `handle_key_event`.
+- **Shared**: `markdown/html.rs::html_block_to_lines` (28) → `apply_tag` — the
+  split follows the seam the `DROPPED_ELEMENTS`/`LINE_BREAKING`/
+  `WORD_SEPARATING` tables already drew, so the scanner itself (indices,
+  quotes, comments, the unterminated-`<` fallback) stays one piece;
+  `i18n.rs::dotted_literals_in_src` (22 — a *test-module* gate scanner, the
+  runtime fallback chain untouched) → nested fns lifted + `key_run`;
+  `theme.rs::hotkey_grid` (20) → `grid_col_widths`/`grid_cols`/`grid_keycap`;
+  `mcp.rs::read_loop` (18) → `deliver_reply`/`answer_server_request`;
+  `gemini/wire.rs::thinking_config` (22) → `gemini3_level`/`gemini25_budget` —
+  extracted rather than Accepted because the per-generation split is exactly
+  the seam and all three thinking-config tests pin it (both 2.5-Pro clamps
+  included); `responses/wire.rs::build_input` (17) → `push_assistant_items`,
+  pinned by the reasoning-item-ordering tests.
+- **The rest**: `dict.rs::load_dir` (19) → `load_entry`;
+  `entities/self_model.rs::apply_edit` (19) → `assign_trimmed`/`assign_list`/
+  `set_goal_text`/`clear_all` (now essentially the dispatch);
+  `main.rs::apply_env_overrides` (16) → `apply_engine_env`/`apply_embed_env`.
+- **No test edited**: **1835 passed / 0 failed**, 76 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean. **No live run
+  required** (AGENTS.md §3): the two wire-file extractions are
+  byte-identical request-shape moves pinned by their own wire unit tests, and
+  the cloud protocols additionally ride the `MINDFORK_GEMINI_KEY`/
+  `MINDFORK_OPENAI_KEY` smokes outside CI; nothing else touches an engine,
+  memory or tool path. No CHANGELOG entry — internal refactor (§4).
+
+### Post-M9: SonarQube backlog — stage 4 (orchestrator and tools) (done)
+
+- **The final code stage** (`refactor/sonar-orchestrator-tools`, stacked on
+  stage 3): nineteen `rust:S3776` functions on the engine/memory/tool paths —
+  the most concurrency-critical part of the backlog, so the brief to both
+  subagents was "fewer, larger, verbatim-moved helpers" with the invariants
+  named up front. Again **all closed by extraction, none by Accept** — across
+  the whole triage, the only functions whose complexity proved genuinely
+  inherent were the seven identified up front in stage 0.
+- **Orchestrator** (8): `generation.rs::spawn_generation` (**50**, the
+  agentic loop) — the per-turn state moved into a private `TurnLoop` struct
+  whose methods carry the loop verbatim (`run` / `tool_round` /
+  `execute_call` / `resolve_call_result`, following the module's existing
+  parameter-struct pattern — `GenSpawn`, `ConfirmGate`); channel order,
+  effect timing, the confirmation round-trip, control-tool recognition,
+  `sync_attachments` mirroring and the thinking-signature accumulation all
+  moved unchanged. `tool_loop.rs::run_rounds` (19) → `read_round`/
+  `invoke_allowed`; `tts.rs` ×3 (18/18/22) → `append_pieces`/
+  `split_giant_word`/`synth_chunk` (the synthesize-ahead pipeline and
+  pause/cancel semantics verbatim); `rag.rs::spawn_rag_rebuild` (26) — split
+  along its own numbered phases into `gather_rebuild_sources`/
+  `prepare_rebuild`; `reembed.rs::drain_store` (16) → `write_batch`, with
+  both loop guards and the vector-then-stamp ordering staying where they
+  were; `search.rs::reconcile` (17) → `reconcile_file` (the hidden-chat
+  rationale comment traveling whole).
+- **Tools/features** (11): `web.rs` ×2 (20/21 — provider order, throttling
+  detection and best-effort degradation verbatim), `youtube.rs` (16),
+  `self_model.rs` ×2 (**40**/22 — the atomic `self_model_update` closures now
+  call helpers from *inside* the closure, so the atomicity boundary is
+  untouched), `rag.rs` ×3 (20/23/22 — the chunk/stitch algorithms had natural
+  seams after all), `notes/recall.rs` (21), `notes/self_notes.rs` (29),
+  `mcp_import.rs` (18).
+- **No test edited**: **1835 passed / 0 failed**, 76 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean — the exact
+  pre-change baseline. **Live run — GO** (AGENTS.md §3): this stage touches
+  the agentic loop and every tool path, and the LAN stack was unreachable at
+  implementation time (both `192.168.1.20` servers timing out) — so the gate
+  ran through the **remote HF runner** (`tools/e2e_hf.py run`, the exact
+  scenario it was built for): Gemma 4 31B q4_0 on nvidia-l40s + bge-m3 and
+  the alternate e5 embedder on T4s, llama.cpp `server-cuda`. **76 passed /
+  0 failed** — the *entire* `#[ignore]` suite, not just the orchestrator
+  e2e set: memory/self-model/notes/graph/cross-organ links/RAG/attachments/
+  control tools/tool confirmation/MCP (a real `npx server-filesystem`,
+  14 tools)/i18n/web/fetch, plus the four model-change smokes on the
+  alternate embedder. Ready in 139 s, suite 1151 s, total 1290 s; all three
+  endpoints deleted and verified gone, `list` empty.
+- **With this stage the backlog burn-down is code-complete**: 57 open issues
+  at the end of stage 0 → 0 expected after the four stage merges re-analyze
+  on `main` (48 Rust + 9 Python fixed across stages 1–4).
+
+### Post-M9: the quality gate stopped judging new-code coverage (done)
+
+- **Found by the four backlog PRs meeting the blocking gate** — the first time
+  the decision "make the gate blocking" (2026-08-05) met a pure refactor of
+  legacy code. Three of the four failed, and the shape of the failure is the
+  whole story: **zero new issues on all four**, ratings A, duplication 0%, and
+  the *only* failing condition `new_coverage ≥ 80` — #269 at 0.0%, #271 at
+  66.2%, #272 at 72.5%, with #270 passing at 96.1%. Analysis read through the
+  SonarQube MCP server (registered in the user-scope Claude Code config this
+  session) plus the REST API for the per-file breakdown the MCP tools do not
+  expose.
+- **Not a coverage regression, and that was measured rather than argued.**
+  Overall project coverage: `main` 85.2%, the four PRs 85.2 / 85.3 / 85.2 /
+  85.2. What changed is the *ledger*: extraction rewrites lines, so branches
+  that had been uncovered for a long time stop being "old code" and start
+  counting against the gate. Cross-checked against the repo's own `lcov.info`
+  baseline, taken from `main` **before** these branches, and it matches file by
+  file — `app/runtime/mod.rs` 29.6% on main → 63 of 63 new lines uncovered,
+  `main.rs` 8.4% → 6 of 6, `orchestrator/tool_loop.rs` 26.7% → 27 of 27,
+  `runtime/input.rs` 52.9% → 19 of 19.
+- **The concentration is not a coincidence**: high cognitive complexity lives
+  exactly where unit tests cannot reach — the TUI loop (needs a real terminal),
+  the network/audio/cloud paths, the background tasks. Refactoring the most
+  complex function in a file preferentially rewrites its *uncovered* half. And
+  the percentage understates reality for those files: `web.rs`, `tts.rs`,
+  `youtube.rs`, `tool_loop.rs` **are** tested — by the 76 `#[ignore]` live
+  smokes (stage 4 ran 76/76 on the remote HF runner), which `cargo llvm-cov`
+  does not execute. "Uncovered" there means "covered only by the live gate".
+- **The fork that decided the design: `sonar.qualitygate.wait=true` does two
+  jobs**, and the journal records the *second* as the reason it was enabled —
+  it waits for server-side processing, which is what caught the report the
+  server later rejected over the LOC quota while the job stayed green. So the
+  obvious response ("make the gate non-blocking") would have thrown that away
+  as collateral, since one flag carries both meanings. Four options were
+  weighed: `wait=false` (loses the upload check), `continue-on-error` on the
+  job (loses it too, and leaves a verdict that is visible but unread), coverage
+  exclusions on `src` (inflates the number and hides real gaps in Rust code
+  that *is* testable), and a custom gate.
+- **Decision (user, 2026-08-06): a custom gate, blocking kept.** The built-in
+  `Sonar way` cannot be edited (`isBuiltIn=true`; the organization has only the
+  two built-ins), so the applied gate is now **"Sonar way without new-code
+  coverage"** — its five other conditions, verified read-back to be identical
+  to the source. The reasoning is marginal value: `clippy -D warnings`, 1835
+  tests, `cyrillic_scan`, `link_check` and `cargo deny` already block, and what
+  Sonar adds on top is cognitive complexity, security hotspots and duplication
+  — which is what produced the 114-issue backlog and still blocks. Coverage is
+  a metric the project already measures, stable at 85.2% and printed on every
+  PR; blocking on it in a codebase with a deliberately untestable core was
+  blocking on an accounting artifact.
+- **The cost is stated rather than glossed** (in `sonar-project.properties` and
+  the roadmap): a genuinely untested new feature can now pass the gate. What
+  remains against that is the reported number and AGENTS.md §3.
+- **`sonar.coverage.exclusions=tools/**` — done for measurement honesty, not
+  for the gate** (which no longer judges coverage). The Rust-only lcov report
+  cannot cover Python, so ~1240 lines of dev scripts sat in the denominator as
+  100% uncovered, dragging the reported figure down for files that have no test
+  harness by design. Coverage-only: they stay in `sonar.sources` and keep being
+  analyzed for issues, so stage 1's nine Python findings are unaffected.
+- **No CHANGELOG entry** — dev infrastructure with no user-visible effect
+  (AGENTS.md §4), consistent with every other Sonar/CI entry. No Rust code
+  touched, so the suite is unchanged at **1835 unit tests**, 76 `#[ignore]`.
+  **No live run required** (§3): no engine, memory, tool or provider path
+  exists in this change.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

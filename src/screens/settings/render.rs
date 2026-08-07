@@ -23,13 +23,63 @@ impl SettingsScreen {
         let area = frame.area();
         let palette = self.palette();
         let loc = self.loc();
+        let hints = self.footer_hints();
+        // The hotkey line — below the panel (outside the border), wraps as a grid using
+        // the same logic as the chat screen's status bar (right-aligned). Height computed up front.
+        let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
+        let status_h = (hotkeys.len() as u16).max(1);
+
+        frame.render_widget(Clear, area);
+        let [panel_area, status_area] =
+            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+
+        let block = palette.panel(
+            format!(
+                "{}{}",
+                palette.glyphs().settings_icon,
+                loc.t("ui.settings.ui.title")
+            ),
+            true,
+        );
+        let inner = block.inner(panel_area);
+        frame.render_widget(&block, panel_area);
+        frame.render_widget(Paragraph::new(hotkeys), status_area);
+
+        let [menu_area, fields_area] =
+            Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
+
+        // Section counters are tied to the selected modes (from the search index) —
+        // the sum matches the number of fields in search.
+        let counts = self.section_counts();
+        self.render_menu(frame, menu_area, &counts);
+        self.render_fields(frame, fields_area);
+
+        // The editor on top — with a real cursor (`InputBox::render` requires `&mut`).
+        self.render_editor_popup(frame, area, &palette);
+
+        // The Choice-field picker popup — on top (the editor/choice are closed while
+        // searching).
+        if self.choice.is_some() {
+            self.render_choice(frame, area, &palette);
+        }
+
+        // The field-search overlay — on top of everything (the editor is closed while
+        // searching).
+        if self.search.is_some() {
+            self.render_search(frame, area, &palette);
+        }
+    }
+
+    /// The contextual footer's hotkey hints for the current focus and section.
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        let loc = self.loc();
         // Contextual footer. The hints differ **by focus** — that's what teaches the
         // navigation model, which is otherwise undiscoverable: on the sections only
         // Enter goes in, and inside the pane the arrows only change a value while Esc
         // steps back out. Section-specific extras (Profiles: create/delete) are
         // appended in both states. See docs/history/settings-navigation.md §5.1.
         let on_menu = self.focus == Focus::Menu;
-        let mut hints: Vec<(&str, &str)> = if on_menu {
+        let mut hints: Vec<(&'static str, &'static str)> = if on_menu {
             vec![
                 ("Tab/↑↓", loc.t("ui.settings.hint.section")),
                 ("Enter", loc.t("ui.settings.hint.enter_fields")),
@@ -63,83 +113,47 @@ impl SettingsScreen {
             },
         ));
         hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
-        // The hotkey line — below the panel (outside the border), wraps as a grid using
-        // the same logic as the chat screen's status bar (right-aligned). Height computed up front.
-        let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
-        let status_h = (hotkeys.len() as u16).max(1);
+        hints
+    }
 
-        frame.render_widget(Clear, area);
-        let [panel_area, status_area] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
-
-        let block = palette.panel(
-            format!(
-                "{}{}",
-                palette.glyphs().settings_icon,
-                loc.t("ui.settings.ui.title")
+    /// Draws the field editor popup, when one is open (a no-op otherwise).
+    fn render_editor_popup(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let loc = self.loc();
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        // System message/greeting — a large multiline popup with
+        // wrapping; other fields — a compact single-line strip. On a validation
+        // error the title carries a red message and the editor doesn't close.
+        let err = editor.error;
+        let base_title = if editor.multiline {
+            loc.t("ui.editor.multiline_footer")
+        } else {
+            loc.t("ui.settings.ui.editor_single")
+        };
+        let title = match err {
+            Some(e) => format!(
+                "{} {e} {}",
+                palette.glyphs().warn,
+                loc.t("ui.settings.ui.esc_cancel")
             ),
-            true,
-        );
-        let inner = block.inner(panel_area);
-        frame.render_widget(&block, panel_area);
-        frame.render_widget(Paragraph::new(hotkeys), status_area);
-
-        let [menu_area, fields_area] =
-            Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
-
-        // Section counters are tied to the selected modes (from the search index) —
-        // the sum matches the number of fields in search.
-        let counts = self.section_counts();
-        self.render_menu(frame, menu_area, &counts);
-        self.render_fields(frame, fields_area);
-
-        // The editor on top — with a real cursor (`InputBox::render` requires `&mut`).
-        if let Some(editor) = self.editor.as_mut() {
-            // System message/greeting — a large multiline popup with
-            // wrapping; other fields — a compact single-line strip. On a validation
-            // error the title carries a red message and the editor doesn't close.
-            let err = editor.error;
-            let base_title = if editor.multiline {
-                loc.t("ui.editor.multiline_footer")
-            } else {
-                loc.t("ui.settings.ui.editor_single")
-            };
-            let title = match err {
-                Some(e) => format!(
-                    "{} {e} {}",
-                    palette.glyphs().warn,
-                    loc.t("ui.settings.ui.esc_cancel")
-                ),
-                None => base_title.to_string(),
-            };
-            let popup = if editor.multiline {
-                centered_rect(80, 40, multiline_popup_height(area), area)
-            } else {
-                centered_rect(60, 30, 3, area)
-            };
-            // A large multiline popup (system message/greeting)
-            // dims the background so it doesn't blend in; compact single-line strips —
-            // don't (an in-place edit).
-            if editor.multiline {
-                dim_background(frame, &palette);
-            }
-            frame.render_widget(Clear, popup);
-            editor
-                .input
-                .render(frame, popup, RenderOpts::focused(&title), &palette);
+            None => base_title.to_string(),
+        };
+        let popup = if editor.multiline {
+            centered_rect(80, 40, multiline_popup_height(area), area)
+        } else {
+            centered_rect(60, 30, 3, area)
+        };
+        // A large multiline popup (system message/greeting)
+        // dims the background so it doesn't blend in; compact single-line strips —
+        // don't (an in-place edit).
+        if editor.multiline {
+            dim_background(frame, palette);
         }
-
-        // The Choice-field picker popup — on top (the editor/choice are closed while
-        // searching).
-        if self.choice.is_some() {
-            self.render_choice(frame, area, &palette);
-        }
-
-        // The field-search overlay — on top of everything (the editor is closed while
-        // searching).
-        if self.search.is_some() {
-            self.render_search(frame, area, &palette);
-        }
+        frame.render_widget(Clear, popup);
+        editor
+            .input
+            .render(frame, popup, RenderOpts::focused(&title), palette);
     }
 
     /// Draws the Choice-field picker popup: the option list, the current one marked.
@@ -419,23 +433,10 @@ impl SettingsScreen {
         // a list row but as a tab strip above it. Its position is needed for "focus on tabs".
         let sub_pos = fields.iter().position(|f| is_subsection(f.id));
         let tabs = sub_pos.and(self.subsection_tabs());
-        let loc = self.loc();
 
         // Header: the section title (always) + a tab strip (if there are subsections).
-        // The bottom panel (value+description) is always reserved when there are fields,
-        // and is as tall as the longest hint of THIS field set needs — a hint clipped
-        // mid-sentence is unreadable, while a per-field height would shift the list on
-        // every step. The ceiling keeps the list from being squeezed out by a wall of
-        // text (an MCP tool's description is arbitrary server text).
         let head_h: u16 = 1 + if tabs.is_some() { 1 } else { 0 };
-        let desc_h: u16 = if fields.is_empty() {
-            0
-        } else {
-            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(head_h as usize) / 3);
-            let rows = hint_panel_rows(&fields, area.width as usize, cap, loc) as u16;
-            // +1 for the top border; never take the last row away from the list.
-            (rows + 1).min(area.height.saturating_sub(head_h + 1))
-        };
+        let desc_h = self.desc_panel_height(&fields, area, head_h);
         let [head_area, list_area, desc_area] = Layout::vertical([
             Constraint::Length(head_h),
             Constraint::Min(1),
@@ -443,111 +444,11 @@ impl SettingsScreen {
         ])
         .areas(area);
 
-        let mut title_spans = vec![
-            // The counterpart of the section menu's `▸`: same rule, opposite pane.
-            Span::styled(
-                format!(" {} ", palette.glyphs().title_marker),
-                focus_marker_style(focused, &palette),
-            ),
-            Span::styled(
-                format!("{} ", self.section().title(loc)),
-                Style::new().fg(palette.text).bold(),
-            ),
-        ];
-        // The "Model/server" section: the active subsection's server-status chip on the
-        // right — edit the engine and see the effect (connecting → ready) without leaving to chat.
-        if self.section() == Section::Model {
-            let chip = self.model_server_chip(&palette);
-            let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
-            let used_right: usize = chip.iter().map(|s| span_width(s)).sum();
-            let head_w = head_area.width as usize;
-            if head_w > used_left + used_right + 1 {
-                title_spans.push(Span::raw(" ".repeat(head_w - used_left - used_right - 1)));
-                title_spans.extend(chip);
-            }
-        }
-        let mut head_lines = vec![Line::from(title_spans)];
-        if let Some((labels, active)) = tabs {
-            let on_tabs = focused && sub_pos == Some(self.field_idx);
-            head_lines.push(tab_strip_line(&labels, active, on_tabs, &palette));
-        }
-        frame.render_widget(Paragraph::new(head_lines), head_area);
+        let on_tabs = focused && sub_pos == Some(self.field_idx);
+        self.render_fields_header(frame, head_area, focused, on_tabs, tabs, &palette);
 
-        // A single value column across the WHOLE section (`section_label_col`): values
-        // and inline hints of all groups line up on one vertical (a per-group column
-        // "sawtoothed" — each group had its own stop). An overlong label
-        // (> LABEL_CAP) doesn't push the column — its value sits locally right
-        // after the label. This is also where we count the group's toggles (on/total) for
-        // the header counter.
-        let label_col = section_label_col(&fields);
-        let mut group_toggles: HashMap<&str, (usize, usize)> = HashMap::new();
-        for f in &fields {
-            if is_subsection(f.id) {
-                continue;
-            }
-            if let FieldKind::Toggle(on) = f.kind {
-                let e = group_toggles.entry(f.group).or_insert((0, 0));
-                e.1 += 1;
-                if on {
-                    e.0 += 1;
-                }
-            }
-        }
-
-        // Fields from the default config — for the "modified" marker (built once).
-        let default_fields = self.default_fields();
-
-        // Build the elements: a group header is inserted at the transition to a new
-        // non-empty group; `select` — the selected field's position among the elements
-        // (headers included) for highlight/scroll. We skip the subsection selector
-        // (it's a tab strip): while the cursor is on it, the list has no highlight.
         let inner_w = list_area.width as usize;
-        let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
-        let mut select: Option<usize> = None;
-        let mut prev_group: Option<&str> = None;
-        for (i, f) in fields.iter().enumerate() {
-            if is_subsection(f.id) {
-                continue;
-            }
-            if !f.group.is_empty() && prev_group != Some(f.group) {
-                // The "on/total" counter — only for groups with ≥2 toggles (there it's
-                // informative; for a single toggle it would duplicate the visible [x]).
-                let count = group_toggles
-                    .get(f.group)
-                    .copied()
-                    .filter(|&(_, total)| total >= 2);
-                items.push(ListItem::new(header_line(
-                    f.group, count, inner_w, &palette,
-                )));
-            }
-            prev_group = Some(f.group);
-            if focused && i == self.field_idx {
-                select = Some(items.len());
-            }
-            // User data (profiles and impersonation personas) has no "default value"
-            // to deviate from — comparing it against a default config would mark, say,
-            // a chosen impersonation persona as "modified" simply because the default
-            // config has no personas at all.
-            let modified = !is_profile_field(f.id)
-                && default_fields
-                    .iter()
-                    .find(|d| d.id == f.id)
-                    .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
-                    .unwrap_or(false);
-            // Width for the value: minus the marker(2)+label+indent and the right margin.
-            // A label longer than the column (> LABEL_CAP) shifts the value right —
-            // we compute the remainder from its real end, so "…" truncation doesn't lie.
-            let start = label_col.max(label_width(&f.label));
-            let value_w = inner_w.saturating_sub(start + 4);
-            items.push(ListItem::new(render_field_line(
-                f,
-                label_col,
-                value_w,
-                modified,
-                focused && i == self.field_idx,
-                &palette,
-            )));
-        }
+        let (items, select) = self.build_field_items(&fields, focused, inner_w, &palette);
         let total = items.len();
 
         // Selection — a soft backdrop (as in the section menu and the chat list), not
@@ -589,53 +490,215 @@ impl SettingsScreen {
             );
         }
 
-        // The bottom panel: the full value of the selected text field (whole paths,
-        // truncated with "…" in the list) + a description hint.
-        if desc_h > 1 {
-            let content_h = desc_h as usize - 1;
-            let w = desc_area.width as usize;
-            // The hint has first claim on the panel — the height was reserved for it.
-            let mut hint: Vec<Line<'static>> = Vec::new();
-            if let Some(f) = focused_field {
-                if let Some(text) = f.description.as_deref() {
-                    hint.extend(wrap_text(text, palette.muted_style(), w));
-                }
-                // An expanded explanation for a flagged row, when the row has one
-                // (a globally-disabled tool) — so the honest gate is
-                // understandable, not just "⊘". Driven by the note rather than by
-                // `warn`: that flag is raised for several unrelated reasons.
-                if let Some(note) = f.warn_note.as_deref() {
-                    hint.extend(wrap_text(note, Style::new().fg(palette.warning), w));
-                }
-            }
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            if let Some(f) = focused_field
-                && let FieldKind::Text(v) = &f.kind
-            {
-                let shown = v.trim();
-                // Show the full value only for "long" fields (paths, URLs, the
-                // system message) — in the list they're truncated with "…". Short
-                // values (numbers, host) are already fully visible in the list, no need to duplicate.
-                let long =
-                    crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
-                if !shown.is_empty() && shown != "—" && long {
-                    // Cap the preview (a multiline system message can be huge):
-                    // it fills what the hint leaves and never grows the panel —
-                    // the value is also in the list row above, the hint is only here.
-                    let preview: String = shown.chars().take(400).collect();
-                    lines = wrap_text(&preview, Style::new().fg(palette.text), w);
-                    lines.truncate(content_h.saturating_sub(hint.len()));
-                }
-            }
-            lines.extend(hint);
-            // Pre-wrapped above (`Wrap` can't be measured before layout), so every
-            // line already fits — no re-wrap here.
-            let para = Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(palette.border_style(false)),
-            );
-            frame.render_widget(para, desc_area);
+        self.render_desc_panel(frame, desc_area, desc_h, focused_field, &palette);
+    }
+
+    /// The bottom description panel's height for this field set (`0` — no fields).
+    fn desc_panel_height(&self, fields: &[FieldRow], area: Rect, head_h: u16) -> u16 {
+        // The bottom panel (value+description) is always reserved when there are fields,
+        // and is as tall as the longest hint of THIS field set needs — a hint clipped
+        // mid-sentence is unreadable, while a per-field height would shift the list on
+        // every step. The ceiling keeps the list from being squeezed out by a wall of
+        // text (an MCP tool's description is arbitrary server text).
+        if fields.is_empty() {
+            0
+        } else {
+            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(head_h as usize) / 3);
+            let rows = hint_panel_rows(fields, area.width as usize, cap, self.loc()) as u16;
+            // +1 for the top border; never take the last row away from the list.
+            (rows + 1).min(area.height.saturating_sub(head_h + 1))
         }
     }
+
+    /// Draws the field pane's header: the section title with its focus marker, the
+    /// "Model" section's server-status chip, and the subsection tab strip.
+    fn render_fields_header(
+        &self,
+        frame: &mut Frame,
+        head_area: Rect,
+        focused: bool,
+        on_tabs: bool,
+        tabs: Option<(Vec<&'static str>, usize)>,
+        palette: &Palette,
+    ) {
+        let loc = self.loc();
+        let mut title_spans = vec![
+            // The counterpart of the section menu's `▸`: same rule, opposite pane.
+            Span::styled(
+                format!(" {} ", palette.glyphs().title_marker),
+                focus_marker_style(focused, palette),
+            ),
+            Span::styled(
+                format!("{} ", self.section().title(loc)),
+                Style::new().fg(palette.text).bold(),
+            ),
+        ];
+        // The "Model/server" section: the active subsection's server-status chip on the
+        // right — edit the engine and see the effect (connecting → ready) without leaving to chat.
+        if self.section() == Section::Model {
+            let chip = self.model_server_chip(palette);
+            let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
+            let used_right: usize = chip.iter().map(|s| span_width(s)).sum();
+            let head_w = head_area.width as usize;
+            if head_w > used_left + used_right + 1 {
+                title_spans.push(Span::raw(" ".repeat(head_w - used_left - used_right - 1)));
+                title_spans.extend(chip);
+            }
+        }
+        let mut head_lines = vec![Line::from(title_spans)];
+        if let Some((labels, active)) = tabs {
+            head_lines.push(tab_strip_line(&labels, active, on_tabs, palette));
+        }
+        frame.render_widget(Paragraph::new(head_lines), head_area);
+    }
+
+    /// Builds the field list's rows (group headers included) and the selected row's
+    /// position among them, for highlight/scroll.
+    fn build_field_items(
+        &self,
+        fields: &[FieldRow],
+        focused: bool,
+        inner_w: usize,
+        palette: &Palette,
+    ) -> (Vec<ListItem<'static>>, Option<usize>) {
+        let loc = self.loc();
+        // A single value column across the WHOLE section (`section_label_col`): values
+        // and inline hints of all groups line up on one vertical (a per-group column
+        // "sawtoothed" — each group had its own stop). An overlong label
+        // (> LABEL_CAP) doesn't push the column — its value sits locally right
+        // after the label. This is also where we count the group's toggles (on/total) for
+        // the header counter.
+        let label_col = section_label_col(fields);
+        let group_toggles = group_toggle_counts(fields);
+
+        // Fields from the default config — for the "modified" marker (built once).
+        let default_fields = self.default_fields();
+
+        // Build the elements: a group header is inserted at the transition to a new
+        // non-empty group; `select` — the selected field's position among the elements
+        // (headers included) for highlight/scroll. We skip the subsection selector
+        // (it's a tab strip): while the cursor is on it, the list has no highlight.
+        let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
+        let mut select: Option<usize> = None;
+        let mut prev_group: Option<&str> = None;
+        for (i, f) in fields.iter().enumerate() {
+            if is_subsection(f.id) {
+                continue;
+            }
+            if !f.group.is_empty() && prev_group != Some(f.group) {
+                // The "on/total" counter — only for groups with ≥2 toggles (there it's
+                // informative; for a single toggle it would duplicate the visible [x]).
+                let count = group_toggles
+                    .get(f.group)
+                    .copied()
+                    .filter(|&(_, total)| total >= 2);
+                items.push(ListItem::new(header_line(f.group, count, inner_w, palette)));
+            }
+            prev_group = Some(f.group);
+            if focused && i == self.field_idx {
+                select = Some(items.len());
+            }
+            // User data (profiles and impersonation personas) has no "default value"
+            // to deviate from — comparing it against a default config would mark, say,
+            // a chosen impersonation persona as "modified" simply because the default
+            // config has no personas at all.
+            let modified = !is_profile_field(f.id)
+                && default_fields
+                    .iter()
+                    .find(|d| d.id == f.id)
+                    .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
+                    .unwrap_or(false);
+            // Width for the value: minus the marker(2)+label+indent and the right margin.
+            // A label longer than the column (> LABEL_CAP) shifts the value right —
+            // we compute the remainder from its real end, so "…" truncation doesn't lie.
+            let start = label_col.max(label_width(&f.label));
+            let value_w = inner_w.saturating_sub(start + 4);
+            items.push(ListItem::new(render_field_line(
+                f,
+                label_col,
+                value_w,
+                modified,
+                focused && i == self.field_idx,
+                palette,
+            )));
+        }
+        (items, select)
+    }
+
+    /// The bottom panel: the full value of the selected text field (whole paths,
+    /// truncated with "…" in the list) + a description hint.
+    fn render_desc_panel(
+        &self,
+        frame: &mut Frame,
+        desc_area: Rect,
+        desc_h: u16,
+        focused_field: Option<&FieldRow>,
+        palette: &Palette,
+    ) {
+        if desc_h <= 1 {
+            return;
+        }
+        let content_h = desc_h as usize - 1;
+        let w = desc_area.width as usize;
+        // The hint has first claim on the panel — the height was reserved for it.
+        let mut hint: Vec<Line<'static>> = Vec::new();
+        if let Some(f) = focused_field {
+            if let Some(text) = f.description.as_deref() {
+                hint.extend(wrap_text(text, palette.muted_style(), w));
+            }
+            // An expanded explanation for a flagged row, when the row has one
+            // (a globally-disabled tool) — so the honest gate is
+            // understandable, not just "⊘". Driven by the note rather than by
+            // `warn`: that flag is raised for several unrelated reasons.
+            if let Some(note) = f.warn_note.as_deref() {
+                hint.extend(wrap_text(note, Style::new().fg(palette.warning), w));
+            }
+        }
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if let Some(f) = focused_field
+            && let FieldKind::Text(v) = &f.kind
+        {
+            let shown = v.trim();
+            // Show the full value only for "long" fields (paths, URLs, the
+            // system message) — in the list they're truncated with "…". Short
+            // values (numbers, host) are already fully visible in the list, no need to duplicate.
+            let long = crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+            if !shown.is_empty() && shown != "—" && long {
+                // Cap the preview (a multiline system message can be huge):
+                // it fills what the hint leaves and never grows the panel —
+                // the value is also in the list row above, the hint is only here.
+                let preview: String = shown.chars().take(400).collect();
+                lines = wrap_text(&preview, Style::new().fg(palette.text), w);
+                lines.truncate(content_h.saturating_sub(hint.len()));
+            }
+        }
+        lines.extend(hint);
+        // Pre-wrapped above (`Wrap` can't be measured before layout), so every
+        // line already fits — no re-wrap here.
+        let para = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(palette.border_style(false)),
+        );
+        frame.render_widget(para, desc_area);
+    }
+}
+
+/// Counts each group's toggles as `(on, total)` — for the "N/M" counter in the
+/// group header.
+fn group_toggle_counts(fields: &[FieldRow]) -> HashMap<&'static str, (usize, usize)> {
+    let mut group_toggles: HashMap<&'static str, (usize, usize)> = HashMap::new();
+    for f in fields {
+        if is_subsection(f.id) {
+            continue;
+        }
+        if let FieldKind::Toggle(on) = f.kind {
+            let e = group_toggles.entry(f.group).or_insert((0, 0));
+            e.1 += 1;
+            if on {
+                e.0 += 1;
+            }
+        }
+    }
+    group_toggles
 }

@@ -272,23 +272,29 @@ pub(super) fn chunk_utterances(
 fn pack_sentences(block: &str, max: usize, out: &mut Vec<String>) {
     let mut cur = String::new();
     for sentence in crate::features::tools::rag::split_sentences(block) {
-        for piece in split_long(&sentence, max) {
-            let piece = piece.trim();
-            if piece.is_empty() {
-                continue;
-            }
-            let extra = if cur.is_empty() { 0 } else { 1 };
-            if !cur.is_empty() && cur.chars().count() + extra + piece.chars().count() > max {
-                out.push(std::mem::take(&mut cur));
-            }
-            if !cur.is_empty() {
-                cur.push(' ');
-            }
-            cur.push_str(piece);
-        }
+        append_pieces(&sentence, max, &mut cur, out);
     }
     if !cur.is_empty() {
         out.push(cur);
+    }
+}
+
+/// Appends one sentence's pieces to the chunk being built (`cur`), flushing it
+/// into `out` whenever the next piece would push it past `max` characters.
+fn append_pieces(sentence: &str, max: usize, cur: &mut String, out: &mut Vec<String>) {
+    for piece in split_long(sentence, max) {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        let extra = if cur.is_empty() { 0 } else { 1 };
+        if !cur.is_empty() && cur.chars().count() + extra + piece.chars().count() > max {
+            out.push(std::mem::take(cur));
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(piece);
     }
 }
 
@@ -306,13 +312,7 @@ fn split_long(sentence: &str, max: usize) -> Vec<String> {
         if wlen > max {
             // A word longer than the limit — cut it by character (otherwise the
             // chunk wouldn't fit).
-            if !cur.is_empty() {
-                out.push(std::mem::take(&mut cur));
-            }
-            let chars: Vec<char> = word.chars().collect();
-            for part in chars.chunks(max) {
-                out.push(part.iter().collect());
-            }
+            split_giant_word(word, max, &mut cur, &mut out);
             continue;
         }
         let extra = if cur.is_empty() { 0 } else { 1 };
@@ -328,6 +328,18 @@ fn split_long(sentence: &str, max: usize) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Cuts a single word longer than the limit into `max`-character parts,
+/// flushing the chunk built so far first.
+fn split_giant_word(word: &str, max: usize, cur: &mut String, out: &mut Vec<String>) {
+    if !cur.is_empty() {
+        out.push(std::mem::take(cur));
+    }
+    let chars: Vec<char> = word.chars().collect();
+    for part in chars.chunks(max) {
+        out.push(part.iter().collect());
+    }
 }
 
 /// Parameters of the background speech task.
@@ -358,65 +370,22 @@ struct TtsTask {
 /// is already opened by the handler (`Playback::open` — on the `/tts` command,
 /// shared via `Arc`).
 fn spawn_tts(task: TtsTask) {
-    let TtsTask {
-        engine,
-        user_engine,
-        chunks,
-        cancel,
-        task_id,
-        playback,
-        loc,
-        evt_tx,
-        done_tx,
-    } = task;
-
     tokio::spawn(async move {
-        let fail = |msg: String| {
-            let _ = evt_tx.send(AppEvent::Error(msg));
-        };
-
-        for (role, chunk) in chunks {
-            if cancel.is_cancelled() {
+        for (role, chunk) in &task.chunks {
+            if task.cancel.is_cancelled() {
                 break;
             }
-            // Pipeline: don't synthesize further ahead than the queue needs.
-            while playback.queued() >= QUEUE_AHEAD && !cancel.is_cancelled() {
-                tokio::time::sleep(POLL_INTERVAL).await;
-            }
-            if cancel.is_cancelled() {
+            if !synth_chunk(&task, *role, chunk).await {
                 break;
-            }
-            // User utterances get their own voice, when set; otherwise (and for
-            // the assistant) — the main engine.
-            let active: &dyn TtsEngine = match role {
-                MessageRole::User => user_engine.as_deref().unwrap_or(engine.as_ref()),
-                _ => engine.as_ref(),
-            };
-            match active.synthesize(&chunk, &cancel).await {
-                Ok(clip) if !clip.is_empty() => {
-                    if let Err(err) = playback.enqueue(clip) {
-                        fail(loc.tf("ui.err.tts_playback", &[("err", &err.to_string())]));
-                        break;
-                    }
-                }
-                // An empty clip — simply nothing to play (not an error).
-                Ok(_) => {}
-                Err(err) => {
-                    // Cancellation isn't an error: the user stopped it themselves.
-                    if !cancel.is_cancelled() {
-                        fail(loc.tf("ui.err.tts_synth", &[("err", &err.to_string())]));
-                    }
-                    break;
-                }
             }
         }
 
         // Wait for the queue to finish playing (or for cancellation).
-        while !playback.is_drained() && !cancel.is_cancelled() {
+        while !task.playback.is_drained() && !task.cancel.is_cancelled() {
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        if cancel.is_cancelled() {
-            playback.stop();
+        if task.cancel.is_cancelled() {
+            task.playback.stop();
         } else {
             // The queue reports "empty" when the source is **exhausted by the
             // mixer**, not when the sound card has finished playing out its
@@ -426,8 +395,56 @@ fn spawn_tts(task: TtsTask) {
             // few dozen milliseconds.
             tokio::time::sleep(DRAIN_TAIL).await;
         }
-        let _ = done_tx.send(task_id);
+        let _ = task.done_tx.send(task.task_id);
     });
+}
+
+/// Synthesizes one chunk and enqueues it, first waiting for a queue slot (the
+/// synthesis-ahead-of-playback pipeline — see [`QUEUE_AHEAD`]). Returns `false`
+/// when the run must stop: cancellation, or an error already reported to the
+/// feed.
+async fn synth_chunk(task: &TtsTask, role: MessageRole, chunk: &str) -> bool {
+    let fail = |msg: String| {
+        let _ = task.evt_tx.send(AppEvent::Error(msg));
+    };
+
+    // Pipeline: don't synthesize further ahead than the queue needs.
+    while task.playback.queued() >= QUEUE_AHEAD && !task.cancel.is_cancelled() {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    if task.cancel.is_cancelled() {
+        return false;
+    }
+    // User utterances get their own voice, when set; otherwise (and for
+    // the assistant) — the main engine.
+    let active: &dyn TtsEngine = match role {
+        MessageRole::User => task.user_engine.as_deref().unwrap_or(task.engine.as_ref()),
+        _ => task.engine.as_ref(),
+    };
+    match active.synthesize(chunk, &task.cancel).await {
+        Ok(clip) if !clip.is_empty() => {
+            if let Err(err) = task.playback.enqueue(clip) {
+                fail(
+                    task.loc
+                        .tf("ui.err.tts_playback", &[("err", &err.to_string())]),
+                );
+                return false;
+            }
+            true
+        }
+        // An empty clip — simply nothing to play (not an error).
+        Ok(_) => true,
+        Err(err) => {
+            // Cancellation isn't an error: the user stopped it themselves.
+            if !task.cancel.is_cancelled() {
+                fail(
+                    task.loc
+                        .tf("ui.err.tts_synth", &[("err", &err.to_string())]),
+                );
+            }
+            false
+        }
+    }
 }
 
 #[cfg(test)]

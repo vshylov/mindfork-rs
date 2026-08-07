@@ -71,6 +71,45 @@ def code_part(line: str) -> str:
             return line[:i]
     return line
 
+def _find_macro(line: str, pos: int, limit: int) -> tuple[int | None, str | None]:
+    """None-state step: advance to just past the next print macro's `(`."""
+    m = PRINT_MACRO.search(line, pos, limit)
+    return (m.end(), "seek") if m else (None, None)
+
+
+def _open_quote(line: str, pos: int, limit: int) -> tuple[int | None, str | None, int]:
+    """Seek-state step: skip whitespace, then enter the literal at a `"`.
+
+    Running out of line means the format string opens on a later line (state
+    stays "seek"); anything that is not a plain `"` literal (a raw string, a
+    variable) makes the tracker bail out rather than guess.
+    """
+    while pos < limit and line[pos].isspace():
+        pos += 1
+    if pos >= limit:
+        return None, "seek", 0
+    if line[pos] == '"':
+        return pos + 1, "in", pos + 1
+    return pos, None, 0
+
+
+def _close_literal(line, pos, start, spans) -> tuple[int | None, str | None]:
+    """In-state step: record the span up to the unescaped closing quote."""
+    j, esc = pos, False
+    while j < len(line):
+        c = line[j]
+        if esc:
+            esc = False
+        elif c == "\\":
+            esc = True
+        elif c == '"':
+            spans.append((start, j))
+            return j + 1, None
+        j += 1
+    spans.append((start, len(line)))  # continues on the next line
+    return None, "in"
+
+
 def print_fmt_spans(line: str, state: str | None) -> tuple[list[tuple[int, int]], str | None]:
     """Character spans of `line` that sit inside a print-macro format string.
 
@@ -85,46 +124,21 @@ def print_fmt_spans(line: str, state: str | None) -> tuple[list[tuple[int, int]]
     Only the **first** literal is tracked: once it closes we stop, so the
     macro's value arguments (which may legitimately mention ru-locale data,
     e.g. `eprintln!("gate: {}", r.contains("<ru string>"))`) are not covered.
-    Anything that is not a plain `"` literal (a raw string, a variable) makes
-    the tracker bail out rather than guess.
+    Each state's step lives in its own helper; a step returning `None` for the
+    position ends the line, and the state it returns carries over to the next.
     """
     spans: list[tuple[int, int]] = []
-    i = 0
     # Outside a string literal `//` starts a comment; inside one it is text.
     limit = len(line) if state == "in" else len(code_part(line))
+    pos: int | None = 0
     start = 0  # a literal continued from the previous line starts at column 0
-    while True:
+    while pos is not None:
         if state is None:
-            m = PRINT_MACRO.search(line, i, limit) if i < limit else None
-            if not m:
-                break
-            i, state = m.end(), "seek"
+            pos, state = _find_macro(line, pos, limit)
         elif state == "seek":
-            while i < limit and line[i].isspace():
-                i += 1
-            if i >= limit:
-                break  # the format string opens on a later line
-            if line[i] == '"':
-                i, state, start = i + 1, "in", i + 1
-            else:
-                state = None  # not a plain literal -> stop tracking this call
-        else:  # inside the format string: find its unescaped closing quote
-            j, esc = i, False
-            while j < len(line):
-                c = line[j]
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    break
-                j += 1
-            if j < len(line):
-                spans.append((start, j))
-                i, state = j + 1, None
-            else:
-                spans.append((start, len(line)))  # continues on the next line
-                break
+            pos, state, start = _open_quote(line, pos, limit)
+        else:
+            pos, state = _close_literal(line, pos, start, spans)
     return spans, state
 
 
@@ -214,6 +228,54 @@ def allowed_line(path: str, line: str, in_test: bool, in_print_fmt: bool = False
     return False
 
 
+def _line_flagged(path: str, line: str, in_test: bool, spans, ok: bool) -> bool:
+    """True when this line carries Cyrillic that should be reported."""
+    if not CYR.search(line) or ok:
+        return False
+    in_print_fmt = any(CYR.search(line[s:e]) for s, e in spans)
+    return not allowed_line(path, line, in_test, in_print_fmt)
+
+
+def scan_file(path: str, data: str) -> list[tuple[int, str]]:
+    """Non-allowlisted Cyrillic lines of one file: [(line_no, text)]."""
+    is_rust = path.endswith(".rs")
+    # A dedicated test module (`foo/tests.rs`, or anything under `tests/`)
+    # is test code end to end: its `#[cfg(test)]` marker sits in the parent
+    # `mod.rs`, not in the file itself.
+    in_test = path.endswith("tests.rs") or "/tests/" in path
+    ok_block = False
+    fmt_state: str | None = None
+    hits: list[tuple[int, str]] = []
+    for i, line in enumerate(data.split("\n"), 1):
+        # Advance the print-macro tracker on *every* line, before any of the
+        # early exits below: a format string that opens on one line and
+        # carries the Cyrillic on the next is exactly the case this catches.
+        spans: list[tuple[int, int]] = []
+        if is_rust:
+            spans, fmt_state = print_fmt_spans(line, fmt_state)
+            in_test = in_test or bool(TEST_MARKER.search(line))
+        if OK_START in line:
+            ok_block = True
+        elif OK_END in line:
+            ok_block = False
+        if _line_flagged(path, line, in_test, spans, ok_block or OK_LINE in line):
+            hits.append((i, line.strip()[:100]))
+    return hits
+
+
+def report(offenders, total: int, list_mode: bool) -> int:
+    if not offenders:
+        print("clean: no non-allowlisted Cyrillic remains")
+        return 0
+    print(f"remaining non-allowlisted Cyrillic: {total} lines in {len(offenders)} files\n")
+    for path, hits in sorted(offenders.items(), key=lambda kv: -len(kv[1])):
+        print(f"{len(hits):5}  {path}")
+        if list_mode:
+            for ln, text in hits:
+                print(f"        {ln}: {text}")
+    return 1
+
+
 def main() -> int:
     list_mode = "--list" in sys.argv
     # Tracked files **and** new ones not yet added (`--others`, honouring
@@ -241,49 +303,11 @@ def main() -> int:
             continue
         if not CYR.search(data):
             continue
-        # A dedicated test module (`foo/tests.rs`, or anything under `tests/`)
-        # is test code end to end: its `#[cfg(test)]` marker sits in the parent
-        # `mod.rs`, not in the file itself.
-        in_test = path.endswith("tests.rs") or "/tests/" in path
-        ok_block = False
-        fmt_state: str | None = None
-        hits: list[tuple[int, str]] = []
-        for i, line in enumerate(data.split("\n"), 1):
-            # Advance the print-macro tracker on *every* line, before any of the
-            # early exits below: a format string that opens on one line and
-            # carries the Cyrillic on the next is exactly the case this catches.
-            spans: list[tuple[int, int]] = []
-            if path.endswith(".rs"):
-                spans, fmt_state = print_fmt_spans(line, fmt_state)
-            if path.endswith(".rs") and TEST_MARKER.search(line):
-                in_test = True
-            if OK_START in line:
-                ok_block = True
-            elif OK_END in line:
-                ok_block = False
-            if not CYR.search(line):
-                continue
-            if ok_block or OK_LINE in line:
-                continue
-            in_print_fmt = any(CYR.search(line[s:e]) for s, e in spans)
-            if allowed_line(path, line, in_test, in_print_fmt):
-                continue
-            hits.append((i, line.strip()[:100]))
+        hits = scan_file(path, data)
         if hits:
             offenders[path] = hits
             total += len(hits)
-
-    if not offenders:
-        print("clean: no non-allowlisted Cyrillic remains")
-        return 0
-
-    print(f"remaining non-allowlisted Cyrillic: {total} lines in {len(offenders)} files\n")
-    for path, hits in sorted(offenders.items(), key=lambda kv: -len(kv[1])):
-        print(f"{len(hits):5}  {path}")
-        if list_mode:
-            for ln, text in hits:
-                print(f"        {ln}: {text}")
-    return 1
+    return report(offenders, total, list_mode)
 
 
 if __name__ == "__main__":

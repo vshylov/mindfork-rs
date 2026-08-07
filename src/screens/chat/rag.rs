@@ -25,68 +25,13 @@ impl ChatScreen {
                 dir,
                 chunks_done,
                 chunks_total,
-            } => {
-                let location = if dir.is_empty() {
-                    String::new()
-                } else {
-                    self.loc.tf("ui.rag.from", &[("dir", &dir)])
-                };
-                let mut text = self.loc.tf(
-                    "ui.rag.indexing",
-                    &[
-                        ("name", &name),
-                        ("location", &location),
-                        ("index", &index.to_string()),
-                        ("total", &total.to_string()),
-                    ],
-                );
-                // We show chunk progress only once the file has been chunked
-                // (chunks_total>0). Otherwise (the file has just started) — the
-                // previous look.
-                if chunks_total > 0 {
-                    text.push_str(&self.loc.tf(
-                        "ui.rag.chunks",
-                        &[
-                            ("done", &chunks_done.to_string()),
-                            ("total", &chunks_total.to_string()),
-                        ],
-                    ));
-                }
-                match &mut self.rag {
-                    Some(banner) => banner.text = text,
-                    None => self.rag = Some(RagBanner { text, tick: 0 }),
-                }
-            }
+            } => self.set_indexing_banner(index, total, &name, &dir, chunks_done, chunks_total),
             RagProgress::Finished {
                 files,
                 chunks,
                 errors,
                 cancelled,
-            } => {
-                self.rag = None;
-                let mut msg = if cancelled {
-                    self.loc.tf(
-                        "ui.rag.finished_cancelled",
-                        &[("chunks", &chunks.to_string())],
-                    )
-                } else {
-                    self.loc.tf(
-                        "ui.rag.finished",
-                        &[
-                            ("files", &files.to_string()),
-                            ("chunks", &chunks.to_string()),
-                        ],
-                    )
-                };
-                if errors > 0 {
-                    msg.push_str(
-                        &self
-                            .loc
-                            .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
-                    );
-                }
-                self.push_note(&msg);
-            }
+            } => self.push_finished_note(files, chunks, errors, cancelled),
             // Re-embedding (`/reindex`) — the same shape as `Finished`: clear the
             // banner and leave a summary note. Cancelling is safe and resumable
             // (every rewritten row is stamped with the current generation), so the
@@ -95,26 +40,7 @@ impl ChatScreen {
                 rows,
                 errors,
                 cancelled,
-            } => {
-                self.rag = None;
-                let mut msg = if cancelled {
-                    self.loc.tf(
-                        "ui.rag.reembedded_cancelled",
-                        &[("rows", &rows.to_string())],
-                    )
-                } else {
-                    self.loc
-                        .tf("ui.rag.reembedded", &[("rows", &rows.to_string())])
-                };
-                if errors > 0 {
-                    msg.push_str(
-                        &self
-                            .loc
-                            .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
-                    );
-                }
-                self.push_note(&msg);
-            }
+            } => self.push_reembedded_note(rows, errors, cancelled),
             RagProgress::Removed { chunks } => {
                 let msg = if chunks == 0 {
                     self.loc.t("ui.rag.removed_none").to_string()
@@ -132,6 +58,100 @@ impl ChatScreen {
                 self.push_error(&self.loc.tf("ui.rag.failed", &[("err", &err)]));
             }
         }
+    }
+
+    /// Updates the banner for the `Indexing` progress of one file (see
+    /// [`Self::set_rag_progress`]).
+    fn set_indexing_banner(
+        &mut self,
+        index: usize,
+        total: usize,
+        name: &str,
+        dir: &str,
+        chunks_done: usize,
+        chunks_total: usize,
+    ) {
+        let location = if dir.is_empty() {
+            String::new()
+        } else {
+            self.loc.tf("ui.rag.from", &[("dir", dir)])
+        };
+        let mut text = self.loc.tf(
+            "ui.rag.indexing",
+            &[
+                ("name", name),
+                ("location", &location),
+                ("index", &index.to_string()),
+                ("total", &total.to_string()),
+            ],
+        );
+        // We show chunk progress only once the file has been chunked
+        // (chunks_total>0). Otherwise (the file has just started) — the
+        // previous look.
+        if chunks_total > 0 {
+            text.push_str(&self.loc.tf(
+                "ui.rag.chunks",
+                &[
+                    ("done", &chunks_done.to_string()),
+                    ("total", &chunks_total.to_string()),
+                ],
+            ));
+        }
+        match &mut self.rag {
+            Some(banner) => banner.text = text,
+            None => self.rag = Some(RagBanner { text, tick: 0 }),
+        }
+    }
+
+    /// Clears the banner and leaves a summary note for the `Finished`
+    /// progress (see [`Self::set_rag_progress`]).
+    fn push_finished_note(&mut self, files: usize, chunks: usize, errors: usize, cancelled: bool) {
+        self.rag = None;
+        let mut msg = if cancelled {
+            self.loc.tf(
+                "ui.rag.finished_cancelled",
+                &[("chunks", &chunks.to_string())],
+            )
+        } else {
+            self.loc.tf(
+                "ui.rag.finished",
+                &[
+                    ("files", &files.to_string()),
+                    ("chunks", &chunks.to_string()),
+                ],
+            )
+        };
+        if errors > 0 {
+            msg.push_str(
+                &self
+                    .loc
+                    .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
+            );
+        }
+        self.push_note(&msg);
+    }
+
+    /// Clears the banner and leaves a summary note for the `Reembedded`
+    /// progress (`/reindex`; see [`Self::set_rag_progress`]).
+    fn push_reembedded_note(&mut self, rows: usize, errors: usize, cancelled: bool) {
+        self.rag = None;
+        let mut msg = if cancelled {
+            self.loc.tf(
+                "ui.rag.reembedded_cancelled",
+                &[("rows", &rows.to_string())],
+            )
+        } else {
+            self.loc
+                .tf("ui.rag.reembedded", &[("rows", &rows.to_string())])
+        };
+        if errors > 0 {
+            msg.push_str(
+                &self
+                    .loc
+                    .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
+            );
+        }
+        self.push_note(&msg);
     }
 
     /// Whether background RAG indexing is in progress (the loop repaints frames

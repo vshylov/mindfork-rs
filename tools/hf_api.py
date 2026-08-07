@@ -481,15 +481,36 @@ def say(*args):
         pass
 
 
-def cleanup():
+def _keep_endpoints():
+    """--keep: hand the names to the user instead of deleting them."""
     global CREATED
+    names, CREATED = CREATED, []
+    say("\n=== --keep: NOT deleting ===")
+    for name in names:
+        say(f"  python tools/e2e_hf.py delete {name}")
+
+
+def _verify_deletions(sent):
+    """Verify each sent DELETE; a proven-gone name leaves CREATED. Returns the
+    names that are still there."""
+    failed = []
+    for name, (status, body) in sent:
+        gone, check = verify_gone(name)
+        say(f"  delete {name}: HTTP {status}, {'gone' if gone else f'STILL THERE (GET -> {check})'}")
+        if gone:
+            CREATED.remove(name)
+        else:
+            failed.append(name)
+            if not ok(status):
+                say(json.dumps(body, ensure_ascii=False)[:800] if not isinstance(body, str) else body[:800])
+    return failed
+
+
+def cleanup():
     if not CREATED:
         return
     if KEEP:
-        names, CREATED = CREATED, []
-        say("\n=== --keep: NOT deleting ===")
-        for name in names:
-            say(f"  python tools/e2e_hf.py delete {name}")
+        _keep_endpoints()
         return
     # A name leaves CREATED only once its endpoint is *proven* gone. Clearing
     # the list up front means that anything raising in between — a broken pipe,
@@ -502,16 +523,7 @@ def cleanup():
     # handler roughly 7.5 s before SIGKILL, so the calls that free the GPU must
     # not queue behind a confirmation round-trip for the previous endpoint.
     sent = [(name, request_delete(name)) for name in names]
-    failed = []
-    for name, (status, body) in sent:
-        gone, check = verify_gone(name)
-        say(f"  delete {name}: HTTP {status}, {'gone' if gone else f'STILL THERE (GET -> {check})'}")
-        if gone:
-            CREATED.remove(name)
-        else:
-            failed.append(name)
-            if not ok(status):
-                say(json.dumps(body, ensure_ascii=False)[:800] if not isinstance(body, str) else body[:800])
+    failed = _verify_deletions(sent)
     if failed:
         say("\n!!! CLEANUP FAILED — these endpoints may still be billing:")
         for name in failed:

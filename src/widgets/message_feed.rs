@@ -136,7 +136,7 @@ impl FeedMessage {
     pub fn from_messages(messages: &[Message]) -> Vec<Self> {
         let mut out: Vec<Self> = Vec::new();
         for msg in messages {
-            let Some(mut fm) = Self::from_message(msg) else {
+            let Some(fm) = Self::from_message(msg) else {
                 continue;
             };
             // Merge the assistant round into the previous assistant block — except
@@ -147,32 +147,39 @@ impl FeedMessage {
                 && let Some(last) = out.last_mut()
                 && last.role == FeedRole::Assistant
             {
-                if !fm.text.is_empty() {
-                    if !last.text.is_empty() {
-                        last.text.push_str("\n\n");
-                    }
-                    last.text.push_str(&fm.text);
-                }
-                let base = last.text.len();
-                for mut tc in fm.tools.drain(..) {
-                    tc.text_offset = base;
-                    last.tools.push(tc);
-                }
-                if !fm.thoughts.is_empty() {
-                    if !last.thoughts.is_empty() {
-                        last.thoughts.push('\n');
-                    }
-                    last.thoughts.push_str(&fm.thoughts);
-                }
-                // The merge is where the many-to-one mapping happens, so it is
-                // where every folded-in id has to be recorded — a jump to any
-                // round of the bubble must land on the bubble (§1.2).
-                last.message_ids.append(&mut fm.message_ids);
+                Self::merge_round(last, fm);
                 continue;
             }
             out.push(fm);
         }
         out
+    }
+
+    /// Folds the assistant round `fm` into the previous assistant block `last`
+    /// (round stitching): text joined via a blank line, the round's tool
+    /// `text_offset`s rebased onto the merged text, thoughts joined via a newline.
+    fn merge_round(last: &mut Self, mut fm: Self) {
+        if !fm.text.is_empty() {
+            if !last.text.is_empty() {
+                last.text.push_str("\n\n");
+            }
+            last.text.push_str(&fm.text);
+        }
+        let base = last.text.len();
+        for mut tc in fm.tools.drain(..) {
+            tc.text_offset = base;
+            last.tools.push(tc);
+        }
+        if !fm.thoughts.is_empty() {
+            if !last.thoughts.is_empty() {
+                last.thoughts.push('\n');
+            }
+            last.thoughts.push_str(&fm.thoughts);
+        }
+        // The merge is where the many-to-one mapping happens, so it is
+        // where every folded-in id has to be recorded — a jump to any
+        // round of the bubble must land on the bubble (§1.2).
+        last.message_ids.append(&mut fm.message_ids);
     }
 }
 
@@ -755,31 +762,7 @@ impl MessageFeed {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut found: Vec<usize> = Vec::new();
         for (idx, item) in messages.iter().enumerate() {
-            let fp = message_fingerprint(item);
-            let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
-            if !hit {
-                // A streaming/changed message — recompute only its block.
-                let (block, content_from) = build_message_block(
-                    item,
-                    palette,
-                    width,
-                    self.view,
-                    opts,
-                    loc,
-                    &self.role_names,
-                    self.marker == Some(idx),
-                );
-                let cb = CachedBlock {
-                    fingerprint: fp,
-                    lines: block,
-                    content_from,
-                };
-                if idx < self.cache.len() {
-                    self.cache[idx] = cb;
-                } else {
-                    self.cache.push(cb);
-                }
-            }
+            self.refresh_cached_block(idx, item, palette, width, opts, loc);
             // The block goes in query-free; the highlight is applied to the
             // *clones* below, which is what keeps it out of the cache.
             let at = lines.len();
@@ -794,24 +777,7 @@ impl MessageFeed {
                 let from = at + self.cache[idx].content_from;
                 // `lines[from..]` is this block's tail: later blocks are not
                 // appended yet, so the slice cannot reach them.
-                //
-                // The rail sits in span 0 of every cached line and is passed
-                // through untouched — deliberately *without* excluding it from
-                // the match text. That was the obvious precaution, and measuring
-                // showed it buys nothing: `highlight_line` derives its offsets
-                // from the same concatenation it matches over, so including the
-                // rail shifts both consistently and the output is identical. No
-                // query can match the rail either — `match_ranges` drops tokens
-                // under three characters, and `▌ ` is not in any of them. An
-                // excluding parameter would be untestable by construction.
-                for (i, line) in lines[from..].iter_mut().enumerate() {
-                    // One entry per occurrence, in document order: a single line
-                    // can hold several, and next/prev steps through matches, not
-                    // lines.
-                    for _ in 0..highlight_line(line, query, palette.accent) {
-                        found.push(from + i);
-                    }
-                }
+                highlight_block_tail(&mut lines, from, query, palette.accent, &mut found);
             }
         }
         self.matches = found;
@@ -820,6 +786,73 @@ impl MessageFeed {
             self.current_match = 0;
         }
         lines
+    }
+
+    /// Recomputes message `idx`'s block in the render cache when its fingerprint
+    /// no longer matches; an unchanged message keeps its cached block as-is.
+    fn refresh_cached_block(
+        &mut self,
+        idx: usize,
+        item: &FeedMessage,
+        palette: &Palette,
+        width: usize,
+        opts: markdown::RenderOpts,
+        loc: &'static Locale,
+    ) {
+        let fp = message_fingerprint(item);
+        let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
+        if !hit {
+            // A streaming/changed message — recompute only its block.
+            let (block, content_from) = build_message_block(
+                item,
+                palette,
+                width,
+                self.view,
+                opts,
+                loc,
+                &self.role_names,
+                self.marker == Some(idx),
+            );
+            let cb = CachedBlock {
+                fingerprint: fp,
+                lines: block,
+                content_from,
+            };
+            if idx < self.cache.len() {
+                self.cache[idx] = cb;
+            } else {
+                self.cache.push(cb);
+            }
+        }
+    }
+}
+
+/// Recolors `query` matches in `lines[from..]` — one block's tail — recording each
+/// occurrence's row into `found`.
+///
+/// The rail sits in span 0 of every cached line and is passed
+/// through untouched — deliberately *without* excluding it from
+/// the match text. That was the obvious precaution, and measuring
+/// showed it buys nothing: `highlight_line` derives its offsets
+/// from the same concatenation it matches over, so including the
+/// rail shifts both consistently and the output is identical. No
+/// query can match the rail either — `match_ranges` drops tokens
+/// under three characters, and `▌ ` is not in any of them. An
+/// excluding parameter would be untestable by construction.
+fn highlight_block_tail(
+    lines: &mut [Line<'static>],
+    from: usize,
+    query: &str,
+    accent: Color,
+    found: &mut Vec<usize>,
+) {
+    for (i, line) in lines[from..].iter_mut().enumerate() {
+        // One entry per occurrence, in document order: a single line
+        // can hold several, and next/prev steps through matches, not
+        // lines.
+        for _ in 0..highlight_line(line, query, accent) {
+            found.push(from + i);
+        }
     }
 }
 
@@ -960,21 +993,7 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize 
     for span in spans {
         let (start, end) = (at, at + span.content.len());
         at = end;
-        // Cut points inside this span: every match boundary strictly within it.
-        // Taken per span because a match may **straddle** two of them — bold in
-        // the middle of a word, a link, an inline code span — and then both
-        // halves have to be recolored. `ranges` is sorted and non-overlapping,
-        // so the cuts come out ascending.
-        let mut cuts: Vec<usize> = vec![start];
-        for r in &ranges {
-            for b in [r.start, r.end] {
-                if b > start && b < end {
-                    cuts.push(b);
-                }
-            }
-        }
-        cuts.push(end);
-        cuts.dedup();
+        let cuts = span_cut_points(start, end, &ranges);
         for w in cuts.windows(2) {
             let (s, e) = (w[0], w[1]);
             let inside = ranges.iter().any(|r| r.start <= s && e <= r.end);
@@ -992,6 +1011,26 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize 
     }
     line.spans = out;
     found
+}
+
+/// Cut points inside one span (`start..end`, byte offsets into the line's
+/// text): every match boundary strictly within it, bracketed by the span's own
+/// ends. Taken per span because a match may **straddle** two of them — bold in
+/// the middle of a word, a link, an inline code span — and then both
+/// halves have to be recolored. `ranges` is sorted and non-overlapping,
+/// so the cuts come out ascending.
+fn span_cut_points(start: usize, end: usize, ranges: &[std::ops::Range<usize>]) -> Vec<usize> {
+    let mut cuts: Vec<usize> = vec![start];
+    for r in ranges {
+        for b in [r.start, r.end] {
+            if b > start && b < end {
+                cuts.push(b);
+            }
+        }
+    }
+    cuts.push(end);
+    cuts.dedup();
+    cuts
 }
 
 /// A message's fingerprint over every field that affects rendering. A hash O(len) vs.

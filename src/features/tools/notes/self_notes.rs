@@ -86,30 +86,13 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
             .unwrap_or_default();
         for (note, relation, outgoing) in nb {
             // Normalize the edge (from→to) and dedup (the same link arrives from both ends).
-            let (from, to) = if outgoing {
-                (*id, note.id)
-            } else {
-                (note.id, *id)
-            };
+            let (from, to) = edge_key(*id, note.id, outgoing);
             if !seen_edges.insert((from, to, relation.clone())) {
                 continue;
             }
-            // A cross-organ neighbor (a user note) is marked — reading the
-            // "self-model" sees the observation's link to an "about the
-            // interlocutor" fact.
-            let mark = if is_self_note(&note) {
-                String::new()
-            } else {
-                format!("{} ", ctx.loc.t("notes.mark.note"))
-            };
-            // A neighbor outside the shown set is brought in with its text (spreading activation).
-            let tail = if shown_set.contains(&note.id) {
-                format!("(id={})", note.id)
-            } else {
-                format!("{mark}(id={}) {}", note.id, note.content)
-            };
-            let arrow = if outgoing { "→" } else { "←" };
-            lines.push(format!("- (id={id}) {arrow}{relation} {tail}"));
+            lines.push(self_edge_line(
+                ctx, &shown_set, *id, &note, &relation, outgoing,
+            ));
             if lines.len() >= RELATED_IN_RECALL {
                 break;
             }
@@ -127,6 +110,43 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
             lines.join("\n")
         ))
     }
+}
+
+/// The normalized `(from, to)` key of an edge seen from `id`'s side.
+fn edge_key(id: Uuid, neighbor: Uuid, outgoing: bool) -> (Uuid, Uuid) {
+    if outgoing {
+        (id, neighbor)
+    } else {
+        (neighbor, id)
+    }
+}
+
+/// One line of the "Observation links" block: direction arrow, relation, and
+/// the neighbor — marked/expanded per the cross-organ and spreading rules.
+fn self_edge_line(
+    ctx: &ToolContext,
+    shown_set: &std::collections::HashSet<Uuid>,
+    id: Uuid,
+    note: &Note,
+    relation: &str,
+    outgoing: bool,
+) -> String {
+    // A cross-organ neighbor (a user note) is marked — reading the
+    // "self-model" sees the observation's link to an "about the
+    // interlocutor" fact.
+    let mark = if is_self_note(note) {
+        String::new()
+    } else {
+        format!("{} ", ctx.loc.t("notes.mark.note"))
+    };
+    // A neighbor outside the shown set is brought in with its text (spreading activation).
+    let tail = if shown_set.contains(&note.id) {
+        format!("(id={})", note.id)
+    } else {
+        format!("{mark}(id={}) {}", note.id, note.content)
+    };
+    let arrow = if outgoing { "→" } else { "←" };
+    format!("- (id={id}) {arrow}{relation} {tail}")
 }
 
 /// A one-time idempotent migration of the "self-model" narrative from the JSON

@@ -1236,34 +1236,13 @@ impl InputBox {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         // Editor Ctrl shortcuts: select all / undo / redo / clear
-        // (layout-independent via `physical_char`). Undo/redo return `Edited`
-        // only if something actually changed (otherwise `Moved` — a no-op).
-        if ctrl && let Some(physical) = keys::hotkey_char(&key) {
-            match physical {
-                'a' => {
-                    self.select_all();
-                    return KeyOutcome::Moved;
-                }
-                'z' => {
-                    return if self.undo() {
-                        KeyOutcome::Edited
-                    } else {
-                        KeyOutcome::Moved
-                    };
-                }
-                'y' => {
-                    return if self.redo() {
-                        KeyOutcome::Edited
-                    } else {
-                        KeyOutcome::Moved
-                    };
-                }
-                'k' => {
-                    self.clear_undoable();
-                    return KeyOutcome::Edited;
-                }
-                _ => {}
-            }
+        // (layout-independent via `physical_char`). A non-shortcut Ctrl+character
+        // falls through to navigation/editing below (as before).
+        if ctrl
+            && let Some(physical) = keys::hotkey_char(&key)
+            && let Some(outcome) = self.on_ctrl_shortcut(physical)
+        {
+            return outcome;
         }
 
         // Navigation (incl. `Ctrl`+word / `Ctrl`+start/end): with `Shift` we grow
@@ -1280,10 +1259,42 @@ impl InputBox {
             return KeyOutcome::Moved;
         }
 
-        // Editing: replacing/deleting a selection is done by the mutators
-        // themselves (at the start — `delete_selection`), so paste/`Shift+Enter`/
-        // emoji respect it too.
-        match key.code {
+        self.on_edit_key(key.code, ctrl)
+    }
+
+    /// An editor Ctrl shortcut (select all / undo / redo / clear). Undo/redo
+    /// return `Edited` only if something actually changed (otherwise `Moved` —
+    /// a no-op). `None` — not an editor shortcut (the caller falls through).
+    fn on_ctrl_shortcut(&mut self, physical: char) -> Option<KeyOutcome> {
+        match physical {
+            'a' => {
+                self.select_all();
+                Some(KeyOutcome::Moved)
+            }
+            'z' => Some(if self.undo() {
+                KeyOutcome::Edited
+            } else {
+                KeyOutcome::Moved
+            }),
+            'y' => Some(if self.redo() {
+                KeyOutcome::Edited
+            } else {
+                KeyOutcome::Moved
+            }),
+            'k' => {
+                self.clear_undoable();
+                Some(KeyOutcome::Edited)
+            }
+            _ => None,
+        }
+    }
+
+    /// Editing keys (typing, `Backspace`/`Delete`, their `Ctrl` word variants).
+    /// Replacing/deleting a selection is done by the mutators
+    /// themselves (at the start — `delete_selection`), so paste/`Shift+Enter`/
+    /// emoji respect it too.
+    fn on_edit_key(&mut self, code: KeyCode, ctrl: bool) -> KeyOutcome {
+        match code {
             KeyCode::Backspace if ctrl => {
                 self.delete_word_left();
                 KeyOutcome::Edited

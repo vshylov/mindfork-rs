@@ -139,6 +139,26 @@ pub fn short_id(id: &Uuid) -> String {
     short_hex(id)
 }
 
+/// Assigns a trimmed string field; `false` (no change) when the trimmed value
+/// is already there.
+fn assign_trimmed(slot: &mut String, value: &str) -> bool {
+    let value = value.trim().to_string();
+    if *slot == value {
+        return false;
+    }
+    *slot = value;
+    true
+}
+
+/// Replaces a list wholesale; `false` when the new list is identical.
+fn assign_list(slot: &mut Vec<String>, value: Vec<String>) -> bool {
+    if *slot == value {
+        return false;
+    }
+    *slot = value;
+    true
+}
+
 /// Sets/clears a goal's `closed_at` based on its current status: on leaving
 /// `Active` — stamps the moment (if not already stamped), on returning to `Active`
 /// — clears it.
@@ -316,75 +336,61 @@ impl SelfModel {
     /// without an orchestrator. Trait/interest lists are replaced wholesale.
     pub fn apply_edit(&mut self, edit: SelfModelEdit) -> bool {
         match edit {
-            SelfModelEdit::SetSummary(s) => {
-                let s = s.trim().to_string();
-                if self.summary == s {
-                    return false;
-                }
-                self.summary = s;
-                true
-            }
+            SelfModelEdit::SetSummary(s) => assign_trimmed(&mut self.summary, &s),
             SelfModelEdit::AddGoal(desc) => {
                 let before = self.goals.len();
                 self.add_goal(desc);
                 self.goals.len() != before
             }
-            SelfModelEdit::SetGoalText { id, text } => {
-                let text = text.trim().to_string();
-                if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
-                    if text.is_empty() || g.description == text {
-                        return false;
-                    }
-                    g.description = text;
-                    true
-                } else {
-                    false
-                }
-            }
+            SelfModelEdit::SetGoalText { id, text } => self.set_goal_text(id, &text),
             SelfModelEdit::CycleGoalStatus(id) => self.cycle_goal_status(id),
             SelfModelEdit::DeleteGoal(id) => {
                 let before = self.goals.len();
                 self.goals.retain(|g| g.id != id);
                 self.goals.len() != before
             }
-            SelfModelEdit::SetTraits(v) => {
-                if self.user_model.perceived_traits == v {
-                    return false;
-                }
-                self.user_model.perceived_traits = v;
-                true
-            }
+            SelfModelEdit::SetTraits(v) => assign_list(&mut self.user_model.perceived_traits, v),
             SelfModelEdit::SetInterests(v) => {
-                if self.user_model.current_interests == v {
-                    return false;
-                }
-                self.user_model.current_interests = v;
-                true
+                assign_list(&mut self.user_model.current_interests, v)
             }
             SelfModelEdit::SetRelationship(s) => {
-                let s = s.trim().to_string();
-                if self.user_model.relationship_dynamic == s {
-                    return false;
-                }
-                self.user_model.relationship_dynamic = s;
-                true
+                assign_trimmed(&mut self.user_model.relationship_dynamic, &s)
             }
             SelfModelEdit::DeleteInsight(id) => {
                 let before = self.narrative.len();
                 self.narrative.retain(|n| n.id != id);
                 self.narrative.len() != before
             }
-            SelfModelEdit::Clear => {
-                if self.is_empty() && self.summary.is_empty() && self.goals.is_empty() {
-                    return false;
-                }
-                self.summary.clear();
-                self.goals.clear();
-                self.user_model = UserModel::default();
-                self.narrative.clear();
-                true
-            }
+            SelfModelEdit::Clear => self.clear_all(),
         }
+    }
+
+    /// [`SelfModelEdit::SetGoalText`]: renames a goal by id. An empty or
+    /// unchanged text, or an unknown id, is a no-op (`false`).
+    fn set_goal_text(&mut self, id: Uuid, text: &str) -> bool {
+        let text = text.trim().to_string();
+        if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
+            if text.is_empty() || g.description == text {
+                return false;
+            }
+            g.description = text;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// [`SelfModelEdit::Clear`]: wipes every part of the model; `false` when
+    /// there was nothing to wipe.
+    fn clear_all(&mut self) -> bool {
+        if self.is_empty() && self.summary.is_empty() && self.goals.is_empty() {
+            return false;
+        }
+        self.summary.clear();
+        self.goals.clear();
+        self.user_model = UserModel::default();
+        self.narrative.clear();
+        true
     }
 
     /// Folds old closed goals into "scar" observations and removes them from

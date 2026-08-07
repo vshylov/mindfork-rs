@@ -179,14 +179,7 @@ impl SettingsScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Quit the app (`Ctrl+Q`/`F10`), from anywhere on the settings screen
-        // (including a field editor). `Ctrl+Q` is matched by the "physical" Latin key —
-        // works under any layout (see shared::keys). Quit moved off `Ctrl+C`
-        // (freed up), see docs/history/input-selection-undo-mouse.md §B.
-        if key.code == KeyCode::F(10)
-            || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && keys::hotkey_char(&key) == Some('q'))
-        {
+        if is_quit_key(&key) {
             return Some(SettingsIntent::Quit);
         }
         // The search overlay intercepts input (except for quit above).
@@ -222,23 +215,41 @@ impl SettingsScreen {
             self.open_search();
             return None;
         }
+        if let Some(done) = self.plugins_list_key(&key) {
+            return done;
+        }
+        if let Some(done) = self.profiles_list_key(&key) {
+            return done;
+        }
+        self.navigation_key(key)
+    }
+
+    /// `Ctrl+N`/`Ctrl+D` in the "Plugins" section: create/delete an MCP server.
+    /// `Some(..)` — the key was consumed; `None` lets the dispatcher continue.
+    fn plugins_list_key(&mut self, key: &KeyEvent) -> Option<Option<SettingsIntent>> {
         // Create/delete an MCP server (in the "Plugins" section) — the same two
         // keys as the profile lists below, over `config.mcp.servers`.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && self.section() == Section::Plugins
-            && let Some(physical) = keys::hotkey_char(&key)
+            && let Some(physical) = keys::hotkey_char(key)
         {
             match physical {
-                'n' => return Some(self.create_mcp_server()),
-                'd' => return self.delete_mcp_server(),
+                'n' => return Some(Some(self.create_mcp_server())),
+                'd' => return Some(self.delete_mcp_server()),
                 _ => {}
             }
         }
+        None
+    }
+
+    /// `Ctrl+N`/`Ctrl+D` in the "Profiles" section: create/delete a profile or
+    /// persona. `Some(..)` — the key was consumed; `None` lets the dispatcher continue.
+    fn profiles_list_key(&mut self, key: &KeyEvent) -> Option<Option<SettingsIntent>> {
         // Create/delete a profile (in the "Profiles" section). Matched by the
         // "physical" Latin key — shortcuts work under any layout (see shared::keys).
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && self.section() == Section::Profiles
-            && let Some(physical) = keys::hotkey_char(&key)
+            && let Some(physical) = keys::hotkey_char(key)
         {
             // The subsection decides *which* list is edited: "Assistant" — the
             // AI-interlocutor profiles (owned by the orchestrator → an intent),
@@ -250,22 +261,28 @@ impl SettingsScreen {
                     // The orchestrator owns the profile list: the new profile arrives
                     // with the next `Settings` snapshot, and `refresh` selects it.
                     self.pending_profile_select = true;
-                    return Some(SettingsIntent::CreateProfile {
+                    return Some(Some(SettingsIntent::CreateProfile {
                         name: self.loc().t("ui.settings.new_profile_name").into(),
                         system_message: String::new(),
-                    });
+                    }));
                 }
                 ('d', false) => {
-                    return self
-                        .profiles
-                        .get(self.profile_idx)
-                        .map(|p| SettingsIntent::DeleteProfile(p.id));
+                    return Some(
+                        self.profiles
+                            .get(self.profile_idx)
+                            .map(|p| SettingsIntent::DeleteProfile(p.id)),
+                    );
                 }
-                ('n', true) => return Some(self.create_impersonation_profile()),
-                ('d', true) => return self.delete_impersonation_profile(),
+                ('n', true) => return Some(Some(self.create_impersonation_profile())),
+                ('d', true) => return Some(self.delete_impersonation_profile()),
                 _ => {}
             }
         }
+        None
+    }
+
+    /// `Esc`/`Tab` navigation and the focus-routed key fallback (the dispatcher's tail).
+    fn navigation_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         match (key.code, key.modifiers) {
             // Esc — one level up. From the field pane it returns to the sections; from
             // the sections it closes the screen. The editor/Choice/search popups
@@ -366,54 +383,60 @@ impl SettingsScreen {
             }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
-                // The MCP-server row — a read-only status; Enter does what the
-                // row needs: confirm a changed catalog (TOFU) or reconnect.
-                if let FieldId::TMcpServer(idx) = f.id {
-                    return self.mcp_server_action(idx);
-                }
-                // A variable that names a source: the row only reports whether
-                // that OS variable is there — there is nothing here to edit (the
-                // source itself is edited in the "Variables" row above).
-                if matches!(f.id, FieldId::McpEnvSource(_)) {
-                    return None;
-                }
-                match &f.kind {
-                    FieldKind::Toggle(_) => self.toggle_field(f.id),
-                    // Choice (incl. profile selection PSelect) — an option-list popup.
-                    FieldKind::Choice(_) => {
-                        self.open_choice(f.id);
-                        None
-                    }
-                    FieldKind::Text(value) => {
-                        // The system message and greeting are multiline (wrapping +
-                        // line breaks); other fields are single-line (horizontal
-                        // scroll, no wrap onto an invisible row). See spec §11.6.
-                        let multiline = matches!(
-                            f.id,
-                            FieldId::PSystem | FieldId::PGreeting | FieldId::IpSystem
-                        );
-                        let mut input = InputBox::new();
-                        input.set_single_line(!multiline);
-                        // Secret field: masking (`•`) + an **empty** seed — a stored
-                        // key can't be shown (not even the screen has it); editing =
-                        // entering it again. See docs/research/api-key-storage.md.
-                        if is_secret_field(f.id) {
-                            input.set_mask(true);
-                        }
-                        // Don't show the "(all)"/"—" placeholders as a value.
-                        let seed = self.field_seed(f.id, value);
-                        input.set_text(&seed);
-                        self.editor = Some(Editor {
-                            field: f.id,
-                            input,
-                            multiline,
-                            error: None,
-                        });
-                        None
-                    }
-                }
+                self.field_enter(f)
             }
             _ => None,
+        }
+    }
+
+    /// `Enter` on a field row: the row-specific action (the MCP status row), a toggle
+    /// flip, the Choice popup, or opening the text editor.
+    fn field_enter(&mut self, f: &FieldRow) -> Option<SettingsIntent> {
+        // The MCP-server row — a read-only status; Enter does what the
+        // row needs: confirm a changed catalog (TOFU) or reconnect.
+        if let FieldId::TMcpServer(idx) = f.id {
+            return self.mcp_server_action(idx);
+        }
+        // A variable that names a source: the row only reports whether
+        // that OS variable is there — there is nothing here to edit (the
+        // source itself is edited in the "Variables" row above).
+        if matches!(f.id, FieldId::McpEnvSource(_)) {
+            return None;
+        }
+        match &f.kind {
+            FieldKind::Toggle(_) => self.toggle_field(f.id),
+            // Choice (incl. profile selection PSelect) — an option-list popup.
+            FieldKind::Choice(_) => {
+                self.open_choice(f.id);
+                None
+            }
+            FieldKind::Text(value) => {
+                // The system message and greeting are multiline (wrapping +
+                // line breaks); other fields are single-line (horizontal
+                // scroll, no wrap onto an invisible row). See spec §11.6.
+                let multiline = matches!(
+                    f.id,
+                    FieldId::PSystem | FieldId::PGreeting | FieldId::IpSystem
+                );
+                let mut input = InputBox::new();
+                input.set_single_line(!multiline);
+                // Secret field: masking (`•`) + an **empty** seed — a stored
+                // key can't be shown (not even the screen has it); editing =
+                // entering it again. See docs/research/api-key-storage.md.
+                if is_secret_field(f.id) {
+                    input.set_mask(true);
+                }
+                // Don't show the "(all)"/"—" placeholders as a value.
+                let seed = self.field_seed(f.id, value);
+                input.set_text(&seed);
+                self.editor = Some(Editor {
+                    field: f.id,
+                    input,
+                    multiline,
+                    error: None,
+                });
+                None
+            }
         }
     }
 
@@ -906,4 +929,13 @@ impl SettingsScreen {
             }),
         }
     }
+}
+
+/// Quit the app (`Ctrl+Q`/`F10`), from anywhere on the settings screen
+/// (including a field editor). `Ctrl+Q` is matched by the "physical" Latin key —
+/// works under any layout (see shared::keys). Quit moved off `Ctrl+C`
+/// (freed up), see docs/history/input-selection-undo-mouse.md §B.
+fn is_quit_key(key: &KeyEvent) -> bool {
+    key.code == KeyCode::F(10)
+        || (key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(key) == Some('q'))
 }

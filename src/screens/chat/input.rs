@@ -15,184 +15,220 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // In-feed search (`Ctrl+F`) captures input while it is open: keys go to
-        // the query field, `Enter`/`↓` and `Shift+Enter`/`↑` step through matches,
-        // `Esc` closes. See docs/history/in-feed-search.md §3.
-        if self.search.is_some() {
-            return self.handle_search_key(key);
-        }
-        // The help/"About" dialog (`F1`/`?`) intercepts input: `Tab`/`←→`
-        // switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` scroll the active tab, `Esc`
-        // (and a repeat `F1`/`?`) close it, `Ctrl+Q`/`F10` — quit. Other keys
-        // are ignored (they don't close it — otherwise navigation would get
-        // confusing). Scroll clamping — in `render_help`. See spec §11.7.
-        if let Some(help) = &mut self.help {
-            // Quit punches through the dialog (layout-independent), as in the
-            // confirmation popup.
-            if key.code == KeyCode::F(10)
-                || (key.modifiers.contains(KeyModifiers::CONTROL)
-                    && keys::hotkey_char(&key) == Some('q'))
-            {
-                self.help = None;
-                return Some(ChatIntent::Quit);
-            }
-            match key.code {
-                KeyCode::Tab | KeyCode::Right => help.next_tab(),
-                KeyCode::BackTab | KeyCode::Left => help.prev_tab(),
-                KeyCode::Up => help.scroll = help.scroll.saturating_sub(1),
-                KeyCode::Down => help.scroll = help.scroll.saturating_add(1),
-                KeyCode::PageUp => help.scroll = help.scroll.saturating_sub(PAGE_SCROLL),
-                KeyCode::PageDown => help.scroll = help.scroll.saturating_add(PAGE_SCROLL),
-                KeyCode::Home => help.scroll = 0,
-                KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => {
-                    // Remember the tab to restore it on the next open.
-                    self.help_last_tab = help.tab;
-                    self.help = None;
-                }
-                _ => {}
-            }
-            return None;
-        }
-        // During impersonation the input box is hidden (a preview is shown
-        // instead): react only to cancel (`Esc`) and quit (`Ctrl+Q`/`F10`);
-        // ignore other keys.
-        if self.impersonation.is_some() {
-            if key.code == KeyCode::F(10) {
-                return Some(ChatIntent::Quit);
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(&key) == Some('q')
-            {
-                return Some(ChatIntent::Quit);
-            }
-            if key.code == KeyCode::Esc {
-                return Some(ChatIntent::CancelImpersonation);
-            }
-            return None;
-        }
-        // A dangerous tool call is waiting for an answer (spec §9.8). Checked
-        // **before** the generation gate below, because unlike every other
-        // popup this one is open precisely while the turn runs — the loop is
-        // parked on it.
-        if self.tool_confirm.is_some() {
-            return self.handle_tool_confirm_key(key);
-        }
-        // The modal confirmation popup (`Ctrl+R`/`Ctrl+E`): Enter — yes, Esc
-        // — no, other keys are ignored (the popup stays open). See spec
-        // §11.7.
-        if self.confirm.is_some() {
-            return self.handle_confirm_key(key);
-        }
-        if self.suggest.is_some() {
-            self.handle_suggest_key(key);
-            return None;
-        }
-        if self.emoji.is_some() {
-            self.handle_emoji_key(key);
-            return None;
-        }
-        if self.profile_overlay.is_some() {
-            return self.handle_profile_overlay_key(key);
+        if let Some(handled) = self.route_modal_key(key) {
+            return handled;
         }
         // Ctrl shortcuts are matched by the "physical" Latin key — so they
         // work under any layout (Russian JCUKEN gives `Ctrl+д` instead of
         // `Ctrl+l`). See shared::keys, spec §11.7.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && let Some(physical) = keys::hotkey_char(&key)
+            && let Some(handled) = self.handle_ctrl_shortcut(physical)
         {
-            match physical {
-                // Quit moved to Ctrl+Q/F10 (F10 — in the code match below);
-                // Ctrl+C was freed up for copying. See
-                // docs/history/input-selection-undo-mouse.md §B.
-                'q' => return Some(ChatIntent::Quit),
-                // Copy the selection to the clipboard (Ctrl+C). Writing it is
-                // a runtime side effect (`AppCommand` isn't needed — the text
-                // is already in the UI). No-op without a selection.
-                'c' => {
-                    if self.input.has_selection() {
-                        let text = self.input.selected_text().unwrap_or_default();
-                        self.input.clear_selection();
-                        return Some(ChatIntent::CopyToClipboard(text));
-                    }
-                    return None;
-                }
-                // Cut the selection (Ctrl+X): copy + delete.
-                'x' => {
-                    if self.input.has_selection() {
-                        let text = self.input.selected_text().unwrap_or_default();
-                        self.input.delete_selection();
-                        self.mark_input_changed();
-                        return Some(ChatIntent::CopyToClipboard(text));
-                    }
-                    return None;
-                }
-                // The settings screen (Ctrl+P) — opens once the settings
-                // snapshot has arrived.
-                'p' => {
-                    return self
-                        .settings_snapshot
-                        .is_some()
-                        .then_some(ChatIntent::OpenSettings);
-                }
-                'n' => return self.request_new_chat(),
-                // Regenerate / delete the last exchange (only while not
-                // generating). See spec §11.7.
-                'r' => return self.trigger_destructive(ConfirmAction::Regenerate),
-                'e' => return self.trigger_destructive(ConfirmAction::DeleteExchange),
-                // Impersonation: write a message on the user's behalf (spec
-                // §11.8). `seed` — the text already typed (the model
-                // continues it).
-                'u' => {
-                    return (!self.generating).then(|| ChatIntent::Impersonate {
-                        seed: self.input.text(),
-                    });
-                }
-                // In-feed text search (docs/history/in-feed-search.md). `/` is not
-                // available: the input box is always focused, and `/` in an
-                // empty box is how a command starts (§1.1).
-                'f' => {
-                    self.open_feed_search();
-                    return None;
-                }
-                // Spellcheck suggestions for the word under the cursor (spec
-                // §11.5).
-                'g' => {
-                    self.open_suggestions();
-                    return None;
-                }
-                // The emoji picker popup (spec §11.5). Restore the previous
-                // selection.
-                'b' => {
-                    self.emoji = Some(EmojiPickerState::with_selected(self.emoji_last));
-                    return None;
-                }
-                // Collapsing "thoughts" (spec §11.3).
-                // Collapsing "thoughts" (spec §11.3). The new state goes back to
-                // the orchestrator, which stores it on the chat — the collapse
-                // state is per chat, like the draft (docs/feed-collapse.md).
-                't' => {
-                    self.feed_view.toggle_thoughts();
-                    // Collapsing reshapes all feed blocks — the same kind of
-                    // content change as streaming/a note.
-                    self.mark_feed_changed();
-                    return Some(ChatIntent::SetFeedView(self.feed_view.view()));
-                }
-                // Collapsing tool calls (spec §11.3) — the header stays, the
-                // arguments and results fold away.
-                'o' => {
-                    self.feed_view.toggle_tools();
-                    self.mark_feed_changed();
-                    return Some(ChatIntent::SetFeedView(self.feed_view.view()));
-                }
-                // The toggle between wheel scrolling ↔ mouse text selection
-                // (spec §11.3). `Ctrl+M` doesn't work for this: the terminal
-                // reports it as Enter.
-                'w' => {
-                    self.mouse_scroll = !self.mouse_scroll;
-                    return Some(ChatIntent::SetMouseCapture(self.mouse_scroll));
-                }
-                _ => {}
-            }
+            return handled;
         }
+        self.handle_plain_key(key)
+    }
+
+    /// Routes the key to whichever modal state is open (in-feed search, the
+    /// help dialog, the impersonation preview, the popups, the profile
+    /// overlay). Returns `Some(result)` when a modal state consumed the key
+    /// (the value is what [`Self::handle_key`] returns), `None` when nothing
+    /// modal is open. The ORDER of the checks is load-bearing — e.g. the
+    /// tool-confirmation popup is checked **before** the generation gate in
+    /// the ordinary routing.
+    fn route_modal_key(&mut self, key: KeyEvent) -> Option<Option<ChatIntent>> {
+        // In-feed search (`Ctrl+F`) captures input while it is open: keys go to
+        // the query field, `Enter`/`↓` and `Shift+Enter`/`↑` step through matches,
+        // `Esc` closes. See docs/history/in-feed-search.md §3.
+        if self.search.is_some() {
+            return Some(self.handle_search_key(key));
+        }
+        if self.help.is_some() {
+            return Some(self.handle_help_key(key));
+        }
+        if self.impersonation.is_some() {
+            return Some(self.handle_impersonation_key(key));
+        }
+        // A dangerous tool call is waiting for an answer (spec §9.8). Checked
+        // **before** the generation gate below, because unlike every other
+        // popup this one is open precisely while the turn runs — the loop is
+        // parked on it.
+        if self.tool_confirm.is_some() {
+            return Some(self.handle_tool_confirm_key(key));
+        }
+        // The modal confirmation popup (`Ctrl+R`/`Ctrl+E`): Enter — yes, Esc
+        // — no, other keys are ignored (the popup stays open). See spec
+        // §11.7.
+        if self.confirm.is_some() {
+            return Some(self.handle_confirm_key(key));
+        }
+        if self.suggest.is_some() {
+            self.handle_suggest_key(key);
+            return Some(None);
+        }
+        if self.emoji.is_some() {
+            self.handle_emoji_key(key);
+            return Some(None);
+        }
+        if self.profile_overlay.is_some() {
+            return Some(self.handle_profile_overlay_key(key));
+        }
+        None
+    }
+
+    /// The help/"About" dialog (`F1`/`?`) intercepts input: `Tab`/`←→`
+    /// switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` scroll the active tab, `Esc`
+    /// (and a repeat `F1`/`?`) close it, `Ctrl+Q`/`F10` — quit. Other keys
+    /// are ignored (they don't close it — otherwise navigation would get
+    /// confusing). Scroll clamping — in `render_help`. See spec §11.7.
+    fn handle_help_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        let help = self.help.as_mut()?;
+        // Quit punches through the dialog (layout-independent), as in the
+        // confirmation popup.
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && keys::hotkey_char(&key) == Some('q'))
+        {
+            self.help = None;
+            return Some(ChatIntent::Quit);
+        }
+        match key.code {
+            KeyCode::Tab | KeyCode::Right => help.next_tab(),
+            KeyCode::BackTab | KeyCode::Left => help.prev_tab(),
+            KeyCode::Up => help.scroll = help.scroll.saturating_sub(1),
+            KeyCode::Down => help.scroll = help.scroll.saturating_add(1),
+            KeyCode::PageUp => help.scroll = help.scroll.saturating_sub(PAGE_SCROLL),
+            KeyCode::PageDown => help.scroll = help.scroll.saturating_add(PAGE_SCROLL),
+            KeyCode::Home => help.scroll = 0,
+            KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => {
+                // Remember the tab to restore it on the next open.
+                self.help_last_tab = help.tab;
+                self.help = None;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// During impersonation the input box is hidden (a preview is shown
+    /// instead): react only to cancel (`Esc`) and quit (`Ctrl+Q`/`F10`);
+    /// ignore other keys.
+    fn handle_impersonation_key(&self, key: KeyEvent) -> Option<ChatIntent> {
+        if key.code == KeyCode::F(10) {
+            return Some(ChatIntent::Quit);
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(&key) == Some('q') {
+            return Some(ChatIntent::Quit);
+        }
+        if key.code == KeyCode::Esc {
+            return Some(ChatIntent::CancelImpersonation);
+        }
+        None
+    }
+
+    /// A layout-independent `Ctrl+<key>` shortcut (`physical` — the physical
+    /// Latin key). Returns `Some(result)` when the shortcut was recognized
+    /// (the value is what [`Self::handle_key`] returns), `None` for an
+    /// unclaimed key, which then falls through to the ordinary routing
+    /// (e.g. `Ctrl+A`/`Ctrl+Z` belong to the input box).
+    fn handle_ctrl_shortcut(&mut self, physical: char) -> Option<Option<ChatIntent>> {
+        match physical {
+            // Quit moved to Ctrl+Q/F10 (F10 — in `handle_plain_key`);
+            // Ctrl+C was freed up for copying. See
+            // docs/history/input-selection-undo-mouse.md §B.
+            'q' => Some(Some(ChatIntent::Quit)),
+            // Copy the selection to the clipboard (Ctrl+C). Writing it is
+            // a runtime side effect (`AppCommand` isn't needed — the text
+            // is already in the UI). No-op without a selection.
+            'c' => {
+                if self.input.has_selection() {
+                    let text = self.input.selected_text().unwrap_or_default();
+                    self.input.clear_selection();
+                    return Some(Some(ChatIntent::CopyToClipboard(text)));
+                }
+                Some(None)
+            }
+            // Cut the selection (Ctrl+X): copy + delete.
+            'x' => {
+                if self.input.has_selection() {
+                    let text = self.input.selected_text().unwrap_or_default();
+                    self.input.delete_selection();
+                    self.mark_input_changed();
+                    return Some(Some(ChatIntent::CopyToClipboard(text)));
+                }
+                Some(None)
+            }
+            // The settings screen (Ctrl+P) — opens once the settings
+            // snapshot has arrived.
+            'p' => Some(
+                self.settings_snapshot
+                    .is_some()
+                    .then_some(ChatIntent::OpenSettings),
+            ),
+            'n' => Some(self.request_new_chat()),
+            // Regenerate / delete the last exchange (only while not
+            // generating). See spec §11.7.
+            'r' => Some(self.trigger_destructive(ConfirmAction::Regenerate)),
+            'e' => Some(self.trigger_destructive(ConfirmAction::DeleteExchange)),
+            // Impersonation: write a message on the user's behalf (spec
+            // §11.8). `seed` — the text already typed (the model
+            // continues it).
+            'u' => Some((!self.generating).then(|| ChatIntent::Impersonate {
+                seed: self.input.text(),
+            })),
+            // In-feed text search (docs/history/in-feed-search.md). `/` is not
+            // available: the input box is always focused, and `/` in an
+            // empty box is how a command starts (§1.1).
+            'f' => {
+                self.open_feed_search();
+                Some(None)
+            }
+            // Spellcheck suggestions for the word under the cursor (spec
+            // §11.5).
+            'g' => {
+                self.open_suggestions();
+                Some(None)
+            }
+            // The emoji picker popup (spec §11.5). Restore the previous
+            // selection.
+            'b' => {
+                self.emoji = Some(EmojiPickerState::with_selected(self.emoji_last));
+                Some(None)
+            }
+            // Collapsing "thoughts" (spec §11.3).
+            // Collapsing "thoughts" (spec §11.3). The new state goes back to
+            // the orchestrator, which stores it on the chat — the collapse
+            // state is per chat, like the draft (docs/feed-collapse.md).
+            't' => {
+                self.feed_view.toggle_thoughts();
+                // Collapsing reshapes all feed blocks — the same kind of
+                // content change as streaming/a note.
+                self.mark_feed_changed();
+                Some(Some(ChatIntent::SetFeedView(self.feed_view.view())))
+            }
+            // Collapsing tool calls (spec §11.3) — the header stays, the
+            // arguments and results fold away.
+            'o' => {
+                self.feed_view.toggle_tools();
+                self.mark_feed_changed();
+                Some(Some(ChatIntent::SetFeedView(self.feed_view.view())))
+            }
+            // The toggle between wheel scrolling ↔ mouse text selection
+            // (spec §11.3). `Ctrl+M` doesn't work for this: the terminal
+            // reports it as Enter.
+            'w' => {
+                self.mouse_scroll = !self.mouse_scroll;
+                Some(Some(ChatIntent::SetMouseCapture(self.mouse_scroll)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Routing for a key with no modal state open and no Ctrl shortcut
+    /// claimed (function keys, scrolling, `Esc`, `Enter`/send, plain typing
+    /// into the input box).
+    fn handle_plain_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         match (key.code, key.modifiers) {
             // Quit — Ctrl+Q (above) or F10 (a second option in case the
             // terminal intercepts Ctrl+Q; F10 often opens the emulator's menu
@@ -246,91 +282,7 @@ impl ChatScreen {
                 self.mark_input_changed();
                 None
             }
-            (KeyCode::Enter, _) => {
-                let text = self.input.text();
-                if text.trim().is_empty() {
-                    return None;
-                }
-                // A RAG slash command (`/rag add …`) — isn't sent as a
-                // message and works independently of generation (background
-                // indexing).
-                if let Some(parsed) = crate::features::rag_command::parse(&text, self.loc) {
-                    use crate::features::rag_command::RagCommand;
-                    self.input.clear();
-                    self.mark_input_changed();
-                    return match parsed {
-                        Ok(RagCommand::Add { path, recursive }) => {
-                            Some(ChatIntent::RagAdd { path, recursive })
-                        }
-                        Ok(RagCommand::Delete { path }) => Some(ChatIntent::RagDelete { path }),
-                        Ok(RagCommand::List) => Some(ChatIntent::RagList),
-                        Ok(RagCommand::Rebuild) => Some(ChatIntent::RagRebuild),
-                        Err(msg) => {
-                            self.push_note(&format!("RAG: {msg}"));
-                            None
-                        }
-                    };
-                }
-                // The re-embedding command (`/reindex`) — also not a message,
-                // and also background work. It takes no arguments; a malformed
-                // one leaves a hint instead of going out to the model. See
-                // docs/research/embedding-model-change-reindex.md §8.1.
-                if let Some(parsed) = crate::features::reindex_command::parse(&text, self.loc) {
-                    self.input.clear();
-                    self.mark_input_changed();
-                    return match parsed {
-                        Ok(()) => Some(ChatIntent::Reindex),
-                        Err(msg) => {
-                            self.push_note(&msg);
-                            None
-                        }
-                    };
-                }
-                // A file-attachment slash command (`/file …`) — not a message
-                // either; works during generation (reading happens in the
-                // background). See docs/file-attachments.md.
-                if let Some(parsed) = crate::features::file_command::parse(&text, self.loc) {
-                    use crate::features::file_command::FileCommand;
-                    self.input.clear();
-                    self.mark_input_changed();
-                    return match parsed {
-                        Ok(FileCommand::Attach { path }) => Some(ChatIntent::FileAttach { path }),
-                        Ok(FileCommand::Remove { target }) => {
-                            Some(ChatIntent::FileRemove { target })
-                        }
-                        Ok(FileCommand::List) => Some(ChatIntent::FileList),
-                        Err(msg) => {
-                            self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
-                            None
-                        }
-                    };
-                }
-                // A speech slash command (`/tts …`) — also not a message, and
-                // it also works during generation (a snapshot gets spoken).
-                // See spec §11.9.
-                if let Some(parsed) = crate::features::tts_command::parse(&text) {
-                    use crate::features::tts_command::TtsCommand;
-                    self.input.clear();
-                    self.mark_input_changed();
-                    return match parsed {
-                        Ok(TtsCommand::Speak(scope)) => Some(ChatIntent::Tts(scope)),
-                        Ok(TtsCommand::Stop) => Some(ChatIntent::TtsStop),
-                        Ok(TtsCommand::Pause) => Some(ChatIntent::TtsPause),
-                        Ok(TtsCommand::Resume) => Some(ChatIntent::TtsResume),
-                        Err(arg) => {
-                            self.push_note(&self.loc.tf("ui.tts.bad_arg", &[("arg", &arg)]));
-                            None
-                        }
-                    };
-                }
-                if !self.generating {
-                    self.input.clear();
-                    self.mark_input_changed();
-                    Some(ChatIntent::Send(text))
-                } else {
-                    None
-                }
-            }
+            (KeyCode::Enter, _) => self.handle_enter(),
             _ => {
                 // Mark the input "dirty" only on an actual edit — a bare
                 // cursor move (`Moved`) shouldn't needlessly wake the
@@ -341,6 +293,113 @@ impl ChatScreen {
                 None
             }
         }
+    }
+
+    /// `Enter` on the input box: slash commands (`/rag`, `/reindex`,
+    /// `/file`, `/tts`) are intercepted and never go out as messages;
+    /// anything else is sent (unless a turn is already generating).
+    fn handle_enter(&mut self) -> Option<ChatIntent> {
+        let text = self.input.text();
+        if text.trim().is_empty() {
+            return None;
+        }
+        if let Some(intent) = self.try_rag_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_reindex_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_file_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_tts_command(&text) {
+            return intent;
+        }
+        if !self.generating {
+            self.input.clear();
+            self.mark_input_changed();
+            Some(ChatIntent::Send(text))
+        } else {
+            None
+        }
+    }
+
+    /// A RAG slash command (`/rag add …`) — isn't sent as a message and
+    /// works independently of generation (background indexing). Returns
+    /// `None` when the text is not a `/rag` command.
+    fn try_rag_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::rag_command::RagCommand;
+        let parsed = crate::features::rag_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(RagCommand::Add { path, recursive }) => Some(ChatIntent::RagAdd { path, recursive }),
+            Ok(RagCommand::Delete { path }) => Some(ChatIntent::RagDelete { path }),
+            Ok(RagCommand::List) => Some(ChatIntent::RagList),
+            Ok(RagCommand::Rebuild) => Some(ChatIntent::RagRebuild),
+            Err(msg) => {
+                self.push_note(&format!("RAG: {msg}"));
+                None
+            }
+        })
+    }
+
+    /// The re-embedding command (`/reindex`) — also not a message,
+    /// and also background work. It takes no arguments; a malformed
+    /// one leaves a hint instead of going out to the model. See
+    /// docs/research/embedding-model-change-reindex.md §8.1. Returns `None`
+    /// when the text is not a `/reindex` command.
+    fn try_reindex_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        let parsed = crate::features::reindex_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(()) => Some(ChatIntent::Reindex),
+            Err(msg) => {
+                self.push_note(&msg);
+                None
+            }
+        })
+    }
+
+    /// A file-attachment slash command (`/file …`) — not a message
+    /// either; works during generation (reading happens in the
+    /// background). See docs/file-attachments.md. Returns `None` when the
+    /// text is not a `/file` command.
+    fn try_file_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::file_command::FileCommand;
+        let parsed = crate::features::file_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(FileCommand::Attach { path }) => Some(ChatIntent::FileAttach { path }),
+            Ok(FileCommand::Remove { target }) => Some(ChatIntent::FileRemove { target }),
+            Ok(FileCommand::List) => Some(ChatIntent::FileList),
+            Err(msg) => {
+                self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
+                None
+            }
+        })
+    }
+
+    /// A speech slash command (`/tts …`) — also not a message, and
+    /// it also works during generation (a snapshot gets spoken).
+    /// See spec §11.9. Returns `None` when the text is not a `/tts` command.
+    fn try_tts_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::tts_command::TtsCommand;
+        let parsed = crate::features::tts_command::parse(text)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(TtsCommand::Speak(scope)) => Some(ChatIntent::Tts(scope)),
+            Ok(TtsCommand::Stop) => Some(ChatIntent::TtsStop),
+            Ok(TtsCommand::Pause) => Some(ChatIntent::TtsPause),
+            Ok(TtsCommand::Resume) => Some(ChatIntent::TtsResume),
+            Err(arg) => {
+                self.push_note(&self.loc.tf("ui.tts.bad_arg", &[("arg", &arg)]));
+                None
+            }
+        })
     }
 
     /// Inserts clipboard text into the input box (the `Event::Paste` event —

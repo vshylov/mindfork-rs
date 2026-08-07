@@ -94,19 +94,7 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
             if !seen.insert(note.id) {
                 continue;
             }
-            let arrow = if outgoing { "→" } else { "←" };
-            // A cross-organ neighbor (an "about self" observation) is marked — so
-            // the model sees the note's link to the observation without mixing
-            // organs in the general output.
-            let mark = if is_self_note(&note) {
-                format!("{} ", ctx.loc.t("notes.mark.self"))
-            } else {
-                String::new()
-            };
-            lines.push(format!(
-                "- {arrow}{relation} {mark}(id={}) {}",
-                note.id, note.content
-            ));
+            lines.push(related_line(ctx, &note, &relation, outgoing));
             if lines.len() >= RELATED_IN_RECALL {
                 break;
             }
@@ -124,6 +112,24 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
             lines.join("\n")
         ))
     }
+}
+
+/// One line of the "Related notes" block: direction arrow, relation, an
+/// `[about self]` marker for a cross-organ neighbor, id and content.
+fn related_line(ctx: &ToolContext, note: &Note, relation: &str, outgoing: bool) -> String {
+    let arrow = if outgoing { "→" } else { "←" };
+    // A cross-organ neighbor (an "about self" observation) is marked — so
+    // the model sees the note's link to the observation without mixing
+    // organs in the general output.
+    let mark = if is_self_note(note) {
+        format!("{} ", ctx.loc.t("notes.mark.self"))
+    } else {
+        String::new()
+    };
+    format!(
+        "- {arrow}{relation} {mark}(id={}) {}",
+        note.id, note.content
+    )
 }
 
 /// The "Source citations" block: for the shown notes (by id), lists the RAG

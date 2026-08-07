@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::entities::sampling::ReasoningEffort;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiRole, ChatRequest};
 
 // ---------- request ----------
@@ -126,40 +126,49 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     tc.insert("includeThoughts".into(), json!(include));
 
     if is_gemini_3(model) {
-        // 3.x: thinkingLevel. Can't be fully disabled — force_off → the minimal level.
-        let level = if force_off {
-            Some("minimal")
-        } else {
-            s.reasoning_effort.and_then(effort_to_level)
-        };
-        // Gemini 3 **Pro** doesn't support `thinkingLevel:"minimal"` (returns `400`
-        // "Thinking level MINIMAL is not supported for this model") — its minimum is
-        // `low`. Clamp "minimal → low" for Pro (mirroring `is_gemini_25_pro`, where 0→128):
-        // applies both to force_off (auto-title/impersonation) and an explicit effort=Minimal.
-        let level = level.map(|l| {
-            if l == "minimal" && is_gemini_3_pro(model) {
-                "low"
-            } else {
-                l
-            }
-        });
         // effort isn't set (level None) with thinking on — the level isn't sent (the model's default),
         // includeThoughts remains.
-        if let Some(level) = level {
+        if let Some(level) = gemini3_level(s, model, force_off) {
             tc.insert("thinkingLevel".into(), json!(level));
         }
     } else {
-        // 2.5 and others: thinkingBudget (tokens).
-        let budget = if force_off {
-            // Gemini 2.5 Pro can't DISABLE thoughts (minimum 128) — `thinkingBudget:0`
-            // would return `400`; send the minimum. Flash/Flash-Lite: `0` disables it.
-            if is_gemini_25_pro(model) { 128 } else { 0 }
-        } else {
-            s.reasoning_effort.map(effort_to_budget).unwrap_or(-1) // -1 = dynamic
-        };
-        tc.insert("thinkingBudget".into(), json!(budget));
+        tc.insert(
+            "thinkingBudget".into(),
+            json!(gemini25_budget(s, model, force_off)),
+        );
     }
     Some(Value::Object(tc))
+}
+
+/// 3.x: thinkingLevel. Can't be fully disabled — force_off → the minimal level.
+fn gemini3_level(s: &SamplingConfig, model: &str, force_off: bool) -> Option<&'static str> {
+    let level = if force_off {
+        Some("minimal")
+    } else {
+        s.reasoning_effort.and_then(effort_to_level)
+    };
+    // Gemini 3 **Pro** doesn't support `thinkingLevel:"minimal"` (returns `400`
+    // "Thinking level MINIMAL is not supported for this model") — its minimum is
+    // `low`. Clamp "minimal → low" for Pro (mirroring `is_gemini_25_pro`, where 0→128):
+    // applies both to force_off (auto-title/impersonation) and an explicit effort=Minimal.
+    level.map(|l| {
+        if l == "minimal" && is_gemini_3_pro(model) {
+            "low"
+        } else {
+            l
+        }
+    })
+}
+
+/// 2.5 and others: thinkingBudget (tokens).
+fn gemini25_budget(s: &SamplingConfig, model: &str, force_off: bool) -> i64 {
+    if force_off {
+        // Gemini 2.5 Pro can't DISABLE thoughts (minimum 128) — `thinkingBudget:0`
+        // would return `400`; send the minimum. Flash/Flash-Lite: `0` disables it.
+        if is_gemini_25_pro(model) { 128 } else { 0 }
+    } else {
+        s.reasoning_effort.map(effort_to_budget).unwrap_or(-1) // -1 = dynamic
+    }
 }
 
 /// The Gemini 3.x generation (uses `thinkingLevel`). A rough inference from the model name.

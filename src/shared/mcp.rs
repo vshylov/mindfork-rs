@@ -315,36 +315,10 @@ async fn read_loop(
         let has_method = msg.get("method").is_some();
         match (id, has_method) {
             // A reply to our request.
-            (Some(id_v), false) => {
-                let Some(id) = id_v.as_i64() else { continue };
-                if let Some(tx) = pending.lock().await.remove(&id) {
-                    let outcome = match msg.get("error") {
-                        Some(e) => Err(e
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("error with no description")
-                            .to_string()),
-                        None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
-                    };
-                    let _ = tx.send(outcome);
-                }
-            }
+            (Some(id_v), false) => deliver_reply(id_v, &msg, &pending).await,
             // A server request to us: reply to ping, everything else —
             // method-not-found (staying silent would hang a well-behaved server).
-            (Some(id_v), true) => {
-                let method = msg["method"].as_str().unwrap_or_default();
-                let reply = if method == "ping" {
-                    json!({ "jsonrpc": "2.0", "id": id_v, "result": {} })
-                } else {
-                    json!({ "jsonrpc": "2.0", "id": id_v,
-                            "error": { "code": -32601, "message": "method not found" } })
-                };
-                let mut line = reply.to_string();
-                line.push('\n');
-                let mut w = writer.lock().await;
-                let _ = w.write_all(line.as_bytes()).await;
-                let _ = w.flush().await;
-            }
+            (Some(id_v), true) => answer_server_request(id_v, &msg, &writer).await,
             // A server notification — ignored in the tools-only subset
             // (list_changed — groundwork for stage 3: re-listing the catalog).
             (None, true) => {}
@@ -353,6 +327,40 @@ async fn read_loop(
     }
     // The stream is closed: wake every waiter with an error (the oneshot closes on drop).
     pending.lock().await.clear();
+}
+
+/// Routes a server reply to the request waiting on its id; a reply nobody is
+/// waiting for (or with a non-numeric id) is dropped.
+async fn deliver_reply(id_v: &Value, msg: &Value, pending: &PendingMap) {
+    let Some(id) = id_v.as_i64() else { return };
+    if let Some(tx) = pending.lock().await.remove(&id) {
+        let outcome = match msg.get("error") {
+            Some(e) => Err(e
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("error with no description")
+                .to_string()),
+            None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
+        };
+        let _ = tx.send(outcome);
+    }
+}
+
+/// Answers a server→client request: an empty result for `ping`, `-32601`
+/// (method not found) for anything else.
+async fn answer_server_request(id_v: &Value, msg: &Value, writer: &SharedWriter) {
+    let method = msg["method"].as_str().unwrap_or_default();
+    let reply = if method == "ping" {
+        json!({ "jsonrpc": "2.0", "id": id_v, "result": {} })
+    } else {
+        json!({ "jsonrpc": "2.0", "id": id_v,
+                "error": { "code": -32601, "message": "method not found" } })
+    };
+    let mut line = reply.to_string();
+    line.push('\n');
+    let mut w = writer.lock().await;
+    let _ = w.write_all(line.as_bytes()).await;
+    let _ = w.flush().await;
 }
 
 fn clip_line(s: &str) -> &str {
