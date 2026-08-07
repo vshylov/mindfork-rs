@@ -1,8 +1,9 @@
 # Research: conversation history compression (rolling summary)
 
 > Research for roadmap §"Context and tokens" item #1 ("Most valuable next").
-> Status: **forks decided by the user 2026-08-07** (§8) — F8(c), F9(b), F10 with
-> a full off switch, the rest as recommended. Next step: stage 0 (the probe, §9).
+> Status: forks decided by the user 2026-08-07 (§8) — F8(c), F9(b), F10 with a
+> full off switch, the rest as recommended. **Stage 0 (the probe) is done —
+> verdict GO** (§9a). Next step: stage 1 (§10).
 > Prepared 2026-08-07, branch `docs/history-compression-research`.
 > Closely related roadmap item: #2 **prompt caching** — the two must compose (§3.3).
 
@@ -30,22 +31,30 @@ in the status bar *shows* the approach to the ceiling but nothing acts on it.
 
 ### 1.2 What actually happens at the ceiling, per provider
 
-Sourced from provider docs/issues; the llama.cpp case is to be **reproduced
-against our live stack in stage 0** (the probe), since it is the primary
-audience:
+The llama.cpp row was **measured in stage 0** (§9a) — against the live stack
+*and* against the C++ source; the cloud rows are from provider docs:
 
 | Provider | Behavior at overflow |
 |---|---|
-| llama-server (default) | **HTTP 400** `the request exceeds the available context size, try increasing it`. Context shift is **disabled by default** (opt-in `--context-shift`). |
-| llama-server + `--context-shift` | Silent front eviction of KV blocks — the model quietly loses the *system prompt and early history* mid-generation. Worse than the error. |
+| llama-server (default) | **HTTP 400** *before* any SSE, body `{"error":{"code":400,"type":"exceed_context_size_error","message":"request (N tokens) exceeds the available context size (M tokens), try increasing it","n_prompt_tokens":N,"n_ctx":M}}`. Measured. Context shift is **disabled by default**. |
+| llama-server + `--context-shift` | **Does not rescue an oversized prompt** — same 400 (measured). It only applies *during generation*: with `n_keep=0` the discard window starts at position 1, so the **system prompt goes first**, along with ~half the window. |
 | OpenAI Responses | `truncation` defaults to `disabled` → **400** when the model's window is exceeded (`"auto"` would drop middle items; we don't send the field). |
 | Anthropic | **400** `invalid_request_error`: `prompt is too long: N tokens > M maximum`. |
 | Gemini | **400** `INVALID_ARGUMENT` on the token limit. |
 
-Our client does not swallow error bodies (a long-standing rule), so the user
-sees the 400 text — but as a generic `ui.err.generation_failed` wrapper
-(`generation.rs:1134-1139`), with no hint of what to *do*. Today's recourse:
-start a new chat, `Ctrl+E` away exchanges by hand, or raise `-c`.
+Our client does not swallow error bodies (a long-standing rule): `client.rs:110-122`
+puts the first 500 characters of the body into the error text, so the user
+**already sees the real reason** — but as raw JSON inside a generic
+`ui.err.generation_failed` wrapper (`generation.rs:1134-1139`), with no hint of
+what to *do*. Today's recourse: start a new chat, `Ctrl+E` away exchanges by
+hand, or raise `-c`.
+
+**A quieter failure worth naming**, since compression does not fix it and it is
+easy to confuse with one: when the *prompt* fits but prompt+generation reaches
+`n_ctx`, llama-server does not error — it stops generating and reports
+`finish_reason: "length"`, which on the OpenAI path is **indistinguishable from
+hitting `max_tokens`** (the native `truncated` flag is not exposed there).
+Measured, §9a M6.
 
 ### 1.3 The hidden bulk: tool messages
 
@@ -303,7 +312,15 @@ bounded, which is what makes this work on any window size.
 
 The summarization prompt asks for a structured summary that **preserves exact
 identifiers, numbers, names, and decisions verbatim** — the planted-fact probe
-(§9) is the direct test of exactly this.
+(§9) is the direct test of exactly this, and it passed (§9a).
+
+Two requirements the probe turned from guesses into measured facts (§9a):
+the prompt must state a **length limit in words** (a bare `max_tokens` cap
+truncates mid-sentence instead of making the model prioritize), and the roll
+template must instruct it to **drop what later parts superseded** — otherwise
+the summary grows with every roll, which defeats the point. `max_tokens` stays
+as a safety net well above the stated limit, and `finish_reason == "length"` is
+treated as "this summary was cut", not as success.
 
 ### 6.4 The trigger
 In the `handle_done` tail: `next_prompt_estimate = last exact prompt_tokens +
@@ -315,8 +332,21 @@ a constant). Budget resolution:
 | Mode | Budget source |
 |---|---|
 | managed | `managed.context_size` (already known) |
-| external | `/props` discovery (best-effort, llama.cpp only) → explicit setting → feature inactive |
+| external | `/props` → `default_generation_settings.n_ctx` (measured §9a M1; **read it directly, never divide by `total_slots`**) → the `n_ctx` carried in a 400 body → explicit setting → feature inactive |
 | cloud | explicit setting → feature inactive (motivation there is cost, not a ceiling) |
+
+**The 400 body is itself a discovery channel** (§9a M3): it carries `n_ctx` and
+`n_prompt_tokens` as numbers, so even a server with no `/props` teaches us its
+budget the first time we overrun it — "learn it from the failure". That makes
+the fallback chain end in something better than "inactive" for any llama.cpp
+server.
+
+**Which token number the trigger uses matters more than expected.** The exact
+`usage.prompt_tokens` is the primary input; the `bytes/4` estimate is a coarse
+fallback only, because its error **changes sign by content type** (§9a M9): it
+overestimates Russian prose by 68% and *underestimates* code by 20% and JSON
+tool results by 7% — i.e. it is unsafe exactly on the tool-heavy chats that
+overflow first (§1.3). A margin on the estimate is therefore not optional.
 
 Compacting at ~75% rather than at the wall leaves headroom for the user to
 keep typing while the background roll runs — the same reason reflection
@@ -462,6 +492,8 @@ else — as recommended.
 
 ## 9. Stage 0 — the probe (go/no-go before any wiring)
 
+> **Done, 2026-08-07 — verdict GO.** Results and what they changed: **§9a**.
+
 The house pattern: measure before building. All against the live stack
 (Gemma 4 31B q4 + the usual `llama-server`):
 
@@ -485,7 +517,165 @@ The house pattern: measure before building. All against the live stack
 
 ---
 
-## 10. Stages sketch (after go)
+## 9a. Stage 0 — measured results (2026-08-07): **GO**
+
+Two stacks. **Live** — the project's usual gate stack: external `llama-server`
+build `b9867-152d337fa`, `gemma-4-31B_q4_0-it.gguf`, `-c 16384`, `total_slots 1`.
+**Local** — a CPU-only build `b9769-c926ad098` with `gemma-3-4b-it-q8_0.gguf` at
+`-c 1024`, used for the server-behaviour measurements where a tiny context makes
+overflow trivial to reach (that behaviour is a property of the server, not the
+weights — and the load-bearing ones were then re-confirmed on the live stack).
+The C++ answers come from a real checkout of the same project at `c926ad098`.
+
+### Server behaviour
+
+- **M1 — `/props` works and is enough.** Live: `default_generation_settings.n_ctx
+  = 16384`, `total_slots = 1`, `build_info = b9867-152d337fa`, plus `model_path`
+  and the chat template's capabilities. **F5's discovery path is confirmed.**
+- **M2 — never divide by `total_slots`.** Locally, `--parallel 2 -c 1024` reports
+  `n_ctx: 512` — the per-slot figure — and a 696-token prompt (fits 1024, not
+  512) is genuinely rejected, so it is the real limit and not a display artefact.
+  But the *source* shows the trap in the other direction: with **no** `-np` flag
+  the server sets `n_parallel = 4, kv_unified = true`
+  (`tools/server/server.cpp:109-114`), so `total_slots` is 4 while `n_ctx` is
+  **not** divided. Dividing would then be wrong by 4×. Reading the field as given
+  is correct in every configuration.
+- **M3/M4 — the overflow error arrives as HTTP 400 *before* any SSE**, and this
+  is deliberate: the handler blocks on the first task result and only switches
+  the response into streaming mode if it is not an error
+  (`server-context.cpp:4161-4174`, "in streaming mode, the first error must be
+  treated as non-stream response … to match the OAI API behavior"). Measured on
+  both stacks: `stream: true` and `stream: false` return **byte-identical**
+  responses, `content-type: application/json`, no `data:` line at all. Live, with
+  a 32 706-token prompt against 16 384: rejected in **0.9 s**, before prefill.
+  The body is machine-readable — `type: "exceed_context_size_error"` plus numeric
+  `n_prompt_tokens` and `n_ctx` — so nothing has to be parsed out of prose.
+- **M5 — `usage` on a normal stream** arrives in a final chunk with an empty
+  `choices` array: `{completion_tokens, prompt_tokens, total_tokens,
+  prompt_tokens_details:{cached_tokens}}`. **`cached_tokens` is a gift for stage
+  1**: it reports how much of the prompt was served from the slot's prefix cache,
+  which is a direct, cheap way to *verify* the prefix-cache claims of §2.3 rather
+  than assert them.
+- **M6 — `--context-shift` does not rescue an oversized prompt.** Measured: the
+  same 400. It applies only *during generation* — with `-c 1024` and a 725-token
+  prompt asking for 500 tokens, the flag let generation run to completion by
+  discarding half the window (`n_keep = 1, n_discard = 511` in the log), while
+  without it generation stopped at the wall and reported
+  `finish_reason: "length"` at exactly `total_tokens = 1024`. Two consequences:
+  the eviction throws away the **system prompt first** (`n_keep` defaults to 0,
+  so the discard window starts at position 1), and the API says nothing —
+  `truncated` exists only on the native `/completion` path, never on
+  `/v1/chat/completions` (`server-task.cpp:377` vs `:398`).
+- **M7/M8 — an exact token count is available**: `POST /v1/chat/completions/input_tokens`
+  takes a full chat body, applies the template and counts with the same flags as
+  the real path (`add_special = true`), returning `{"input_tokens": N}`. Verified
+  live. `/tokenize` also exists (with `with_pieces`) but counts *raw text*, so it
+  would miss the template and BOS. The build string is readable from `/props`
+  (`build_info`) and rides every chunk as `system_fingerprint`.
+
+### M9 — the estimate's error changes sign
+
+Measured against the live tokenizer via `input_tokens`, comparing our
+`shared/tokens.rs` heuristic (`bytes/4`):
+
+| sample | estimate / actual |
+|---|---|
+| Russian prose | **1.68** (over) |
+| English prose | 1.35 (over) |
+| Rust code | **0.80** (under) |
+| JSON tool result | **0.93** (under) |
+
+Safe on prose, **unsafe on code and tool output** — the exact content §1.3
+identifies as the invisible bulk. This is why §6.4 makes `usage.prompt_tokens`
+the primary input. It is also a pre-existing inaccuracy in the `~` figure the
+status bar shows today (§11 groundwork).
+
+### The planted-fact probe (the go/no-go)
+
+A 38-message synthetic design conversation (~22 000 chars) with two facts planted
+in the first three exchanges — an identifier (`ZARYA-8823`) and a decision **with
+its reason** (SQLite over PostgreSQL, *because the product must ship as a single
+binary*) — and an assertion that no later message mentions either, so the probe
+measures what it claims to. Split early 40% / middle 30% / verbatim tail, two
+consecutive rolls (`summarize(early)`, then `summarize(summary₁ + middle)`), then
+both questions asked against **summary₂ + the tail only**. A control column asks
+the same questions over the full uncompressed conversation — without it, "the
+model can't answer" is indistinguishable from "the summary lost it".
+
+**Validity was verified before trusting the result**: across the six requests
+the probe makes, the two *compressed* questions contain **zero** occurrences of
+`ZARYA`, `SQLite`, `Postgres` or `single binary` outside the summary — so a pass
+cannot come from anywhere else. The fixture's own planting assertion earns its
+keep (it failed the first draft), and one confound was caught and removed: the
+verbatim tail originally ended on an assistant recap listing "settled" decisions
+*without* storage, which a model trusting the tail over the summary could have
+answered from — a false NO-GO blamed on compression.
+
+Result on the live 31B: **both questions PASS from the compressed context, and
+match the control.** Q1 returned `ZARYA-8823` verbatim; Q2 returned SQLite *and*
+the single-binary reason — i.e. a decision survived two rounds of
+summary-of-summary with its rationale intact, which was the real question. Each
+roll cost **~10.6 s** (~1 950 prompt tokens in). The thinking-mute
+(`reasoning_budget: 0` + `chat_template_kwargs.enable_thinking: false`) held: no
+roll came back with empty `content`, the failure mode `title.rs` exists to
+survive.
+
+### The probe's most useful finding: a `max_tokens` cap is not a length limit
+
+At `--summary-tokens 400` both rolls returned **exactly 400** completion tokens
+and both summaries were **cut mid-sentence** ("Decision pending on whether to
+reject"). The facts survived only because the model front-loads decisions; the
+trailing "open questions" section was simply lost. Re-run at **700**, the shape
+of the problem showed itself: roll 1 finished naturally at **450** tokens, roll 2
+again hit the ceiling at **700**. So the summary was never bounded — at 400 it
+was *being truncated*, and given room it **grows with each roll**, which is
+exactly the failure mode rolling exists to avoid.
+
+Two causes, both fixable in the prompt rather than the mechanism, and both are
+stage-1 requirements rather than nice-to-haves:
+
+1. **The budget must be a stated length, not just a `max_tokens` cliff.** A cap
+   silently truncates; an instruction makes the model *prioritize*.
+2. **My own roll template invited the growth** — it said the new summary
+   "replaces the previous one, so nothing important may be dropped", which
+   instructs the model never to shed anything. It must instead say to compress or
+   drop what later parts superseded, under the same limit.
+
+Also worth carrying into stage 1: the roll should treat
+`finish_reason == "length"` as a signal (the summary was cut, not finished)
+rather than accepting the text silently — the same "don't hide a truncation"
+rule §1.2 applies to the conversation itself.
+
+**The fix was validated, not just proposed.** A third run added a stated
+`Hard limit: at most 250 words` to the system prompt (with "staying under it
+matters more than covering everything — keep decisions, identifiers and
+constraints, drop procedural detail") and replaced the roll template's
+"nothing important may be dropped" with "compress or drop what later parts
+superseded, so the summary does not grow as the conversation does":
+
+| variant (`max_tokens` 700 unless noted) | roll 1 | roll 2 | complete? | bounded? | facts |
+|---|---|---|---|---|---|
+| no length instruction, cap 400 | 400 | 400 | **no** — both cut mid-sentence | only by force | PASS |
+| no length instruction, cap 700 | 450 | **700** | no — roll 2 cut | **no, grows** | PASS |
+| **250-word instruction, cap 700** | **346** | **399** | **yes** | **yes** (+15%) | PASS |
+
+The capped run's summary₂ is 227 words and ends on a complete "Open Questions"
+section — precisely the part truncation had been eating. So the recommended
+prompt shape is: `max_tokens` as a **safety net well above** the stated limit,
+with the real budget expressed in words inside the prompt.
+
+### Latency and residual risk
+
+A roll costs **~10-12 s** on the reference stack (31B q4 on GPU) for ~2 000
+prompt tokens in — background work, invisible unless watched, and comfortably
+inside the ~75% threshold's headroom (§6.4).
+
+**Untested, and honestly the audience most in need of the feature**: the probe
+ran on 31B. The 8k-window user is typically running a 4B–12B model, and
+summarization quality is exactly where model size tells. Stage 1's `#[ignore]`
+smoke should therefore be run on a small model too; if a 4B cannot hold a
+decision's rationale across two rolls, that strengthens the case for F9(b)'s
+read-back tools rather than invalidating the mechanism.
 
 - **Stage 1 — core** (`feat/history-compaction`): `Chat.compaction` +
   request splice + digest variant with tool activity + the roll task
@@ -512,6 +702,14 @@ The house pattern: measure before building. All against the live stack
 
 - `estimate_prompt_tokens` ignores `req.tools` — with MCP schemas enabled the
   estimate undercounts; worth fixing when the trigger starts depending on it.
+- **The `~` token figure in the status bar is materially wrong today** (§9a M9):
+  measured against the real tokenizer it overestimates Russian prose by 68% and
+  underestimates code by 20%. Independent of this feature — it is what the user
+  reads on every turn — and cheap to improve (per-script byte ratios, or the
+  exact count once a turn has reported `usage`).
+- **`usage.prompt_tokens_details.cached_tokens`** is reported by llama-server and
+  ignored by us; it measures prefix-cache reuse directly, which would let stage 1
+  *verify* the §2.3 trade-off instead of reasoning about it.
 - The exact `prompt_tokens` dies in the UI today (`ChatScreen.gen_context`);
   carrying it through `GenResult` (stage 2) also opens the door to persisting
   a per-chat "last known size" for restart continuity.
