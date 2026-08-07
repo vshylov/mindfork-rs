@@ -146,6 +146,9 @@ var
   DataPage: TInputOptionWizardPage;
   DirPage: TInputDirWizardPage;
   SystemIndex, PortableIndex, CustomIndex: Integer;
+  { Named like the data-location indices below, so the option order can be changed
+    without silently inverting the language written into defaults.json. }
+  EnLangIndex, RuLangIndex: Integer;
 
 procedure InitializeWizard;
 begin
@@ -153,12 +156,16 @@ begin
   LangPage := CreateInputOptionPage(wpSelectDir,
     CustomMessage('AppLangCaption'), CustomMessage('AppLangSub'),
     CustomMessage('AppLangPrompt'), True, False);
-  LangPage.Add('Русский'); // the Russian option's own label; cyrillic-ok
+  { English first, matching the [Languages] order. The pre-selected option still
+    follows the language the wizard itself is running in, not the list order. }
   LangPage.Add('English');
+  EnLangIndex := 0;
+  LangPage.Add('Русский'); // the Russian option's own label; cyrillic-ok
+  RuLangIndex := 1;
   if ActiveLanguage = 'ru' then
-    LangPage.SelectedValueIndex := 0
+    LangPage.SelectedValueIndex := RuLangIndex
   else
-    LangPage.SelectedValueIndex := 1;
+    LangPage.SelectedValueIndex := EnLangIndex;
 
   { The data-location picker page (radio buttons). The portable option is only
     for a per-user install: in Program Files (per-machine) you can't write data
@@ -238,7 +245,7 @@ begin
   Path := ExpandConstant('{app}\defaults.json');
   if not FileExists(Path) then
   begin
-    if LangPage.SelectedValueIndex = 0 then
+    if LangPage.SelectedValueIndex = RuLangIndex then
       Lang := 'ru'
     else
       Lang := 'en';

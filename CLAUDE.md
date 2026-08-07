@@ -12677,8 +12677,8 @@ three findings are invisible from the workflow's own status):
 - **The checkbox itself was looked at, not just asserted**: the real wizard was
   driven to "Select Additional Tasks" and screenshotted in **both** locales — the
   new box sits under "Create a desktop shortcut", unchecked, reading
-  *Install the Python sandbox (downloads ~300 MB)* / *Установить Python-песочницу
-  (загрузка ~300 МБ)*. Automating that turned up a detail worth keeping for the
+  *Install the Python sandbox (downloads ~300 MB)* and its Russian counterpart
+  (`SandboxTask` in `[CustomMessages]`). Automating that turned up a detail worth keeping for the
   next time: Inno 6 **disables the Welcome page by default**, so the tasks page is
   three pages in, not four, and `/CURRENTUSER` is needed to skip the install-mode
   dialog that `PrivilegesRequiredOverridesAllowed=dialog` puts first.
@@ -12686,6 +12686,29 @@ three findings are invisible from the workflow's own status):
   inside the data root the uninstaller promises not to touch (in portable mode,
   right next to the user's chats), and it is re-downloadable rather than ours to
   delete — noted in the script's comment so the omission reads as a decision.
+- **Follow-up, spotted by the user while the installer was being tested**:
+  English sat *second* on the "Application language" page, and now leads — matching
+  the `[Languages]` order. A two-line change with a trap in it: `WriteDefaults`
+  mapped `SelectedValueIndex = 0` to `'ru'`, so reordering the two `Add` calls
+  alone would have **inverted the language written into defaults.json** while
+  looking correct on screen. The indices are now named (`EnLangIndex`/`RuLangIndex`,
+  the pattern the data-location page in the same file already used), so the order
+  and the mapping can no longer drift apart. The **pre-selected** option is
+  unchanged and still follows the language the wizard is running in, not the list
+  order. No CHANGELOG entry — the order of two radio buttons is below what a
+  release note serves.
+- **Verified in both directions** (silent installs: `/LANG=ru` → `"ru"`,
+  `/LANG=en` → `"en"` — the assertion that fails if the mapping inverts) and by
+  looking at the page in both locales: English first, with Russian still
+  pre-selected in the Russian wizard. Getting that picture needed two workarounds
+  worth keeping: the session's desktop input had become unavailable, so the wizard
+  was advanced with **`PostMessage(BM_CLICK)`** instead of `SendKeys` (it needs no
+  focus, and unlike `SendMessage` it doesn't block), and captured with
+  **`PrintWindow`** instead of `CopyFromScreen` (it renders the window straight
+  into a DC, so it works with no access to the screen). Also learned the hard way:
+  the options on a `CreateInputOptionPage` are **not** child radio-button windows —
+  Inno owner-draws them inside one `TNewCheckListBox` — so enumerating controls
+  finds nothing and a picture is the only way to read that list.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
