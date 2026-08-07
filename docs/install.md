@@ -479,6 +479,16 @@ and packages into `data/sandbox/`; ~300 MB on disk):
 mindfork-rs sandbox setup          # --force — re-download
 ```
 
+The **Windows installer** can do this for you: the "Additional tasks" page has an
+*Install the Python sandbox* checkbox (off by default). It runs exactly the command
+above right after the files are copied, in a console window that shows the download
+progress. If the download fails, the installation still succeeds — the sandbox is
+optional and the command can be re-run at any time. The **Linux packages
+(deb/rpm/pkg.tar.zst) deliberately don't offer this**: they install
+non-interactively as root, while the sandbox lives in the *user's* data directory
+(`~/.local/share/mindfork-rs/sandbox`), so root couldn't provision it for the right
+user anyway — run the command yourself after installing.
+
 Provisioning follows a lock list with sha256 verification; at the end the
 **compilation cache is warmed up** (`python.wasm` + numpy), so the first real tool
 call is already warm. The command doesn't launch the TUI. The tool is enabled by

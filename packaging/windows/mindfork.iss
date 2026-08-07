@@ -81,9 +81,21 @@ en.DirSub=Where should the data be saved?
 ru.DirSub=Куда сохранять данные?
 en.DirPrompt=Select a directory for the application data, then click Next.
 ru.DirPrompt=Укажите каталог для данных приложения, затем нажмите «Далее».
+; The optional Python sandbox (ADR 0005). Off by default, matching
+; tools.python_enabled=false: enabling the tool stays a deliberate step.
+en.SandboxTask=Install the Python sandbox (downloads ~300 MB)
+ru.SandboxTask=Установить Python-песочницу (загрузка ~300 МБ)
+en.SandboxStatus=Installing the Python sandbox (this may take several minutes)...
+ru.SandboxStatus=Установка Python-песочницы (может занять несколько минут)…
 
 [Files]
-Source: "{#BinDir}\mindfork-rs.exe"; DestDir: "{app}"; Flags: ignoreversion
+; AfterInstall (not CurStepChanged(ssPostInstall), where this used to live): [Run]
+; entries are processed BEFORE ssPostInstall — measured, not assumed — and the
+; optional `sandbox setup` run needs defaults.json to already be there, or it would
+; download into the default data directory instead of the one picked on the
+; "Data location" page. Writing it right after the binary lands is early enough
+; for every path. WriteDefaults is idempotent (it skips an existing file).
+Source: "{#BinDir}\mindfork-rs.exe"; DestDir: "{app}"; Flags: ignoreversion; AfterInstall: WriteDefaults
 ; Spellcheck dictionaries — in a portable layout next to the binary (the P1 fallback): with
 ; mode=system they're absent from the data directory, the app takes them from here.
 Source: "{#SourcePath}..\..\dictionaries\*.aff"; DestDir: "{app}\data\dictionaries"; Flags: ignoreversion
@@ -99,9 +111,32 @@ Name: "{autodesktop}\mindfork-rs"; Filename: "{app}\mindfork-rs.exe"; Tasks: des
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
+Name: "installsandbox"; Description: "{cm:SandboxTask}"; Flags: unchecked
+
+; The optional Python sandbox for the `python_exec` tool (ADR 0005): `sandbox setup`
+; downloads wasmer + CPython + the wheels into `<data>/sandbox/` from the lock list.
+; Notes on the flags:
+;  * Inno processes [Run] entries BEFORE CurStepChanged(ssPostInstall) — measured,
+;    not assumed — which is why defaults.json is written from AfterInstall on the
+;    [Files] entry instead. Without that the download would land in the default
+;    data directory rather than the one picked on the "Data location" page;
+;  * no `runhidden`: mindfork-rs.exe is a console binary, so the console window it
+;    opens is what shows the download progress of a multi-minute job;
+;  * `runasoriginaluser` matters for a per-machine install (Setup is elevated then,
+;    and the data directory in `system` mode is per-user — without this the sandbox
+;    would land in the elevating admin's %APPDATA%);
+;  * a failed download does NOT fail the install (Inno ignores a non-zero exit code
+;    of a [Run] entry). The sandbox is optional and re-runnable at any time with
+;    `mindfork-rs sandbox setup`; the error stays visible in the console.
+[Run]
+Filename: "{app}\mindfork-rs.exe"; Parameters: "sandbox setup"; WorkingDir: "{app}"; \
+  StatusMsg: "{cm:SandboxStatus}"; Tasks: installsandbox; \
+  Flags: waituntilterminated runasoriginaluser
 
 ; defaults.json is written by the code (see [Code]); it's also removed on uninstall. The user's
-; data (chats/profiles in %APPDATA% or portable) is untouched by the uninstaller.
+; data (chats/profiles in %APPDATA% or portable) is untouched by the uninstaller — that
+; deliberately includes `<data>/sandbox/`, which sits next to the chats and is
+; re-downloadable rather than being ours to delete.
 [UninstallDelete]
 Type: files; Name: "{app}\defaults.json"
 
@@ -191,38 +226,39 @@ begin
   Result := SaveStringsToUTF8File(FileName, Arr, False);
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+// Writes the wizard's choices into the defaults.json next to the binary. Called from
+// the main binary's AfterInstall (see [Files]) — early enough for the optional [Run]
+// entry, which Inno processes before ssPostInstall. Idempotent: on an upgrade the
+// existing file is left alone, so the user's earlier choice is preserved.
+// (Line comments, not a { } block: an app constant in braces would close it early.)
+procedure WriteDefaults;
 var
   Path, Json, Lang, Mode, DataDir: String;
 begin
-  if CurStep = ssPostInstall then
+  Path := ExpandConstant('{app}\defaults.json');
+  if not FileExists(Path) then
   begin
-    Path := ExpandConstant('{app}\defaults.json');
-    { Don't overwrite on an upgrade — the user's choice is preserved. }
-    if not FileExists(Path) then
+    if LangPage.SelectedValueIndex = 0 then
+      Lang := 'ru'
+    else
+      Lang := 'en';
+
+    if DataPage.SelectedValueIndex = SystemIndex then
+      Mode := 'system'
+    else if (PortableIndex >= 0) and (DataPage.SelectedValueIndex = PortableIndex) then
+      Mode := 'portable'
+    else
+      Mode := 'path';
+
+    if Mode = 'path' then
     begin
-      if LangPage.SelectedValueIndex = 0 then
-        Lang := 'ru'
-      else
-        Lang := 'en';
+      DataDir := DirPage.Values[0];
+      Json := '{"mode":"path","path":"' + JsonEscape(DataDir) +
+        '","default_language":"' + Lang + '"}';
+    end
+    else
+      Json := '{"mode":"' + Mode + '","default_language":"' + Lang + '"}';
 
-      if DataPage.SelectedValueIndex = SystemIndex then
-        Mode := 'system'
-      else if (PortableIndex >= 0) and (DataPage.SelectedValueIndex = PortableIndex) then
-        Mode := 'portable'
-      else
-        Mode := 'path';
-
-      if Mode = 'path' then
-      begin
-        DataDir := DirPage.Values[0];
-        Json := '{"mode":"path","path":"' + JsonEscape(DataDir) +
-          '","default_language":"' + Lang + '"}';
-      end
-      else
-        Json := '{"mode":"' + Mode + '","default_language":"' + Lang + '"}';
-
-      SaveJson(Path, Json);
-    end;
+    SaveJson(Path, Json);
   end;
 end;

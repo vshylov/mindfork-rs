@@ -123,10 +123,15 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-08-05, version 0.9.4)
+## Status (as of 2026-08-07, version 0.9.4)
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1835 unit
 tests green, 76 `#[ignore]` smokes** (the largest count — log below; the most
-recent change makes **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
+recent change lets the **Windows installer provision the Python sandbox** — an
+opt-in checkbox on the "Additional tasks" page running the existing
+`sandbox setup`; the Linux packages deliberately get nothing (non-interactive,
+and a root-run maintainer script cannot populate a per-user data directory), and
+the measurement behind it moved `defaults.json` out of `ssPostInstall`, since
+Inno runs `[Run]` entries *before* it; before that — **tool calls collapsible, like "thoughts"**: `Ctrl+O` folds a
 call's arguments and result away while keeping the header that says what ran,
 both kinds of block are **collapsed by default**, an expanded card is laid out
 as name → arguments one per line → gutter gap → result (the header is a title: it
@@ -12596,6 +12601,91 @@ three findings are invisible from the workflow's own status):
   touched, so the suite is unchanged at **1835 unit tests**, 76 `#[ignore]`.
   **No live run required** (§3): no engine, memory, tool or provider path
   exists in this change.
+
+### Post-M9: the Windows installer can provision the Python sandbox (done)
+
+- **Asked for directly**: an optional deployment of the Wasmer sandbox during
+  installation — a checkbox on Windows, and "check whether the Linux packages can
+  take such a parameter; if not, leave it as is". Branch
+  `feat/installer-sandbox-option`. A simple task by AGENTS.md §1 (packaging
+  configuration, no cross-layer contract, no new dependency), so no design doc —
+  the two genuine forks went to the user instead (**decided 2026-08-07**, both as
+  recommended: the "Additional tasks" page, and a failed download must not fail
+  the install).
+- **Nothing in the app changed, and that is the point**: `sandbox setup` has been
+  a self-contained CLI command since ADR 0005 §4, and the installed binary is a
+  console app — so the installer only has to launch it. A `[Tasks]` checkbox
+  (`installsandbox`, `unchecked`) gates one `[Run]` entry. **No `runhidden`**: the
+  console window Windows opens for a console binary *is* the progress display for a
+  multi-minute download. **`runasoriginaluser`** matters for a per-machine install
+  — Setup is elevated then, while `mode: system` resolves to a per-user data
+  directory, so without it the sandbox would land in the elevating admin's
+  `%APPDATA%`. A non-zero exit code of a `[Run]` entry is ignored by Inno, which is
+  exactly the agreed failure behaviour: the sandbox is optional and re-runnable.
+- **Left off by default deliberately**, matching `tools.python_enabled=false`
+  (ADR 0005 §5): "enabled but not provisioned" is worse than "not installed", and
+  enabling the tool stays a deliberate step. One consequence worth knowing — Inno
+  **remembers the previous install's task selection** per AppId in the registry, so
+  on an upgrade the box is pre-ticked for someone who chose it before. Correct and
+  cheap: `sandbox setup` is idempotent and skips assets already present.
+- **The measurement overturned my assumption, and it was load-bearing.** I had
+  written into the script's comment that `[Run]` runs *after*
+  `CurStepChanged(ssPostInstall)` — "verified, not assumed" — and then verified it,
+  with a stub `mindfork-rs.exe` that logs whether `defaults.json` exists at the
+  moment it is launched. It logged **`defaults_exists=false`** while the file was
+  in the installed directory afterwards: Inno processes `[Run]` entries **before**
+  `ssPostInstall`. Left alone, the sandbox would have been downloaded into the
+  *default* data directory rather than the one picked on the "Data location" page —
+  silently, since `sandbox setup` would succeed either way. Fixed by moving the
+  write to **`AfterInstall: WriteDefaults`** on the binary's `[Files]` entry (files
+  are necessarily installed before `[Run]` can launch one), which is a single call
+  site rather than two; the procedure's body is unchanged and its
+  `if not FileExists` guard already made it idempotent.
+- **Two smaller traps, both found by compiling rather than by reading**: a `{ }`
+  Pascal comment containing an app constant in braces **closes early** at that
+  constant's `}` (syntax error — the block comment is now `//` lines, with the
+  reason recorded); and a test path containing `"` is rejected by Inno's own
+  directory-field validation, so `JsonEscape`'s quote-escaping is unreachable
+  defence in depth (Windows forbids `"` in a path at all).
+- **Linux — genuinely infeasible, for three independent reasons**, so the packages
+  are unchanged: deb/rpm/pacman install **non-interactively** (no checkbox and no
+  prompt to offer — debconf has no rpm/pacman counterpart); maintainer scripts run
+  **as root** while `sandbox_dir()` is `<data root>/sandbox` and the packages ship
+  `mode: system`, i.e. `~/.local/share/mindfork-rs/sandbox` — root cannot provision
+  it for the installing user, and there is no system-wide fallback for the sandbox
+  the way there is for dictionaries (P1); and downloading ~300 MB from a postinst
+  is against packaging norms and breaks offline installs. An env-var "parameter"
+  (`MINDFORK_INSTALL_SANDBOX=1 apt install …`) would clear only the first
+  obstacle. Documented in install.md so the question isn't re-litigated.
+- **Verified against the real Inno Setup 6.7.3** on this machine (no live model
+  run is required by AGENTS.md §3 — packaging configuration, no engine, memory,
+  tool or provider path is touched; there is no Rust change at all, so the suite
+  stands unchanged at **1835 unit tests**, 76 `#[ignore]`). Since the change moved
+  the *proven* `defaults.json` path, every previously-verified behaviour was
+  re-confirmed through the new call site, with the stub binary standing in for the
+  real one: the task selected → `[Run]` fires with `sandbox setup` and now sees the
+  finished `defaults.json`; **no task → it does not run at all** (opt-in honoured);
+  an upgrade → the existing `defaults.json` is preserved (still `ru` after
+  re-installing with `/LANG=en`) and the entry runs once; `/LANG=ru` → the language
+  branch writes `"ru"`; the "Another folder…" branch → `mode: path` with
+  backslashes escaped and a Cyrillic path intact, **and the sandbox run saw that
+  custom path**, which is the whole point of the ordering fix; uninstall → clean.
+  The first "no task" run was a **false failure worth recording**: it reported the
+  sandbox running unasked, because an earlier test install of the same AppId was
+  never uninstalled and Inno restored its remembered task selection — the retest
+  from a genuinely clean registry state passed.
+- **The checkbox itself was looked at, not just asserted**: the real wizard was
+  driven to "Select Additional Tasks" and screenshotted in **both** locales — the
+  new box sits under "Create a desktop shortcut", unchecked, reading
+  *Install the Python sandbox (downloads ~300 MB)* / *Установить Python-песочницу
+  (загрузка ~300 МБ)*. Automating that turned up a detail worth keeping for the
+  next time: Inno 6 **disables the Welcome page by default**, so the tasks page is
+  three pages in, not four, and `/CURRENTUSER` is needed to skip the install-mode
+  dialog that `PrivilegesRequiredOverridesAllowed=dialog` puts first.
+- **Deliberately not done**: removing `<data>/sandbox/` on uninstall. It sits
+  inside the data root the uninstaller promises not to touch (in portable mode,
+  right next to the user's chats), and it is re-downloadable rather than ours to
+  delete — noted in the script's comment so the omission reads as a decision.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

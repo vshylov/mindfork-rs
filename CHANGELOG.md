@@ -15,6 +15,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **The Windows installer can set up the Python sandbox for you.** A new
+  *Install the Python sandbox* checkbox on the "Additional tasks" page (off by
+  default) downloads and installs it during the installation, instead of leaving
+  you to run `mindfork-rs sandbox setup` afterwards. It downloads about 300 MB
+  and takes a few minutes, with the progress visible in a console window; if it
+  fails, the installation still succeeds and the command can be re-run at any
+  time. The Linux packages don't offer this — they install as root, while the
+  sandbox belongs to your user account, so run the command yourself after
+  installing.
 - **Tool calls in the feed fold away, like "thoughts".** `Ctrl+O` collapses and
   expands them; collapsed, a call keeps its header — the tool's name and a short
   argument — so you still see *what* ran, while the arguments and the result move
