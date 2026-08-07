@@ -12840,6 +12840,12 @@ three findings are invisible from the workflow's own status):
   satisfied by reading that instead of the summary. The control now runs
   immediately after the seed so both fall behind the boundary, and the test
   additionally asserts the summary itself carries the identifier.
+- **Regression — clean**: the full orchestrator e2e live set, **26 passed / 0
+  failed** (706 s) on the same stack — memory/self-model/notes/graph/cross-organ
+  links/RAG/attachments/control tools/tool confirmation/MCP/i18n. The right scope
+  even though the feature is opt-in per chat: `build_request` now slices
+  `messages` and sits on **every** turn, so "it only changes what a compacted
+  chat sends" had to be demonstrated rather than argued.
 - **One honest observation from that run**: on this fixture the summary came out
   extremely terse (42 characters for 12 messages) — it kept the identifier and
   dropped the generic Q&A entirely. Defensible under the prompt (that filler
