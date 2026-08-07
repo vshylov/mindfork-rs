@@ -50,7 +50,10 @@ impl ChatScreen {
     /// on together with the query to highlight inside it
     /// (`AppCommand::OpenChatAt`); `None` — the usual "show the tail", with
     /// nothing highlighted. `feed_view` — the chat's stored collapse state
-    /// ("thoughts"/tool calls, spec §11.3).
+    /// ("thoughts"/tool calls, spec §11.3). `compaction` — the history-compaction
+    /// boundary `(the id of the first message still sent verbatim, the rolling
+    /// summary)`, or `None` when nothing is folded (spec §6.7).
+    #[allow(clippy::too_many_arguments)]
     pub fn activate_chat(
         &mut self,
         id: Uuid,
@@ -59,6 +62,7 @@ impl ChatScreen {
         draft: &str,
         feed_view: FeedView,
         focus: Option<FeedFocus>,
+        compaction: Option<(Uuid, String)>,
     ) {
         // Switching chats resets the generation state: "orphaned" chunks of the
         // previous generation must not land in the new chat's feed.
@@ -74,8 +78,10 @@ impl ChatScreen {
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
         // The collapse state belongs to the chat, so it is applied **before**
-        // the feed is built: the block cache is keyed on it (spec §11.3).
+        // the feed is built: the block cache is keyed on it (spec §11.3). So is
+        // the compaction boundary — both are per-chat rendering inputs.
         self.feed_view.set_view(feed_view);
+        self.feed_view.set_compaction(compaction);
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
         // The feed was replaced wholesale — recompute "is there a risk" from scratch (from
@@ -110,6 +116,18 @@ impl ChatScreen {
         self.input.set_text(draft);
         self.spell_dirty = true;
         self.last_edit = None;
+    }
+
+    /// Updates the history-compaction boundary after a live compaction
+    /// (`AppEvent::Compacted`) — `(the id of the first message still sent
+    /// verbatim, the rolling summary)`; `None` clears it.
+    ///
+    /// A feed mutator like any other: the boundary changes the rendered lines,
+    /// so a legacy terminal needs the same full-redraw insurance every other
+    /// content change takes out (see [`Self::mark_feed_changed`]).
+    pub fn set_compaction(&mut self, compaction: Option<(Uuid, String)>) {
+        self.feed_view.set_compaction(compaction);
+        self.mark_feed_changed();
     }
 
     /// Returns the text for the input box after deleting the last exchange. If the field

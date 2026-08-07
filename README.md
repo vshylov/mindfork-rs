@@ -473,6 +473,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `/rag add <path> [-r]` | index a file/directory into RAG (an input-box command) |
 | `/rag remove <path>` | remove a file/directory from RAG (an input-box command) |
 | `/reindex` | re-embed everything with the current embedding model (an input-box command) |
+| `/compact` | fold the earlier part of the conversation into a rolling summary so it keeps fitting the context window (an input-box command) |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | stop / pause / resume reading aloud |
 

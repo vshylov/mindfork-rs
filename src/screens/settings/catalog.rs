@@ -996,7 +996,32 @@ impl SettingsScreen {
 
     pub(super) fn memory_fields(&self) -> Vec<FieldRow> {
         let loc = self.loc();
+        // "Context" first: history compression is about the **current**
+        // conversation, ahead of the long-term memory groups that follow.
         let mut rows = grouped(
+            loc.t("ui.settings.group.context"),
+            vec![
+                row(
+                    FieldId::CompactEnabled,
+                    loc.t("ui.settings.field.compact_enabled"),
+                    FieldKind::Toggle(self.config.compaction.enabled),
+                )
+                .describe(loc.t("ui.settings.desc.compact_enabled")),
+                num_field(
+                    FieldId::CompactWords,
+                    loc.t("ui.settings.field.compact_words"),
+                    self.config.compaction.summary_words,
+                )
+                .describe(loc.t("ui.settings.desc.compact_words")),
+                num_field(
+                    FieldId::CompactTail,
+                    loc.t("ui.settings.field.compact_tail"),
+                    self.config.compaction.tail_tokens,
+                )
+                .describe(loc.t("ui.settings.desc.compact_tail")),
+            ],
+        );
+        rows.extend(grouped(
             loc.t("ui.settings.group.rag"),
             vec![
                 row(
@@ -1018,7 +1043,7 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.rag_max")),
             ],
-        );
+        ));
         rows.extend(grouped(
             loc.t("ui.settings.group.attachments"),
             vec![

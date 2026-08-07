@@ -228,7 +228,15 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
         Message::user("привет"),
         Message::assistant("здравствуйте"),
     ];
-    s.activate_chat(id, "Чат".into(), &messages, "", FeedView::default(), None);
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
     assert_eq!(s.active_chat, Some(id));
     assert!(!s.generating);
     assert!(s.current_gen.is_none());
@@ -260,6 +268,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         "",
         FeedView::default(),
         focus_on(target),
+        None,
     );
     assert_eq!(s.feed_view.anchor(), Some(8));
     assert_eq!(s.feed_view.marker(), Some(8));
@@ -279,6 +288,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         &messages,
         "",
         FeedView::default(),
+        None,
         None,
     );
     assert_eq!(s.feed_view.anchor(), None);
@@ -308,6 +318,7 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
             message: messages[2].id,
             query: "маркер".into(),
         }),
+        None,
     );
     assert_eq!(s.feed_view.marker(), Some(2));
     assert_eq!(s.feed_view.highlight(), Some("маркер"));
@@ -320,6 +331,7 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
         &messages,
         "",
         FeedView::default(),
+        None,
         None,
     );
     assert_eq!(s.feed_view.marker(), None);
@@ -345,6 +357,7 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         "",
         FeedView::default(),
         focus_on(stale),
+        None,
     );
     assert_eq!(s.feed_view.marker(), Some(8));
 
@@ -358,6 +371,7 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         "",
         FeedView::default(),
         focus_on(stale),
+        None,
     );
     assert_eq!(
         s.feed_view.anchor(),
@@ -424,6 +438,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         "",
         FeedView::default(),
         None,
+        None,
     );
     clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
     assert!(
@@ -440,6 +455,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         &[Message::assistant("## 🗂️ Хэш")],
         "",
         FeedView::default(),
+        None,
         None,
     );
     emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
@@ -518,12 +534,21 @@ fn activate_chat_loads_draft_without_marking_dirty() {
         "недописанный текст",
         FeedView::default(),
         None,
+        None,
     );
     assert_eq!(s.input.text(), "недописанный текст");
     // ...but doesn't mark the draft "dirty" (otherwise it would be sent right back).
     assert_eq!(s.take_dirty_draft(), None);
     // Switching to a chat with no draft clears the input box.
-    s.activate_chat(gen_id(), "Новый".into(), &[], "", FeedView::default(), None);
+    s.activate_chat(
+        gen_id(),
+        "Новый".into(),
+        &[],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
     assert!(s.input.is_empty());
     assert_eq!(s.take_dirty_draft(), None);
 }
@@ -1182,7 +1207,15 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
 fn rename_chat_updates_title_bar_of_active_chat() {
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.activate_chat(id, "Старое".into(), &[], "", FeedView::default(), None);
+    s.activate_chat(
+        id,
+        "Старое".into(),
+        &[],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
     s.rename_chat(id, "Новое".into());
     assert_eq!(s.title, "Новое");
     // A foreign chat doesn't touch the active chat's header.
@@ -1199,7 +1232,7 @@ fn f5_copies_active_chat_in_main_window() {
         None
     );
     let id = gen_id();
-    s.activate_chat(id, "Чат".into(), &[], "", FeedView::default(), None);
+    s.activate_chat(id, "Чат".into(), &[], "", FeedView::default(), None, None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
         Some(ChatIntent::CopyChat(id))
@@ -1338,7 +1371,7 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
         thoughts: true,
         tools: true,
     };
-    s.activate_chat(gen_id(), "Чат".into(), &[], "", expanded, None);
+    s.activate_chat(gen_id(), "Чат".into(), &[], "", expanded, None, None);
     assert_eq!(s.feed_view.view(), expanded);
     // ...and switching to a chat that never expanded anything collapses again.
     s.activate_chat(
@@ -1347,6 +1380,7 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
         &[],
         "",
         FeedView::default(),
+        None,
         None,
     );
     assert_eq!(s.feed_view.view(), FeedView::default());
@@ -1667,6 +1701,7 @@ fn every_feed_mutator_marks_content_change() {
         "",
         FeedView::default(),
         None,
+        None,
     );
     assert!(s.take_full_redraw(), "activate_chat");
 
@@ -1700,6 +1735,10 @@ fn every_feed_mutator_marks_content_change() {
     // Collapsing "thoughts" (`Ctrl+T`) recomputes all blocks — also a change.
     s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
     assert!(s.take_full_redraw(), "Ctrl+T (collapsing thoughts)");
+
+    // A compaction adds a divider above a block — a content change like any other.
+    s.set_compaction(Some((gen_id(), "ранее обсудили X".into())));
+    assert!(s.take_full_redraw(), "set_compaction");
 }
 
 #[test]
@@ -2380,7 +2419,15 @@ fn activating_a_chat_closes_the_search() {
     type_str(&mut s, "маркер");
     assert!(s.search.is_some());
 
-    s.activate_chat(gen_id(), "Чат".into(), &[], "", FeedView::default(), None);
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
     assert!(
         s.search.is_none(),
         "the search must not survive a feed rebuild"
@@ -2401,4 +2448,126 @@ fn reopening_the_search_resumes_the_query() {
         s.search.as_ref().map(|f| f.text()),
         Some("маркер".to_string())
     );
+}
+
+// ---------- history compaction (spec §6.7) ----------
+
+/// The divider's localized label — how the boundary is found in a rendered feed.
+fn compacted_label() -> &'static str {
+    crate::shared::i18n::locale(crate::shared::i18n::Lang::default()).t("ui.feed.compacted")
+}
+
+/// Renders the screen and returns its rows as strings.
+fn screen_rows(s: &mut ChatScreen, w: u16, h: u16) -> Vec<String> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let area = buf.area;
+    (area.top()..area.bottom())
+        .map(|y| {
+            (area.left()..area.right())
+                .map(|x| buf[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}
+
+/// Activation carries the chat's boundary into the feed: the compaction is a
+/// per-chat rendering input, so switching chats has to bring it along or a
+/// summary would linger from the previous one.
+#[test]
+fn activation_carries_the_compaction_boundary() {
+    let messages: Vec<Message> = (0..4)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    let boundary = messages[2].id;
+    let mut s = ChatScreen::new();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        Some((boundary, "ранее обсудили X".into())),
+    );
+    let rows = screen_rows(&mut s, 60, 24);
+    assert!(
+        rows.iter().any(|r| r.contains(compacted_label())),
+        "the divider must be drawn for the activated chat: {rows:?}"
+    );
+
+    // Switching to a chat with nothing folded takes it away again.
+    s.activate_chat(
+        gen_id(),
+        "Другой".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let rows = screen_rows(&mut s, 60, 24);
+    assert!(
+        !rows.iter().any(|r| r.contains(compacted_label())),
+        "the previous chat's boundary must not linger: {rows:?}"
+    );
+}
+
+/// A live compaction (`AppEvent::Compacted`) reaches the feed without a
+/// reactivation — the boundary appears on the chat the user is looking at.
+#[test]
+fn a_live_compaction_reaches_the_feed() {
+    let messages: Vec<Message> = (0..4)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    let boundary = messages[2].id;
+    let mut s = ChatScreen::new();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    assert!(
+        !screen_rows(&mut s, 60, 24)
+            .iter()
+            .any(|r| r.contains(compacted_label()))
+    );
+
+    s.set_compaction(Some((boundary, "ранее обсудили X".into())));
+    let rows = screen_rows(&mut s, 60, 24);
+    assert!(
+        rows.iter().any(|r| r.contains(compacted_label())),
+        "the divider must appear without reactivating the chat: {rows:?}"
+    );
+}
+
+/// The quiet background indicator joins the same `·`-separated list the other
+/// background tasks use — they can run at the same time, so it must compose
+/// rather than replace.
+#[test]
+fn compaction_shows_a_quiet_background_indicator() {
+    let mut s = ChatScreen::new();
+    assert_eq!(s.background_hint(), None);
+
+    s.set_compacting(true);
+    let hint = s.background_hint().expect("the indicator must be shown");
+    assert_eq!(hint, s.loc().t("ui.chat.bg.compact"));
+
+    // Composes with a concurrent task rather than replacing it.
+    s.set_reflecting(true);
+    let hint = s.background_hint().unwrap();
+    assert!(hint.contains(s.loc().t("ui.chat.bg.reflect")), "{hint}");
+    assert!(hint.contains(s.loc().t("ui.chat.bg.compact")), "{hint}");
+    assert!(hint.contains(" · "), "{hint}");
+
+    s.set_compacting(false);
+    let hint = s.background_hint().unwrap();
+    assert!(!hint.contains(s.loc().t("ui.chat.bg.compact")), "{hint}");
 }

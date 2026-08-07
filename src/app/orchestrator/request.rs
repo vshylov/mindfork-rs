@@ -5,7 +5,7 @@ use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::{ApiMessage, ApiToolCall, ChatRequest};
-use crate::shared::config::AttachmentSettings;
+use crate::shared::config::{AttachmentSettings, CompactionSettings};
 use crate::shared::i18n::Locale;
 
 /// Converts a domain message into a message for the model. System messages
@@ -60,6 +60,7 @@ pub(super) fn build_request(
     sampling: SamplingConfig,
     tools: Vec<crate::shared::api::ToolSchema>,
     attachments: &AttachmentSettings,
+    compaction: &CompactionSettings,
     indexed: &[uuid::Uuid],
     loc: &Locale,
 ) -> ChatRequest {
@@ -68,12 +69,55 @@ pub(super) fn build_request(
     } else {
         Some(chat.system_message.clone())
     };
+    // The compacted-away prefix is replaced by a summary block; `chat.messages`
+    // is untouched, so this is the only place the two views diverge.
+    let (summary, upto) = match chat.compaction_view(compaction.enabled) {
+        Some((s, i)) => (Some(s), i),
+        None => (None, 0),
+    };
+    let system = inject_compaction(system, summary, loc);
     ChatRequest {
         system: inject_attachments(system, &chat.attachments, attachments, indexed, loc),
-        messages: chat.messages.iter().filter_map(message_to_api).collect(),
+        messages: chat.messages[upto..]
+            .iter()
+            .filter_map(message_to_api)
+            .collect(),
         sampling,
         tools,
     }
+}
+
+/// Prepends the rolling-summary block to the system prompt (spec §6.7).
+///
+/// Placement mirrors [`inject_attachments`] and is ordered by volatility: the
+/// persona first (never changes), then this block (changes only on a
+/// compaction), then attachments, then the self-model — which the generation
+/// task appends last because it changes most often. Everything after a changed
+/// block is re-prefilled, so the most stable content goes first (spec §6.6).
+///
+/// The header is in the **profile** language (axis A — the model reads it), and
+/// it says two things deliberately: the block is DATA rather than instructions
+/// (the prompt-injection rule attachments follow, spec §13), and the verbatim
+/// text of those messages is **not reachable** — a block that describes a
+/// situation without saying what is possible is what sends a model improvising
+/// (three case studies in the CLAUDE.md journal). When the read-back tools of
+/// stage 3 land, that sentence changes to name them.
+pub(super) fn inject_compaction(
+    system: Option<String>,
+    summary: Option<&str>,
+    loc: &Locale,
+) -> Option<String> {
+    // No summary — `system` passes through untouched. (Not `summary?`: that
+    // would return `None` and silently drop the persona, which is what the
+    // pre-existing request tests caught.)
+    let Some(summary) = summary else {
+        return system;
+    };
+    let block = format!("{}\n\n{}", loc.t("compaction.block.header"), summary.trim());
+    Some(match system {
+        Some(s) if !s.trim().is_empty() => format!("{s}\n\n{block}"),
+        _ => block,
+    })
 }
 
 /// Appends the pinned block of attached files to the system prompt

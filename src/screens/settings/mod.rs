@@ -584,6 +584,15 @@ enum FieldId {
     /// never the value; editing goes out as [`SettingsIntent::SetSecret`].
     /// See spec §12.3, docs/history/backup-password.md.
     BackupPassword,
+    // Conversation history compression (a rolling summary), spec §6.7 — the
+    // "Context" group of the "Memory" section: about the current conversation,
+    // ahead of the long-term memory groups that follow.
+    /// Master switch for history compression (`compaction.enabled`).
+    CompactEnabled,
+    /// Length limit for the rolling summary, in words.
+    CompactWords,
+    /// How much of the conversation tail stays verbatim (estimated tokens).
+    CompactTail,
     // RAG (knowledge-base chunking)
     RagTarget,
     RagOverlap,

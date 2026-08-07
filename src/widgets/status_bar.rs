@@ -68,8 +68,10 @@ const GAP: usize = 3;
 /// `tokens` — reply tokens (live), `context` — conversation (prompt) tokens (`None`
 /// — unknown), `context_exact` — whether this is the exact number from the server's `usage`
 /// (otherwise an estimate, marked with `~`). `mouse_scroll` — whether mouse capture for
-/// wheel scrolling is on (otherwise native text selection). `background` — a quiet indicator of a
-/// background task (auto-reflection/consolidation; `None` — none). See spec §11.1, §11.3.
+/// wheel scrolling is on (otherwise native text selection). `background` — a quiet indicator of
+/// the running background tasks, already composed into one label by the caller
+/// (auto-reflection, note/self-model consolidation, history compaction; `None` —
+/// nothing running). See spec §11.1, §11.3.
 pub struct StatusModel<'a> {
     pub statuses: &'a ServerStatuses,
     pub generating: bool,
@@ -253,7 +255,7 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
         state.push(sep());
         state.push(counter);
     }
-    // A quiet indicator of a background task (auto-reflection/consolidation) — muted,
+    // A quiet indicator of the running background tasks (composed by the caller) — muted,
     // the `✻` glyph (compat — `*`) width 1 column (the grid layout doesn't "shift").
     if let Some(hint) = model.background {
         state.push(sep());

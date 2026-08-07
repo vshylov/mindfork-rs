@@ -752,6 +752,49 @@ impl Default for AttachmentSettings {
     }
 }
 
+/// Whether conversation history compression is active by default. **On** — what
+/// it prevents (a hard 400 from the engine, or a silent context shift that
+/// evicts the system prompt first) is strictly worse than what it does, and the
+/// feed divider keeps it visible. Fork F10,
+/// docs/research/history-compression.md §8.
+pub const DEFAULT_COMPACTION_ENABLED: bool = true;
+/// Default length limit for the rolling summary, **in words**. Measured: a bare
+/// `max_tokens` cap truncates the summary mid-sentence instead of making the
+/// model prioritize, and given room the summary grows with every roll — a stated
+/// word limit fixes both (§9a of the research).
+pub const DEFAULT_COMPACTION_SUMMARY_WORDS: usize = 250;
+/// Default size of the conversation tail kept **verbatim**, in estimated tokens.
+/// Everything before the nearest exchange boundary older than this is what a
+/// compaction folds into the summary.
+pub const DEFAULT_COMPACTION_TAIL_TOKENS: usize = 2048;
+
+/// Conversation history compression (a rolling summary of the older part of a
+/// chat). See docs/research/history-compression.md and spec §6.7.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompactionSettings {
+    /// Master switch. When off the feature is **inert**: no summary is spliced
+    /// into the request (the full history is sent, exactly as before the feature
+    /// existed), `/compact` refuses, and the feed shows no boundary. A summary
+    /// already stored on a chat is kept, not discarded — `messages` are never
+    /// touched, so off → on → off is lossless in both directions.
+    pub enabled: bool,
+    /// Length limit for the summary, in words, stated in the prompt itself.
+    pub summary_words: usize,
+    /// How much of the conversation tail stays verbatim (estimated tokens).
+    pub tail_tokens: usize,
+}
+
+impl Default for CompactionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_COMPACTION_ENABLED,
+            summary_words: DEFAULT_COMPACTION_SUMMARY_WORDS,
+            tail_tokens: DEFAULT_COMPACTION_TAIL_TOKENS,
+        }
+    }
+}
+
 /// Default storage ceiling for the self-model narrative (insights).
 pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
 /// Default number of fresh insights to inject into the system prompt.
@@ -1328,6 +1371,8 @@ pub struct AppConfig {
     pub rag: RagSettings,
     /// Chat file-attachment budgets (`/file attach`).
     pub attachments: AttachmentSettings,
+    /// Conversation history compression (rolling summary, `/compact`).
+    pub compaction: CompactionSettings,
     /// Self-model settings (narrative, prompt-injection volume).
     pub self_model: SelfModelSettings,
     /// Notes settings (auto-consolidation "sleep").
@@ -1380,6 +1425,7 @@ impl Default for AppConfig {
             tools: ToolSettings::default(),
             rag: RagSettings::default(),
             attachments: AttachmentSettings::default(),
+            compaction: CompactionSettings::default(),
             self_model: SelfModelSettings::default(),
             notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),

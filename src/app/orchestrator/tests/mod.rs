@@ -157,6 +157,10 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         config,
         registry,
         title_tx,
+        // No loop drains this either: compaction tests that need a roll's result
+        // go through `spawn_orch_cfg` (the real `run` loop), the ones about
+        // *applying* one call `handle_compact_result` directly.
+        compact_tx: unbounded_channel().0,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
@@ -411,6 +415,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 
 mod attachments;
 mod chats;
+mod compaction;
 mod confirm;
 mod generation;
 mod impersonation;
