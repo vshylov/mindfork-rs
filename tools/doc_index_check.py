@@ -65,8 +65,12 @@ JOURNAL_DIR = "docs/journal"
 LESSONS = "docs/lessons.md"
 
 ENTRIES_HEADER = re.compile(r"^##\s+Entries\s*\((\d+)\)\s*$")
-ENTRY_HEADING = re.compile(r"^###\s+(.+?)\s*$")
-INDEX_BULLET = re.compile(r"^-\s+(.+?)\s*$")
+# Titles are captured from their first to their last non-space (`\S` at both
+# edges), so the surrounding `\s+`/`\s*` cannot overlap the group. The tempting
+# `(.+?)\s*$` backtracks quadratically (python:S8786): `.` matches spaces too,
+# so every lazy expansion rescans the same trailing whitespace.
+ENTRY_HEADING = re.compile(r"^###\s+(\S(?:.*\S)?)\s*$")
+INDEX_BULLET = re.compile(r"^-\s+(\S(?:.*\S)?)\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 # A concrete file, so a glob (`docs/journal/*.md`) in the prose is not read as a

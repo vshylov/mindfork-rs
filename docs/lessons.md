@@ -72,6 +72,16 @@ array of strings, so a single-line regex edit mangles multi-line hints.
 neighbouring feature's references too.
 — *confirmation before dangerous tool calls*.
 
+**The `(.+?)\s*$` trim idiom is quadratic in Python; pin both edges with `\S`.**
+`.` matches whitespace too, so the lazy group and the trailing `\s*` re-split the
+same tail on every expansion — the shape SonarQube flags as S8786. It cost
+`link_check.py` its code-span regex (rewritten as a manual scanner), and the very
+next tools script shipped it again in two title patterns, measured at 397 ms on
+one 8 KB line. Capture `(\S(?:.*\S)?)` instead, or trim outside the regex; atomic
+groups need Python 3.11+, which the tools cannot assume. **Recorded twice.**
+— *SonarQube backlog — triage + stage 1 (Python tools)*, *SonarQube follow-up —
+the doc gate's regexes and one test's complexity*.
+
 ---
 
 ## 2. Testing discipline

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -21,6 +21,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube backlog — stage 4 (orchestrator and tools) (done)
 - Post-M9: the quality gate stopped judging new-code coverage (done)
 - Post-M9: the documentation refactor — CLAUDE.md became a router (done)
+- Post-M9: SonarQube follow-up — the doc gate's regexes and one test's complexity (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -603,3 +604,44 @@ three findings are invisible from the workflow's own status):
   of through the whole of CLAUDE.md and states the read-the-section rule; §4's
   "journal entry" row names the matching `docs/journal/<area>.md` **and its index**,
   and a new row sends a recurring trap to `docs/lessons.md`.
+
+### Post-M9: SonarQube follow-up — the doc gate's regexes and one test's complexity (done)
+
+- **The first analyses after the 2026-08-07/08 merges left three open issues on
+  `main`** (the quality gate itself stayed OK): two `python:S8786` super-linear
+  regexes in the brand-new `tools/doc_index_check.py`, and one `rust:S3776`
+  (21 > 15) on `message_feed.rs::cache_matches_fresh_render` — the cache-parity
+  test, pushed over the threshold when the history-compression track made the
+  compaction boundary a sixth nested loop (1+2+3+4+5+6 = 21 exactly). Branch
+  `fix/sonar-followup`.
+- **The regexes are the trap stage 1 fixed in `link_check.py`, reborn in a file
+  that did not exist then** — now also a `docs/lessons.md` line, since twice is
+  a pattern. `ENTRY_HEADING`/`INDEX_BULLET` ended `(.+?)\s*$`, where `\s+`, `.`
+  and `\s*` all match the same whitespace, so every lazy expansion rescans the
+  same tail. The title is now captured `(\S(?:.*\S)?)` — pinned to non-space at
+  both edges, no overlap, linear. Atomic groups/possessive quantifiers were not
+  an option: they need Python 3.11+, the project's declared floor is 3.10.
+  Behaviour change: only the degenerate all-whitespace heading/bullet (old:
+  an entry titled `" "`; new: not an entry at all) — none exist, and the new
+  reading is the truer one.
+- **Parity measured, not assumed** (the stage-1 pattern): old and new agree on
+  every one of the **44 289 lines across the 93 tracked Markdown files**. On the
+  pathological input (`"### a" + " "*n + "\nx"` — the embedded newline defeats
+  `$`; unreachable through the tool's own `split("\n")`, but a pattern should
+  not lean on its caller for its own complexity) the old pattern grows
+  **27 → 99 → 397 ms** as n doubles through 2k/4k/8k — quadratic — while the new
+  one stays under 0.2 ms. Also verified against the analyzer itself via the MCP
+  snippet tool, in both directions: the old shape is flagged, the new one is
+  clean — a positive control, not just an absence.
+- **The test refactor is the stage-2/4 recipe**: the four inner loops
+  (width × palette × thoughts × tools) moved **verbatim** into
+  `assert_warm_matches_fresh(messages, compaction)`; the test keeps
+  scenarios × compaction and the call. Complexity 3 + 10, both under 15, and
+  no assertion, comment or grid point changed — the same
+  scenarios × 2 × 2 × 2 × 2 × 2 sweep.
+- **Verification**: **1952 unit tests green** (0 failed, 81 `#[ignore]` — the
+  exact pre-change baseline; the helper is not a `#[test]`, so the count is
+  unchanged), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/
+  `doc_index_check` all clean. **No live run required** (AGENTS.md §3): a dev
+  script and a test-module refactor — no engine, memory, tool or provider path
+  is touched. No CHANGELOG entry — internal tooling and tests (§4).
