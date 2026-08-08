@@ -29,7 +29,12 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   on its own — from a managed server's own setting, or by asking a llama.cpp server
   — and you can state it yourself for a model that cannot be asked. And if the
   window fills up anyway, the error now says what to do about it instead of showing
-  the server's raw reply.
+  the server's raw reply. Finally, **a summary is no longer the end of the story**:
+  what it had to leave out is still reachable, because the assistant can read the
+  folded part back page by page and search it by words — so asking about a detail
+  from the beginning of a long conversation gets an answer from the actual messages
+  rather than a guess. The search needs no embedding server, and the page size is in
+  the same settings group.
 - **The Windows installer can set up the Python sandbox for you.** A new
   *Install the Python sandbox and enable Python execution* checkbox on the
   "Additional tasks" page (off by default) installs it during the installation and

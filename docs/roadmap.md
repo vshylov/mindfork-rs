@@ -49,11 +49,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   S1–S8, a compaction starts by itself at a share of the resolved context
   window, which comes from an explicit setting, a managed server's `-c`, or the
   engine's own `/props`; an overflow that happens anyway is explained rather
-  than dumped as raw JSON. **Remaining:** stage 3 — the `history_read`/
-  `history_search` read-back tools (fork F9b), after which the summary block's
-  wording stops saying the verbatim text is unreachable and names them. See
+  than dumped as raw JSON. **Stage 3 (the read-back tools) is done** —
+  sub-decisions S9–S16: `history_read` walks the folded range page by page and
+  `history_search` finds where to look, so the summary block now names them
+  instead of saying the verbatim text is unreachable. Search runs over the
+  full-text index the app already keeps rather than over embeddings, so it works
+  for the local user with no embedding server — the audience the whole track
+  exists for. **The track is complete.** See
   [history-compression.md](research/history-compression.md).
-  **Groundwork left by stage 2:** learning the window from the 400 body
+  **Groundwork left by the track:** a semantic index over the folded range
+  (sub-decision S11 chose full-text, and recorded the embedding variant as the
+  answer if a live run ever shows lexical misses); learning the window from the
+  400 body
   (sub-decision S3 — deferred as redundant with `/props`, since the body shape
   that carries `n_ctx` is llama.cpp's own); `estimate_prompt_tokens` still
   ignores `req.tools`, which matters for the `~` figure though no longer for the

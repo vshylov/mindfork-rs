@@ -2,8 +2,10 @@
 
 > Research for roadmap §"Context and tokens" item #1 ("Most valuable next").
 > Status: forks decided by the user 2026-08-07 (§8) — F8(c), F9(b), F10 with a
-> full off switch, the rest as recommended. **Stage 0 (the probe) is done —
-> verdict GO** (§9a). Next step: stage 1 (§10).
+> full off switch, the rest as recommended. **The track is complete**: stage 0
+> (the probe, GO — §9a), stage 1 (core), stage 2 (the automatic trigger —
+> sub-decisions §10.1, and what it uncovered — §9b), stage 3 (the read-back
+> tools — sub-decisions §10.2).
 > Prepared 2026-08-07, branch `docs/history-compression-research`.
 > Closely related roadmap item: #2 **prompt caching** — the two must compose (§3.3).
 
@@ -691,10 +693,10 @@ read-back tools rather than invalidating the mechanism.
   compression is off) + the `BackgroundKind::Compaction` failure streak on the
   automatic path only. **What it cost that was not planned for**: the client
   never emitted `ChatChunk::Usage` at all on the llama.cpp path — §9b.
-- **Stage 3 — read-back tools** (committed by F9(b)): `history_read`/
-  `history_search` over the compressed range, the `attachment_read`/
-  `attachment_search` shape; the summary block's wording switches from "not
-  retrievable" to naming the tools.
+- **Stage 3 — read-back tools** (**done**, committed by F9(b), sub-decisions §10.2):
+  `history_read`/`history_search` over the compressed range, the
+  `attachment_read`/`attachment_search` shape; the summary block's wording
+  switches from "not retrievable" to naming the tools.
 - **Groundwork (not committed)**: impersonation reusing the summary; F3(b)
   tool-result eliding; compact-into-new-chat (F1c); prompt-caching alignment
   (roadmap #2 lands its breakpoints around the now-stable prefix).
@@ -821,6 +823,164 @@ the *how* questions it turned out to contain. **Decided by the user
 - **S8 — cloud.** Explicit `context_tokens` or inactive. No provider→model→window
   table: model names are free-form and windows move under us (§11), and the
   motivation there is cost rather than a ceiling.
+
+---
+
+## 10.2. Stage 3 — sub-decisions (recorded before implementation)
+
+Written after reading the stage-1/2 code and the two precedents this stage
+copies (`attachment_read`/`attachment_search`, and the `cache.db` full-text
+index). F9(b) already decided *what* stage 3 is — read-back tools over the
+compressed range — these are the *how* questions it turned out to contain.
+**Decided by the user 2026-08-08** — all as recommended.
+
+The one finding that reshaped the stage before any code: **the full-text index
+this project already maintains covers exactly the content the read-back tools
+need.** `cache.db` (SQLite FTS5, trigram) indexes every message of every chat
+and, checked rather than assumed, `search::indexed_messages` filters only on
+*empty text* — so `Tool`-role messages are indexed too, at full length. That is
+§1.3's invisible bulk, already searchable, already kept in step by the post-save
+hook, and reachable per chat through `CacheDb::matching_messages_in_chat`.
+
+- **S9 — how a tool sees the compressed range.** **Decision: (a).**
+  - (a) **A turn snapshot on `ToolContext`** — `Arc<[Message]>` of
+    `messages[..upto]`, built where `attachments` already is (`TurnInfo`).
+    *Recommended*: the orchestrator stays the sole owner of `Chat`, there is no
+    I/O on the tool path, and the snapshot is consistent with the request the
+    model was actually shown — a roll that lands mid-turn changes the chat but
+    must not change what this turn's tools describe.
+  - (b) The tool loads the chat from storage by `chat_id` — bypasses the
+    ownership invariant and can read a stale on-disk copy (saves are debounced
+    800 ms).
+
+- **S10 — what a "page" is.** **Decision: (a).**
+  - (a) **Token-budgeted pages over a rendered transcript**, reusing
+    `entities::attachment::paginate` (cuts on a line boundary, never splits a
+    character). *Recommended*: it is the `attachment_read` guarantee verbatim —
+    the model walks `1..M` and **knows** it has read everything, which is the one
+    thing retrieval cannot promise.
+  - (b) One page = one exchange. Semantically tidy, but exchange sizes vary
+    wildly — the largest single message in the dev corpus is 38 782 characters,
+    so a "page" could exceed the window the whole feature exists to protect.
+  - (c) Message-index ranges — no `M` to walk, so the guarantee is lost.
+
+- **S11 — what `history_search` searches with.** **Decision: (a).**
+  - (a) **The existing `cache.db` FTS5 index**, scoped to the chat and filtered
+    to the compressed range. *Recommended*, and the decisive argument is the
+    audience: an embedding server is a **separate** server (ADR 0002) and is
+    routinely unconfigured, while the 8k local user is exactly who this track
+    exists for — a search that needs an embedder would be absent precisely where
+    it is needed. It also costs no new table, no indexing task, no
+    generation-stamping and no `/reindex` integration. Trigram additionally does
+    substring matching, so `8823` finds `ZARYA-8823` — identifiers are what a
+    summary loses first.
+  - (b) A new chat-scoped vec0 semantic index, mirroring `attachment_search`.
+    Better recall for paraphrase, but the *summary* is already the semantic view
+    of that range; what it loses is verbatim detail, and verbatim detail is what
+    lexical search is best at. The two are complementary the other way round
+    from how it first looks. Groundwork, if a live run shows lexical misses.
+  - (c) Both — twice the surface for a gap not yet observed.
+
+- **S12 — are the tools always offered?** **Decision: (a).**
+  - (a) **Registered only when this chat actually has a compressed range** — a
+    special case in `effective_tool_ids`, exactly like the one `get/set_sampling`
+    already has for a provider with no settable fields. *Recommended*: two tool
+    schemas cost prompt on every turn, and this feature's whole audience is
+    people fighting a ceiling. It also earns an invariant — **the block and the
+    tool set are driven by the same `compaction_view`**, so the block can name
+    the tools without ever promising one that is absent (S15). The tool set
+    changes at the moment of a compaction, which already re-prefills the prompt,
+    so the prefix cache pays nothing extra.
+  - (b) Always registered, answering "nothing has been compressed" — simpler,
+    but it spends context on every turn of every chat to describe a situation
+    that does not exist.
+
+- **S13 — what `history_read` covers.** **Decision: (a).**
+  - (a) **The compressed range only.** *Recommended*: it is precisely what the
+    model cannot see; the verbatim tail is already in the prompt, so a page spent
+    on it would be a page wasted.
+  - (b) The whole conversation — a simpler sentence to write in the description,
+    at the cost of inviting calls that return what the model is already holding.
+
+- **S14 — the page size.** **Decision: (a).**
+  - (a) **A new `compaction.page_tokens`**, settings → "Memory" → "Context".
+    *Recommended*: an 8k user and a 200k user need materially different pages,
+    and this feature's users are the ones with the least room to spare.
+  - (b) A constant — one knob fewer, but wrong at both ends of the range.
+  - (c) Reuse `attachments.page_tokens` — the same meaning, but a setting named
+    after attachments silently governing history reading is the kind of coupling
+    that surprises whoever changes it.
+
+- **S15 — the block's wording.** F9(b) commits it: `compaction.block.header`
+  stops saying the verbatim text is unreachable and **names the two tools**, in
+  both bundles. Because of S12 there is exactly **one** wording rather than a
+  with-tools/without-tools pair (the `prompt.attachments.end_excerpt`
+  vs `…_search` split exists because an attachment may or may not be indexed;
+  here the two conditions are the same condition).
+
+- **S16 — what a search hit carries.** The **page number**, plus a snippet and
+  the speaker. That is what makes the pair compose the way the attachment pair
+  does: search says *where* to look, `history_read` guarantees *everything* can
+  be read. A hit without a page number would leave the model with a fragment and
+  no way to widen it.
+
+Three notes that are not forks:
+
+- **One renderer, parameterized by the tool-result clip.** The transcript the
+  reader pages through and the digest the summarizer saw are built by the same
+  function — so what was summarized is what can be re-read — but the digest
+  clips a tool result to `TOOL_RESULT_CLIP` (200 chars) while the reader must
+  not clip at all, or paging back to a `fetch_url` result would return the same
+  200 characters the summary already had.
+- **FTS query escaping stays in its one home.** `features::chat_search::to_fts_query`
+  exists precisely because `shared/storage` may not depend on `features`, so
+  `CacheDb` takes an already-escaped query; the tool calls it rather than growing
+  a second escaper to drift from the first. Raw input cannot reach `MATCH` —
+  measured when that home was built, `C++`, `cost-benefit` and `50%` are all SQL
+  errors on ordinary text.
+- **Both "nothing here" answers must close the door**, the lesson this journal
+  has now recorded four times (the by-reference attachment block, the
+  `youtube_watch` unconfigured path, the `python_exec` sandbox, the stage-2
+  overflow hint): "nothing has been compressed in this conversation — all of it
+  is already in front of you" is an answer; a bare empty result is an invitation
+  to improvise.
+
+### What the stage-3 live run cost, and what it taught
+
+The smoke asks the one question unit tests cannot: **will a real model, told by
+the block that the tools exist, reach for one instead of guessing?** Its validity
+rests on the seed being genuinely un-summarizable, and the fixture took **four
+attempts** — each failing its own precondition rather than the feature, and each
+worth recording:
+
+1. **Fifteen item→code pairs survived a 250-word summary whole.** Fifteen pairs
+   is about sixty words. Worse, the model filed the list with `note_save` first,
+   so it could have answered from memory without touching the history *and* the
+   note's result travelled into the digest. The smoke now enables **only** the
+   two read-back tools — the same move `spawn_orch_live_no_embed` makes for
+   attachments: remove the alternative rather than hope it is not taken.
+2. **Sixty entries, but the target was the only *named* one** among "item number
+   N" — so the summary compressed the rest into ranges and kept exactly the entry
+   that had to be lost. Every entry must be equally plausible and equally
+   nameable.
+3. **Sixty entries as adjective × noun were grouped by adjective**, and all sixty
+   codes still fitted. Any structure is compressible; the fixture went to **200
+   entries against a 120-word limit**, which is arithmetic rather than a hope
+   about the model's judgement.
+4. **The control question was itself the confound** — the sharpest of the four.
+   Asked about the target and landing *inside* the folded range, it made that one
+   entry the most salient thing in the range, so the summary kept precisely what
+   the test needed dropped — twice in a row, which is what showed it was not
+   chance. The control now asks about a **different** entry, keeping its purpose
+   (proving the model can answer this kind of question at all) without steering
+   the summarizer. Note the mirror image in stage 1's smoke, where the control
+   *helped* because that test wants the fact kept: the same device is an aid or a
+   confound depending on which direction the assertion runs.
+
+**Result — GO** (Gemma 4 31B q4_0, external `llama-server`): the summary dropped
+199 of 200 entries, keeping one example — the control's; the model then called
+`history_search` twice and answered with the target's code, which existed nowhere
+but in messages no longer being sent.
 
 ---
 
