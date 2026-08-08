@@ -1,6 +1,6 @@
 # Journal — Engine, generation and providers
 
-Inference engine and the client-side agentic loop: the `EngineBackend` contract and its four implementations (llama.cpp/OpenAI-compatible, OpenAI Responses, Anthropic, native Gemini), the managed `llama-server` launcher, readiness probing and health monitoring, sampling, streaming and token accounting, impersonation, history compaction.
+Inference engine and the client-side agentic loop: the `EngineBackend` contract and its four implementations (llama.cpp/OpenAI-compatible — which also serves the xAI Grok cloud, OpenAI Responses, Anthropic, native Gemini), the managed `llama-server` launcher, readiness probing and health monitoring, sampling, streaming and token accounting, impersonation, history compaction.
 
 **Reference documents for this area:** architecture.md §5–§6, spec.md §3, §6-§8
 
@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -38,6 +38,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: history compression — stage 2 (the automatic trigger) (done)
 - Post-M9: history compression — stage 3 (the read-back tools) (done)
 - Post-M9: impersonation sends the compacted conversation (done)
+- Post-M9: Grok (xAI) as a cloud provider (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1454,3 +1455,61 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   Cyrillic fixture value in a test file. Correct — the wholesale test allowlist
   covers fixture data in code position, not prose; the comment was reworded to
   describe the index instead of quoting it.
+
+### Post-M9: Grok (xAI) as a cloud provider (done)
+
+**Task**: add xAI's Grok models as a first-class engine mode (the user had a
+console.x.ai account and a key). Research first —
+[docs/research/grok-xai-provider.md](../research/grok-xai-provider.md), written
+against the **live** API rather than the docs, because xAI documents almost none
+of the per-model parameter rules.
+
+- **The finding that shaped the work**: xAI's plain `/v1/chat/completions`
+  streams reasoning in `delta.reasoning_content` — byte-for-byte the field
+  `OpenAiClient` has parsed since it was written for llama.cpp — and accepts a
+  replayed assistant turn with `tool_calls` and **no** thinking signature. Every
+  other cloud needed a client of its own for exactly those two reasons
+  (Anthropic's signed thinking block, Responses' reasoning item with
+  `encrypted_content`, Gemini 3's per-call `thoughtSignature`). Grok needed
+  none: no new wire, no contract change, no persisted field, no migration.
+  `cloud_chat_setup` hands it an `OpenAiClient` and the existing accumulator,
+  thoughts parser and token accounting all work unchanged.
+- **The one trap that would have shipped broken**: the orchestrator sets
+  `reasoning_effort: "none"` on its auxiliary turns — title generation,
+  compaction and impersonation all do it deliberately, and llama.cpp reads it as
+  "don't think". xAI rejects the *value* (`400 This model does not support
+  reasoning_effort value none`). Ordinary chat would have worked while those
+  three failed — the miserable kind of partial breakage. Fix:
+  `OpenAiClient::with_effort_none_omitted(true)`, set only for Grok, which drops
+  the field instead of sending it; the Anthropic and Gemini wires already map
+  `None => None` the same way. A live smoke pins it.
+- **Sampling, measured rather than assumed**: a `200` proves nothing on xAI —
+  unknown fields are silently ignored (`{"totally_bogus_field":1}` → 200). Sending
+  a **wrong type** separates the cases: a field in xAI's schema fails
+  deserialization (422), an unknown one is dropped. That gives
+  `supported_sampling_fields(Grok)` = `temperature`/`top_p`/`max_tokens`/`seed`
+  + reasoning. `top_k`/`min_p`/`repeat_penalty` are *not* in the schema (offering
+  them would be a lie), and `presence_penalty`/`frequency_penalty` are a hard
+  `400` on grok-4.5/4.3/4.20 (offering them would break the request). Worth
+  recording: `stop` also `400`s — the project's anti-self-cutoff invariant, which
+  exists for an unrelated reason, is what keeps that from ever being hit.
+- **No embeddings at xAI** (`/v1/embedding-models` returns an empty list), so
+  `apply_embed` folds Grok into the `Claude` arm — RAG needs a separate embedder.
+- **Rejected**: binding to xAI's `/v1/responses` instead. It works — our exact
+  `ResponsesClient` payload returns 200 with the same event names and
+  `encrypted_content` shape — but `ResponsesClient` sends no
+  `temperature`/`top_p`/`seed`, and what it buys in exchange (stored responses,
+  `/responses/compact`) is dead weight for a client that keeps its own history and
+  compacts it itself. The Anthropic-compatible `/v1/messages` surface works too
+  (its `thinking` blocks come back with an **empty** `signature`). Both stay cheap
+  options if xAI-only features ever matter.
+- **Small refactor taken along**: `cloud_ref`/`cloud_mut` took one
+  `&CloudSettings` per provider positionally; a fourth would have made them
+  six-argument functions and a fifth eight. They now take a
+  `CloudProvider::ALL`-ordered array indexed by `CloudProvider::index`, with a
+  test asserting each provider sits at its own index — a wrong slot would hand
+  back another provider's key and model name with no type error to catch it.
+- **Live run** (`MINDFORK_GROK_KEY=… cargo test grok_smoke -- --ignored`): three
+  smokes green against `api.x.ai` — reasoning deltas arrive, a tool result
+  replays without a signature, and `effort=none` no longer fails. 1962 unit tests
+  green.

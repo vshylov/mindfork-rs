@@ -250,6 +250,23 @@ comparison that would have left a server running with an old secret.
 — *confirmation before dangerous tool calls*, *MCP servers in the settings window*,
 *history compression — stage 3*.
 
+**A `200` is not proof a parameter works — send a wrong type to find out.** xAI
+silently ignores fields outside its request schema, so `{"totally_bogus_field": 1}`
+and `{"top_k": 40}` both answer `200`; sending `"top_k": "banana"` separates them —
+a field the server actually knows fails deserialization (`422`), an unknown one is
+still dropped. That one probe turned four "supported" sampling knobs into two
+honoured, two silently discarded, and kept the settings UI from offering knobs that
+do nothing. Applies to any permissive API, not just xAI.
+— *Grok (xAI) as a cloud provider*.
+
+**A value the orchestrator sets on its own turns can break only the background.**
+`reasoning_effort: "none"` is never typed by a user — the app sets it for title
+generation, compaction and impersonation. A provider that rejects that one *value*
+(xAI does) leaves ordinary chat working while exactly those three fail, which reads
+as "the app is flaky" rather than "the provider disagrees". When adding a provider,
+enumerate what the code sends without being asked, not just what the settings expose.
+— *Grok (xAI) as a cloud provider*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the

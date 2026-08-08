@@ -814,9 +814,10 @@ multi-provider support, and mocking in tests. The module is laid out by family
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
-a proxy; `responses` — the Responses API for the OpenAI cloud), **`gemini`**
-(native `generateContent` for the Google Gemini cloud), **`anthropic`**
-(Claude, Messages API), **`managed`** (launching a child `llama-server`).
+a proxy **and for the xAI Grok cloud**; `responses` — the Responses API for the
+OpenAI cloud), **`gemini`** (native `generateContent` for the Google Gemini
+cloud), **`anthropic`** (Claude, Messages API), **`managed`** (launching a child
+`llama-server`).
 
 ```mermaid
 classDiagram
@@ -893,10 +894,19 @@ top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `call_id`), `thinkingConfig`; the `thoughtSignature` thought signature is
 per-tool-call (persisted). `AnthropicClient` sends only `max_tokens` from
 sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude
-4.x rejects temperature/top_p/top_k and `budget_tokens`). Anthropic and
-Responses have no embeddings — only `OpenAiClient` implements `Embedder` (RAG
-uses a separate one, ADR 0002). External gained an optional `api_key_env`
-(a Bearer key for an OpenAI-compatible proxy/gateway).
+4.x rejects temperature/top_p/top_k and `budget_tokens`). The **Grok** cloud
+(xAI) is the exception that needs no client of its own: its Chat Completions
+endpoint already streams reasoning in `delta.reasoning_content` — the field
+`OpenAiClient` parses for llama.cpp — and takes a tool result back with no
+thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
+(key + model + `with_effort_none_omitted`, since xAI rejects the *value*
+`reasoning_effort:"none"` the auxiliary turns ask for). `supported_sampling_fields(Grok)`
+= `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
+`400` there and `top_k`/`min_p` are dropped silently. See
+docs/research/grok-xai-provider.md. Anthropic, xAI and Responses have no
+embeddings — only `OpenAiClient` implements `Embedder` (RAG uses a separate one,
+ADR 0002). External gained an optional `api_key_env` (a Bearer key for an
+OpenAI-compatible proxy/gateway).
 
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, including
   `tool_calls` and tool results) + `sampling` + `tools`. History is append-only →

@@ -313,9 +313,15 @@ falls back to parsing `<think>…</think>` from the text.
 
 ### 3.1. Cloud providers and API keys
 
-Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**, or
-**Claude** (Anthropic). The mode is chosen in settings (`Ctrl+P` → "Model/server" →
-"Mode" field), where the model name is also set.
+Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**,
+**Claude** (Anthropic), or **Grok** (xAI). The mode is chosen in settings
+(`Ctrl+P` → "Model/server" → "Mode" field), where the model name is also set
+(e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`, `grok-4.5` — keys are
+issued at `console.x.ai` for the last one).
+
+Neither Anthropic nor xAI offers embeddings, so under a `claude`/`grok` engine
+RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI, or
+Gemini) — set it in the same section's "Embeddings" tab.
 
 **The key is entered right in settings** — the "API key" field under the model
 name: `Enter` opens a blank input (characters hidden as `•`), `Enter` saves, `Del`

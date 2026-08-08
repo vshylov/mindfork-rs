@@ -1746,6 +1746,20 @@ fn cloud_hides_unsupported_sampling_params() {
     assert!(!has(&s, SamplingParam::TopP));
     assert!(!has(&s, SamplingParam::FreqPen));
     assert!(has(&s, SamplingParam::MaxTokens));
+    // Grok (xAI Chat Completions): temperature/top_p/seed/max_tokens + reasoning.
+    // The penalties are hidden because xAI answers 400 for them, top_k/min_p because
+    // it drops them silently.
+    s.config.engine.mode = ServerMode::Grok;
+    assert!(has(&s, SamplingParam::Temp));
+    assert!(has(&s, SamplingParam::TopP));
+    assert!(has(&s, SamplingParam::Seed));
+    assert!(has(&s, SamplingParam::MaxTokens));
+    assert!(has(&s, SamplingParam::Reasoning));
+    assert!(!has(&s, SamplingParam::FreqPen));
+    assert!(!has(&s, SamplingParam::PresPen));
+    assert!(!has(&s, SamplingParam::TopK));
+    assert!(!has(&s, SamplingParam::MinP));
+    assert!(!has(&s, SamplingParam::Verbosity));
 }
 
 #[test]

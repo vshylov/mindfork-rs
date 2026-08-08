@@ -883,13 +883,13 @@
   ],
   "ui.settings.desc.mode": [
     "managed — локальный llama-server (приложение запускает процесс);",
-    "external — свой OpenAI-совместимый сервер по URL; openai/gemini — облако",
-    "(нужны имя модели и API-ключ из env-переменной)."
+    "external — свой OpenAI-совместимый сервер по URL;",
+    "openai/gemini/claude/grok — облако (нужны имя модели и API-ключ)."
   ],
   "ui.settings.desc.imp_mode": [
     "shared — тот же движок, что у ассистента (с семплингом имперсонации);",
     "managed — отдельный llama-server; external — отдельный удалённый сервер;",
-    "openai/gemini — облако (имя модели + API-ключ из env)."
+    "openai/gemini/claude/grok — облако (имя модели + API-ключ)."
   ],
   "ui.settings.desc.backup_password": [
     "Резервные копии будут шифроваться этим паролем (AES-256), включая копии, которые",
@@ -916,7 +916,7 @@
   ],
   "ui.settings.desc.model_name": [
     "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro,",
-    "text-embedding-3-small). Для облака обязательно."
+    "claude-opus-4-8, grok-4.5, text-embedding-3-small). Для облака обязательно."
   ],
   "ui.settings.desc.ext_api_key_env": [
     "Имя переменной окружения с Bearer-ключом для",
