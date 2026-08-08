@@ -32,6 +32,11 @@ pub struct OpenAiClient {
     /// a multi-model proxy require it, `llama-server` ignores it). The domain
     /// [`ChatRequest`] doesn't carry a model — it's a property of the backend.
     model: Option<String>,
+    /// Send **no** `reasoning_effort` when the request asks for
+    /// [`ReasoningEffort::None`](crate::entities::sampling::ReasoningEffort::None),
+    /// instead of sending the literal `"none"`. See
+    /// [`Self::with_effort_none_omitted`].
+    omit_effort_none: bool,
 }
 
 impl OpenAiClient {
@@ -44,6 +49,7 @@ impl OpenAiClient {
             base_url,
             api_key: None,
             model: None,
+            omit_effort_none: false,
         }
     }
 
@@ -57,6 +63,23 @@ impl OpenAiClient {
     /// Builder-style.
     pub fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model.filter(|m| !m.is_empty());
+        self
+    }
+
+    /// Omit `reasoning_effort` instead of sending `"none"`. Builder-style.
+    ///
+    /// `llama-server` reads `"none"` as "don't think", and the orchestrator relies
+    /// on that for its auxiliary turns — title generation, compaction and
+    /// impersonation all set [`ReasoningEffort::None`](crate::entities::sampling::ReasoningEffort::None)
+    /// deliberately. xAI rejects the *value* outright ("This model does not support
+    /// `reasoning_effort` value `none`"), so on a Grok backend those three
+    /// background turns would fail with a `400` while ordinary chat kept working —
+    /// a confusing failure to diagnose. Omitting the field is the same thing the
+    /// Anthropic and Gemini wires already do (`ant_effort`/`gem_effort` map
+    /// `None => None`); Grok simply reasons at its default depth instead.
+    /// See docs/research/grok-xai-provider.md §2.3.
+    pub fn with_effort_none_omitted(mut self, omit: bool) -> Self {
+        self.omit_effort_none = omit;
         self
     }
 
@@ -98,7 +121,8 @@ impl OpenAiClient {
 #[async_trait::async_trait]
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_chat_request(&req, true, self.model.as_deref());
+        let body =
+            wire::build_chat_request(&req, true, self.model.as_deref(), self.omit_effort_none);
         let url = format!("{}/chat/completions", self.base_url);
 
         let response = self
@@ -629,7 +653,7 @@ mod ignored_smoke {
         crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
     }
 
-    async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
+    pub(super) async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
         let mut text = String::new();
         let mut thoughts = String::new();
         let mut finish = None;
@@ -916,5 +940,189 @@ mod ignored_smoke {
             calls.iter().any(|c| c.name == "send_followup_message"),
             "the model did not call send_followup_message: finish={finish:?} calls={calls:?}"
         );
+    }
+}
+
+/// A manual smoke set against the **live xAI API** (Grok). Marked `#[ignore]` —
+/// doesn't run in CI. Grok is the only cloud served by this client rather than a
+/// protocol-specific one, so these pin the three claims that decision rests on
+/// (docs/research/grok-xai-provider.md): reasoning arrives as `reasoning_content`,
+/// a tool result can be replayed with no thinking signature, and
+/// [`OpenAiClient::with_effort_none_omitted`] keeps the orchestrator's auxiliary
+/// turns off the `400` path.
+///
+/// Run: `MINDFORK_GROK_KEY=… cargo test grok -- --ignored --nocapture`.
+#[cfg(test)]
+mod grok_smoke {
+    use super::*;
+    use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
+    use crate::shared::api::contract::{ApiMessage, ApiToolCall, ToolCallAccumulator, ToolSchema};
+    use futures_util::StreamExt;
+
+    fn client_from_env() -> Option<OpenAiClient> {
+        let key = std::env::var("MINDFORK_GROK_KEY").ok()?;
+        let model = std::env::var("MINDFORK_GROK_MODEL").unwrap_or_else(|_| "grok-4.5".into());
+        Some(
+            OpenAiClient::new(crate::shared::config::CloudProvider::Grok.chat_base_url())
+                .with_api_key(Some(key))
+                .with_model(Some(model))
+                .with_effort_none_omitted(true),
+        )
+    }
+
+    fn weather_tool() -> ToolSchema {
+        ToolSchema {
+            name: "get_weather".into(),
+            description: "Get the current weather for a city.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            }),
+        }
+    }
+
+    /// The load-bearing claim: Grok streams its reasoning in `delta.reasoning_content`,
+    /// the field this client already parses for llama.cpp — which is why xAI needs no
+    /// wire of its own. If this ever stops holding, the `grok` mode silently loses its
+    /// "thoughts" while still answering, so assert both halves.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GROK_KEY (live xAI API)"]
+    async fn thinking_streams_thoughts_on_chat_completions() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GROK_KEY not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(
+                "Think step by step: what is 17 * 23? Show brief reasoning.",
+            )],
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                thinking: Some(true),
+                reasoning_effort: Some(ReasoningEffort::Low),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, thoughts, finish) = super::ignored_smoke::collect(
+            client.chat_stream(req, Default::default()).await.unwrap(),
+        )
+        .await;
+        println!("finish={finish:?}\nthoughts={thoughts}\ntext={text}");
+        assert!(!text.is_empty(), "expected a final answer");
+        assert!(
+            !thoughts.is_empty(),
+            "expected reasoning_content deltas — the whole reason Grok needs no native client"
+        );
+    }
+
+    /// A full tool round-trip **without** echoing any thinking signature back. Every
+    /// other cloud 400s on this (Anthropic wants the signed thinking block, OpenAI
+    /// Responses the reasoning item, Gemini 3 a per-call `thoughtSignature`); Grok
+    /// does not, which is what lets the whole feature skip the contract changes those
+    /// providers needed.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GROK_KEY (live xAI API)"]
+    async fn tool_result_replays_without_a_signature() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GROK_KEY not set");
+            return;
+        };
+        let sampling = SamplingConfig {
+            max_tokens: Some(1024),
+            reasoning_effort: Some(ReasoningEffort::Low),
+            ..Default::default()
+        };
+        let first = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(
+                "What is the weather in Kyiv? Use the get_weather tool.",
+            )],
+            sampling: sampling.clone(),
+            tools: vec![weather_tool()],
+        };
+        let mut stream = client.chat_stream(first, Default::default()).await.unwrap();
+        let mut acc = ToolCallAccumulator::default();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::ToolCall(delta) => acc.push(delta),
+                ChatChunk::Finished(_) => break,
+                _ => {}
+            }
+        }
+        let calls = acc.finish();
+        let call = calls
+            .iter()
+            .find(|c| c.name == "get_weather")
+            .unwrap_or_else(|| panic!("the model did not call get_weather: {calls:?}"));
+
+        // Second round: the assistant turn carries the call and nothing else — no
+        // thoughts, no signature — followed by the tool result.
+        let assistant = ApiMessage::assistant_tool_calls(
+            "",
+            vec![ApiToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                thought_signature: None,
+            }],
+        );
+        let second = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::user("What is the weather in Kyiv? Use the get_weather tool."),
+                assistant,
+                ApiMessage::tool(&call.id, "18C, clear"),
+            ],
+            sampling,
+            tools: vec![weather_tool()],
+        };
+        let (text, _, finish) = super::ignored_smoke::collect(
+            client
+                .chat_stream(second, Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        println!("finish={finish:?}\ntext={text}");
+        assert!(
+            !text.is_empty(),
+            "replaying a tool result without a signature must not fail: finish={finish:?}"
+        );
+    }
+
+    /// The orchestrator asks for `reasoning_effort: none` on its auxiliary turns
+    /// (title, compaction, impersonation). xAI rejects that *value*, so without
+    /// [`OpenAiClient::with_effort_none_omitted`] those three would 400 while ordinary
+    /// chat kept working — the kind of partial breakage that is miserable to diagnose.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GROK_KEY (live xAI API)"]
+    async fn effort_none_does_not_fail_the_request() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GROK_KEY not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: Some("Be terse.".into()),
+            messages: vec![ApiMessage::user("Reply with exactly: pong")],
+            sampling: SamplingConfig {
+                max_tokens: Some(512),
+                reasoning_effort: Some(ReasoningEffort::None),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, _, finish) = super::ignored_smoke::collect(
+            client.chat_stream(req, Default::default()).await.unwrap(),
+        )
+        .await;
+        println!("finish={finish:?} text={text}");
+        assert!(
+            matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
+            "effort=none must be omitted, not sent: finish={finish:?} text={text}"
+        );
+        assert!(!text.is_empty());
     }
 }

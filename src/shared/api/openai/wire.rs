@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::ChatRequest;
 
 // The only consumer of this client is the local/external llama.cpp `llama-server`
@@ -160,11 +161,14 @@ pub struct WireFunctionCall {
 /// Builds the chat request body from the domain [`ChatRequest`]. `model` is substituted into
 /// the `model` field (for an external proxy if desired; for llama-server `None` works —
 /// the server takes the loaded model). Everything set in sampling is sent (llama.cpp
-/// ignores what it doesn't know).
+/// ignores what it doesn't know). `omit_effort_none` — drop a `reasoning_effort` of
+/// `"none"` rather than send it (xAI rejects the value; see
+/// [`OpenAiClient::with_effort_none_omitted`](super::OpenAiClient::with_effort_none_omitted)).
 pub fn build_chat_request(
     req: &ChatRequest,
     stream: bool,
     model: Option<&str>,
+    omit_effort_none: bool,
 ) -> ChatCompletionRequest {
     let mut messages = Vec::with_capacity(req.messages.len() + 1);
     if let Some(system) = &req.system {
@@ -266,7 +270,10 @@ pub fn build_chat_request(
         seed: s.seed,
         samplers: non_empty(&s.samplers),
         thinking: s.thinking,
-        reasoning_effort: s.reasoning_effort.map(|r| r.as_wire()),
+        reasoning_effort: s
+            .reasoning_effort
+            .filter(|r| !(omit_effort_none && *r == ReasoningEffort::None))
+            .map(|r| r.as_wire()),
         reasoning_budget: s.reasoning_budget,
         chat_template_kwargs,
         tools,
@@ -378,7 +385,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             tools: vec![],
         };
-        let body = build_chat_request(&req, true, None);
+        let body = build_chat_request(&req, true, None, false);
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("stop").is_none(), "stop must never be sent");
         assert!(json.get("temperature").is_none());
@@ -423,7 +430,7 @@ mod tests {
             },
             tools: vec![],
         };
-        let json = serde_json::to_value(build_chat_request(&req, false, None)).unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
         // f32→f64 widening makes exact comparison unreliable — compare approximately.
         let approx = |v: &serde_json::Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-6;
         assert!(approx(&json["temperature"], 0.8));
@@ -471,7 +478,7 @@ mod tests {
             },
             tools: vec![],
         };
-        let json = serde_json::to_value(build_chat_request(&req, false, None)).unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
         assert_eq!(json["dry_sequence_breakers"][0], "\n");
         assert_eq!(json["dry_sequence_breakers"][1], ":");
         assert_eq!(json["samplers"][0], "penalties");
@@ -488,7 +495,8 @@ mod tests {
             },
             tools: vec![],
         };
-        let json_empty = serde_json::to_value(build_chat_request(&req_empty, false, None)).unwrap();
+        let json_empty =
+            serde_json::to_value(build_chat_request(&req_empty, false, None, false)).unwrap();
         assert!(json_empty.get("dry_sequence_breakers").is_none());
         assert!(json_empty.get("samplers").is_none());
     }
@@ -503,10 +511,48 @@ mod tests {
             tools: vec![],
         };
         let with_model =
-            serde_json::to_value(build_chat_request(&req, true, Some("some-model"))).unwrap();
+            serde_json::to_value(build_chat_request(&req, true, Some("some-model"), false))
+                .unwrap();
         assert_eq!(with_model["model"], "some-model");
-        let no_model = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
+        let no_model = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
         assert!(no_model.get("model").is_none());
+    }
+
+    /// `reasoning_effort: "none"` is how the orchestrator says "don't think" on its
+    /// auxiliary turns (title, compaction, impersonation) — llama.cpp obeys it, xAI
+    /// answers `400`. With the flag on, the field is omitted rather than sent, and
+    /// **only** that value is affected: an explicit `low`/`high` still goes out.
+    #[test]
+    fn effort_none_is_omitted_only_when_asked() {
+        let req = |e: ReasoningEffort| ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("hi")],
+            sampling: SamplingConfig {
+                reasoning_effort: Some(e),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let json = |e: ReasoningEffort, omit: bool| {
+            serde_json::to_value(build_chat_request(&req(e), true, None, omit)).unwrap()
+        };
+        // Default (llama.cpp): "none" is a meaningful value, keep sending it.
+        assert_eq!(
+            json(ReasoningEffort::None, false)["reasoning_effort"],
+            "none"
+        );
+        // Grok: dropped entirely — the model reasons at its default depth.
+        assert!(
+            json(ReasoningEffort::None, true)
+                .get("reasoning_effort")
+                .is_none()
+        );
+        // Every other level is untouched by the flag.
+        assert_eq!(json(ReasoningEffort::Low, true)["reasoning_effort"], "low");
+        assert_eq!(
+            json(ReasoningEffort::XHigh, true)["reasoning_effort"],
+            "xhigh"
+        );
     }
 
     #[test]
@@ -572,7 +618,7 @@ mod tests {
                 parameters: serde_json::json!({"type":"object"}),
             }],
         };
-        let json = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
         assert_eq!(json["tool_choice"], "auto");
         assert_eq!(json["tools"][0]["type"], "function");
         assert_eq!(json["tools"][0]["function"]["name"], "note_save");
@@ -598,7 +644,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             tools: vec![],
         };
-        let json = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
         assert_eq!(json["messages"][0]["tool_calls"][0]["id"], "c1");
         assert_eq!(
             json["messages"][0]["tool_calls"][0]["function"]["name"],

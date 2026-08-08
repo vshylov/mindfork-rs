@@ -232,7 +232,14 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 /// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
 ///   4.x models have "locked in" sampling (reject `temperature`/`top_p`/`top_k`),
 ///   but support extended thinking (`{type:"adaptive"}` + `output_config.effort`).
-///   `reasoning_budget` isn't included here — 4.x models reject `budget_tokens`.
+///   `reasoning_budget` isn't included here — 4.x models reject `budget_tokens`;
+/// - **Grok** (xAI, plain Chat Completions via [`OpenAiClient`](crate::shared::api::OpenAiClient))
+///   — `temperature`/`top_p`/`max_tokens`/`seed` + reasoning. Verified live against
+///   `api.x.ai` (docs/research/grok-xai-provider.md §2.5): the penalties are a hard
+///   `400` ("Model grok-4.5 does not support parameter presencePenalty"), while
+///   `top_k`/`min_p`/`repeat_penalty` and every llama.cpp extension are **silently
+///   dropped** — they aren't in xAI's request schema, so offering them would be a
+///   lie rather than an error. No `verbosity` (OpenAI-Responses-specific).
 ///
 /// This is the single source of truth for the settings UI (`cloud_supported_param`)
 /// and the `get_sampling`/`set_sampling` tools (show/change only what's available).
@@ -253,6 +260,14 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
             "reasoning_effort",
         ],
         Some(CloudProvider::Claude) => &["max_tokens", "thinking", "reasoning_effort"],
+        Some(CloudProvider::Grok) => &[
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "seed",
+            "thinking",
+            "reasoning_effort",
+        ],
     }
 }
 
@@ -319,8 +334,24 @@ mod tests {
         assert!(claude.contains(&"thinking"));
         assert!(claude.contains(&"reasoning_effort"));
         assert!(!claude.contains(&"top_k"));
+        // Grok (xAI Chat Completions): temperature/top_p/max_tokens/seed + reasoning.
+        // The penalties are excluded because xAI answers `400` for them — the one
+        // provider where offering a field would break the request rather than be
+        // ignored (docs/research/grok-xai-provider.md §2.5).
+        let grok = supported_sampling_fields(Some(CloudProvider::Grok));
+        assert!(grok.contains(&"temperature"));
+        assert!(grok.contains(&"top_p"));
+        assert!(grok.contains(&"seed"));
+        assert!(grok.contains(&"max_tokens"));
+        assert!(grok.contains(&"reasoning_effort"));
+        assert!(!grok.contains(&"presence_penalty"));
+        assert!(!grok.contains(&"frequency_penalty"));
+        // Not in xAI's request schema — silently dropped, so don't offer them.
+        assert!(!grok.contains(&"top_k"));
+        assert!(!grok.contains(&"min_p"));
+        assert!(!grok.contains(&"verbosity"));
         // The cloud subsets are indeed subsets of the full set.
-        for f in openai.iter().chain(gemini).chain(claude) {
+        for f in openai.iter().chain(gemini).chain(claude).chain(grok) {
             assert!(SETTABLE_SAMPLING_FIELDS.contains(f));
         }
     }
@@ -364,6 +395,31 @@ mod tests {
         assert_eq!(claude.thinking, Some(true));
         assert_eq!(claude.temperature, None);
         assert_eq!(claude.top_k, None);
+        // Grok keeps temperature/max_tokens/thinking; top_k and min_p are zeroed —
+        // xAI would drop them silently, and a knob that does nothing is worse than
+        // one that isn't offered.
+        let grok = s.retain_supported(Some(CloudProvider::Grok));
+        assert_eq!(grok.temperature, Some(0.7));
+        assert_eq!(grok.max_tokens, Some(256));
+        assert_eq!(grok.thinking, Some(true));
+        assert_eq!(grok.top_k, None);
+        assert_eq!(grok.min_p, None);
+    }
+
+    /// The penalties are the one field group that turns a Grok request into a hard
+    /// `400`, so they must not survive the filter.
+    #[test]
+    fn retain_supported_drops_penalties_for_grok() {
+        let s = SamplingConfig {
+            presence_penalty: Some(0.5),
+            frequency_penalty: Some(0.5),
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        let grok = s.retain_supported(Some(CloudProvider::Grok));
+        assert_eq!(grok.presence_penalty, None);
+        assert_eq!(grok.frequency_penalty, None);
+        assert_eq!(grok.temperature, Some(0.7));
     }
 
     #[test]

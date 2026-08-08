@@ -229,20 +229,21 @@ impl SettingsScreen {
                             .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
-                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                        rows.extend(grouped(
-                            loc.t("ui.settings.group.provider"),
-                            cloud_rows(
-                                x.cloud(),
-                                FieldId::XModelName,
-                                FieldId::XApiKey,
-                                FieldId::XApiKeyEnv,
-                                FieldId::XUrl,
-                                self.api_key_present(x.mode.cloud_provider()),
-                                loc,
-                            ),
-                        ))
-                    }
+                    ServerMode::OpenAi
+                    | ServerMode::Gemini
+                    | ServerMode::Claude
+                    | ServerMode::Grok => rows.extend(grouped(
+                        loc.t("ui.settings.group.provider"),
+                        cloud_rows(
+                            x.cloud(),
+                            FieldId::XModelName,
+                            FieldId::XApiKey,
+                            FieldId::XApiKeyEnv,
+                            FieldId::XUrl,
+                            self.api_key_present(x.mode.cloud_provider()),
+                            loc,
+                        ),
+                    )),
                 }
                 rows
             }
@@ -283,7 +284,8 @@ impl SettingsScreen {
                     )),
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
-                    | ImpersonationMode::Claude => rows.extend(grouped(
+                    | ImpersonationMode::Claude
+                    | ImpersonationMode::Grok => rows.extend(grouped(
                         loc.t("ui.settings.group.provider"),
                         cloud_rows(
                             x.cloud(),
@@ -350,9 +352,13 @@ impl SettingsScreen {
                             .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
-                    // Claude shows fields, but Anthropic doesn't do embeddings —
-                    // the supervisor will return "unavailable" (RAG turns off). ADR 0004.
-                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                    // Claude and Grok show fields, but neither Anthropic nor xAI does
+                    // embeddings — the supervisor will return "unavailable" (RAG turns
+                    // off). ADR 0004.
+                    ServerMode::OpenAi
+                    | ServerMode::Gemini
+                    | ServerMode::Claude
+                    | ServerMode::Grok => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
                         rows.extend(grouped(

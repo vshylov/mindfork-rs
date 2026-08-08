@@ -11,7 +11,9 @@ use super::*;
 /// the GPT 5.4 family accepted them, and GPT 5.5/5.6 reject them. Anthropic (Claude):
 /// **only `max_tokens`** — the newest
 /// 4.x models "locked in" sampling and reject `temperature`/`top_p`/`top_k` as
-/// deprecated, so we don't send them (see `anthropic::wire`). The rest — llama.cpp
+/// deprecated, so we don't send them (see `anthropic::wire`). Grok (xAI):
+/// `temperature`/`top_p`/`max_tokens`/`seed` — the penalties are a hard 400 and
+/// `top_k`/`min_p` aren't in xAI's schema at all. The rest — llama.cpp
 /// extensions and reasoning fields — the cloud doesn't accept. See ADR 0004.
 pub(super) fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -> bool {
     // A single source of truth shared with the get_sampling/set_sampling tools — the set
@@ -912,13 +914,14 @@ pub(super) fn mode_label(m: ServerMode) -> String {
         ServerMode::OpenAi => "openai".into(),
         ServerMode::Gemini => "gemini".into(),
         ServerMode::Claude => "claude".into(),
+        ServerMode::Grok => "grok".into(),
     }
 }
 
-/// Cyclically changes the engine mode (5 values, direction-aware ←/→).
+/// Cyclically changes the engine mode (6 values, direction-aware ←/→).
 pub(super) fn cycle_mode(m: ServerMode, dir: i32) -> ServerMode {
     use ServerMode::*;
-    let order = [Managed, External, OpenAi, Gemini, Claude];
+    let order = [Managed, External, OpenAi, Gemini, Claude, Grok];
     let idx = order.iter().position(|x| *x == m).unwrap_or(0) as i32;
     let n = order.len() as i32;
     order[(((idx + dir) % n + n) % n) as usize]
@@ -932,13 +935,14 @@ pub(super) fn imp_mode_label(m: ImpersonationMode) -> String {
         ImpersonationMode::OpenAi => "openai".into(),
         ImpersonationMode::Gemini => "gemini".into(),
         ImpersonationMode::Claude => "claude".into(),
+        ImpersonationMode::Grok => "grok".into(),
     }
 }
 
-/// Cyclically changes the impersonation mode (6 values, direction-aware).
+/// Cyclically changes the impersonation mode (7 values, direction-aware).
 pub(super) fn cycle_imp_mode(m: ImpersonationMode, dir: i32) -> ImpersonationMode {
     use ImpersonationMode::*;
-    let order = [Shared, Managed, External, OpenAi, Gemini, Claude];
+    let order = [Shared, Managed, External, OpenAi, Gemini, Claude, Grok];
     let idx = order.iter().position(|x| *x == m).unwrap_or(0) as i32;
     let n = order.len() as i32;
     order[(((idx + dir) % n + n) % n) as usize]
@@ -1075,22 +1079,24 @@ pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static
 }
 
 /// The order of engine-mode options (for the Choice popup; matches `cycle_mode`).
-pub(super) const SERVER_MODES: [ServerMode; 5] = [
+pub(super) const SERVER_MODES: [ServerMode; 6] = [
     ServerMode::Managed,
     ServerMode::External,
     ServerMode::OpenAi,
     ServerMode::Gemini,
     ServerMode::Claude,
+    ServerMode::Grok,
 ];
 
 /// The order of impersonation-mode options (matches `cycle_imp_mode`).
-pub(super) const IMP_MODES: [ImpersonationMode; 6] = [
+pub(super) const IMP_MODES: [ImpersonationMode; 7] = [
     ImpersonationMode::Shared,
     ImpersonationMode::Managed,
     ImpersonationMode::External,
     ImpersonationMode::OpenAi,
     ImpersonationMode::Gemini,
     ImpersonationMode::Claude,
+    ImpersonationMode::Grok,
 ];
 
 /// The order of themes (matches `cycle_theme`).

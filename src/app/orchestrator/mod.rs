@@ -711,24 +711,21 @@ impl Orchestrator {
         // entry: the entry may also hold this machine's secrets for servers that
         // have since been renamed or deleted (they are deliberately not collected,
         // §9 S4), and a status row must only speak for a field that exists.
-        let secrets_present: Vec<SecretKey> = [
-            CloudProvider::OpenAi,
-            CloudProvider::Gemini,
-            CloudProvider::Claude,
-        ]
-        .into_iter()
-        .map(SecretKey::Provider)
-        .chain(std::iter::once(SecretKey::BackupPassword))
-        .chain(self.config.mcp.servers.iter().flat_map(|s| {
-            s.env.keys().map(|var| SecretKey::McpEnv {
-                server: s.id.clone(),
-                var: var.clone(),
+        let secrets_present: Vec<SecretKey> = CloudProvider::ALL
+            .into_iter()
+            .map(SecretKey::Provider)
+            .chain(std::iter::once(SecretKey::BackupPassword))
+            .chain(self.config.mcp.servers.iter().flat_map(|s| {
+                s.env.keys().map(|var| SecretKey::McpEnv {
+                    server: s.id.clone(),
+                    var: var.clone(),
+                })
+            }))
+            .filter(|k| {
+                crate::shared::secrets::stored_key(&self.config.api_keys, &k.storage_name())
+                    .is_some()
             })
-        }))
-        .filter(|k| {
-            crate::shared::secrets::stored_key(&self.config.api_keys, &k.storage_name()).is_some()
-        })
-        .collect();
+            .collect();
         // Secrets never leave the backend for the UI, not even as ciphertext:
         // the config snapshot goes out without them (`handle_update_config`
         // holds onto them separately). See docs/research/api-key-storage.md.

@@ -188,6 +188,26 @@ extra architectural work required.
   replay (otherwise Gemini 3 returns `400`). The round-level `ThinkingRef`
   (Anthropic/OpenAI) is unaffected. The "persist vs. signature-only-for-the-
   current-turn" fork is to be confirmed against a live key.
+- **Grok (xAI) — done** (2026-08-09, [docs/research/grok-xai-provider.md](../research/grok-xai-provider.md)):
+  a fourth `CloudProvider`/sixth `ServerMode`, and the first cloud added
+  **without a client of its own**. xAI's `/v1/chat/completions` streams reasoning
+  in `delta.reasoning_content` (the field `OpenAiClient` already parses for
+  llama.cpp) and accepts a replayed tool result with no thinking signature — the
+  signature round-trip that Phase 2, the Responses work and Gemini Phase B each
+  needed simply does not arise, so there are no contract or persistence changes.
+  `cloud_chat_setup` builds a plain `OpenAiClient` with key + model +
+  `with_effort_none_omitted(true)`: the orchestrator's auxiliary turns (title,
+  compaction, impersonation) ask for `reasoning_effort:"none"`, which xAI rejects
+  as a *value*, so the field is omitted instead — the same thing `ant_effort`/
+  `gem_effort` already do. `supported_sampling_fields(Grok)` =
+  `temperature`/`top_p`/`max_tokens`/`seed` + `thinking`/`reasoning_effort`
+  (verified live: the penalties return `400`; `top_k`/`min_p`/llama.cpp
+  extensions are silently dropped; `stop` would `400` too, but the project's
+  anti-self-cutoff invariant never sends it). No embeddings at xAI → the
+  `Claude` handling in `apply_embed` is shared. `cloud_ref`/`cloud_mut` moved
+  from positional per-provider arguments to a `CloudProvider::ALL`-ordered array.
+  Live `#[ignore]` smokes against `api.x.ai` cover thoughts, the tool round-trip
+  without a signature, and `effort=none`.
 - **`shared/api` layout (§2) — done** (after Phase 2, for symmetry with
   `anthropic/`): `backend.rs` → `contract.rs` (provider-agnostic contract);
   `client.rs`+`wire.rs` → `openai/` (with private `wire`, re-exporting

@@ -30,6 +30,11 @@ pub enum ServerMode {
     /// Anthropic cloud (`platform.claude.com`). A separate Messages API protocol
     /// (`/v1/messages`), `x-api-key`. See ADR 0004, Phase 2.
     Claude,
+    /// xAI cloud (`console.x.ai`), the Grok models. Plain OpenAI Chat Completions
+    /// (`OpenAiClient`) — the only cloud whose OpenAI-compatible path also carries
+    /// reasoning (`delta.reasoning_content`) and needs no thinking-signature
+    /// round-trip. See docs/research/grok-xai-provider.md.
+    Grok,
 }
 
 /// Inference cloud provider. `OpenAi`/`Gemini` speak the OpenAI protocol,
@@ -39,9 +44,32 @@ pub enum CloudProvider {
     OpenAi,
     Gemini,
     Claude,
+    Grok,
 }
 
 impl CloudProvider {
+    /// Every provider, in the order the per-provider arrays taken by
+    /// [`cloud_ref`]/[`cloud_mut`] are indexed (and the order the settings UI
+    /// cycles through them).
+    pub const ALL: [CloudProvider; 4] = [
+        CloudProvider::OpenAi,
+        CloudProvider::Gemini,
+        CloudProvider::Claude,
+        CloudProvider::Grok,
+    ];
+
+    /// Position in [`Self::ALL`]. Adding a provider then costs one array element
+    /// per settings struct instead of another positional argument on
+    /// [`cloud_ref`]/[`cloud_mut`] (which a fourth provider would have grown to
+    /// six).
+    fn index(self) -> usize {
+        match self {
+            CloudProvider::OpenAi => 0,
+            CloudProvider::Gemini => 1,
+            CloudProvider::Claude => 2,
+            CloudProvider::Grok => 3,
+        }
+    }
     /// Base URL for **embeddings**/compat access (an OpenAI-compatible
     /// endpoint). For Gemini this is the compat path `…/v1beta/openai` (RAG
     /// embeddings go through it, `OpenAiClient`). Overridable via the `url` field.
@@ -51,6 +79,9 @@ impl CloudProvider {
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
             // The Anthropic client appends `/v1/messages` itself, hence no suffix.
             CloudProvider::Claude => "https://api.anthropic.com",
+            // xAI has no embedding models at all (docs/research/grok-xai-provider.md
+            // §2.7) — this URL only serves as the chat base, which is the same path.
+            CloudProvider::Grok => "https://api.x.ai/v1",
         }
     }
 
@@ -61,7 +92,7 @@ impl CloudProvider {
     pub fn chat_base_url(self) -> &'static str {
         match self {
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
-            CloudProvider::OpenAi | CloudProvider::Claude => self.base_url(),
+            CloudProvider::OpenAi | CloudProvider::Claude | CloudProvider::Grok => self.base_url(),
         }
     }
 
@@ -74,6 +105,7 @@ impl CloudProvider {
             CloudProvider::OpenAi => "openai",
             CloudProvider::Gemini => "gemini",
             CloudProvider::Claude => "claude",
+            CloudProvider::Grok => "grok",
         }
     }
 }
@@ -85,6 +117,7 @@ impl ServerMode {
             ServerMode::OpenAi => Some(CloudProvider::OpenAi),
             ServerMode::Gemini => Some(CloudProvider::Gemini),
             ServerMode::Claude => Some(CloudProvider::Claude),
+            ServerMode::Grok => Some(CloudProvider::Grok),
             ServerMode::Managed | ServerMode::External => None,
         }
     }
@@ -283,12 +316,12 @@ pub struct ExternalSettings {
     pub api_key_env: Option<String>,
 }
 
-/// Settings for a single cloud provider (OpenAI/Gemini/Claude). Stored
+/// Settings for a single cloud provider (OpenAI/Gemini/Claude/Grok). Stored
 /// separately per provider so switching providers doesn't lose the other's values.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudSettings {
-    /// Provider's model name (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`).
+    /// Provider's model name (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`, `grok-4.5`).
     pub model_name: Option<String>,
     /// Env-variable name carrying the API key (e.g. `OPENAI_API_KEY`). Stores
     /// the **name**, not the secret itself — the key is read from the environment (ADR 0004).
@@ -298,9 +331,9 @@ pub struct CloudSettings {
 }
 
 /// Chat inference-server settings. A sub-section per mode/provider
-/// (managed/external/openai/gemini/claude), so switching modes doesn't lose the
-/// other's values. Transport — OpenAI-compatible HTTP (except Claude — Messages
-/// API). See docs/install.md §3, ADR 0004.
+/// (managed/external/openai/gemini/claude/grok), so switching modes doesn't lose
+/// the other's values. Transport — OpenAI-compatible HTTP (except Claude —
+/// Messages API). See docs/install.md §3, ADR 0004.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
@@ -310,6 +343,7 @@ pub struct EngineSettings {
     pub openai: CloudSettings,
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
+    pub grok: CloudSettings,
 }
 
 impl EngineSettings {
@@ -317,9 +351,7 @@ impl EngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            &self.openai,
-            &self.gemini,
-            &self.claude,
+            [&self.openai, &self.gemini, &self.claude, &self.grok],
         )
     }
 
@@ -327,9 +359,12 @@ impl EngineSettings {
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
-            &mut self.openai,
-            &mut self.gemini,
-            &mut self.claude,
+            [
+                &mut self.openai,
+                &mut self.gemini,
+                &mut self.claude,
+                &mut self.grok,
+            ],
         )
     }
 
@@ -344,7 +379,7 @@ impl EngineSettings {
                 (!name.is_empty()).then(|| name.to_string())
             }),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => self
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -353,30 +388,21 @@ impl EngineSettings {
 }
 
 /// Active cloud sub-structure by provider (a shared helper for all engines).
-fn cloud_ref<'a>(
+/// `all` is indexed by [`CloudProvider::index`], i.e. it must be given in
+/// [`CloudProvider::ALL`] order.
+fn cloud_ref(
     provider: Option<CloudProvider>,
-    openai: &'a CloudSettings,
-    gemini: &'a CloudSettings,
-    claude: &'a CloudSettings,
-) -> Option<&'a CloudSettings> {
-    match provider? {
-        CloudProvider::OpenAi => Some(openai),
-        CloudProvider::Gemini => Some(gemini),
-        CloudProvider::Claude => Some(claude),
-    }
+    all: [&CloudSettings; CloudProvider::ALL.len()],
+) -> Option<&CloudSettings> {
+    Some(all[provider?.index()])
 }
 
-fn cloud_mut<'a>(
+fn cloud_mut(
     provider: Option<CloudProvider>,
-    openai: &'a mut CloudSettings,
-    gemini: &'a mut CloudSettings,
-    claude: &'a mut CloudSettings,
-) -> Option<&'a mut CloudSettings> {
-    match provider? {
-        CloudProvider::OpenAi => Some(openai),
-        CloudProvider::Gemini => Some(gemini),
-        CloudProvider::Claude => Some(claude),
-    }
+    all: [&mut CloudSettings; CloudProvider::ALL.len()],
+) -> Option<&mut CloudSettings> {
+    let idx = provider?.index();
+    all.into_iter().nth(idx)
 }
 
 /// Impersonation-server mode (writing a message on the user's behalf).
@@ -399,6 +425,8 @@ pub enum ImpersonationMode {
     Gemini,
     /// Anthropic cloud (Claude, Messages API).
     Claude,
+    /// xAI cloud (Grok, OpenAI Chat Completions).
+    Grok,
 }
 
 impl ImpersonationMode {
@@ -408,6 +436,7 @@ impl ImpersonationMode {
             ImpersonationMode::OpenAi => Some(CloudProvider::OpenAi),
             ImpersonationMode::Gemini => Some(CloudProvider::Gemini),
             ImpersonationMode::Claude => Some(CloudProvider::Claude),
+            ImpersonationMode::Grok => Some(CloudProvider::Grok),
             ImpersonationMode::Shared
             | ImpersonationMode::Managed
             | ImpersonationMode::External => None,
@@ -430,6 +459,7 @@ pub struct ImpersonationEngineSettings {
     pub openai: CloudSettings,
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
+    pub grok: CloudSettings,
 }
 
 impl Default for ImpersonationEngineSettings {
@@ -445,6 +475,7 @@ impl Default for ImpersonationEngineSettings {
             openai: CloudSettings::default(),
             gemini: CloudSettings::default(),
             claude: CloudSettings::default(),
+            grok: CloudSettings::default(),
         }
     }
 }
@@ -454,9 +485,7 @@ impl ImpersonationEngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            &self.openai,
-            &self.gemini,
-            &self.claude,
+            [&self.openai, &self.gemini, &self.claude, &self.grok],
         )
     }
 
@@ -464,9 +493,12 @@ impl ImpersonationEngineSettings {
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
-            &mut self.openai,
-            &mut self.gemini,
-            &mut self.claude,
+            [
+                &mut self.openai,
+                &mut self.gemini,
+                &mut self.claude,
+                &mut self.grok,
+            ],
         )
     }
 }
@@ -503,7 +535,7 @@ impl Default for ManagedEmbedSettings {
 /// Settings for the dedicated embedding server used by RAG (ADR 0002). A separate
 /// process/port; when unconfigured (`UnavailableEmbedder`) — RAG returns an error.
 /// A sub-section per mode/provider (like [`EngineSettings`]); cloud embeddings
-/// exist for OpenAI/Gemini (not Anthropic — RAG turns off). See ADR 0004.
+/// exist for OpenAI/Gemini (not Anthropic and not xAI — RAG turns off). See ADR 0004.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedSettings {
@@ -513,6 +545,7 @@ pub struct EmbedSettings {
     pub openai: CloudSettings,
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
+    pub grok: CloudSettings,
     /// How the active model expects its input to be marked (`query:`/`passage:`
     /// and relatives). Independent of the mode — it is a property of the *model*,
     /// not of where it runs. Default [`EmbedConvention::None`], and switching it
@@ -526,9 +559,7 @@ impl EmbedSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            &self.openai,
-            &self.gemini,
-            &self.claude,
+            [&self.openai, &self.gemini, &self.claude, &self.grok],
         )
     }
 
@@ -536,9 +567,12 @@ impl EmbedSettings {
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
-            &mut self.openai,
-            &mut self.gemini,
-            &mut self.claude,
+            [
+                &mut self.openai,
+                &mut self.gemini,
+                &mut self.claude,
+                &mut self.grok,
+            ],
         )
     }
 
@@ -559,7 +593,7 @@ impl EmbedSettings {
                 (!name.is_empty()).then(|| name.to_string())
             }),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => self
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -1309,7 +1343,9 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&self.openai),
             CloudProvider::Gemini => Some(&self.gemini),
-            CloudProvider::Claude => None,
+            // Neither has a TTS API (and `TtsMode` has no variant for them
+            // anyway — these arms exist only to keep the match exhaustive).
+            CloudProvider::Claude | CloudProvider::Grok => None,
         }
     }
 
@@ -1332,7 +1368,9 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&mut self.openai),
             CloudProvider::Gemini => Some(&mut self.gemini),
-            CloudProvider::Claude => None,
+            // Neither has a TTS API (and `TtsMode` has no variant for them
+            // anyway — these arms exist only to keep the match exhaustive).
+            CloudProvider::Claude | CloudProvider::Grok => None,
         }
     }
 }
@@ -1903,6 +1941,51 @@ mod tests {
         assert_eq!(c, back);
     }
 
+    /// `cloud_ref`/`cloud_mut` index per-provider arrays by [`CloudProvider::index`],
+    /// so a provider added to `ALL` without its index (or in the wrong slot) would
+    /// silently hand back **another provider's** settings — a key and a model name
+    /// from the wrong cloud, with no type error to catch it.
+    #[test]
+    fn provider_index_matches_its_slot_in_all() {
+        for (i, p) in CloudProvider::ALL.into_iter().enumerate() {
+            assert_eq!(p.index(), i, "{p:?} is not at its own index");
+        }
+        // …and the settings accessor really follows that order.
+        let mut e = EngineSettings {
+            grok: CloudSettings {
+                model_name: Some("grok-4.5".into()),
+                ..Default::default()
+            },
+            claude: CloudSettings {
+                model_name: Some("claude-opus-4-8".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        e.mode = ServerMode::Grok;
+        assert_eq!(e.cloud().unwrap().model_name.as_deref(), Some("grok-4.5"));
+        assert_eq!(e.active_model_name().as_deref(), Some("grok-4.5"));
+        e.cloud_mut().unwrap().model_name = Some("grok-4.3".into());
+        assert_eq!(e.grok.model_name.as_deref(), Some("grok-4.3"));
+        assert_eq!(
+            e.claude.model_name.as_deref(),
+            Some("claude-opus-4-8"),
+            "writing through cloud_mut hit the wrong provider"
+        );
+    }
+
+    /// A `settings.json` written before the Grok mode existed must still load — the
+    /// project's no-migration invariant (`#[serde(default)]` on every sub-section).
+    #[test]
+    fn config_without_grok_section_still_loads() {
+        let old = r#"{"engine":{"mode":"openai","openai":{"model_name":"gpt-4o"}}}"#;
+        let c: AppConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(c.engine.openai.model_name.as_deref(), Some("gpt-4o"));
+        assert_eq!(c.engine.grok, CloudSettings::default());
+        assert_eq!(c.impersonation_engine.grok, CloudSettings::default());
+        assert_eq!(c.embed.grok, CloudSettings::default());
+    }
+
     #[test]
     fn theme_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&Theme::Dark).unwrap(), "\"dark\"");
@@ -1938,6 +2021,18 @@ mod tests {
             Some(CloudProvider::Claude)
         );
         assert!(CloudProvider::Claude.base_url().contains("anthropic"));
+        // Grok — cloud on the plain OpenAI Chat Completions protocol; chat and
+        // embeddings share one base URL (no compat/native split as for Gemini).
+        assert_eq!(
+            serde_json::to_string(&ServerMode::Grok).unwrap(),
+            "\"grok\""
+        );
+        assert_eq!(ServerMode::Grok.cloud_provider(), Some(CloudProvider::Grok));
+        assert_eq!(CloudProvider::Grok.base_url(), "https://api.x.ai/v1");
+        assert_eq!(
+            CloudProvider::Grok.chat_base_url(),
+            CloudProvider::Grok.base_url()
+        );
         // Impersonation: the same cloud providers, other modes — None.
         assert_eq!(
             ImpersonationMode::OpenAi.cloud_provider(),

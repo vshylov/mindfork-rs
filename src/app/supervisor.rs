@@ -140,7 +140,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ServerMode::Managed => {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("cloud mode"),
@@ -175,7 +175,10 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::Managed => {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
-            ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
+            ImpersonationMode::OpenAi
+            | ImpersonationMode::Gemini
+            | ImpersonationMode::Claude
+            | ImpersonationMode::Grok => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("cloud mode"),
@@ -294,9 +297,14 @@ impl ServerSupervisor for LlamaSupervisor {
                     cloud.model_name.as_deref(),
                 )
             }
-            // Anthropic has no embeddings API — RAG uses a separate embedder (ADR 0002).
-            ServerMode::Claude => {
-                tracing::warn!("Anthropic has no embeddings API; set a different embedder for RAG");
+            // Anthropic and xAI have no embeddings API — RAG uses a separate embedder
+            // (ADR 0002; docs/research/grok-xai-provider.md §2.7: xAI's
+            // `/v1/embedding-models` returns an empty list).
+            ServerMode::Claude | ServerMode::Grok => {
+                tracing::warn!(
+                    mode = ?settings.mode,
+                    "this provider has no embeddings API; set a different embedder for RAG"
+                );
                 unavailable_embed()
             }
         }
@@ -468,11 +476,21 @@ fn cloud_chat_setup(
     // The backend by the provider's protocol: OpenAI Responses API
     // (`ResponsesClient` — reasoning summaries, reasoning.effort, verbosity), Gemini
     // via native generateContent (`GeminiClient` — "thoughts" summaries,
-    // thinkingLevel/thinkingBudget), or the Anthropic Messages API (Claude).
+    // thinkingLevel/thinkingBudget), the Anthropic Messages API (Claude), or —
+    // uniquely — plain Chat Completions for Grok: xAI is the one cloud whose
+    // OpenAI-compatible path already carries reasoning (`delta.reasoning_content`,
+    // the field `OpenAiClient` parses for llama.cpp) and needs no thinking-signature
+    // round-trip on tool use. See docs/research/grok-xai-provider.md.
     let backend: Arc<dyn EngineBackend> = match provider {
         CloudProvider::OpenAi => Arc::new(ResponsesClient::new(base, key, model.to_string())),
         CloudProvider::Gemini => Arc::new(GeminiClient::new(base, key, model.to_string())),
         CloudProvider::Claude => Arc::new(AnthropicClient::new(base, key, model.to_string())),
+        CloudProvider::Grok => Arc::new(
+            OpenAiClient::new(base)
+                .with_api_key(Some(key))
+                .with_model(Some(model.to_string()))
+                .with_effort_none_omitted(true),
+        ),
     };
     ChatSetup {
         backend: Some(backend),
@@ -1117,6 +1135,48 @@ mod tests {
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);
+    }
+
+    /// Grok is the one cloud served by `OpenAiClient` rather than a protocol-specific
+    /// client, so this pins the setup contract it shares with the others: model + key
+    /// → `Ready`, no child process, no probe.
+    #[tokio::test]
+    async fn cloud_chat_grok_with_model_and_key_is_ready() {
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Grok,
+            grok: crate::shared::config::CloudSettings {
+                model_name: Some("grok-4.5".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        assert!(setup.backend.is_some());
+        assert!(setup.handle.is_none());
+        assert_eq!(setup.status, ServerStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn grok_embed_is_unavailable() {
+        // xAI ships no embedding model (`/v1/embedding-models` is empty) — RAG is
+        // unavailable, exactly as for Anthropic.
+        let s = EmbedSettings {
+            mode: ServerMode::Grok,
+            grok: crate::shared::config::CloudSettings {
+                model_name: Some("x".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = embed_setup(&s)
+            .embedder
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not configured"));
     }
 
     #[tokio::test]

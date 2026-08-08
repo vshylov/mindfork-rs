@@ -11,8 +11,8 @@
 
 **A console (TUI) AI chat app in Rust.** Built for **local** models
 **Gemma 3/4** and **Qwen 3.5/3.6** (via **llama.cpp `llama-server`**), but through a single
-engine contract it also supports **cloud APIs**: **OpenAI**, **Google Gemini**, and
-**Anthropic (Claude)** — see [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
+engine contract it also supports **cloud APIs**: **OpenAI**, **Google Gemini**,
+**Anthropic (Claude)** and **xAI (Grok)** — see [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
 UI — on [ratatui](https://ratatui.rs). Platforms: **Windows** and **Linux**.
 Architecture — **Feature-Sliced Design (FSD)**.
 
@@ -318,10 +318,14 @@ deliberately **not used**. Several providers are supported behind one contract
 - **the Anthropic (Claude) cloud** — `AnthropicClient` (Messages API
   `/v1/messages`, `x-api-key`) with **extended thinking (CoT)**: adaptive thinking +
   visible "thoughts", correct even with tool calls (resending the thinking block with
-  its signature within the same turn).
+  its signature within the same turn);
+- **the xAI (Grok) cloud** — the same `OpenAiClient`, and the only cloud that needs
+  no client of its own: xAI's Chat Completions endpoint already streams reasoning in
+  `reasoning_content` and takes a tool result back with no thinking signature
+  (docs/research/grok-xai-provider.md).
 
 The provider is chosen in settings with a single mode selector (`managed` /
-`external` / `openai` / `gemini` / `claude`). **The API key is entered right in
+`external` / `openai` / `gemini` / `claude` / `grok`). **The API key is entered right in
 settings** (the "API key" field): it's stored **encrypted and tied to this machine**
 (Windows — DPAPI, Linux — a key derived from `machine-id`), so the settings file can
 be moved between machines — on a new one the key is entered again, and back on the

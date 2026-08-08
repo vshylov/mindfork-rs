@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **Grok (xAI) as a model provider.** Alongside a local model, OpenAI, Gemini and
+  Claude, you can now point mindfork at xAI's Grok models: settings (`Ctrl+P`) →
+  "Model/server" → "Mode" → `grok`, then a model name (`grok-4.5`, `grok-4.3`,
+  `grok-4.20`…) and an API key from [console.x.ai](https://console.x.ai/). The key
+  is entered in settings and stored encrypted for this computer, exactly like the
+  other providers', and one key serves chat, impersonation and embeddings.
+  Reasoning ("thoughts") and tool calling work as with the other clouds; the
+  sampling section shows only the parameters xAI actually honours (temperature,
+  top-p, seed, token limit and the reasoning depth) instead of ones it would
+  reject or ignore. Note that xAI, like Anthropic, offers no embedding models —
+  under a `grok` engine the knowledge base needs an embedder from somewhere else
+  (a local server, OpenAI or Gemini) in the same section's "Embeddings" tab.
+
 ### Fixed
 
 - **The assistant's model of *you* was not reaching it.** The self-model block the
