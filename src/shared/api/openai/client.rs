@@ -126,6 +126,10 @@ impl EngineBackend for OpenAiClient {
         let s = stream! {
             // A "thoughts" splitter in case of an inline <think> in content.
             let mut parser = ThoughtsParser::new();
+            // The reason the model stopped, once a chunk has reported one. Held
+            // until the stream terminates so a trailing `usage` chunk is not lost
+            // (see the `finish_reason` arm below).
+            let mut finish: Option<FinishReason> = None;
             loop {
                 tokio::select! {
                     biased;
@@ -137,7 +141,9 @@ impl EngineBackend for OpenAiClient {
                         match next {
                             None => {
                                 for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                yield ChatChunk::Finished(FinishReason::Stop);
+                                // A stream that ended without `[DONE]` still ends the
+                                // turn — with the reason the model gave, if it gave one.
+                                yield ChatChunk::Finished(finish.unwrap_or(FinishReason::Stop));
                                 break;
                             }
                             Some(Err(err)) => {
@@ -148,7 +154,7 @@ impl EngineBackend for OpenAiClient {
                             Some(Ok(event)) => {
                                 if event.data == "[DONE]" {
                                     for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                    yield ChatChunk::Finished(FinishReason::Stop);
+                                    yield ChatChunk::Finished(finish.unwrap_or(FinishReason::Stop));
                                     break;
                                 }
                                 match serde_json::from_str::<wire::ChatCompletionChunk>(&event.data) {
@@ -189,8 +195,15 @@ impl EngineBackend for OpenAiClient {
                                         }
                                         if let Some(reason) = choice.finish_reason {
                                             for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                            yield ChatChunk::Finished(FinishReason::from_wire(&reason));
-                                            break;
+                                            // Record it and keep reading rather than
+                                            // finishing here: llama.cpp sends the
+                                            // `include_usage` chunk **after** this one
+                                            // (measured — `choices` empty, then
+                                            // `[DONE]`), so breaking now threw the exact
+                                            // token counts away every single time. The
+                                            // stream's own terminator ends us below, and
+                                            // the cancel arm still bounds the wait.
+                                            finish = Some(FinishReason::from_wire(&reason));
                                         }
                                     }
                                     Err(err) => {
@@ -375,6 +388,119 @@ mod tests {
             "probe must authenticate; got:\n{request}"
         );
         assert!(request.contains("get /health"), "and hit /health");
+    }
+
+    /// Serves one SSE response made of the given `data:` payloads.
+    fn sse_server(events: &'static [&'static str]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = sock.read(&mut buf);
+            let body: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        });
+        format!("http://{addr}/v1")
+    }
+
+    async fn collect(url: String) -> Vec<ChatChunk> {
+        let client = OpenAiClient::new(url);
+        let req = ChatRequest {
+            system: None,
+            messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
+            sampling: Default::default(),
+            tools: Vec::new(),
+        };
+        let mut s = client
+            .chat_stream(req, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(c) = s.next().await {
+            out.push(c);
+        }
+        out
+    }
+
+    /// llama.cpp sends the `include_usage` chunk **after** the one carrying
+    /// `finish_reason` — measured against the live server, `choices` empty, then
+    /// `[DONE]`. Finishing on `finish_reason` therefore discarded the exact token
+    /// counts on every single turn, which is why the status bar never left the
+    /// `~` estimate and why automatic compaction had nothing to trigger on.
+    #[tokio::test]
+    async fn a_usage_chunk_after_finish_reason_is_not_lost() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":7,"total_tokens":1241}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        let usage = chunks.iter().find_map(|c| match c {
+            ChatChunk::Usage(u) => Some(*u),
+            _ => None,
+        });
+        let usage = usage.expect("the trailing usage chunk must survive");
+        assert_eq!(usage.prompt_tokens, 1234);
+        assert_eq!(usage.completion_tokens, 7);
+
+        // …and the turn still ends, with the reason the model actually gave —
+        // held from the earlier chunk rather than replaced by a default `Stop`.
+        assert!(
+            matches!(chunks.last(), Some(ChatChunk::Finished(FinishReason::Stop))),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks
+                .iter()
+                .filter(|c| matches!(c, ChatChunk::Finished(_)))
+                .count(),
+            1,
+            "exactly one terminator: {chunks:?}"
+        );
+    }
+
+    /// The reason must survive the wait: a length cut-off that came back as a
+    /// plain `Stop` would make the loop treat a truncated reply as a complete one.
+    #[tokio::test]
+    async fn the_reported_reason_survives_the_trailing_chunk() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":9,"total_tokens":18}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Length))
+            ),
+            "{chunks:?}"
+        );
+    }
+
+    /// A server that ends the body without `[DONE]` still ends the turn, and with
+    /// the reason it gave.
+    #[tokio::test]
+    async fn a_stream_that_ends_without_done_still_reports_its_reason() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":"length"}]}"#,
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Length))
+            ),
+            "{chunks:?}"
+        );
     }
 
     #[test]

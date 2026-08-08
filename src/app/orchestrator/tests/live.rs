@@ -2114,16 +2114,23 @@ async fn props_reports_the_context_window_live() {
 /// The threshold is set far below the default 75% for time's sake: 75% of a real
 /// 16k window would take a very long conversation to reach, and what is under
 /// test is the trigger and the budget, not the arithmetic of a percentage.
+///
+/// The prompt is grown by the **user's** messages rather than by asking the
+/// model for long answers: how verbose a model feels like being is not something
+/// a test should depend on, and the first attempt at this smoke failed for
+/// exactly that reason — four short exchanges came to ~330 tokens against a
+/// threshold of 491.
 #[tokio::test]
 #[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
 async fn auto_compaction_fires_without_the_command_live() {
     use crate::shared::config::{CompactionSettings, EngineSettings, ServerMode};
+    const THRESHOLD_PCT: u8 = 3;
     let config = AppConfig {
         compaction: CompactionSettings {
             enabled: true,
             summary_words: 120,
             tail_tokens: 120,
-            threshold_pct: 3,
+            threshold_pct: THRESHOLD_PCT,
             // Nothing explicit: the window must be discovered, or this smoke
             // silently stops testing what it is named after.
             context_tokens: None,
@@ -2142,28 +2149,52 @@ async fn auto_compaction_fires_without_the_command_live() {
         .await
         .unwrap();
 
+    // Deterministic ballast: the user's own text, so the prompt grows by a known
+    // amount per turn whatever the model answers.
+    let ballast =
+        "Для контекста повторю условие задачи целиком, чтобы ничего не потерялось. ".repeat(12);
+
     // The first turn is also what kicks the budget question off — the answer
     // arrives in the background, so an early turn legitimately does nothing.
     // That self-healing is part of what is being checked.
     let mut compacted = None;
+    // The exact prompt size the server reported, as the trigger sees it.
+    let mut exact_prompt: Option<u64> = None;
     for topic in [
-        "В двух предложениях: зачем нужны индексы в базах данных?",
-        "В двух предложениях: чем кэш отличается от буфера?",
-        "В двух предложениях: что такое идемпотентность запроса?",
-        "В двух предложениях: зачем нужны миграции схемы?",
+        "Одним предложением: зачем нужны индексы в базах данных?",
+        "Одним предложением: чем кэш отличается от буфера?",
+        "Одним предложением: что такое идемпотентность запроса?",
+        "Одним предложением: зачем нужны миграции схемы?",
     ] {
-        let (reply, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
-        eprintln!("reply: {}", reply.chars().take(60).collect::<String>());
-        // A roll is a background task, so it lands somewhere after the turn it
-        // was triggered by — draining what has arrived so far is enough.
-        while let Ok(e) = evt_rx.try_recv() {
-            if let AppEvent::Compacted {
-                summary, folded, ..
-            } = e
-            {
-                compacted = Some((summary, folded));
+        cmd_tx
+            .send(AppCommand::SendMessage(format!("{ballast}\n{topic}")))
+            .unwrap();
+        // Collected **during** the turn on purpose: the exact `usage` arrives
+        // before `Finished`, so the shared `run_turn_capture` — which stops
+        // there — would have already consumed it and the diagnostic below would
+        // read `None` whatever the server said.
+        while let Some(e) = evt_rx.recv().await {
+            match e {
+                AppEvent::TokenUsage {
+                    context: Some(n),
+                    context_exact: true,
+                    ..
+                } => exact_prompt = Some(n),
+                AppEvent::Compacted {
+                    summary, folded, ..
+                } => compacted = Some((summary, folded)),
+                AppEvent::Error(m) => eprintln!("error event: {m}"),
+                // `Finished` is not the end of the turn's bookkeeping: the
+                // trigger runs in `handle_done`, which emits `ChatList`
+                // afterwards (the `title.rs` precedent).
+                AppEvent::ChatList(_) => break,
+                _ => {}
             }
         }
+        eprintln!(
+            "exact prompt: {exact_prompt:?}, compacted: {}",
+            compacted.is_some()
+        );
         if compacted.is_some() {
             break;
         }
@@ -2184,10 +2215,15 @@ async fn auto_compaction_fires_without_the_command_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    let (summary, folded) = compacted.expect(
-        "the conversation crossed the threshold and nothing folded it — either \
-         the window was never discovered or the trigger did not fire",
-    );
+    let (summary, folded) = compacted.unwrap_or_else(|| {
+        panic!(
+            "nothing folded. Last exact prompt: {exact_prompt:?} tokens, \
+             threshold: {THRESHOLD_PCT}% of the window the engine reported. \
+             If the prompt is well under it, the conversation simply never grew \
+             enough; if it is over, the budget was never discovered or the \
+             trigger did not fire."
+        )
+    });
     eprintln!(
         "auto-folded {folded} messages into {} chars:\n{summary}",
         summary.len()
