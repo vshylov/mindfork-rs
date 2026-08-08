@@ -598,6 +598,9 @@ enum FieldId {
     /// Explicit context window, in tokens, when the engine cannot be asked
     /// (`0` — resolve it: a managed server's `-c`, else the engine's own answer).
     CompactContext,
+    /// Page size for `history_read`, in estimated tokens — how much of the
+    /// compacted-away conversation one call returns.
+    CompactPage,
     // RAG (knowledge-base chunking)
     RagTarget,
     RagOverlap,

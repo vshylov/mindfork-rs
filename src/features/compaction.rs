@@ -10,7 +10,11 @@
 //! cheap half and leave the expensive half uncompressed.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
+use uuid::Uuid;
+
+use crate::entities::attachment::paginate;
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
 use crate::shared::i18n::Locale;
 use crate::shared::tokens::estimate_prompt;
@@ -20,24 +24,40 @@ use crate::shared::tokens::estimate_prompt;
 /// summary is supposed to be dropping anyway.
 pub const TOOL_RESULT_CLIP: usize = 200;
 
-/// Builds the summarizer's input digest for `messages`: one line per
-/// user/assistant message (roles labeled in the scaffold language `loc`, axis A),
-/// plus one compact line per tool call an assistant message made.
+/// One rendered message of a range, with the id it came from.
+struct Rendered {
+    /// Blocks in conversation order: the id of the message and its text.
+    blocks: Vec<(Uuid, String)>,
+    /// `Tool`-role message id → index of the block that carries its result.
+    ///
+    /// A tool result is rendered *inside* the assistant block whose call
+    /// produced it, so the `Tool` message has no block of its own — but it does
+    /// have its own row in the full-text index, and it is the bulk a search is
+    /// most likely to hit (§1.3). Without this a hit on a tool result would map
+    /// to no page at all.
+    aliases: HashMap<Uuid, usize>,
+}
+
+/// Renders `messages` one block per user/assistant message: a role line (in the
+/// scaffold language `loc`, axis A) plus one compact line per tool call the
+/// message made.
+///
+/// `clip` is the tool-result budget in characters, `None` for no clipping. That
+/// parameter is the whole reason there is one renderer rather than two: the
+/// digest handed to the summarizer clips a result to [`TOOL_RESULT_CLIP`], while
+/// the transcript the read-back tools page through must not clip at all — paging
+/// back to a `fetch_url` result only to receive the same 200 characters the
+/// summary already carried would defeat the point. Sharing the renderer is what
+/// makes "what was summarized is what can be re-read" true by construction.
 ///
 /// Rules:
-/// - `Tool`-role messages are **not** emitted on their own: they are already
-///   represented by the `[used …]` line of the call that produced them, and
-///   emitting both would double-count the bulk this digest exists to compress.
-/// - "Thoughts" (CoT) are excluded — they are the model's scratch space, not
-///   conversation content.
+/// - `Tool`-role messages get no block of their own: they are already
+///   represented by the call line of the message that produced them, and
+///   emitting both would double-count the bulk this exists to compress.
+/// - "Thoughts" (CoT) are excluded — the model's scratch space, not conversation.
 /// - A blank message is skipped **unless** it carries tool calls (a round that
 ///   only called tools still happened, and its results matter).
-/// - The whole digest is **not** truncated: the caller sizes the window it
-///   passes in (`plan_cut` + the roll loop), so truncating here would silently
-///   drop content the caller believes it handed over.
-///
-/// Returns `None` when nothing substantive was produced.
-pub fn build_compaction_digest(messages: &[Message], loc: &Locale) -> Option<String> {
+fn render(messages: &[Message], loc: &Locale, clip: Option<usize>) -> Rendered {
     // Fallback source for a tool result the record itself doesn't carry (see
     // `tool_result_of`). Built once; empty for a conversation without tools.
     let by_call_id: HashMap<&str, &str> = messages
@@ -46,10 +66,17 @@ pub fn build_compaction_digest(messages: &[Message], loc: &Locale) -> Option<Str
         .filter_map(|m| Some((m.tool_call_id.as_deref()?, m.text.as_str())))
         .collect();
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut blocks: Vec<(Uuid, String)> = Vec::new();
+    let mut aliases: HashMap<Uuid, usize> = HashMap::new();
     for m in messages {
-        // System never occurs in `chat.messages` (research §5.5) and Tool is
-        // represented by the call lines below — both are skipped.
+        // A tool result belongs to the block above it; System never occurs in
+        // `chat.messages` at all (research §5.5).
+        if m.role == MessageRole::Tool {
+            if let Some(i) = blocks.len().checked_sub(1) {
+                aliases.insert(m.id, i);
+            }
+            continue;
+        }
         if !matches!(m.role, MessageRole::User | MessageRole::Assistant) {
             continue;
         }
@@ -63,13 +90,13 @@ pub fn build_compaction_digest(messages: &[Message], loc: &Locale) -> Option<Str
         };
         // A tool-only round has no text: keep the role line bare rather than
         // trailing a space into the prompt — the call lines hang off it.
-        lines.push(if text.is_empty() {
+        let mut lines = vec![if text.is_empty() {
             format!("{who}:")
         } else {
             format!("{who}: {text}")
-        });
+        }];
         for call in &m.tool_calls {
-            let result = tool_result_of(call, &by_call_id);
+            let result = tool_result_of(call, &by_call_id, clip);
             lines.push(loc.tf(
                 "compaction.digest.tool",
                 // The result goes last, as in `features/tools/fetch.rs`: it is
@@ -78,29 +105,150 @@ pub fn build_compaction_digest(messages: &[Message], loc: &Locale) -> Option<Str
                 &[("name", &call.name), ("result", &result)],
             ));
         }
+        blocks.push((m.id, lines.join("\n")));
     }
-    if lines.is_empty() {
-        return None;
-    }
-    Some(lines.join("\n"))
+    Rendered { blocks, aliases }
 }
 
-/// One tool call's result text for the digest, clipped to [`TOOL_RESULT_CLIP`]
-/// characters.
+/// Builds the summarizer's input digest for `messages` — [`render`] with the
+/// tool-result clip, blocks joined one per line.
+///
+/// The digest is **not** truncated as a whole: the caller sizes the window it
+/// passes in (`plan_cut` + the roll loop), so truncating here would silently
+/// drop content the caller believes it handed over.
+///
+/// Returns `None` when nothing substantive was produced.
+pub fn build_compaction_digest(messages: &[Message], loc: &Locale) -> Option<String> {
+    let rendered = render(messages, loc, Some(TOOL_RESULT_CLIP));
+    if rendered.blocks.is_empty() {
+        return None;
+    }
+    Some(
+        rendered
+            .blocks
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// The compacted-away part of a conversation, rendered once per turn so the
+/// read-back tools can page through it and locate a match in it (spec §6.7,
+/// stage 3 / fork F9b).
+///
+/// Pages are token-budgeted slices of one rendered transcript, cut on line
+/// boundaries by [`paginate`] — the same helper `attachment_read` pages a file
+/// with, and for the same reason: the model can walk `1..M` and *know* it has
+/// read everything, which is the guarantee retrieval cannot give. Sharing it
+/// also means the two readers cut text the same way.
+pub struct HistoryView {
+    /// The rendered transcript of the compacted-away range.
+    text: String,
+    /// Byte range of each block within [`Self::text`], in conversation order.
+    blocks: Vec<(Uuid, Range<usize>)>,
+    /// `Tool`-role message id → index into [`Self::blocks`] (see [`Rendered`]).
+    aliases: HashMap<Uuid, usize>,
+}
+
+/// Separator between blocks of the readable transcript. Deliberately wider than
+/// the digest's single newline: a multi-line user message would otherwise run
+/// into the next speaker's line, and a blank line is also where [`paginate`]
+/// prefers to cut.
+const BLOCK_SEPARATOR: &str = "\n\n";
+
+impl HistoryView {
+    /// Renders `messages` (the compacted-away prefix) for reading back.
+    /// `None` when there is nothing substantive in it.
+    pub fn render(messages: &[Message], loc: &Locale) -> Option<Self> {
+        let rendered = render(messages, loc, None);
+        if rendered.blocks.is_empty() {
+            return None;
+        }
+        let mut text = String::new();
+        let mut blocks = Vec::with_capacity(rendered.blocks.len());
+        for (id, block) in rendered.blocks {
+            if !text.is_empty() {
+                text.push_str(BLOCK_SEPARATOR);
+            }
+            let start = text.len();
+            text.push_str(&block);
+            blocks.push((id, start..text.len()));
+        }
+        Some(Self {
+            text,
+            blocks,
+            aliases: rendered.aliases,
+        })
+    }
+
+    /// How many pages the transcript takes at this page size.
+    pub fn page_count(&self, page_tokens: usize) -> usize {
+        paginate(&self.text, page_tokens).len()
+    }
+
+    /// Page `n` (1-based), or `None` when out of range.
+    pub fn page(&self, page_tokens: usize, n: usize) -> Option<&str> {
+        let pages = paginate(&self.text, page_tokens);
+        n.checked_sub(1).and_then(|i| pages.get(i)).copied()
+    }
+
+    /// Which page (1-based) a message landed on, and its rendered block —
+    /// the pair a search hit needs so the model can widen it with a page read.
+    ///
+    /// A `Tool`-role message resolves to the block of the call that produced it.
+    /// `None` when the id is not in this range at all.
+    pub fn locate(&self, page_tokens: usize, id: Uuid) -> Option<(usize, &str)> {
+        let i = self
+            .blocks
+            .iter()
+            .position(|(bid, _)| *bid == id)
+            .or_else(|| self.aliases.get(&id).copied())?;
+        let range = self.blocks[i].1.clone();
+        // Pages tile the text in order, so the page holding an offset is the
+        // first whose cumulative end passes it.
+        let mut end = 0;
+        for (p, page) in paginate(&self.text, page_tokens).iter().enumerate() {
+            end += page.len();
+            if range.start < end {
+                return Some((p + 1, &self.text[range]));
+            }
+        }
+        None
+    }
+
+    /// Conversation order of a message within this range — what search hits are
+    /// sorted by, since the index returns them in an arbitrary order.
+    pub fn order_of(&self, id: Uuid) -> Option<usize> {
+        self.blocks
+            .iter()
+            .position(|(bid, _)| *bid == id)
+            .or_else(|| self.aliases.get(&id).copied())
+    }
+}
+
+/// One tool call's result text, clipped to `clip` characters when asked.
 ///
 /// The live agentic loop always stores the result on the record itself
 /// (`orchestrator/generation.rs::execute_call` sets `result: Some(…)` even for a
 /// gated or refused call), so that is the normal source. The field is still an
 /// `Option` — an imported or hand-edited chat can lack it — so we fall back to
 /// the `Tool`-role message carrying the same `tool_call_id`.
-fn tool_result_of(call: &ToolCallRecord, by_call_id: &HashMap<&str, &str>) -> String {
+fn tool_result_of(
+    call: &ToolCallRecord,
+    by_call_id: &HashMap<&str, &str>,
+    clip: Option<usize>,
+) -> String {
     let raw = call
         .result
         .as_deref()
         .or_else(|| by_call_id.get(call.id.as_str()).copied())
         .unwrap_or("")
         .trim();
-    clip_chars(raw, TOOL_RESULT_CLIP)
+    match clip {
+        Some(budget) => clip_chars(raw, budget),
+        None => raw.to_string(),
+    }
 }
 
 /// Limits a string to `budget` **characters** (Unicode scalars, not bytes),
@@ -493,6 +641,121 @@ mod tests {
     fn a_placeholder_inside_the_digest_is_not_re_expanded() {
         let roll = roll_user_message("", "the user wrote {words} literally", ru(), 250);
         assert!(roll.contains("{words} literally"), "{roll}");
+    }
+
+    // ---- HistoryView (the read-back view, stage 3) ------------------------
+
+    /// A small page size so the fixtures span several pages: 10 estimated tokens
+    /// ≈ 40 bytes ≈ 20 Cyrillic characters.
+    const PAGE: usize = 10;
+
+    /// The guarantee the whole page shape exists for: walking `1..M` returns the
+    /// transcript in full, with nothing dropped between pages.
+    #[test]
+    fn walking_every_page_reassembles_the_transcript() {
+        let msgs = two_exchanges();
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+        let total = view.page_count(PAGE);
+        assert!(total > 1, "the fixture must span several pages");
+        let mut joined = String::new();
+        for p in 1..=total {
+            joined.push_str(view.page(PAGE, p).unwrap());
+        }
+        assert_eq!(joined, view.text);
+        assert!(view.page(PAGE, 0).is_none(), "pages are 1-based");
+        assert!(view.page(PAGE, total + 1).is_none());
+    }
+
+    /// A hit has to come back with the page it sits on — that is what makes
+    /// search and page reading compose (S16).
+    #[test]
+    fn locate_maps_a_message_to_its_page_and_block() {
+        let msgs = two_exchanges();
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+        for m in &msgs {
+            if m.role == MessageRole::Tool {
+                continue;
+            }
+            let (page, block) = view.locate(PAGE, m.id).unwrap();
+            assert!(
+                (1..=view.page_count(PAGE)).contains(&page),
+                "page {page} out of range for {:?}",
+                m.text
+            );
+            assert!(block.contains(m.text.trim()), "{block}");
+        }
+        assert_eq!(view.locate(PAGE, Uuid::new_v4()), None);
+    }
+
+    /// The one that matters for search: a tool **result** is rendered inside the
+    /// assistant block, but the full-text index stores it under the `Tool`
+    /// message's own id — so without the alias a hit on the bulk this feature is
+    /// most about would map to no page at all.
+    #[test]
+    fn a_tool_message_resolves_to_the_block_that_carries_its_result() {
+        let msgs = two_exchanges();
+        let tool_msg = msgs.iter().find(|m| m.role == MessageRole::Tool).unwrap();
+        let assistant = &msgs[1];
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+
+        let (page, block) = view.locate(PAGE, tool_msg.id).unwrap();
+        let (a_page, a_block) = view.locate(PAGE, assistant.id).unwrap();
+        assert_eq!((page, block), (a_page, a_block));
+        assert_eq!(view.order_of(tool_msg.id), view.order_of(assistant.id));
+    }
+
+    /// One renderer, two clips (see [`render`]): the summary got a clipped tool
+    /// result, the reader must get the whole thing — otherwise paging back would
+    /// return exactly what the summary already carried.
+    #[test]
+    fn the_reader_sees_a_tool_result_the_digest_had_to_clip() {
+        let long = "я".repeat(TOOL_RESULT_CLIP + 50);
+        let msgs = vec![
+            Message::user("вопрос"),
+            assistant_with_call("ответ", "c1", "fetch_url", Some(&long)),
+        ];
+        let digest = build_compaction_digest(&msgs, ru()).unwrap();
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+        assert_eq!(digest.matches('я').count(), TOOL_RESULT_CLIP);
+        assert!(digest.contains('…'));
+        assert_eq!(
+            view.text.matches('я').count(),
+            TOOL_RESULT_CLIP + 50,
+            "the reader must not clip"
+        );
+    }
+
+    /// Conversation order, whatever order the index hands hits back in.
+    #[test]
+    fn order_of_follows_the_conversation() {
+        let msgs = two_exchanges();
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+        let first = view.order_of(msgs[0].id).unwrap();
+        let later = view.order_of(msgs[4].id).unwrap();
+        assert!(first < later, "{first} !< {later}");
+    }
+
+    #[test]
+    fn view_is_none_without_meaningful_messages() {
+        assert!(HistoryView::render(&[], ru()).is_none());
+        let msgs = vec![Message::user("   "), tool_msg("c1", "calc", "42")];
+        assert!(HistoryView::render(&msgs, ru()).is_none());
+    }
+
+    /// Blocks are separated, so a multi-line message cannot run into the next
+    /// speaker's line — and the blank line is also where `paginate` prefers to cut.
+    #[test]
+    fn blocks_are_separated_in_the_readable_transcript() {
+        let msgs = vec![
+            Message::user("первая строка\nвторая строка"),
+            Message::assistant("ответ"),
+        ];
+        let view = HistoryView::render(&msgs, ru()).unwrap();
+        assert!(
+            view.text.contains("вторая строка\n\nАссистент: ответ"),
+            "{}",
+            view.text
+        );
     }
 
     // ---- the overflow detector ------------------------------------------

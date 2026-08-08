@@ -2080,6 +2080,239 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
     );
 }
 
+/// Stage 3 (fork F9b) end to end: what a summary could **not** carry must still
+/// be reachable, and a real model has to actually reach for it.
+///
+/// This is the half unit tests cannot answer. They prove the tools return the
+/// right page and the right fragment; whether a model, told in the summary block
+/// that the two exist, chooses to call one instead of guessing is a property of
+/// the wiring meeting a real model.
+///
+/// Validity rests on the seed being **un-summarizable**: fifteen arbitrary
+/// item→code pairs cannot survive a 250-word summary that is explicitly told to
+/// drop procedural detail. So the run asserts the summary does *not* carry the
+/// answer — a precondition, reported loudly, exactly like the control below.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn history_read_back_answers_what_the_summary_dropped_live() {
+    use crate::shared::config::CompactionSettings;
+    let config = AppConfig {
+        compaction: CompactionSettings {
+            enabled: true,
+            // Deliberately tight: the seed below has to be genuinely beyond what
+            // a summary can hold, and the word limit is half of that arithmetic.
+            summary_words: 120,
+            tail_tokens: 120,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .expect("the bootstrap profile");
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Only the read-back tools. The first run of this smoke failed on its own
+    // validity check and showed why that matters: the model filed the list with
+    // `note_save`, so it could answer from memory without ever going back to the
+    // history — and the note's *result* then travelled into the digest, which
+    // put the whole list into the summary verbatim. Removing the alternative is
+    // the same move `spawn_orch_live_no_embed` makes for attachments: a smoke
+    // must not depend on the model's mood not to take a shortcut.
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(vec![
+                    crate::features::tools::history::HISTORY_READ_ID.into(),
+                    crate::features::tools::history::HISTORY_SEARCH_ID.into(),
+                ]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+
+    // The fixture's shape **is** this test's validity, and three earlier
+    // attempts failed their own precondition, each teaching a rule:
+    //  - fifteen entries are about sixty words and survived a 250-word summary
+    //    whole;
+    //  - when the target was the only *named* item among "item number N", the
+    //    summary dropped the rest and kept the one that stood out — so every
+    //    entry must be equally plausible and equally nameable;
+    //  - sixty entries laid out as adjective x noun were *grouped by adjective*
+    //    and all sixty codes still fitted. Any structure is compressible.
+    // Hence two hundred entries against a 120-word limit: that is arithmetic
+    // rather than a hope about the model's judgement. The codes are
+    // non-arithmetic for the mirror reason — an obvious sequence invites a
+    // summary to keep a range the answer can be derived from.
+    let items: Vec<String> = [
+        "токарный",
+        "фрезерный",
+        "сверлильный",
+        "шлифовальный",
+        "расточный",
+        "строгальный",
+        "долбёжный",
+        "протяжной",
+        "зубофрезерный",
+        "заточный",
+        "хонинговальный",
+        "притирочный",
+        "балансировочный",
+        "испытательный",
+        "калибровочный",
+        "маркировочный",
+        "упаковочный",
+        "фасовочный",
+        "сортировочный",
+        "промывочный",
+    ]
+    .iter()
+    .flat_map(|adj| {
+        [
+            "станок",
+            "пресс",
+            "конвейер",
+            "насос",
+            "компрессор",
+            "редуктор",
+            "манипулятор",
+            "дозатор",
+            "сепаратор",
+            "накопитель",
+        ]
+        .iter()
+        .map(move |noun| format!("{adj} {noun}"))
+    })
+    .collect();
+    let codes: Vec<String> = (0..items.len())
+        .map(|i| format!("ZARYA-{}", 1000 + (i * 6389) % 8999))
+        .collect();
+    let unique: std::collections::HashSet<&String> = codes.iter().collect();
+    assert_eq!(
+        unique.len(),
+        codes.len(),
+        "the fixture's codes must be unique"
+    );
+    // Deep in the last third, and deliberately not the middle: a summary that
+    // keeps one illustrative example tends to take it from the middle of the
+    // list, which is where this index used to be — and the run before this one
+    // quoted exactly the entry being asked about.
+    let idx = items.len() * 7 / 8 - 4;
+    let item = items[idx].clone();
+    let code = codes[idx].clone();
+
+    let mut inventory = String::from("Вот инвентарный список склада, запомни его:\n");
+    for (name, c) in items.iter().zip(&codes) {
+        inventory.push_str(&format!("- {name}: {c}\n"));
+    }
+    inventory.push_str("Просто подтверди, что список получен.");
+    let (reply, _) = run_turn_capture(&cmd_tx, &mut evt_rx, &inventory).await;
+    eprintln!(
+        "seed reply: {}",
+        reply.chars().take(120).collect::<String>()
+    );
+
+    // The control proves the model can answer this *kind* of question while the
+    // whole history is still sent — without it a failure cannot be told from
+    // "this model would not have answered anyway".
+    //
+    // It asks about a **different** entry, and that is the sharpest lesson of
+    // the four attempts this fixture took. Asking the control about the target
+    // put the question inside the folded range, which made that one entry the
+    // most salient thing in it — so the summary kept precisely the entry the
+    // test needs it to drop, twice in a row and not by chance.
+    let ctrl = 12;
+    let (before, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Какой инвентарный номер у позиции «{}»? Ответь только номером.",
+            items[ctrl]
+        ),
+    )
+    .await;
+    eprintln!("control answer: {before}");
+    assert!(
+        before.contains(&codes[ctrl]),
+        "control failed — the model cannot answer even with the full history, \
+         so this run says nothing about the read-back tools: {before}"
+    );
+    let question = format!("Какой инвентарный номер у позиции «{item}»? Ответь только номером.");
+
+    for topic in [
+        "В двух предложениях: зачем нужен профилактический ремонт оборудования?",
+        "В двух предложениях: чем отличается плановый простой от аварийного?",
+        "В двух предложениях: что такое наработка на отказ?",
+        "В двух предложениях: зачем на складе нужна маркировка?",
+    ] {
+        let (r, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
+        eprintln!("filler reply: {}", r.chars().take(80).collect::<String>());
+    }
+
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let compacted = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
+    })
+    .await
+    .unwrap();
+    let AppEvent::Compacted {
+        summary, folded, ..
+    } = compacted
+    else {
+        panic!("compaction failed: {compacted:?}");
+    };
+    eprintln!(
+        "folded {folded} messages into {} chars:\n{}",
+        summary.chars().count(),
+        summary.chars().take(600).collect::<String>()
+    );
+    assert!(
+        folded >= 4,
+        "the seed must be behind the boundary: {folded}"
+    );
+    assert!(
+        !summary.contains(&code),
+        "the seed was summarizable after all, so this run cannot show anything \
+         about reading back: {summary}"
+    );
+
+    // The real question: the answer now exists only in messages that are no
+    // longer sent, and only the read-back tools can reach it.
+    let (after, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, &question).await;
+    eprintln!("answer after compaction: {after}");
+    eprintln!(
+        "tools called: {:?}",
+        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let used_read_back = calls.iter().any(|(name, _)| {
+        name == crate::features::tools::history::HISTORY_READ_ID
+            || name == crate::features::tools::history::HISTORY_SEARCH_ID
+    });
+    assert!(
+        used_read_back,
+        "the model must reach for the read-back tools the summary block names, \
+         instead of guessing: {calls:?}"
+    );
+    assert!(
+        after.contains(&code),
+        "what the summary dropped must still be answerable: {after}"
+    );
+}
+
 /// What only a real server can answer: that `/props` exists on the stack we
 /// actually run against, and that our client reads the field it means to.
 ///
@@ -2131,6 +2364,7 @@ async fn auto_compaction_fires_without_the_command_live() {
             summary_words: 120,
             tail_tokens: 120,
             threshold_pct: THRESHOLD_PCT,
+            page_tokens: crate::shared::config::DEFAULT_COMPACTION_PAGE_TOKENS,
             // Nothing explicit: the window must be discovered, or this smoke
             // silently stops testing what it is named after.
             context_tokens: None,

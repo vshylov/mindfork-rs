@@ -508,6 +508,11 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.compaction.context_tokens = (v > 0).then_some(v);
             }
         }),
+        CompactPage => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.compaction.page_tokens = v;
+            }
+        }),
         IDicts => text(|c, t| {
             c.interface.selected_dictionaries = t
                 .split(',')

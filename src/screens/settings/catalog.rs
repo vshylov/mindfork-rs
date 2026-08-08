@@ -1031,6 +1031,12 @@ impl SettingsScreen {
                     self.config.compaction.context_tokens.unwrap_or(0),
                 )
                 .describe(loc.t("ui.settings.desc.compact_context")),
+                num_field(
+                    FieldId::CompactPage,
+                    loc.t("ui.settings.field.compact_page"),
+                    self.config.compaction.page_tokens,
+                )
+                .describe(loc.t("ui.settings.desc.compact_page")),
             ],
         );
         rows.extend(grouped(

@@ -229,6 +229,13 @@ impl Orchestrator {
             .find(|p| p.id == profile_id)
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
+        // Where this chat's verbatim history starts, if compression folded
+        // anything away. It decides three things at once, which is the point:
+        // what the request carries, whether the summary block is in the prompt,
+        // and whether the read-back tools are offered (spec §6.7, S12).
+        let history_upto = chat_ref
+            .compaction_view(self.config.compaction.enabled)
+            .map(|(_, upto)| upto);
         // The effective set = profile ∩ global switches (spec §9.4).
         let allowed = effective_tool_ids(
             &enabled,
@@ -236,6 +243,7 @@ impl Orchestrator {
             self.config.tools.python_enabled,
             self.config.tools.fs_enabled,
             self.config.mcp.enabled,
+            history_upto.is_some(),
             self.config.engine.mode.cloud_provider(),
         );
         let profile_loc = crate::shared::i18n::locale(profile_lang);
@@ -315,6 +323,25 @@ impl Orchestrator {
                 // (spec §9.7). `Arc` — the context is cloned per call and the
                 // texts can be large.
                 attachments: std::sync::Arc::from(chat.attachments.clone()),
+                // The folded-away range, rendered for `history_read`/
+                // `history_search` (spec §6.7). Rendered only when the tools are
+                // actually in this turn's set: with none of them offered, the
+                // work would be pure cost — and a chat with no compaction skips
+                // it entirely, which is every chat until the first roll.
+                history: history_upto
+                    .filter(|_| {
+                        allowed.iter().any(|t| {
+                            t == crate::features::tools::history::HISTORY_READ_ID
+                                || t == crate::features::tools::history::HISTORY_SEARCH_ID
+                        })
+                    })
+                    .and_then(|upto| {
+                        crate::features::compaction::HistoryView::render(
+                            &chat.messages[..upto],
+                            profile_loc,
+                        )
+                    })
+                    .map(std::sync::Arc::new),
                 lang: profile_lang,
                 cancel: cancel.clone(),
             };
