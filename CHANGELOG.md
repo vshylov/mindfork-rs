@@ -34,7 +34,9 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   folded part back page by page and search it by words — so asking about a detail
   from the beginning of a long conversation gets an answer from the actual messages
   rather than a guess. The search needs no embedding server, and the page size is in
-  the same settings group.
+  the same settings group. **Writing a message as the user** (`Ctrl+U`) sends the
+  same folded conversation, so it no longer runs into the ceiling the rest of the
+  chat is already protected from.
 - **The Windows installer can set up the Python sandbox for you.** A new
   *Install the Python sandbox and enable Python execution* checkbox on the
   "Additional tasks" page (off by default) installs it during the installation and

@@ -13150,6 +13150,79 @@ three findings are invisible from the workflow's own status):
   three consumers of one `compaction_view`, which is the seam any future
   per-chat tool gating would reuse.
 
+### Post-M9: impersonation sends the compacted conversation (done)
+
+- **The last leftover of the history-compression track with a real user
+  effect**, and the framing is what made it worth doing: `Ctrl+U` builds its own
+  request ([impersonation.rs](src/app/orchestrator/impersonation.rs), spec
+  §11.8) and took `chat.messages` **whole**, so a long chat hit the very context
+  ceiling the whole track exists to remove — only from a different key. Branch
+  `fix/impersonation-compaction`. A simple task by AGENTS.md §1 (one module, no
+  cross-layer contract, no new dependency), so no design doc; the one genuine
+  unknown was measured first, below.
+- **~20 lines of production code**, because the pieces already existed: the view
+  is `Chat::compaction_view(config.compaction.enabled)` — the same call
+  `generation.rs` makes — and the block comes from the shared
+  `request::inject_compaction`, so there is **one** wording in one place. Passed
+  as the pair the view already returns (`Option<(&str, usize)>`) rather than two
+  parameters, so a summary can never arrive without the cut it describes.
+  Ordering follows `build_request`'s volatility rule: persona → summary → the
+  interlocutor model → the seed continuation, which stays last as the immediate
+  instruction.
+- **The block is injected with `tools = false`, and that falls out of an existing
+  decision rather than needing a new one**: impersonation carries no tools, so
+  sub-decision S12's gate produces the "work from this summary" wording instead
+  of pointing at `history_read`/`history_search` the model cannot call. The dead
+  end this project has now closed four times would otherwise have reopened here.
+- **The one unknown was settled live before any code** (three real providers,
+  our own clients rather than curl — the journal's corrupted-`awk` lesson): a cut
+  always lands on a `User` message, and the swap turns it into a **leading
+  assistant turn**, which impersonation had never produced. **Anthropic
+  (claude-haiku-4-5), native Gemini (gemini-3.5-flash) and OpenAI Responses
+  (gpt-5.6) all accept it** — no 400, and all three wrote a clean one-line user
+  message. So no guard was needed and the estimate stayed at ~20 lines.
+- **Two of my own probe runs were wrong, and both would have produced a false
+  conclusion.** The first ended the history on an **assistant** turn: Anthropic
+  and Gemini returned empty text with `Stop` — not a rejection but a **prefill**,
+  since a trailing assistant turn is continued rather than answered. Real
+  impersonation never sends that shape (the chat ends with the assistant's reply,
+  which swaps to `user`), so the fixture was simply wrong. The second used
+  `max_tokens: 64` and produced empty replies from the two 3.x models — plausibly
+  the shape, actually the cap (thinking tokens count against it, already recorded
+  here for Responses); at 512 all six answered. The control arm ("leading user",
+  today's shape) is what made both diagnosable at all.
+- **That prefill rule is now a test, not a comment**
+  (`compacted_impersonation_starts_with_assistant_and_ends_with_user`): the head
+  is fine and the **tail** is the fragile half, so a future change to the cut that
+  left a trailing assistant turn would fail here instead of silently producing an
+  empty preview.
+- **Tests**: 4 unit (the folded prefix is not sent while the summary is, the
+  no-tools wording with neither tool named, the switch off giving byte-for-byte
+  the previous request while the stored summary stays dormant, and the role
+  invariant) + 1 integration through the real `run` loop — placed in
+  `tests/compaction.rs`, since driving a real roll needs that module's fixtures,
+  and it is the only test that can catch the one-line wiring in
+  `handle_impersonate`. **All four load-bearing behaviours mutation-tested**:
+  reverting the wiring, the slice, the injection, or `tools=false` each fails its
+  own test — the last one exactly one test, which is the precision worth having.
+  **1947 unit tests green** (+5), **81 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **Live run — GO** (Gemma 4 31B q4_0, external `llama-server`, `--jinja`):
+  `impersonation_after_compaction_still_writes_live` — 4 messages folded into a
+  229-character summary, and the impersonated message came back as a coherent
+  user-style follow-up on the conversation's last topic. The assertion is
+  deliberately just "non-empty": both ways this can fail — a refused leading role,
+  or a tail read as a prefill — end in the same silence rather than an error.
+- **Regression — clean**: the three live compaction smokes and the read-back one
+  green (127 s + 102 s). Deliberately not the full orchestrator e2e set: unlike
+  the track's own stages this touches **no** shared turn path — `generation.rs`,
+  `build_request` and `inject_compaction` are untouched, and the blast radius is
+  the one function `Ctrl+U` calls.
+- **A note the scanner earned**: `cyrillic_scan.py` flagged a *comment* quoting a
+  Cyrillic fixture value in a test file. Correct — the wholesale test allowlist
+  covers fixture data in code position, not prose; the comment was reworded to
+  describe the index instead of quoting it.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

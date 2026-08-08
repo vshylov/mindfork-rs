@@ -961,3 +961,54 @@ async fn an_unrelated_failure_is_not_dressed_up_as_an_overflow() {
         _ => unreachable!(),
     }
 }
+
+/// Impersonation (`Ctrl+U`) sends the conversation too, so it must send the
+/// **compacted** view of it — otherwise it keeps hitting the very ceiling this
+/// track removes, from a different key (spec §11.8).
+///
+/// Lives here rather than next to the other impersonation tests because driving
+/// a real roll needs this module's fixtures; the request-shaping half is unit
+/// tested in `tests/impersonation.rs`. What only this test can catch is the
+/// wiring — `handle_impersonate` actually passing the view.
+#[tokio::test]
+async fn impersonation_sends_the_compacted_view() {
+    const SUMMARY: &str = "Ранее: обсудили первый и второй вопрос.";
+    let backend = RecordingBackend::new(&["ответ один", "ответ два", SUMMARY, "моя реплика"]);
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend.clone()), compact_cfg(1));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    turn(&cmd_tx, &mut evt_rx, "первый вопрос").await;
+    turn(&cmd_tx, &mut evt_rx, "второй вопрос").await;
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let (_, _, _, folded) = wait_compacted(&mut evt_rx).await;
+    assert!(folded > 0, "something was actually folded");
+
+    cmd_tx
+        .send(AppCommand::Impersonate {
+            seed: String::new(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImpersonationFinished { .. })
+    })
+    .await
+    .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // The impersonation request is the last one, and the only one with no tools
+    // whose system prompt is not a summarization roll.
+    let last = backend.requests().pop().expect("an impersonation request");
+    let system = last.system.as_deref().unwrap_or_default();
+    assert!(
+        system.contains(SUMMARY),
+        "the summary must reach the impersonation prompt: {system}"
+    );
+    let sent: Vec<&str> = last.messages.iter().map(|m| m.content.as_str()).collect();
+    assert!(
+        !sent.iter().any(|t| t.contains("первый вопрос")),
+        "the folded exchange must not be sent verbatim: {sent:?}"
+    );
+}

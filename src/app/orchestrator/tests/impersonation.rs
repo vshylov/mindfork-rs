@@ -13,6 +13,7 @@ fn impersonation_request_swaps_roles_and_sets_system() {
 
     let req = build_impersonation_request(
         &chat,
+        None,
         "Ты — пользователь".into(),
         "",
         SamplingConfig::default(),
@@ -49,6 +50,7 @@ fn impersonation_request_disables_reasoning() {
     let chat = Chat::from_profile(&profile, "c");
     let req = build_impersonation_request(
         &chat,
+        None,
         "Ты — пользователь".into(),
         "",
         // The user left "thoughts" enabled in the impersonation sampling —
@@ -74,6 +76,7 @@ fn impersonation_request_with_seed_adds_continuation_hint() {
     let chat = Chat::from_profile(&profile, "c");
     let req = build_impersonation_request(
         &chat,
+        None,
         "Ты — пользователь".into(),
         "Мне нужно ",
         SamplingConfig::default(),
@@ -94,6 +97,7 @@ fn impersonation_request_includes_user_hint() {
     let chat = Chat::from_profile(&profile, "c");
     let req = build_impersonation_request(
         &chat,
+        None,
         "Ты — пользователь".into(),
         "",
         SamplingConfig::default(),
@@ -104,6 +108,134 @@ fn impersonation_request_includes_user_hint() {
     assert!(system.contains("Ты — пользователь"));
     // The interlocutor model is mixed into the impersonation system prompt.
     assert!(system.contains("черты — скептик"));
+}
+
+/// A chat whose older half is folded away, plus the view over it. Shaped like a
+/// real one: the greeting, two exchanges folded, one exchange verbatim — and the
+/// boundary on a `User` message, which is what `plan_cut` guarantees.
+fn compacted_chat() -> Chat {
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "c");
+    chat.push_message(Message::assistant("Привет! Чем помочь?"));
+    chat.push_message(Message::user("Первый вопрос"));
+    chat.push_message(Message::assistant("Первый ответ"));
+    chat.push_message(Message::user("Второй вопрос"));
+    chat.push_message(Message::assistant("Второй ответ"));
+    let boundary = 3; // The second user message — a cut always lands on a User one.
+    chat.compaction = Some(crate::entities::chat::Compaction {
+        summary: "Ранее: обсудили первый вопрос.".into(),
+        upto: boundary,
+        boundary_id: chat.messages[boundary].id,
+        compacted_at: chrono::Utc::now(),
+        rolls: 1,
+    });
+    chat
+}
+
+#[test]
+fn impersonation_folds_the_compacted_prefix_and_carries_the_summary() {
+    let chat = compacted_chat();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let req = build_impersonation_request(
+        &chat,
+        chat.compaction_view(true),
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        None,
+        loc,
+    );
+
+    // Only the verbatim tail is sent, and the folded part is not in it.
+    assert_eq!(req.messages.len(), 2, "the tail is messages[3..]");
+    let sent: Vec<&str> = req.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(sent, vec!["Второй вопрос", "Второй ответ"]);
+    assert!(
+        !sent.iter().any(|t| t.contains("Первый")),
+        "the folded exchange must not be sent verbatim: {sent:?}"
+    );
+    // …and what replaced it is in the system prompt, after the persona.
+    let system = req.system.unwrap();
+    assert!(system.starts_with("Ты — пользователь"));
+    assert!(system.contains("Ранее: обсудили первый вопрос."));
+}
+
+/// Impersonation has **no** tools, so the block must tell the model to work from
+/// the summary rather than point it at `history_read`/`history_search` it cannot
+/// call — the dead-end wording the whole S12 gate exists to prevent.
+#[test]
+fn impersonation_summary_block_does_not_offer_the_read_back_tools() {
+    let chat = compacted_chat();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let req = build_impersonation_request(
+        &chat,
+        chat.compaction_view(true),
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        None,
+        loc,
+    );
+    let system = req.system.unwrap();
+    assert!(req.tools.is_empty(), "impersonation never offers tools");
+    assert!(system.contains(loc.t("compaction.block.no_tools")));
+    assert!(
+        !system.contains("history_read") && !system.contains("history_search"),
+        "must not name tools this request does not carry: {system}"
+    );
+}
+
+/// The master switch off (or nothing folded) → byte-for-byte the request that
+/// was built before compression existed.
+#[test]
+fn impersonation_is_unchanged_when_compaction_is_off() {
+    let chat = compacted_chat();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let build = |view| {
+        build_impersonation_request(
+            &chat,
+            view,
+            "Ты — пользователь".into(),
+            "",
+            SamplingConfig::default(),
+            None,
+            loc,
+        )
+    };
+    let off = build(chat.compaction_view(false));
+    assert_eq!(off.system.as_deref(), Some("Ты — пользователь"));
+    assert_eq!(off.messages.len(), 5, "the whole history is sent");
+    // The stored summary is dormant, not discarded: switching back brings it in.
+    assert_eq!(build(chat.compaction_view(true)).messages.len(), 2);
+}
+
+/// A cut always lands on a `User` message, and impersonation **swaps** roles —
+/// so the request starts with an assistant turn, which it never did before.
+/// Verified live against Anthropic, native Gemini and OpenAI Responses (all
+/// accept it), but the tail matters more than the head: Anthropic treats a
+/// **trailing** assistant turn as a prefill and answers with nothing. That is
+/// exactly what a future change to the cut could reintroduce silently — hence
+/// this test rather than a comment.
+#[test]
+fn compacted_impersonation_starts_with_assistant_and_ends_with_user() {
+    use crate::shared::api::contract::ApiRole;
+    let chat = compacted_chat();
+    let req = build_impersonation_request(
+        &chat,
+        chat.compaction_view(true),
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    );
+    assert_eq!(req.messages.first().unwrap().role, ApiRole::Assistant);
+    assert_eq!(
+        req.messages.last().unwrap().role,
+        ApiRole::User,
+        "a trailing assistant turn reads as a prefill — the model would continue it instead of \
+         writing the next message"
+    );
 }
 
 #[test]
