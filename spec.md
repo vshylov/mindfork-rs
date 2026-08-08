@@ -2309,13 +2309,31 @@ companion, and a handful of recent insights). Gate: the profile enabled `get_sel
 the model "remembers" itself and the user without an explicit tool call — this is the
 main mechanism of value (verified through cross-chat recall).
 
+**Every section has its own budget** — a share of `prompt_cap` (description 40%,
+goals 20%, interlocutor 20%, observations 20%) plus whatever earlier sections did
+not use. A share is a *ceiling*, so a bloated description or a long trait list
+cannot starve what comes after it; unused room flows forward, so a short section
+makes the next one richer. Lists lose **whole items** rather than being cut
+mid-item and report how many were dropped ("… +N more"), because a trait cut in
+half reads as a different trait and the count tells the model it is seeing a
+part. The full picture is always one `get_self_model` away — that read
+(`render_full`) is deliberately untruncated. Before this, only the description
+was bounded and the rest was a queue: measured on a real profile, the description
+and goals consumed the entire budget and **neither the interlocutor model nor the
+observations were injected at all**, while the injected text told the model that
+observations "surface by relevance". See
+[docs/history/self-model-injection-budget.md](docs/history/self-model-injection-budget.md).
+
 ### 17.5. Parameters (settings)
 
 `config.self_model: SelfModelSettings` (all under `#[serde(default)]` — no migration needed):
 
 - `max_narrative` — the cap on stored insights (older ones are evicted);
 - `narrative_in_prompt` — how many recent insights go into the prompt;
-- `prompt_cap` — the character cap for the compact injection (protecting the context window);
+- `prompt_cap` — the character cap for the compact injection (protecting the context window),
+  split between the sections as described in §17.4; default **4000** (raised from 1200, which
+  measurement showed too tight for a mature self-model — an existing `settings.json` keeps its
+  own stored value);
 - `auto_reflect_every` — the auto-reflection period (0 — off).
 
 `SelfModelParams::from_settings` sanitizes it (at least 1 insight; no more in the prompt

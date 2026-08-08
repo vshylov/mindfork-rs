@@ -96,6 +96,7 @@
   "selfmodel.render.user.interests": " интересы: ",
   "selfmodel.render.user.relationship": " отношения: ",
   "selfmodel.render.observations_recent": "Недавние наблюдения:",
+  "selfmodel.render.more": " … ещё {n}",
   "selfmodel.render.observations": "Наблюдения ({n}):",
   "selfmodel.render.impersonation.intro": "Известное о человеке, за которого ты пишешь:",
   "selfmodel.render.impersonation.traits": " черты — ",

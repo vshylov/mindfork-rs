@@ -111,6 +111,20 @@ pub enum GoalStatus {
 /// the lifecycle is visible, but the list doesn't grow without bound.
 const CLOSED_GOALS_SHOWN: usize = 5;
 
+/// Per-section shares of the injection budget, in percent, in render order
+/// (docs/history/self-model-injection-budget.md). They sum to 100; unused room flows
+/// forward, so a short section makes the next one richer, while a bloated one
+/// cannot reach past its own share. See [`SelfModel::render_for_prompt`].
+const SHARE_SUMMARY: usize = 40;
+const SHARE_GOALS: usize = 20;
+const SHARE_USER: usize = 20;
+const SHARE_OBSERVATIONS: usize = 20;
+
+/// Room held back for the "+N more" marker while filling a list, so reporting the
+/// dropped items cannot itself overflow the section. Approximate on purpose — the
+/// marker's length is localized, and the block's final truncation is the backstop.
+const MORE_MARKER_RESERVE: usize = 12;
+
 /// The result of resolving a goal reference by its "handle" (a short `#id` or a
 /// full UUID). See [`SelfModel::match_goal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,9 +468,22 @@ impl SelfModel {
     /// A compact human-readable block for system-prompt injection.
     /// `None` if the structural part is empty **and** there are no observations.
     /// Observations (`recent` — self-notes, newest first, prepared by the caller)
-    /// go into the block, `narrative_in_prompt` freshest ones; the result is
-    /// truncated to `max_chars` characters. `now` — the reference point for age
-    /// labels (day granularity, stable within a day — see [`age_label`]).
+    /// go into the block, `narrative_in_prompt` freshest ones. `now` — the
+    /// reference point for age labels (day granularity, stable within a day —
+    /// see [`age_label`]).
+    ///
+    /// **Every section has a budget** (`SHARE_*`, docs/history/self-model-injection-budget.md):
+    /// a share of `max_chars` plus whatever earlier sections did not use. A share
+    /// is a *ceiling*, so a bloated description or a long trait list cannot starve
+    /// the sections after it — which is how the later ones get a floor without a
+    /// second mechanism. Before this, only the description was bounded and the
+    /// rest was a queue: measured on a real profile, the description and goals
+    /// took everything and neither the interlocutor model nor the observations
+    /// were injected at all.
+    ///
+    /// Lists lose **whole items** rather than being cut mid-item, and say how many
+    /// were dropped, so the model knows it is seeing a part and can read the rest
+    /// with `get_self_model` — which renders untruncated ([`Self::render_full`]).
     pub fn render_for_prompt(
         &self,
         max_chars: usize,
@@ -469,45 +496,72 @@ impl SelfModel {
             return None;
         }
         let mut out = format!("{}\n", loc.t("selfmodel.render.header"));
+        // Unused room flows forward, so a short section makes the next one richer.
+        let share = |pct: usize| max_chars * pct / 100;
+        let mut carry = 0usize;
+
+        let budget = share(SHARE_SUMMARY) + carry;
+        carry = budget;
         if !self.summary.trim().is_empty() {
+            let text = truncate_chars_word(self.summary.trim(), budget);
+            carry = budget.saturating_sub(text.chars().count());
             out.push_str(loc.t("selfmodel.render.about"));
-            // A per-section budget (stage 3): the description gets no more than half
-            // the limit, so a bloated summary doesn't crowd goals/interlocutor/
-            // observations out of the injection. The final truncation of the whole
-            // block below remains a safety net. See docs/summary-as-snapshot.md.
-            out.push_str(&truncate_chars_word(self.summary.trim(), max_chars / 2));
+            out.push_str(&text);
             out.push('\n');
         }
+
+        let budget = share(SHARE_GOALS) + carry;
+        carry = budget;
         let active: Vec<&Goal> = self.active_goals().collect();
         if !active.is_empty() {
+            let items: Vec<String> = active
+                .iter()
+                .map(|g| {
+                    loc.tf(
+                        "selfmodel.item.goal_prompt",
+                        &[
+                            ("desc", g.description.trim()),
+                            ("age", &age_label(g.created_at, now, loc)),
+                        ],
+                    )
+                })
+                .collect();
+            let (text, used) = fit_lines(&items, budget, loc);
+            carry = budget.saturating_sub(used);
             out.push_str(loc.t("selfmodel.render.goals_active"));
             out.push('\n');
-            for g in active {
-                out.push_str(&loc.tf(
-                    "selfmodel.item.goal_prompt",
-                    &[
-                        ("desc", g.description.trim()),
-                        ("age", &age_label(g.created_at, now, loc)),
-                    ],
-                ));
-                out.push('\n');
-            }
+            out.push_str(&text);
         }
-        render_user_model(&mut out, &self.user_model, loc);
+
+        let budget = share(SHARE_USER) + carry;
+        carry = budget;
+        if !self.user_model.is_empty() {
+            let used = render_user_model(&mut out, &self.user_model, budget, loc);
+            carry = budget.saturating_sub(used);
+        }
+
         if !recent.is_empty() && narrative_in_prompt > 0 {
+            let budget = share(SHARE_OBSERVATIONS) + carry;
+            let items: Vec<String> = recent
+                .iter()
+                .take(narrative_in_prompt)
+                .map(|seg| {
+                    loc.tf(
+                        "selfmodel.item.obs_prompt",
+                        &[
+                            ("age", &age_label(seg.created_at, now, loc)),
+                            ("text", seg.text.trim()),
+                        ],
+                    )
+                })
+                .collect();
+            let (text, _) = fit_lines(&items, budget, loc);
             out.push_str(loc.t("selfmodel.render.observations_recent"));
             out.push('\n');
-            for seg in recent.iter().take(narrative_in_prompt) {
-                out.push_str(&loc.tf(
-                    "selfmodel.item.obs_prompt",
-                    &[
-                        ("age", &age_label(seg.created_at, now, loc)),
-                        ("text", seg.text.trim()),
-                    ],
-                ));
-                out.push('\n');
-            }
+            out.push_str(&text);
         }
+        // A safety net only: the budgets above count content, not the fixed labels
+        // around it, so the assembled block can still overshoot by a little.
         Some(truncate_chars(out.trim_end(), max_chars))
     }
 
@@ -585,7 +639,9 @@ impl SelfModel {
                 out.push('\n');
             }
         }
-        render_user_model(&mut out, &self.user_model, loc);
+        // A full read is deliberately not truncated (this is what `get_self_model`
+        // returns and `F3` shows), so the interlocutor model gets an unbounded budget.
+        render_user_model(&mut out, &self.user_model, usize::MAX, loc);
         // Observations (self-notes) in full, newest first — no truncation. Full id:
         // an observation is rewritten/replaced by note tools using the full id.
         if !recent.is_empty() {
@@ -618,26 +674,118 @@ impl SelfModel {
 /// and [`SelfModel::render_full`] (byte-for-byte in both). The `, ` and `;`
 /// separators are punctuation, language-neutral and stay in the code; only the
 /// label captions are localized.
-fn render_user_model(out: &mut String, u: &UserModel, loc: &Locale) {
+/// Renders the interlocutor model within `budget` characters of content and
+/// returns how many it used.
+///
+/// The three parts share the budget in order (traits → interests → dynamic), so
+/// a long trait list cannot swallow the dynamic entirely: each part gets at most
+/// half of what is left when it starts, except the last, which takes the
+/// remainder. Lists lose whole items and say how many (see [`fit_items`]).
+fn render_user_model(out: &mut String, u: &UserModel, budget: usize, loc: &Locale) -> usize {
     if u.is_empty() {
-        return;
+        return 0;
     }
-    out.push_str(loc.t("selfmodel.render.user"));
+    let mut used = 0usize;
+    let mut body = String::new();
+    let mut left = budget;
     if !u.perceived_traits.is_empty() {
-        out.push_str(loc.t("selfmodel.render.user.traits"));
-        out.push_str(&u.perceived_traits.join(", "));
-        out.push(';');
+        let (text, n) = fit_items(&u.perceived_traits, left.div_ceil(2), loc);
+        if !text.is_empty() {
+            body.push_str(loc.t("selfmodel.render.user.traits"));
+            body.push_str(&text);
+            body.push(';');
+            used += n;
+            left = left.saturating_sub(n);
+        }
     }
     if !u.current_interests.is_empty() {
-        out.push_str(loc.t("selfmodel.render.user.interests"));
-        out.push_str(&u.current_interests.join(", "));
-        out.push(';');
+        let (text, n) = fit_items(&u.current_interests, left.div_ceil(2), loc);
+        if !text.is_empty() {
+            body.push_str(loc.t("selfmodel.render.user.interests"));
+            body.push_str(&text);
+            body.push(';');
+            used += n;
+            left = left.saturating_sub(n);
+        }
     }
-    if !u.relationship_dynamic.trim().is_empty() {
-        out.push_str(loc.t("selfmodel.render.user.relationship"));
-        out.push_str(u.relationship_dynamic.trim());
+    let dynamic = u.relationship_dynamic.trim();
+    if !dynamic.is_empty() && left > 0 {
+        let text = truncate_chars_word(dynamic, left);
+        body.push_str(loc.t("selfmodel.render.user.relationship"));
+        body.push_str(&text);
+        used += text.chars().count();
     }
+    if body.is_empty() {
+        return 0;
+    }
+    out.push_str(loc.t("selfmodel.render.user"));
+    out.push_str(&body);
     out.push('\n');
+    used
+}
+
+/// Joins list items with `, ` while they fit into `budget`, then reports how
+/// many were dropped ("… +N more"). Returns the text and the characters used.
+///
+/// Whole items only (decision D3): a trait cut in half reads as a different
+/// trait, and the count tells the model it is seeing a part — the full list is
+/// one `get_self_model` away.
+fn fit_items(items: &[String], budget: usize, loc: &Locale) -> (String, usize) {
+    fit_parts(items, ", ", budget, loc)
+}
+
+/// [`fit_items`] for whole lines (goals, observations), newline-separated. The
+/// returned text ends with a newline when non-empty, matching the previous
+/// line-by-line rendering.
+fn fit_lines(items: &[String], budget: usize, loc: &Locale) -> (String, usize) {
+    let (text, used) = fit_parts(items, "\n", budget, loc);
+    if text.is_empty() {
+        (text, used)
+    } else {
+        (format!("{text}\n"), used)
+    }
+}
+
+fn fit_parts(items: &[String], sep: &str, budget: usize, loc: &Locale) -> (String, usize) {
+    let mut out = String::new();
+    let mut used = 0usize;
+    let mut taken = 0usize;
+    for item in items {
+        let item = item.trim();
+        let extra = item.chars().count() + if taken == 0 { 0 } else { sep.chars().count() };
+        // Room must be left for the "+N more" marker, unless this is the last item.
+        let marker = if taken + 1 == items.len() {
+            0
+        } else {
+            MORE_MARKER_RESERVE
+        };
+        if used + extra + marker > budget {
+            break;
+        }
+        if taken > 0 {
+            out.push_str(sep);
+        }
+        out.push_str(item);
+        used += extra;
+        taken += 1;
+    }
+    if taken == 0 {
+        // Nothing fits whole: degrade to a character cut of the first item rather
+        // than dropping the section — an empty section would read as "no traits".
+        let head = truncate_chars_word(items[0].trim(), budget);
+        used = head.chars().count();
+        out = head;
+        taken = 1;
+    }
+    if taken < items.len() {
+        let more = loc.tf(
+            "selfmodel.render.more",
+            &[("n", &(items.len() - taken).to_string())],
+        );
+        used += more.chars().count();
+        out.push_str(&more);
+    }
+    (out, used)
 }
 
 impl UserModel {
@@ -862,6 +1010,113 @@ mod tests {
         assert!(!m.set_goal_status(Uuid::new_v4(), GoalStatus::Abandoned));
     }
 
+    /// A model shaped like the measured dev profile: a description over its share,
+    /// five goals, sixteen traits, sixteen interests. See
+    /// docs/history/self-model-injection-budget.md §1.
+    fn bloated_model() -> SelfModel {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "описание ".repeat(150); // 1350 chars
+        for i in 0..5 {
+            m.add_goal(format!("цель номер {i} с довольно длинной формулировкой"));
+        }
+        m.user_model.perceived_traits = (0..16)
+            .map(|i| format!("черта номер {i} с пояснением на сотню символов примерно вот так"))
+            .collect();
+        m.user_model.current_interests = (0..16).map(|i| format!("интерес номер {i}")).collect();
+        m.user_model.relationship_dynamic = "рабочие, доверительные".into();
+        m
+    }
+
+    /// The defect this budget exists for: with only the description bounded, the
+    /// goals ate the remainder and neither the interlocutor model nor the
+    /// observations reached the prompt at all.
+    #[test]
+    fn every_section_survives_a_bloated_model() {
+        let m = bloated_model();
+        let recent = vec![seg("наблюдение про кэш")];
+        let r = m.render_for_prompt(4000, 3, now(), &recent, loc()).unwrap();
+        assert!(r.contains("О себе:"), "{r}");
+        assert!(r.contains("цель номер 0"), "goals present: {r}");
+        assert!(r.contains("черта номер 0"), "interlocutor present: {r}");
+        assert!(
+            r.contains("наблюдение про кэш"),
+            "observations present: {r}"
+        );
+        assert!(r.chars().count() <= 4000);
+    }
+
+    /// The same at the old, tighter budget: every section still gets something,
+    /// rather than the first two taking everything.
+    #[test]
+    fn every_section_survives_a_small_budget() {
+        let m = bloated_model();
+        let recent = vec![seg("наблюдение про кэш")];
+        let r = m.render_for_prompt(1200, 3, now(), &recent, loc()).unwrap();
+        assert!(r.contains("О себе:"), "{r}");
+        assert!(r.contains("цель номер 0"), "{r}");
+        assert!(r.contains("черта номер 0"), "{r}");
+        assert!(r.contains("наблюдение про кэш"), "{r}");
+    }
+
+    #[test]
+    fn unused_room_flows_to_the_next_section() {
+        let mut short = bloated_model();
+        short.summary = "коротко".into();
+        let long = bloated_model();
+        let goals_of = |m: &SelfModel| {
+            let r = m.render_for_prompt(1200, 0, now(), &[], loc()).unwrap();
+            (0..5)
+                .filter(|i| r.contains(&format!("цель номер {i}")))
+                .count()
+        };
+        assert!(
+            goals_of(&short) > goals_of(&long),
+            "a short description leaves the goals more room: {} vs {}",
+            goals_of(&short),
+            goals_of(&long)
+        );
+    }
+
+    /// Lists lose whole items and say how many — a trait cut in half reads as a
+    /// different trait, and the count tells the model the list is partial.
+    #[test]
+    fn lists_drop_whole_items_and_report_the_count() {
+        let m = bloated_model();
+        let r = m.render_for_prompt(1200, 0, now(), &[], loc()).unwrap();
+        let traits = r
+            .split("черты: ")
+            .nth(1)
+            .expect("traits section")
+            .split(';')
+            .next()
+            .unwrap();
+        assert!(traits.contains("ещё "), "dropped count reported: {traits}");
+        // The marker is appended to the last item, so strip it before checking
+        // that every rendered trait is whole.
+        let listed = traits.split('…').next().unwrap();
+        for part in listed.split(", ") {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            assert!(
+                m.user_model.perceived_traits.iter().any(|t| t == part),
+                "a partial item leaked into the list: {part:?}"
+            );
+        }
+    }
+
+    /// A single item larger than the whole section still renders (cut), rather
+    /// than the section vanishing — an empty section reads as "no traits".
+    #[test]
+    fn an_oversized_single_item_degrades_to_a_cut() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.user_model.perceived_traits = vec!["очень длинная черта ".repeat(50)];
+        let r = m.render_for_prompt(400, 0, now(), &[], loc()).unwrap();
+        assert!(r.contains("черты: очень длинная"), "{r}");
+        assert!(r.chars().count() <= 400);
+    }
+
     #[test]
     fn render_includes_sections() {
         let mut m = SelfModel::new(Uuid::new_v4());
@@ -1040,8 +1295,11 @@ mod tests {
         let r = m
             .render_for_prompt(50, p().narrative_in_prompt, now(), &[], loc())
             .unwrap();
-        assert_eq!(r.chars().count(), 50);
-        assert!(r.ends_with('…'));
+        // No longer *equal* to the cap: the description's own section budget (40%)
+        // cuts it before the block-wide truncation can, which is the point of
+        // docs/history/self-model-injection-budget.md. The invariant is the ceiling.
+        assert!(r.chars().count() <= 50, "{r:?}");
+        assert!(r.ends_with('…'), "the description was truncated: {r:?}");
     }
 
     #[test]

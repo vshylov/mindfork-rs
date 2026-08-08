@@ -69,15 +69,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [prompt-caching.md §3.3](research/prompt-caching.md): with caching on,
   Anthropic's `input_tokens` is only the *uncached remainder* — 13 tokens for a
   7.4k prompt — so the counter must sum it with the cache fields.
-- **Self-model: injected observations never render on a large model** — measured
-  2026-08-08 on the real dev profile ([prompt-caching.md
-  §2.1](research/prompt-caching.md)): summary + goals + interlocutor traits
-  exhaust `prompt_cap`, so `render_for_prompt` truncates before the observations
-  section at every budget tried (1200/2000/4000). The embedder is queried every
-  turn for a relevance selection that is then discarded, while the injected text
-  tells the model that observations "surface by relevance". Per-section budgets
-  (summary-as-snapshot, stage 3) reserve half the cap for "About you" but nothing
-  for observations.
 
 ## Tools
 - **MCP host — groundwork** (core is **done**: spec §9.6,

@@ -13,6 +13,23 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The assistant's model of *you* was not reaching it.** The self-model block the
+  assistant carries into every conversation is assembled from four parts — its
+  self-description, its active goals, what it has concluded about you, and its
+  recent observations — but only the description had a size limit, so on a
+  mature profile the description and goals used up the whole block and **the
+  other two were silently dropped**. Measured on real data: everything the
+  assistant had recorded about the interlocutor, and every observation it had
+  written about itself, never left the database. Each part now gets its own share
+  of the space, and what one part does not use goes to the next; when a list has
+  to be shortened it drops whole entries and says how many are hidden, instead of
+  cutting one in half. The assistant can still read the whole thing at any time —
+  that view was never truncated. The default size of the block was also raised
+  (1200 → 4000 characters), which mostly matters for a self-model that has grown;
+  an existing installation keeps its own setting, in "Memory" → "Self-model".
+
 ### Added
 
 - **History compression (`/compact`).** A long conversation eventually stops fitting
