@@ -3,7 +3,7 @@
 
 use super::engines::EngineManager;
 use super::impersonation::{build_impersonation_request, swap_role_message};
-use super::request::build_request;
+use super::request::{PromptContext, build_request};
 use super::restart_queue::RestartQueue;
 use super::save_queue::SaveQueue;
 use super::title::salvage_title_source;

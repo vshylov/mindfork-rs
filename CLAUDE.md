@@ -13058,6 +13058,20 @@ three findings are invisible from the workflow's own status):
   guarantees *everything*. Escaping stays in its one home
   (`features::chat_search::to_fts_query`): raw input cannot reach `MATCH`, since
   `C++`, `cost-benefit` and `50%` are all FTS5 syntax errors on ordinary text.
+- **A hole in my own S15 reasoning, found by re-reading it after it was
+  written.** S15 argued for a *single* block wording because block and tools are
+  gated on the same `compaction_view` — true of the chat-level gate, but a
+  **profile** can switch the two tools off, and then the block would name tools
+  the model does not have: precisely the dead end the sentence exists to
+  prevent. So the wording follows the turn's real tool set after all
+  (`compaction.block.tools` / `…no_tools`), exactly as an attachment's entry only
+  offers `attachment_search` for a file that has an index. The invariant S15
+  wanted survives in the form that matters — the block never names an absent
+  tool — it just needed one more input to hold.
+- That input pushed `build_request` to eight parameters, so its injection inputs
+  moved into a `PromptContext` (the `ToolDeps`/`ToolParams` pattern): the next
+  thing the system prompt is assembled from will not lengthen the signature
+  again.
 - **Tests**: the view (walking `1..M` reassembles the transcript; `locate` maps
   a message — **including a `Tool` one** — to its page and block; the reader sees
   what the digest had to clip; conversation order; blocks separated); the tools

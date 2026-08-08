@@ -911,12 +911,17 @@ hook, and reachable per chat through `CacheDb::matching_messages_in_chat`.
     after attachments silently governing history reading is the kind of coupling
     that surprises whoever changes it.
 
-- **S15 — the block's wording.** F9(b) commits it: `compaction.block.header`
-  stops saying the verbatim text is unreachable and **names the two tools**, in
-  both bundles. Because of S12 there is exactly **one** wording rather than a
-  with-tools/without-tools pair (the `prompt.attachments.end_excerpt`
-  vs `…_search` split exists because an attachment may or may not be indexed;
-  here the two conditions are the same condition).
+- **S15 — the block's wording.** F9(b) commits it: the block stops saying the
+  verbatim text is unreachable and **names the two tools**, in both bundles.
+  *Recorded first as a single wording* on the argument that S12 gates block and
+  tools on the same `compaction_view` — and **corrected during implementation**:
+  that holds for the chat-level gate, but a *profile* can switch the two tools
+  off, and then the block would name tools the model does not have. So there is a
+  with-tools/without-tools pair after all (`compaction.block.tools` /
+  `…no_tools`), chosen from the turn's real tool set — exactly the split
+  `prompt.attachments.end_excerpt` vs `…_search` makes for an attachment that
+  may or may not be indexed. The invariant the single wording was reaching for
+  survives in the form that matters: the block never names an absent tool.
 
 - **S16 — what a search hit carries.** The **page number**, plus a snippet and
   the speaker. That is what makes the pair compose the way the attachment pair

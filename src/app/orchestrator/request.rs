@@ -52,6 +52,22 @@ pub(super) fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chron
         .map(|m| m.timestamp)
 }
 
+/// Everything the system prompt is assembled from besides the chat itself —
+/// gathered so a new injection input does not lengthen [`build_request`]'s
+/// signature again (the `ToolDeps`/`ToolParams` pattern,
+/// docs/history/refactoring-solid.md §3).
+pub(super) struct PromptContext<'a> {
+    pub attachments: &'a AttachmentSettings,
+    pub compaction: &'a CompactionSettings,
+    /// Attached files that actually have a semantic index.
+    pub indexed: &'a [uuid::Uuid],
+    /// Whether this turn offers `history_read`/`history_search` — the summary
+    /// block only names them when it does (see [`inject_compaction`]).
+    pub history_tools: bool,
+    /// Scaffold language (axis A): every injected block is read by the model.
+    pub loc: &'a Locale,
+}
+
 /// Builds a generation request from the chat's current state with a set of tool
 /// schemas. Attached files (`/file attach`) are injected into the system prompt
 /// — see [`inject_attachments`].
@@ -59,10 +75,7 @@ pub(super) fn build_request(
     chat: &Chat,
     sampling: SamplingConfig,
     tools: Vec<crate::shared::api::ToolSchema>,
-    attachments: &AttachmentSettings,
-    compaction: &CompactionSettings,
-    indexed: &[uuid::Uuid],
-    loc: &Locale,
+    cx: &PromptContext<'_>,
 ) -> ChatRequest {
     let system = if chat.system_message.trim().is_empty() {
         None
@@ -71,13 +84,19 @@ pub(super) fn build_request(
     };
     // The compacted-away prefix is replaced by a summary block; `chat.messages`
     // is untouched, so this is the only place the two views diverge.
-    let (summary, upto) = match chat.compaction_view(compaction.enabled) {
+    let (summary, upto) = match chat.compaction_view(cx.compaction.enabled) {
         Some((s, i)) => (Some(s), i),
         None => (None, 0),
     };
-    let system = inject_compaction(system, summary, loc);
+    let system = inject_compaction(system, summary, cx.history_tools, cx.loc);
     ChatRequest {
-        system: inject_attachments(system, &chat.attachments, attachments, indexed, loc),
+        system: inject_attachments(
+            system,
+            &chat.attachments,
+            cx.attachments,
+            cx.indexed,
+            cx.loc,
+        ),
         messages: chat.messages[upto..]
             .iter()
             .filter_map(message_to_api)
@@ -97,14 +116,21 @@ pub(super) fn build_request(
 ///
 /// The header is in the **profile** language (axis A — the model reads it), and
 /// it says two things deliberately: the block is DATA rather than instructions
-/// (the prompt-injection rule attachments follow, spec §13), and the verbatim
-/// text of those messages is **not reachable** — a block that describes a
-/// situation without saying what is possible is what sends a model improvising
-/// (three case studies in the CLAUDE.md journal). When the read-back tools of
-/// stage 3 land, that sentence changes to name them.
+/// (the prompt-injection rule attachments follow, spec §13), and **what is
+/// possible next** — a block that describes a situation without saying that is
+/// what sends a model improvising (four case studies in the CLAUDE.md journal).
+///
+/// `tools` — whether this turn actually offers `history_read`/`history_search`.
+/// A folded range normally implies them (sub-decision S12 gates both on the same
+/// `compaction_view`), but a profile can have the two tools switched off, and
+/// then naming them would point at a dead end — the very failure the sentence
+/// exists to prevent. So the wording follows the turn's real tool set, exactly
+/// as an attachment's entry only offers `attachment_search` when that file has
+/// an index.
 pub(super) fn inject_compaction(
     system: Option<String>,
     summary: Option<&str>,
+    tools: bool,
     loc: &Locale,
 ) -> Option<String> {
     // No summary — `system` passes through untouched. (Not `summary?`: that
@@ -113,7 +139,17 @@ pub(super) fn inject_compaction(
     let Some(summary) = summary else {
         return system;
     };
-    let block = format!("{}\n\n{}", loc.t("compaction.block.header"), summary.trim());
+    let reach = if tools {
+        "compaction.block.tools"
+    } else {
+        "compaction.block.no_tools"
+    };
+    let block = format!(
+        "{}{}\n\n{}",
+        loc.t("compaction.block.header"),
+        loc.t(reach),
+        summary.trim()
+    );
     Some(match system {
         Some(s) if !s.trim().is_empty() => format!("{s}\n\n{block}"),
         _ => block,

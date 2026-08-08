@@ -31,10 +31,13 @@ fn build_request_puts_system_aside_and_maps_roles() {
         &chat,
         SamplingConfig::default(),
         vec![],
-        &AttachmentSettings::default(),
-        &CompactionSettings::default(),
-        NO_INDEX,
-        ru(),
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            history_tools: true,
+            loc: ru(),
+        },
     );
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 2);
@@ -52,10 +55,13 @@ fn build_request_appends_attached_files_to_system() {
         &chat,
         SamplingConfig::default(),
         vec![],
-        &AttachmentSettings::default(),
-        &CompactionSettings::default(),
-        NO_INDEX,
-        ru(),
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            history_tools: true,
+            loc: ru(),
+        },
     );
     let system = req.system.expect("system with the attachment block");
     // The chat's own system message stays first, the block is appended.
@@ -257,10 +263,13 @@ fn compaction_replaces_the_prefix_with_a_summary_block() {
         &chat,
         SamplingConfig::default(),
         vec![],
-        &AttachmentSettings::default(),
-        &CompactionSettings::default(),
-        NO_INDEX,
-        ru(),
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            history_tools: true,
+            loc: ru(),
+        },
     );
     // The persona stays first, the block is appended after it — ordered by
     // volatility so the most stable content keeps its prefix (spec §6.6).
@@ -270,6 +279,49 @@ fn compaction_replaces_the_prefix_with_a_summary_block() {
     // Only the verbatim tail is sent, and the whole history is still on the chat.
     assert_eq!(req.messages.len(), 4);
     assert_eq!(chat.messages.len(), 10);
+}
+
+/// The block must name the read-back tools **only when this turn offers them**.
+/// They normally travel together (sub-decision S12 gates both on the same
+/// `compaction_view`), but a profile can switch the two tools off — and a block
+/// that names a tool the model does not have is the dead end the sentence exists
+/// to prevent, the fourth instance of that defect class in this codebase.
+#[test]
+fn the_block_names_the_read_back_tools_only_when_they_are_offered() {
+    let chat = compacted_chat(5, 6, "Ранее: выбрали SQLite.");
+    let block = |history_tools| {
+        build_request(
+            &chat,
+            SamplingConfig::default(),
+            vec![],
+            &PromptContext {
+                attachments: &AttachmentSettings::default(),
+                compaction: &CompactionSettings::default(),
+                indexed: NO_INDEX,
+                history_tools,
+                loc: ru(),
+            },
+        )
+        .system
+        .expect("system with the summary block")
+    };
+
+    let with = block(true);
+    assert!(
+        with.contains("history_search") && with.contains("history_read"),
+        "{with}"
+    );
+
+    let without = block(false);
+    assert!(
+        !without.contains("history_search") && !without.contains("history_read"),
+        "a tool the model does not have must not be named: {without}"
+    );
+    // Both wordings still carry the summary and say the block is a record.
+    for system in [&with, &without] {
+        assert!(system.contains("выбрали SQLite"), "{system}");
+        assert!(system.contains("ДАННЫЕ"), "{system}");
+    }
 }
 
 #[test]
@@ -286,10 +338,13 @@ fn the_master_switch_off_makes_compression_inert() {
         &chat,
         SamplingConfig::default(),
         vec![],
-        &AttachmentSettings::default(),
-        &off,
-        NO_INDEX,
-        ru(),
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &off,
+            indexed: NO_INDEX,
+            history_tools: true,
+            loc: ru(),
+        },
     );
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 10);
@@ -310,10 +365,13 @@ fn a_vanished_boundary_falls_back_to_the_whole_history() {
         &chat,
         SamplingConfig::default(),
         vec![],
-        &AttachmentSettings::default(),
-        &CompactionSettings::default(),
-        NO_INDEX,
-        ru(),
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            history_tools: true,
+            loc: ru(),
+        },
     );
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 9);
