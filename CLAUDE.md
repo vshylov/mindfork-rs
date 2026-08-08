@@ -124,7 +124,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-08, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1941 unit
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1942 unit
 tests green, 80 `#[ignore]` smokes** (the largest count — log below; the most
 recent change **completes the history-compression track — stage 3, the read-back
 tools**: a summary is lossy, so `history_read` walks the folded-away part of a
@@ -13080,8 +13080,8 @@ three findings are invisible from the workflow's own status):
   its page; a substring of an identifier; a match in the verbatim tail correctly
   **not** surfacing; every refusal pointing at `history_read`); the visibility
   gate; and end to end through a real turn — the tools absent before a compaction
-  and present after it, travelling with the block that names them. **1941 unit
-  tests green** (+20), **80 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
+  and present after it, travelling with the block that names them. **1942 unit
+  tests green** (+21), **80 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
   `cyrillic_scan`/`link_check` clean.
 - **Six mutations, five caught first time — and the sixth is the useful one.**
   Dropping the `Tool` alias, clipping in the reader, letting tail hits through,
@@ -13117,9 +13117,33 @@ three findings are invisible from the workflow's own status):
   stage 1's smoke, where the control *helps* because that test wants the fact
   kept: the same device is an aid or a confound depending on which way the
   assertion runs.
-- **Regression — clean**: the full orchestrator e2e live set on the same stack.
-  The right scope, since `effective_tool_ids`, the `TurnInfo` snapshot and
-  `build_request` all sit on **every** turn.
+- **Regression — clean**: the full orchestrator e2e live set on the same stack,
+  **29 passed / 0 failed** (821 s). The right scope, since `effective_tool_ids`,
+  the `TurnInfo` snapshot and `build_request` all sit on **every** turn. The
+  whole `#[ignore]` suite was then run as well — **80 passed / 0 failed**
+  (913 s), with the cloud, alternate-embedder and managed-server smokes skipping
+  on their env gates.
+- **The Sonar gate failed on new-code duplication (6.5% against 3%), and two of
+  the three blocks it flagged were worth fixing on their own account.** The new
+  live smoke had copied the stage-1 smoke's "filler turns → `/compact` → unwrap
+  the event" tail verbatim (now `fill_then_compact`, with only the topics as a
+  parameter), and the request tests repeated the whole `PromptContext` literal at
+  every call site (now `request_of`). That took it to 3.85%.
+- **The rest was a real duplication I had first written off as unavoidable.**
+  `attachment_search` and `history_search` take the same two arguments for the
+  same reason — one names *where* to look, a reader then fetches it — and each
+  spelled the contract out twice: once as a JSON schema, once as the parsing in
+  `invoke`. One contract, written four times. It is now `search_parameters` +
+  `search_args` in `features/tools/mod.rs`, the rule this codebase already
+  applies to the FTS escaper. Duplication on new code: **0.0%**, better than the
+  ~1% predicted — extracting the schema also pulled the two `impl Tool` heads
+  apart, so their 16-line match stopped reaching the detection threshold.
+- **A trap on the way**, and the i18n gates caught it immediately: the first
+  version built the bundle keys from a prefix (`format!("{prefix}.param.query")`),
+  which makes them **invisible to the key scanner** — four keys read as dead and
+  the template as a key that does not exist. That is exactly why the dynamic
+  `ui.tool.label.*` family carries a gate test of its own. The keys are passed
+  whole instead, which also shows in each tool's own file which text it presents.
 - **Groundwork**: a semantic index over the folded range (S11's rejected
   variant, if lexical misses ever show up live); impersonation still builds its
   own full-history request; and the block, the tool set and the reader are now
