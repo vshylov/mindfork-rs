@@ -16,6 +16,7 @@ pub mod control;
 pub mod datetime;
 pub mod fetch;
 pub mod fs;
+pub mod history;
 pub mod introspection;
 pub mod mcp;
 pub mod meta;
@@ -91,6 +92,17 @@ pub struct ToolContext {
     /// `attachment_read`, and — for a tool that produces an attachment of its own
     /// — the same thresholds the orchestrator decides the mode with.
     pub attachment_cfg: crate::shared::config::AttachmentSettings,
+    /// The compacted-away part of the conversation, rendered for reading back
+    /// (`history_read`/`history_search`, spec §6.7). A turn snapshot like
+    /// `attachments`, and for the same reason: the orchestrator stays the sole
+    /// owner of `Chat`, and a roll that lands mid-turn must not change what this
+    /// turn's tools describe — they have to agree with the summary block the
+    /// model was actually shown. `None` when nothing is folded away (or
+    /// compression is off), which is also when the two tools are not offered at
+    /// all (see [`effective_tool_ids`]).
+    pub history: Option<Arc<crate::features::compaction::HistoryView>>,
+    /// Page size for `history_read`, in estimated tokens (`config.compaction`).
+    pub history_page_tokens: usize,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -121,6 +133,11 @@ pub struct ToolParams {
     /// uses, or it would describe to the model something other than what gets
     /// stored.
     pub attachments: crate::shared::config::AttachmentSettings,
+    /// Page size for `history_read` (`config.compaction.page_tokens`). Only the
+    /// page size, not the whole `CompactionSettings`: whether to compact and
+    /// against what window are decisions already taken by the time a tool runs,
+    /// and the turn snapshot encodes their outcome.
+    pub history_page_tokens: usize,
 }
 
 impl ToolParams {
@@ -131,6 +148,7 @@ impl ToolParams {
             self_model_params: SelfModelParams::from_settings(&cfg.self_model),
             recall_includes_self: cfg.notes.recall_includes_self,
             attachments: cfg.attachments,
+            history_page_tokens: cfg.compaction.page_tokens,
         }
     }
 }
@@ -144,6 +162,10 @@ pub struct TurnInfo {
     pub last_user_message_at: Option<DateTime<Utc>>,
     /// Files attached to the chat (a `Chat` snapshot; empty for background tasks).
     pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
+    /// The compacted-away part of the conversation, rendered (a `Chat` snapshot;
+    /// `None` when nothing is folded, and for background tasks — they have no
+    /// chat). See [`ToolContext::history`].
+    pub history: Option<Arc<crate::features::compaction::HistoryView>>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -164,6 +186,8 @@ impl ToolContext {
             last_user_message_at: turn.last_user_message_at,
             attachments: turn.attachments,
             attachment_cfg: params.attachments,
+            history: turn.history,
+            history_page_tokens: params.history_page_tokens,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -174,6 +198,68 @@ impl ToolContext {
             cancel: turn.cancel,
         }
     }
+}
+
+/// The JSON schema of a **search tool**: a required `query` plus an optional
+/// `top_k`.
+///
+/// Shared by `attachment_search` and `history_search`, which take the same
+/// arguments for the same reason — one names *where* to look, a reader then
+/// fetches it. One definition so the two contracts cannot drift apart, the rule
+/// this codebase already applies to the FTS escaper.
+///
+/// The two bundle keys are passed **whole** rather than built from a prefix:
+/// a key assembled with `format!` is invisible to the i18n gates
+/// (`all_bundle_key_references_in_code_exist` / `bundle_keys_are_not_dead`),
+/// which is exactly why the dynamic `ui.tool.label.*` family needs a gate test
+/// of its own. Keeping the literals at the call site also shows, in the tool's
+/// own file, which text it presents.
+pub(crate) fn search_parameters(
+    loc: &crate::shared::i18n::Locale,
+    query_key: &str,
+    top_k_key: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": loc.t(query_key)
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "description": loc.t(top_k_key)
+            }
+        },
+        "required": ["query"]
+    })
+}
+
+/// Reads the arguments [`search_parameters`] describes: a trimmed, non-empty
+/// `query` and `top_k` (falling back to `default_k`).
+///
+/// An empty query is a usage error rather than an empty result — the tool was
+/// called wrong, and saying so is what lets the next call succeed. `err_key`
+/// names the tool's own message.
+pub(crate) fn search_args<'a>(
+    args: &'a serde_json::Value,
+    loc: &crate::shared::i18n::Locale,
+    err_key: &str,
+    default_k: usize,
+) -> Result<(&'a str, usize)> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!(loc.t(err_key).to_string()))?;
+    let k = args
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(default_k);
+    Ok((query, k))
 }
 
 /// An effect that mutates `Chat`; returned by a tool, applied by the orchestrator.
@@ -345,12 +431,21 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// by provider, so it's handled separately from the static [`meta::ToolGate`].
 /// MCP-server tools (id with the `mcp__` prefix) are gated by `mcp_enabled` **by
 /// prefix**: they're dynamic and absent from the static [`CATALOG`].
+///
+/// The history read-back tools are gated the same dynamic way, by
+/// `history_available` — whether **this chat** actually has a compacted-away
+/// range (sub-decision S12). Two schemas cost prompt on every single turn, and
+/// this feature's audience is people already fighting a context ceiling; more
+/// importantly it earns an invariant, since the same `compaction_view` decides
+/// both this and whether the summary block is in the prompt — so the block can
+/// name the tools without ever promising one that is absent.
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
     python_enabled: bool,
     fs_enabled: bool,
     mcp_enabled: bool,
+    history_available: bool,
     sampling_provider: Option<CloudProvider>,
 ) -> Vec<ToolId> {
     let sampling_available = !supported_sampling_fields(sampling_provider).is_empty();
@@ -360,6 +455,10 @@ pub fn effective_tool_ids(
         .filter(|id| {
             if id.as_str() == GET_SAMPLING_ID || id.as_str() == SET_SAMPLING_ID {
                 return sampling_available;
+            }
+            if id.as_str() == history::HISTORY_READ_ID || id.as_str() == history::HISTORY_SEARCH_ID
+            {
+                return history_available;
             }
             if id.starts_with(mcp::MCP_TOOL_PREFIX) {
                 return mcp_enabled;
@@ -499,6 +598,13 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));
     reg.register(Arc::new(attachment::AttachmentSearch));
+    // Reading back the part of *this* conversation that compression folded into
+    // the summary (spec §6.7). Not gated by a switch — narrower still than the
+    // attachment tools, since they reach only this chat's own older messages,
+    // which the user is looking at in the feed. They are, however, offered to the
+    // model only while there is a folded range at all (see `effective_tool_ids`).
+    reg.register(Arc::new(history::HistoryRead));
+    reg.register(Arc::new(history::HistorySearch));
     // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
@@ -592,6 +698,7 @@ pub(crate) mod testkit {
             chunk_params: rag::ChunkParams::default(),
             self_model_params: SelfModelParams::default(),
             recall_includes_self: false,
+            history_page_tokens: crate::shared::config::DEFAULT_COMPACTION_PAGE_TOKENS,
             attachments: crate::shared::config::AttachmentSettings::default(),
         }
     }
@@ -606,6 +713,7 @@ pub(crate) mod testkit {
             last_user_message_at: None,
             // No attachments by default; tests that need them set `ctx.attachments`.
             attachments: std::sync::Arc::from(Vec::new()),
+            history: None,
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
         }
@@ -889,7 +997,7 @@ mod tests {
             );
         }
         // DB-only: pass the effective set with no global gates.
-        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, false, None);
+        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, false, true, None);
         assert!(eff.iter().any(|t| t == self_model::GET_SELF_MODEL_ID));
         assert!(eff.iter().any(|t| t == self_model::UPDATE_SELF_MODEL_ID));
     }
@@ -898,13 +1006,13 @@ mod tests {
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
         // web on, python off, fs off → web_search/fetch_url present, no python/fs.
-        let eff = effective_tool_ids(&enabled, true, false, false, false, None);
+        let eff = effective_tool_ids(&enabled, true, false, false, false, true, None);
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
         assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
         assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
         // everything off → no external/file tools, but internal ones remain.
-        let eff = effective_tool_ids(&enabled, false, false, false, false, None);
+        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
         assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
             !eff.iter()
@@ -915,7 +1023,7 @@ mod tests {
         assert!(eff.iter().any(|t| t == "calculate"));
         assert!(eff.iter().any(|t| t == "current_time"));
         // fs on → file tools appear.
-        let eff = effective_tool_ids(&enabled, false, false, true, false, None);
+        let eff = effective_tool_ids(&enabled, false, false, true, false, true, None);
         assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
         assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
         assert!(eff.iter().any(|t| t == fs::FS_LIST_ID));
@@ -932,7 +1040,7 @@ mod tests {
             Some(CloudProvider::Gemini),
             Some(CloudProvider::Claude),
         ] {
-            let eff = effective_tool_ids(&enabled, false, false, false, false, provider);
+            let eff = effective_tool_ids(&enabled, false, false, false, false, true, provider);
             assert!(
                 eff.iter().any(|t| t == GET_SAMPLING_ID),
                 "get_sampling must be available for {provider:?}"
@@ -941,15 +1049,39 @@ mod tests {
         }
     }
 
+    /// S12: the read-back tools are offered only while the chat actually has a
+    /// folded-away range. Two schemas cost prompt on **every** turn, and the same
+    /// condition puts the summary block in the prompt — so this is also what lets
+    /// the block name them without ever promising an absent tool.
+    #[test]
+    fn effective_tool_ids_gates_history_tools_by_the_chat() {
+        let enabled: Vec<ToolId> = vec![
+            "note_save".into(),
+            history::HISTORY_READ_ID.into(),
+            history::HISTORY_SEARCH_ID.into(),
+        ];
+        let eff = effective_tool_ids(&enabled, false, false, false, false, false, None);
+        assert!(
+            !eff.iter()
+                .any(|t| t == history::HISTORY_READ_ID || t == history::HISTORY_SEARCH_ID),
+            "nothing folded → the tools must not be offered"
+        );
+        assert!(eff.iter().any(|t| t == "note_save"), "unrelated tools stay");
+
+        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
+        assert!(eff.iter().any(|t| t == history::HISTORY_READ_ID));
+        assert!(eff.iter().any(|t| t == history::HISTORY_SEARCH_ID));
+    }
+
     #[test]
     fn effective_tool_ids_gates_mcp_tools_by_prefix() {
         // MCP tools (dynamic, outside CATALOG) are gated by the master switch by
         // the `mcp__` prefix; internal tools don't depend on it.
         let enabled: Vec<ToolId> = vec!["note_save".into(), "mcp__fs__read_text_file".into()];
-        let eff = effective_tool_ids(&enabled, false, false, false, false, None);
+        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
         assert!(!eff.iter().any(|t| t.starts_with(mcp::MCP_TOOL_PREFIX)));
         assert!(eff.iter().any(|t| t == "note_save"));
-        let eff = effective_tool_ids(&enabled, false, false, false, true, None);
+        let eff = effective_tool_ids(&enabled, false, false, false, true, true, None);
         assert!(eff.iter().any(|t| t == "mcp__fs__read_text_file"));
     }
 

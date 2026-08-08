@@ -773,6 +773,10 @@ pub const DEFAULT_COMPACTION_TAIL_TOKENS: usize = 2048;
 /// typing while it works — and it doubles as the reply reserve, which is why
 /// there is no second knob for that (sub-decision S5).
 pub const DEFAULT_COMPACTION_THRESHOLD_PCT: u8 = 75;
+/// Default page size for `history_read`, in estimated tokens. Smaller than the
+/// attachment page (1500): this reader exists for conversations that are already
+/// pressing against their window, so a page has to be affordable there.
+pub const DEFAULT_COMPACTION_PAGE_TOKENS: usize = 800;
 
 /// Conversation history compression (a rolling summary of the older part of a
 /// chat). See docs/research/history-compression.md and spec §6.7.
@@ -800,6 +804,12 @@ pub struct CompactionSettings {
     /// — llama.cpp's `/props`). With no source at all the automatic trigger stays
     /// inactive; `/compact` still works, it needs no budget.
     pub context_tokens: Option<usize>,
+    /// Page size for `history_read`, in estimated tokens: how much of the
+    /// compacted-away conversation one call returns. Its own knob rather than
+    /// the attachment one (S14) — an 8k user and a 200k user need materially
+    /// different pages, and this feature's users are the ones with the least
+    /// room to spare.
+    pub page_tokens: usize,
 }
 
 impl Default for CompactionSettings {
@@ -810,6 +820,7 @@ impl Default for CompactionSettings {
             tail_tokens: DEFAULT_COMPACTION_TAIL_TOKENS,
             threshold_pct: DEFAULT_COMPACTION_THRESHOLD_PCT,
             context_tokens: None,
+            page_tokens: DEFAULT_COMPACTION_PAGE_TOKENS,
         }
     }
 }

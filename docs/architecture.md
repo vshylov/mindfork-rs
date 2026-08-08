@@ -307,6 +307,12 @@ src/
 │  │  ├─ attachment.rs      attachment_read (one page of an attached file) +
 │  │  │                     attachment_search (by meaning, chat-scoped index);
 │  │  │                     both read the snapshot/index, never the disk — spec §9.7
+│  │  ├─ history.rs         history_read (one page of the folded-away part of this
+│  │  │                     conversation) + history_search (over `cache.db`'s
+│  │  │                     full-text index, no embedder — the local 8k user is who
+│  │  │                     compression is for). Offered only while the chat has a
+│  │  │                     folded range, the same condition that puts the summary
+│  │  │                     block in the prompt — spec §6.7
 │  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
@@ -317,11 +323,15 @@ src/
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
-│  ├─ compaction.rs        history compression, pure part: the digest (which,
-│  │                       unlike the title one, carries tool activity — the
-│  │                       invisible bulk of a long chat), the cut planner
-│  │                       (snapped to a User boundary), the two prompts and the
-│  │                       overflow detector behind the "the window is full" hint
+│  ├─ compaction.rs        history compression, pure part: one renderer of a
+│  │                       message range (parameterized by the tool-result clip,
+│  │                       so what the summarizer saw is what the reader can
+│  │                       re-read) feeding both the digest — which, unlike the
+│  │                       title one, carries tool activity, the invisible bulk of
+│  │                       a long chat — and `HistoryView`, the paginated view the
+│  │                       read-back tools serve; plus the cut planner (snapped to
+│  │                       a User boundary), the two prompts and the overflow
+│  │                       detector behind the "the window is full" hint
 │  ├─ compact_command.rs   /compact parser
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)

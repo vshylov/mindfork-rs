@@ -147,6 +147,18 @@ Architecture — **Feature-Sliced Design (FSD)**.
   keeps working. Budgets live in settings ("Memory" → "Attachments"); the
   status bar shows a `§ files: N (~tokens)` chip with what the attachments
   actually cost per message.
+- **History compression:** a long conversation eventually stops fitting the
+  model's context window, and the engine then refuses the request outright. The
+  older part of a chat is folded into a rolling summary sent in place of those
+  messages — automatically once the conversation reaches a share of the window,
+  or on demand with `/compact`. **Nothing is deleted**: the feed, search and
+  export still show everything, and the boundary is marked by a divider you can
+  unfold (with `Ctrl+T`, together with the "thoughts" blocks) to read the summary.
+  What the summary had to leave out is still reachable — the assistant can read
+  the folded part back page by page and search it by words, so a question about
+  the beginning of a long conversation is answered from the actual messages
+  rather than guessed. That search needs no embedding server. On by default
+  where it can act, and fully switchable off in settings → "Memory" → "Context".
 - **Loading files into RAG from the input box:** `/rag add <path> [-r]` commands
   (indexes a file or directory, recursively with the flag; currently `*.txt`/`*.md`)
   and `/rag remove <path>` (removes a file/directory from the store). Indexing runs

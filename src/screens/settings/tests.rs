@@ -2310,7 +2310,8 @@ fn memory_section_opens_with_the_context_group() {
             FieldId::CompactWords,
             FieldId::CompactTail,
             FieldId::CompactThreshold,
-            FieldId::CompactContext
+            FieldId::CompactContext,
+            FieldId::CompactPage
         ]
     );
     // …and it comes before the long-term memory groups.
@@ -2402,6 +2403,28 @@ fn compaction_numeric_fields_commit_and_validate() {
             .context_tokens,
         Some(32768)
     );
+}
+
+/// The `history_read` page size is its own knob (S14): editing it commits into
+/// `compaction.page_tokens` and, like its neighbours in the group, goes through
+/// the `field_spec` access table as an integer.
+#[test]
+fn compaction_page_size_commits() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Memory);
+    goto_field(&mut s, FieldId::CompactPage);
+    assert_eq!(field_num_kind(FieldId::CompactPage), Some(NumKind::Int));
+
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in "1200".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.compaction.page_tokens, 1200),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert_eq!(s.config.compaction.page_tokens, 1200);
 }
 
 #[test]

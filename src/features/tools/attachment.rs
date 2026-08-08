@@ -146,38 +146,23 @@ impl Tool for AttachmentSearch {
         loc.t("tool.attachment_search.desc").into()
     }
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": loc.t("tool.attachment_search.param.query")
-                },
-                "top_k": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": loc.t("tool.attachment_search.param.top_k")
-                }
-            },
-            "required": ["query"]
-        })
+        super::search_parameters(
+            loc,
+            "tool.attachment_search.param.query",
+            "tool.attachment_search.param.top_k",
+        )
     }
 
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         if ctx.attachments.is_empty() {
             return Ok(ToolOutcome::text(ctx.loc.t("tool.attachment_read.none")));
         }
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.attachment_search.err.query_empty")))?;
-        let k = args
-            .get("top_k")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_TOP_K);
+        let (query, k) = super::search_args(
+            &args,
+            ctx.loc,
+            "tool.attachment_search.err.query_empty",
+            DEFAULT_TOP_K,
+        )?;
 
         // None of the *currently attached* files is indexed (no embedder when
         // they were attached, or they are all inline) — say so and point at the

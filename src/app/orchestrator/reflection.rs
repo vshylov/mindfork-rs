@@ -246,6 +246,7 @@ impl Orchestrator {
                 last_user_message_at: last_user,
                 // A background task runs outside a chat turn — no attachments.
                 attachments: std::sync::Arc::from(Vec::new()),
+                history: None,
                 lang,
                 cancel: cancel.clone(),
             },

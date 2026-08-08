@@ -306,6 +306,112 @@ async fn a_successful_roll_stores_the_summary_and_tells_the_feed() {
     assert!(c.upto > 0 && c.upto < chat.messages.len());
 }
 
+// ---------- stage 3: the read-back tools ----------
+
+/// Waits until the engine has been sent at least `n` requests. The generation
+/// task records its request as soon as it runs, so a few yields are enough —
+/// and this is the only way to see it, since the bare orchestrator runs no loop
+/// and never reaches `handle_done`.
+async fn wait_for_requests(backend: &RecordingBackend, n: usize) -> Vec<ChatRequest> {
+    for _ in 0..200 {
+        let reqs = backend.requests();
+        if reqs.len() >= n {
+            return reqs;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("the engine was never sent {n} request(s)");
+}
+
+fn offers_history_tools(req: &ChatRequest) -> bool {
+    use crate::features::tools::history::{HISTORY_READ_ID, HISTORY_SEARCH_ID};
+    req.tools
+        .iter()
+        .any(|t| t.name == HISTORY_READ_ID || t.name == HISTORY_SEARCH_ID)
+}
+
+/// S12 end to end: the two tools reach the model only once this chat actually
+/// has a folded-away range — the same condition that puts the summary block in
+/// the prompt, which is what lets the block name them without ever promising an
+/// absent tool. Two schemas on every turn of every chat is exactly the cost this
+/// feature's audience cannot afford.
+// Spawns: a turn runs in its own task.
+#[tokio::test]
+async fn the_read_back_tools_are_offered_only_after_a_compaction() {
+    let (_d, mut orch, _rx, chat_id, backend) = orch_with_history(4);
+    orch.config = compact_cfg(1);
+    orch.profiles[0].enabled_tools = crate::features::tools::default_tool_ids();
+
+    orch.handle_send("первый вопрос".into());
+    let reqs = wait_for_requests(&backend, 1).await;
+    assert!(
+        !offers_history_tools(&reqs[0]),
+        "nothing folded yet — the tools must not be offered"
+    );
+
+    // Fold, through the real application path.
+    let boundary_id = chat_of(&orch, chat_id).messages[2].id;
+    // The bare orchestrator runs no loop, so nothing calls `handle_done` to put
+    // the state back — do it by hand, or the second `handle_send` is a no-op.
+    orch.gen_state = crate::app::gen_state::GenState::Idle;
+    orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
+        chat_id,
+        boundary_id,
+        rolls: 1,
+        text: Ok("сводка".into()),
+    });
+
+    orch.handle_send("второй вопрос".into());
+    let reqs = wait_for_requests(&backend, 2).await;
+    let turn = reqs.last().unwrap();
+    assert!(
+        offers_history_tools(turn),
+        "with a folded range the tools must be offered"
+    );
+    // The block that names them is in the same request, from the same condition.
+    assert!(
+        turn.system
+            .as_deref()
+            .unwrap_or_default()
+            .contains("сводка"),
+        "the summary block travels with the tools"
+    );
+}
+
+/// The turn's snapshot has to carry the folded range itself, or the tools would
+/// be offered and then answer "nothing is folded" — the dead end this project
+/// keeps closing.
+#[test]
+fn the_turn_snapshot_carries_the_folded_range() {
+    use crate::features::compaction::HistoryView;
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(4);
+    orch.config = compact_cfg(1);
+    let boundary_id = chat_of(&orch, chat_id).messages[2].id;
+    orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
+        chat_id,
+        boundary_id,
+        rolls: 1,
+        text: Ok("сводка".into()),
+    });
+
+    let chat = chat_of(&orch, chat_id);
+    let (_, upto) = chat.compaction_view(true).expect("a folded range");
+    let view = HistoryView::render(&chat.messages[..upto], locale(Lang::default()))
+        .expect("the folded range renders");
+    // What the reader sees is the folded part and nothing after it.
+    assert!(view.page(64, 1).is_some());
+    let whole: String = (1..=view.page_count(64))
+        .map(|p| view.page(64, p).unwrap())
+        .collect();
+    assert!(whole.contains("вопрос 0"), "{whole}");
+    assert!(
+        !whole.contains(&chat.messages[upto].text),
+        "the verbatim tail is already in the prompt: {whole}"
+    );
+}
+
 // ---------- the invariant the whole design rests on ----------
 
 /// Compression only changes what a *request* carries. `messages` is compared by

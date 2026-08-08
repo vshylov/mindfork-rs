@@ -124,10 +124,17 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_PORT`) for a managed `llama-server`.
 
 ## Status (as of 2026-08-08, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1921 unit
-tests green, 79 `#[ignore]` smokes** (the largest count — log below; the most
-recent change is **history compression, stage 2**: compaction stops needing to be
-asked for — once a turn's **exact** prompt size reaches a share of the model's
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1942 unit
+tests green, 80 `#[ignore]` smokes** (the largest count — log below; the most
+recent change **completes the history-compression track — stage 3, the read-back
+tools**: a summary is lossy, so `history_read` walks the folded-away part of a
+conversation page by page and `history_search` finds where to look in it, and the
+summary block stops saying the verbatim text is unreachable and names them
+instead. Search runs over the full-text index the application already keeps
+rather than over embeddings — an embedding server is separate and routinely
+unconfigured, while the local user with a small window is exactly who the track
+exists for; before that — **history compression, stage 2**: compaction stops
+needing to be asked for — once a turn's **exact** prompt size reaches a share of the model's
 context window (resolved from a managed server's `-c`, the engine's own `/props`,
 or an explicit setting), the older part is folded in the background; and an
 overflow that happens anyway is explained instead of dumped as raw JSON. Along
@@ -12986,6 +12993,162 @@ three findings are invisible from the workflow's own status):
   builds its own full-history request. Next: **stage 3** — the
   `history_read`/`history_search` read-back tools (fork F9b), after which the
   summary block stops saying the verbatim text is unreachable and names them.
+
+### Post-M9: history compression — stage 3 (the read-back tools) (done)
+
+- **Completes the track** (research
+  [docs/research/history-compression.md](docs/research/history-compression.md);
+  track-level fork **F9(b)** decided 2026-08-07, **sub-decisions S9–S16 recorded
+  before implementation and S11/S12/S13/S14 confirmed by the user 2026-08-08**,
+  all as recommended). Behaviour — spec §6.7. Branch `feat/history-readback`.
+  Stage 1 made a conversation foldable and stage 2 made it fold by itself; both
+  left the same honest admission in the summary block — *the verbatim text of
+  those messages is not available to you*. This removes it.
+- **Reading the code first turned the stage's one line into a different stage.**
+  F9(b) had specified the `attachment_read`/`attachment_search` shape, i.e. a
+  chat-scoped **embedding** index. But `cache.db` — the full-text index behind
+  `Ctrl+F` — already covers every message of every chat, and, checked rather than
+  assumed, `search::indexed_messages` filters only on *empty text*: **`Tool`-role
+  messages are indexed too, at full length**. That is §1.3's invisible bulk,
+  already searchable, already kept in step by the post-save hook, and reachable
+  per chat through `CacheDb::matching_messages_in_chat`.
+- **S11 — so search is full-text, not semantic**, and the decisive argument is
+  the audience rather than the cost: an embedding server is a **separate** server
+  (ADR 0002) and is routinely unconfigured, while the local user with an 8k
+  window is exactly who this track exists for — a search that needed an embedder
+  would be absent precisely where it is needed. It also costs no new table, no
+  indexing task, no generation-stamping and no `/reindex` integration. And the
+  complementarity runs the *opposite* way from how it first looks: the **summary
+  is already the semantic view** of that range; what it loses is verbatim
+  detail, which is what lexical search is best at — trigram matches substrings,
+  so `8823` finds `ZARYA-8823`. The embedding variant is recorded as groundwork
+  if a live run ever shows lexical misses.
+- **S12 — the tools are offered only while the chat has a folded range**, a
+  special case in `effective_tool_ids` exactly like the one `get/set_sampling`
+  already has. Two schemas cost prompt on **every** turn, and this feature's
+  audience is people fighting a ceiling. More importantly it earns an invariant:
+  the same `compaction_view` decides the tool set *and* whether the block is in
+  the prompt, so the block can name the tools without ever promising an absent
+  one — which is why there is **one** block wording rather than the
+  with-tools/without-tools pair attachments need (S15).
+- **S9/S10/S13/S14, briefly**: the folded range is an `Arc<HistoryView>` **turn
+  snapshot** on `ToolContext`, built where `attachments` already is — the
+  orchestrator stays the sole owner of `Chat`, there is no I/O on the tool path,
+  and a roll landing mid-turn cannot change what this turn's tools describe;
+  pages are token-budgeted slices cut by `entities::attachment::paginate`, so
+  `history_read` inherits the guarantee `attachment_read` exists for (walk
+  `1..M` and *know* you read everything) and both readers cut text the same way;
+  only the folded range is readable, since the verbatim tail is already in the
+  prompt; and the page size is its own `compaction.page_tokens` (default 800,
+  smaller than the attachment page — this reader serves conversations already
+  pressing against their window).
+- **One renderer, parameterized by the clip.** `features/compaction.rs` now
+  renders a message range once, and the tool-result budget is a parameter: the
+  digest clips to `TOOL_RESULT_CLIP`, the reader does not clip at all — paging
+  back to a `fetch_url` result only to receive the same 200 characters the
+  summary already carried would defeat the point. Sharing the renderer makes
+  "what was summarized is what can be re-read" true by construction.
+- **The detail that makes search work at all**: a tool result is rendered
+  *inside* the assistant block whose call produced it, so the `Tool` message has
+  no block of its own — but it has its own row in the index and is the likeliest
+  hit. `HistoryView` therefore keeps an alias `Tool` message id → that block, or
+  a hit on the bulk this feature is most about would map to no page.
+- **A search hit carries its page number** (S16), which is what makes the pair
+  compose the way the attachment pair does — search says *where*, reading
+  guarantees *everything*. Escaping stays in its one home
+  (`features::chat_search::to_fts_query`): raw input cannot reach `MATCH`, since
+  `C++`, `cost-benefit` and `50%` are all FTS5 syntax errors on ordinary text.
+- **A hole in my own S15 reasoning, found by re-reading it after it was
+  written.** S15 argued for a *single* block wording because block and tools are
+  gated on the same `compaction_view` — true of the chat-level gate, but a
+  **profile** can switch the two tools off, and then the block would name tools
+  the model does not have: precisely the dead end the sentence exists to
+  prevent. So the wording follows the turn's real tool set after all
+  (`compaction.block.tools` / `…no_tools`), exactly as an attachment's entry only
+  offers `attachment_search` for a file that has an index. The invariant S15
+  wanted survives in the form that matters — the block never names an absent
+  tool — it just needed one more input to hold.
+- That input pushed `build_request` to eight parameters, so its injection inputs
+  moved into a `PromptContext` (the `ToolDeps`/`ToolParams` pattern): the next
+  thing the system prompt is assembled from will not lengthen the signature
+  again.
+- **Tests**: the view (walking `1..M` reassembles the transcript; `locate` maps
+  a message — **including a `Tool` one** — to its page and block; the reader sees
+  what the digest had to clip; conversation order; blocks separated); the tools
+  (pages walked and a bad one reporting the real count; both tools explaining a
+  conversation with nothing folded; search finding a **tool result** and naming
+  its page; a substring of an identifier; a match in the verbatim tail correctly
+  **not** surfacing; every refusal pointing at `history_read`); the visibility
+  gate; and end to end through a real turn — the tools absent before a compaction
+  and present after it, travelling with the block that names them. **1942 unit
+  tests green** (+21), **80 `#[ignore]`** (+1), clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **Six mutations, five caught first time — and the sixth is the useful one.**
+  Dropping the `Tool` alias, clipping in the reader, letting tail hits through,
+  dropping the visibility gate and hardcoding "a range exists" each failed their
+  own test. But **bypassing the FTS escaping survived**: my punctuation test
+  asserted `is_ok()`, and the tool *deliberately degrades* an index failure into
+  a normal answer — so an unescaped query would never run while the test passed.
+  Rewritten to assert *which* answer comes back (not the "index unavailable"
+  one), it now fails under the mutation. Worth remembering as a shape: on a code
+  path built to degrade gracefully, `is_ok()` can never be the assertion.
+- **Live run — GO** (Gemma 4 31B q4_0, external `llama-server`, `--jinja`):
+  `history_read_back_answers_what_the_summary_dropped_live` — the model called
+  `history_search` twice and answered with a code that existed nowhere but in
+  messages no longer being sent. That is the half unit tests cannot reach: they
+  prove the tools return the right page, not that a real model reaches for one
+  instead of guessing.
+- **The fixture took four attempts, each failing its own precondition rather
+  than the feature**, and the last is the most instructive. (1) Fifteen
+  item→code pairs survived a 250-word summary whole — and the model filed them
+  with `note_save` first, so it could have answered from memory; the smoke now
+  enables **only** the two read-back tools, the same "remove the alternative
+  rather than hope it is not taken" move `spawn_orch_live_no_embed` makes. (2)
+  With the target the only *named* entry among "item number N", the summary
+  dropped the rest and kept exactly the one that had to be lost. (3) Sixty
+  entries as adjective × noun were **grouped by adjective** and all sixty codes
+  still fitted — any structure is compressible, so the fixture went to 200
+  entries against a 120-word limit, which is arithmetic rather than a hope about
+  the model's judgement. (4) **The control question was itself the confound**:
+  asked about the target and landing inside the folded range, it made that entry
+  the most salient thing in the range, so the summary kept precisely what the
+  test needed dropped — twice in a row, which is what showed it was not chance.
+  The control now asks about a **different** entry. Note the mirror image in
+  stage 1's smoke, where the control *helps* because that test wants the fact
+  kept: the same device is an aid or a confound depending on which way the
+  assertion runs.
+- **Regression — clean**: the full orchestrator e2e live set on the same stack,
+  **29 passed / 0 failed** (821 s). The right scope, since `effective_tool_ids`,
+  the `TurnInfo` snapshot and `build_request` all sit on **every** turn. The
+  whole `#[ignore]` suite was then run as well — **80 passed / 0 failed**
+  (913 s), with the cloud, alternate-embedder and managed-server smokes skipping
+  on their env gates.
+- **The Sonar gate failed on new-code duplication (6.5% against 3%), and two of
+  the three blocks it flagged were worth fixing on their own account.** The new
+  live smoke had copied the stage-1 smoke's "filler turns → `/compact` → unwrap
+  the event" tail verbatim (now `fill_then_compact`, with only the topics as a
+  parameter), and the request tests repeated the whole `PromptContext` literal at
+  every call site (now `request_of`). That took it to 3.85%.
+- **The rest was a real duplication I had first written off as unavoidable.**
+  `attachment_search` and `history_search` take the same two arguments for the
+  same reason — one names *where* to look, a reader then fetches it — and each
+  spelled the contract out twice: once as a JSON schema, once as the parsing in
+  `invoke`. One contract, written four times. It is now `search_parameters` +
+  `search_args` in `features/tools/mod.rs`, the rule this codebase already
+  applies to the FTS escaper. Duplication on new code: **0.0%**, better than the
+  ~1% predicted — extracting the schema also pulled the two `impl Tool` heads
+  apart, so their 16-line match stopped reaching the detection threshold.
+- **A trap on the way**, and the i18n gates caught it immediately: the first
+  version built the bundle keys from a prefix (`format!("{prefix}.param.query")`),
+  which makes them **invisible to the key scanner** — four keys read as dead and
+  the template as a key that does not exist. That is exactly why the dynamic
+  `ui.tool.label.*` family carries a gate test of its own. The keys are passed
+  whole instead, which also shows in each tool's own file which text it presents.
+- **Groundwork**: a semantic index over the folded range (S11's rejected
+  variant, if lexical misses ever show up live); impersonation still builds its
+  own full-history request; and the block, the tool set and the reader are now
+  three consumers of one `compaction_view`, which is the seam any future
+  per-chat tool gating would reuse.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
