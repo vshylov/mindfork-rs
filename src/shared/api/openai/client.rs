@@ -126,6 +126,10 @@ impl EngineBackend for OpenAiClient {
         let s = stream! {
             // A "thoughts" splitter in case of an inline <think> in content.
             let mut parser = ThoughtsParser::new();
+            // The reason the model stopped, once a chunk has reported one. Held
+            // until the stream terminates so a trailing `usage` chunk is not lost
+            // (see the `finish_reason` arm below).
+            let mut finish: Option<FinishReason> = None;
             loop {
                 tokio::select! {
                     biased;
@@ -137,7 +141,9 @@ impl EngineBackend for OpenAiClient {
                         match next {
                             None => {
                                 for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                yield ChatChunk::Finished(FinishReason::Stop);
+                                // A stream that ended without `[DONE]` still ends the
+                                // turn — with the reason the model gave, if it gave one.
+                                yield ChatChunk::Finished(finish.unwrap_or(FinishReason::Stop));
                                 break;
                             }
                             Some(Err(err)) => {
@@ -148,7 +154,7 @@ impl EngineBackend for OpenAiClient {
                             Some(Ok(event)) => {
                                 if event.data == "[DONE]" {
                                     for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                    yield ChatChunk::Finished(FinishReason::Stop);
+                                    yield ChatChunk::Finished(finish.unwrap_or(FinishReason::Stop));
                                     break;
                                 }
                                 match serde_json::from_str::<wire::ChatCompletionChunk>(&event.data) {
@@ -189,8 +195,15 @@ impl EngineBackend for OpenAiClient {
                                         }
                                         if let Some(reason) = choice.finish_reason {
                                             for piece in parser.finish() { yield piece_to_chunk(piece); }
-                                            yield ChatChunk::Finished(FinishReason::from_wire(&reason));
-                                            break;
+                                            // Record it and keep reading rather than
+                                            // finishing here: llama.cpp sends the
+                                            // `include_usage` chunk **after** this one
+                                            // (measured — `choices` empty, then
+                                            // `[DONE]`), so breaking now threw the exact
+                                            // token counts away every single time. The
+                                            // stream's own terminator ends us below, and
+                                            // the cancel arm still bounds the wait.
+                                            finish = Some(FinishReason::from_wire(&reason));
                                         }
                                     }
                                     Err(err) => {
@@ -205,6 +218,41 @@ impl EngineBackend for OpenAiClient {
         };
 
         Ok(Box::pin(s))
+    }
+
+    /// Reads llama.cpp's `/props` → `default_generation_settings.n_ctx`.
+    ///
+    /// **The figure is used as given, never divided by `total_slots`** — measured
+    /// (§9a M2 of the research): with no `-np` flag the server sets
+    /// `n_parallel = 4, kv_unified = true` and does *not* divide `n_ctx`, so
+    /// dividing would be wrong by 4x; where slots do divide the context, the
+    /// field already reports the per-slot figure.
+    ///
+    /// Any failure — a server without the endpoint (vLLM, LM Studio, a cloud
+    /// proxy), a network error, a body that doesn't parse — is `None`, i.e.
+    /// "cannot say". Logged at debug, since not answering is normal here.
+    async fn context_budget(&self) -> Option<u32> {
+        let url = props_url(&self.base_url);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no context budget from /props");
+                return None;
+            }
+        };
+        let props: Props = match resp.json().await {
+            Ok(p) => p,
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "/props did not parse");
+                return None;
+            }
+        };
+        // A zero would be a nonsense window; treat it as "cannot say" rather than
+        // as a budget every prompt exceeds.
+        props
+            .default_generation_settings
+            .and_then(|g| g.n_ctx)
+            .filter(|&n| n > 0)
     }
 }
 
@@ -249,9 +297,32 @@ impl Embedder for OpenAiClient {
 /// The URL of the `/health` readiness endpoint, from the base URL. `/health` lives at
 /// the server root (outside `/v1`), so the `/v1` suffix is stripped.
 fn health_url(base_url: &str) -> String {
+    server_root_url(base_url, "health")
+}
+
+/// `/props` — llama.cpp's own description of the running server (§9a M1). Like
+/// `/health` it lives at the root, outside `/v1`.
+fn props_url(base_url: &str) -> String {
+    server_root_url(base_url, "props")
+}
+
+/// A path at the server root (outside the `/v1` prefix the OpenAI surface uses).
+fn server_root_url(base_url: &str, path: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     let root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
-    format!("{root}/health")
+    format!("{root}/{path}")
+}
+
+/// The part of llama.cpp's `/props` we read. Every other field is ignored, so a
+/// server that answers with more (or a future version with fewer) still parses.
+#[derive(serde::Deserialize)]
+struct Props {
+    default_generation_settings: Option<PropsGeneration>,
+}
+
+#[derive(serde::Deserialize)]
+struct PropsGeneration {
+    n_ctx: Option<u32>,
 }
 
 #[cfg(test)]
@@ -317,6 +388,210 @@ mod tests {
             "probe must authenticate; got:\n{request}"
         );
         assert!(request.contains("get /health"), "and hit /health");
+    }
+
+    /// Serves one SSE response made of the given `data:` payloads.
+    fn sse_server(events: &'static [&'static str]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = sock.read(&mut buf);
+            let body: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        });
+        format!("http://{addr}/v1")
+    }
+
+    async fn collect(url: String) -> Vec<ChatChunk> {
+        let client = OpenAiClient::new(url);
+        let req = ChatRequest {
+            system: None,
+            messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
+            sampling: Default::default(),
+            tools: Vec::new(),
+        };
+        let mut s = client
+            .chat_stream(req, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(c) = s.next().await {
+            out.push(c);
+        }
+        out
+    }
+
+    /// llama.cpp sends the `include_usage` chunk **after** the one carrying
+    /// `finish_reason` — measured against the live server, `choices` empty, then
+    /// `[DONE]`. Finishing on `finish_reason` therefore discarded the exact token
+    /// counts on every single turn, which is why the status bar never left the
+    /// `~` estimate and why automatic compaction had nothing to trigger on.
+    #[tokio::test]
+    async fn a_usage_chunk_after_finish_reason_is_not_lost() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":7,"total_tokens":1241}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        let usage = chunks.iter().find_map(|c| match c {
+            ChatChunk::Usage(u) => Some(*u),
+            _ => None,
+        });
+        let usage = usage.expect("the trailing usage chunk must survive");
+        assert_eq!(usage.prompt_tokens, 1234);
+        assert_eq!(usage.completion_tokens, 7);
+
+        // …and the turn still ends, with the reason the model actually gave —
+        // held from the earlier chunk rather than replaced by a default `Stop`.
+        assert!(
+            matches!(chunks.last(), Some(ChatChunk::Finished(FinishReason::Stop))),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks
+                .iter()
+                .filter(|c| matches!(c, ChatChunk::Finished(_)))
+                .count(),
+            1,
+            "exactly one terminator: {chunks:?}"
+        );
+    }
+
+    /// The reason must survive the wait: a length cut-off that came back as a
+    /// plain `Stop` would make the loop treat a truncated reply as a complete one.
+    #[tokio::test]
+    async fn the_reported_reason_survives_the_trailing_chunk() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":9,"total_tokens":18}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Length))
+            ),
+            "{chunks:?}"
+        );
+    }
+
+    /// A server that ends the body without `[DONE]` still ends the turn, and with
+    /// the reason it gave.
+    #[tokio::test]
+    async fn a_stream_that_ends_without_done_still_reports_its_reason() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":"length"}]}"#,
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Length))
+            ),
+            "{chunks:?}"
+        );
+    }
+
+    #[test]
+    fn props_url_sits_at_the_server_root_like_health() {
+        assert_eq!(
+            props_url("http://127.0.0.1:8000/v1"),
+            "http://127.0.0.1:8000/props"
+        );
+        assert_eq!(props_url("http://host:9/v1/"), "http://host:9/props");
+        assert_eq!(props_url("http://host:9"), "http://host:9/props");
+    }
+
+    /// Answers one request with the given status and body, then reports the path
+    /// that was asked for.
+    fn one_shot_server(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            // Drain before answering: writing first turns the close into an RST
+            // that discards the response.
+            let n = sock.read(&mut buf).unwrap();
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    /// The measured shape of a real `/props` (§9a M1), trimmed to what is read.
+    const PROPS_BODY: &str = r#"{"default_generation_settings":{"n_ctx":16384,"n_predict":-1},
+        "total_slots":4,"build_info":"b9867-152d337fa"}"#;
+
+    #[tokio::test]
+    async fn context_budget_reads_n_ctx_as_given() {
+        let (url, server) = one_shot_server("200 OK", PROPS_BODY);
+        let budget = OpenAiClient::new(url).context_budget().await;
+        // **Not** divided by `total_slots`, which is 4 here: with no `-np` flag
+        // llama.cpp reports 4 slots over an undivided context, so dividing would
+        // be wrong by 4x (§9a M2). Where slots do divide it, the field already
+        // reports the per-slot figure.
+        assert_eq!(budget, Some(16384));
+        assert!(
+            server.join().unwrap().starts_with("GET /props "),
+            "asked at the server root, outside /v1"
+        );
+    }
+
+    /// Every way of not knowing is `None` — "cannot say", never a guess that
+    /// would make the trigger measure against a fiction.
+    #[tokio::test]
+    async fn anything_but_a_real_answer_is_unknown() {
+        for (status, body) in [
+            // A server without the endpoint: vLLM, LM Studio, a cloud proxy.
+            ("404 Not Found", "{}"),
+            ("500 Internal Server Error", "{}"),
+            // Answers, but says nothing we can use.
+            ("200 OK", "{}"),
+            ("200 OK", r#"{"default_generation_settings":{}}"#),
+            // A zero window is nonsense, not a budget every prompt exceeds.
+            ("200 OK", r#"{"default_generation_settings":{"n_ctx":0}}"#),
+            ("200 OK", "not json at all"),
+        ] {
+            let (url, server) = one_shot_server(status, body);
+            assert_eq!(
+                OpenAiClient::new(url).context_budget().await,
+                None,
+                "status={status} body={body}"
+            );
+            let _ = server.join();
+        }
+    }
+
+    /// An unreachable host must not hang or panic — it simply cannot say.
+    #[tokio::test]
+    async fn an_unreachable_server_is_unknown_too() {
+        // Bind and drop: the port is then almost certainly free and refusing.
+        let addr = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let client = OpenAiClient::new(format!("http://{addr}/v1"));
+        assert_eq!(client.context_budget().await, None);
     }
 
     #[test]

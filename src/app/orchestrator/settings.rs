@@ -204,6 +204,10 @@ impl Orchestrator {
         let loc = self.ui_locale();
         self.engines
             .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+        // A different engine has a different context window, and an answer from
+        // the previous one must not be carried over — nor an in-flight one
+        // applied when it lands (spec §6.7).
+        self.context.invalidate();
         self.emit_server_status();
     }
 

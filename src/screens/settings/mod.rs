@@ -593,6 +593,11 @@ enum FieldId {
     CompactWords,
     /// How much of the conversation tail stays verbatim (estimated tokens).
     CompactTail,
+    /// Share of the context window at which compression starts by itself (%).
+    CompactThreshold,
+    /// Explicit context window, in tokens, when the engine cannot be asked
+    /// (`0` — resolve it: a managed server's `-c`, else the engine's own answer).
+    CompactContext,
     // RAG (knowledge-base chunking)
     RagTarget,
     RagOverlap,

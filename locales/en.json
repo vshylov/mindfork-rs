@@ -1104,6 +1104,8 @@
   "ui.err.no_active_chat": "No active chat",
   "ui.err.impersonation_failed": "Impersonation error: {err}",
   "ui.err.generation_failed": "Generation error: {err}",
+  "ui.err.context_overflow": "The conversation no longer fits the model's context window. Run /compact to fold the older messages into a summary, or start a new chat. Server reply: {err}",
+  "ui.err.context_overflow_off": "The conversation no longer fits the model's context window. History compression is off — turn it on in settings, section \"Memory\" -> \"Context\", and it will fold the older messages into a summary by itself. Server reply: {err}",
   "ui.err.load_data_failed": "Data load error: {err}",
   "ui.err.save_settings_failed": "Failed to save settings: {err}",
   "ui.err.api_key_save_failed": "Failed to save the API key: {err}",
@@ -1353,5 +1355,9 @@
   "ui.settings.field.compact_words": "Summary length (words)",
   "ui.settings.desc.compact_words": "How long the rolling summary may be. The limit is stated in the prompt, so the model prioritizes instead of being cut off mid-sentence.",
   "ui.settings.field.compact_tail": "Verbatim tail (tokens)",
-  "ui.settings.desc.compact_tail": "How much of the end of the conversation always stays verbatim. Everything before the nearest exchange boundary older than this is what a compression folds into the summary."
+  "ui.settings.desc.compact_tail": "How much of the end of the conversation always stays verbatim. Everything before the nearest exchange boundary older than this is what a compression folds into the summary.",
+  "ui.settings.field.compact_threshold": "Auto at (% of window)",
+  "ui.settings.desc.compact_threshold": "Share of the model's context window at which the older part of the conversation is folded into the summary on its own. The rest is headroom: the compression runs in the background, so you can keep typing while it works, and the reply needs room too. 0 — never automatically, only /compact.",
+  "ui.settings.field.compact_context": "Context window (tokens)",
+  "ui.settings.desc.compact_context": "The window to measure against when the engine cannot be asked — a cloud model, or a server that does not report it. 0: work it out instead — a managed server's -c, otherwise ask the engine (llama.cpp reports it). With no source at all, automatic compression stays off; /compact still works."
 }

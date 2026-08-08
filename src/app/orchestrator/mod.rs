@@ -76,7 +76,7 @@ use crate::shared::storage::Storage;
 
 use self::attachments::AttachResult;
 use self::background::BgSlot;
-use self::compaction::CompactResult;
+use self::compaction::{CompactResult, ContextDiscovery};
 use self::engines::EngineManager;
 use self::generation::GenResult;
 use self::mcp::{McpEvent, McpManager};
@@ -138,6 +138,11 @@ pub async fn run(deps: OrchestratorDeps) {
     // Internal history-compression channel: a background roll sends the summary
     // (or an error), the loop stores it on the chat.
     let (compact_tx, mut compact_rx) = unbounded_channel::<CompactResult>();
+    // Internal channel for what the engine says its context window is (spec §6.7,
+    // sub-decision S1): a background task asks `EngineBackend::context_budget`
+    // and answers `(epoch, budget)`; the epoch is what lets the loop drop an
+    // answer that belongs to an engine which has since been replaced.
+    let (budget_tx, mut budget_rx) = unbounded_channel::<(u64, Option<u32>)>();
     // Internal status channel for the impersonation server (a background probe).
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
     // Internal status channel for the embedding server (a background probe).
@@ -169,6 +174,8 @@ pub async fn run(deps: OrchestratorDeps) {
         registry,
         title_tx,
         compact_tx,
+        budget_tx,
+        context: ContextDiscovery::default(),
         profiles: Vec::new(),
         chats: Vec::new(),
         confirm: None,
@@ -229,6 +236,11 @@ pub async fn run(deps: OrchestratorDeps) {
             status = status_rx.recv() => {
                 if let Some(s) = status {
                     orch.engines.set_chat_status(s);
+                    // Readiness flipped, so the engine may answer differently now:
+                    // a server that was down could not report its context window,
+                    // and one that just came up can. The channel only carries
+                    // flips, so this is not a per-probe cost. See `ContextDiscovery`.
+                    orch.context.invalidate();
                     orch.emit_server_status();
                     orch.relaunch_dead_managed_servers();
                 }
@@ -241,6 +253,11 @@ pub async fn run(deps: OrchestratorDeps) {
             compact = compact_rx.recv() => {
                 if let Some(res) = compact {
                     orch.handle_compact_result(res);
+                }
+            }
+            budget = budget_rx.recv() => {
+                if let Some((epoch, value)) = budget {
+                    orch.handle_budget_result(epoch, value);
                 }
             }
             status = imp_status_rx.recv() => {
@@ -360,6 +377,11 @@ struct Orchestrator {
     title_tx: UnboundedSender<TitleResult>,
     /// Channel for results of background history compression (spec §6.7).
     compact_tx: UnboundedSender<CompactResult>,
+    /// Channel for the engine's answer about its context window: `(epoch, budget)`.
+    budget_tx: UnboundedSender<(u64, Option<u32>)>,
+    /// What is known about the engine's context window — the budget the automatic
+    /// compaction measures itself against.
+    context: ContextDiscovery,
     profiles: Vec<Profile>,
     /// The in-flight turn's dangerous-tool confirmation channel: its id and the
     /// sender the generation task is listening on (spec §9.8, fork F8 of

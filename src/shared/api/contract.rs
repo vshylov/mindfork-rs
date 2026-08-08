@@ -288,6 +288,25 @@ pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 pub trait EngineBackend: Send + Sync {
     /// A streaming single-turn request. Cancellation — via `cancel`.
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream>;
+
+    /// The engine's own context window in tokens, when it can say — the budget
+    /// history compression measures itself against (spec §6.7, sub-decision S1
+    /// of docs/research/history-compression.md).
+    ///
+    /// "What window does this engine have" is engine knowledge, so it belongs on
+    /// the engine contract (ADR 0004) rather than in the layer above: the
+    /// orchestrator asks and stays provider-agnostic. The default is `None` —
+    /// **"cannot say", never "unlimited"** — so a backend that has no way to
+    /// answer leaves auto-compaction inactive rather than acting on a guess. Only
+    /// [`super::openai::OpenAiClient`] overrides it (llama.cpp's `/props`); the
+    /// cloud protocols have no such endpoint and model windows are free-form
+    /// (§11), so there the answer comes from an explicit setting or not at all.
+    ///
+    /// Called rarely — once per applied engine, re-asked when readiness flips —
+    /// so a network round trip here is not on any hot path.
+    async fn context_budget(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// What a text is being embedded *as*.

@@ -123,10 +123,18 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-08-07, version 0.9.4)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1897 unit
-tests green, 77 `#[ignore]` smokes** (the largest count — log below; the most
-recent change is **history compression, stage 1**: `/compact` folds the older
+## Status (as of 2026-08-08, version 0.9.4)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1921 unit
+tests green, 79 `#[ignore]` smokes** (the largest count — log below; the most
+recent change is **history compression, stage 2**: compaction stops needing to be
+asked for — once a turn's **exact** prompt size reaches a share of the model's
+context window (resolved from a managed server's `-c`, the engine's own `/props`,
+or an explicit setting), the older part is folded in the background; and an
+overflow that happens anyway is explained instead of dumped as raw JSON. Along
+the way it uncovered that the client had been **discarding the server's exact
+token counts** on every turn — llama.cpp sends `usage` *after* the chunk carrying
+`finish_reason`, and the stream ended on that chunk; before that — **stage 1**:
+`/compact` folds the older
 part of a chat into a rolling summary so a long conversation keeps fitting the
 model's context window — `chat.messages` is never edited, only what the request
 carries, so the feed still shows everything and marks the boundary with a
@@ -12855,6 +12863,129 @@ three findings are invisible from the workflow's own status):
 - **Next**: stage 2 — the automatic trigger (`GenResult` carries `usage`, budget
   resolution from `/props` and from the 400 body, the threshold in settings, the
   overflow error naming `/compact`); stage 3 — `history_read`/`history_search`.
+
+### Post-M9: history compression — stage 2 (the automatic trigger) (done)
+
+- **Stage 2 of the track** (research
+  [docs/research/history-compression.md](docs/research/history-compression.md);
+  track-level forks F1–F10 decided 2026-08-07, **sub-decisions S1–S8 recorded
+  before implementation and S1/S2/S3 confirmed by the user 2026-08-08**, all as
+  recommended). Behaviour — spec §6.7. Branch
+  `feat/history-compaction-auto`. Stage 1 made compaction possible; this makes
+  it happen without being asked, which is the half that saves the 8k-window user
+  who does not know the command exists.
+- **Reading the stage-1 code first turned the plan's one line into eight
+  questions**, and the three with real trade-offs went to the user rather than
+  being decided quietly:
+  - **S1 — the budget's source.** `EngineBackend::context_budget()` with a
+    `None` default, implemented by `OpenAiClient` over llama.cpp's `/props`. The
+    trait **is** the engine contract (ADR 0004), so "what window does this engine
+    have" belongs on it; the alternative (resolve it in the supervisor's
+    readiness probe, which already holds the concrete client) would widen a
+    trait shared by three servers and hang a budget off a channel that exists to
+    carry a status. Every existing backend compiles unchanged, and the default
+    means **"cannot say", never "unlimited"** — a backend that has no answer
+    leaves the trigger inactive rather than acting on a guess. `n_ctx` is read
+    **as given**: measured in stage 0 (M2), with no `-np` flag the server reports
+    four slots over an *undivided* context, so dividing would be wrong by 4x.
+  - **S2 — which number.** The exact `usage.prompt_tokens` and nothing else. The
+    byte estimate is not a fallback here because its error **changes sign** by
+    content type (§9a M9: +68% on Russian prose, −20% on code, −7% on JSON tool
+    results), i.e. it is unsafe on exactly the tool-heavy chats that overflow
+    first. A provider reporting no usage leaves the trigger silent — every
+    provider we speak to does report it, so the exclusion is theoretical.
+  - **S3 — learning the window from the 400 body: deferred**, on a measured
+    redundancy rather than for effort: the body shape carrying `n_ctx`
+    (`exceed_context_size_error`) **is** llama.cpp's, and llama.cpp answers
+    `/props`. What the failure genuinely needed was the hint (S4), and the user
+    is not stuck without it — `/compact` needs no budget at all.
+- **The rest, as recommended**: the reply reserve is folded into the threshold's
+  remaining 25% rather than being a second knob (S5); a **background** failure
+  spends a strike in the existing failure streak while a **typed** command
+  reports immediately, so `CompactResult` carries its origin (S6 — the stage-1
+  code comment asked for exactly this); the trigger runs on the chat whose turn
+  just finished rather than "the active one" (S7); cloud is an explicit setting
+  or nothing, with no provider→window table (S8).
+- **The planning seam PR #275 asked for exists now**: `plan_roll` decides what a
+  roll would fold and builds its request with no engine and no side effects, and
+  `spawn_roll` launches it. `/compact` turns a `None` into "nothing to compress
+  yet", the automatic path just stays quiet, and a test asserts on the plan
+  instead of inferring it from what a roll happened to send.
+- **Discovery is epoch-guarded and self-healing.** `ContextDiscovery` asks once
+  per applied engine and is invalidated on an engine change *and* on a readiness
+  flip — so a server that came up after the app is not left unmeasured, while an
+  answer about an engine that has since been replaced is dropped (switching from
+  a local 8k model to a cloud one must not leave the cloud measured against the
+  local window). The status channel only carries flips, so this is not a
+  per-probe cost.
+- **The overflow message must not create a dead end** (S4): with compression on
+  it names `/compact`, with it off it names the setting. Pointing at a command
+  that would refuse is the defect class this journal has already recorded three
+  times — the by-reference attachment block, `youtube_watch`'s unconfigured
+  path, `python_exec`'s sandbox. Detection is a pure function over the error
+  text (a small documented marker list, best-effort: a marker that stops
+  matching costs the hint, never correctness, and the raw body is still there).
+- **A pre-existing defect found by the live smoke refusing to fire, and it is
+  the most valuable thing in this stage** (§9b of the research): the client
+  **never emitted `ChatChunk::Usage` at all** on the llama.cpp path.
+  llama-server sends the `include_usage` chunk **after** the one carrying
+  `finish_reason` (`choices` empty, then `[DONE]` — re-measured on the wire),
+  and `chat_stream` `break`ed the moment it saw a finish reason. Consequences:
+  the status bar's exact figure never arrived, so the `~` estimate was in
+  practice the only number the user ever saw — contrary to what spec §11.1
+  claimed — and stage 2's trigger, which reads that figure and nothing else, had
+  nothing to fire on. Fixed by holding the reason until the stream's own
+  terminator. The other clients are unaffected, **checked rather than assumed**:
+  Anthropic carries usage in `message_delta`, OpenAI Responses in
+  `response.completed`, Gemini in the same part as `finishReason` — all
+  alongside the finish signal, not after it.
+- **Two of my own diagnostics were instrumentation bugs, not findings**, worth
+  recording because both looked like evidence: `run_turn_capture` drains events
+  up to `Finished`, so it had already consumed the `TokenUsage` events the
+  diagnostic was looking for — twice, before and after moving the collection
+  inside the turn. Only isolating the question to the client (stream one
+  request, print the chunks) answered it. The first smoke failure was a third
+  such artifact: four short exchanges came to ~330 tokens against a threshold of
+  491, so the test grew the prompt with **the user's own text** rather than
+  relying on how verbose a model feels like being.
+- **Tests**: the trigger's gates (fires past the threshold; the reply counts
+  towards the next prompt; silent without exact usage; both the switch and a
+  zero threshold disable it; not started twice; a conversation with nothing left
+  to fold is silent rather than nagging every turn); budget resolution
+  (explicit outranks all, managed reads its own `-c`, a discovered window is
+  used and re-asked after an invalidation, an answer for a replaced engine is
+  dropped, an engine that cannot say leaves it unknown); failure semantics by
+  origin, including that an empty summary is counted and not announced;
+  `/props` parsing against a stub, every way of not knowing, and an unreachable
+  server; the overflow detector against one real body per provider plus five
+  negatives; end-to-end through the real loop, that a full window is explained
+  and never points at a dead end. **1921 unit tests green** (+24), **79
+  `#[ignore]`** (+2), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`
+  clean. The SSE ordering fix was **mutation-tested** — restoring the `break`
+  fails its test and only that one.
+- **Live run — GO** (Gemma 4 31B q4_0 + bge-m3, external `llama-server`,
+  `--jinja`): `props_reports_the_context_window_live` — the real server reports
+  **16384**, which is the half only a live stack can answer (a stub would only
+  prove our fixture parses). `auto_compaction_fires_without_the_command_live` —
+  deliberately in **external** mode so the budget can come from nowhere but
+  `/props`: the exact prompt grew 3642 → 3908 → 4192 and the conversation was
+  folded **with nobody typing `/compact`**, on the turn after the window was
+  discovered — which also demonstrates the "the first turn kicks the question
+  off and the next one acts on it" self-healing.
+- **Regression — clean**: the full orchestrator e2e live set, **28 passed / 0
+  failed** (683 s) on the same stack. The right scope twice over: the trigger
+  sits in `handle_done` on every turn, and the client fix changes stream
+  termination for **all** OpenAI-compatible traffic — memory/self-model/notes/
+  graph/cross-organ links/RAG/attachments/control tools/tool confirmation/MCP/
+  i18n all green.
+- **Groundwork**: learning the window from the 400 body (S3);
+  `estimate_prompt_tokens` still ignores `req.tools`, which matters for the `~`
+  figure though no longer for the trigger; `cached_tokens` is reported by
+  llama-server and still ignored (it would let the prefix-cache trade-off of
+  §2.3 be *verified* rather than reasoned about); impersonation (`Ctrl+U`) still
+  builds its own full-history request. Next: **stage 3** — the
+  `history_read`/`history_search` read-back tools (fork F9b), after which the
+  summary block stops saying the verbatim text is unreachable and names them.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool

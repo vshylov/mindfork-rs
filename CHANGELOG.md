@@ -23,7 +23,13 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   marks the boundary with a divider you can unfold (together with the "thoughts"
   blocks, `Ctrl+T`) to read the summary. On by default where it can act, and fully
   switchable off in settings → "Memory" → "Context" — off, the whole history is sent
-  exactly as before.
+  exactly as before. It also **happens by itself**: once a conversation reaches a
+  share of the model's context window (75% by default, adjustable there), the older
+  part is folded in the background while you keep typing. The window is worked out
+  on its own — from a managed server's own setting, or by asking a llama.cpp server
+  — and you can state it yourself for a model that cannot be asked. And if the
+  window fills up anyway, the error now says what to do about it instead of showing
+  the server's raw reply.
 - **The Windows installer can set up the Python sandbox for you.** A new
   *Install the Python sandbox and enable Python execution* checkbox on the
   "Additional tasks" page (off by default) installs it during the installation and
@@ -126,6 +132,10 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Fixed
 
+- **The token counter now shows the real number, not an estimate.** With a
+  llama.cpp server the exact count it reports arrived a moment *after* the reply
+  ended, and was being discarded — so the counter kept showing its own `~`
+  approximation, which is off by well over half on some kinds of text.
 - **Two labels in the feed ignored the interface language** and were always
   Russian: the heading above an **expanded** "thoughts" block, and the exit-code
   line under a `python_exec` console.

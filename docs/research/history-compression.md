@@ -684,10 +684,13 @@ read-back tools rather than invalidating the mechanism.
   inert) + clamping + i18n (`prompt.compact.*`) + unit tests + the
   planted-fact live smoke. Spec §6.2/§6.6 bullets, §9.x or §11.x section;
   architecture §5/§11.
-- **Stage 2 — auto**: `GenResult` carries usage → `maybe_auto_compact` in the
-  `handle_done` tail + budget resolution (`/props` discovery per F5) +
-  settings UI ("Memory" → "Context") + the 400-error hint naming `/compact` +
-  `BackgroundKind::Compaction` chip/failure streak.
+- **Stage 2 — auto** (**done**, sub-decisions §10.1): `GenResult` carries usage →
+  `maybe_auto_compact` in the `handle_done` tail + budget resolution
+  (`EngineBackend::context_budget` → `/props`, per F5) + settings UI ("Memory" →
+  "Context") + the overflow hint naming `/compact` (or the setting, when
+  compression is off) + the `BackgroundKind::Compaction` failure streak on the
+  automatic path only. **What it cost that was not planned for**: the client
+  never emitted `ChatChunk::Usage` at all on the llama.cpp path — §9b.
 - **Stage 3 — read-back tools** (committed by F9(b)): `history_read`/
   `history_search` over the compressed range, the `attachment_read`/
   `attachment_search` shape; the summary block's wording switches from "not
@@ -695,6 +698,129 @@ read-back tools rather than invalidating the mechanism.
 - **Groundwork (not committed)**: impersonation reusing the summary; F3(b)
   tool-result eliding; compact-into-new-chat (F1c); prompt-caching alignment
   (roadmap #2 lands its breakpoints around the now-stable prefix).
+
+---
+
+## 9b. What stage 2 found: the exact `usage` never reached us
+
+Measured 2026-08-08, while the stage-2 live smoke refused to fire.
+
+M5 (§9a) established that llama-server reports `usage` in a final chunk with an
+empty `choices` array. It does — and **our client threw it away every single
+time**. The order on the wire, re-measured directly:
+
+```
+data: {"choices":[{"finish_reason":"length","index":0,"delta":{}}], …}
+data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":16, …}}
+data: [DONE]
+```
+
+`OpenAiClient::chat_stream` yielded `Finished` and **`break`ed** the moment a
+chunk carried `finish_reason`, so the usage chunk that follows it was never
+read. Two consequences, one of them long-standing:
+
+- The status-bar counter's exact figure never arrived on llama.cpp: the `~`
+  estimate was, in practice, the only number the user ever saw — contrary to
+  what spec §11.1 claimed. The same for reasoning tokens.
+- Stage 2's trigger reads the exact figure **and nothing else** (S2), so it had
+  nothing to fire on. The smoke reported "nothing folded" with no exact prompt
+  ever observed, which is what led here.
+
+Fixed by holding the reason until the stream's own terminator (`[DONE]` or the
+body ending) instead of finishing on it. Worth recording as a method note: the
+first two attempts at diagnosing this were **instrumentation bugs of the test,
+not findings** — `run_turn_capture` drains events up to `Finished`, so it had
+already consumed the `TokenUsage` events the diagnostic was looking for. Only
+isolating the question to the client itself (stream one request, print the
+chunks) answered it.
+
+The other clients are unaffected, checked rather than assumed: Anthropic carries
+usage in `message_delta`, OpenAI Responses in `response.completed`, Gemini in
+the same part as `finishReason` — all alongside the finish signal, not after it.
+
+---
+
+## 10.1. Stage 2 — sub-decisions (recorded before implementation)
+
+Written after reading the stage-1 code; the track-level forks (§8) already
+decided *what* stage 2 is (F4a auto+manual, F5a `/props` discovery), these are
+the *how* questions it turned out to contain. **Decided by the user
+2026-08-08** — S1(a), S2(a), S3(a); the rest as recommended.
+
+- **S1 — how the context budget is discovered.** **Decision: (a).**
+  - (a) **A new `EngineBackend::context_budget()` with a `None` default**,
+    implemented by `OpenAiClient` (GET `/props` →
+    `default_generation_settings.n_ctx`, read as given — never divided by
+    `total_slots`, M2) and left at the default for Anthropic/Gemini/Responses.
+    The orchestrator resolves it once per applied engine into a cache and stays
+    provider-agnostic. *Recommended*: the trait **is** the engine contract
+    (ADR 0004), "what window does this engine have" is engine knowledge, and
+    every existing backend compiles unchanged.
+  - (b) Resolve it in the supervisor's readiness probe (it already holds the
+    concrete `OpenAiClient`) — but that widens the `ServerSupervisor` trait for
+    all three servers and couples a budget to a *status* channel that exists to
+    carry something else.
+  - (c) Explicit setting only — contradicts F5a, and re-introduces the
+    "changed `-c`, forgot the setting" footgun.
+  - Resolution order either way: explicit `compaction.context_tokens` →
+    `managed.context_size` when the mode is managed (that number *is* the `-c`
+    the child was launched with, and needs no network) → discovery → **inactive**.
+
+- **S2 — which token number the trigger reads.** **Decision: (a).**
+  - (a) **Exact `usage.prompt_tokens` only**; where a provider reports no
+    usage, auto-compaction simply never fires (`/compact` still works).
+    *Recommended* because of M9: the `bytes/4` estimate's error **changes
+    sign** — it overestimates Russian prose by 68% but *underestimates* code by
+    20% and JSON tool results by 7%, i.e. it is unsafe precisely on the
+    tool-heavy chats that overflow first (§1.3). Every provider we speak to
+    reports usage (we send `stream_options.include_usage`), so this is a
+    theoretical rather than a practical exclusion.
+  - (b) Fall back to the estimate with a margin — more coverage, but the margin
+    would have to be sized against the *worst* content type and would then fire
+    early on prose.
+
+- **S3 — learning the budget from the 400 body.** **Decision: (a).**
+  - (a) **Defer as groundwork; ship the hint only.** *Recommended*, on a
+    measured redundancy: the body shape that carries `n_ctx`
+    (`exceed_context_size_error`) **is** llama.cpp's, and llama.cpp answers
+    `/props` — so the discovery path already covers every server the learning
+    path could. What the failure genuinely needs is the *hint* (S4), and the
+    user is not left stuck without it: `/compact` needs no budget at all.
+  - (b) Implement now — `overflow` threaded through `RoundOutput` →
+    `GenResult`, plus relaxing `handle_done`'s early return (an overflow turn
+    produces no messages). Real plumbing for a case (a) already covers.
+
+- **S4 — the overflow hint, and it must not create a dead end.** The generic
+  `ui.err.generation_failed` (raw JSON in a wrapper) becomes a message that
+  says what to do — but **which** advice depends on the switch: with
+  compression on it names `/compact`, with it off it names the setting.
+  Pointing at a command that would refuse is exactly the defect class the
+  journal has closed three times (the by-reference attachment block, the
+  `youtube_watch` unconfigured path, the `python_exec` sandbox). Detection is a
+  pure function over the error text (best-effort, a small documented list of
+  provider markers), so it is testable without a server.
+
+- **S5 — the threshold's shape.** One percentage,
+  `compaction.threshold_pct` (default **75**), against the resolved budget; the
+  reply reserve is **folded into the remaining 25%** rather than subtracted
+  separately. The trigger compares `last_prompt_tokens + last_completion_tokens`
+  (the next turn's prompt, near enough) against `budget × pct / 100`. A
+  separate reserve would be a second knob describing the same headroom.
+
+- **S6 — failure semantics differ by origin.** The **auto** path passes the
+  real result into `handle_bg_done` (the 3-strike alert the slot machinery
+  exists for), while the **manual** path keeps stage 1's behaviour: report the
+  failure straight to the user and close the slot as a success, since alerting
+  twice for a command just typed is noise. `CompactResult` therefore carries
+  its origin — the stage-1 code comment asks for exactly this.
+
+- **S7 — which chat.** The one whose turn just finished (`res.chat_id`), not
+  "the active one": they are the same today (one generation at a time), and
+  reading the turn's own id is what stays correct if that ever stops being true.
+
+- **S8 — cloud.** Explicit `context_tokens` or inactive. No provider→model→window
+  table: model names are free-form and windows move under us (§11), and the
+  motivation there is cost rather than a ceiling.
 
 ---
 

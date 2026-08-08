@@ -17,6 +17,7 @@ use std::sync::Mutex;
 
 use tokio_util::sync::CancellationToken;
 
+use super::super::compaction::CompactOrigin;
 use crate::features::compaction::summary_system_message;
 use crate::shared::api::ChatRequest;
 use crate::shared::api::contract::ChatStream;
@@ -320,6 +321,7 @@ async fn compressing_never_edits_the_conversation() {
     let boundary_id = chat_of(&orch, chat_id).messages[2].id;
 
     orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
         chat_id,
         boundary_id,
         rolls: 1,
@@ -410,6 +412,7 @@ async fn a_boundary_that_vanished_mid_roll_discards_the_summary() {
     let _ = drain(&mut rx);
 
     orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
         chat_id,
         boundary_id: Uuid::new_v4(), // never belonged to this chat
         rolls: 1,
@@ -444,6 +447,7 @@ async fn a_compaction_does_not_bump_modified_at() {
     let boundary_id = chat_of(&orch, chat_id).messages[2].id;
 
     orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
         chat_id,
         boundary_id,
         rolls: 1,
@@ -465,6 +469,7 @@ async fn a_failed_roll_is_reported_and_clears_the_indicator() {
     let _ = drain(&mut rx);
 
     orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
         chat_id,
         boundary_id: chat_of(&orch, chat_id).messages[2].id,
         rolls: 1,
@@ -494,4 +499,359 @@ async fn a_failed_roll_is_reported_and_clears_the_indicator() {
     // deliberately not advanced — the streak exists for *silent* runs, and a
     // second alert for a command just typed would be noise.
     assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 0);
+}
+
+// ---------- stage 2: the automatic trigger ----------
+//
+// These drive `maybe_auto_compact` directly on a bare orchestrator. Every gate
+// it applies is synchronous, and "did a roll start?" is exactly
+// `bg_running(Compaction)` — which is also what makes a *negative* assertion
+// meaningful here: through the loop, "no `Compacted` event yet" is
+// indistinguishable from "the roll is still running".
+
+use super::super::generation::TurnUsage;
+use crate::shared::config::{EngineSettings, ManagedSettings, ServerMode};
+
+/// A managed engine with a deliberately tiny window, so a modest `usage` is
+/// already over the threshold. Managed is also the one budget source that needs
+/// no network (S1), which keeps these tests off the discovery path.
+fn auto_cfg(context_size: u32, threshold_pct: u8) -> AppConfig {
+    AppConfig {
+        compaction: CompactionSettings {
+            enabled: true,
+            tail_tokens: 1,
+            threshold_pct,
+            ..Default::default()
+        },
+        engine: EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                context_size,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn usage(prompt: u32, completion: u64) -> Option<TurnUsage> {
+    Some(TurnUsage {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+    })
+}
+
+// Spawns: reaching a roll (or asking the engine for its window) starts a task.
+#[tokio::test]
+async fn auto_compaction_fires_once_a_turn_crosses_the_threshold() {
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(3);
+    orch.config = auto_cfg(1000, 75);
+    // 700 + 100 = 800 of a 1000-token window: past the 750 mark.
+    orch.maybe_auto_compact(chat_id, usage(700, 100));
+    assert!(
+        orch.bg_running(BackgroundKind::Compaction),
+        "a roll must be under way"
+    );
+}
+
+/// The reply counts towards the next turn's prompt: on its own the prompt is
+/// still under the mark, and ignoring what was generated on top of it would
+/// postpone the compaction by exactly the turn that overflows.
+// Spawns: reaching a roll (or asking the engine for its window) starts a task.
+#[tokio::test]
+async fn the_reply_counts_towards_the_next_prompt() {
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(3);
+    orch.config = auto_cfg(1000, 75);
+    orch.maybe_auto_compact(chat_id, usage(700, 0));
+    assert!(!orch.bg_running(BackgroundKind::Compaction), "700 < 750");
+    orch.maybe_auto_compact(chat_id, usage(700, 60));
+    assert!(orch.bg_running(BackgroundKind::Compaction), "760 >= 750");
+}
+
+/// S2: without an exact `usage` the trigger stays quiet rather than falling back
+/// to the byte estimate, whose error changes sign by content type (§9a M9) and
+/// is worst on exactly the tool-heavy chats that overflow first.
+#[test]
+fn without_exact_usage_the_trigger_stays_quiet() {
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(3);
+    orch.config = auto_cfg(10, 75); // any conversation is over this window
+    orch.maybe_auto_compact(chat_id, None);
+    assert!(!orch.bg_running(BackgroundKind::Compaction));
+}
+
+/// Fork F10 again, on the new path: off means inert, and a threshold of 0 means
+/// "manual only" — both leave `/compact` working.
+#[test]
+fn the_switch_and_a_zero_threshold_both_disable_the_auto_path() {
+    for (enabled, pct) in [(false, 75), (true, 0)] {
+        let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(3);
+        let mut cfg = auto_cfg(1000, pct);
+        cfg.compaction.enabled = enabled;
+        orch.config = cfg;
+        orch.maybe_auto_compact(chat_id, usage(900, 50));
+        assert!(
+            !orch.bg_running(BackgroundKind::Compaction),
+            "enabled={enabled} pct={pct}"
+        );
+    }
+}
+
+/// One at a time: a roll already in flight is moving the boundary anyway.
+#[test]
+fn a_roll_already_running_is_not_started_twice() {
+    let (_d, mut orch, _rx, chat_id, backend) = orch_with_history(3);
+    orch.config = auto_cfg(1000, 75);
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new());
+    let before = backend.requests().len();
+    orch.maybe_auto_compact(chat_id, usage(900, 50));
+    assert_eq!(backend.requests().len(), before, "no second roll was sent");
+}
+
+/// A conversation with nothing left to fold is over the threshold on every
+/// single turn. It must not spin: no roll, and — the part that would be visible
+/// — no message.
+#[test]
+fn nothing_left_to_fold_is_silent() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(10, 75);
+    let _ = drain(&mut rx);
+    orch.maybe_auto_compact(chat_id, usage(900, 50));
+    assert!(!orch.bg_running(BackgroundKind::Compaction));
+    assert!(
+        drain(&mut rx).is_empty(),
+        "an unavoidable state must not nag every turn"
+    );
+}
+
+// ---------- stage 2: resolving the budget ----------
+
+#[test]
+fn an_explicit_setting_outranks_every_other_source() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.compaction.context_tokens = Some(4096);
+    assert_eq!(orch.context_budget(), Some(4096));
+    // …and it applies where there is nothing to discover, which is the case it
+    // exists for (a cloud model, or a server that does not report its window).
+    orch.config.engine.mode = ServerMode::OpenAi;
+    assert_eq!(orch.context_budget(), Some(4096));
+}
+
+#[test]
+fn a_managed_server_is_measured_against_its_own_c_flag() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(3072, 75);
+    assert_eq!(orch.context_budget(), Some(3072));
+}
+
+/// With no source at all the answer is `None` — "cannot say", never a guess.
+/// `/compact` needs no budget, so the user is not stuck either way.
+#[test]
+fn an_engine_that_cannot_say_leaves_the_budget_unknown() {
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(3);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.engine.mode = ServerMode::External;
+    // The recording backend keeps the trait's default answer.
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(epoch, None);
+    assert_eq!(orch.context_budget(), None);
+    orch.maybe_auto_compact(chat_id, usage(900, 50));
+    assert!(!orch.bg_running(BackgroundKind::Compaction));
+}
+
+// Spawns: reaching a roll (or asking the engine for its window) starts a task.
+#[tokio::test]
+async fn a_discovered_window_is_used_and_can_be_re_asked() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.engine.mode = ServerMode::External;
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(epoch, Some(16384));
+    assert_eq!(orch.context_budget(), Some(16384));
+    // A readiness flip or an engine change forgets it: the next engine may have
+    // a different window, and a server that could not answer before may now.
+    orch.context.invalidate();
+    assert_eq!(orch.context_budget(), None);
+}
+
+/// The epoch is what makes switching engines mid-question safe: an answer about
+/// the previous engine must not become the new one's budget.
+// Spawns: reaching a roll (or asking the engine for its window) starts a task.
+#[tokio::test]
+async fn an_answer_about_a_replaced_engine_is_dropped() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.engine.mode = ServerMode::External;
+    let stale = orch.context.epoch();
+    orch.context.invalidate();
+    orch.handle_budget_result(stale, Some(131072));
+    assert_eq!(
+        orch.context_budget(),
+        None,
+        "the late answer belonged to an engine that is gone"
+    );
+}
+
+// ---------- stage 2: how a failure is reported, by origin ----------
+
+/// S6: a silent background roll spends a strike, so three consecutive failures
+/// alert once — and it does *not* report each one, which is the difference from
+/// the manual path.
+#[test]
+fn an_automatic_failure_advances_the_streak_without_reporting() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
+    let _ = drain(&mut rx);
+    let boundary_id = chat_of(&orch, chat_id).messages[2].id;
+    orch.handle_compact_result(CompactResult {
+        chat_id,
+        boundary_id,
+        rolls: 1,
+        origin: CompactOrigin::Auto,
+        text: Err("сервер недоступен".into()),
+    });
+    assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 1);
+    let events = drain(&mut rx);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AppEvent::Error(m) if m.contains("сервер недоступен"))),
+        "a background failure is not announced on its own: {events:?}"
+    );
+}
+
+/// An empty summary is a failure too — and on the automatic path it must not be
+/// announced either, or a model that keeps returning nothing would produce a
+/// message a turn.
+#[test]
+fn an_empty_automatic_summary_is_counted_not_announced() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
+    let _ = drain(&mut rx);
+    let boundary_id = chat_of(&orch, chat_id).messages[2].id;
+    orch.handle_compact_result(CompactResult {
+        chat_id,
+        boundary_id,
+        rolls: 1,
+        origin: CompactOrigin::Auto,
+        text: Ok("   ".into()),
+    });
+    assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 1);
+    assert!(
+        !drain(&mut rx)
+            .iter()
+            .any(|e| matches!(e, AppEvent::Error(_))),
+        "no error is shown for a silent run"
+    );
+    assert!(chat_of(&orch, chat_id).compaction.is_none());
+}
+
+// ---------- stage 2: what the user is told when the window is already full ----------
+
+/// An engine that always fails with the body llama-server really sends when a
+/// prompt no longer fits (§9a M3 — HTTP 400 before the stream starts).
+struct OverflowingBackend;
+
+const OVERFLOW_BODY: &str = "engine returned status 400 Bad Request: \
+{\"error\":{\"code\":400,\"message\":\"the request exceeds the available context size\",\
+\"type\":\"exceed_context_size_error\",\"n_prompt_tokens\":32706,\"n_ctx\":16384}}";
+
+#[async_trait::async_trait]
+impl EngineBackend for OverflowingBackend {
+    async fn chat_stream(
+        &self,
+        _req: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> anyhow::Result<ChatStream> {
+        anyhow::bail!("{OVERFLOW_BODY}")
+    }
+}
+
+/// Drives one failing turn and returns what the user was told.
+async fn overflow_message(compaction_enabled: bool) -> String {
+    let mut cfg = compact_cfg(1);
+    cfg.compaction.enabled = compaction_enabled;
+    let backend: Arc<dyn EngineBackend> = Arc::new(OverflowingBackend);
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Error(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    match ev {
+        AppEvent::Error(m) => m,
+        _ => unreachable!(),
+    }
+}
+
+/// S4. The message must say what to do — and *which* thing to do depends on the
+/// switch, because naming `/compact` while compression is off would send the
+/// user to a command that refuses. That dead end is the defect class this
+/// project has closed three times.
+#[tokio::test]
+async fn a_full_window_is_explained_and_never_points_at_a_dead_end() {
+    let on = overflow_message(true).await;
+    assert!(
+        on.contains("/compact"),
+        "with compression on, name the command that fixes it: {on}"
+    );
+
+    let off = overflow_message(false).await;
+    assert!(
+        !off.contains("/compact"),
+        "with compression off, /compact would refuse — do not send the user there: {off}"
+    );
+    assert_ne!(on, off, "the two situations need different advice");
+
+    // Whatever the advice, the server's own words survive: the client's rule of
+    // never swallowing an error body is what made this diagnosable in the first
+    // place.
+    for msg in [&on, &off] {
+        assert!(
+            msg.contains("n_ctx") && msg.contains("16384"),
+            "the raw reason is still there: {msg}"
+        );
+    }
+}
+
+/// An ordinary failure keeps the ordinary message: the hint must not attach
+/// itself to every error that happens to mention a number.
+#[tokio::test]
+async fn an_unrelated_failure_is_not_dressed_up_as_an_overflow() {
+    struct Broken;
+    #[async_trait::async_trait]
+    impl EngineBackend for Broken {
+        async fn chat_stream(
+            &self,
+            _req: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> anyhow::Result<ChatStream> {
+            anyhow::bail!("connection refused (os error 10061)")
+        }
+    }
+    let backend: Arc<dyn EngineBackend> = Arc::new(Broken);
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), compact_cfg(1));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Error(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    match ev {
+        AppEvent::Error(m) => {
+            assert!(!m.contains("/compact"), "no compaction advice here: {m}");
+            assert!(m.contains("connection refused"), "{m}");
+        }
+        _ => unreachable!(),
+    }
 }
