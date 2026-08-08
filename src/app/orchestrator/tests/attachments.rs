@@ -533,6 +533,7 @@ async fn a_tool_produced_attachment_is_persisted_and_replaces_the_previous_one()
     let gen_id = Uuid::new_v4();
     orch.gen_state.begin(gen_id, CancellationToken::new());
     orch.handle_done(super::super::generation::GenResult {
+        usage: None,
         id: gen_id,
         chat_id,
         messages: vec![Message::assistant("готово")],
@@ -571,6 +572,7 @@ async fn a_tool_produced_attachment_is_persisted_and_replaces_the_previous_one()
     let gen_id = Uuid::new_v4();
     orch.gen_state.begin(gen_id, CancellationToken::new());
     orch.handle_done(super::super::generation::GenResult {
+        usage: None,
         id: gen_id,
         chat_id,
         messages: vec![],

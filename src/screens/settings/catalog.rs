@@ -1019,6 +1019,18 @@ impl SettingsScreen {
                     self.config.compaction.tail_tokens,
                 )
                 .describe(loc.t("ui.settings.desc.compact_tail")),
+                num_field(
+                    FieldId::CompactThreshold,
+                    loc.t("ui.settings.field.compact_threshold"),
+                    self.config.compaction.threshold_pct as usize,
+                )
+                .describe(loc.t("ui.settings.desc.compact_threshold")),
+                num_field(
+                    FieldId::CompactContext,
+                    loc.t("ui.settings.field.compact_context"),
+                    self.config.compaction.context_tokens.unwrap_or(0),
+                )
+                .describe(loc.t("ui.settings.desc.compact_context")),
             ],
         );
         rows.extend(grouped(

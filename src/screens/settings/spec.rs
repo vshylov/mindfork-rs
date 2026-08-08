@@ -493,6 +493,21 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.compaction.tail_tokens = v;
             }
         }),
+        CompactThreshold => int(|c, t| {
+            // Clamped rather than rejected: above 100 the trigger could never
+            // fire, which reads as "the feature is broken" rather than as a
+            // refused entry. `0` legitimately means "manual only".
+            if let Ok(v) = t.parse::<u32>() {
+                c.compaction.threshold_pct = v.min(100) as u8;
+            }
+        }),
+        CompactContext => int(|c, t| {
+            // `0` is how the UI spells "resolve it yourself" — the field is a
+            // number, and an empty entry already means "keep the previous value".
+            if let Ok(v) = t.parse::<usize>() {
+                c.compaction.context_tokens = (v > 0).then_some(v);
+            }
+        }),
         IDicts => text(|c, t| {
             c.interface.selected_dictionaries = t
                 .split(',')

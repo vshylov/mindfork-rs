@@ -1983,6 +1983,7 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
             // A small verbatim tail, so a handful of exchanges is enough to push
             // the planted fact out of the part that is still sent literally.
             tail_tokens: 120,
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -2077,4 +2078,120 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
         after.contains(CODE),
         "the fact is now reachable only through the summary and must survive it: {after}"
     );
+}
+
+/// What only a real server can answer: that `/props` exists on the stack we
+/// actually run against, and that our client reads the field it means to.
+///
+/// The probe measured this with `curl` (§9a M1); this is the same question
+/// through [`EngineBackend::context_budget`], which is what the automatic
+/// trigger depends on. A stub cannot cover it — it would only prove our own
+/// fixture parses.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn props_reports_the_context_window_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let budget = backend.context_budget().await;
+    eprintln!("live context window: {budget:?}");
+    let n = budget.expect(
+        "a live llama-server must report its window at /props — without it the \
+         automatic trigger has no budget for an external server",
+    );
+    assert!(n >= 512, "an implausible window: {n}");
+}
+
+/// Stage 2 end to end: nobody types `/compact`, and the conversation is folded
+/// anyway once it approaches the window.
+///
+/// Deliberately in **external** mode, so the budget can only come from one
+/// place: the engine's own `/props`. In managed mode the answer would be read
+/// straight from `-c` in the config and the discovery path — the half that
+/// needs a server at all — would not run.
+///
+/// The threshold is set far below the default 75% for time's sake: 75% of a real
+/// 16k window would take a very long conversation to reach, and what is under
+/// test is the trigger and the budget, not the arithmetic of a percentage.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn auto_compaction_fires_without_the_command_live() {
+    use crate::shared::config::{CompactionSettings, EngineSettings, ServerMode};
+    let config = AppConfig {
+        compaction: CompactionSettings {
+            enabled: true,
+            summary_words: 120,
+            tail_tokens: 120,
+            threshold_pct: 3,
+            // Nothing explicit: the window must be discovered, or this smoke
+            // silently stops testing what it is named after.
+            context_tokens: None,
+        },
+        engine: EngineSettings {
+            mode: ServerMode::External,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // The first turn is also what kicks the budget question off — the answer
+    // arrives in the background, so an early turn legitimately does nothing.
+    // That self-healing is part of what is being checked.
+    let mut compacted = None;
+    for topic in [
+        "В двух предложениях: зачем нужны индексы в базах данных?",
+        "В двух предложениях: чем кэш отличается от буфера?",
+        "В двух предложениях: что такое идемпотентность запроса?",
+        "В двух предложениях: зачем нужны миграции схемы?",
+    ] {
+        let (reply, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
+        eprintln!("reply: {}", reply.chars().take(60).collect::<String>());
+        // A roll is a background task, so it lands somewhere after the turn it
+        // was triggered by — draining what has arrived so far is enough.
+        while let Ok(e) = evt_rx.try_recv() {
+            if let AppEvent::Compacted {
+                summary, folded, ..
+            } = e
+            {
+                compacted = Some((summary, folded));
+            }
+        }
+        if compacted.is_some() {
+            break;
+        }
+    }
+    if compacted.is_none() {
+        // The last turn may have triggered a roll that has not landed yet.
+        if let Ok(Some(AppEvent::Compacted {
+            summary, folded, ..
+        })) = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Compacted { .. })),
+        )
+        .await
+        {
+            compacted = Some((summary, folded));
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let (summary, folded) = compacted.expect(
+        "the conversation crossed the threshold and nothing folded it — either \
+         the window was never discovered or the trigger did not fire",
+    );
+    eprintln!(
+        "auto-folded {folded} messages into {} chars:\n{summary}",
+        summary.len()
+    );
+    assert!(folded > 0, "a compaction that folded nothing");
+    assert!(!summary.trim().is_empty(), "an empty summary is a failure");
 }

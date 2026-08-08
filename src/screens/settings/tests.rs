@@ -2308,7 +2308,9 @@ fn memory_section_opens_with_the_context_group() {
         vec![
             FieldId::CompactEnabled,
             FieldId::CompactWords,
-            FieldId::CompactTail
+            FieldId::CompactTail,
+            FieldId::CompactThreshold,
+            FieldId::CompactContext
         ]
     );
     // …and it comes before the long-term memory groups.
@@ -2318,7 +2320,7 @@ fn memory_section_opens_with_the_context_group() {
         .unwrap();
     let last_ctx = rows
         .iter()
-        .rposition(|f| f.id == FieldId::CompactTail)
+        .rposition(|f| f.id == FieldId::CompactContext)
         .unwrap();
     assert!(last_ctx < rag_at, "Context sits ahead of the RAG group");
 }
@@ -2373,6 +2375,32 @@ fn compaction_numeric_fields_commit_and_validate() {
     assert_eq!(
         edit(FieldId::CompactTail, "4096").compaction.tail_tokens,
         4096
+    );
+    assert_eq!(
+        edit(FieldId::CompactThreshold, "60")
+            .compaction
+            .threshold_pct,
+        60
+    );
+    // Clamped rather than refused: a threshold above 100 could never fire, which
+    // reads as "the feature is broken" instead of as a rejected entry.
+    assert_eq!(
+        edit(FieldId::CompactThreshold, "150")
+            .compaction
+            .threshold_pct,
+        100
+    );
+    // 0 is how a numeric field spells "work it out yourself" — an empty entry
+    // already means "keep the previous value", so it cannot mean this too.
+    assert_eq!(
+        edit(FieldId::CompactContext, "0").compaction.context_tokens,
+        None
+    );
+    assert_eq!(
+        edit(FieldId::CompactContext, "32768")
+            .compaction
+            .context_tokens,
+        Some(32768)
     );
 }
 

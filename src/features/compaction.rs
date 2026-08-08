@@ -152,6 +152,36 @@ pub fn plan_cut(messages: &[Message], tail_tokens: usize) -> Option<usize> {
     (boundary > 0).then_some(boundary)
 }
 
+/// Markers of "the prompt did not fit the context window" in a provider's error
+/// text, lowercased.
+///
+/// The client deliberately does not swallow an error body — it puts the first 500
+/// characters into the error text — so this reads what the server actually said.
+/// Best-effort by construction: a marker that stops matching costs the *hint*,
+/// never correctness, and the generic message still carries the raw body.
+const OVERFLOW_MARKERS: &[&str] = &[
+    // llama.cpp: `{"error":{"type":"exceed_context_size_error",…,"n_ctx":M}}`
+    // (measured, §9a M3 — it arrives as HTTP 400 before the SSE stream starts).
+    "exceed_context_size_error",
+    // OpenAI, both the modern code and the older prose.
+    "context_length_exceeded",
+    "maximum context length",
+    // Anthropic: `prompt is too long: N tokens > M maximum`.
+    "prompt is too long",
+    // Gemini: "The input token count (N) exceeds the maximum number of tokens…".
+    "exceeds the maximum number of tokens",
+];
+
+/// Did this generation fail because the conversation no longer fits the model's
+/// context window?
+///
+/// A `true` only changes which message the user is shown — one naming the way out
+/// instead of a generic failure wrapped around raw JSON. Spec §6.7.
+pub fn is_context_overflow(err: &str) -> bool {
+    let err = err.to_lowercase();
+    OVERFLOW_MARKERS.iter().any(|m| err.contains(m))
+}
+
 /// The summarizer's system message (scaffold language, axis A). `words` is the
 /// stated length limit: the probe (research §9a) measured that a bare
 /// `max_tokens` cap truncates mid-sentence instead of making the model
@@ -463,5 +493,45 @@ mod tests {
     fn a_placeholder_inside_the_digest_is_not_re_expanded() {
         let roll = roll_user_message("", "the user wrote {words} literally", ru(), 250);
         assert!(roll.contains("{words} literally"), "{roll}");
+    }
+
+    // ---- the overflow detector ------------------------------------------
+
+    /// One real body per provider, in the shape the client hands over: the
+    /// status line it prepends, then the server's own words.
+    #[test]
+    fn every_provider_overflow_is_recognized() {
+        let bodies = [
+            // llama.cpp — measured (§9a M3), the primary audience's failure.
+            "engine returned status 400 Bad Request: {\"error\":{\"code\":400,\
+             \"type\":\"exceed_context_size_error\",\"n_prompt_tokens\":32706,\"n_ctx\":16384}}",
+            "engine returned status 400: {\"error\":{\"code\":\"context_length_exceeded\"}}",
+            "This model's maximum context length is 128000 tokens",
+            "invalid_request_error: prompt is too long: 210000 tokens > 200000 maximum",
+            "INVALID_ARGUMENT: The input token count (1200000) exceeds the maximum \
+             number of tokens allowed (1048576)",
+        ];
+        for body in bodies {
+            assert!(is_context_overflow(body), "not recognized: {body}");
+            // Providers are inconsistent about case; matching must not depend on it.
+            assert!(is_context_overflow(&body.to_uppercase()), "case: {body}");
+        }
+    }
+
+    /// The detector only changes *which* advice is shown, so a false positive
+    /// would send someone chasing a compaction that cannot help. An ordinary
+    /// failure — including one that mentions tokens or a context — stays generic.
+    #[test]
+    fn ordinary_failures_are_not_mistaken_for_an_overflow() {
+        for body in [
+            "connection refused (os error 10061)",
+            "engine returned status 503: server is still loading the model",
+            "engine returned status 401: invalid api key",
+            "engine returned status 400: unknown field `top_k`",
+            // Mentions both words, means neither.
+            "the tool returned 4096 tokens of context",
+        ] {
+            assert!(!is_context_overflow(body), "false positive: {body}");
+        }
     }
 }

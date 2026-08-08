@@ -39,6 +39,31 @@ pub(super) struct GenResult {
     /// the previous (incorrect) version + its tool message. Kept in `Chat.deleted`
     /// for manual recovery; not part of inference/the feed. See spec §9.3.
     pub(super) deleted: Vec<Message>,
+    /// What the **last** round of this turn actually cost, as the server counted
+    /// it. The auto-compaction trigger reads it (spec §6.7); `None` when the
+    /// provider reported no `usage`, and then the trigger stays quiet rather than
+    /// guessing (sub-decision S2).
+    pub(super) usage: Option<TurnUsage>,
+}
+
+/// The exact size of one round, as reported by the server's `usage`.
+///
+/// The last round of a turn is the largest — within a turn the history only
+/// grows — and the *next* turn's prompt is close to `prompt + completion` plus
+/// whatever the user types, which is what makes this a usable trigger input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TurnUsage {
+    pub(super) prompt_tokens: u32,
+    pub(super) completion_tokens: u64,
+}
+
+impl TurnUsage {
+    /// A lower bound on the next turn's prompt: this turn's prompt plus what was
+    /// generated on top of it. The user's next message and any injection deltas
+    /// come on top — which the threshold's headroom is there to absorb.
+    pub(super) fn next_prompt_estimate(self) -> u64 {
+        self.prompt_tokens as u64 + self.completion_tokens
+    }
 }
 
 impl Orchestrator {
@@ -331,6 +356,7 @@ impl Orchestrator {
             engine_mode: self.config.engine.mode,
             model_name: self.config.engine.active_model_name(),
             ui_loc: self.ui_locale(),
+            compaction_enabled: self.config.compaction.enabled,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -401,6 +427,10 @@ impl Orchestrator {
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
+        // …and maybe the conversation is approaching the model's context window
+        // (spec §6.7). Last of the four deliberately: it reads what this turn
+        // actually cost, which is the freshest measurement available.
+        self.maybe_auto_compact(res.chat_id, res.usage);
     }
 
     /// Routes the user's answer into the turn that asked (spec §9.8, fork F8).
@@ -464,6 +494,11 @@ struct GenSpawn {
     /// → task; everything else (`title_tx`, `imp_done`, the background-task done
     /// channel) runs the other way. See docs/history/tool-confirmation.md §3, fork F8.
     confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
+    /// `compaction.enabled` — read only to pick *which* advice a context-overflow
+    /// error gives (spec §6.7): with compression on it names `/compact`, with it
+    /// off it names the setting. Pointing at a command that would refuse is the
+    /// dead end this project has closed three times.
+    compaction_enabled: bool,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
@@ -564,6 +599,13 @@ struct RoundOutput {
     /// the count of streamed deltas (an approximation — for llama-server one delta ≈
     /// one token).
     tokens: u64,
+    /// The **exact** prompt size the server reported for this round, from `usage`.
+    /// `None` when the provider reported none — and then it stays `None` rather
+    /// than falling back to the byte estimate: auto-compaction reads this, and
+    /// the estimate's error changes sign by content type (§9a M9 of the
+    /// research), i.e. it is unsafe precisely on the tool-heavy chats that
+    /// overflow first. See sub-decision S2.
+    prompt_tokens: Option<u32>,
     /// Reasoning tokens ("thoughts") for the round from `usage` (`0` — the provider
     /// doesn't separate them).
     reasoning_tokens: u32,
@@ -593,6 +635,7 @@ fn spawn_generation(spawn: GenSpawn) {
         engine_mode,
         model_name,
         ui_loc,
+        compaction_enabled,
         evt_tx,
         done_tx,
     } = spawn;
@@ -655,6 +698,8 @@ fn spawn_generation(spawn: GenSpawn) {
             allowed_for_turn: HashSet::new(),
             total_tokens: 0,
             total_reasoning: 0,
+            last_usage: None,
+            compaction_enabled,
             pending_new_bubble: false,
         };
         let reason = turn.run().await;
@@ -669,6 +714,7 @@ fn spawn_generation(spawn: GenSpawn) {
             messages: turn.messages,
             effects: turn.effects,
             deleted: turn.deleted,
+            usage: turn.last_usage,
         });
     });
 }
@@ -710,6 +756,12 @@ struct TurnLoop {
     total_tokens: u64,
     /// Cumulative reasoning tokens ("thoughts") across rounds.
     total_reasoning: u32,
+    /// The exact size of the most recent round, when the server reported one.
+    /// Written by [`Self::stream`], so neither call site can forget it.
+    last_usage: Option<TurnUsage>,
+    /// `compaction.enabled` — picks which advice a context-overflow error gives
+    /// (see [`GenSpawn::compaction_enabled`]).
+    compaction_enabled: bool,
     /// The next domain assistant message starts a new bubble (after
     /// `send_followup_message`). See spec §9.3.
     pending_new_bubble: bool,
@@ -725,19 +777,37 @@ impl TurnLoop {
     /// The agentic loop itself: stream → on `finish_reason=ToolCalls` execute
     /// tools → a new request, up to `max_rounds`. Returns the turn's finish
     /// reason.
+    /// One round through [`stream_round`], recording what it cost.
+    ///
+    /// Both call sites go through here so the usage cannot be recorded at one of
+    /// them and forgotten at the other — the round-limit branch runs its own
+    /// final round, and it is the one whose size the next turn actually starts
+    /// from.
+    async fn stream(&mut self) -> RoundOutput {
+        let out = stream_round(
+            &self.backend,
+            self.request.clone(),
+            &self.cancel,
+            self.id,
+            &self.evt_tx,
+            self.total_tokens,
+            self.total_reasoning,
+            self.ui_loc,
+            self.compaction_enabled,
+        )
+        .await;
+        if let Some(prompt_tokens) = out.prompt_tokens {
+            self.last_usage = Some(TurnUsage {
+                prompt_tokens,
+                completion_tokens: out.tokens,
+            });
+        }
+        out
+    }
+
     async fn run(&mut self) -> FinishReason {
         loop {
-            let out = stream_round(
-                &self.backend,
-                self.request.clone(),
-                &self.cancel,
-                self.id,
-                &self.evt_tx,
-                self.total_tokens,
-                self.total_reasoning,
-                self.ui_loc,
-            )
-            .await;
+            let out = self.stream().await;
             self.total_tokens += out.tokens;
             self.total_reasoning += out.reasoning_tokens;
 
@@ -781,17 +851,7 @@ impl TurnLoop {
             self.request.tools.clear();
             // The final round's token counter is emitted by `stream_round` itself
             // (from `base = total_*`); after that the turn ends, no need to accumulate.
-            let final_out = stream_round(
-                &self.backend,
-                self.request.clone(),
-                &self.cancel,
-                self.id,
-                &self.evt_tx,
-                self.total_tokens,
-                self.total_reasoning,
-                self.ui_loc,
-            )
-            .await;
+            let final_out = self.stream().await;
             if let Some(mut m) =
                 finalize_message(&final_out, &self.ctx, self.engine_mode, &self.model_name)
             {
@@ -1050,6 +1110,7 @@ async fn stream_round(
     base_tokens: u64,
     base_reasoning: u32,
     ui_loc: &'static crate::shared::i18n::Locale,
+    compaction_enabled: bool,
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
@@ -1061,6 +1122,9 @@ async fn stream_round(
     // value from the server's `usage` replaces the approximation.
     let mut streamed: u64 = 0;
     let mut usage_tokens: Option<u64> = None;
+    // The exact prompt size, when the server reports one. Deliberately without an
+    // estimate fallback — see `RoundOutput::prompt_tokens`.
+    let mut usage_prompt: Option<u32> = None;
     // The round's reasoning tokens (from `usage`; `0` — the provider doesn't separate them).
     let mut round_reasoning: u32 = 0;
 
@@ -1117,6 +1181,7 @@ async fn stream_round(
                         // and the conversation estimate. Reasoning tokens ("thoughts") —
                         // cumulative across rounds (base + current).
                         usage_tokens = Some(u.completion_tokens as u64);
+                        usage_prompt = Some(u.prompt_tokens);
                         round_reasoning = u.reasoning_tokens;
                         let _ = evt_tx.send(AppEvent::TokenUsage {
                             generation_id: id,
@@ -1134,9 +1199,21 @@ async fn stream_round(
             }
         }
         Err(err) => {
-            let _ = evt_tx.send(AppEvent::Error(
-                ui_loc.tf("ui.err.generation_failed", &[("err", &err.to_string())]),
-            ));
+            let err = err.to_string();
+            // The conversation outgrew the window: say what to do about it rather
+            // than handing back raw provider JSON in a generic wrapper. Which
+            // advice depends on the switch — naming `/compact` while compression
+            // is off would send the user to a command that refuses (spec §6.7,
+            // sub-decision S4).
+            let key = match (
+                crate::features::compaction::is_context_overflow(&err),
+                compaction_enabled,
+            ) {
+                (true, true) => "ui.err.context_overflow",
+                (true, false) => "ui.err.context_overflow_off",
+                (false, _) => "ui.err.generation_failed",
+            };
+            let _ = evt_tx.send(AppEvent::Error(ui_loc.tf(key, &[("err", &err)])));
             reason = FinishReason::Error;
         }
     }
@@ -1154,6 +1231,7 @@ async fn stream_round(
         calls: acc.finish(),
         reason,
         tokens: usage_tokens.unwrap_or(streamed),
+        prompt_tokens: usage_prompt,
         reasoning_tokens: round_reasoning,
     }
 }

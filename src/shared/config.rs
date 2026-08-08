@@ -767,6 +767,12 @@ pub const DEFAULT_COMPACTION_SUMMARY_WORDS: usize = 250;
 /// Everything before the nearest exchange boundary older than this is what a
 /// compaction folds into the summary.
 pub const DEFAULT_COMPACTION_TAIL_TOKENS: usize = 2048;
+/// Default share of the context window at which a compaction starts, in percent.
+/// Deliberately well below the wall: the roll runs in the background (~10-12 s on
+/// the reference stack), so the remaining quarter is what lets the user keep
+/// typing while it works — and it doubles as the reply reserve, which is why
+/// there is no second knob for that (sub-decision S5).
+pub const DEFAULT_COMPACTION_THRESHOLD_PCT: u8 = 75;
 
 /// Conversation history compression (a rolling summary of the older part of a
 /// chat). See docs/research/history-compression.md and spec §6.7.
@@ -783,6 +789,17 @@ pub struct CompactionSettings {
     pub summary_words: usize,
     /// How much of the conversation tail stays verbatim (estimated tokens).
     pub tail_tokens: usize,
+    /// Share of the context window at which a compaction starts automatically,
+    /// in percent. `0` disables the automatic trigger while leaving `/compact`
+    /// available.
+    pub threshold_pct: u8,
+    /// The context window to measure against, in tokens, when the engine cannot
+    /// be asked. `None`/`0` — resolve it instead: `managed.context_size` for a
+    /// managed server, else the engine's own answer
+    /// ([`EngineBackend::context_budget`](crate::shared::api::EngineBackend::context_budget)
+    /// — llama.cpp's `/props`). With no source at all the automatic trigger stays
+    /// inactive; `/compact` still works, it needs no budget.
+    pub context_tokens: Option<usize>,
 }
 
 impl Default for CompactionSettings {
@@ -791,6 +808,8 @@ impl Default for CompactionSettings {
             enabled: DEFAULT_COMPACTION_ENABLED,
             summary_words: DEFAULT_COMPACTION_SUMMARY_WORDS,
             tail_tokens: DEFAULT_COMPACTION_TAIL_TOKENS,
+            threshold_pct: DEFAULT_COMPACTION_THRESHOLD_PCT,
+            context_tokens: None,
         }
     }
 }
@@ -1551,6 +1570,15 @@ mod tests {
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
         // Confirmation of dangerous tool calls is opt-in: off until turned on.
         assert!(!c.tools.confirm_dangerous);
+        // History compression: on where it can act at all (fork F10), and the
+        // stage-2 fields are additive — a `settings.json` written before they
+        // existed reads them as defaults, no migration (ADR 0006 F12).
+        assert!(c.compaction.enabled);
+        assert_eq!(c.compaction.threshold_pct, DEFAULT_COMPACTION_THRESHOLD_PCT);
+        // No explicit window: it is resolved (a managed server's `-c`, else the
+        // engine's own answer), and where nothing can say, the automatic trigger
+        // stays inactive rather than guessing.
+        assert_eq!(c.compaction.context_tokens, None);
         // File tools are off by default (like Python).
         assert!(!c.tools.fs_enabled);
         assert_eq!(c.tools.fs_root, None);
