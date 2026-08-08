@@ -13223,6 +13223,80 @@ three findings are invisible from the workflow's own status):
   covers fixture data in code position, not prose; the comment was reworded to
   describe the index instead of quoting it.
 
+### Post-M9: self-model injection — per-section budgets (done)
+
+- **Found while measuring for the prompt-caching research**
+  ([prompt-caching.md §2.1](docs/research/prompt-caching.md)), fixed as its own
+  task; plan and decisions D1–D5 —
+  [self-model-injection-budget.md](docs/history/self-model-injection-budget.md)
+  (user, 2026-08-08). Behaviour: spec §17.4. Branch
+  `fix/self-model-injection-budget`.
+- **The defect**: `render_for_prompt` assembles description → goals →
+  interlocutor → observations, and **only the description had a budget**
+  (`max_chars / 2`, from summary-as-snapshot stage 3). Everything after it was
+  unbounded and the block was cut at `prompt_cap` — so it was not a budget but a
+  queue: whoever renders first eats. Measured on the real dev profile against the
+  default 1200: description 1349, goals 855, traits 1893, interests 1039,
+  dynamic 223 — **5359 characters of content**, of which the model saw the
+  description (600) and the goals, cut mid-item. **Nothing else.** So
+  `update_user_model` — a tool with its own semantic gate and its own "scar" on
+  replacement — wrote into a structure the model never passively saw, and
+  `injection_recent` queried the embedder every turn for a relevance selection
+  that truncation then discarded, while the injected text told the model that
+  observations "surface by relevance". The code comment stated the intent
+  correctly ("so a bloated summary doesn't crowd goals/interlocutor/observations
+  out"); it had only ever been implemented for the description.
+- **Not data loss**: `render_full` (what `get_self_model` returns and `F3` shows)
+  is untruncated, so the model could always read the whole thing on request. The
+  defect is in what is *passively* injected — which is the mechanism the whole
+  self-model track calls "the main mechanism of value".
+- **Fix — fixed shares with carry-forward** (D1/D2): description 40%, goals 20%,
+  interlocutor 20%, observations 20%; each section's allowance is its share plus
+  whatever earlier sections left unused. The load-bearing property is that a
+  share is a **ceiling**: a bloated early section cannot reach past it, which
+  gives later sections a floor **without a second mechanism** — the "reserve a
+  minimum for observations" fork dissolved once the shares were ceilings rather
+  than targets.
+- **Lists lose whole items and say how many** (D3/D4): a trait cut in half reads
+  as a *different* trait, and the count ("… +N more") tells the model it is
+  seeing a part, with the full list one `get_self_model` away. One deliberate
+  degradation: when not even one item fits, the section falls back to a character
+  cut of the first item rather than disappearing — an absent section reads as
+  "no traits", which is a stronger and wronger claim than a truncated one.
+- **`prompt_cap` default 1200 → 4000** (D5). **An existing `settings.json` keeps
+  its own value** — the field is always serialized, so this only reaches fresh
+  installs; a migration that rewrote it was deliberately not done, since it would
+  also overwrite a deliberately-chosen 1200 and has no correctness argument
+  behind it (ADR 0006 treats a value rewrite as a real migration). Recorded in
+  the constant's doc comment, the spec and the CHANGELOG rather than left for
+  someone to discover.
+- **Tests**: the direct regression (all four sections present on a model shaped
+  like the measured profile — at the new default **and** at the old 1200, where
+  the fix also has to degrade sensibly), carry-forward (a short description
+  leaves the goals more room), whole-item truncation with the count, and the
+  oversized-single-item fallback. **1952 unit tests green** (+5), 81 `#[ignore]`,
+  clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **Mutation-tested**, and one of the four mis-fired first: restoring the old
+  "only the summary is bounded" fails 14 tests, cutting items instead of dropping
+  them fails its own, dropping the "+N more" marker fails its own — but the
+  carry-forward mutation initially **survived**, because I had removed the carry
+  from the *interlocutor* section while the test measures *goals*. Retargeted, it
+  fails exactly that test. A reminder that a surviving mutation is as likely to
+  indict the mutation as the test.
+- **One test's premise legitimately changed**: `render_truncates_to_cap` asserted
+  the block is *exactly* `prompt_cap` long, which was true when the block-wide cut
+  was the only limit. Now the section budget cuts first, so the block comes out
+  shorter; the assertion moved to the invariant that actually matters (never
+  exceeds the cap, and the description was truncated).
+- **Verified on the real profile**, the same data that exposed the defect: at
+  cap 1200 and at 4000, all four sections now render (before: two). **A live model
+  run is not required** (AGENTS.md §3) — this is a pure rendering function in
+  `entities`, no engine, memory-write or tool path is touched, and the behaviour
+  is fully determined by its inputs.
+- **Left alone deliberately**: what the model *writes* (summary target, trait
+  counts) is a different question, already served by the summary size gate; and
+  the wasted embedder call disappears on its own now that observations render.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** in the feed — "thoughts" (`Ctrl+T`) and tool
   calls (`Ctrl+O`) collapse **for the whole feed at once**, with the state stored

@@ -830,7 +830,15 @@ pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
 /// Default number of fresh insights to inject into the system prompt.
 pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
 /// Default character ceiling for rendering the self-model into the system prompt.
-pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 1200;
+///
+/// Raised 1200 → 4000 (docs/history/self-model-injection-budget.md, decision D5): measured
+/// on a real profile, the four sections wanted 5359 characters, so at 1200 the
+/// description and goals took everything and the interlocutor model and the
+/// observations were never injected at all. The per-section budgets fix the
+/// starvation; this gives them room to be worth having. **An existing
+/// `settings.json` pins its own value** — the field is always serialized, so this
+/// only affects fresh installs.
+pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 4000;
 /// Whether to inject a persona-neutral "self-model maintenance protocol" by default.
 pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
 /// Default number of closed goals to keep in the structure (the oldest beyond this

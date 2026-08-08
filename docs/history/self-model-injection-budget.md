@@ -1,7 +1,7 @@
 # Self-model injection: per-section budgets
 
 > Design plan for one PR. Decisions **D1–D5 confirmed by the user 2026-08-08**.
-> Found while measuring for [prompt-caching.md §2.1](research/prompt-caching.md).
+> Found while measuring for [prompt-caching.md §2.1](../research/prompt-caching.md).
 > Behaviour: spec §9.4 (self-model), the injected block.
 
 ## 1. The defect

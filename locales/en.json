@@ -95,6 +95,7 @@
   "selfmodel.render.user.interests": " interests: ",
   "selfmodel.render.user.relationship": " relationship: ",
   "selfmodel.render.observations_recent": "Recent observations:",
+  "selfmodel.render.more": " … {n} more",
   "selfmodel.render.observations": "Observations ({n}):",
   "selfmodel.render.impersonation.intro": "Known about the person you're writing on behalf of:",
   "selfmodel.render.impersonation.traits": " traits — ",
