@@ -162,7 +162,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-09, version 0.9.4)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **1952 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **1956 unit tests
 green, 81 `#[ignore]` live smokes**. The most recent tracks: the **history
 compression** track (a rolling summary keeps a long chat inside the model's
 context window — `/compact`, an automatic trigger, and read-back tools for the

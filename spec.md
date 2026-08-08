@@ -1877,6 +1877,9 @@ tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name,
 description, author, version, links — the website `mindfork.io`, the repository, the crate),
 **"Hotkeys"** (this table), **"Commands"** (input-box commands `/rag …`/
 `/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
+**"Disclaimer"** (`DISCLAIMER.md` — what the author does not answer for when the model that
+writes every word on screen was chosen and downloaded by the user: generated output,
+third-party models and providers, the tools a model can invoke, cloud egress),
 **"Components"** (third-party dependencies — **name, version, license**; the list is checked
 against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests).
 Opens on the "Hotkeys" tab (`F1`/`?` — the familiar help key), and on
@@ -1884,8 +1887,16 @@ reopening — on the **last-selected** tab (remembered). Navigation:
 `Tab`/`←→` — switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` — scroll the active tab, `Esc`
 (or `F1`/`?` again) — close, `Ctrl+Q`/`F10` — quit. The logo is drawn only
 when there's enough height/width (a hard degradation, docs/branding.md §5); the license
-text wraps by word to the dialog's width. The "License"/"Components" tabs'
+text wraps by word to the dialog's width, and the disclaimer — markdown at the source —
+goes through our own renderer (ADR 0003), with wrapped list items hung under their marker.
+The "License"/"Disclaimer"/"Components" tabs'
 data is language-neutral and comes straight from `shared/credits.rs`, bypassing the locale bundles.
+The **disclaimer is a tab of its own, not a tail on "License"**: the `LICENSE` file must stay
+byte-identical to the canonical MIT text or the `MIT` SPDX identifier we publish stops being
+truthful and license scanners start reporting "Other" (a `shared::credits` gate test holds
+that line). The strip's labels are width-budgeted — a `screens::chat` gate test checks that
+it fits the dialog in **every** bundled locale, since the tab that overflows is the rightmost
+one and would be silently truncated for one language only.
 The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME`, not the
 package `mindfork-rs`); the same text is set as the **terminal window's title**
 at startup (`SetTitle`, Windows).

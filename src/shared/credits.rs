@@ -24,7 +24,22 @@ pub const CRATE_URL: &str = "https://crates.io/crates/mindfork";
 
 /// App license text (MIT) — from the `LICENSE` file at the repository root.
 /// Legal text in English, language-neutral — not localized.
+///
+/// The file is kept **byte-identical to the canonical MIT text**: the SPDX
+/// identifier `MIT` in `Cargo.toml`, `packaging/nfpm.yaml` and the README badge
+/// is only truthful while it is, and license scanners (GitHub's `licensee`,
+/// distribution audits) match it by similarity — extra prose in this file makes
+/// them report "Other". Everything the project wants to say *around* the
+/// license lives in [`DISCLAIMER_TEXT`].
 pub const LICENSE_TEXT: &str = include_str!("../../LICENSE");
+
+/// The disclaimer covering model output, third-party models/providers and the
+/// software's automated actions — from `DISCLAIMER.md` at the repository root.
+/// A supplement to the MIT license, deliberately a **separate file** (see
+/// [`LICENSE_TEXT`]); markdown, rendered by our own renderer (ADR 0003) on the
+/// help dialog's "Disclaimer" tab. Legal text in English — not localized, same
+/// as the license.
+pub const DISCLAIMER_TEXT: &str = include_str!("../../DISCLAIMER.md");
 
 /// Third-party components — **direct** runtime dependencies (`[dependencies]` +
 /// `[target.'cfg(windows)'.dependencies]`): `(name, version, SPDX license)`. Dev/
@@ -273,5 +288,39 @@ mod tests {
     fn license_text_is_embedded_mit() {
         assert!(LICENSE_TEXT.contains("MIT License"));
         assert!(LICENSE_TEXT.contains(AUTHOR), "LICENSE copyright ≠ AUTHOR");
+    }
+
+    /// `LICENSE` carries the MIT text and **nothing else**. The SPDX identifier
+    /// we publish (`Cargo.toml`, `packaging/nfpm.yaml`, the README badge) is
+    /// only truthful while that holds, and scanners that match the file by
+    /// similarity start reporting "Other" once it drifts. This catches the
+    /// tempting "just append a paragraph here" edit — the paragraph belongs in
+    /// `DISCLAIMER.md`.
+    #[test]
+    fn license_file_carries_nothing_but_the_mit_text() {
+        let last = LICENSE_TEXT.trim_end().lines().last().unwrap_or("").trim();
+        assert_eq!(last, "SOFTWARE.", "LICENSE has content after the MIT text");
+        assert!(
+            !LICENSE_TEXT.contains('#'),
+            "LICENSE has markdown headings — an addendum crept in"
+        );
+    }
+
+    /// The disclaimer is embedded, names itself a supplement to the license,
+    /// and still covers the three things it exists for: generated output, the
+    /// third-party models behind it, and the liability limit.
+    #[test]
+    fn disclaimer_text_is_embedded_and_supplements_the_license() {
+        assert!(DISCLAIMER_TEXT.starts_with("# Disclaimer"));
+        assert!(
+            DISCLAIMER_TEXT.contains("(LICENSE)"),
+            "the disclaimer does not link back to LICENSE"
+        );
+        for topic in ["no warranty", "model", "Limitation of liability"] {
+            assert!(
+                DISCLAIMER_TEXT.contains(topic),
+                "the disclaimer no longer mentions {topic:?}"
+            );
+        }
     }
 }

@@ -2212,8 +2212,76 @@ fn help_hides_logo_when_terminal_is_short() {
         }
     }
 }
+/// The tab strip is one line and the dialog has a fixed width, so a tab label
+/// that is a few columns too long in *some* locale silently truncates the last
+/// tab — and the tab that gets cut is the rightmost one, which nobody looking
+/// at the developer's locale would notice. Adding the "Disclaimer" tab pushed
+/// the `ru` strip six columns over the edge, and the fix was to shorten the
+/// hotkeys label in `locales/ru.json` — so the budget is checked for every
+/// bundled locale rather than left to luck.
+#[test]
+fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
+    use super::popups::{HELP_WIDTH, help_tab_strip};
+    use crate::shared::i18n::{Lang, locale};
+
+    let palette = Palette::default();
+    for lang in Lang::ALL {
+        let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang));
+        let chars: Vec<char> = strip.spans.iter().flat_map(|s| s.content.chars()).collect();
+        let width = crate::shared::wrap::display_width(&chars);
+        assert!(
+            width <= HELP_WIDTH as usize,
+            "the {} tab strip is {width} columns wide, the dialog is {HELP_WIDTH}",
+            lang.code()
+        );
+    }
+}
+
+/// A level-1 markdown heading is accent + bold + **underlined**, and the writer
+/// puts that on the `Line` rather than on its spans — so the "Disclaimer" tab's
+/// left indent inherited it and the underline visibly ran out to the left of the
+/// heading's text. The style belongs on the content spans; the indent stays
+/// blank. Reported from a real screenshot.
+#[test]
+fn the_disclaimer_indent_does_not_inherit_the_heading_style() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
+
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    s.help.as_mut().unwrap().tab = HelpTab::Disclaimer;
+    let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+
+    let buf = term.backend().buffer();
+    // Find the heading row and the column its `#` marker starts at.
+    let (y, x) = (buf.area.top()..buf.area.bottom())
+        .find_map(|y| {
+            (buf.area.left()..buf.area.right())
+                .find(|&x| buf[(x, y)].symbol() == "#")
+                .map(|x| (y, x))
+        })
+        .expect("the disclaimer heading is not on screen");
+    assert!(
+        buf[(x, y)]
+            .style()
+            .add_modifier
+            .contains(Modifier::UNDERLINED),
+        "the heading itself lost its underline"
+    );
+    for dx in 1..=2 {
+        let cell = &buf[(x - dx, y)];
+        assert_eq!(cell.symbol(), " ", "the indent is not blank");
+        assert!(
+            !cell.style().add_modifier.contains(Modifier::UNDERLINED),
+            "the indent column {dx} left of the heading is underlined"
+        );
+    }
+}
+
 /// Every tab of the help dialog draws its own distinctive content, and the tab strip
-/// carries all four tabs.
+/// carries all six tabs.
 #[test]
 fn help_tabs_render_distinct_content() {
     use ratatui::Terminal;
@@ -2236,13 +2304,14 @@ fn help_tabs_render_distinct_content() {
         out
     };
 
-    // The tab strip carries all five labels on any tab.
+    // The tab strip carries all six labels on any tab.
     let about = text_for(HelpTab::About);
     for label in [
         "О программе",
-        "Горячие клавиши",
+        "Клавиши",
         "Команды",
         "Лицензия",
+        "Дисклеймер",
         "Компоненты",
     ] {
         assert!(about.contains(label), "missing the \"{label}\" tab label");
@@ -2298,6 +2367,30 @@ fn help_tabs_render_distinct_content() {
         "missing the license header"
     );
     assert!(license.contains("WARRANTY"), "missing the license body");
+    // The disclaimer is a separate tab, not a tail on the license: the MIT text
+    // must stay pure (see `credits::LICENSE_TEXT`).
+    assert!(
+        !license.contains("Disclaimer"),
+        "the disclaimer leaked into the license tab"
+    );
+
+    // "Disclaimer": the model-output notice, rendered through our own markdown
+    // renderer — headings keep their styled `#` prefix (that is the renderer's
+    // house style), but emphasis markers are consumed, which is what tells us
+    // the text went through the renderer rather than being dumped verbatim.
+    let disclaimer = text_for(HelpTab::Disclaimer);
+    assert!(
+        disclaimer.contains("Disclaimer"),
+        "missing the disclaimer heading"
+    );
+    assert!(
+        disclaimer.contains("mindfork is a client"),
+        "missing the disclaimer body"
+    );
+    assert!(
+        !disclaimer.contains("**"),
+        "raw markdown emphasis markers on screen — the renderer was bypassed"
+    );
 
     // "Components": name, version, and license (taken from the start of the list — it's
     // long and scrolls, distant crates are off-screen).

@@ -132,5 +132,9 @@ contents:
     dst: /usr/share/doc/mindfork-rs/CHANGELOG.md
   - src: ./LICENSE
     dst: /usr/share/doc/mindfork-rs/LICENSE
+  # Ships next to the license it supplements: the model-output disclaimer is
+  # only useful if it reaches the machine the model runs on.
+  - src: ./DISCLAIMER.md
+    dst: /usr/share/doc/mindfork-rs/DISCLAIMER.md
   - src: ./docs/install.md
     dst: /usr/share/doc/mindfork-rs/install.md

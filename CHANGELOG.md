@@ -33,6 +33,17 @@ split by subsystem.
 
 ### Added
 
+- **A disclaimer about what the models can say and do** — a new `DISCLAIMER.md`,
+  readable in the app on the `F1` → "Disclaimer" tab and shipped in the archives,
+  packages and installer next to the license. The app carries no model of its own:
+  every word on screen is written by a model you chose and downloaded, it may be
+  wrong or harmful, and nothing here filters or moderates it. The notice spells out
+  what that means for warranty and liability, for the tools a model can run on your
+  machine, and for what leaves it when you use a cloud provider. The MIT license
+  itself is unchanged — the disclaimer supplements it and takes nothing away.
+  The Russian label of the `F1` hotkeys tab was shortened to make room for the
+  new tab.
+
 - **History compression (`/compact`).** A long conversation eventually stops fitting
   the model's context window — the engine then refuses the request outright. The
   older part of a chat can now be folded into a rolling summary that is sent in

@@ -82,6 +82,15 @@ groups need Python 3.11+, which the tools cannot assume. **Recorded twice.**
 — *SonarQube backlog — triage + stage 1 (Python tools)*, *SonarQube follow-up —
 the doc gate's regexes and one test's complexity*.
 
+**The `LICENSE` file is a machine input; keep it byte-identical to the canonical
+text.** An addendum appended to it — however clearly marked as "not part of the MIT
+License" — makes the `MIT` SPDX identifier published in `Cargo.toml`, `nfpm.yaml` and
+the README badge untrue, and license scanners that match by *similarity* (GitHub's
+`licensee`, distribution audits) start reporting "Other"; MIT is short enough that a
+few lines is a large fraction of it. Anything the project wants to say around the
+license goes in a separate file, and a gate test pins the license file's shape.
+— *a disclaimer for what the models say and do*.
+
 ---
 
 ## 2. Testing discipline
@@ -294,6 +303,14 @@ emoji vanishing from a grid, and a "broken" frame. A fourth lies upstream.
 — *emoji popup — a "hanging" selection ghost after closing*, *ratatui-core/crossterm
 update 0.1.1 to 0.1.2*.
 
+**A `Line`'s style covers the whole row, not just its text** — so any padding you
+prepend to a styled line inherits it. Indenting markdown output by two spaces made a
+level-1 heading's `UNDERLINED` run out to the left of the text: the writer puts a
+heading's style on the `Line`, not on its spans. Fold a line style into the content
+spans (`line_style.patch(span.style)` keeps each span's own overrides) whenever you
+add decoration cells around it.
+— *a disclaimer for what the models say and do*.
+
 **Use `shared/ui.rs::prime_full_redraw` for a full repaint; never `terminal.clear()`
 and never a plain back-buffer reset.** `clear()` emits `ESC[2J` and flickers. A plain
 `swap_buffers` is *worse*: the diff then compares "empty to frame" and **skips space
@@ -405,6 +422,14 @@ import*.
 **Deleting the last user of a key is not enough** — the no-dead-key gate fails on an
 orphan, so remove the bundle entry in the same change.
 — *settings-screen focus model*.
+
+**A fixed-width strip of localized labels has a budget, and only one locale finds
+out.** Adding a sixth tab to the 76-column help dialog fitted comfortably in `en` and
+overflowed `ru` by six columns — and what silently truncates is the *rightmost* tab, so
+a developer working in the other locale never sees it. Whenever labels share one line of
+fixed width, measure the rendered line for **every** bundled locale in a gate test; do
+not reason about the language you happen to be reading.
+— *a disclaimer for what the models say and do*.
 
 **Know where `cyrillic_scan.py` cannot see.** It allowlists test files **wholesale**
 (they legitimately hold fixture data and reference-locale assertions), and it sets

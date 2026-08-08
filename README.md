@@ -75,7 +75,9 @@ Architecture — **Feature-Sliced Design (FSD)**.
 - **Live spellcheck** for Russian and English (Hunspell): error underlines,
   a suggestions popup (`Ctrl+G`), a personal dictionary.
 - **Themes** auto / dark / light, a help/"About" dialog (`F1` / `?`) with tabs:
-  about (author/version/links), hotkeys, commands, license, components.
+  about (author/version/links), hotkeys, commands, license, **disclaimer**
+  (what the author does not answer for — see [DISCLAIMER.md](DISCLAIMER.md)),
+  components.
 - **Interface language** (Russian / English, the "Interface language" field in the
   "Interface" section): the whole UI chrome — status bar, feed, settings, help, the
   self-model screen, errors. **Independent of the agents' language** (each profile
@@ -460,7 +462,7 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut selection · paste from clipboard |
 | `Esc` | back: chat list (the same key closes it) — or the search results, if the chat was opened from a hit · cancel generation |
 | `Ctrl+Q` / `F10` | quit (including from the chat list) |
-| `F1` / `?` | help/"About" dialog (tabs: about · hotkeys · commands · license · components; `Tab`/`←→` — switch tabs) |
+| `F1` / `?` | help/"About" dialog (tabs: about · hotkeys · commands · license · disclaimer · components; `Tab`/`←→` — switch tabs) |
 | `Ctrl+P` | settings screen |
 | in the chat list (`Esc`) | search, sort orders, `F2`/`Ctrl+N`/`Ctrl+D`/`Del`, `Ctrl+R` auto-title, `F5` copy |
 | `Ctrl+F` | in a chat: find in this conversation (`Enter`/`↓` next, `Shift+Enter`/`↑` previous, `Esc` close); in the chat list: switch the search between titles and message content |
@@ -557,6 +559,20 @@ committing: `cargo fmt`, `cargo clippy`, `cargo test` — everything green.
 - **[docs/history/](docs/history/)** — archive: the original requirements doc
   ([request.md](docs/history/request.md)) and the completed M0–M9 plan
   ([plan.md](docs/history/plan.md)).
+
+## License and disclaimer
+
+The software is under the **MIT License** ([LICENSE](LICENSE)) — the standard
+text, unmodified.
+
+It ships **no model**. Every word on screen is written by a model you chose and
+obtained yourself, local or cloud, and the app applies no content filtering or
+moderation of its own — by design, an "uncensored" fine-tune runs exactly as
+readily as an aligned one. What that means for warranty and liability, for the
+tools a model can invoke on your machine, and for what leaves it when you use a
+cloud provider, is spelled out in **[DISCLAIMER.md](DISCLAIMER.md)** — also
+readable in the app on the `F1` → "Disclaimer" tab. It supplements the license
+and takes nothing away from it.
 
 ## Status
 

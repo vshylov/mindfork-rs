@@ -129,7 +129,7 @@ jobs:
           mkdir -p dist
 
           # A shared doc set for every archive.
-          DOCS=(README.md CHANGELOG.md LICENSE docs/install.md)
+          DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md docs/install.md)
 
           # Put spellcheck dictionaries into data/dictionaries/ — the portable layout
           # the app reads next to the binary (data/ next to the exe → spellcheck

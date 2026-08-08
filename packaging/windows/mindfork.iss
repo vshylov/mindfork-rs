@@ -104,6 +104,8 @@ Source: "{#SourcePath}..\..\dictionaries\*.dic"; DestDir: "{app}\data\dictionari
 Source: "{#SourcePath}..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+; The model-output disclaimer travels with the license it supplements.
+Source: "{#SourcePath}..\..\DISCLAIMER.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
