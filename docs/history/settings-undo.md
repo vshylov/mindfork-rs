@@ -182,7 +182,7 @@ Nothing found → stay put.
   listed in the `F1` help overlay, so the footer is the only place these keys can
   be discovered.
 - **spec §11.6** — a sentence in the "Navigation"/"Field editing" area.
-- **CHANGELOG** (`Added`) + a CLAUDE.md journal entry.
+- **CHANGELOG** (`Added`) + a [journal entry](../journal/ui-screens.md).
 - **Live run not required** (AGENTS.md §3): key handling and screen state — no
   engine, memory, tool or provider path is touched. The established precedent for
   settings-screen work.

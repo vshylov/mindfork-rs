@@ -222,7 +222,7 @@ corresponding line must fail exactly one):
 - **CHANGELOG** (`Changed`) — `Esc` no longer closes the screen in one press, and
   `→` no longer enters the field pane. Both are visible behaviour changes to
   muscle memory and belong in the changelog per AGENTS.md §4.
-- **CLAUDE.md** — a journal entry.
+- **[docs/journal/ui-screens.md](../journal/ui-screens.md)** — a journal entry.
 
 ### 5.5. Live run
 

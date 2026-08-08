@@ -328,7 +328,8 @@ architecture (FSD, client-side agentic loop, `ChatEffect`, isolation by
 - `SelfModel` is stored in SQLite (like notes and RAG).
 - Tools are added incrementally, with the option to disable them.
 - Focus on **reflection quality**, not tool count.
-- After each phase — manual testing on Gemma/Qwen + update `CLAUDE.md` and
+- After each phase — manual testing on Gemma/Qwen + update the
+  [journal](../journal/self-model.md) and
   `architecture.md`.
 
 ---
@@ -462,7 +463,7 @@ self-observation.
 - Documentation updates:
   - `spec.md` (a new section on SelfModel)
   - `architecture.md`
-  - Example prompts in `CLAUDE.md`
+  - Example prompts in the [journal](../journal/self-model.md)
 - Metrics/quality evaluation:
   - Long-term coherence tests.
   - Comparing behavior with and without SelfModel.

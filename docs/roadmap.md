@@ -1,7 +1,8 @@
 # Possible Roadmap
 
 > Live list of ideas. Implemented items don't come back here — track history
-> lives in [CLAUDE.md](../CLAUDE.md) (post-M9 journal) and [docs/history/](history/).
+> lives in [docs/journal/](journal/) (the post-M9 log, split by subsystem) and
+> [docs/history/](history/).
 > A compact summary of what recently closed is at the end of the file.
 
 ## Most valuable next
@@ -312,7 +313,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   GitHub Releases) already exists.
 - **Message playback (TTS)** — **the `feat/tts` stage is implemented**
   (2026-07-23, [research/tts.md §13](research/tts.md),
-  [CLAUDE.md](../CLAUDE.md)): the `/tts` command (`/tts N`/`all`/`stop`), a
+  [journal/tools.md](journal/tools.md)): the `/tts` command (`/tts N`/`all`/`stop`), a
   Markdown speech extractor (`shared/markdown/speak.rs` — code/mermaid/tables/
   formulas get a voice note), the `rodio` player, stop points, a "Playback"
   settings tab. **Primary engine — OpenAI TTS** (`gpt-4o-mini-tts`, `onyx`
@@ -440,7 +441,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   a stale turn or another call of the same round dropped. Turned off, the loop is
   byte-for-byte its old self. See
   [tool-confirmation.md](history/tool-confirmation.md), spec §9.8.
-A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
+A compact summary (details — in [docs/journal/](journal/) and
 [docs/history/](history/)):
 - **In-feed text search** (complete): **`Ctrl+F`** inside a chat searches that
   conversation — every match highlighted, a `match n of total` counter,

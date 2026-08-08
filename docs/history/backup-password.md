@@ -101,7 +101,8 @@ Small and mostly mechanical once the forks are settled.
   one more flag.
 * **i18n** — CLI help/errors and the settings field/hint, both bundles.
 * **Docs** — spec §12.3, README, `docs/install.md`, CHANGELOG (Added +
-  **Security**), CLAUDE.md journal; an ADR if F1 goes the non-standard way.
+  **Security**), a [journal entry](../journal/storage.md); an ADR if F1 goes
+  the non-standard way.
 
 **A live run is not required** (AGENTS.md §3): no engine, memory, tool or
 provider path is touched. What replaces it, as in the database-compaction work,

@@ -114,6 +114,13 @@ jobs:
       # (one archived plan had 23). Also needs no toolchain, so it runs here.
       - name: Documentation links resolve
         run: python3 tools/link_check.py --list
+      # The engineering journal moved out of CLAUDE.md into docs/journal/ so it
+      # stops being auto-loaded into every session (~237K tokens spent before any
+      # work began). That split rots silently: an entry appended without its index
+      # bullet, a journal file nobody links to, a router creeping back towards a
+      # megabyte. None of it breaks a build. Needs no toolchain, so it runs here.
+      - name: Documentation structure (journal indexes + CLAUDE.md size)
+        run: python3 tools/doc_index_check.py
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default

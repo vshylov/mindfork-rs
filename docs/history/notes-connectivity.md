@@ -316,5 +316,5 @@ Full Tier 3 is implemented (consolidation / "sleep"):
 
 ~2 days of code+tests (patterns are ready: tools ≈ `notes.rs`, embedding ≈
 `rag.rs`, DB methods ≈ `note_*`/`rag_*`, cosine ≈ RAG reranking).
-Afterward — update `CLAUDE.md`/`architecture.md` (the "Memory/knowledge"
+Afterward — update the [journal](../journal/notes.md)/`architecture.md` (the "Memory/knowledge"
 group modification, the new `note_vectors` table, the `note_revise` tool).

@@ -40,10 +40,10 @@ guarantee the GPU is released even when the run crashes**.
 |---|---|---|
 | Smokes read `MINDFORK_ENGINE_URL` and `MINDFORK_EMBED_URL` (`…/v1`) | `orchestrator/tests/mod.rs:173-185`, `shared/api/openai/client.rs` | The runner only needs two URLs; no code change to point them elsewhere |
 | `live_backend()` builds `OpenAiClient::new(url)` — **no API key** | `orchestrator/tests/mod.rs:176` | **The harness cannot send `Authorization: Bearer`.** Protecting the endpoint with `llama-server --api-key` needs a code change (a `MINDFORK_ENGINE_KEY` env var), or an approach that needs no header at all — see §5 |
-| Two servers, different flags: chat `--jinja`, embeddings `--embeddings -ub <ctx> -b <ctx>` | CLAUDE.md §Commands, "raised the physical batch" entry | One pod can host both; the embedding server's batch flags are load-bearing (without them large chunks fail) |
+| Two servers, different flags: chat `--jinja`, embeddings `--embeddings -ub <ctx> -b <ctx>` | CLAUDE.md §Commands, the journal's "raised the physical batch" entry | One pod can host both; the embedding server's batch flags are load-bearing (without them large chunks fail) |
 | Some smokes want a **second, different** embedding model (`MINDFORK_EMBED_URL_ALT`) | `embed_guard.rs`, `reembed.rs`, `embed_prefix.rs` | The model-change / calibration / prefix smokes need e5-large-instruct as well — a third server, ~1 GB more |
 | ~55 of the 69 smokes are llama.cpp-relevant (44 in `tests/live.rs` + engine/supervisor/embed) | `grep -c '#\[ignore'` | The rest need cloud keys or the Python sandbox and are out of scope here |
-| Measured wall clock: the orchestrator e2e set is **~500–720 s** | CLAUDE.md live-run entries | Budget ~15–20 min of test time |
+| Measured wall clock: the orchestrator e2e set is **~500–720 s** | the journal's live-run entries | Budget ~15–20 min of test time |
 | The smokes are **not** hermetic: `web_search`/`fetch_url` hit the real internet | `features/tools/web.rs`, `fetch.rs` | Expect occasional flakes independent of the GPU |
 
 **The models** (both verified via the HF API on 2026-07-28 — **neither is
@@ -433,7 +433,7 @@ omission.
    (`hf endpoints ls` → delete anything named `e2e-*` older than the max
    lifetime). The sweeper also reclaims endpoint quota, which scale-to-zero
    alone does not.
-4. Docs: `docs/install.md`, a CLAUDE.md journal entry.
+4. Docs: `docs/install.md`, a [journal entry](../journal/ci.md).
 
 ### 10.b If R1b (RunPod) is chosen
 
@@ -457,7 +457,7 @@ omission.
 6. `if: always()` → `DELETE /v1/pods/{id}`; assert the pod is gone and fail the
    job loudly if it is not.
 7. `.github/workflows/e2e-sweeper.yml` — hourly orphan sweep.
-8. Docs: `docs/install.md` (how to run it), CLAUDE.md journal entry, and an ADR
+8. Docs: `docs/install.md` (how to run it), a [journal entry](../journal/ci.md), and an ADR
    only if the design turns out to constrain the app itself (it should not).
 
 ## 11. Open questions / risks

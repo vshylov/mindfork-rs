@@ -271,7 +271,7 @@ tools + a provider protocol, so a live run is mandatory.
 
 ## 6. Documentation to update (AGENTS.md §4)
 
-CLAUDE.md journal + status header; CHANGELOG `[Unreleased]` (user-visible);
+A [journal entry](../journal/tools.md) + the status header; CHANGELOG `[Unreleased]` (user-visible);
 spec §9.9 (and a pointer from §9.7, since a transcript is now a way an
 attachment appears); docs/architecture.md §8 (the tool table and the effect);
 README (the new argument); docs/roadmap.md (close the R3c groundwork item);

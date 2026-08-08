@@ -118,7 +118,7 @@ pub(super) fn build_request(
 /// it says two things deliberately: the block is DATA rather than instructions
 /// (the prompt-injection rule attachments follow, spec §13), and **what is
 /// possible next** — a block that describes a situation without saying that is
-/// what sends a model improvising (four case studies in the CLAUDE.md journal).
+/// what sends a model improvising (four case studies in docs/lessons.md §4).
 ///
 /// `tools` — whether this turn actually offers `history_read`/`history_search`.
 /// A folded range normally implies them (sub-decision S12 gates both on the same

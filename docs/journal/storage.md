@@ -1,0 +1,507 @@
+# Journal — Storage, config and backup
+
+Everything that reaches the disk: the JSON store (config/profiles/chats), SQLite, schema versioning and migrations, backup/restore, machine-bound secrets, and the per-chat state that rides in the chat file.
+
+**Reference documents for this area:** architecture.md §7, spec.md §5, §12
+
+Entries are verbatim and in chronological order, moved here from the CLAUDE.md
+journal (see [docs/history/documentation-refactor.md](../history/documentation-refactor.md)). They record what was done,
+why, what was measured and what was rejected — the reasoning behind the code, not
+its current shape. For the current shape read the reference documents named above;
+for the traps that recur across areas read [lessons.md](../lessons.md).
+
+## Entries (8)
+
+- Post-M9: persisting the input-box draft in the chat file (done)
+- Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
+- Post-M9: data storage mode + backup/restore (done)
+- Post-M9: remembering the last-open chat (done)
+- Post-M9: API keys in settings — stage 1 (core: machine-bound storage) (done)
+- Post-M9: database compaction on backup and restore (done)
+- Post-M9: password-protected backups (done)
+- Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
+
+### Post-M9: persisting the input-box draft in the chat file (done)
+- **Unsaved input-box text is stored on the chat and restored on
+  switching**: a new `Chat.draft` field (`entities/chat.rs`, `#[serde(default)]` →
+  old chat files load without migration). Empty on a new chat; cleared on send.
+  Switching to/creating a chat loads its draft into the input box (a new one →
+  empty).
+- **Contract**: an `AppCommand::SetDraft(String)` command (UI → orchestrator) and a
+  `draft` field in the `AppEvent::ChatActivated` event. The orchestrator is the sole
+  writer of `Chat`: `handle_set_draft` writes the active chat's draft and marks it dirty
+  (`mark_dirty`, disk write with an 800ms debounce), **without touching `modified_at`**
+  (editing a draft shouldn't bump the chat up the list); `handle_send` clears `chat.draft`
+  along with appending the user message.
+- **UI**: `ChatScreen::mark_input_changed` (called on any input edit — typing,
+  pasting, restoring, suggestions) now also raises `draft_dirty`. The `app/runtime.rs`
+  loop, every tick, picks up the changed draft (`take_dirty_draft`) and sends
+  `SetDraft` (no repaint — the view doesn't change). `activate_chat` loads `draft` into
+  the input box via `set_text`, but **deliberately doesn't set `draft_dirty`** (otherwise
+  it would immediately send the same text right back via the same `SetDraft`) — it
+  triggers a spellcheck recheck directly instead. See spec §11.7.
+
+### Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
+- **Deleting an exchange (`Ctrl+E`) and regenerating (`Ctrl+R`) are irreversible in the
+  UI, but what's deleted is saved to disk** for **manual** recovery by editing JSON in
+  rare cases. A new `DeletedExchange { deleted_at, messages, draft }` type and a
+  `Chat.deleted: Vec<DeletedExchange>` field (`entities/chat.rs`, `#[serde(default,
+  skip_serializing_if = "Vec::is_empty")]` → old files load without migration, an
+  empty collection doesn't clutter the JSON). This is **not** a message but a
+  container: the deleted messages + the input-box draft at the time of deletion + the
+  date.
+- **What goes in**: `Ctrl+E` (`handle_delete_last`) — the user message and the
+  assistant's reply (`split_off(idx)`) + `chat.draft` **before** the user's text is
+  restored into the input box; `Ctrl+R` (`handle_regenerate`) — the assistant's reply
+  and the round's tool messages (`split_off(idx+1)`) + `chat.draft`. A pure
+  `Chat::record_deleted(messages, draft)` method sets `deleted_at = Utc::now()`, ignores
+  an empty set, and inserts the entry at the **front** of the collection (recent
+  deletions are faster to find), without touching `modified_at` (the truncation
+  operations themselves update that). There's no UI restore. See spec §11.7.
+
+### Post-M9: data storage mode + backup/restore (done)
+- **Data storage mode via a `location.json` marker** next to the binary
+  (`shared/paths.rs`, type `DataLocation`: `portable`/`system`/`path`). By default
+  (no marker/empty/`portable`) — data goes into a **`data/` subdirectory next to the binary**
+  (`PORTABLE_DATA_SUBDIR`; the subdirectory separates data from build tooling files/caches —
+  in dev, `target/debug/data/`, so it doesn't mix with build artifacts). `system` → a standard
+  OS folder (the `directories` crate: Windows `%APPDATA%\mindfork-rs\data`, Linux
+  `~/.local/share/mindfork-rs`); `path` → an arbitrary directory (no `data/` subfolder —
+  the user specified an exact location). `Paths::discover()` reads the marker, resolves the root,
+  and **creates it for every mode** (including the portable `data/`); the marker itself
+  **always** sits next to the binary (outside `data/`) — it's about the installation, not
+  user data. **A corrupted marker JSON is a startup error** (a typo in the
+  path shouldn't silently drop you onto an empty dataset). Logs/instance-guard/storage follow
+  the root automatically (`discover` → `logging::init`); `build.rs` copies dictionaries into
+  `<profile>/data/dictionaries/`. A new accessor `paths.backups_dir()`. **Changing
+  the layout**: previous portable data sat right in the binary's directory — after switching,
+  it needs to be moved into `data/` once (auto-migration is deliberately not done).
+- **Backup/restore** (`features/backup.rs`, a `clap`-based CLI):
+  `mindfork backup [-o FILE] [-c 0..9]` and `mindfork restore <archive>` (no TUI,
+  they end the process, like `import-lamellama`; they take the single-instance lock — protecting `data.db`
+  from a race with a running application). `--import-lamellama` was switched to the same
+  `import-lamellama` clap subcommand.
+- **Zip contents** (paths relative to the root): `settings.json`, `profiles.json`,
+  `data.db` (+ its sidecar `-wal`/`-shm`, if present), `personal_dictionary.txt`,
+  the `chats/` and `dictionaries/` directories recursively (pulling in their own `*.bak`), all top-level
+  `*.bak` files (`settings.bak`/`profiles.bak` — this project's `.bak` is
+  `with_extension`, i.e. `settings.bak`, not `settings.json.bak`), and the
+  "sandbox" directory `tools.fs_root` — **only if** its canonicalized path is inside
+  the canonicalized root (otherwise skipped). **Excluded**: `backups/`, `logs/`,
+  `location.json`. Entries in the archive are deduped by name. Compression level `0..=9` (0 → store,
+  else deflate; clap validates the range, default 9). The default name —
+  `backups/mindfork-backup-<date>.zip` (chrono Local).
+- **Restore is transactional** (`restore_backup` → `RestoreOutcome`): (1)
+  **archive validation before any destructive action** (opening the zip + checking
+  `enclosed_name` for each entry — anti-zip-slip); an invalid/corrupted archive → `Err` without
+  any cleanup. (2) If the root has data (`settings.json`|`profiles.json`|`data.db`|
+  a non-empty `chats/`) → an **automatic pre-restore copy** of the prior data into `backups/`. (3)
+  Clearing the whitelisted set (the same composition; **preserving**
+  `backups/`/`logs/`/`location.json`; the cleanup is by whitelist, not "wipe everything" — stray
+  files in the root are untouched) → unpacking the given archive into the root. (4)
+  **If the unpacking fails partway through** and a pre-restore copy was made → an **automatic
+  rollback**: another cleanup + unpacking the pre-restore copy (`RolledBack`); if the
+  rollback itself fails → `Failed`, with the path to the pre-restore copy for manual recovery. `main.rs` reports
+  every outcome to the console (stdout isn't occupied by the TUI). An `Err` from restore
+  (before any destruction) and `Failed`/`RolledBack` give a nonzero exit
+  code.
+- **Dependencies**: `zip` (`default-features=false`, only `deflate` — no bzip2/zstd
+  C dependencies), `clap` (derive), `directories`.
+- **Tests** (`backup.rs`, on a tempdir): archive contents (expected files included, logs/
+  backups/marker excluded); `fs_root` is only included when under the root; round-trip
+  restore (replacing data + a pre-restore copy + removal of a stale chat); refusal on a
+  corrupted archive without touching the data; restore into an empty root without a pre-restore copy;
+  store-level (0) produces a valid archive; **rollback on an unpack failure** (a crafted archive with
+  a file entry conflicting with a same-named directory surviving the cleanup →
+  `RolledBack`). `paths.rs`: default-portable, a whitespace marker, round-trip of the three
+  modes, path trimming, an error for an empty path/corrupted JSON, the system path contains the
+  application name. **669 tests green** (+18 `#[ignore]`), clippy/fmt clean.
+
+### Post-M9: remembering the last-open chat (done)
+- **The app now restores the last-open chat on the next launch.** Previously
+  `bootstrap` always activated the most recently modified chat (`chats.first()`
+  after sorting by `modified_at`) — switching to an old, unedited chat was
+  "forgotten" on restart. Now the active chat is remembered in settings.
+- **New field `AppConfig.last_active_chat: Option<Uuid>`**
+  (`shared/config.rs`, `#[serde(default)]` via the container's
+  `#[serde(default)]` → old `settings.json` files without migration; **not
+  editable on the settings screen** — an orchestrator property). Written by
+  `Orchestrator::remember_active_chat` (called from `activate`) — **only on an
+  actual switch** of the active chat (`activate` is also called to rebuild the
+  feed of the same chat during regeneration/exchange deletion — no write
+  there); an atomic write of `settings.json`, an error is not escalated
+  (memory is a convenience). `bootstrap` activates `last_active_chat` if it's
+  still visible, otherwise — the previous fallback (most recent).
+- **Settings round-trip protection**: `handle_update_config` replaces the
+  entire `self.config` with the UI snapshot, which may carry a stale
+  `last_active_chat` (e.g. `None` from startup) — after the replacement the
+  actual value is restored (`old.last_active_chat`), so editing settings
+  doesn't erase the memory of the chat.
+- **Tests**: config (default `None`); orchestrator
+  (`remembers_and_restores_last_opened_chat` — a two-phase test: switching to
+  the first chat → `settings.json` has `last_active_chat` = the first one; a
+  second launch on the same data restores exactly that one, even though the
+  second chat was modified later). **734 tests green**, 25 `#[ignore]`,
+  clippy/fmt clean.
+
+### Post-M9: API keys in settings — stage 1 (core: machine-bound storage) (done)
+- **A new track** (at the user's request): cloud keys (OpenAI/Gemini/Claude)
+  should be entered **in the settings window**, not via env variables
+  ("ordinary users don't really understand environment variables"), and
+  stored in the config **securely** — encrypted with a **machine key**,
+  while keeping the config portable: scenario A/B/A (entered on A → moved
+  the config to B → re-entered there → back on A → the keys are still
+  readable). Research doc
+  [docs/research/api-key-storage.md](../../docs/research/api-key-storage.md);
+  forks D1–D6 **adopted by the user, per the recommendations, on
+  2026-07-20**. Branch `feat/api-key-store` (stacked on
+  `docs/api-keys-research`). Stage 1 is **the core** (a UI input field —
+  stage 2), so there's no user-visible effect yet.
+- **Format — a list of entries, one per machine** (`AppConfig.api_keys:
+  Vec<ApiKeyEntry>`; `#[serde(default)]` + `skip_serializing_if` →
+  additive, **no migration or schema bump**, per the ADR 0006 F12 policy).
+  An entry carries `label` (a PC name + date, human-facing only),
+  `scheme`, `check`, and `keys: provider → ciphertext`. **Recognizing
+  "our" entry is done by decrypting the `check` probe**, rather than by
+  storing a machine id: a machine identifier doesn't need to appear in a
+  portable config, and it's not needed for Windows paths either. Foreign
+  entries are left untouched (they'll come alive on their own machines);
+  an entry with an **unfamiliar scheme** is read, kept, and simply
+  treated as foreign — the format is extensible (future work: an OS
+  keychain as another `scheme`).
+- **Two schemes** (`shared/secrets.rs`, a new module): **`dpapi`**
+  (Windows) — the system's `CryptProtectData`/`CryptUnprotectData` (a
+  *user*'s key managed by the OS; decryption by another user/on another
+  machine is impossible; `pOptionalEntropy` is an app-level constant).
+  **`machine-key-v1`** (Linux) — HKDF-SHA256 over `/etc/machine-id` (the
+  `sd_id128_get_machine_app_specific` pattern — systemd explicitly warns
+  against using the raw machine-id; a fallback to
+  `/var/lib/dbus/machine-id`) + ChaCha20-Poly1305 (AEAD, a random nonce as
+  a prefix), the username in `info` → per-user binding, like DPAPI. No
+  machine-id → the scheme is unavailable, leaving the env fallback in
+  place. The ciphertext is encoded as **hex** (a hand-rolled codec — a
+  precedent is `sandbox_setup::hex_lower`; a base64 dependency isn't
+  needed, and the length difference doesn't matter for a config).
+- **The "stored → env" resolution** (fork D3): `resolve_api_key(stored,
+  api_key_env)` (`app/supervisor.rs`) — a stored key takes priority
+  (entered by an explicit action, the target user never sees env), env
+  stays a fallback (CI, power users, systems without machine-id).
+  Decryption lives in `EngineManager` (`stored_key(api_keys, provider)`),
+  while the supervisor accepts an already-decrypted `stored_key:
+  Option<&str>` — **the server-launch layer knows nothing about the
+  secret-storage format**, and its tests don't need encryption (a
+  deliberate deviation from the design doc, noted there). Keys are
+  **provider-centric**: one OpenAI key serves chat + impersonation +
+  embeddings (removing the previous "specify the env name three times");
+  an external proxy stays env-only (D4 — an arbitrary provider URL can't
+  be bound to it).
+- **Command `AppCommand::SetApiKey { provider, key }`** →
+  `handle_set_api_key` (`orchestrator/settings.rs`): encrypts, places it
+  into this machine's entry, persists it (`save_config`, rolled back on
+  failure), flags a deferred (re)startup for **only the** slots whose
+  active provider's key changed (the same `RestartQueue` debounce used for
+  engine settings edits). An empty key means removal; an emptied entry
+  gets dropped. The plaintext lives only in the argument and in the HTTP
+  client.
+- **Round-trip protection**: `handle_update_config` restores `api_keys`
+  from the previous config — the UI snapshot never carries them, otherwise
+  editing any setting would wipe the keys (precedents —
+  `last_active_chat`, MCP TOFU-pin inheritance).
+- **i18n**: `ui.err.server.no_api_key_env` → `ui.err.server.no_api_key`
+  ("enter a key in settings or set an environment variable"); a new
+  `ui.err.api_key_save_failed` (ru+en; the i18n parity/no-dead gates
+  covered it automatically).
+- **Dependencies**: `chacha20poly1305` + `hkdf` (RustCrypto, pure Rust,
+  licenses already in `deny.toml`'s allowlist); `windows-sys` gained the
+  `Win32_Security_Cryptography` feature (the crate was already present —
+  the sandbox's Job Object). No new C dependencies.
+- **The threat model is documented honestly** (§3 of the doc, module doc):
+  we protect the **file** — moving/copying/backing up/syncing the config
+  (outside its own machine it's a useless ciphertext), and on Windows
+  also from other users of the machine. It doesn't protect against code
+  running under the same user — it would call the same DPAPI; this is
+  fundamental for any scheme where "the app decrypts on its own" (that's
+  how Chrome and Git Credential Manager work too). The previous env-based
+  path was no safer.
+- **Tests**: `secrets` (7 — hex round-trip and rejecting garbage; AEAD
+  round-trip; **rejecting a foreign key/a different user/a corrupted
+  one**; nonce randomness; `derive_key` determinism and domain
+  separation; a full write-then-read cycle on **the live platform
+  scheme** — on this machine that's real DPAPI; a foreign entry and an
+  entry with an unfamiliar scheme are ignored and **not overwritten**);
+  supervisor (2 — priority of a stored key over env and working
+  **without** `api_key_env`; a cloud mode reaches `Ready` on a single
+  stored key); orchestrator (3 — the key persists as **ciphertext**
+  (asserted: "no plaintext appears in `settings.json`") and reads back
+  correctly; editing settings doesn't wipe keys; an empty key deletes the
+  entry). **1192 unit tests green** (+12), 53 `#[ignore]`, clippy
+  `-D warnings`/fmt clean.
+- **No live engine run needed** (client protocols untouched — the same
+  key goes into the same header; engine/memory unaffected). The DPAPI
+  path was actually verified: the full-cycle unit test was run on a live
+  Windows machine. The Linux path: the pure scheme core
+  (`derive_key`/`encrypt_with_key`/`decrypt_with_key`) is covered by
+  tests and run; the platform's ikm source (`/etc/machine-id`) will be
+  verified by the `ubuntu` CI job (a Windows host only builds its own
+  target).
+- **Next — stage 2 (`feat/api-key-ui`)**: a masked `InputBox` mode, an
+  "API key" field with a "configured (this computer)" status in the cloud
+  subsections, "configured" flags in `AppEvent::Settings`,
+  `SettingsIntent::SetApiKey`, README/spec/install.md/CHANGELOG + an
+  **ADR** summarizing the track.
+
+### Post-M9: database compaction on backup and restore (done)
+
+- **`data.db` never shrinks on its own.** Deleted notes, `/rag remove`d chunks
+  and an attachment index dropped with its chat all leave free pages that SQLite
+  keeps in the file. So a backup was archiving the holes as well as the data, and
+  a restore laid them back down. Now `mindfork backup` packs a **`VACUUM INTO`
+  copy** of the database instead of the live file, and `mindfork restore`
+  compacts what it unpacked — the second half matters because an archive made
+  before this existed (or by another tool) is fragmented, and it is also what
+  folds in a `-wal` an older archive may carry. Branch
+  `feat/backup-db-compaction`. A simple task by AGENTS.md §1 (no cross-layer
+  contract, no new dependency), so no design doc — but two things had to be
+  measured rather than assumed, below.
+- **The choice was `VACUUM INTO`, not an in-place `VACUUM` before copying.** The
+  source is only read, so a backup cannot damage what it is backing up; the
+  result is a single self-contained file, which is why the `-wal`/`-shm` entries
+  are dropped from the archive when it succeeds (their content is folded in)
+  rather than packed next to a copy they no longer describe. Restore is the one
+  place an in-place `VACUUM` is right: the file is already ours, and rewriting it
+  is the whole point.
+- **Both paths are best effort, and that is the design, not a shortcut.** A
+  `data.db` that cannot be read as a database is packed raw (sidecars included)
+  and left alone on restore. A backup that *happens* for a corrupt database is
+  worth more than a compact one, and the fallback is exactly the pre-change
+  behaviour. Failures are logged (`tracing`), not surfaced — the CLI's own output
+  is unchanged.
+- **Measured hazard #1 — opening a database is not free.** The fallback test
+  failed by finding that a stale `data.db-wal` had *disappeared* from the data
+  root: SQLite deletes it next to a file it reads as **zero-page**, and that is a
+  VFS-level delete which `SQLITE_OPEN_READ_ONLY` does **not** prevent. A separate
+  probe showed a read-**write** open removes it for a valid database too (WAL
+  recovery + checkpoint on close). A backup silently mutating the data root is
+  not acceptable, so a non-database is now refused **by its header before being
+  opened at all**, and a real one is opened read-only. Both guards are
+  mutation-tested: dropping the header check fails the "empty" case, dropping
+  read-only fails the "a real database" case.
+- **Measured hazard #2 — `vec0` is addressed by rowid.** `rag_vectors` /
+  `attachment_vectors` join their neighbours by `rowid`, so a renumbering would
+  leave search returning the *wrong text* — silent, and invisible to any size
+  assertion. `VACUUM` preserves `user_version` and explicit `INTEGER PRIMARY KEY`
+  rowids, which is what makes this safe; `vacuum_into_preserves_the_vector_index`
+  pins it by searching the compacted copy rather than by trusting the
+  documentation.
+- **Consequence worth knowing**: a genuinely hot WAL cannot be recovered
+  read-only, so compaction is skipped and `data.db`+`-wal`+`-shm` are packed
+  together — which is the consistent thing to do anyway. In practice the app
+  never enables WAL mode, so this is a corner.
+- **Tests**: `db/mod.rs::compact_tests` (the vector index survives; the schema
+  version survives; a stale scratch destination is overwritten; in-place
+  compaction reclaims pages and keeps the data; a non-database is refused; the
+  source directory is untouched across placeholder/empty/real inputs) and
+  `features/backup.rs` (a compacted database is packed **without** the sidecars
+  and is still searchable, with no scratch file left behind; the raw file is
+  packed byte-for-byte when it cannot be compacted; restore compacts a
+  legacy-style raw archive; restore leaves an unreadable database alone).
+  **1657 unit tests green** (+10), 70 `#[ignore]`, clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check` clean.
+- **Verified against the real 17.2 MB dev `data.db`** — no live model needed
+  (nothing touches the engine, and the memory *content* paths are unchanged), but
+  a synthetic database cannot answer whether a real one with 1441 attachment
+  chunks and real `vec0` indexes survives. The real CLI was run on an isolated
+  copy: backup → the packed database has **freelist 3 → 0**, an **identical
+  content hash** over every table, `user_version` preserved, and the
+  `rag_documents`/`attachment_documents` rowid sets **matching** their `vec0`
+  shadow tables; then a hand-built "legacy" archive (raw, uncompacted database)
+  was restored into a fresh root and came back compacted with the same content
+  hash. The size gain there is small (40 KB) precisely because that database is
+  barely fragmented — the gain scales with how much has been deleted.
+
+### Post-M9: password-protected backups (done)
+
+- **Asked for directly**: a backup password, settable as a CLI argument *or* in
+  the settings, stored machine-bound and encrypted the same way cloud API keys
+  are (ADR 0008); restore must take both an archive encrypted with that password
+  and an unencrypted one. Plan with forks F1–F8 —
+  [docs/history/backup-password.md](../../docs/history/backup-password.md)
+  (**user's decision, 2026-08-01**, all as recommended). Branches
+  `docs/backup-password` → `feat/backup-password`.
+- **Everything load-bearing was measured against a throwaway probe crate before
+  any design was committed to**, and two of the results shaped the code directly:
+  - **A password handed to an *unencrypted* archive is discarded by the zip
+    layer** (`(Some(_), false) => password = None`). So the requirement's own
+    wording — "restore either kind" — needs **no detection branch and no mode
+    switch**; one code path does both, which is why the diff is small.
+  - **The password is verified when an entry is *opened***, not after reading it
+    (AES stores a 2-byte verifier in the entry header). That is what keeps the
+    transactional restore intact: `validate_archive` already runs before anything
+    destructive, so a wrong password becomes a clean refusal rather than a
+    rollback. Had verification only happened at EOF, every entry would have had
+    to be read up front.
+  - Also measured: writing works at all (`with_aes_encryption`), the plaintext is
+    absent from the archive bytes, entry **names are not** encrypted, the two
+    failure modes are *distinct* errors (`UnsupportedArchive("Password
+    required")` vs `InvalidPassword`), the manifest can stay unencrypted inside
+    an encrypted archive, and the ciphertext **is authenticated** — 66 of 66
+    single-byte corruptions in an entry's payload detected, **0** silently wrong.
+    That last one corrected a first, sloppier probe of mine that flipped a byte
+    at `len()/3` and reported no error: the byte had landed outside the entry.
+- **F1 — WinZip AES-256 inside the zip, not our own container.** The stronger
+  option (ChaCha20-Poly1305 + Argon2id, which would also hide the file names and
+  give a KDF we control) was rejected for what a backup *is*: an artifact whose
+  job is to be recoverable when the application is not available. Standard AES
+  keeps it openable by 7-Zip/WinZip by hand; a private format makes the archive
+  depend on this program continuing to exist and run.
+- **The limits are written down rather than implied** (module doc, settings hint,
+  install.md), in the house style of `shared/secrets.rs`: entry names and sizes
+  stay visible (content-only encryption); the KDF is fixed by the format at
+  PBKDF2-HMAC-SHA1/1000 and is weak against offline brute force of a short
+  password — hence the hint asking for a passphrase; and **a machine-bound
+  password plus a dead machine means unreadable archives**, which inverts the
+  point of a backup, so the hint says to record it elsewhere. This last one is
+  sharper than for an API key, where re-entering is merely an inconvenience.
+- **F2 — the existing `AppConfig.api_keys` was reused** under a reserved entry
+  key, so `put_key`/`stored_key`/`is_ours` work unchanged and one per-machine
+  entry keeps holding everything that machine knows. Renaming the field to match
+  its widened meaning is exactly what the additive-only rule (ADR 0006 F12)
+  forbids, so the doc comment moved instead of the field. **The reserved name is
+  `backup-password`, with a hyphen**: the first version used a dot, and the i18n
+  gate correctly flagged it as a bundle key that isn't in the bundle — a real
+  false positive, better removed at the source than taught to the gate as an
+  exception.
+- **F3/F4 — the copies the app makes on its own are covered too.** The
+  pre-restore copy inherits the run's one effective password (argument, else the
+  setting), and the pre-migration backup (ADR 0006) reads the stored password out
+  of the raw `settings.json` `Value` — it runs before storage opens, so there is
+  no typed `AppConfig` yet. The reasoning is the same in both places: a setting
+  that says "my backups are encrypted" must not have an exception that quietly
+  writes a plaintext copy of everything.
+- **F5 — the manifest stays unencrypted** (it holds only version metadata), so
+  `read_manifest` and the "this backup is from a newer version" warning keep
+  working with no password, and the archive stays self-describing.
+- **F6 — `restore` prompts for the password** when it is missing or wrong, up to
+  three attempts, using `crossterm`'s raw mode (already a dependency — no
+  `rpassword`). Deliberately **skipped when stdin is not a terminal**: prompting
+  in a pipe or a CI job would hang forever instead of failing with a message.
+  Restoring a foreign archive on a fresh machine is exactly the case where no
+  stored password can apply, and the alternative is `--password` in the shell
+  history.
+- **UI — a new "Data" section.** None of Model/Sampling/Tools/Memory/Profiles/
+  Interface is about the data root, and a security setting filed under an
+  unrelated heading is a setting nobody finds; the section also gives the
+  data-location and compaction groundwork items a home. The field itself is a
+  mirror of the "API key" row (a *status*, never the value; an empty masked
+  editor; `Del` clears), which is what the `is_api_key_field` → `is_secret_field`
+  rename and the extracted `secret_row` are for.
+- **Secrets still never reach the UI**: `emit_settings` sends a
+  `backup_password_present: bool` beside `api_keys_present`, and the orchestrator
+  restores `api_keys` on the way back — the round-trip protection that already
+  existed is what makes the new flag safe. `handle_set_api_key`'s "encrypt →
+  persist → roll back on failure" core was extracted as `store_secret` and shared.
+- **Dependencies**: `zip` gained `aes-crypto` — exactly the three predicted new
+  crates (`pbkdf2`, `sha1`, `constant_time_eq`, plus the `zeroize_derive` proc
+  macro), all RustCrypto, still **no C dependency**. `cargo deny check` clean.
+- **Tests**: the four-row read matrix; that an encrypted archive carries no
+  readable data (asserted on the archive's **bytes** against a level-0 control —
+  an API refusal would still pass if the content sat there in the clear); a
+  round trip over both kinds of archive with the password held throughout (the
+  requirement's own case); a bad password refused **without touching data or even
+  writing a pre-restore copy**; the manifest readable without it; an empty
+  password meaning plain; the pre-restore copy inheriting the password;
+  corruption detected; the CLI parser (both spellings, on both commands, and the
+  option before the positional); the help column that had to widen for
+  `--password <PASSWORD>`; the settings field; the orchestrator persisting
+  ciphertext and emitting the flag; and the precedence rule. **1702 unit tests
+  green** (+12), 70 `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/
+  `link_check`/`cargo deny` clean.
+- **Mutation-tested**: dropping the pre-flight password check, writing the
+  pre-restore copy without the password, and making `write_zip` ignore the
+  password each fail exactly the tests meant to catch them (1, 1 and 5
+  respectively).
+- **A live model run isn't required** (AGENTS.md §3) — no engine, memory, tool or
+  provider path is touched. What stands in for it, as in the database-compaction
+  work, is the **real CLI against a copy of the real data root** (311 chats,
+  42 MB): a plain and an encrypted backup; **7-Zip reports `Method = AES-256
+  Deflate` and `Encrypted = +`** on the data entries and *nothing* on the
+  manifest, extracts `settings.json` with the password and refuses a wrong one —
+  the interop claim behind F1, verified against a third-party tool rather than
+  our own reader; restore refused (exit 1, data intact at 311 chats) with no
+  password and with a wrong one; restore succeeded with the right one, and the
+  **pre-restore copy came out encrypted**; the plain archive restored while a
+  password was held; and with a password seeded into `settings.json` through the
+  app's own encryption, `backup` and `restore` used it with **no argument at
+  all** (314 encrypted entries).
+- **A trap worth re-recording** (the journal already has it, and it bit again):
+  `./mindfork-rs restore … | tail` reports **`tail`'s** exit code, so a refusal
+  looked like `exit=0` until it was re-run without the pipe. Also, one probe of
+  mine was a bad instrument rather than a finding: a stray file at the data root
+  survives a restore **by design** (the cleanup is an allowlist), so proving a
+  real replacement needs a stray file inside `chats/`.
+- **Groundwork**: encrypting the archive's file names would need the outer
+  container from F1(b); a stronger KDF is impossible without leaving the zip
+  format; `MINDFORK_BACKUP_PASSWORD` (F7) was deliberately not added — trivial
+  later, and a third source now would widen "where did this password come from"
+  for no current need.
+
+### Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
+
+- **Reported from a real password-protected restore**: after typing the password
+  and pressing `Enter` the program printed a newline and then **sat silent for
+  ten seconds**, after which all three result lines appeared at once; and the
+  `Enter`s pressed during that silence were replayed by `cmd` afterwards as
+  three empty prompts. Branch `fix/restore-progress-and-typeahead` (a simple task
+  by AGENTS.md §1: one feature module and the CLI, no cross-layer contract, no
+  new dependency — no design doc).
+- **Two defects with one symptom, and the second one made the first worse.**
+  Every message was written *after* the work (`cli.restore.pre_saved`,
+  `cli.restore.cleared`), so the whole restore ran mute; and a password prompt
+  echoes nothing, so the one moment the user most needs a sign of life is the
+  one where the program looked dead. Pressing `Enter` is then the natural thing
+  to try — and those keystrokes sat in the console input buffer with nobody
+  reading them, so on exit the shell inherited and replayed them.
+- **Progress is a callback of already-localized lines**, the shape
+  `sandbox_setup::setup` already uses: `features` has no TUI, so the CLI decides
+  where the lines go (`println!`) and `data_migration` — which runs at startup,
+  before the TUI — passes `|_| {}`. Each phase announces itself **before** it
+  runs (checking → pre-restore copy → compacting → packing → clearing →
+  unpacking → compacting), which is what makes it feedback rather than a log.
+- **The entry loops count themselves out** (`EntryProgress`, `N of M`, at most
+  once per 500 ms, counted from the loop's start so a small data root finishes
+  in silence). Deliberately **not** a byte counter: the measured shape of a real
+  root is ~300 small chat files plus one 26 MB `data.db`, so entry counting
+  answers "is it moving?" for the bulk of the time, while an honest byte counter
+  would have to reach inside the copy of a single file — recorded as groundwork
+  rather than done.
+- **The keystrokes are discarded on the way out**
+  (`features/terminal_input.rs::discard_type_ahead`, the module renamed from
+  `password_prompt.rs` — it is now terminal input for the CLI generally). Safe
+  because there is no other consumer: the CLI has finished reading by then, and
+  the keys were typed at us. Gated on stdin being a terminal, so a pipe or a CI
+  job keeps its input; called on **both** commands and on every outcome
+  (including a rollback), since the shell inherits the terminal either way.
+- **One message survived the rewrite for a reason**: the path of the pre-restore
+  copy is still printed at the end (`cli.restore.pre_saved`), because that is the
+  path you undo a restore with and by then the progress lines have scrolled past.
+  The phase label above it therefore names no path — it is announced before the
+  copy exists. `cli.restore.cleared` became a progress line and its key was
+  deleted (the i18n gate fails on a dead key).
+- **Tests**: the phase order on a real restore (the contract is that each label
+  precedes its step), a pre-restore copy **not** announced when the root is
+  empty, the rollback announcing itself, `backup` announcing compaction before
+  packing, and the ticker staying quiet under its interval / counting `N of M`
+  with no unsubstituted placeholder in either language. **Mutation-tested**:
+  dropping the clearing label, dropping the rollback label, or ignoring the
+  throttle each fails exactly its own test. **1798 unit tests green** (+6), 75
+  `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **No live model run is required** (AGENTS.md §3) — no engine, memory or tool
+  path is touched. What stands in for it, as in the compaction and password work,
+  is the **real CLI against a copy of the real data root** (321 chats, 26 MB
+  database, 58 MB): `backup --password` narrated 331 entries and finished in
+  15.7 s, `restore` narrated every phase of its 21.4 s and left the data intact
+  (321 chats, the database restored), and a restore with no password still
+  refuses before touching anything. The **type-ahead half cannot be tested from
+  here** — it needs a real console, and `IsTerminal` is false in a piped
+  harness — so it is left for the user's interactive check, the same boundary
+  the MCP command resolver's wiring sits behind.

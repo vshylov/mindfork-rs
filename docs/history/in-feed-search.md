@@ -1,6 +1,6 @@
 # In-feed text search — design plan
 
-**Status:** **CLOSED** 2026-07-29 — shipped as `Ctrl+F` (not `/`, see §1.1); forks decided the same day. Outcome lives in `CLAUDE.md` and the roadmap's "Recently closed". Closes the roadmap item *"In-feed text
+**Status:** **CLOSED** 2026-07-29 — shipped as `Ctrl+F` (not `/`, see §1.1); forks decided the same day. Outcome lives in [docs/journal/ui-feed.md](../journal/ui-feed.md) and the roadmap's "Recently closed". Closes the roadmap item *"In-feed text
 search"*, the last piece left by the chat-content-search track
 ([research](../research/chat-content-search.md),
 [stage 2](chat-search-stage2.md), fork S5 kept it out deliberately).

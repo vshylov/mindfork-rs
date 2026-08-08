@@ -7,7 +7,7 @@
 //! `<table>` used to render as *nothing at all*: the whole block, prose
 //! included, was dropped on the floor. Measured on the real dev corpus before
 //! this was written — one message in 1213, but 1574 characters of prose
-//! silently invisible in it (see the CLAUDE.md journal entry).
+//! silently invisible in it (see the docs/journal/ui-feed.md entry).
 //!
 //! We show the block's **text**, not its markup and not a reconstructed table:
 //!

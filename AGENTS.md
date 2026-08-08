@@ -1,11 +1,13 @@
 # AGENTS.md — task workflow for AI agents
 
 Mandatory rules for AI agents (Claude Code and any others) working on this
-repository. Project orientation (what this is, architecture, changelog of what's
-done) — [CLAUDE.md](CLAUDE.md) and [docs/architecture.md](docs/architecture.md);
-here — **how to run a task**: from spec to PR. The rules are derived from the
-project's actual practice (see the "Post-M9" journal in CLAUDE.md) — follow them
-instead of reinventing the process.
+repository. Project orientation (what this is, architecture, where every
+document lives) — [CLAUDE.md](CLAUDE.md) and
+[docs/architecture.md](docs/architecture.md); the log of what's been done —
+[docs/journal/](docs/journal/), split by subsystem. Here — **how to run a
+task**: from spec to PR. The rules are derived from the project's actual
+practice (see the "Post-M9" entries in the journal) — follow them instead of
+reinventing the process.
 
 ## Definition of Done checklist
 
@@ -21,15 +23,31 @@ A task isn't considered complete until all of this is done:
       against a live stack** (§3); for pure UI/refactor — explicitly noted that a
       live run isn't required;
 - [ ] documentation updated per the table in §4 (at minimum — an entry in the
-      CLAUDE.md journal);
+      matching [docs/journal/](docs/journal/) file);
 - [ ] commits carry a trailer with the **actual model**, PR description has a
       "Models" section (§5).
 
 ## 1. Orientation and design (before code)
 
-**Read before working:** [CLAUDE.md](CLAUDE.md) (orientation + journal),
-[docs/architecture.md](docs/architecture.md) (code map — affected §s),
-relevant [ADRs](docs/decisions/) and sections of [spec.md](spec.md) on the topic.
+**Read before working:**
+
+1. [CLAUDE.md](CLAUDE.md) — orientation and the **document map**: which document
+   answers which question, and when to open it. It is the entry point, and it is
+   small on purpose.
+2. Follow that map to the pieces your task actually touches: the affected §s of
+   [docs/architecture.md](docs/architecture.md) (code map), the relevant §s of
+   [spec.md](spec.md) ("what" and "why"), the matching
+   [docs/journal/`<area>`.md](docs/journal/) (how this subsystem got the way it
+   is — decisions, measurements, live-run outcomes), and any
+   [ADR](docs/decisions/) on the topic.
+3. [docs/lessons.md](docs/lessons.md) — the recurring traps and practices mined
+   from the journal. Read it **before implementing**, not after something bites.
+
+**Read the section, not the whole file.** `spec.md` (~217 KB),
+`docs/architecture.md` (~144 KB) and the journal files are chaptered reference
+documents, not narratives: loading one whole burns the session's context and
+buries the part you needed. Find the heading (their tables of contents, `grep`,
+the document map), read that chapter and its neighbours.
 
 **Complex task → write a doc first, then code.** Signs of a complex task
 (one is enough): a multi-stage/PR track; an architectural decision or new
@@ -52,11 +70,11 @@ Design doc rules:
   against a live model (self-model / notes-connectivity pattern); tiers come
   after go.
 - Track stages get separate branches/PRs. A finished track: the plan moves to
-  `docs/history/` in a dedicated docs branch, references to it in
-  CLAUDE.md/architecture.md get updated. **Mind the plan's own links**: the file
-  gains a directory level, so every relative link *inside* it needs one more
-  `../`. Easy to miss (the links to it are the obvious half) — `python
-  tools/link_check.py` catches both, and CI runs it.
+  `docs/history/` in a dedicated docs branch, references to it (the journal,
+  architecture.md, CLAUDE.md's document map) get updated. **Mind the plan's own
+  links**: the file gains a directory level, so every relative link *inside* it
+  needs one more `../`. Easy to miss (the links to it are the obvious half) —
+  `python tools/link_check.py` catches both, and CI runs it.
 
 ## 2. Branch (before the first commit)
 
@@ -88,8 +106,8 @@ additions:
 - **A live run is mandatory** for functionality touching the engine / memory /
   tools / provider protocols: run the relevant `#[ignore]` smokes against a
   live stack (`cargo test -- --ignored --nocapture --test-threads=1`; env —
-  see CLAUDE.md §Commands) and record in the journal the **model/stack and
-  outcome** ("Smoke — GO" pattern). A pure UI/refactor doesn't need a live
+  see CLAUDE.md §Commands) and record the **model/stack and outcome** in the
+  journal entry ("Smoke — GO" pattern). A pure UI/refactor doesn't need a live
   run — say so explicitly.
 - **FSD**: dependencies strictly downward (`app → screens → widgets →
   features → entities → shared`); `screens`/`widgets` don't import `app`.
@@ -114,7 +132,8 @@ Before the PR, update the docs per the table (this is part of the task, not
 
 | What changed | What to update |
 |---|---|
-| Any completed task | **CLAUDE.md** — journal entry (`### Post-M9: <topic> (done)`: what/why/key decisions/test count) + test count and date in the "## Status" header |
+| Any completed task | an entry in the matching **`docs/journal/<area>.md`** (heading `### Post-M9: <topic> (done)`: what/why/key decisions/test count), added at the end of that file **and** to its `## Entries` index at the top; plus the test count and date in CLAUDE.md's "## Status" header |
+| A trap or practice that will bite again on an unrelated task | a line in **[docs/lessons.md](docs/lessons.md)** |
 | User-visible effect (feature/change/fix/removal affecting the user; data format change) | **CHANGELOG.md** — item in the `[Unreleased]` section, category Added/Changed/Fixed/Removed/**Data**/Security; one to two lines in user language (not an internals log). Purely internal refactor/tests — skip. See docs/history/release-engineering.md §3.2 |
 | Code structure, modules, flows, invariants | **docs/architecture.md** — affected §s |
 | Behavior, contracts, "what and why" | **spec.md** — affected §s |
@@ -124,9 +143,27 @@ Before the PR, update the docs per the table (this is part of the task, not
 | A groundwork item was closed / a new one appeared | **docs/roadmap.md** |
 | A track with a design plan finished | plan → `docs/history/`, references updated **and the plan's own relative links re-pointed** — `python tools/link_check.py` (§1) |
 
-If a row in the table isn't affected — don't invent anything; but the
-CLAUDE.md journal is updated **always** (except pure documentation PRs —
-there it's enough to fix the docs themselves and the links).
+If a row in the table isn't affected — don't invent anything; but a
+[docs/journal/](docs/journal/) entry is written **always** (except pure
+documentation PRs — there it's enough to fix the docs themselves and the
+links). Pick the file by subsystem, the one the change is *about*:
+
+| File | Covers |
+|---|---|
+| [engine.md](docs/journal/engine.md) | engine and providers, generation, sampling, streaming, servers and health, impersonation, history compaction |
+| [storage.md](docs/journal/storage.md) | JSON/SQLite, migrations, backup/restore, secrets, per-chat state on disk |
+| [tools.md](docs/journal/tools.md) | tool system, MCP, Python sandbox, web/fetch, YouTube, TTS, control tools, confirmation |
+| [self-model.md](docs/journal/self-model.md) | the self-model: summary, goals, traits, the observation narrative, reflection and consolidation |
+| [notes.md](docs/journal/notes.md) | notes, their link graph, semantic recall and the cross-organ edges |
+| [rag.md](docs/journal/rag.md) | the RAG knowledge base, chat attachments, and the embedding stack under both (model change, reindex, thresholds) |
+| [ui-feed.md](docs/journal/ui-feed.md) | feed, markdown renderer, syntax, Mermaid, status bar, themes, terminal/redraw |
+| [ui-input.md](docs/journal/ui-input.md) | InputBox, keys, selection/undo/mouse, clipboard, spellcheck, emoji |
+| [ui-screens.md](docs/journal/ui-screens.md) | settings, chat list, self-model viewer, search, help/About, popups |
+| [i18n.md](docs/journal/i18n.md) | both localization axes, CLI, external locales, the English source migration |
+| [release.md](docs/journal/release.md) | packaging, installers, the release pipeline, version and schema discipline, branding assets |
+| [ci.md](docs/journal/ci.md) | workflows and jobs, caches, Actions minutes, the rented live-test gate, test-side cost work |
+| [quality.md](docs/journal/quality.md) | SonarQube analysis and its backlog, the quality gate, and the gates guarding the repo's own structure |
+| [refactors.md](docs/journal/refactors.md) | god-object splits, SOLID work, single-source consolidations |
 
 ## 5. Commit and PR: model attribution
 

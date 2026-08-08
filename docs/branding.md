@@ -394,7 +394,7 @@ Stage 1 goes first: until the wordmark is fixed and `artwork/` is in git, the
 other stages have nothing to build on.
 
 **Each stage's DoD** — standard (AGENTS.md): `fmt`/`clippy -D warnings`/`test`
-green, an entry in the CLAUDE.md journal, a CHANGELOG item for user-visible
+green, an entry in the [journal](journal/release.md), a CHANGELOG item for user-visible
 effects (stages 2–4), an architecture.md §3 update for the new
 `widgets/logo.rs`.
 

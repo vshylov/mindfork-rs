@@ -9,7 +9,8 @@ Sections: **Added** (new functionality), **Changed** (to existing functionality)
 **Fixed** (bugs), **Removed**, **Data** (storage formats and migrations — most
 important to users: an update should never lose data), **Security**.
 
-Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
+Detailed engineering history lives in the [docs/journal/](docs/journal/) log,
+split by subsystem.
 
 ## [Unreleased]
 
@@ -842,7 +843,7 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 First tracked release. The project completed the entire M0–M9 plan plus
 extensive post-M9 work; below is a summary of features by track (detailed
-history is in the CLAUDE.md log).
+history is in the [docs/journal/](docs/journal/) log).
 
 ### Added
 

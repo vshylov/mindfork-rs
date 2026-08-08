@@ -82,7 +82,7 @@ impl PythonExec {
             // Output goes into a pipe, not the console, so Python on Windows picks
             // an encoding by locale (often cp1252) and fails on Cyrillic in `print`
             // (`UnicodeEncodeError`). We read the output as UTF-8, so we
-            // also ask Python to write UTF-8. See CLAUDE.md (M7).
+            // also ask Python to write UTF-8. See docs/journal/milestones.md (M7).
             .env("PYTHONIOENCODING", "utf-8")
             .env("PYTHONUTF8", "1")
             .kill_on_drop(true);

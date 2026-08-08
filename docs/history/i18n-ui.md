@@ -8,7 +8,8 @@
 > `Locale::get`) and displayed supervisor reasons (`ui.err.server.*`, threading `loc`
 > into the `ServerSupervisor` trait) are localized. Only technical engine probe errors
 > remain (`shared/api/managed.rs` — a provider layer, not UI). Outcome and decisions —
-> in the CLAUDE.md journal ("axis B" + "closing the groundwork item").
+> in [docs/journal/i18n.md](../journal/i18n.md) ("axis B" + "closing the
+> groundwork item").
 >
 > Below — the original design plan (decision points confirmed 2026-07-13).
 > Continues [docs/history/i18n.md](i18n.md): axis A (**agent** language — prompts and
@@ -185,7 +186,8 @@ the `python.console.exit` label (axis A, Tier 2c); the feed only displays it.
 Pluralization/grammar (decision point 2 → number-neutral), RTL, custom keyboard
 layouts, external `data/locales` (axis A Tier 3), translating documentation/logs.
 
-**The groundwork item is CLOSED** (same PR, see the CLAUDE.md journal "axis B —
+**The groundwork item is CLOSED** (same PR, see
+[docs/journal/i18n.md](../journal/i18n.md), "axis B —
 closing the groundwork item"):
 - **Tool labels in profile toggles** — localized by resolving in the settings layer:
   `Locale::get(&'static self, key)` (a dynamic key → `&'static str`),

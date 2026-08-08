@@ -67,7 +67,7 @@ jobs:
 
       # The two MCP smokes spawn `npx @modelcontextprotocol/server-filesystem`.
       # Its first run on a cold npm cache can exceed the 120 s readiness timeout
-      # (recorded in the CLAUDE.md journal), so warm it here rather than letting
+      # (recorded in docs/journal/i18n.md), so warm it here rather than letting
       # it fail inside the suite while the GPU bills.
       - name: Warm the npm cache (MCP smokes)
         run: |

@@ -3,7 +3,7 @@
 **Status:** the track is **complete** — stage 1 done and accepted 2026-08-02,
 stage 2 (secrets + import, §9, forks S1–S8 accepted the same day) implemented and
 live-run 2026-08-02. The file stayed in `docs/history/` throughout: every
-reference to it (roadmap, ADR 0007, CLAUDE.md) already points here, and moving it
+reference to it (roadmap, ADR 0007, the journal) already points here, and moving it
 back and forth would churn those links for no gain.
 
 Stage 1's acceptance: a real server was configured end to end from the settings
@@ -262,7 +262,7 @@ window**, which is the actual acceptance criterion for this track.
 
 ## 7. Documentation to update on completion
 
-CLAUDE.md journal; CHANGELOG (`Added`); spec §9.6 (servers are configured in
+A [journal entry](../journal/tools.md); CHANGELOG (`Added`); spec §9.6 (servers are configured in
 the UI, `settings.json` remains the equivalent path); README (settings);
 docs/install.md §4.2 (the hand-edited JSON becomes the alternative, not the
 only way); docs/roadmap.md (the groundwork item closes); ADR 0007 gets a note
@@ -625,7 +625,7 @@ source, and the user had called the fallback worth keeping).
 
 ### 9.6 Documentation to update on completion
 
-CLAUDE.md journal; CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten
+A [journal entry](../journal/tools.md); CHANGELOG (`Added` + `Security`); **ADR 0007** — R8 rewritten
 (env names *or* machine-bound stored values, both without plaintext on disk),
 with a pointer to ADR 0008; **ADR 0008** — its "MCP server env maps" groundwork
 item closes; spec §9.6 (secret values, import); README; docs/install.md §4.2 (a

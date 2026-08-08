@@ -3,8 +3,8 @@
 **Status:** **CLOSED**, 2026-07-29 — stages 0–3 shipped (PRs #226, #227), the
 gate runs in CI and covers the whole llama.cpp smoke set. Historical document:
 the outcome lives in `tools/e2e_hf.py`, the two `e2e-*` workflows, and
-[docs/install.md §7.2](../install.md); the running log is in the CLAUDE.md
-journal.
+[docs/install.md §7.2](../install.md); the running log is in the
+[journal](../journal/ci.md).
 **Research and decision:** [docs/research/remote-e2e-gpu.md](../research/remote-e2e-gpu.md)
 (forks R1–R8, all resolved to the recommended option — *user's decision,
 2026-07-28*).
@@ -315,7 +315,7 @@ the *money* at one idle window; the sweeper bounds the *time* and reclaims
 endpoint quota, which scale-to-zero does not.
 
 **Docs:** `docs/install.md` (running the live gate, the new env vars),
-CLAUDE.md journal entry, `README.md` env table. **No CHANGELOG entry** — dev
+a [journal entry](../journal/ci.md), `README.md` env table. **No CHANGELOG entry** — dev
 infrastructure with no user-visible effect (AGENTS.md §4).
 
 ## 7. Stage 3 — the second embedder (done)
@@ -373,7 +373,7 @@ chosen over a rented pod.
 - Docs updated per AGENTS.md §4; commits carry the model trailer; the PR body
   follows the template with a "Models" section.
 - On completion of the track this plan moves to `docs/history/` and the
-  references in CLAUDE.md are updated.
+  references to it are updated.
 
 ## 10. Risks
 

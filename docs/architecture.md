@@ -6,7 +6,9 @@ contracts, lifecycles, and invariants. It complements, but does not replace, the
 sources of truth:
 
 - **[spec.md](../spec.md)** — engineering specification ("what" and "why");
-- **[CLAUDE.md](../CLAUDE.md)** — orientation guide and implementation log (M0–M9 + post-M9);
+- **[CLAUDE.md](../CLAUDE.md)** — orientation guide and the map of the other documents;
+- **[docs/journal/](journal/)** — the implementation log (M0–M9 + post-M9), split by
+  subsystem: how each part got the way it is, with its decisions and live-run outcomes;
 - **[docs/decisions/](decisions/)** — ADRs (recorded technical decisions),
   including [0004](decisions/0004-engine-contract-multi-provider.md) — `shared/api`
   boundaries and multi-provider inference without a crate split;
@@ -1430,7 +1432,7 @@ what it's working toward, and what it's realized about itself. The mechanism
 grew from an idea bank ([docs/self-model.md](history/self-model.md)) through
 a shipped probe ([docs/self-model-mvp.md](history/self-model-mvp.md)) and two
 rounds of fixes based on live testing on Opus 4.8 (log in
-[CLAUDE.md](../CLAUDE.md)).
+[docs/journal/self-model.md](journal/self-model.md)).
 
 Key architectural stance: **the self-model is per-profile data in SQLite
 (like notes/RAG), not `Chat` state.** So mutator tools write it **directly**
@@ -1682,7 +1684,8 @@ digest — the self-memory "sleep" gets **concrete data**, not just a rubric;
 `contradicts`, and linking unlinked ones. Isolated by `profile_id`, no
 migrations.
 
-Why it's built this way (lessons from live testing, see CLAUDE.md):
+Why it's built this way (lessons from live testing, see
+[docs/journal/self-model.md](journal/self-model.md)):
 
 - **`get_self_model` doesn't truncate** — it used to return the same compact
   injection with a "…", and the model would complain about the "…".
@@ -2291,5 +2294,5 @@ tests + end-to-end self-model/notes/narrative tests).
 
 *This document describes the implementation of `mindfork-rs`. The source of
 truth for "what/why" is [spec.md](../spec.md); recorded decisions are in
-[ADR](decisions/); the implementation log and current status are in
-[CLAUDE.md](../CLAUDE.md).*
+[ADR](decisions/); the implementation log is in [docs/journal/](journal/) and
+the current status in [CLAUDE.md](../CLAUDE.md).*

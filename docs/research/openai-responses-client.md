@@ -4,7 +4,7 @@
 chosen (mode `openai` switched from Chat Completions to the Responses API),
 adding "thoughts" (reasoning summaries), `reasoning_effort` (extended to
 `minimal`/`xhigh`), `verbosity`; the "keyed proxy" case closed via
-`ExternalSettings.api_key_env`. Summary in CLAUDE.md ("OpenAI → Responses
+`ExternalSettings.api_key_env`. Summary in [docs/journal/engine.md](../journal/engine.md) ("OpenAI → Responses
 API"). Extends
 [ADR 0004](../decisions/0004-engine-contract-multi-provider.md) (Phases 0–2).
 
@@ -117,7 +117,7 @@ Plus `response.incomplete` (`incomplete_details.reason == "max_output_tokens"`),
    in the stream.
 5. **The summary may not arrive** — at low `effort` or on a trivial prompt the
    model doesn't reason. Exactly like Claude's adaptive thinking (already
-   documented in CLAUDE.md). Tests must allow for this.
+   documented in the [journal](../journal/engine.md)). Tests must allow for this.
 6. **Gemini and External stay on Chat Completions.** Gemini's OpenAI-compatible
    endpoint has no `/responses`; third-party servers even less so. `OpenAiClient`
    isn't going anywhere.
