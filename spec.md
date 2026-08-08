@@ -484,7 +484,7 @@ loop:
 
 The whole conversation is sent on every request, so a long chat eventually stops fitting the model's context window. Measured against the reference stack: llama-server answers **HTTP 400 before the SSE stream even starts** (`exceed_context_size_error`, with `n_prompt_tokens` and `n_ctx` in the body), and `--context-shift` does not rescue an oversized prompt — it only evicts during generation, discarding the **system prompt first**. Compression exists to keep the conversation below that ceiling. Research and measurements: [docs/research/history-compression.md](docs/research/history-compression.md).
 
-**The mechanism changes what a request carries, never what the chat holds.** `Chat.messages` is untouched, so the feed, full-text search, the `F5` export, TTS and the reflection watermark all keep seeing the whole conversation — this is what makes the feature cheap and reversible. A request becomes `system + [summary block] + messages[upto..]`.
+**The mechanism changes what a request carries, never what the chat holds.** `Chat.messages` is untouched, so the feed, full-text search, the `F5` export, TTS and the reflection watermark all keep seeing the whole conversation — this is what makes the feature cheap and reversible. A request becomes `system + [summary block] + messages[upto..]`. **Impersonation** (`Ctrl+U`, [§11.8](#118-impersonation-writing-a-message-as-the-user)) builds its own request and reads the same view, so it is subject to the same ceiling and the same relief.
 
 - **Storage** — `Chat.compaction: Option<Compaction>` (`summary`, `upto`, `boundary_id`, `compacted_at`, `rolls`). Additive, no migration (ADR 0006 F12). `upto` is a fast path only: the boundary is re-found by **`boundary_id`** on every read, so an edit that shifts indices cannot leave the summary silently covering the wrong span; if that message is gone the summary is ignored and the whole history is sent until the next compaction rebuilds it.
 - **The cut is always a `User` message**, so an assistant turn is never separated from its tool results — which would break Anthropic's strict alternation and Gemini's per-call thought-signature replay. Everything older than the verbatim tail (`compaction.tail_tokens`) is folded in.
@@ -1965,6 +1965,15 @@ box. The request-building algorithm:
   deleted), or an empty message → a shared default;
 - in the history, **user ↔ assistant roles are swapped**, and system/tool messages and
   empty ones are dropped (there are no tools in this mode);
+- the history is the **compacted** one (§6.7): a folded prefix is replaced by the
+  rolling summary block, so impersonation cannot hit the context ceiling a
+  regular turn is already protected from. The block is built with the "no
+  read-back tools" wording, since this mode carries none. Note the shape it
+  produces: a cut always lands on a `User` message, which the swap turns into a
+  **leading assistant turn** (accepted by Anthropic, native Gemini and OpenAI
+  Responses — measured 2026-08-08); the tail still ends on `user`, which matters
+  because a *trailing* assistant turn reads as a prefill and the model would
+  continue it instead of writing the next message;
 - sampling comes from the "Impersonation" subsection (`AppConfig.impersonation_sampling`),
   but reasoning is **forced off** within it (`reasoning_budget=0`): the mode
   discards "thoughts", and for models with thinking "baked" into the chat template, otherwise

@@ -2471,3 +2471,76 @@ async fn auto_compaction_fires_without_the_command_live() {
     assert!(folded > 0, "a compaction that folded nothing");
     assert!(!summary.trim().is_empty(), "an empty summary is a failure");
 }
+
+/// Impersonation (`Ctrl+U`) over a **compacted** conversation, against a live
+/// engine (spec §11.8, §6.7).
+///
+/// The deterministic half — what the request carries — is unit tested; what only
+/// a live engine can answer is whether the resulting shape is *usable*. It is
+/// unlike anything impersonation sent before: a cut always lands on a `User`
+/// message, and the role swap turns it into a **leading assistant turn**. Both
+/// ways that can go wrong end in the same silence rather than an error — a
+/// provider refusing the leading role, or (Anthropic's rule) treating a trailing
+/// assistant turn as a prefill and continuing it instead of replying. So the
+/// assertion is deliberately just "a non-empty message came back": an empty
+/// preview is exactly the symptom either failure produces.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn impersonation_after_compaction_still_writes_live() {
+    use crate::shared::config::CompactionSettings;
+    let config = AppConfig {
+        compaction: CompactionSettings {
+            enabled: true,
+            summary_words: 120,
+            tail_tokens: 120,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    let (_summary, folded) = fill_then_compact(
+        &cmd_tx,
+        &mut evt_rx,
+        &[
+            "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
+            "В двух предложениях: чем отличается кэш от буфера?",
+            "В двух предложениях: что такое идемпотентность запроса?",
+        ],
+    )
+    .await;
+    assert!(folded > 0, "nothing was folded — nothing to test");
+
+    cmd_tx
+        .send(AppCommand::Impersonate {
+            seed: String::new(),
+        })
+        .unwrap();
+    let mut text = String::new();
+    let mut reason = None;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::ImpersonationChunk { text: t, .. } => text.push_str(&t),
+            AppEvent::ImpersonationFinished { reason: r, .. } => {
+                reason = Some(r);
+                break;
+            }
+            AppEvent::Error(e) => panic!("impersonation failed: {e}"),
+            _ => {}
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!("impersonated message ({reason:?}): {text}");
+    assert!(
+        !text.trim().is_empty(),
+        "empty preview — the compacted request was refused or read as a prefill"
+    );
+}

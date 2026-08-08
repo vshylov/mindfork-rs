@@ -40,9 +40,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     redundant with `/props`, since the body shape that carries `n_ctx` is
     llama.cpp's own;
   - `estimate_prompt_tokens` still ignores `req.tools`, which matters for the
-    `~` figure though no longer for the trigger;
-  - compaction does not apply to **impersonation** (`Ctrl+U`), which builds its
-    own full-history request.
+    `~` figure though no longer for the trigger.
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
   into `system` is stable within a day — a direct candidate for prompt

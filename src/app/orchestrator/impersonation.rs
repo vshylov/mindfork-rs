@@ -105,6 +105,7 @@ impl Orchestrator {
             });
         let request = build_impersonation_request(
             chat,
+            chat.compaction_view(self.config.compaction.enabled),
             imp_system,
             &seed,
             self.config.impersonation_sampling.clone(),
@@ -156,8 +157,24 @@ impl Orchestrator {
 /// impersonation one (the user's persona), the user/assistant roles in history are swapped (the
 /// model continues the conversation "on behalf of the user"). No tools. If `seed` isn't empty,
 /// the model is asked to continue text that's already started.
+///
+/// `compaction` — the chat's compaction view
+/// ([`Chat::compaction_view`](crate::entities::chat::Chat::compaction_view)), i.e.
+/// the rolling summary and the index its folded prefix ends at (spec §6.7).
+/// Impersonation sends the conversation too, so without this it would keep
+/// hitting the very context ceiling the compression track exists to remove —
+/// only from a different key. Passed as the pair the view already returns, so a
+/// summary can never arrive without the cut it describes, or the other way
+/// round. `None` (nothing folded, or the master switch is off) leaves the
+/// request byte-for-byte what it was before compression existed.
+///
+/// The block is injected with `tools = false`: impersonation has **no** tools,
+/// so the model is told to work from the summary rather than pointed at
+/// `history_read`/`history_search` it cannot call — the same rule a regular turn
+/// follows (sub-decision S12, see [`inject_compaction`]).
 pub(super) fn build_impersonation_request(
     chat: &Chat,
+    compaction: Option<(&str, usize)>,
     mut system: String,
     seed: &str,
     mut sampling: SamplingConfig,
@@ -175,12 +192,28 @@ pub(super) fn build_impersonation_request(
     sampling.thinking = Some(false);
     sampling.reasoning_effort = Some(ReasoningEffort::None);
     sampling.reasoning_budget = Some(0);
+    let (summary, upto) = match compaction {
+        Some((s, i)) => (Some(s), i),
+        None => (None, 0),
+    };
+    // Ordered by volatility, as in `build_request`: the persona never changes,
+    // the summary only on a compaction, the interlocutor model most often — and
+    // the seed continuation stays last, being the immediate instruction.
+    // `inject_compaction` returns `Some` for a `Some` input whatever the summary
+    // is, so the fallback is unreachable.
+    system =
+        super::request::inject_compaction(Some(system), summary, false, loc).unwrap_or_default();
     // A hint about the interlocutor (a model of who we're writing on behalf of) — before the seed continuation.
     if let Some(hint) = user_hint.map(str::trim).filter(|s| !s.is_empty()) {
         system.push_str("\n\n");
         system.push_str(hint);
     }
-    let messages = chat.messages.iter().filter_map(swap_role_message).collect();
+    // The folded prefix is replaced by the summary block above; `chat.messages`
+    // is untouched, exactly as on a regular turn.
+    let messages = chat.messages[upto..]
+        .iter()
+        .filter_map(swap_role_message)
+        .collect();
     let seed = seed.trim();
     if !seed.is_empty() {
         system.push_str("\n\n");
