@@ -811,7 +811,7 @@ mod ignored_smoke {
     /// We check the **combined** stream (`text` + `thoughts`): for a reasoning model
     /// (Gemma with thinking "baked in") the reply may go entirely into `reasoning_content`,
     /// with `content` staying empty and `finish_reason="length"` — that's normal and has
-    /// nothing to do with accepting the sampling fields (see CLAUDE.md, the
+    /// nothing to do with accepting the sampling fields (see docs/journal/engine.md, the
     /// reasoning-budget trap). `max_tokens` is generous so generation is visible.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]

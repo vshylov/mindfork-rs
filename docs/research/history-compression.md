@@ -1027,5 +1027,5 @@ but in messages no longer being sent.
   <https://portkey.ai/error-library/input-length-error-10153>
 - In-repo: spec §6.2/§6.6/§9.5/§9.7, `docs/roadmap.md` §"Context and tokens",
   ADR 0006 (additive fields), `docs/file-attachments.md` §3 (retrieval ≠
-  guaranteed context), CLAUDE.md journal (title/reflection/attachment
+  guaranteed context), the [journal](../journal/engine.md) (title/reflection/attachment
   precedents).

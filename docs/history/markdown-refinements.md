@@ -1,7 +1,8 @@
 # Markdown-render refinements: LaTeX approximation, writer, feed cache
 
 > **Status:** implemented (2026-07-11), branch `feat/markdown-refinements` —
-> all six stages done as separate commits. See the CLAUDE.md journal,
+> all six stages done as separate commits. See
+> [docs/journal/ui-feed.md](../journal/ui-feed.md),
 > "Post-M9: markdown-render refinements."
 > **Context:** based on an analysis of `src/shared/markdown/` (an own renderer,
 > [ADR 0003](../decisions/0003-own-markdown-renderer.md)) and its call from
@@ -401,7 +402,7 @@ is also a full re-render. Yet only the tail message actually changes.
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test`
   — green; tests live next to the code (`mod tests` in the submodule — the
   module's convention).
-- An entry in the CLAUDE.md journal (post-M9), modeled on existing ones.
+- An entry in [docs/journal/ui-feed.md](../journal/ui-feed.md) (post-M9), modeled on existing ones.
 - A behavior change → edit spec §11.4 and, if needed, a note in ADR 0003's
   "Consequences" (affected: `rule` at full width, `<br>`, autolinks, `\\`
   semantics, the price heuristic, environments).

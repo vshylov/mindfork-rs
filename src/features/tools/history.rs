@@ -49,7 +49,7 @@ const SNIPPET_CHARS: usize = SNIPPET_BUDGET_CHARS * 3;
 
 /// The answer when this conversation has nothing compressed — every tool result
 /// has to say what *is* possible, or the model improvises (four case studies in
-/// the CLAUDE.md journal). Here the good news is that nothing is missing at all.
+/// docs/lessons.md §4). Here the good news is that nothing is missing at all.
 fn nothing_compressed(loc: &Locale) -> ToolOutcome {
     ToolOutcome::text(loc.t("tool.history.none"))
 }

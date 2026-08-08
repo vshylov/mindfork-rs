@@ -142,5 +142,6 @@ Tier 2 as a separate pass.
 ## Scope
 
 ~1.5–2 days of code+tests (patterns already exist: the entity ≈ `note.rs`, tools ≈
-`notes.rs`, DB ≈ notes' methods). Afterward — update `CLAUDE.md`/`architecture.md`
+`notes.rs`, DB ≈ notes' methods). Afterward — update the
+[journal](../journal/memory.md)/`architecture.md`
 (a new tool group, the `ToolContext` field, a DB table).

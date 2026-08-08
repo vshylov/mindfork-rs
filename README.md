@@ -543,8 +543,12 @@ committing: `cargo fmt`, `cargo clippy`, `cargo test` — everything green.
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** — a quick project orientation and status (M0–M9 done).
+- **[CLAUDE.md](CLAUDE.md)** — a quick project orientation, the map of the other
+  documents, and status (M0–M9 done).
 - **[spec.md](spec.md)** — the full engineering spec (source of truth).
+- **[docs/journal/](docs/journal/)** — the engineering log, split by subsystem
+  (engine, storage, tools, memory, UI, i18n, platform): how each part got the way
+  it is, with the decisions and live-run outcomes behind it.
 - **[docs/install.md](docs/install.md)** — install, run, the engine (llama.cpp), the
   OpenAI-compatible protocol, dictionaries, import.
 - **[docs/decisions/](docs/decisions/)** — ADRs (UI crates, the embedding server, the

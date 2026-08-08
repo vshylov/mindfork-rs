@@ -2,7 +2,8 @@
 
 > **Status: implemented** (stages 1–4, branch `feat/summary-as-snapshot`). The live
 > run `summary_gate_e2e_live` and related SelfModel smokes were GO on Gemma 4 31B + bge-m3.
-> Historical document, not a source of truth. Outcome — in CLAUDE.md (post-M9 log) and
+> Historical document, not a source of truth. Outcome — in
+> [docs/journal/memory.md](../journal/memory.md) and
 > [architecture.md §9](../architecture.md).
 
 An actionable plan from a 2026-07-05 analysis. User observation: "the
@@ -84,7 +85,7 @@ Five root causes (from the code):
 
 - **Each stage is a separate PR** with a green gate (`cargo fmt`,
   `clippy --all-targets -- -D warnings`, `cargo test`); after merge — update
-  the CLAUDE.md log and architecture.md §9.
+  the [journal](../journal/memory.md) and architecture.md §9.
 - **Invariants stay untouched**: the orchestrator remains the sole owner of
   `Chat`; SelfModel mutations are DB-only (no `ChatEffect`); isolation by
   `profile_id`; FSD.

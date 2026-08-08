@@ -48,7 +48,7 @@ helpers without changing behavior**):
    edited (e.g. building `ToolContext` via the new constructor).
 4. **One stage — one PR**, branch from `main`. Stages are independent (except
    3.2 after 3.1) — order can be reshuffled.
-5. **Docs**: architecture.md (touched §§) + a CLAUDE.md log entry per stage;
+5. **Docs**: architecture.md (touched §§) + a [journal](../journal/refactors.md) entry per stage;
    once the track is finished — a note here.
 
 ---
@@ -595,5 +595,5 @@ continues — proceed to 3.2; if it has tapered off — stop at 3.1.
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` clean after
   every stage.
 - architecture.md (§3 module map, §8 tools, §11 concurrency — as touched)
-  and CLAUDE.md (log) updated at every stage; stage status marked in this
+  and the [journal](../journal/refactors.md) updated at every stage; stage status marked in this
   document.

@@ -2,10 +2,12 @@
 
 > **Status:** stages **A** (selection), **B** (clipboard + moving quit
 > `Ctrl+C`→`Ctrl+Q`/`F10`), **C** (undo/redo), and **D** (mouse: click → cursor,
-> drag → selection) — **all done** (see the CLAUDE.md changelog). The track is complete.
+> drag → selection) — **all done** (see
+> [docs/journal/ui-input.md](../journal/ui-input.md)). The track is complete.
 > **Context:** follows the `widgets/input_box.rs` audit (custom multiline input,
 > [ADR 0001](../decisions/0001-ui-crates-ratatui-030.md)). Audit items 1-7 are done
-> (see the CLAUDE.md changelog, "InputBox refinements" + "wrap cache"). Here are the
+> (see [docs/journal/ui-input.md](../journal/ui-input.md), "InputBox refinements"
+> + "wrap cache"). Here are the
 > three remaining major gaps versus "big editors":
 > **8** text selection (+ copy/cut), **9** undo/redo,
 > **10** mouse in the field (click → cursor, drag → selection).
@@ -586,7 +588,7 @@ guard).
 - **Status bar** (`widgets/status_bar.rs`): quit hint `Ctrl+C` → `Ctrl+Q`.
 - **architecture.md §4** (dirty): selection redraws on a terminal event
   (already the case); §9 — mention the selection/undo model in the widget.
-- **CLAUDE.md**: changelog entries per stage (like items 1-7); note the
+- **[docs/journal/ui-input.md](../journal/ui-input.md)**: an entry per stage (like items 1-7); note the
   quit relocation (`Ctrl+Q`/`F10`) with the `Ctrl+Q`/`F10` compatibility
   caveat (§2 Fork 2).
 - **`ChatIntent` contract**: `+CopyToClipboard(String)` (runtime

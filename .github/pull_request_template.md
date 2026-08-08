@@ -19,7 +19,8 @@
 <!-- Check off what was updated; delete inapplicable items. "What changed → what to
      update" table — AGENTS.md §4. -->
 
-- [ ] CLAUDE.md — a changelog entry + the test count in "Status"
+- [ ] docs/journal/`<area>`.md — an entry (+ its `## Entries` index) + the test count in CLAUDE.md "Status"
+- [ ] docs/lessons.md — a trap or practice that will bite again elsewhere
 - [ ] CHANGELOG.md — an entry in `[Unreleased]` (if there's a user-visible effect / a data format change)
 - [ ] docs/architecture.md — the affected §§
 - [ ] spec.md — the affected §§

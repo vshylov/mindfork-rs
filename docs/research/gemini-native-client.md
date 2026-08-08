@@ -501,7 +501,7 @@ Difference between Gemini and Anthropic/OpenAI: the signature is
 - **`thinkingLevel` vs `thinkingBudget`**: inference by model name
   (`gemini-3*`→level, `gemini-2.5*`→budget) or explicit selection — if a live
   run shows one parameter isn't universal.
-- Update `CLAUDE.md` (the log), `ADR 0004` (native Gemini instead of "out of
+- Update the [journal](../journal/engine.md), `ADR 0004` (native Gemini instead of "out of
   scope"), `architecture.md §9` as needed.
 
 ### Ripple outside `shared/api/gemini/` (summary)

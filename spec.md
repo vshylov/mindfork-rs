@@ -2253,7 +2253,7 @@ An extension of the "self-awareness" thread ([§1.2](#12-goals) item 6, `call_su
 a per-profile **representation the agent holds of itself**, maintained by the model itself and
 influencing its subsequent responses. Implemented post-M9 in stages (a probe → Tier 2/3);
 the detailed plan and decisions — [docs/self-model-mvp.md](docs/history/self-model-mvp.md), the log —
-[CLAUDE.md](CLAUDE.md). **Optional, and off by default.**
+[docs/journal/memory.md](docs/journal/memory.md). **Optional, and off by default.**
 
 **Why this way:** small local models fill richly-typed
 structures poorly (numeric "belief strengths", contradiction `severity`, contradiction

@@ -188,7 +188,7 @@ plumbing, and the repo has precedent for linear stacks):
    `exited` watched continuously (F4).
 2. Managed relaunch under a restart budget (F4a) — droppable to keep the PR
    narrow.
-3. Docs: architecture §6, spec §11.1, CHANGELOG, CLAUDE.md journal, roadmap
+3. Docs: architecture §6, spec §11.1, CHANGELOG, [journal](journal/engine.md), roadmap
    (close the groundwork item).
 
 ## 7. Tests

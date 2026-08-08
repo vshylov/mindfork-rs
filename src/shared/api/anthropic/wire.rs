@@ -34,7 +34,7 @@ pub struct AntRequest {
     /// Extended thinking. Modern Claude models (Opus 4.6+/Sonnet 4.6/Fable 5) accept
     /// only `{type:"adaptive"}` — the old `budget_tokens` gets a `400`. `display:
     /// "summarized"` is needed so the "thoughts" text arrives non-empty (default `omitted`).
-    /// Sent only when reasoning is enabled. See CLAUDE.md (CoT for Claude).
+    /// Sent only when reasoning is enabled. See docs/journal/engine.md (CoT for Claude).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<AntThinking>,
     /// Reasoning depth (`output_config.effort`, GA). Sent only with thinking and
@@ -100,7 +100,7 @@ pub struct AntTool {
 /// From sampling, **only `max_tokens`** is sent (the required field): the newest
 /// Claude models (4.x) have "locked in" sampling and reject `temperature`/`top_p`/`top_k`
 /// as deprecated (HTTP 400), so these fields aren't sent at all. The UI marks them
-/// as unsupported for Claude. See ADR 0004 and CLAUDE.md (Phase 2).
+/// as unsupported for Claude. See ADR 0004 and docs/journal/engine.md (Phase 2).
 pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest {
     let tools = if req.tools.is_empty() {
         None

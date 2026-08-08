@@ -19,7 +19,7 @@ user data.
 |---|---|---|
 | App version | `Cargo.toml` = `0.1.0`, never bumped; no git tags; no releases | the version says nothing; no rollback/comparison points |
 | Showing the version | `mindfork-rs --version` prints `CARGO_PKG_VERSION` (key `cli.version.line`) | no version in the TUI or the startup log — diagnosing "which binary does the user have" is hard |
-| Changelog | none | the user has nothing to read on upgrade; the CLAUDE.md journal is for development, not for users |
+| Changelog | none | the user has nothing to read on upgrade; the engineering journal is for development, not for users |
 | CI | none (`.github/` — just a PR template) | the `fmt`/`clippy -D warnings`/`test` gates rely only on agent discipline; the Linux build isn't checked at all (development happens on Windows) |
 | License | `license = "MIT"` in Cargo.toml, no `LICENSE` file | the code isn't formally licensed; release archives have nothing to bundle |
 | `settings.json` | `AppConfig.schema_version: u32 = 1` — the field **exists but is never checked**; on corrupt JSON `main.rs` does `unwrap_or_default()` | a decorative version; a corrupted file gets **silently overwritten with defaults** on the next save (the `.bak` then gets overwritten with the corrupted version too) |
@@ -198,10 +198,10 @@ implementation (AGENTS.md §1).
 - **Discipline**: a PR with a user-visible effect adds an item to
   `[Unreleased]` — a new checklist item in the PR template and a row in
   AGENTS.md §4's table. One item = one or two lines in user-facing
-  language (not the CLAUDE.md journal).
+  language (not the engineering journal).
 - Initial fill-in: the `[0.9.0]` section — a condensed retrospective of
-  "what the app can do" (15–25 lines, by track), linking to the CLAUDE.md
-  journal for detailed history. The whole journal isn't carried over.
+  "what the app can do" (15–25 lines, by track), linking to the
+  [journal](../journal/) for detailed history. The whole journal isn't carried over.
 
 ### 3.3 CI (GitHub Actions)
 

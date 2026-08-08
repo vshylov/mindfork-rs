@@ -5,7 +5,7 @@ moving to `docs/history/` (like refinements.md and others).
 
 **Progress:** all seven stages done and merged into one branch `refactor/god-object-split`
 (originally each was a separate branch from `main`). Summary table and details — §6;
-full per-stage log — in [CLAUDE.md](../../CLAUDE.md).
+full per-stage log — in [docs/journal/refactors.md](../journal/refactors.md).
 
 ## 1. Context and diagnosis
 
@@ -65,13 +65,14 @@ channels, or behavior:
    convention); where an entire screen is tested through `handle_key`/`render`
    (settings, chat) — a single `tests.rs` submodule (orchestrator precedent).
    Shared fixtures go in `#[cfg(test)] mod testkit` in `mod.rs`. Test function
-   names don't change (the CLAUDE.md log references them).
+   names don't change (the journal references them).
 6. **Gates on every PR**: `cargo fmt`, `cargo clippy --all-targets -- -D
    warnings`, `cargo test` — green; test count hasn't dropped (794 at the time).
 7. **One stage — one PR**, the split isn't mixed with functional changes. The
    move commit is separate from small visibility fixes — the diff reads as a
    pure move.
-8. **Docs**: update the module map in architecture.md §3 + a CLAUDE.md log entry
+8. **Docs**: update the module map in architecture.md §3 + a
+   [journal](../journal/refactors.md) entry
    (per-PR convention).
 
 Thresholds ("yellow zone", entry into the plan when violated + expected churn):
@@ -314,7 +315,7 @@ app/runtime/
 - 794+ unit tests green after every stage, count hasn't dropped;
   `#[ignore]` smokes untouched.
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` clean.
-- architecture.md §3 (module map) and CLAUDE.md (log) updated at every stage.
+- architecture.md §3 (module map) and the [journal](../journal/refactors.md) updated at every stage.
 
 ## 6. Done
 
@@ -354,7 +355,7 @@ clean.
 ### Stages 2–7 (done)
 
 All remaining stages were done with the same playbook (§2). The full
-per-stage breakdown is in the [CLAUDE.md](../../CLAUDE.md) log ("God-object
+per-stage breakdown is in the [journal](../journal/refactors.md) ("God-object
 refactor — stage N" entries); here — a "before → largest file after" summary
 and where things landed.
 
