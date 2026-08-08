@@ -161,11 +161,14 @@ src/
 │  │  │                     settings edits (a series of edits → one restart)
 │  │  ├─ generation.rs      send/regenerate/delete exchange + the agentic-loop task
 │  │  ├─ chats.rs           chat list (new/switch/rename/clone/copy/delete) + draft
-│  │  ├─ compaction.rs      history compression (`/compact`): one single-turn roll
-│  │  │                     (the title.rs shape — its text comes back on a typed
-│  │  │                     channel), the boundary re-found by message id. Never
-│  │  │                     edits `chat.messages` — only what a request carries,
-│  │  │                     spec §6.7
+│  │  ├─ compaction.rs      history compression (`/compact` and the automatic
+│  │  │                     trigger): one single-turn roll (the title.rs shape —
+│  │  │                     its text comes back on a typed channel), the boundary
+│  │  │                     re-found by message id, plus `ContextDiscovery` — what
+│  │  │                     is known about the engine's context window (asked once
+│  │  │                     per applied engine, epoch-guarded against a stale
+│  │  │                     answer). Never edits `chat.messages` — only what a
+│  │  │                     request carries, spec §6.7
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor
 │  │  ├─ title.rs           chat auto-title (background task)
@@ -317,7 +320,8 @@ src/
 │  ├─ compaction.rs        history compression, pure part: the digest (which,
 │  │                       unlike the title one, carries tool activity — the
 │  │                       invisible bulk of a long chat), the cut planner
-│  │                       (snapped to a User boundary) and the two prompts
+│  │                       (snapped to a User boundary), the two prompts and the
+│  │                       overflow detector behind the "the window is full" hint
 │  ├─ compact_command.rs   /compact parser
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)

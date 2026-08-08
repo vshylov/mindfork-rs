@@ -684,10 +684,13 @@ read-back tools rather than invalidating the mechanism.
   inert) + clamping + i18n (`prompt.compact.*`) + unit tests + the
   planted-fact live smoke. Spec §6.2/§6.6 bullets, §9.x or §11.x section;
   architecture §5/§11.
-- **Stage 2 — auto**: `GenResult` carries usage → `maybe_auto_compact` in the
-  `handle_done` tail + budget resolution (`/props` discovery per F5) +
-  settings UI ("Memory" → "Context") + the 400-error hint naming `/compact` +
-  `BackgroundKind::Compaction` chip/failure streak.
+- **Stage 2 — auto** (**done**, sub-decisions §10.1): `GenResult` carries usage →
+  `maybe_auto_compact` in the `handle_done` tail + budget resolution
+  (`EngineBackend::context_budget` → `/props`, per F5) + settings UI ("Memory" →
+  "Context") + the overflow hint naming `/compact` (or the setting, when
+  compression is off) + the `BackgroundKind::Compaction` failure streak on the
+  automatic path only. **What it cost that was not planned for**: the client
+  never emitted `ChatChunk::Usage` at all on the llama.cpp path — §9b.
 - **Stage 3 — read-back tools** (committed by F9(b)): `history_read`/
   `history_search` over the compressed range, the `attachment_read`/
   `attachment_search` shape; the summary block's wording switches from "not
@@ -695,6 +698,45 @@ read-back tools rather than invalidating the mechanism.
 - **Groundwork (not committed)**: impersonation reusing the summary; F3(b)
   tool-result eliding; compact-into-new-chat (F1c); prompt-caching alignment
   (roadmap #2 lands its breakpoints around the now-stable prefix).
+
+---
+
+## 9b. What stage 2 found: the exact `usage` never reached us
+
+Measured 2026-08-08, while the stage-2 live smoke refused to fire.
+
+M5 (§9a) established that llama-server reports `usage` in a final chunk with an
+empty `choices` array. It does — and **our client threw it away every single
+time**. The order on the wire, re-measured directly:
+
+```
+data: {"choices":[{"finish_reason":"length","index":0,"delta":{}}], …}
+data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":16, …}}
+data: [DONE]
+```
+
+`OpenAiClient::chat_stream` yielded `Finished` and **`break`ed** the moment a
+chunk carried `finish_reason`, so the usage chunk that follows it was never
+read. Two consequences, one of them long-standing:
+
+- The status-bar counter's exact figure never arrived on llama.cpp: the `~`
+  estimate was, in practice, the only number the user ever saw — contrary to
+  what spec §11.1 claimed. The same for reasoning tokens.
+- Stage 2's trigger reads the exact figure **and nothing else** (S2), so it had
+  nothing to fire on. The smoke reported "nothing folded" with no exact prompt
+  ever observed, which is what led here.
+
+Fixed by holding the reason until the stream's own terminator (`[DONE]` or the
+body ending) instead of finishing on it. Worth recording as a method note: the
+first two attempts at diagnosing this were **instrumentation bugs of the test,
+not findings** — `run_turn_capture` drains events up to `Finished`, so it had
+already consumed the `TokenUsage` events the diagnostic was looking for. Only
+isolating the question to the client itself (stream one request, print the
+chunks) answered it.
+
+The other clients are unaffected, checked rather than assumed: Anthropic carries
+usage in `message_delta`, OpenAI Responses in `response.completed`, Gemini in
+the same part as `finishReason` — all alongside the finish signal, not after it.
 
 ---
 

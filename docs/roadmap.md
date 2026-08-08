@@ -45,12 +45,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   than in `max_tokens`. **Stage 1 (core) is done** — `/compact` folds the older
   part of a chat into a rolling summary, the feed marks the boundary with a
   foldable divider, and the master switch makes the whole thing inert when off
-  (spec §6.7). **Remaining stages:** 2 — the automatic trigger (`GenResult`
-  carries `usage`, budget resolution via `/props` and the 400 body, settings for
-  the threshold, an error hint naming `/compact`); 3 — the `history_read`/
+  (spec §6.7). **Stage 2 (the automatic trigger) is done** — sub-decisions
+  S1–S8, a compaction starts by itself at a share of the resolved context
+  window, which comes from an explicit setting, a managed server's `-c`, or the
+  engine's own `/props`; an overflow that happens anyway is explained rather
+  than dumped as raw JSON. **Remaining:** stage 3 — the `history_read`/
   `history_search` read-back tools (fork F9b), after which the summary block's
   wording stops saying the verbatim text is unreachable and names them. See
   [history-compression.md](research/history-compression.md).
+  **Groundwork left by stage 2:** learning the window from the 400 body
+  (sub-decision S3 — deferred as redundant with `/props`, since the body shape
+  that carries `n_ctx` is llama.cpp's own); `estimate_prompt_tokens` still
+  ignores `req.tools`, which matters for the `~` figure though no longer for the
+  trigger; and compaction still does not apply to impersonation (`Ctrl+U`),
+  which builds its own full-history request.
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
   into `system` is stable within a day — a direct candidate for prompt
