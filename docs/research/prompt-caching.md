@@ -1,8 +1,11 @@
 # Prompt caching — research and decision points
 
-> Status: **research, forks F1–F6 open**. Roadmap: §Context and tokens, item 1 of
-> "Most valuable next". Adjacent: [history-compression.md](history-compression.md)
-> §2.3, spec [§6.6](../../spec.md) (KV cache and prefix caching),
+> Status: **research complete; implementation deferred** (user's decision,
+> 2026-08-08 — see [§5 F1](#f1-prompt-layout--the-one-that-decides-whether-anything-else-is-worth-doing)).
+> The measurements stand and the decision points are recorded; nothing is being
+> built on them for now. Roadmap: §Context and tokens.
+> Adjacent: [history-compression.md](history-compression.md) §2.3, spec
+> [§6.6](../../spec.md) (KV cache and prefix caching),
 > [ADR 0004](../decisions/0004-engine-contract-multi-provider.md).
 > Measurements taken 2026-08-08 against live providers and a live `llama-server`.
 
@@ -188,18 +191,36 @@ Notes that matter for implementation:
   (llama.cpp), 0% → 81% (OpenAI), and a 2304-token-per-turn write → 0
   (Anthropic).
 - **(d)** Move the whole self-model block after the conversation.
+- **(e)** Leave the block where it is and make its **content** stable instead:
+  select observations by something that does not change per turn (the
+  conversation as a whole, or a per-chat selection refreshed only on a
+  compaction or every N turns) rather than by relevance to the latest user
+  message. Untested — see below.
 
-**Recommendation: (c) + (b).** (c) is what the measurements are about; (b) is
-free and makes a compaction roll invalidate less. (d) goes further than the
-evidence requires and changes more of the prompt the model reads.
+**Decision (user, 2026-08-08): none of (c)/(d) — implementation deferred.**
 
-**This reverses the 2026-07-03 decision** ("the block stays in `system`, losing
-prefix cache is the accepted price") — deliberately: that decision was taken when
-the price was an abstraction. It is now three measured tables. The reversal is
-narrow: the block still exists and still says the same thing, it moves position.
-**What needs the user's judgement is behavioural, not technical** — whether the
-self-model reads differently to the model when it arrives after the conversation
-instead of before it.
+The recommendation here was (c) + (b), on the strength of §3. It was
+**rejected, and the objection is sound**: many models react markedly worse when
+extra data is appended to a *user* message. Moving the block out of `system`
+does not merely change its position, it changes its **status** — a user turn is
+read as part of what the human is asking, so the content gets echoed, argued
+with, or attributed to the user, while `system` is trained to be authoritative.
+That is precisely the risk the recommendation flagged as needing judgement
+rather than measurement, and the asymmetry decides it: the saving is measurable
+and bounded, the behavioural regression is neither, would land in the project's
+flagship track (self-model), and would be noticed long after the change.
+
+So the 2026-07-03 decision **stands**: the injection stays in `system`, and
+losing prefix reuse when it changes remains the accepted price. What this
+research adds is that the price is now known — §3 — rather than assumed, and
+that today it is mostly **not being paid**, for the accidental reason in §2.1.
+
+If this is ever revisited, the promising direction is **(e)**, not (c): it
+removes the volatility instead of relocating it, so the prompt the model reads
+is unchanged and the objection above does not apply. What it costs is the
+per-turn relevance selection, which §2.1 measured as inert on the real profile
+anyway. It would need its own measurement of whether a stabler selection is
+worth less to the model than a per-turn one.
 
 ### F2. How far to go per provider
 
@@ -252,16 +273,25 @@ The threshold is per model and non-monotonic. Do we
 **Recommendation: (a).** A stale table is worse than none, the no-op costs
 nothing, and F3's reporting shows whether it engaged.
 
-## 6. Proposed staging
+## 6. What remains available, if this is revisited
 
-1. **Layout + reporting** (F1, F3) — no protocol change, helps three providers
-   immediately, and gives the instrument that verifies the rest.
-2. **Anthropic breakpoints** (F2b) — `system` becomes blocks; the only client
-   change.
-3. **`prompt_cache_key`** (F2c) — one field.
+Deferring F1 does not block everything: two of the three stages never touch the
+prompt's **content**, so the objection above does not reach them. Recorded here
+rather than proposed — nothing is being built now.
 
-Each stage is independently verifiable with the probes in §3, which are cheap
-and repeatable.
+1. **Anthropic breakpoints** (F2b) — the largest remaining gain, and it is
+   layout-independent. Anthropic caches **nothing** today; with a breakpoint
+   after the stable head, §3.3 measured the head being read back (5067 tokens)
+   *even on the turn the volatile block changed*. The conversation is still
+   rewritten each such turn, so this captures part of the win, not all of it.
+   Cost: `system` becomes an array of text blocks in `anthropic/wire.rs`.
+2. **Reporting** (F3) — all four providers report reuse; the status-bar counter
+   already exists. This is also the instrument: without it, a prefix broken by
+   some future change is invisible.
+3. **`prompt_cache_key`** (F2c) — one field on OpenAI, keyed by chat id.
+
+Each is independently verifiable with the probes in §3, which are cheap and
+repeatable.
 
 ## 7. Open questions
 

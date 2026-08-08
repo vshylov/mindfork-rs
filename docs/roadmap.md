@@ -7,12 +7,15 @@
 ## Most valuable next
 The unprioritized list below is an idea bank of equal weight; these three are
 called out as the highest-payoff tracks (real user pain / direct savings):
-1. **Prompt caching** (§Context and tokens) — direct token/latency savings,
-   unlocked by the stable daily self-model injection.
-2. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
+1. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
    reliability.
-3. **Multimodality (images)** (§Engine and reliability) — a big feature with
+2. **Multimodality (images)** (§Engine and reliability) — a big feature with
    demand.
+
+**Prompt caching** left this list on 2026-08-08: it is researched and measured,
+but the change the numbers argue for was rejected on behavioural grounds, so
+what remains is a partial gain rather than the headline one
+([prompt-caching.md](research/prompt-caching.md)).
 
 ## Memory, self-model, knowledge
 The project's flagship track (self-model / notes / connectivity / RAG). The
@@ -41,16 +44,40 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     llama.cpp's own;
   - `estimate_prompt_tokens` still ignores `req.tools`, which matters for the
     `~` figure though no longer for the trigger.
-- **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
-  `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
-  into `system` is stable within a day — a direct candidate for prompt
-  caching (token and latency savings). See groundwork in
-  [openai-responses-client](research/openai-responses-client.md).
-- **`cached_tokens` in the token counter** — show the cache-hit share. The
-  server already reports it and we drop it, so wiring it through would let the
-  prefix-cache trade-off the self-model injection accepts
-  ([§2.3](research/history-compression.md)) be **measured** rather than reasoned
-  about.
+- **Prompt caching** — **researched and measured; implementation deferred**
+  (user's decision 2026-08-08). Full contracts, three live measurements and the
+  decision points: [prompt-caching.md](research/prompt-caching.md).
+  In short: caching is automatic on llama.cpp, OpenAI and Gemini and **opt-in
+  only** on Anthropic, which caches nothing today. The gain hinges on a stable
+  prefix, and our volatile block sits at the end of `system` — measured, a
+  change to it costs the whole conversation (llama.cpp 0% vs 99% reuse; OpenAI
+  0% vs 81%; Anthropic a 2304-token write per turn vs none). Moving it after the
+  conversation is what the numbers argue for and **what was rejected**: many
+  models read data appended to a *user* message as part of the user's request,
+  and that behavioural risk in the self-model track outweighs a bounded token
+  saving. So the 2026-07-03 decision stands. **Still available and
+  layout-independent, if revisited:** Anthropic breakpoints (the head alone is
+  worth ~5k tokens a turn), the cache share in the token counter, and
+  `prompt_cache_key`. The promising way to get the rest is to make the
+  observation selection **stable** rather than to relocate the block
+  (§5 F1(e)) — untested.
+- **`cached_tokens` in the token counter** — show the cache-hit share. All four
+  providers report it and we drop it (llama.cpp: `timings.cache_n`, present
+  since 2025-09 and not gated by `include_usage`). Beyond the display, it is the
+  **instrument**: a prefix broken by some future change is otherwise invisible.
+  Note the accounting trap measured in
+  [prompt-caching.md §3.3](research/prompt-caching.md): with caching on,
+  Anthropic's `input_tokens` is only the *uncached remainder* — 13 tokens for a
+  7.4k prompt — so the counter must sum it with the cache fields.
+- **Self-model: injected observations never render on a large model** — measured
+  2026-08-08 on the real dev profile ([prompt-caching.md
+  §2.1](research/prompt-caching.md)): summary + goals + interlocutor traits
+  exhaust `prompt_cap`, so `render_for_prompt` truncates before the observations
+  section at every budget tried (1200/2000/4000). The embedder is queried every
+  turn for a relevance selection that is then discarded, while the injected text
+  tells the model that observations "surface by relevance". Per-section budgets
+  (summary-as-snapshot, stage 3) reserve half the cap for "About you" but nothing
+  for observations.
 
 ## Tools
 - **MCP host — groundwork** (core is **done**: spec §9.6,
