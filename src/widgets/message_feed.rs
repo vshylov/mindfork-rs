@@ -3166,6 +3166,43 @@ mod tests {
             .collect()
     }
 
+    /// Grid body of [`cache_matches_fresh_render`]: for one scenario and one
+    /// compaction boundary, sweep widths × palettes × collapse state (both
+    /// kinds) and require the warm cache to match a fresh render.
+    fn assert_warm_matches_fresh(messages: &[FeedMessage], compaction: Option<(Uuid, String)>) {
+        for width in [40usize, 80] {
+            for palette in [Palette::default(), Palette::default().with_compat(true)] {
+                for thoughts in [false, true] {
+                    for tools in [false, true] {
+                        let view = FeedView { thoughts, tools };
+                        let mut warm = MessageFeed::new();
+                        warm.set_view(view);
+                        warm.set_compaction(compaction.clone());
+                        // warm the cache with repeated calls
+                        let _ = warm.build_lines(messages, &palette, width, ru());
+                        let _ = warm.build_lines(messages, &palette, width, ru());
+                        let warm_lines = warm.build_lines(messages, &palette, width, ru());
+
+                        let mut fresh = MessageFeed::new();
+                        fresh.set_view(view);
+                        fresh.set_compaction(compaction.clone());
+                        let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
+
+                        let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
+                        let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+                        assert_eq!(
+                            w,
+                            f,
+                            "cache diverged: width={width} view={view:?} \
+                             compaction={}",
+                            compaction.is_some()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// A warm cache gives line-for-line identical output to a fresh render — across
     /// scenarios, widths, palettes, and collapse state (both kinds).
     #[test]
@@ -3197,38 +3234,7 @@ mod tests {
             // cache input like the collapse state — covered here too.
             let folded = Some((messages[0].message_ids[0], "ранее обсудили X".to_string()));
             for compaction in [None, folded] {
-                for width in [40usize, 80] {
-                    for palette in [Palette::default(), Palette::default().with_compat(true)] {
-                        for thoughts in [false, true] {
-                            for tools in [false, true] {
-                                let view = FeedView { thoughts, tools };
-                                let mut warm = MessageFeed::new();
-                                warm.set_view(view);
-                                warm.set_compaction(compaction.clone());
-                                // warm the cache with repeated calls
-                                let _ = warm.build_lines(messages, &palette, width, ru());
-                                let _ = warm.build_lines(messages, &palette, width, ru());
-                                let warm_lines = warm.build_lines(messages, &palette, width, ru());
-
-                                let mut fresh = MessageFeed::new();
-                                fresh.set_view(view);
-                                fresh.set_compaction(compaction.clone());
-                                let fresh_lines =
-                                    fresh.build_lines(messages, &palette, width, ru());
-
-                                let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
-                                let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
-                                assert_eq!(
-                                    w,
-                                    f,
-                                    "cache diverged: width={width} view={view:?} \
-                                     compaction={}",
-                                    compaction.is_some()
-                                );
-                            }
-                        }
-                    }
-                }
+                assert_warm_matches_fresh(messages, compaction);
             }
         }
     }
