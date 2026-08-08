@@ -130,38 +130,23 @@ impl Tool for HistorySearch {
         loc.t("tool.history_search.desc").into()
     }
     fn parameters(&self, loc: &Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": loc.t("tool.history_search.param.query")
-                },
-                "top_k": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": loc.t("tool.history_search.param.top_k")
-                }
-            },
-            "required": ["query"]
-        })
+        super::search_parameters(
+            loc,
+            "tool.history_search.param.query",
+            "tool.history_search.param.top_k",
+        )
     }
 
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let Some(view) = ctx.history.as_ref() else {
             return Ok(nothing_compressed(ctx.loc));
         };
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.history_search.err.query_empty")))?;
-        let k = args
-            .get("top_k")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_TOP_K);
+        let (query, k) = super::search_args(
+            &args,
+            ctx.loc,
+            "tool.history_search.err.query_empty",
+            DEFAULT_TOP_K,
+        )?;
 
         // Raw input must never reach `MATCH`: `C++`, `cost-benefit` and `50%` are
         // all FTS5 syntax errors on ordinary text. The escaper lives in one place

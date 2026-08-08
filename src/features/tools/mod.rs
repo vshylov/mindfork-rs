@@ -200,6 +200,68 @@ impl ToolContext {
     }
 }
 
+/// The JSON schema of a **search tool**: a required `query` plus an optional
+/// `top_k`.
+///
+/// Shared by `attachment_search` and `history_search`, which take the same
+/// arguments for the same reason — one names *where* to look, a reader then
+/// fetches it. One definition so the two contracts cannot drift apart, the rule
+/// this codebase already applies to the FTS escaper.
+///
+/// The two bundle keys are passed **whole** rather than built from a prefix:
+/// a key assembled with `format!` is invisible to the i18n gates
+/// (`all_bundle_key_references_in_code_exist` / `bundle_keys_are_not_dead`),
+/// which is exactly why the dynamic `ui.tool.label.*` family needs a gate test
+/// of its own. Keeping the literals at the call site also shows, in the tool's
+/// own file, which text it presents.
+pub(crate) fn search_parameters(
+    loc: &crate::shared::i18n::Locale,
+    query_key: &str,
+    top_k_key: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": loc.t(query_key)
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "description": loc.t(top_k_key)
+            }
+        },
+        "required": ["query"]
+    })
+}
+
+/// Reads the arguments [`search_parameters`] describes: a trimmed, non-empty
+/// `query` and `top_k` (falling back to `default_k`).
+///
+/// An empty query is a usage error rather than an empty result — the tool was
+/// called wrong, and saying so is what lets the next call succeed. `err_key`
+/// names the tool's own message.
+pub(crate) fn search_args<'a>(
+    args: &'a serde_json::Value,
+    loc: &crate::shared::i18n::Locale,
+    err_key: &str,
+    default_k: usize,
+) -> Result<(&'a str, usize)> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!(loc.t(err_key).to_string()))?;
+    let k = args
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(default_k);
+    Ok((query, k))
+}
+
 /// An effect that mutates `Chat`; returned by a tool, applied by the orchestrator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatEffect {
