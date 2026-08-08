@@ -1290,7 +1290,22 @@ debounce was done as a separate PR, see below).
   `the_help_tab_strip_fits_the_dialog_in_every_locale`, which measures the
   rendered strip for every bundled locale rather than trusting the next label to
   be short.
-- **Tests**: **1955 unit tests green** (+3), 81 `#[ignore]`, clippy
+- **Two fixes from the user's screenshot of the finished tab.** The `ru` label is
+  the borrowed "disclaimer", not the native word first tried: the borrowing is
+  established in Russian and reads unambiguously, where the native one mostly
+  means a slip of the tongue. It costs two more columns, which puts the `ru`
+  strip at exactly 76 of 76 — the gate test above is what makes that safe to ship
+  rather than lucky.
+- And the heading's underline **ran out to the left of its text**: a level-1
+  markdown heading is accent+bold+`UNDERLINED`, the writer puts that on the
+  `Line` rather than on its spans, and a line style covers every column of the
+  row — including the two-space indent prepended here. Folded into the content
+  spans instead (`line_style.patch(span.style)`, so a span's own overrides
+  win), leaving the indent unstyled. Pinned by
+  `the_disclaimer_indent_does_not_inherit_the_heading_style`, which reads the
+  cells to the left of the `#` out of the rendered buffer;
+  **mutation-checked** — restoring `out.style = line_style` fails it.
+- **Tests**: **1956 unit tests green** (+4), 81 `#[ignore]`, clippy
   `-D warnings`/fmt/`cyrillic_scan`/`link_check`/`doc_index_check` clean.
 - **A live run isn't required** (AGENTS.md §3): a document, a help tab and
   packaging file lists — no engine, memory, tool or provider path is touched.

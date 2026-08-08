@@ -2237,6 +2237,49 @@ fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
     }
 }
 
+/// A level-1 markdown heading is accent + bold + **underlined**, and the writer
+/// puts that on the `Line` rather than on its spans — so the "Disclaimer" tab's
+/// left indent inherited it and the underline visibly ran out to the left of the
+/// heading's text. The style belongs on the content spans; the indent stays
+/// blank. Reported from a real screenshot.
+#[test]
+fn the_disclaimer_indent_does_not_inherit_the_heading_style() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
+
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    s.help.as_mut().unwrap().tab = HelpTab::Disclaimer;
+    let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+
+    let buf = term.backend().buffer();
+    // Find the heading row and the column its `#` marker starts at.
+    let (y, x) = (buf.area.top()..buf.area.bottom())
+        .find_map(|y| {
+            (buf.area.left()..buf.area.right())
+                .find(|&x| buf[(x, y)].symbol() == "#")
+                .map(|x| (y, x))
+        })
+        .expect("the disclaimer heading is not on screen");
+    assert!(
+        buf[(x, y)]
+            .style()
+            .add_modifier
+            .contains(Modifier::UNDERLINED),
+        "the heading itself lost its underline"
+    );
+    for dx in 1..=2 {
+        let cell = &buf[(x - dx, y)];
+        assert_eq!(cell.symbol(), " ", "the indent is not blank");
+        assert!(
+            !cell.style().add_modifier.contains(Modifier::UNDERLINED),
+            "the indent column {dx} left of the heading is underlined"
+        );
+    }
+}
+
 /// Every tab of the help dialog draws its own distinctive content, and the tab strip
 /// carries all six tabs.
 #[test]
@@ -2268,7 +2311,7 @@ fn help_tabs_render_distinct_content() {
         "Клавиши",
         "Команды",
         "Лицензия",
-        "Оговорка",
+        "Дисклеймер",
         "Компоненты",
     ] {
         assert!(about.contains(label), "missing the \"{label}\" tab label");

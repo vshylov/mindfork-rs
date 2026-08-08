@@ -303,6 +303,14 @@ emoji vanishing from a grid, and a "broken" frame. A fourth lies upstream.
 — *emoji popup — a "hanging" selection ghost after closing*, *ratatui-core/crossterm
 update 0.1.1 to 0.1.2*.
 
+**A `Line`'s style covers the whole row, not just its text** — so any padding you
+prepend to a styled line inherits it. Indenting markdown output by two spaces made a
+level-1 heading's `UNDERLINED` run out to the left of the text: the writer puts a
+heading's style on the `Line`, not on its spans. Fold a line style into the content
+spans (`line_style.patch(span.style)` keeps each span's own overrides) whenever you
+add decoration cells around it.
+— *a disclaimer for what the models say and do*.
+
 **Use `shared/ui.rs::prime_full_redraw` for a full repaint; never `terminal.clear()`
 and never a plain back-buffer reset.** `clear()` emits `ESC[2J` and flickers. A plain
 `swap_buffers` is *worse*: the diff then compares "empty to frame" and **skips space

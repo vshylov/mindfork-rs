@@ -559,10 +559,19 @@ fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
             }
             let indent = if i == 0 { 0 } else { hang };
             let mut spans = vec![Span::raw(format!("{HELP_PAD}{}", " ".repeat(indent)))];
-            spans.extend(wrapped.spans);
-            let mut out = Line::from(spans);
-            out.style = wrapped.style;
-            lines.push(out);
+            // A heading carries its color, bold and underline on the **line**,
+            // and a line style covers the indent columns too — which showed as
+            // an underline running out to the left of the heading's text. Fold
+            // the line style into the content spans instead (each span keeps
+            // its own overrides), and leave the padding unstyled.
+            let line_style = wrapped.style;
+            spans.extend(
+                wrapped
+                    .spans
+                    .into_iter()
+                    .map(|s| Span::styled(s.content, line_style.patch(s.style))),
+            );
+            lines.push(Line::from(spans));
         }
     }
     lines
