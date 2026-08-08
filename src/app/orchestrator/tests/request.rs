@@ -4,6 +4,7 @@
 use super::*;
 use crate::app::orchestrator::request::inject_attachments;
 use crate::entities::attachment::{AttachMode, Attachment};
+use crate::shared::api::ChatRequest;
 use crate::shared::config::{AttachmentSettings, CompactionSettings};
 
 fn ru() -> &'static crate::shared::i18n::Locale {
@@ -19,6 +20,24 @@ fn att(name: &str, text: &str, mode: AttachMode) -> Attachment {
     Attachment::new(name, format!("/tmp/{name}"), text.to_string(), bytes, mode)
 }
 
+/// A request built with default injection settings — the shape almost every test
+/// here wants. The two knobs that tests actually vary get parameters; the rest
+/// would only be noise repeated at each call site.
+fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool) -> ChatRequest {
+    build_request(
+        chat,
+        SamplingConfig::default(),
+        vec![],
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction,
+            indexed: NO_INDEX,
+            history_tools,
+            loc: ru(),
+        },
+    )
+}
+
 #[test]
 fn build_request_puts_system_aside_and_maps_roles() {
     let mut p = Profile::new("X", "Ты — X.");
@@ -27,18 +46,7 @@ fn build_request_puts_system_aside_and_maps_roles() {
     chat.push_message(Message::assistant("Здравствуйте!"));
     chat.push_message(Message::user("привет"));
 
-    let req = build_request(
-        &chat,
-        SamplingConfig::default(),
-        vec![],
-        &PromptContext {
-            attachments: &AttachmentSettings::default(),
-            compaction: &CompactionSettings::default(),
-            indexed: NO_INDEX,
-            history_tools: true,
-            loc: ru(),
-        },
-    );
+    let req = request_of(&chat, &CompactionSettings::default(), true);
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 2);
 }
@@ -51,18 +59,7 @@ fn build_request_appends_attached_files_to_system() {
     chat.attachments
         .push(att("notes.md", "секретное число 4242", AttachMode::Inline));
 
-    let req = build_request(
-        &chat,
-        SamplingConfig::default(),
-        vec![],
-        &PromptContext {
-            attachments: &AttachmentSettings::default(),
-            compaction: &CompactionSettings::default(),
-            indexed: NO_INDEX,
-            history_tools: true,
-            loc: ru(),
-        },
-    );
+    let req = request_of(&chat, &CompactionSettings::default(), true);
     let system = req.system.expect("system with the attachment block");
     // The chat's own system message stays first, the block is appended.
     assert!(system.starts_with("Ты — X."), "{system}");
@@ -259,18 +256,7 @@ fn compacted_chat(n: usize, upto: usize, summary: &str) -> Chat {
 #[test]
 fn compaction_replaces_the_prefix_with_a_summary_block() {
     let chat = compacted_chat(5, 6, "Ранее: обсудили хранилище, выбрали SQLite.");
-    let req = build_request(
-        &chat,
-        SamplingConfig::default(),
-        vec![],
-        &PromptContext {
-            attachments: &AttachmentSettings::default(),
-            compaction: &CompactionSettings::default(),
-            indexed: NO_INDEX,
-            history_tools: true,
-            loc: ru(),
-        },
-    );
+    let req = request_of(&chat, &CompactionSettings::default(), true);
     // The persona stays first, the block is appended after it — ordered by
     // volatility so the most stable content keeps its prefix (spec §6.6).
     let system = req.system.expect("system with the summary block");
@@ -290,20 +276,9 @@ fn compaction_replaces_the_prefix_with_a_summary_block() {
 fn the_block_names_the_read_back_tools_only_when_they_are_offered() {
     let chat = compacted_chat(5, 6, "Ранее: выбрали SQLite.");
     let block = |history_tools| {
-        build_request(
-            &chat,
-            SamplingConfig::default(),
-            vec![],
-            &PromptContext {
-                attachments: &AttachmentSettings::default(),
-                compaction: &CompactionSettings::default(),
-                indexed: NO_INDEX,
-                history_tools,
-                loc: ru(),
-            },
-        )
-        .system
-        .expect("system with the summary block")
+        request_of(&chat, &CompactionSettings::default(), history_tools)
+            .system
+            .expect("system with the summary block")
     };
 
     let with = block(true);
@@ -334,18 +309,7 @@ fn the_master_switch_off_makes_compression_inert() {
         enabled: false,
         ..Default::default()
     };
-    let req = build_request(
-        &chat,
-        SamplingConfig::default(),
-        vec![],
-        &PromptContext {
-            attachments: &AttachmentSettings::default(),
-            compaction: &off,
-            indexed: NO_INDEX,
-            history_tools: true,
-            loc: ru(),
-        },
-    );
+    let req = request_of(&chat, &off, true);
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 10);
     assert!(
@@ -361,18 +325,7 @@ fn a_vanished_boundary_falls_back_to_the_whole_history() {
     // silently covering the wrong span.
     let mut chat = compacted_chat(5, 6, "Ранее: выбрали SQLite.");
     chat.messages.remove(6);
-    let req = build_request(
-        &chat,
-        SamplingConfig::default(),
-        vec![],
-        &PromptContext {
-            attachments: &AttachmentSettings::default(),
-            compaction: &CompactionSettings::default(),
-            indexed: NO_INDEX,
-            history_tools: true,
-            loc: ru(),
-        },
-    );
+    let req = request_of(&chat, &CompactionSettings::default(), true);
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 9);
 }

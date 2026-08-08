@@ -5,6 +5,43 @@ use super::*;
 use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::EmbedRole;
 
+/// Runs `topics` as ordinary turns, then folds the conversation with `/compact`
+/// and returns `(summary, folded)`.
+///
+/// Shared by the two compaction smokes, which need the same three steps for
+/// opposite reasons — one checks that a planted fact **survives** the summary,
+/// the other that what the summary **dropped** is still reachable. The filler
+/// turns are what push the seed behind the verbatim tail; only their topics
+/// differ, which is why they are the parameter.
+async fn fill_then_compact(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    topics: &[&str],
+) -> (String, usize) {
+    for topic in topics {
+        let (r, _) = run_turn_capture(cmd_tx, evt_rx, topic).await;
+        eprintln!("filler reply: {}", r.chars().take(80).collect::<String>());
+    }
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let compacted = wait_for(evt_rx, |e| {
+        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
+    })
+    .await
+    .unwrap();
+    let AppEvent::Compacted {
+        summary, folded, ..
+    } = compacted
+    else {
+        panic!("compaction failed: {compacted:?}");
+    };
+    eprintln!(
+        "folded {folded} messages into {} chars:\n{}",
+        summary.chars().count(),
+        summary.chars().take(600).collect::<String>()
+    );
+    (summary, folded)
+}
+
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
 /// file the model finds the right place **by meaning in one `attachment_search`
 /// call**, instead of walking pages. The payload sits deliberately deep — around
@@ -2025,32 +2062,17 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
     );
 
     // Unrelated turns, so the two exchanges above fall behind the verbatim tail.
-    for topic in [
-        "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
-        "В двух предложениях: чем отличается кэш от буфера?",
-        "В двух предложениях: что такое идемпотентность запроса?",
-        "В двух предложениях: зачем нужны миграции схемы?",
-    ] {
-        let (r, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
-        eprintln!("filler reply: {}", r.chars().take(80).collect::<String>());
-    }
-
-    cmd_tx.send(AppCommand::Compact).unwrap();
-    let compacted = wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
-    })
-    .await
-    .unwrap();
-    let AppEvent::Compacted {
-        summary, folded, ..
-    } = compacted
-    else {
-        panic!("compaction failed: {compacted:?}");
-    };
-    eprintln!(
-        "folded {folded} messages into {} chars:\n{summary}",
-        summary.len()
-    );
+    let (summary, folded) = fill_then_compact(
+        &cmd_tx,
+        &mut evt_rx,
+        &[
+            "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
+            "В двух предложениях: чем отличается кэш от буфера?",
+            "В двух предложениях: что такое идемпотентность запроса?",
+            "В двух предложениях: зачем нужны миграции схемы?",
+        ],
+    )
+    .await;
 
     // The real question: the planted fact is now only reachable through the
     // summary, because those messages are no longer sent verbatim.
@@ -2250,33 +2272,17 @@ async fn history_read_back_answers_what_the_summary_dropped_live() {
     );
     let question = format!("Какой инвентарный номер у позиции «{item}»? Ответь только номером.");
 
-    for topic in [
-        "В двух предложениях: зачем нужен профилактический ремонт оборудования?",
-        "В двух предложениях: чем отличается плановый простой от аварийного?",
-        "В двух предложениях: что такое наработка на отказ?",
-        "В двух предложениях: зачем на складе нужна маркировка?",
-    ] {
-        let (r, _) = run_turn_capture(&cmd_tx, &mut evt_rx, topic).await;
-        eprintln!("filler reply: {}", r.chars().take(80).collect::<String>());
-    }
-
-    cmd_tx.send(AppCommand::Compact).unwrap();
-    let compacted = wait_for(&mut evt_rx, |e| {
-        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
-    })
-    .await
-    .unwrap();
-    let AppEvent::Compacted {
-        summary, folded, ..
-    } = compacted
-    else {
-        panic!("compaction failed: {compacted:?}");
-    };
-    eprintln!(
-        "folded {folded} messages into {} chars:\n{}",
-        summary.chars().count(),
-        summary.chars().take(600).collect::<String>()
-    );
+    let (summary, folded) = fill_then_compact(
+        &cmd_tx,
+        &mut evt_rx,
+        &[
+            "В двух предложениях: зачем нужен профилактический ремонт оборудования?",
+            "В двух предложениях: чем отличается плановый простой от аварийного?",
+            "В двух предложениях: что такое наработка на отказ?",
+            "В двух предложениях: зачем на складе нужна маркировка?",
+        ],
+    )
+    .await;
     assert!(
         folded >= 4,
         "the seed must be behind the boundary: {folded}"
