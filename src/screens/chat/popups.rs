@@ -265,7 +265,7 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
 
 /// Width of the help/"About" dialog in columns (excluding the border) —
 /// comfortable and stable across tabs, so the window doesn't "jump" on switching.
-const HELP_WIDTH: u16 = 76;
+pub(super) const HELP_WIDTH: u16 = 76;
 /// Dialog height in rows (excluding the border).
 const HELP_HEIGHT: u16 = 34;
 
@@ -341,6 +341,7 @@ pub(super) fn render_help(
         HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc),
         HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc),
         HelpTab::License => license_lines(palette, inner_w),
+        HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
         HelpTab::Components => component_lines(palette, loc),
     };
     let total = content.len();
@@ -365,7 +366,11 @@ pub(super) fn render_help(
 /// a muted backdrop, bold (like the selected settings tab); the `│` separator
 /// and the content are WGL4-safe. The dialog is always modal (in focus), so the
 /// active tab's highlight is always the "focused" one.
-fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> Line<'static> {
+pub(super) fn help_tab_strip(
+    active: HelpTab,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
     for (i, tab) in HelpTab::ALL.iter().enumerate() {
         if i > 0 {
@@ -517,6 +522,55 @@ fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
     }
     lines
 }
+
+/// The "Disclaimer" tab: `DISCLAIMER.md` — what the author does not answer for
+/// when a model, chosen and downloaded by the user, writes every word on screen
+/// (see spec §11.7). A supplement to the license, which is why it is a tab of
+/// its own rather than a tail on the "License" tab.
+///
+/// Unlike the license, the source is markdown, so it goes through our own
+/// renderer (ADR 0003) — headings, emphasis and bullets survive. The renderer
+/// deliberately does not wrap paragraphs (that is the feed's job), so the
+/// logical lines it returns are wrapped here, exactly as
+/// [`crate::widgets::message_feed`] does it.
+fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
+    let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
+    let rendered = crate::shared::markdown::render(credits::DISCLAIMER_TEXT, body_w, palette);
+    let mut lines = vec![Line::raw("")];
+    for line in rendered.lines {
+        // A wrapped list item is indented under its own marker: the feed can
+        // live without that (its lists are short), but here the items run three
+        // and four rows long, and without the hang a continuation row is
+        // indistinguishable from the next item.
+        let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let hang = if plain.trim_start().starts_with("- ") {
+            LIST_HANG
+        } else {
+            0
+        };
+        for (i, wrapped) in
+            crate::shared::wrap::wrap_line(&line, body_w.saturating_sub(hang).max(1))
+                .into_iter()
+                .enumerate()
+        {
+            if wrapped.spans.iter().all(|s| s.content.trim().is_empty()) {
+                lines.push(Line::raw("")); // no trailing pad on blank rows
+                continue;
+            }
+            let indent = if i == 0 { 0 } else { hang };
+            let mut spans = vec![Span::raw(format!("{HELP_PAD}{}", " ".repeat(indent)))];
+            spans.extend(wrapped.spans);
+            let mut out = Line::from(spans);
+            out.style = wrapped.style;
+            lines.push(out);
+        }
+    }
+    lines
+}
+
+/// Continuation indent for a wrapped list item on the "Disclaimer" tab — the
+/// width of the `- ` marker the markdown writer emits.
+const LIST_HANG: usize = 2;
 
 /// The "Components" tab: name (aligned into a column), version, and license.
 /// The name uses the main text color, version and license are muted, columns

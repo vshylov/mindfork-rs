@@ -68,10 +68,10 @@ pub struct RenderOpts {
 /// (arrows, fractions, indices, symbols), and the parser itself strips the
 /// delimiters. "Bare" commands outside delimiters (`\alpha` with no `$`) are
 /// NOT touched. Returns a `'static`-`Text`.
-// Production paths (the feed) pass flags explicitly via `render_with`; the
-// module's own tests use the defaults facade — kept as a public surface (see
-// ADR 0003).
-#[allow(dead_code)]
+// The feed passes flags explicitly via `render_with` (they come from interface
+// settings); this facade serves the callers with nothing to configure — the
+// help dialog's "Disclaimer" tab (`screens/chat/popups.rs`) and the module's
+// own tests.
 pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
     render_with(input, width, palette, RenderOpts::default())
 }

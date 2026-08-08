@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -37,6 +37,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: settings-screen focus model (done)
 - Post-M9: undoing an edit on the settings screen (done)
 - Post-M9: a settings hint always fits its panel (done)
+- Post-M9: a disclaimer for what the models say and do (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1244,3 +1245,52 @@ debounce was done as a separate PR, see below).
 - **A live run isn't required** (AGENTS.md §3): layout and rendering on one
   screen — no engine, memory, tool or provider path is touched (the precedent set
   by the settings redesign and the focus-model work).
+
+### Post-M9: a disclaimer for what the models say and do (done)
+- **The question that started it** (user, 2026-08-09): the MIT text disclaims
+  liability "in connection with **the Software**" — but this app ships no model.
+  The user downloads any GGUF they like, including a fine-tune with its safety
+  training removed, and every word on screen comes from it. Whether "the
+  Software" reaches that far is exactly the kind of question one does not want
+  to be arguing after the fact.
+- **The MIT file is not the place to answer it.** The obvious move — append a
+  couple of paragraphs to `LICENSE` — quietly breaks three things: the `MIT`
+  SPDX identifier published in `Cargo.toml`, `packaging/nfpm.yaml` and the
+  README badge stops being truthful; GitHub's `licensee` and distribution audits
+  match the file by *similarity* against the canonical text, so extra prose
+  makes them report "Other" (MIT is short, so a few lines is a large fraction);
+  and downstream users lose the right to treat it as plain MIT. So: a separate
+  root `DISCLAIMER.md`, and `LICENSE` stays byte-identical. A gate test
+  (`credits::license_file_carries_nothing_but_the_mit_text`) holds that line —
+  it asserts the file ends on `SOFTWARE.` and contains no markdown heading,
+  which is precisely the shape the tempting edit would take.
+- **What it covers**, seven sections: generated output carries no warranty of any
+  kind; you choose the model and accept its license/AUP, and the app applies no
+  filtering or moderation *by design*; not medical/legal/financial advice and not
+  for safety-critical use; the autonomous side (Python sandbox, `fetch_url`, MCP
+  servers, sub-agents, a self-model that rewrites its own system message and
+  sampling) runs on your machine at your risk, and the confirmation prompts are
+  not a security boundary against prompt injection; what leaves the machine for a
+  cloud provider; the liability limit itself; and a mandatory-law carve-out.
+- **It has to reach the user, not just the repository.** New `F1` tab
+  "Disclaimer" next to "License", plus `DISCLAIMER.md` in the release archives,
+  the `.deb`/`.rpm`/`.pkg` doc directory and the Windows installer.
+- **The tab reuses our own markdown renderer** (ADR 0003) instead of the
+  license tab's paragraph-reflow: the source is markdown, and headings and lists
+  are what make a seven-section legal notice readable in a terminal. That gave
+  `markdown::render` its first production caller, so its `#[allow(dead_code)]`
+  came off. One addition on top of the feed's treatment — a wrapped list item is
+  hung under its own marker (the feed's lists are short; these run four rows, and
+  without the hang a continuation row reads as the next item).
+- **A layout trap the tab strip was one label away from**: the dialog is a fixed
+  76 columns and the strip is a single line, so a sixth tab put the `ru` strip
+  six columns over the edge — and what gets truncated is the *rightmost* tab, in
+  one locale only, which nobody working in the other locale would ever see. Fixed
+  by shortening the `ru` hotkeys label, and pinned by
+  `the_help_tab_strip_fits_the_dialog_in_every_locale`, which measures the
+  rendered strip for every bundled locale rather than trusting the next label to
+  be short.
+- **Tests**: **1955 unit tests green** (+3), 81 `#[ignore]`, clippy
+  `-D warnings`/fmt/`cyrillic_scan`/`link_check`/`doc_index_check` clean.
+- **A live run isn't required** (AGENTS.md §3): a document, a help tab and
+  packaging file lists — no engine, memory, tool or provider path is touched.

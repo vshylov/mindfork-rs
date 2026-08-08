@@ -225,17 +225,21 @@ pub(super) enum HelpTab {
     Commands,
     /// The application's license text (MIT).
     License,
+    /// The disclaimer covering model output, tools and automated actions
+    /// (`DISCLAIMER.md`) — a supplement to the license, not part of it.
+    Disclaimer,
     /// Third-party components, their versions and licenses.
     Components,
 }
 
 impl HelpTab {
     /// Tabs in display order (the tab strip's order).
-    pub(super) const ALL: [HelpTab; 5] = [
+    pub(super) const ALL: [HelpTab; 6] = [
         Self::About,
         Self::Hotkeys,
         Self::Commands,
         Self::License,
+        Self::Disclaimer,
         Self::Components,
     ];
 
@@ -251,6 +255,7 @@ impl HelpTab {
             Self::Hotkeys => "ui.help.tab.hotkeys",
             Self::Commands => "ui.help.tab.commands",
             Self::License => "ui.help.tab.license",
+            Self::Disclaimer => "ui.help.tab.disclaimer",
             Self::Components => "ui.help.tab.components",
         }
     }
