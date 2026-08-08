@@ -5,15 +5,13 @@
 > A compact summary of what recently closed is at the end of the file.
 
 ## Most valuable next
-The unprioritized list below is an idea bank of equal weight; these five are
+The unprioritized list below is an idea bank of equal weight; these three are
 called out as the highest-payoff tracks (real user pain / direct savings):
-1. **History compression / rolling summary** (§Context and tokens) — already
-   hits the 8k-context ceiling of local models.
-2. **Prompt caching** (§Context and tokens) — direct token/latency savings,
+1. **Prompt caching** (§Context and tokens) — direct token/latency savings,
    unlocked by the stable daily self-model injection.
-3. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
+2. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
    reliability.
-4. **Multimodality (images)** (§Engine and reliability) — a big feature with
+3. **Multimodality (images)** (§Engine and reliability) — a big feature with
    demand.
 
 ## Memory, self-model, knowledge
@@ -32,46 +30,29 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [notes-vec0](notes-vec0.md).
 
 ## Context and tokens
-- **History compression / rolling summary** — right now the whole conversation
-  is sent on every request (`build_conversation_digest` only exists for
-  titles). For local models with 8k context this hits a ceiling; a candidate
-  is auto-summarizing old messages past a token threshold, next to the
-  existing token counter. **Researched, forks F1–F10 decided 2026-08-07**
-  (rolling summary, messages retained; foldable summary at the feed boundary;
-  read-back tools as a committed stage; on by default with a full off switch),
-  and **stage 0 measured — GO**: two rolls of summary-of-summary preserved a
-  planted identifier and a decision *with its reason* on the live 31B, and the
-  probe caught the requirement that the length limit live in the prompt rather
-  than in `max_tokens`. **Stage 1 (core) is done** — `/compact` folds the older
-  part of a chat into a rolling summary, the feed marks the boundary with a
-  foldable divider, and the master switch makes the whole thing inert when off
-  (spec §6.7). **Stage 2 (the automatic trigger) is done** — sub-decisions
-  S1–S8, a compaction starts by itself at a share of the resolved context
-  window, which comes from an explicit setting, a managed server's `-c`, or the
-  engine's own `/props`; an overflow that happens anyway is explained rather
-  than dumped as raw JSON. **Stage 3 (the read-back tools) is done** —
-  sub-decisions S9–S16: `history_read` walks the folded range page by page and
-  `history_search` finds where to look, so the summary block now names them
-  instead of saying the verbatim text is unreachable. Search runs over the
-  full-text index the app already keeps rather than over embeddings, so it works
-  for the local user with no embedding server — the audience the whole track
-  exists for. **The track is complete.** See
-  [history-compression.md](research/history-compression.md).
-  **Groundwork left by the track:** a semantic index over the folded range
-  (sub-decision S11 chose full-text, and recorded the embedding variant as the
-  answer if a live run ever shows lexical misses); learning the window from the
-  400 body
-  (sub-decision S3 — deferred as redundant with `/props`, since the body shape
-  that carries `n_ctx` is llama.cpp's own); `estimate_prompt_tokens` still
-  ignores `req.tools`, which matters for the `~` figure though no longer for the
-  trigger; and compaction still does not apply to impersonation (`Ctrl+U`),
-  which builds its own full-history request.
+- **History compression — groundwork** (the track itself is **done**, stages
+  0–3, see "Recently closed";
+  [history-compression.md](research/history-compression.md), spec §6.7):
+  - a **semantic index over the folded range** — sub-decision S11 chose the
+    full-text index the app already keeps, and recorded the embedding variant as
+    the answer if a live run ever shows lexical misses;
+  - **learning the window from the 400 body** — sub-decision S3, deferred as
+    redundant with `/props`, since the body shape that carries `n_ctx` is
+    llama.cpp's own;
+  - `estimate_prompt_tokens` still ignores `req.tools`, which matters for the
+    `~` figure though no longer for the trigger;
+  - compaction does not apply to **impersonation** (`Ctrl+U`), which builds its
+    own full-history request.
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
   `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
   into `system` is stable within a day — a direct candidate for prompt
   caching (token and latency savings). See groundwork in
   [openai-responses-client](research/openai-responses-client.md).
-- **`cached_tokens` in the token counter** — show the cache-hit share.
+- **`cached_tokens` in the token counter** — show the cache-hit share. The
+  server already reports it and we drop it, so wiring it through would let the
+  prefix-cache trade-off the self-model injection accepts
+  ([§2.3](research/history-compression.md)) be **measured** rather than reasoned
+  about.
 
 ## Tools
 - **MCP host — groundwork** (core is **done**: spec §9.6,
@@ -356,6 +337,27 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **History compression / rolling summary** (stages 0–3, complete): a long
+  conversation keeps fitting the model's context window. The older part is
+  folded into a rolling summary — on request (`/compact`) and, once a turn's
+  **exact** prompt reaches a share of the resolved window, by itself. The
+  decision that dissolved most of the hard problems: compression changes what a
+  *request* carries and never what the chat holds, so the feed, full-text
+  search, the `F5` export and the reflection watermark needed no changes at all;
+  the feed marks the boundary with a foldable divider. The window is resolved
+  from an explicit setting, a managed server's `-c`, or the engine's own
+  `/props`, and the trigger reads the server's exact `usage` because the byte
+  estimate's error **changes sign** by content type (+68% on Russian prose,
+  −20% on code) — unsafe on exactly the tool-heavy chats that overflow first.
+  A summary is lossy, so `history_read` walks the folded range page by page and
+  `history_search` says where to look; search runs over the full-text index the
+  app already keeps rather than over embeddings, since an embedding server is
+  separate and routinely unconfigured, and the local user with a small window is
+  precisely who the track exists for. Along the way it uncovered that the client
+  had been **discarding the server's exact token counts** on every turn —
+  llama.cpp sends `usage` *after* the chunk carrying `finish_reason`, and the
+  stream ended on that chunk. See
+  [history-compression.md](research/history-compression.md), spec §6.7.
 - **YouTube: the words, as a chat attachment** (stage 2, complete):
   `transcript: true` also brings back the spoken words with timestamps, in the
   **same** provider call as the description (the video is ingested either way, so
