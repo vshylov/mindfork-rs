@@ -433,7 +433,7 @@ omission.
    (`hf endpoints ls` → delete anything named `e2e-*` older than the max
    lifetime). The sweeper also reclaims endpoint quota, which scale-to-zero
    alone does not.
-4. Docs: `docs/install.md`, a [journal entry](../journal/platform.md).
+4. Docs: `docs/install.md`, a [journal entry](../journal/ci.md).
 
 ### 10.b If R1b (RunPod) is chosen
 
@@ -457,7 +457,7 @@ omission.
 6. `if: always()` → `DELETE /v1/pods/{id}`; assert the pod is gone and fail the
    job loudly if it is not.
 7. `.github/workflows/e2e-sweeper.yml` — hourly orphan sweep.
-8. Docs: `docs/install.md` (how to run it), a [journal entry](../journal/platform.md), and an ADR
+8. Docs: `docs/install.md` (how to run it), a [journal entry](../journal/ci.md), and an ADR
    only if the design turns out to constrain the app itself (it should not).
 
 ## 11. Open questions / risks

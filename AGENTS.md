@@ -160,7 +160,9 @@ links). Pick the file by subsystem, the one the change is *about*:
 | [ui-input.md](docs/journal/ui-input.md) | InputBox, keys, selection/undo/mouse, clipboard, spellcheck, emoji |
 | [ui-screens.md](docs/journal/ui-screens.md) | settings, chat list, self-model viewer, search, help/About, popups |
 | [i18n.md](docs/journal/i18n.md) | both localization axes, CLI, external locales, the English source migration |
-| [platform.md](docs/journal/platform.md) | installers/packaging, releases, CI, static analysis, the live-test gate, branding, tooling |
+| [release.md](docs/journal/release.md) | packaging, installers, the release pipeline, version and schema discipline, branding assets |
+| [ci.md](docs/journal/ci.md) | workflows and jobs, caches, Actions minutes, the rented live-test gate, test-side cost work |
+| [quality.md](docs/journal/quality.md) | SonarQube analysis and its backlog, the quality gate, and the gates guarding the repo's own structure |
 | [refactors.md](docs/journal/refactors.md) | god-object splits, SOLID work, single-source consolidations |
 
 ## 5. Commit and PR: model attribution

@@ -126,7 +126,9 @@ Not by date — nobody retrieves by date. The split axis is **the chapters of
 | `ui-input.md` | §10 | input box, keys, spellcheck, selection/undo/mouse |
 | `ui-screens.md` | §10 | settings, chat list, self-model screen, search screens |
 | `i18n.md` | — | both axes, CLI, external locales |
-| `platform.md` | §12 | packaging, installers, CI, releases, dev tooling |
+| `release.md` | §12 | packaging, installers, the release pipeline, branding |
+| `ci.md` | §12 | workflows, jobs, caches, minutes, the live-test gate |
+| `quality.md` | §12 | static analysis and the repository's own gates |
 | `refactors.md` | §3 | god objects, SOLID, Sonar backlog, documentation work |
 
 Entries move **verbatim**, chronological within each file, with a heading index

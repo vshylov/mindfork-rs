@@ -447,7 +447,7 @@ package names (`mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`
 The track needs no live engine run (the engine/memory/tools aren't touched) — install
 smokes from the DoD stand in for it. Docs per AGENTS.md §4: install.md (new install
 methods), README (badges/links), roadmap (groundwork item closed), CHANGELOG
-(`[Unreleased]` → Added), a [journal entry](../journal/platform.md).
+(`[Unreleased]` → Added), a [journal entry](../journal/release.md).
 
 ---
 

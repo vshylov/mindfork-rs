@@ -4,7 +4,7 @@
 gate runs in CI and covers the whole llama.cpp smoke set. Historical document:
 the outcome lives in `tools/e2e_hf.py`, the two `e2e-*` workflows, and
 [docs/install.md §7.2](../install.md); the running log is in the
-[journal](../journal/platform.md).
+[journal](../journal/ci.md).
 **Research and decision:** [docs/research/remote-e2e-gpu.md](../research/remote-e2e-gpu.md)
 (forks R1–R8, all resolved to the recommended option — *user's decision,
 2026-07-28*).
@@ -315,7 +315,7 @@ the *money* at one idle window; the sweeper bounds the *time* and reclaims
 endpoint quota, which scale-to-zero does not.
 
 **Docs:** `docs/install.md` (running the live gate, the new env vars),
-a [journal entry](../journal/platform.md), `README.md` env table. **No CHANGELOG entry** — dev
+a [journal entry](../journal/ci.md), `README.md` env table. **No CHANGELOG entry** — dev
 infrastructure with no user-visible effect (AGENTS.md §4).
 
 ## 7. Stage 3 — the second embedder (done)
