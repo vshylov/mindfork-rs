@@ -143,5 +143,5 @@ Tier 2 as a separate pass.
 
 ~1.5–2 days of code+tests (patterns already exist: the entity ≈ `note.rs`, tools ≈
 `notes.rs`, DB ≈ notes' methods). Afterward — update the
-[journal](../journal/memory.md)/`architecture.md`
+[journal](../journal/self-model.md)/`architecture.md`
 (a new tool group, the `ToolContext` field, a DB table).

@@ -153,7 +153,9 @@ links). Pick the file by subsystem, the one the change is *about*:
 | [engine.md](docs/journal/engine.md) | engine and providers, generation, sampling, streaming, servers and health, impersonation, history compaction |
 | [storage.md](docs/journal/storage.md) | JSON/SQLite, migrations, backup/restore, secrets, per-chat state on disk |
 | [tools.md](docs/journal/tools.md) | tool system, MCP, Python sandbox, web/fetch, YouTube, TTS, control tools, confirmation |
-| [memory.md](docs/journal/memory.md) | self-model, notes, RAG, attachments, embeddings, reindex |
+| [self-model.md](docs/journal/self-model.md) | the self-model: summary, goals, traits, the observation narrative, reflection and consolidation |
+| [notes.md](docs/journal/notes.md) | notes, their link graph, semantic recall and the cross-organ edges |
+| [rag.md](docs/journal/rag.md) | the RAG knowledge base, chat attachments, and the embedding stack under both (model change, reindex, thresholds) |
 | [ui-feed.md](docs/journal/ui-feed.md) | feed, markdown renderer, syntax, Mermaid, status bar, themes, terminal/redraw |
 | [ui-input.md](docs/journal/ui-input.md) | InputBox, keys, selection/undo/mouse, clipboard, spellcheck, emoji |
 | [ui-screens.md](docs/journal/ui-screens.md) | settings, chat list, self-model viewer, search, help/About, popups |

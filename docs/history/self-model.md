@@ -329,7 +329,7 @@ architecture (FSD, client-side agentic loop, `ChatEffect`, isolation by
 - Tools are added incrementally, with the option to disable them.
 - Focus on **reflection quality**, not tool count.
 - After each phase — manual testing on Gemma/Qwen + update the
-  [journal](../journal/memory.md) and
+  [journal](../journal/self-model.md) and
   `architecture.md`.
 
 ---
@@ -463,7 +463,7 @@ self-observation.
 - Documentation updates:
   - `spec.md` (a new section on SelfModel)
   - `architecture.md`
-  - Example prompts in the [journal](../journal/memory.md)
+  - Example prompts in the [journal](../journal/self-model.md)
 - Metrics/quality evaluation:
   - Long-term coherence tests.
   - Comparing behavior with and without SelfModel.

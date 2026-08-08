@@ -2,7 +2,7 @@
 
 > Status: **track complete** (B1a, B1b, B2a, B2b done; branches
 > `feat/rag-html-sources`, `feat/rag-pdf-docx`, `feat/rag-chunk-progress`,
-> `feat/rag-cross-source-dedup`; log — [docs/journal/memory.md](../journal/memory.md)). B2b, by the user's
+> `feat/rag-cross-source-dedup`; log — [docs/journal/rag.md](../journal/rag.md)). B2b, by the user's
 > decision — **text-based** dedup (not embedding-based: `rag_search` is a hot
 > path, vec0 already ranks). Closed two pieces of roadmap groundwork in the
 > "Memory, self-model, knowledge" section (RAG). Independent of the
@@ -112,5 +112,5 @@ roadmap places it last in this section).
 4. **B2b** (ranking/dedup) — per the roadmap above.
 
 DoD for each stage: `cargo fmt`/`clippy -D warnings`/`test` green; new crates
-in `deny.toml`; an entry in the [journal](../journal/memory.md) + CHANGELOG; fixture tests for
+in `deny.toml`; an entry in the [journal](../journal/rag.md) + CHANGELOG; fixture tests for
 extraction/dedup.

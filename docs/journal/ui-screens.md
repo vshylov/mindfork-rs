@@ -802,7 +802,7 @@ debounce was done as a separate PR, see below).
 ### Post-M9: full-text search over chat content — stage 1 (done)
 - **The roadmap item "Search within chat content ... via SQLite FTS"**, stage 1
   of 2. Research
-  [docs/research/chat-content-search.md](docs/research/chat-content-search.md);
+  [docs/research/chat-content-search.md](../../docs/research/chat-content-search.md);
   **forks F1–F6 decided by the user 2026-07-29** (all as recommended). The user's
   framing set the shape: chats stay in JSON, the index goes in a **separate
   database that can be deleted with no risk**, synced in the background, and able
@@ -910,7 +910,7 @@ debounce was done as a separate PR, see below).
 - **Stage 2** — done, see the next entry.
 
 ### Post-M9: chat content search — stage 2, jump and the results screen (done)
-- Completes the track ([stage 2 plan](docs/history/chat-search-stage2.md), forks
+- Completes the track ([stage 2 plan](../../docs/history/chat-search-stage2.md), forks
   **S1–S6 decided by the user 2026-07-29**, all as recommended). Stage 1 answered
   *"which chats mention this?"*; stage 2 answers *"where exactly, and take me
   there."* Split along the risk line: **2a** the jump infrastructure, **2b** the
@@ -1039,7 +1039,7 @@ debounce was done as a separate PR, see below).
   with `→`, then try to come back with `←` — and on a switch that changes its value
   instead; confused, they press `Esc`, leave the screen entirely, and come back
   trying to remember what they just changed. Plan with forks R1–R6 —
-  [docs/history/settings-navigation.md](docs/history/settings-navigation.md) (**user's decision,
+  [docs/history/settings-navigation.md](../../docs/history/settings-navigation.md) (**user's decision,
   2026-07-31**, all as recommended). Branch `feat/settings-focus-model`, stacked on
   `docs/settings-navigation`.
 - **The damage is larger than "a setting changed", and reading the code is what
@@ -1124,10 +1124,10 @@ debounce was done as a separate PR, see below).
 ### Post-M9: undoing an edit on the settings screen (done)
 
 - **The follow-up deferred as fork R6** of the focus-model track
-  ([settings-navigation.md §7](docs/history/settings-navigation.md)): that change
+  ([settings-navigation.md §7](../../docs/history/settings-navigation.md)): that change
   removed the main *source* of accidental edits, this one removes the
   *consequence*. Plan with forks U1–U4 —
-  [docs/history/settings-undo.md](docs/history/settings-undo.md) (**user's
+  [docs/history/settings-undo.md](../../docs/history/settings-undo.md) (**user's
   decision, 2026-07-31**, all as recommended). Branch `feat/settings-undo`.
 - **The finding that made it cheap, and it came from reading the contract rather
   than the screen:** `SettingsIntent::SaveConfig` already carries the **whole**

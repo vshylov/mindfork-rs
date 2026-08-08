@@ -47,7 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the documentation refactor — CLAUDE.md became a router (done)
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
-  [docs/history/release-engineering.md](docs/history/release-engineering.md), decision points confirmed by the
+  [docs/history/release-engineering.md](../../docs/history/release-engineering.md), decision points confirmed by the
   user 2026-07-15; branch `feat/ci-pipeline`): versioning, changelog,
   CI, and data-schema versioning/migrations. Stage 1 closes out **CI** — before this,
   the `fmt`/`clippy -D warnings`/`test` gates relied on nothing but agent discipline, and
@@ -73,14 +73,14 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   were checked manually — gated correctly). No live engine run required
   (CI infrastructure, engine/memory/tools unaffected).
 - Local gates on Windows are green: **1049 unit tests passed, 48 `#[ignore]`**,
-  clippy `-D warnings`/fmt clean. Docs: [docs/history/release-engineering.md](docs/history/release-engineering.md).
+  clippy `-D warnings`/fmt clean. Docs: [docs/history/release-engineering.md](../../docs/history/release-engineering.md).
 - **Next:** stage 2 (`feat/versioning-changelog` — bump to `0.9.0`, `CHANGELOG.md`,
   version in help/logs), stages 3–4 (JSON/SQLite migrations, ADR 0006), stage 5
   (release pipeline), optional stage 6 (`cargo-deny`).
 
 ### Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
 - **Stage 2** of the "release engineering" track
-  ([docs/history/release-engineering.md](docs/history/release-engineering.md), branch
+  ([docs/history/release-engineering.md](../../docs/history/release-engineering.md), branch
   `feat/versioning-changelog`): app versioning and the changelog.
 - **Bump `0.1.0` → `0.9.0`** (`Cargo.toml` + `Cargo.lock`): a signal of "almost 1.0".
   `1.0.0` — once the track is proven in production (CI + migrations + a release
@@ -100,14 +100,14 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   `[Unreleased]`) + a checklist item in the **PR template**.
 - Pure infrastructure/UI — **no live engine run required**. Gates green;
   no tests exist for the help title's content (verified). Docs:
-  [docs/history/release-engineering.md](docs/history/release-engineering.md).
+  [docs/history/release-engineering.md](../../docs/history/release-engineering.md).
 - **Next:** stage 3 (`feat/json-schema-migrations` — a JSON version/migration framework,
   a downgrade guard, a pre-migration backup, ADR 0006), stage 4 (SQLite `user_version`),
   stage 5 (the `release.yml` release pipeline).
 
 ### Post-M9: release engineering — stage 3 (schema versions + JSON migrations) (done)
 - **Stage 3** of the "release engineering" track
-  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.4, F7–F12; branch
+  ([docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.4, F7–F12; branch
   `feat/json-schema-migrations`): versioning the schemas of saved data and a migration
   framework so a binary upgrade never loses data. **ADR 0006**.
 - **Per-artifact versions** (F7): `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/
@@ -150,7 +150,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: release engineering — stage 4 (SQLite schema migrations) (done)
 - **Stage 4** of the "release engineering" track
-  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.4; branch
+  ([docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.4; branch
   `feat/db-schema-migrations`): versioning and migrating the SQLite schema on top of
   stage 3's framework. **ADR 0006** (extended).
 - **`PRAGMA user_version`** as the DB schema version (`DB_SCHEMA = 1`). `db/mod.rs::migrate`
@@ -184,7 +184,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: release engineering — stage 5 (release pipeline + backup manifest) (done)
 - **The final stage** of the "release engineering" track
-  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.5; branch
+  ([docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.5; branch
   `feat/release-pipeline`). The track is complete (stages 1–5; optional stage 6 — `cargo-deny`).
 - **`.github/workflows/release.yml`** (trigger — a `v*` tag): the `build` job (a matrix of
   `windows-latest` + **`ubuntu-22.04`** — old glibc 2.35) builds `cargo build
@@ -247,7 +247,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **A new "installers" track** (the order: Windows msi/exe + Linux deb/rpm/
   pkg.tar.zst; at install time — choosing the interface language and the data
   location, see `defaults.json`; code signing left open). **Research** —
-  [docs/history/installers.md](docs/history/installers.md) (three parallel web surveys
+  [docs/history/installers.md](../../docs/history/installers.md) (three parallel web surveys
   based on primary sources, July 2026): Windows — **Inno Setup 6.7.x (exe)**, not MSI (every
   "special" requirement is a stock `CreateInputOptionPage`/`CreateInputDirPage`/
   `SaveStringsToUTF8File`/the official `Russian.isl`; MSI would be days-to-weeks of workarounds);
@@ -416,7 +416,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   if demand arises.
 
 ### Release 0.9.1 (prepared)
-- **A release PR** per the checklist in [AGENTS.md §6](AGENTS.md) (branch
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
   `chore/release-0.9.1`): bumped `Cargo.toml` `0.9.0 → 0.9.1` (+
   `Cargo.lock`), `CHANGELOG.md` — `[Unreleased]` → `[0.9.1] — 2026-07-18`, a
   fresh empty `[Unreleased]` opened, comparison links updated. The `v0.9.1`
@@ -443,7 +443,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   1128/50 from 2026-07-17).
 
 ### Post-M9: branding — logo and wordmark (stages 1–4) (done)
-- **A new "branding" track** (design doc [docs/branding.md](docs/branding.md)):
+- **A new "branding" track** (design doc [docs/branding.md](../../docs/branding.md)):
   bring the `artwork/` directory to full-fledged branding — portable assets,
   a brand guide, a packaging icon, a TUI logo, a wordmark in the docs.
   Forks R1–R7 confirmed by the user on 2026-07-18: **R2** — the logo in the
@@ -791,9 +791,9 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   now that meant `run_all_tests.bat` → `http://192.168.1.20:8000/v1`: not
   reproducible by anyone else, not runnable in CI, and a llama.cpp regression
   catchable only by hand. Research
-  [docs/research/remote-e2e-gpu.md](docs/research/remote-e2e-gpu.md) (forks
+  [docs/research/remote-e2e-gpu.md](../../docs/research/remote-e2e-gpu.md) (forks
   **R1–R8 accepted by the user as recommended, 2026-07-28**), plan
-  [docs/history/remote-e2e-hf.md](docs/history/remote-e2e-hf.md). Branches
+  [docs/history/remote-e2e-hf.md](../../docs/history/remote-e2e-hf.md). Branches
   `spike/hf-endpoint-probe` (stages 0–1) and `feat/e2e-hf-runner` (stage 2).
 - **Why HF Inference Endpoints and not a rented pod** (R1a): the survey's real
   question was not price but *"can we guarantee the GPU is released when the run
@@ -2019,11 +2019,16 @@ three findings are invisible from the workflow's own status):
   CHANGELOG, spec/architecture, and the design docs.
 - **Split by subsystem along `architecture.md`'s chapters** (F1a), so the map is
   self-evident and mechanically checkable rather than ad-hoc: `docs/journal/`
-  {`engine`, `storage`, `tools`, `memory`, `ui-feed`, `ui-input`, `ui-screens`,
-  `i18n`, `platform`, `refactors`, `milestones`}`.md`, each with a reference header
-  naming its architecture/spec sections and an index of its entries. Chronological
-  **within** a file; the M3–M9 milestone log moved to `milestones.md` rather than
-  being deleted.
+  {`engine`, `storage`, `tools`, `self-model`, `notes`, `rag`, `ui-feed`,
+  `ui-input`, `ui-screens`, `i18n`, `platform`, `refactors`, `milestones`}`.md`, each
+  with a reference header naming its architecture/spec sections and an index of its
+  entries. Chronological **within** a file; the M3–M9 milestone log moved to
+  `milestones.md` rather than being deleted. Memory started as one `memory.md` and
+  was split again in the same PR, at the user's request: at 180 KB and 45 entries it
+  was the one file an agent would grep rather than read, and the project's own
+  vocabulary already names three organs. Attachments and the embedding stack went
+  with `rag.md` — they are retrieval infrastructure, and the alternative was a
+  fourth file for machinery that serves all three.
 - **Moved verbatim (F3a), and that is what made it verifiable**: 243 entries,
   **961 820 bytes byte-identical**, zero missing, zero extra, matching SHA-256. The
   alternative on the table — compressing older entries while moving — was rejected
@@ -2058,8 +2063,15 @@ three findings are invisible from the workflow's own status):
   (2) The classifier's `^M3 ` patterns were uppercase and matched against a
   lowercased title, so every milestone heading fell through to a keyword rule.
   (3) Relative links from `docs/journal/*.md` need one more `../` than the source
-  they were copied from — caught by `link_check.py`, the same class of miss the
-  "plan moves to `docs/history/`" rule warns about.
+  they were copied from — the same class of miss the "plan moves to
+  `docs/history/`" rule warns about, and **106 entry bodies carried it**. The
+  interesting part is why it stayed hidden: `link_check.py` walks **git-tracked**
+  files, `docs/journal/` was untracked, and the gate therefore reported *clean*
+  three times in a row while never once looking at its subject. It only spoke up
+  after `git add`. So the entries are verbatim with exactly one mechanical
+  exception — root-relative link targets gained a `../../` prefix — and the
+  byte-identity proof normalizes that prefix away before hashing, which is what
+  keeps it a proof rather than an assertion.
   (4) The gate's own footer hardcoded `docs/documentation-refactor.md`, which moved
   to `docs/history/` mid-session — a stale path inside the tool that exists to
   prevent stale paths.

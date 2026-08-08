@@ -105,7 +105,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   green (411 passed, 7 ignored).
 
 ### God-object refactor — stage 1: `screens/settings.rs` → `screens/settings/` (done)
-- **Track plan** — [docs/history/refactoring-god-objects.md](docs/history/refactoring-god-objects.md)
+- **Track plan** — [docs/history/refactoring-god-objects.md](../../docs/history/refactoring-god-objects.md)
   (7 stages + optional): splitting up several monolithic files that had grown
   into god objects (settings/chat/orchestrator-tests/notes/db/markdown/
   runtime). Method — the same playbook used for the orchestrator split
@@ -413,7 +413,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: SOLID refactor — stage 1: `ToolContext` (dependency bundles + constructor) (done)
 - **First stage of the targeted SOLID-improvements track**
-  ([docs/history/refactoring-solid.md](docs/history/refactoring-solid.md), branch
+  ([docs/history/refactoring-solid.md](../../docs/history/refactoring-solid.md), branch
   `refactor/tool-context-bundles`): eliminated shotgun surgery when adding a
   `ToolContext` field — previously an 11-line literal was repeated in **8 places** (3
   production + 5 test), a new field meant editing all of them. A purely structural
@@ -443,7 +443,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: SOLID refactor — stage 2: background tasks (slot registry + a single done channel) (done)
 - **Stage 2** of the SOLID-improvements track
-  ([docs/history/refactoring-solid.md §4](docs/history/refactoring-solid.md), branch
+  ([docs/history/refactoring-solid.md §4](../../docs/history/refactoring-solid.md), branch
   `refactor/bg-task-slots`): the family of "silent" background tasks (self-model
   auto-reflection + notes auto-consolidation — a UI-less mini agentic loop via the
   shared runner `tool_loop::spawn_silent_loop`) was maintained by copy-pasting its
@@ -485,7 +485,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: SOLID refactor — stage 4: status-bar view-model + canonical runtime helpers (done)
 - **Stage 4 (small, targeted)** of the SOLID-improvements track
-  ([docs/history/refactoring-solid.md §6](docs/history/refactoring-solid.md), branch
+  ([docs/history/refactoring-solid.md §6](../../docs/history/refactoring-solid.md), branch
   `refactor/status-bar-runtime`): removed the status bar's 10-argument signatures and
   scattered named screen enumerations in runtime. Purely structural (behavior
   unchanged). Did 4a/4b/4d; 4c (grouping `ChatScreen` fields) — **not done**
@@ -526,7 +526,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: SOLID refactor — stage 3, step 3.1: settings-field description in `FieldRow` (done)
 - **Step 3.1** of stage 3 (settings-field descriptors,
-  [docs/history/refactoring-solid.md §5](docs/history/refactoring-solid.md), branch
+  [docs/history/refactoring-solid.md §5](../../docs/history/refactoring-solid.md), branch
   `refactor/settings-field-descriptors`): the aspects of a single settings field were
   smeared across five match sites; 3.1 co-locates the **description** at the row-
   building site (SRP groundwork). Purely structural, behavior unchanged.
@@ -555,7 +555,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: SOLID refactor — stage 3, steps 3.2/3.3: a field-value access table (`field_spec`) (done)
 - **Steps 3.2 (core) + 3.3** of stage 3
-  ([docs/history/refactoring-solid.md §5](docs/history/refactoring-solid.md), branch
+  ([docs/history/refactoring-solid.md §5](../../docs/history/refactoring-solid.md), branch
   `refactor/settings-field-descriptors`): access to a config field's value in
   settings was smeared across **four** `FieldId` match sites (`toggle_field`/`cycle_field`/
   config branches of `apply_text`/`field_num_kind`) + Choice options (`choice_menu`).

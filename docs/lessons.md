@@ -121,6 +121,15 @@ against vendored files).
 — *broken documentation links*, *branding — logo and wordmark*, *live-smoke diagnostic
 log in English*.
 
+**Check that a gate can see its subject at all — untracked files are invisible to
+most of them.** `link_check.py` and `cyrillic_scan.py` walk **git-tracked** files.
+While a new directory is untracked they report *clean* without ever reading it: the
+documentation refactor got three consecutive green `link_check` runs over a
+`docs/journal/` holding **106 broken links**, and the gate only spoke up after
+`git add`. When you add a tree, stage it before you believe a gate about it, and
+prefer a filesystem walk to a git listing when writing the fix.
+— *the documentation refactor — CLAUDE.md became a router*.
+
 **When a live smoke fails, suspect the fixture before the feature.** One took **four**
 attempts, each failing its own precondition: the model could answer from memory; the
 target was the only named entry, so the summary kept exactly what had to be lost;

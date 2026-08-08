@@ -2,7 +2,7 @@
 
 > Status: **A1, A2, A3-light — done; the track is complete** (A3-heavy —
 > future work). Branches `feat/self-model-auto-consolidate`, `feat/self-model-summary-semantics`,
-> `feat/self-model-interests-aging`; log — [docs/journal/memory.md](../journal/memory.md); the A2 threshold
+> `feat/self-model-interests-aging`; log — [docs/journal/self-model.md](../journal/self-model.md); the A2 threshold
 > `SUMMARY_OBS_SIMILARITY=0.62` was calibrated against live bge-m3; A3-light — a nudge in
 > `selfmodel.policy_core`. This track continues
 > [summary-as-snapshot](summary-as-snapshot.md) ("Out of scope") and
@@ -191,5 +191,5 @@ nothing washes them out. Two forks:
 2. **A2** (summary↔observation semantics) — the next PR, on top of A1/reflection.
 
 Stage DoD: `cargo fmt`/`clippy -D warnings`/`test` green; the A1 live smoke — **go**;
-an entry in the [journal](../journal/memory.md) + CHANGELOG (the rubric matching the effect); settings fields and
+an entry in the [journal](../journal/self-model.md) + CHANGELOG (the rubric matching the effect); settings fields and
 i18n keys in place.

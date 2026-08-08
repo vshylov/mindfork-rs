@@ -23,7 +23,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Deferred beyond M3
 
 ### M3 (chat UI) — done so far
-- **`[R]` UI crates closed** → [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md):
+- **`[R]` UI crates closed** → [ADR 0001](../../docs/decisions/0001-ui-crates-ratatui-030.md):
   `tui-textarea`/`ratatui-markdown` lock in ratatui 0.29 → we take `tui-markdown` +
   `tui-scrollview`, and input is a **custom widget** (this also resolves the spellcheck
   rendering `[R]` — we draw the underlines ourselves).
@@ -33,7 +33,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   `ChatSummary` lives in `entities/chat.rs` (needed by both `app` and `widgets`).
 - **`shared/markdown.rs`**: rendering via `tui-markdown` + a unicode approximation of LaTeX.
   **Replaced post-M9** with an own `pulldown-cmark`-based renderer (tables +
-  delimiter-scoped LaTeX + theme) → [ADR 0003](docs/decisions/0003-own-markdown-renderer.md).
+  delimiter-scoped LaTeX + theme) → [ADR 0003](../../docs/decisions/0003-own-markdown-renderer.md).
 - **`features/chat_search_sort.rs`, `features/rename_chat.rs`**: pure logic.
 - **`widgets/chat_list.rs`**: the `Ctrl+L` overlay (search, 2 sort orders via `Tab`,
   `F2` rename, `Ctrl+N` new, `Ctrl+D` clone, `Del` delete). Integrated into `runtime.rs`.
@@ -87,7 +87,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   available from the chat).
 
 ### M5 (tools + agentic loop) — done so far
-- **`[R]` Embeddings closed** → [ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md):
+- **`[R]` Embeddings closed** → [ADR 0002](../../docs/decisions/0002-embeddings-dedicated-server.md):
   a **dedicated** embedding server (the `Embedder` trait is split off from `EngineBackend`);
   `XinferClient: Embedder`; env `MINDFORK_EMBED_URL`/`_BIN`/`_MODEL`/`_PORT`;
   when not configured — `UnavailableEmbedder` (RAG returns an error, doesn't crash).
@@ -237,7 +237,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### M9 — Gemma check (done)
 - **Gemma 4 E4B-it verified** against a live `llama-server` (llama.cpp). Added/
-  extended `#[ignore]` smokes in [client.rs](src/shared/api/openai/client.rs):
+  extended `#[ignore]` smokes in [client.rs](../../src/shared/api/openai/client.rs):
   anti-self-cutoff for both families (`<|im_end|>` + `<end_of_turn>`), tool calling
   (`finish_reason=tool_calls` + parsing `delta.tool_calls`), "thoughts"
   (`reasoning_content` → `Thoughts`). All green. Nuance: Gemma reasoning "thinks"

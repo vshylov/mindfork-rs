@@ -69,7 +69,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
 - **`shared/markdown.rs` was rewritten** from `tui-markdown` to an own walker over
-  `pulldown-cmark` 0.13 events → [ADR 0003](docs/decisions/0003-own-markdown-renderer.md).
+  `pulldown-cmark` 0.13 events → [ADR 0003](../../docs/decisions/0003-own-markdown-renderer.md).
   Reason: `tui-markdown` didn't support tables and math and ignored the theme.
   Signature: `render(input, width, palette) -> Text<'static>` (`message_feed`
   passes the panel width and palette). The `tui-markdown` dependency is removed;
@@ -515,12 +515,12 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: markdown-render refinements (LaTeX + writer + feed cache) (done)
 - Six focused stages per the plan
-  [docs/history/markdown-refinements.md](docs/history/markdown-refinements.md) (branch
+  [docs/history/markdown-refinements.md](../../docs/history/markdown-refinements.md) (branch
   `feat/markdown-refinements`, one commit per stage): event-walker defects, gaps in the
   unicode approximation of LaTeX on real LLM output, false positives of the
   math extension, and no render cache in the feed. Only `shared/markdown/`
   (writer/latex/code/mod) + `widgets/message_feed.rs`; the external surface
-  (`render`/`render_with`/`highlight_code`) unchanged. See [ADR 0003](docs/decisions/0003-own-markdown-renderer.md),
+  (`render`/`render_with`/`highlight_code`) unchanged. See [ADR 0003](../../docs/decisions/0003-own-markdown-renderer.md),
   spec §11.4.
 - **Stage 1 — writer defects** (`writer.rs`): `$$…$$` no longer double-skips before a
   formula (the first line is placed into the already-open empty paragraph line via
@@ -662,7 +662,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   instead of printing the source. Getting to the feature was a three-step move: a **probe**
   (2026-07-14, verdict NO-GO on 0.56.0 — a panic on Cyrillic sequence diagrams + silent corruption of
   flowchart labels, byte offsets treated as character ones;
-  [docs/research/mermaid-ascii-rendering.md](docs/research/mermaid-ascii-rendering.md)) →
+  [docs/research/mermaid-ascii-rendering.md](../../docs/research/mermaid-ascii-rendering.md)) →
   **an upstream fix, ours** (a bug report
   [leboiko/markdown-reader#29](https://github.com/leboiko/markdown-reader/issues/29) +
   a ready-made [PR #30](https://github.com/leboiko/markdown-reader/pull/30) with three fixes and
@@ -1056,7 +1056,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   shifting the row and become safe).
 
 ### Post-M9: in-feed text search (`Ctrl+F`) (done)
-- Closes the roadmap's last search item ([plan](docs/history/in-feed-search.md),
+- Closes the roadmap's last search item ([plan](../../docs/history/in-feed-search.md),
   forks **F1–F6 decided by the user 2026-07-29**, all as recommended). Two
   stages: **3a** moved the highlight out of the block cache, **3b** built the
   mode. Done by hand rather than delegated — five consecutive agent runs died on
@@ -1319,7 +1319,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 - **Asked for right after the Zig fix**, which had closed the symptom with an
   approximation and named the real fix as groundwork. Plan with forks F1–F5 —
-  [docs/history/vendored-syntaxes.md](docs/history/vendored-syntaxes.md)
+  [docs/history/vendored-syntaxes.md](../../docs/history/vendored-syntaxes.md)
   (**user's decision, 2026-07-31**, all four questions as recommended: the
   curated set, vendored files with a manifest, a build-time dump, no user
   overlay yet). Branch `feat/vendored-syntaxes`, stacked on the Zig fix (they
@@ -1431,7 +1431,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Asked for directly**: tool calls should fold away the way "thoughts" already
   do, be **collapsed by default**, and the collapsed/expanded state should be
   remembered **per chat** — for both kinds of block. Plan with forks C1–C3 —
-  [docs/feed-collapse.md](docs/feed-collapse.md) (**user's decision, 2026-08-03**,
+  [docs/feed-collapse.md](../../docs/feed-collapse.md) (**user's decision, 2026-08-03**,
   both questions as recommended). Behaviour — spec §11.3. Branch
   `feat/feed-collapse`.
 - **Reading the code decided the shape and made it small.** Per-chat UI state

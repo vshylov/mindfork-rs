@@ -16,7 +16,7 @@ of history is not done (see "Out of scope").
 ## Principles (in the project's spirit)
 
 - **Each stage is a separate PR** with a green gate (`cargo fmt`, `clippy -D
-  warnings`, `cargo test`); after merge — update the [journal](../journal/memory.md) and
+  warnings`, `cargo test`); after merge — update the [journal](../journal/self-model.md) and
   architecture.md (§9/§11).
 - **No migrations**: new fields — `#[serde(default)]` (the `self_models` JSON
   blob, chat files), new tables — `CREATE TABLE IF NOT EXISTS`.
@@ -487,5 +487,5 @@ model use the gate on `add_insight` (rewriting instead of a near-duplicate).
 | 7 | Narrative as notes | track (doc+probe) | separate |
 
 Total for stages 1–6: ~5–6 days of clean work, six independent PRs. After
-each — a [journal](../journal/memory.md) entry and an architecture.md edit (§9 "Self-model,"
+each — a [journal](../journal/self-model.md) entry and an architecture.md edit (§9 "Self-model,"
 §11 "Concurrency").

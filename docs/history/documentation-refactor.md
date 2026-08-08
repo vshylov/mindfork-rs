@@ -100,7 +100,7 @@ but *when to read it*:
 | When you are… | Read |
 |---|---|
 | working on the engine / a provider | architecture §6, spec §6–§8, docs/journal/engine.md |
-| working on memory (notes/self-model/RAG) | architecture §9, spec §9.5/§17, docs/journal/memory.md |
+| working on memory (notes/self-model/RAG) | architecture §9, spec §9.5/§17, docs/journal/self-model.md |
 | about to implement anything | docs/lessons.md |
 ```
 
@@ -119,7 +119,9 @@ Not by date — nobody retrieves by date. The split axis is **the chapters of
 | `engine.md` | §5, §6 | providers, wire formats, sampling, streaming, servers, health, compaction |
 | `storage.md` | §7 | JSON/SQLite, migrations, backup, `cache.db`, search index |
 | `tools.md` | §8 | tool system, MCP, sandbox, web/fetch/YouTube, TTS, confirmation |
-| `memory.md` | §9 | self-model, notes, RAG, embeddings, attachments |
+| `self-model.md` | §9 | the self-model: summary, goals, traits, narrative, reflection |
+| `notes.md` | §9 | notes, their graph, semantic recall, cross-organ edges |
+| `rag.md` | §9 | the knowledge base, chat attachments, the embedding stack |
 | `ui-feed.md` | §10 | feed, markdown renderer, syntax, terminal quirks |
 | `ui-input.md` | §10 | input box, keys, spellcheck, selection/undo/mouse |
 | `ui-screens.md` | §10 | settings, chat list, self-model screen, search screens |
@@ -128,7 +130,10 @@ Not by date — nobody retrieves by date. The split axis is **the chapters of
 | `refactors.md` | §3 | god objects, SOLID, Sonar backlog, documentation work |
 
 Entries move **verbatim**, chronological within each file, with a heading index
-at the top of each file. Ten files of ~95 KB average; a task reads one.
+at the top of each file. A task reads one. Memory was delivered as one
+`memory.md` and split again into `self-model` / `notes` / `rag` before the PR
+closed — 180 KB and 45 entries is past the point where a file is read rather
+than grepped, and "the three memory organs" is the project's own vocabulary.
 
 ### 4.3 `docs/lessons.md` — the extraction that makes the split safe (~20 KB)
 

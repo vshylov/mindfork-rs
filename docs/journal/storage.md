@@ -152,7 +152,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   while keeping the config portable: scenario A/B/A (entered on A → moved
   the config to B → re-entered there → back on A → the keys are still
   readable). Research doc
-  [docs/research/api-key-storage.md](docs/research/api-key-storage.md);
+  [docs/research/api-key-storage.md](../../docs/research/api-key-storage.md);
   forks D1–D6 **adopted by the user, per the recommendations, on
   2026-07-20**. Branch `feat/api-key-store` (stacked on
   `docs/api-keys-research`). Stage 1 is **the core** (a UI input field —
@@ -325,7 +325,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   the settings, stored machine-bound and encrypted the same way cloud API keys
   are (ADR 0008); restore must take both an archive encrypted with that password
   and an unencrypted one. Plan with forks F1–F8 —
-  [docs/history/backup-password.md](docs/history/backup-password.md)
+  [docs/history/backup-password.md](../../docs/history/backup-password.md)
   (**user's decision, 2026-08-01**, all as recommended). Branches
   `docs/backup-password` → `feat/backup-password`.
 - **Everything load-bearing was measured against a throwaway probe crate before

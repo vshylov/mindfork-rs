@@ -329,7 +329,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: InputBox — text selection (track "selection/undo/mouse", stage A of items 8–10) (done)
 - The first of four stages in the "selection/undo/mouse" track
-  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), stage A);
+  ([docs/history/input-selection-undo-mouse.md](../../docs/history/input-selection-undo-mouse.md), stage A);
   branch `feat/input-selection`. **Widget only** `widgets/input_box.rs` (+ tests) —
   selection is now available to **all five** `InputBox` consumers (chat, chat
   rename, settings fields, the self-model editor, search) via the shared `on_key`. Copying/
@@ -374,7 +374,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: InputBox — copy/cut + moving Quit (track "selection/undo/mouse", stage B of items 8–10) (done)
 - The second stage of the "selection/undo/mouse" track
-  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), stage B);
+  ([docs/history/input-selection-undo-mouse.md](../../docs/history/input-selection-undo-mouse.md), stage B);
   branch `feat/input-clipboard`. Builds on stage A (selection). Decision points resolved
   by the user: `Ctrl+C` copies / `Ctrl+X` cuts; **Quit moves from
   `Ctrl+C` to `Ctrl+Q` + `F10`** (`Ctrl+C` freed up); `Ctrl+K` is replaced by shared
@@ -420,7 +420,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: InputBox — undo/redo (track "selection/undo/mouse", stage C of items 8–10) (done)
 - The third stage of the "selection/undo/mouse" track
-  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), stage C);
+  ([docs/history/input-selection-undo-mouse.md](../../docs/history/input-selection-undo-mouse.md), stage C);
   branch `feat/input-undo`. **Widget only** `widgets/input_box.rs` + consumers
   (replacing `Ctrl+K`). A shared undo model across **all five** `InputBox` consumers.
 - **Model — a stack of snapshots** `(lines, cursor)` with coalescing (not operational
@@ -464,7 +464,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: InputBox — mouse in the field (track "selection/undo/mouse", stage D of items 8–10) (done)
 - The final stage of the "selection/undo/mouse" track
-  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), stage D);
+  ([docs/history/input-selection-undo-mouse.md](../../docs/history/input-selection-undo-mouse.md), stage D);
   branch `feat/input-mouse` (off `feat/input-undo`). Builds on stage A (dragging grows the
   selection). Left-clicking in the **chat's** input box places the cursor, dragging —
   selects. **Only with mouse capture (`Ctrl+W`)** (otherwise crossterm gets no mouse
@@ -632,7 +632,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   standard Russian JCUKEN. Under Greek/Hebrew/Georgian/Bulgarian/Armenian/Thai/
   Turkish/… the character passed through unchanged, the match against `'q'`/`'l'`
   failed, and every shortcut was dead. Research —
-  [docs/research/layout-independent-hotkeys.md](docs/research/layout-independent-hotkeys.md),
+  [docs/research/layout-independent-hotkeys.md](../../docs/research/layout-independent-hotkeys.md),
   decision points R1–R5 accepted by the user per the recommendations 2026-07-24;
   branch `feat/universal-hotkeys-win`.
 - **Key insight (from crossterm's own source)**: on Windows the character we
@@ -714,7 +714,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: universal layout-independent hotkeys — stage 3, upstream crossterm (submitted)
 - **Stage 3** of the track (research
-  [docs/research/layout-independent-hotkeys.md](docs/research/layout-independent-hotkeys.md) §4 C,
+  [docs/research/layout-independent-hotkeys.md](../../docs/research/layout-independent-hotkeys.md) §4 C,
   fork R2): the unix half of layout independence isn't ours to write — the kitty
   keyboard protocol already carries the **base layout key** ("the key
   corresponding to the physical key in the standard PC-101 key layout"), but

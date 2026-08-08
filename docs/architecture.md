@@ -1432,7 +1432,7 @@ what it's working toward, and what it's realized about itself. The mechanism
 grew from an idea bank ([docs/self-model.md](history/self-model.md)) through
 a shipped probe ([docs/self-model-mvp.md](history/self-model-mvp.md)) and two
 rounds of fixes based on live testing on Opus 4.8 (log in
-[docs/journal/memory.md](journal/memory.md)).
+[docs/journal/self-model.md](journal/self-model.md)).
 
 Key architectural stance: **the self-model is per-profile data in SQLite
 (like notes/RAG), not `Chat` state.** So mutator tools write it **directly**
@@ -1685,7 +1685,7 @@ digest — the self-memory "sleep" gets **concrete data**, not just a rubric;
 migrations.
 
 Why it's built this way (lessons from live testing, see
-[docs/journal/memory.md](journal/memory.md)):
+[docs/journal/self-model.md](journal/self-model.md)):
 
 - **`get_self_model` doesn't truncate** — it used to return the same compact
   injection with a "…", and the model would complain about the "…".

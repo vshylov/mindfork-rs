@@ -346,13 +346,13 @@ SelfModel and notes probes.
 `ensure_note_vectors`; render/injection/`F3` edits — mechanical). The main
 work isn't new code but **carefully working through the ripple** (render,
 `SelfModelView`, `REFLECT_TOOL_IDS`, prompts) and the backfill. Afterward —
-update the [journal](../journal/memory.md)/`architecture.md` (§9 "Self-model": narrative → notes;
+update the [journal](../journal/self-model.md)/`architecture.md` (§9 "Self-model": narrative → notes;
 memory-organs table) and the status in this document.
 
 ## Tier 1 — status: implemented (steps 1–7), probe evaluation is a manual step
 
 Tier 1 is implemented (code + tests, **711 tests green**, clippy/fmt clean;
-log — in [docs/journal/memory.md](../journal/memory.md), map — [architecture.md](../architecture.md) §9).
+log — in [docs/journal/self-model.md](../journal/self-model.md), map — [architecture.md](../architecture.md) §9).
 Forks resolved (confirmed by the user): **tag `@self`**; self-notes are
 **hidden** from user-facing `note_recall`. Per step:
 
@@ -518,13 +518,13 @@ Criterion — whether to proceed to Tier 3 (linking memory organs).
 ~2–3 days. The main work is A (relevance injection + location) and B
 (surfacing the graph + self-consolidation overview); C is small. The graph
 mechanism already exists (we reuse `note_link`/`note_neighbors`/
-`note_search_semantic`). Afterward — update the [journal](../journal/memory.md)/`architecture.md` §9
+`note_search_semantic`). Afterward — update the [journal](../journal/self-model.md)/`architecture.md` §9
 and the status in this document.
 
 ### Tier 2 — status: A+B+C implemented; graph — GO on a live model
 
 **A (relevance-based injection)**, **B (graph over observations)**, and **C
-(semantic trait gate)** are all implemented. Log — [docs/journal/memory.md](../journal/memory.md),
+(semantic trait gate)** are all implemented. Log — [docs/journal/self-model.md](../journal/self-model.md),
 map — [architecture.md](../architecture.md) §9. Gate is green (718 tests,
 20 `#[ignore]`).
 

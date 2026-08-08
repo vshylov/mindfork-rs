@@ -127,4 +127,4 @@ under Settings → Profiles.
 
 *Sources: [spec.md §17](../../spec.md) (what/why),
 [self-model-mvp.md](../history/self-model-mvp.md) (plan and decisions),
-[docs/journal/memory.md](../journal/memory.md) (implementation log).*
+[docs/journal/self-model.md](../journal/self-model.md) (implementation log).*

@@ -229,7 +229,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   a real short-lived process, cross-platform), clippy/fmt clean.
 
 ### Post-M9: multi-provider inference — Phase 0 (foundation) (done)
-- **Cloud providers through the same `EngineBackend` trait** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+- **Cloud providers through the same `EngineBackend` trait** ([ADR 0004](../../docs/decisions/0004-engine-contract-multi-provider.md)):
   Phase 0 unlocks **OpenAI** (`platform.openai.com`) and **Gemini** (via an
   OpenAI-compatible endpoint). Claude (a separate `/v1/messages` protocol) — Phase 2.
   Layers above the engine (orchestrator, agentic loop, tools, UI) are **untouched**.
@@ -298,7 +298,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   key, outside CI.
 
 ### Post-M9: multi-provider inference — Phase 2 (Anthropic / Claude) (done)
-- **Claude through its own Messages API protocol** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)),
+- **Claude through its own Messages API protocol** ([ADR 0004](../../docs/decisions/0004-engine-contract-multi-provider.md)),
   as a new `EngineBackend` trait implementation — layers above the engine untouched.
 - **New module `shared/api/anthropic/`** (`client.rs` + `wire.rs`): `AnthropicClient`
   hits `/v1/messages` (headers `x-api-key` + `anthropic-version`), parses
@@ -610,7 +610,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: OpenAI → Responses API ("thoughts", reasoning_effort, verbosity) (done)
 - **`openai` mode moved from Chat Completions to the Responses API** (`POST /v1/responses`)
-  — research and the decision are in [docs/research/openai-responses-client.md](docs/research/openai-responses-client.md),
+  — research and the decision are in [docs/research/openai-responses-client.md](../../docs/research/openai-responses-client.md),
   ADR 0004. Motive: reasoning summaries ("thoughts") and `reasoning.effort` for OpenAI
   live **only** in Responses; Chat Completions is legacy for reasoning models. Responses is
   a separate protocol of the same vendor → **a new `EngineBackend` implementation**
@@ -698,7 +698,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: native Gemini client (generateContent) — Phase A (done)
 - **`gemini` mode moved from OpenAI-compatible Chat Completions to native
   `generateContent`/`streamGenerateContent`** — research and the plan are in
-  [docs/research/gemini-native-client.md](docs/research/gemini-native-client.md), ADR 0004.
+  [docs/research/gemini-native-client.md](../../docs/research/gemini-native-client.md), ADR 0004.
   Motive: the compat path (`OpenAiClient`+`WireDialect::Gemini`) stripped reasoning under
   the strict dialect — there was no "thoughts" or depth control at all (even `top_k`,
   which Gemini accepts natively, was cut). The native API is **a new `EngineBackend`
@@ -825,7 +825,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   server was off (`ping 192.168.1.20` — "Destination host unreachable"), yet the
   chip read **`● embeddings: ready`** (green). **Cause**: the status was derived from the
   configuration, never from the network — in `external` mode the entire "check"
-  was a non-empty URL → `ServerStatus::Ready` ([supervisor.rs](src/app/supervisor.rs)),
+  was a non-empty URL → `ServerStatus::Ready` ([supervisor.rs](../../src/app/supervisor.rs)),
   and `embed_status` was written exactly once, in `EngineManager::apply_embed`,
   with no channel to update it later. Deliberate at the time (ADR 0002 — RAG is
   lazy) and documented on `EmbedSetup`, with "a real probe is groundwork" recorded
@@ -890,7 +890,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: periodic server health monitoring (done)
 - **The other half of the previous entry** (user request; design doc
-  [docs/server-health-monitoring.md](docs/server-health-monitoring.md), forks
+  [docs/server-health-monitoring.md](../../docs/server-health-monitoring.md), forks
   **F1–F6 confirmed 2026-07-28** — F2/F4 put to the user explicitly, the rest taken
   by recommendation). Branch `feat/server-health-monitoring`, stacked on
   `fix/embed-server-probe`.
@@ -960,7 +960,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: no server restart when nothing effectively changed (done)
 
 - **Closes the consequence recorded in §5.1** of
-  [settings-undo.md](docs/history/settings-undo.md): `handle_update_config` marked
+  [settings-undo.md](../../docs/history/settings-undo.md): `handle_update_config` marked
   a restart by diffing the incoming config against the **previous edit**, so an
   engine edit plus its `Ctrl+Z` marked it twice and the debounce produced one
   restart that reloaded the server with the values it already had — on a managed
@@ -1009,7 +1009,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: history compression — stage 1 (core, `/compact`) (done)
 
 - **The first stage of the "history compression" track** (research + forks
-  [docs/research/history-compression.md](docs/research/history-compression.md),
+  [docs/research/history-compression.md](../../docs/research/history-compression.md),
   decided by the user 2026-08-07; **stage 0's probe returned GO**, §9a there).
   Behaviour — spec §6.7. Branch `feat/history-compaction`, stacked on the
   research branch. The whole conversation was sent on every request, so a long
@@ -1106,7 +1106,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: history compression — stage 2 (the automatic trigger) (done)
 
 - **Stage 2 of the track** (research
-  [docs/research/history-compression.md](docs/research/history-compression.md);
+  [docs/research/history-compression.md](../../docs/research/history-compression.md);
   track-level forks F1–F10 decided 2026-08-07, **sub-decisions S1–S8 recorded
   before implementation and S1/S2/S3 confirmed by the user 2026-08-08**, all as
   recommended). Behaviour — spec §6.7. Branch
@@ -1229,7 +1229,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: history compression — stage 3 (the read-back tools) (done)
 
 - **Completes the track** (research
-  [docs/research/history-compression.md](docs/research/history-compression.md);
+  [docs/research/history-compression.md](../../docs/research/history-compression.md);
   track-level fork **F9(b)** decided 2026-08-07, **sub-decisions S9–S16 recorded
   before implementation and S11/S12/S13/S14 confirmed by the user 2026-08-08**,
   all as recommended). Behaviour — spec §6.7. Branch `feat/history-readback`.
@@ -1386,7 +1386,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 - **The last leftover of the history-compression track with a real user
   effect**, and the framing is what made it worth doing: `Ctrl+U` builds its own
-  request ([impersonation.rs](src/app/orchestrator/impersonation.rs), spec
+  request ([impersonation.rs](../../src/app/orchestrator/impersonation.rs), spec
   §11.8) and took `chat.messages` **whole**, so a long chat hit the very context
   ceiling the whole track exists to remove — only from a different key. Branch
   `fix/impersonation-compaction`. A simple task by AGENTS.md §1 (one module, no

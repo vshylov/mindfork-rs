@@ -151,7 +151,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   mistake), and its description is neutral.
 
 ### Post-M9: Python sandbox on Wasmer/WASIX — Phase 1 (sidecar scaffolding) (done)
-- **`python_exec` gained two modes** ([docs/research/python-wasmer-sandbox.md](docs/research/python-wasmer-sandbox.md)):
+- **`python_exec` gained two modes** ([docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)):
   **Wasmer** (the default) — an isolated WASIX sandbox via a **`wasmer` sidecar**
   (a binary next to the app, not embedded in the exe — the Phase 0 §9.7 decision: embedding V8 in
   a dll would pull LLVM/libclang+a static V8 into our build, whereas killing a sidecar
@@ -244,7 +244,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   timeout kill (`while True: pass` → "exceeded the time limit"), basic sandbox/local.
 
 ### Post-M9: Python sandbox on Wasmer/WASIX — Phase 3 (hardening/polish) (done)
-- **Locked in by a decision**: [ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)
+- **Locked in by a decision**: [ADR 0005](../../docs/decisions/0005-python-sandbox-wasmer.md)
   (the `wasmer`/WASIX sidecar behind `shared/sandbox.rs`; the security/resource posture;
   defaults). Track outcome (Phases 0–3): the Python sandbox works out of the box.
 - **A "one task at a time" gate** (`shared/sandbox.rs`): `WasmerSandbox` gained
@@ -320,7 +320,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 ### Post-M9: plugins — stage 1: generic import (the mindfork-import format) (done)
 - **The first stage of the "plugin system" track** (research
-  [docs/research/plugin-system.md](docs/research/plugin-system.md), decision points R1–R8
+  [docs/research/plugin-system.md](../../docs/research/plugin-system.md), decision points R1–R8
   accepted by the user 2026-07-17 per the recommendations; branch `feat/generic-import`,
   stacked on `docs/plugins-research` — general roadmap edits, a precedent from the linear
   installer stack). Importing from third-party apps moved from an importer for
@@ -329,7 +329,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   it with the command `mindfork import <file>`. The pattern "converter → a documented
   file → import" — precedents beancount/beangulp, KeePass, Netscape bookmarks
   (research §5); knowledge of the non-public LameLLaMA leaves the monolith.
-- **The `mindfork-import` v1 format** ([docs/import-format.md](docs/import-format.md) —
+- **The `mindfork-import` v1 format** ([docs/import-format.md](../../docs/import-format.md) —
   an external contract): `format`/`version` + `profiles[]` (key/name/language/
   system_message/greeting/character_names/sampling) + `chats[]` (key/profile_key/
   title/dates/messages with user|assistant|system roles) + an optional `settings`
@@ -381,7 +381,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   stacked on `feat/generic-import`): a go/no-go check for "a live local model
   correctly calls tools of a real MCP server via our agentic-loop machinery".
   Verdict — **GO** (results in the research doc
-  [docs/research/plugin-system.md §9](docs/research/plugin-system.md)), stage 3
+  [docs/research/plugin-system.md §9](../../docs/research/plugin-system.md)), stage 3
   (`feat/mcp-host`) unblocked.
 - **Mini-client `shared/mcp.rs`** (tools-only, stdio, target revision 2025-11-25;
   in the probe the module is under `#[cfg(test)]` — not compiled into the binary, it
@@ -590,7 +590,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **The track was restored from a reverted stage 1** (`git show 19ead9f` —
   the `pulldown-cmark` extractor, the `/tts` command, the `rodio` player,
   stop points, the settings tab, clients) after **a re-investigation via a
-  live spike** ([docs/research/tts.md §13](docs/research/tts.md)): the
+  live spike** ([docs/research/tts.md §13](../../docs/research/tts.md)): the
   previously implemented engines didn't deliver acceptable quality on real
   text, so the track was reverted (PRs #197–199), then candidates were
   checked on live hardware. **DECISION (2026-07-23): the primary engine is
@@ -800,7 +800,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 
 - **Human-in-the-loop before a tool call that changes something outside the app**
   (roadmap §Tools, one of the five "most valuable next"). Design plan with forks
-  F1–F8 — [docs/history/tool-confirmation.md](docs/history/tool-confirmation.md),
+  F1–F8 — [docs/history/tool-confirmation.md](../../docs/history/tool-confirmation.md),
   accepted by the user as recommended 2026-07-30 with one addition: the feature
   must be **fully** switchable off. Behaviour — spec §9.8. Branch
   `feat/tool-confirmation`, one PR.
@@ -893,7 +893,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Asked for as "research the possibility of integrating with YouTube, so the
   assistant can get a description of what is talked about **or shown** in a
   video"** — and that "or shown" turned out to be the whole story. Research with
-  forks R1–R9 — [docs/research/youtube-integration.md](docs/research/youtube-integration.md)
+  forks R1–R9 — [docs/research/youtube-integration.md](../../docs/research/youtube-integration.md)
   (**user's decision 2026-08-01, all as recommended**); behaviour — spec §9.9.
   Branch `docs/youtube-research` (research + stage 1).
 - **Everything load-bearing was measured live from this machine before any
@@ -999,7 +999,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: YouTube stage 2 — the words, as a chat attachment (done)
 
 - **Stage 2 of the YouTube track**, fork **R3(c)**: plan with forks F1–F5 —
-  [docs/history/youtube-transcript.md](docs/history/youtube-transcript.md)
+  [docs/history/youtube-transcript.md](../../docs/history/youtube-transcript.md)
   (**user's decision, 2026-08-01**, all as recommended); behaviour — spec §9.9.
   `youtube_watch(transcript: true)` brings back the spoken words as well as the
   description, and a large transcript lands as a **chat attachment** (spec §9.7)
@@ -1179,7 +1179,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   `config.mcp.servers` was hand-edited in `settings.json` (decision point R6,
   deliberate at the time: the host was new and a file was the smaller surface).
   Design plan with forks F1–F8 —
-  [docs/history/mcp-server-editor.md](docs/history/mcp-server-editor.md)
+  [docs/history/mcp-server-editor.md](../../docs/history/mcp-server-editor.md)
   (**confirmed by the user 2026-08-02, all as recommended; scope — stage 1**).
   Behaviour — spec §9.6. Branches `docs/mcp-server-editor` → `feat/mcp-server-editor`.
 - **Reading the code first shrank the task and reshaped it.** The settings screen
@@ -1334,7 +1334,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 ### Post-M9: MCP servers — secrets for the `env` map and JSON import (stage 2, done)
 
 - **Completes the "MCP servers in the settings window" track** (plan
-  [mcp-server-editor.md](docs/history/mcp-server-editor.md) §9, forks **S1–S8
+  [mcp-server-editor.md](../../docs/history/mcp-server-editor.md) §9, forks **S1–S8
   confirmed by the user 2026-08-02, all as recommended**). Stage 1 made a server
   *authorable* in the window; it still could not be *given a token* — a hosted
   server (GitHub, Slack) needed an OS environment variable and an app restart,
@@ -1500,7 +1500,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   messages — 3 fruitless `web_search`es and **6** `python_exec` rounds, including
   downloading the same 16 MB tarball of the V repository **twice**. Reading the
   transcript against the code found four causes, and they chain. Plan with forks
-  F1–F2 — [docs/history/fetch-url-fidelity.md](docs/history/fetch-url-fidelity.md)
+  F1–F2 — [docs/history/fetch-url-fidelity.md](../../docs/history/fetch-url-fidelity.md)
   (**user's decision 2026-08-03: all four, F1(a) `fetch_url` only, F2(b) attach**);
   behaviour — spec §9.3.1. Branch `feat/fetch-url-fidelity`.
 - **P1, the root cause — extraction threw away the code.** `extract_readable`
