@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -26,6 +26,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: branding — TUI wordmark, a lockup instead of a bare glyph (done)
 - Post-M9: the mindfork.io site URL in project metadata (done)
 - Post-M9: the Windows installer can provision the Python sandbox (done)
+- Release 0.9.5 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -832,3 +833,33 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   the options on a `CreateInputOptionPage` are **not** child radio-button windows —
   Inno owner-draws them inside one `TNewCheckListBox` — so enumerating controls
   finds nothing and a picture is the only way to read that list.
+
+### Release 0.9.5 (prepared)
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.9.5`): bumped `Cargo.toml` `0.9.4 → 0.9.5` (+ `Cargo.lock`),
+  `CHANGELOG.md` — `[Unreleased]` → `[0.9.5] — 2026-08-09`, a fresh empty
+  `[Unreleased]` opened, comparison links updated. The `v0.9.5` tag is applied by
+  the user after the merge (the agent doesn't push tags/`main`).
+- **MINOR, not PATCH**: while at `0.x` a MINOR carries features (AGENTS.md §6),
+  and the section is dominated by them — Grok (xAI) as a fourth cloud provider,
+  history compression (`/compact`, the automatic trigger, the read-back tools),
+  chat file attachments and their semantic index, chat content search
+  (`Ctrl+F`/`Ctrl+G`) and in-feed search, the MCP server editor with
+  machine-bound env secrets and config import, `youtube_watch`,
+  password-protected backups, dangerous-tool confirmation, `/reindex`, and the
+  `DISCLAIMER.md` shipped with every archive and package.
+- **The `[Unreleased]` section was consolidated on the way in.** It had grown
+  over ~40 merged PRs into **13 rubric blocks** (Added ×4, Changed ×3, Fixed ×5,
+  Security ×1); they were merged into one rubric each, in the order the CHANGELOG
+  header declares (Added / Changed / Fixed / Removed / Data / Security) — the same
+  clean-up the `0.9.1` release did. This is not cosmetic: `release.yml` publishes
+  that section **verbatim** as the GitHub Release body (the `awk` extractor between
+  `## [ver]` and the next `## [`), so a reader of the release page would otherwise
+  meet "Fixed" five times. One item was also in the wrong rubric — the
+  `youtube_watch` transcript, an addition sitting under "Fixed" — and moved to
+  "Added" next to the tool it extends.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **1962 unit tests, 84 `#[ignore]`**; the documentation gates
+  (`cyrillic_scan`, `link_check`, `doc_index_check`) green too. No live run needed
+  (version + docs, app code untouched). The version in CLAUDE.md's "## Status"
+  header was refreshed; the test count and date there were already current.
