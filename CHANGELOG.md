@@ -14,6 +14,8 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-08-09
+
 ### Added
 
 - **Grok (xAI) as a model provider.** Alongside a local model, OpenAI, Gemini and
@@ -28,25 +30,6 @@ split by subsystem.
   reject or ignore. Note that xAI, like Anthropic, offers no embedding models —
   under a `grok` engine the knowledge base needs an embedder from somewhere else
   (a local server, OpenAI or Gemini) in the same section's "Embeddings" tab.
-
-### Fixed
-
-- **The assistant's model of *you* was not reaching it.** The self-model block the
-  assistant carries into every conversation is assembled from four parts — its
-  self-description, its active goals, what it has concluded about you, and its
-  recent observations — but only the description had a size limit, so on a
-  mature profile the description and goals used up the whole block and **the
-  other two were silently dropped**. Measured on real data: everything the
-  assistant had recorded about the interlocutor, and every observation it had
-  written about itself, never left the database. Each part now gets its own share
-  of the space, and what one part does not use goes to the next; when a list has
-  to be shortened it drops whole entries and says how many are hidden, instead of
-  cutting one in half. The assistant can still read the whole thing at any time —
-  that view was never truncated. The default size of the block was also raised
-  (1200 → 4000 characters), which mostly matters for a self-model that has grown;
-  an existing installation keeps its own setting, in "Memory" → "Self-model".
-
-### Added
 
 - **A disclaimer about what the models can say and do** — a new `DISCLAIMER.md`,
   readable in the app on the `F1` → "Disclaimer" tab and shipped in the archives,
@@ -142,127 +125,6 @@ split by subsystem.
   confirm, restarts the server. Previously a server that had crashed too often
   could only be brought back by restarting the application.
 
-### Changed
-
-- **A fetched page keeps its code examples.** `fetch_url` used to hand the
-  assistant prose only — section headings and every code block were dropped
-  before it ever saw the page. On documentation that is not a cosmetic loss:
-  each "here is an example:" led nowhere, so the assistant concluded the page had
-  arrived damaged and went looking for the source elsewhere, spending several
-  tool calls on it. Headings and code (fenced, with the language) now come
-  through in their place in the text.
-- **A page too large for one answer is attached to the chat instead of being
-  cut.** It arrives as an ordinary attachment — visible in `/file list`, read
-  page by page and searchable by meaning — so nothing is lost and the assistant
-  can reach the parts a summary skipped. Previously such a page was silently
-  truncated mid-word with nothing saying so, which made a long page
-  indistinguishable from a complete one. A ceiling still exists for genuinely
-  enormous pages, and reaching it is now stated in the answer. Such an
-  attachment is named after the page's own heading rather than the browser tab
-  title — many documentation sites give every page the same tab title, which
-  would have left two attached pages sharing one name and the assistant reading
-  whichever came first. If two attachments do end up sharing a name, reading one
-  by that name now says so instead of picking one.
-- **`Home` and `End` reach further with each press.** In the input box they
-  still go to the start/end of the row you see on screen — but pressing the same
-  key again, when the cursor is already there, now goes on to the whole line you
-  typed. Previously a line broken across several rows by word wrap could only be
-  traversed with `Ctrl+Home`/`Ctrl+End`, which jump to the ends of the entire
-  text. `Home` also stops at the **first non-space character** before the line's
-  very beginning, so an indented line is entered at its text.
-
-### Security
-
-- An MCP server's token, whether typed in or imported from another client's
-  configuration, is stored the way the cloud API keys are: encrypted with a key
-  belonging to this computer, never written to the settings file in the clear
-  and never shown in the interface. An imported configuration therefore does not
-  turn its literal tokens into plaintext on your disk. The same limitation
-  applies as for the API keys — this protects the file, not against programs
-  running under your own account.
-
-### Fixed
-
-- **The token counter now shows the real number, not an estimate.** With a
-  llama.cpp server the exact count it reports arrived a moment *after* the reply
-  ended, and was being discarded — so the counter kept showing its own `~`
-  approximation, which is off by well over half on some kinds of text.
-- **Two labels in the feed ignored the interface language** and were always
-  Russian: the heading above an **expanded** "thoughts" block, and the exit-code
-  line under a `python_exec` console.
-- **Web search no longer reports "nothing found" when it was actually blocked.**
-  One of the search engines serves its "prove you are human" page with an
-  ordinary success status, so it counted as a normal answer that happened to
-  contain no results — and that suppressed the honest "every search engine is
-  refusing us right now" message. The assistant was told the web knows nothing
-  about the subject and, quite reasonably, went off inventing ways around it.
-- **The assistant is told that Python code does not carry over between calls.**
-  Each `python_exec` call gets a fresh sandbox: files written by one call —
-  `/tmp` included — are gone by the next. Nothing said so, so the assistant would
-  download a large file in one call and find it missing in the next, then
-  download it again.
-- **`backup` and `restore` no longer look like they have hung.** Packing or
-  unpacking real data takes seconds, and until now the commands printed nothing
-  until it was all over — hardest to read right after `restore` asks for the
-  password, where nothing is echoed either, so there is no sign the password was
-  taken. Each step now says what it is doing before it does it (checking the
-  archive, saving the previous data, clearing, restoring, compacting the
-  database), and packing/unpacking counts its files as it goes.
-- **Keys pressed while `backup`/`restore` was working no longer land in the
-  shell.** They used to sit in the terminal's buffer untouched and be replayed as
-  commands the moment the program exited — pressing `Enter` a few times while
-  waiting produced a few stray prompts afterwards. They are discarded on the way
-  out: they were typed at mindfork, not at the shell.
-- **The settings panel no longer explains the wrong thing.** The line about a
-  tool being "disabled by a global switch" used to appear under **any** row
-  flagged for attention — an MCP server whose tool catalog had changed, or an
-  environment variable whose source is missing — where it is about neither that
-  row nor anything the user can act on. It now shows only for a tool that really
-  is gated, and names the section that holds the switch: the MCP master toggle
-  lives in "Plugins", not "Tools".
-- **Appending to a file could silently lose what was appended.** `fs_write` with
-  `append` did not flush before closing the file, so the text sometimes never
-  reached disk — the file simply stayed as it was.
-- **An MCP server's status no longer hides that its tools are switched off.** The
-  row now reads `ready · tools: 14 · in profile: 0` and points at the "Profiles"
-  section: a server can be running while the model sees none of its tools, because
-  they are enabled per profile — previously the row just said "ready", and the only
-  way to find out was to ask the assistant and be told it has no such tool.
-
-- **`youtube_watch` can bring back the words, not just a description.** Pass
-  `transcript: true` and the assistant also gets a transcript of the speech with
-  timestamps. If it is short, it comes straight back in the answer; if it is
-  large, it is **attached to the chat** (it shows up in `/file list`, and the
-  assistant reads it page by page or searches it by meaning) instead of filling
-  the conversation. The transcript costs exactly as much as watching — it is the
-  same request — so it is not requested by default. Timestamps are always counted
-  from the start of the video, even when you asked for a segment.
-
-### Fixed
-
-- **Spellcheck no longer underlines links and email addresses.** A URL
-  (`https://…`, `www.…`, a bare `example.com/path`) or an address
-  (`user@example.com`, `mailto:` and all) in the input box is skipped whole, so
-  its host and path fragments are not flagged word by word, and the suggestions
-  popup (`Ctrl+G`) stays quiet inside one. Prose around it is checked as
-  before — including a missing space after a period (`end.Next`), which is still
-  a typo and not a domain, and a mention like `@username`.
-- **A Gemini key can now be entered where `youtube_watch` is configured.**
-  The "Model" section only offers a key field for a slot that is actually set to
-  that cloud, so with a local or OpenAI setup there was nowhere to enter a Gemini
-  key — and the video tool needs one whatever the chat engine is. The "Video"
-  group in "Tools" now has its own "API key" row, stored on this computer like
-  any other key; it is the same shared Gemini key, so entering it here also
-  configures Gemini chat and embeddings.
-- **`youtube_watch` no longer sends the assistant hunting for a workaround.**
-  When video understanding is not configured (or the provider fails), the
-  answer now says plainly that the video's content cannot be obtained any other
-  way — captions, downloading and web search are all dead ends — so the model
-  answers from what it has instead of spending several tool calls trying to
-  scrape subtitles, install packages or find `yt-dlp`.
-
-### Added
-
 - **The assistant can watch a YouTube video** — the new `youtube_watch` tool
   tells what is **said and shown** in it, with timestamps, and `focus` narrows
   that to your question. It needs a Gemini API key, but **not** a Gemini chat:
@@ -276,6 +138,14 @@ split by subsystem.
 - **A YouTube link is no longer a dead end for `fetch_url`.** It used to answer
   "failed to extract readable text" (a watch page carries none); now it returns
   the same free metadata and points at `youtube_watch`.
+- **`youtube_watch` can bring back the words, not just a description.** Pass
+  `transcript: true` and the assistant also gets a transcript of the speech with
+  timestamps. If it is short, it comes straight back in the answer; if it is
+  large, it is **attached to the chat** (it shows up in `/file list`, and the
+  assistant reads it page by page or searches it by meaning) instead of filling
+  the conversation. The transcript costs exactly as much as watching — it is the
+  same request — so it is not requested by default. Timestamps are always counted
+  from the start of the video, even when you asked for a segment.
 
 - **Backups can be password-protected.** Give a password with
   `mindfork backup --password …`, or set it once in settings → "Data" → "Backup
@@ -303,66 +173,6 @@ split by subsystem.
   typing, as before. A few things stay outside it by nature: an API key (the app
   never keeps it in the screen), creating or deleting a profile, and confirming
   an MCP server's tool list.
-
-### Fixed
-
-- **A setting's hint is no longer cut off mid-sentence.** The panel at the
-  bottom of the settings screen had room for three lines, and longer hints — the
-  API key, MCP servers, speculative decoding — simply ran past it, with the part
-  that explained what to actually do left unread. The panel is now as tall as
-  the longest hint in the section needs, and stays that height while you step
-  through its fields, so the list underneath doesn't shift about.
-- **Zig code blocks are highlighted — and twenty-one other languages with them.**
-  A ` ```zig ` block came out as flat text on a grey background, and so did
-  `toml`, `dockerfile`, `powershell`, `swift`, `typescript`, `kotlin`, `scss`,
-  `sass`, `graphql`, `terraform`, `elixir`, `solidity`, `julia`, `nix`, `dart`,
-  `protobuf`, `cmake`, `nginx`, `vue`, `svelte` and `nim`: the syntax set the
-  app shipped with covers only what Sublime Text's defaults did, and none of
-  these were in it. Real grammars for all twenty-two now ship with the app.
-  `jsonc`/`json5` and `v` highlight too, through the closest grammar the app
-  has. Nothing to configure, and startup is no slower — the grammars are
-  compiled in when the app is built.
-- **Editing a server setting and taking it back no longer reloads the model for
-  nothing.** A change and its undo both asked for a restart, and the app then
-  restarted the server with the settings it was already running — on a local
-  model that means unloading and reloading a multi-gigabyte file. The app now
-  compares against what each server is actually running, so a restart only
-  happens when something really differs. The same applies to MCP servers, where
-  a needless re-apply killed and respawned their processes.
-
-### Changed
-
-- **Code blocks without highlighting are drawn as a neat rectangle.** Their
-  background used to follow the ragged right edge of the text, so a block read
-  as a stack of bars of differing length. Now every row of the block — the
-  ` ``` ` fences included — is filled to one width, blank lines inside it too,
-  with a blank column along the right edge so the text doesn't run into it.
-  The block is sized to its own content and does not stretch across the panel
-  (the same rule tables follow); a line too long for the panel is wrapped into
-  the rectangle instead of leaving a ragged tail.
-
-- **Moving around the settings screen no longer changes settings by accident.**
-  `→` used to step from the section list into the parameters, so `→` and then `←`
-  looked like the way in and back out — but `←` on a switch changes its value, and
-  the first parameter of most sections is a switch (the server mode, the theme).
-  The way back was a silent edit, applied at once and restarting the server. Now
-  the model is: **the arrows change a value, `Enter` goes into the parameters,
-  `Esc` goes back out** (a second `Esc` closes the screen), and `Tab` switches
-  section without moving your focus. The hotkey line at the bottom now changes
-  with your focus, so it always says what `Enter` and `Esc` will do, and each of
-  the two panes has a marker in its title that turns green when it is the one
-  listening to you. Note the two habits that change: `→` no longer enters the
-  parameters, and leaving the screen from inside them takes two `Esc` presses.
-
-- **`mindfork backup` and `mindfork restore` now compact the database.** `data.db`
-  holds on to the space freed by deleted notes, `/rag remove` and chats whose
-  attachment index went away — a backup now packs a compacted copy of it (a
-  smaller archive), and a restore compacts what it unpacked, including archives
-  made by older versions. A file that can't be read as a database is copied
-  as-is, so an unreadable one still gets backed up; the backup never modifies
-  the data it is copying.
-
-### Added
 
 - **Ask before a tool does something outside the app.** A new switch in settings
   → Tools → "Confirm dangerous calls" (off by default) makes the assistant stop
@@ -464,6 +274,63 @@ split by subsystem.
 
 ### Changed
 
+- **A fetched page keeps its code examples.** `fetch_url` used to hand the
+  assistant prose only — section headings and every code block were dropped
+  before it ever saw the page. On documentation that is not a cosmetic loss:
+  each "here is an example:" led nowhere, so the assistant concluded the page had
+  arrived damaged and went looking for the source elsewhere, spending several
+  tool calls on it. Headings and code (fenced, with the language) now come
+  through in their place in the text.
+- **A page too large for one answer is attached to the chat instead of being
+  cut.** It arrives as an ordinary attachment — visible in `/file list`, read
+  page by page and searchable by meaning — so nothing is lost and the assistant
+  can reach the parts a summary skipped. Previously such a page was silently
+  truncated mid-word with nothing saying so, which made a long page
+  indistinguishable from a complete one. A ceiling still exists for genuinely
+  enormous pages, and reaching it is now stated in the answer. Such an
+  attachment is named after the page's own heading rather than the browser tab
+  title — many documentation sites give every page the same tab title, which
+  would have left two attached pages sharing one name and the assistant reading
+  whichever came first. If two attachments do end up sharing a name, reading one
+  by that name now says so instead of picking one.
+- **`Home` and `End` reach further with each press.** In the input box they
+  still go to the start/end of the row you see on screen — but pressing the same
+  key again, when the cursor is already there, now goes on to the whole line you
+  typed. Previously a line broken across several rows by word wrap could only be
+  traversed with `Ctrl+Home`/`Ctrl+End`, which jump to the ends of the entire
+  text. `Home` also stops at the **first non-space character** before the line's
+  very beginning, so an indented line is entered at its text.
+
+- **Code blocks without highlighting are drawn as a neat rectangle.** Their
+  background used to follow the ragged right edge of the text, so a block read
+  as a stack of bars of differing length. Now every row of the block — the
+  ` ``` ` fences included — is filled to one width, blank lines inside it too,
+  with a blank column along the right edge so the text doesn't run into it.
+  The block is sized to its own content and does not stretch across the panel
+  (the same rule tables follow); a line too long for the panel is wrapped into
+  the rectangle instead of leaving a ragged tail.
+
+- **Moving around the settings screen no longer changes settings by accident.**
+  `→` used to step from the section list into the parameters, so `→` and then `←`
+  looked like the way in and back out — but `←` on a switch changes its value, and
+  the first parameter of most sections is a switch (the server mode, the theme).
+  The way back was a silent edit, applied at once and restarting the server. Now
+  the model is: **the arrows change a value, `Enter` goes into the parameters,
+  `Esc` goes back out** (a second `Esc` closes the screen), and `Tab` switches
+  section without moving your focus. The hotkey line at the bottom now changes
+  with your focus, so it always says what `Enter` and `Esc` will do, and each of
+  the two panes has a marker in its title that turns green when it is the one
+  listening to you. Note the two habits that change: `→` no longer enters the
+  parameters, and leaving the screen from inside them takes two `Esc` presses.
+
+- **`mindfork backup` and `mindfork restore` now compact the database.** `data.db`
+  holds on to the space freed by deleted notes, `/rag remove` and chats whose
+  attachment index went away — a backup now packs a compacted copy of it (a
+  smaller archive), and a restore compacts what it unpacked, including archives
+  made by older versions. A file that can't be read as a database is copied
+  as-is, so an unreadable one still gets backed up; the backup never modifies
+  the data it is copying.
+
 - **Content arriving on its own no longer drags the feed back to the bottom.**
   If you have scrolled up to re-read something, a tool card, a service note or
   the assistant's next message landing mid-turn now leaves your position alone —
@@ -484,6 +351,112 @@ split by subsystem.
   and so does `/reindex`; reading a file page by page is unaffected.
 
 ### Fixed
+
+- **The assistant's model of *you* was not reaching it.** The self-model block the
+  assistant carries into every conversation is assembled from four parts — its
+  self-description, its active goals, what it has concluded about you, and its
+  recent observations — but only the description had a size limit, so on a
+  mature profile the description and goals used up the whole block and **the
+  other two were silently dropped**. Measured on real data: everything the
+  assistant had recorded about the interlocutor, and every observation it had
+  written about itself, never left the database. Each part now gets its own share
+  of the space, and what one part does not use goes to the next; when a list has
+  to be shortened it drops whole entries and says how many are hidden, instead of
+  cutting one in half. The assistant can still read the whole thing at any time —
+  that view was never truncated. The default size of the block was also raised
+  (1200 → 4000 characters), which mostly matters for a self-model that has grown;
+  an existing installation keeps its own setting, in "Memory" → "Self-model".
+
+- **The token counter now shows the real number, not an estimate.** With a
+  llama.cpp server the exact count it reports arrived a moment *after* the reply
+  ended, and was being discarded — so the counter kept showing its own `~`
+  approximation, which is off by well over half on some kinds of text.
+- **Two labels in the feed ignored the interface language** and were always
+  Russian: the heading above an **expanded** "thoughts" block, and the exit-code
+  line under a `python_exec` console.
+- **Web search no longer reports "nothing found" when it was actually blocked.**
+  One of the search engines serves its "prove you are human" page with an
+  ordinary success status, so it counted as a normal answer that happened to
+  contain no results — and that suppressed the honest "every search engine is
+  refusing us right now" message. The assistant was told the web knows nothing
+  about the subject and, quite reasonably, went off inventing ways around it.
+- **The assistant is told that Python code does not carry over between calls.**
+  Each `python_exec` call gets a fresh sandbox: files written by one call —
+  `/tmp` included — are gone by the next. Nothing said so, so the assistant would
+  download a large file in one call and find it missing in the next, then
+  download it again.
+- **`backup` and `restore` no longer look like they have hung.** Packing or
+  unpacking real data takes seconds, and until now the commands printed nothing
+  until it was all over — hardest to read right after `restore` asks for the
+  password, where nothing is echoed either, so there is no sign the password was
+  taken. Each step now says what it is doing before it does it (checking the
+  archive, saving the previous data, clearing, restoring, compacting the
+  database), and packing/unpacking counts its files as it goes.
+- **Keys pressed while `backup`/`restore` was working no longer land in the
+  shell.** They used to sit in the terminal's buffer untouched and be replayed as
+  commands the moment the program exited — pressing `Enter` a few times while
+  waiting produced a few stray prompts afterwards. They are discarded on the way
+  out: they were typed at mindfork, not at the shell.
+- **The settings panel no longer explains the wrong thing.** The line about a
+  tool being "disabled by a global switch" used to appear under **any** row
+  flagged for attention — an MCP server whose tool catalog had changed, or an
+  environment variable whose source is missing — where it is about neither that
+  row nor anything the user can act on. It now shows only for a tool that really
+  is gated, and names the section that holds the switch: the MCP master toggle
+  lives in "Plugins", not "Tools".
+- **Appending to a file could silently lose what was appended.** `fs_write` with
+  `append` did not flush before closing the file, so the text sometimes never
+  reached disk — the file simply stayed as it was.
+- **An MCP server's status no longer hides that its tools are switched off.** The
+  row now reads `ready · tools: 14 · in profile: 0` and points at the "Profiles"
+  section: a server can be running while the model sees none of its tools, because
+  they are enabled per profile — previously the row just said "ready", and the only
+  way to find out was to ask the assistant and be told it has no such tool.
+
+- **Spellcheck no longer underlines links and email addresses.** A URL
+  (`https://…`, `www.…`, a bare `example.com/path`) or an address
+  (`user@example.com`, `mailto:` and all) in the input box is skipped whole, so
+  its host and path fragments are not flagged word by word, and the suggestions
+  popup (`Ctrl+G`) stays quiet inside one. Prose around it is checked as
+  before — including a missing space after a period (`end.Next`), which is still
+  a typo and not a domain, and a mention like `@username`.
+- **A Gemini key can now be entered where `youtube_watch` is configured.**
+  The "Model" section only offers a key field for a slot that is actually set to
+  that cloud, so with a local or OpenAI setup there was nowhere to enter a Gemini
+  key — and the video tool needs one whatever the chat engine is. The "Video"
+  group in "Tools" now has its own "API key" row, stored on this computer like
+  any other key; it is the same shared Gemini key, so entering it here also
+  configures Gemini chat and embeddings.
+- **`youtube_watch` no longer sends the assistant hunting for a workaround.**
+  When video understanding is not configured (or the provider fails), the
+  answer now says plainly that the video's content cannot be obtained any other
+  way — captions, downloading and web search are all dead ends — so the model
+  answers from what it has instead of spending several tool calls trying to
+  scrape subtitles, install packages or find `yt-dlp`.
+
+- **A setting's hint is no longer cut off mid-sentence.** The panel at the
+  bottom of the settings screen had room for three lines, and longer hints — the
+  API key, MCP servers, speculative decoding — simply ran past it, with the part
+  that explained what to actually do left unread. The panel is now as tall as
+  the longest hint in the section needs, and stays that height while you step
+  through its fields, so the list underneath doesn't shift about.
+- **Zig code blocks are highlighted — and twenty-one other languages with them.**
+  A ` ```zig ` block came out as flat text on a grey background, and so did
+  `toml`, `dockerfile`, `powershell`, `swift`, `typescript`, `kotlin`, `scss`,
+  `sass`, `graphql`, `terraform`, `elixir`, `solidity`, `julia`, `nix`, `dart`,
+  `protobuf`, `cmake`, `nginx`, `vue`, `svelte` and `nim`: the syntax set the
+  app shipped with covers only what Sublime Text's defaults did, and none of
+  these were in it. Real grammars for all twenty-two now ship with the app.
+  `jsonc`/`json5` and `v` highlight too, through the closest grammar the app
+  has. Nothing to configure, and startup is no slower — the grammars are
+  compiled in when the app is built.
+- **Editing a server setting and taking it back no longer reloads the model for
+  nothing.** A change and its undo both asked for a restart, and the app then
+  restarted the server with the settings it was already running — on a local
+  model that means unloading and reloading a multi-gigabyte file. The app now
+  compares against what each server is actually running, so a restart only
+  happens when something really differs. The same applies to MCP servers, where
+  a needless re-apply killed and respawned their processes.
 
 - **Pasted HTML no longer disappears from the conversation.** A message containing
   a block of raw HTML — a table copied out of a README, an answer a model wrote in
@@ -548,6 +521,16 @@ split by subsystem.
   into the next one, and a heading inside a fragment was rendered as a heading of
   the reply itself, tearing the result apart — which happened with practically
   every `.md` file, since each of its fragments starts with its section heading.
+
+### Security
+
+- An MCP server's token, whether typed in or imported from another client's
+  configuration, is stored the way the cloud API keys are: encrypted with a key
+  belonging to this computer, never written to the settings file in the clear
+  and never shown in the interface. An imported configuration therefore does not
+  turn its literal tokens into plaintext on your disk. The same limitation
+  applies as for the API keys — this protects the file, not against programs
+  running under your own account.
 
 ## [0.9.4] — 2026-07-26
 
@@ -910,7 +893,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...v0.9.2
