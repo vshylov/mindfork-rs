@@ -165,10 +165,11 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **1977 unit tests
 green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
-most recent tracks: the **mindfork.io website, stage S1** (a Zola site under
-`site/`, terminal-styled on the brand palette, Zola pinned to 0.22.1 for a
-Windows template-discovery regression in 0.23.x; hosting decided — private S3
-behind CloudFront in one CloudFormation stack;
+most recent tracks: the **mindfork.io website, stages S1–S2** (a Zola site
+under `site/`, terminal-styled on the brand palette, Zola pinned to 0.22.1 for
+a Windows template-discovery regression in 0.23.x; **live at
+https://mindfork.io** — one CloudFormation stack `infra/website.cfn.yaml`:
+private S3 + OAC, CloudFront, ACM, Route53, the OIDC deploy role;
 [docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)),
 **demo screenshots + demo mode** (a private-data-free,
 rot-gated capture pipeline — demo fixture → headless frame dumps →

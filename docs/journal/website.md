@@ -10,9 +10,10 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (1)
+## Entries (2)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
+- Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -60,3 +61,39 @@ read [lessons.md](../lessons.md).
   touched** — 1977 unit tests / 85 `#[ignore]` unchanged, all gates green;
   an engine live run does not apply (static output), and the stage's gate
   was the user reviewing the local preview.
+
+### Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
+
+- **One CloudFormation stack** (`infra/website.cfn.yaml`, us-east-1, stack
+  `mindfork-website`; branch `feat/website-infra`) creates the whole serving
+  path: a private S3 bucket (BPA, SSE, auto-generated name — a dotted name
+  would break TLS between CloudFront and the regional S3 endpoint, since the
+  wildcard cert covers a single label), CloudFront with OAC, the managed
+  CachingOptimized and SecurityHeadersPolicy policies and custom 403/404 →
+  `/404.html`, a viewer-request function (www→apex 301 + directory-index
+  rewrite for Zola's trailing-slash URLs), an ACM apex+wildcard certificate
+  DNS-validated into the zone by the stack itself, four Route53 aliases
+  (A/AAAA × apex/www), and the GitHub OIDC provider plus the
+  `mindfork-site-deploy` role trusted for
+  `repo:vshylov/mindfork-rs:ref:refs/heads/main` only, allowed s3 sync into
+  the site bucket plus one CloudFront invalidation and nothing else.
+- **The first deploy failed and taught the template a lesson**: the apex and
+  `*.apex` share the identical ACM validation CNAME, and listing both in
+  `DomainValidationOptions` makes the handler write the same record twice —
+  Route53 answers 400 "invalid set of changes for a resource record set" and
+  the stack rolls back whole. One options entry (the apex, with
+  `HostedZoneId`) validates both names; the reasoning is a comment next to
+  the resource so the trap cannot be reintroduced silently.
+- **First deploy by hand** (the CI workflow is the next stage):
+  `zola build` → `aws s3 sync` — 29 files, 1.9 MiB; `.woff2` uploaded as
+  `font/woff2` (the CLI's mimetype table is current). No invalidation needed
+  on a fresh distribution.
+- **Live checks, all green**: `https://mindfork.io/` 200; `/blog/` 200
+  through the rewrite function; a missing page answers the site's own 404;
+  `www` 301 → apex with the path preserved; http 301 → https; HSTS
+  `max-age=31536000` from the managed headers policy; `/atom.xml` and
+  `/sitemap.xml` 200. Operational outputs for the CI stage: bucket
+  `mindfork-website-sitebucket-ioafb7vyycso`, distribution `E8EC9ICZSRYKB`,
+  role `arn:aws:iam::976877302614:role/mindfork-site-deploy`.
+- No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged, gates green;
+  the stage's live run is the deployed site itself.

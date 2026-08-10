@@ -375,7 +375,14 @@ untouched until the design is reviewed.
   does not run on macOS, and the frames must not suggest it.
 - **S2 — infra** (`feat/website-infra`): `infra/website.cfn.yaml`, stack
   deployed, cert issued, DNS live, first manual `s3 sync` — https://mindfork.io
-  answers. Gate: the site is up.
+  answers. Gate: the site is up. **Done 2026-08-10 — the site is live**
+  (stack `mindfork-website`, us-east-1; bucket
+  `mindfork-website-sitebucket-ioafb7vyycso`, distribution `E8EC9ICZSRYKB`,
+  deploy role `mindfork-site-deploy`). One measured correction along the
+  way: apex and wildcard share the identical ACM validation CNAME, so
+  `DomainValidationOptions` must list the apex **once** — listing both made
+  the handler write the same record twice and Route53 answered 400 (the
+  first stack rolled back; the template carries the comment).
 - **S3 — CI deploy** (`feat/website-ci`): `site.yml` (PR build gate +
   main deploy via OIDC role from the stack).
 - **S4 — screenshots SVG writer + content**: the deferred stage 4 of the
