@@ -1,0 +1,85 @@
+# mindfork.io: a build gate on pull requests, deploy on push to main.
+# Design: docs/research/mindfork-io-website.md §5.5; infra (bucket,
+# distribution, the OIDC deploy role) comes from the `mindfork-website`
+# CloudFormation stack, infra/website.cfn.yaml.
+#
+# Zola is pinned to 0.22.1 to match local development: 0.23.0–0.23.2 do not
+# discover templates/ on Windows (getzola/zola#3229), and the site must build
+# with one version everywhere. Bump here and in docs when the fix ships.
+#
+# Deploys carry no stored keys: the job's OIDC token assumes the
+# least-privilege mindfork-site-deploy role (s3 sync + one invalidation),
+# trusted for refs/heads/main of this repository only.
+name: Site
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - "artwork/**"
+      - "tools/site_sync_assets.py"
+      - ".github/workflows/site.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "artwork/**"
+      - "tools/site_sync_assets.py"
+      - ".github/workflows/site.yml"
+  # Manual redeploy (e.g. after an infra change with no site diff).
+  workflow_dispatch:
+
+# Superseded PR builds are cancelled; deploys on main queue and never cancel
+# each other mid-sync.
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build (gate)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Zola
+        uses: taiki-e/install-action@v2
+        with:
+          tool: zola@0.22.1
+      - name: Mirror brand assets from artwork/
+        run: python tools/site_sync_assets.py
+      - name: Check internal links
+        run: zola --root site check --skip-external-links
+      - name: Build
+        run: zola --root site build
+
+  deploy:
+    name: Deploy to mindfork.io
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # the OIDC token that assumes the deploy role
+      contents: read
+    env:
+      # Outputs of the `mindfork-website` stack (infra/website.cfn.yaml).
+      BUCKET: mindfork-website-sitebucket-ioafb7vyycso
+      DISTRIBUTION: E8EC9ICZSRYKB
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Zola
+        uses: taiki-e/install-action@v2
+        with:
+          tool: zola@0.22.1
+      - name: Mirror brand assets from artwork/
+        run: python tools/site_sync_assets.py
+      - name: Build
+        run: zola --root site build
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::976877302614:role/mindfork-site-deploy
+          aws-region: us-east-1
+      - name: Sync to S3
+        run: aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"
