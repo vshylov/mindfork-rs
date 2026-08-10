@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -28,6 +28,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the Windows installer can provision the Python sandbox (done)
 - Release 0.9.5 (prepared)
 - Post-M9: demo screenshots — stage 1 (fixture, frame dumps, raster tool) (done)
+- Post-M9: demo screenshots — stage 2 (the full set, the drift gate, README embeds) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -919,3 +920,44 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   verified byte-identical output) and S1172 (a genuinely dead `size`
   parameter). The rule class is LLM-era and will meet every future
   path-taking tool script — recorded in lessons §1.
+
+### Post-M9: demo screenshots — stage 2 (the full set, the drift gate, README embeds) (done)
+- **Go received on the stage-1 hero shot** (2026-08-11 user session); branch
+  `feat/demo-screenshots-set`. This stage delivers the rest of the confirmed
+  matrix: chat list, settings twice (Model/server + Tools), self-model — each
+  in Dark and Light, ten dumps and ten PNGs total.
+- **The fixture grew organs** (`features/demo`): nine chat summaries with
+  fixed dates (the showcase chat active on top), a mid-life self-model
+  (summary, three goals in two states, a user model, three dated
+  observations), a managed-llama.cpp `AppConfig` consistent with the hero
+  conversation (same model, same 16k context), and a "Gaia" profile with the
+  base tools enabled.
+- **Recipes at per-screen heights** (hero 116x44; panels hug content —
+  list 22, settings 30, self-model 24: empty terminal makes a poor gallery).
+  The Tools section is reached by two `Tab` key events (`SECTIONS` order),
+  and the showcase test pins the destination by content ("Agentic loop",
+  "Wasmer sandbox"), so a section-order change cannot silently capture the
+  wrong pane. First needle guess ("note_save") was wrong and instructive:
+  the Tools section is global switches and parameters; per-tool toggles live
+  under Profiles.
+- **The drift gate** (`committed_dumps_match_the_code`, an ordinary test):
+  renders the whole matrix fresh and compares byte-for-byte with the
+  committed dumps; a missing file is a failure, not a skip; `\r\n` from
+  git eol translation is normalized; the failure message names the first
+  differing line and the two regeneration commands instead of printing two
+  hundred-kilobyte JSONs at each other.
+- **Raster tool**: `.ttc` collections handled (explicit face index for
+  Pillow and fontTools), Yu Gothic / Noto CJK appended to the fallbacks —
+  the coverage warning caught `U+FF0B` (fullwidth plus, the F3 screen's
+  "add goal" affordance) covered by no Latin fallback.
+- **The hero dump survived the refactor byte-identical** (capture gained a
+  height parameter; `git status` stayed silent on `chat-dark-en.json`) — the
+  artifact the user approved is exactly the artifact shipped.
+- **README**: a theme-aware hero `<picture>` (dark/light PNGs switched by
+  `prefers-color-scheme`) plus a `<details>` gallery of the other four, and
+  a stated promise next to them: screenshots are generated from code and a
+  gate fails the build when they drift. `artwork/screenshots/README.md`
+  documents the two-command regeneration.
+- **Tests**: 1972 unit green (+1: the drift gate; the determinism, grid and
+  showcase guards now sweep the whole matrix), 85 `#[ignore]` unchanged.
+  **No live run** — render-only, no engine/memory/tool path (AGENTS.md §3).

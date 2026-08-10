@@ -162,7 +162,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-10, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **1971 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **1972 unit tests
 green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
 most recent tracks: **generated demo screenshots** (a private-data-free,
 rot-gated capture pipeline: demo fixture → headless frame dumps →

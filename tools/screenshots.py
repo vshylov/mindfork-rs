@@ -77,7 +77,9 @@ FALLBACKS = [
     "C:/Windows/Fonts/seguisym.ttf",  # Segoe UI Symbol
     "C:/Windows/Fonts/seguiemj.ttf",  # Segoe UI Emoji (monochrome outlines)
     "C:/Windows/Fonts/segoeui.ttf",  # Segoe UI — broad text coverage (sub/superscripts)
+    "C:/Windows/Fonts/YuGothM.ttc",  # Yu Gothic — fullwidth/CJK forms (e.g. U+FF0B)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
 
 
@@ -111,8 +113,14 @@ class Faces:
         for cand in FALLBACKS:
             p = Path(cand)
             if p.is_file():
+                # `.ttc` collections need an explicit face index (0 = the
+                # family's primary face); plain `.ttf` must not get one.
+                number = 0 if p.suffix.lower() == ".ttc" else -1
                 self.fallbacks.append(
-                    (ImageFont.truetype(str(p), px), set(TTFont(str(p)).getBestCmap()))
+                    (
+                        ImageFont.truetype(str(p), px, index=max(number, 0)),
+                        set(TTFont(str(p), fontNumber=number).getBestCmap()),
+                    )
                 )
         self.missing: set[str] = set()
 

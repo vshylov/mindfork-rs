@@ -1,7 +1,8 @@
 # Demo mode and generated screenshots — design plan
 
-Status: **forks decided by the user 2026-08-10; stage 1 (MVP probe) in
-progress.**
+Status: **forks decided by the user 2026-08-10; stage 1 merged (go on the
+hero shot); stage 2 (the full set + the drift gate + README embeds) done;
+stage 3 (the interactive `mindfork demo`) pending.**
 
 ## 1. Context and goal
 

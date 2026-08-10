@@ -11,8 +11,13 @@
 use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 
-use crate::entities::chat::FeedView;
+use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+use crate::entities::profile::Profile;
+use crate::entities::self_model::{Goal, GoalStatus, NarrativeSegment, SelfModel, UserModel};
+use crate::features::tools::default_tool_ids;
+use crate::shared::config::{AppConfig, Theme};
+use crate::shared::i18n::Lang;
 
 /// Title of the showcase chat (shown in the feed header).
 pub const CHAT_TITLE: &str = "Gemma 4 on a 12 GB GPU";
@@ -34,6 +39,12 @@ pub fn feed_view() -> FeedView {
 /// Fixed timestamp base; messages step forward a minute at a time.
 fn at(minute: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 1, 10, minute, 0).unwrap()
+}
+
+/// Fixed calendar date for the list/self-model fixtures.
+fn date(month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, month, day, hour, minute, 0)
+        .unwrap()
 }
 
 fn message(role: MessageRole, minute: u32, text: &str) -> Message {
@@ -113,6 +124,192 @@ pub fn showcase_messages() -> Vec<Message> {
     }];
 
     vec![m1, m2, m3, m4]
+}
+
+/// Fixed profile id for the demo companion.
+pub fn profile_id() -> Uuid {
+    Uuid::from_u128(0x6d66_5f64_656d_6f5f_7072_6f66_0000_0001)
+}
+
+/// The demo companion: a named profile with the base tools enabled, so the
+/// settings screen's Tools section shows a real toggle set.
+pub fn profile() -> Profile {
+    let mut p = Profile::new("Gaia", "You are Gaia — a thoughtful local companion.");
+    p.enabled_tools = default_tool_ids();
+    p
+}
+
+/// The app config the settings captures depict: a healthy managed llama.cpp
+/// setup consistent with the showcase conversation (the same model and
+/// context the hero chat recommends).
+pub fn app_config(theme: Theme) -> AppConfig {
+    let mut c = AppConfig::default();
+    c.interface.theme = theme;
+    c.interface.language = Lang::En;
+    c.engine.managed.binary = Some("C:\\llama.cpp\\llama-server.exe".into());
+    c.engine.managed.model_path = Some("C:\\models\\gemma-4-12B-it-Q5_K_M.gguf".into());
+    c.engine.managed.gpu_layers = 99;
+    c.engine.managed.context_size = 16384;
+    c
+}
+
+/// The chat list: the showcase chat on top (active), then a spread of
+/// plausible topics with fixed dates and counts — enough rows to fill the
+/// stage-2 frame without scrolling.
+pub fn chat_summaries() -> Vec<ChatSummary> {
+    let mk =
+        |slot: u128, title: &str, count: usize, created: DateTime<Utc>, modified: DateTime<Utc>| {
+            ChatSummary {
+                id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6c69_7374_0000_0000 + slot),
+                title: title.into(),
+                created_at: created,
+                modified_at: modified,
+                message_count: count,
+            }
+        };
+    vec![
+        ChatSummary {
+            id: chat_id(),
+            title: CHAT_TITLE.into(),
+            created_at: date(8, 1, 10, 0),
+            modified_at: date(8, 1, 10, 3),
+            message_count: 4,
+        },
+        mk(
+            1,
+            "Sampler settings for livelier replies",
+            18,
+            date(7, 29, 9, 12),
+            date(7, 30, 21, 40),
+        ),
+        mk(
+            2,
+            "Speculative decoding: draft models",
+            12,
+            date(7, 29, 8, 0),
+            date(7, 29, 19, 5),
+        ),
+        mk(
+            3,
+            "Refactoring a god object in Rust",
+            41,
+            date(7, 26, 14, 30),
+            date(7, 27, 17, 52),
+        ),
+        mk(
+            4,
+            "What does the DRY penalty actually do?",
+            9,
+            date(7, 25, 11, 3),
+            date(7, 25, 12, 44),
+        ),
+        mk(
+            5,
+            "Trip notes: the Dolomites in October",
+            26,
+            date(7, 20, 18, 15),
+            date(7, 22, 20, 31),
+        ),
+        mk(
+            6,
+            "Reading list: attention papers",
+            15,
+            date(7, 17, 7, 45),
+            date(7, 19, 23, 10),
+        ),
+        mk(
+            7,
+            "Backup dry run before the update",
+            7,
+            date(7, 18, 16, 20),
+            date(7, 18, 16, 58),
+        ),
+        mk(
+            8,
+            "Mermaid diagrams in the terminal",
+            11,
+            date(7, 15, 13, 0),
+            date(7, 16, 10, 27),
+        ),
+    ]
+}
+
+/// The self-model the `F3` capture shows: a companion that has already lived
+/// a little — a voice, three goals in two states, a user model, and a few
+/// narrative observations consistent with the showcase chat.
+pub fn self_model() -> SelfModel {
+    let goal = |slot: u128,
+                text: &str,
+                status: GoalStatus,
+                created: DateTime<Utc>,
+                closed: Option<DateTime<Utc>>| Goal {
+        id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_676f_616c_0000_0000 + slot),
+        description: text.into(),
+        status,
+        created_at: created,
+        closed_at: closed,
+    };
+    let segment = |slot: u128, text: &str, created: DateTime<Utc>| NarrativeSegment {
+        id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6e61_7272_0000_0000 + slot),
+        text: text.into(),
+        created_at: created,
+    };
+    SelfModel {
+        profile_id: profile_id(),
+        version: 7,
+        summary: "I run locally and help with practical engineering — model \
+                  sizing, Rust, the occasional trip plan. I prefer measured \
+                  numbers to adjectives, and I write things down: advice \
+                  should start from remembered facts, not fresh guesses."
+            .into(),
+        goals: vec![
+            goal(
+                1,
+                "Answer sizing questions from saved notes alone — no re-asking about hardware.",
+                GoalStatus::Active,
+                date(7, 22, 12, 0),
+                None,
+            ),
+            goal(
+                2,
+                "Keep recommendations reproducible: name the exact quant, context and flags.",
+                GoalStatus::Active,
+                date(7, 25, 9, 30),
+                None,
+            ),
+            goal(
+                3,
+                "Index the llama.cpp server docs into the knowledge base.",
+                GoalStatus::Completed,
+                date(7, 16, 15, 0),
+                Some(date(7, 19, 11, 20)),
+            ),
+        ],
+        user_model: UserModel {
+            perceived_traits: vec!["methodical".into(), "impatient with vague answers".into()],
+            current_interests: vec!["local model tuning".into(), "terminal tooling".into()],
+            relationship_dynamic: "Collaborative and direct; jokes land better after the numbers."
+                .into(),
+        },
+        narrative: vec![
+            segment(
+                1,
+                "Tables beat prose here: comparisons get read, paragraphs get skimmed.",
+                date(7, 24, 19, 40),
+            ),
+            segment(
+                2,
+                "The 12 GB VRAM budget keeps coming up — saved it as a note so I stop re-asking.",
+                date(7, 28, 10, 15),
+            ),
+            segment(
+                3,
+                "Showing the exact command I ran turns out to be the fastest way to build trust.",
+                date(8, 1, 10, 3),
+            ),
+        ],
+        updated_at: date(8, 1, 10, 3),
+    }
 }
 
 #[cfg(test)]
