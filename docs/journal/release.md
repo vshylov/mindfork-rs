@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -27,6 +27,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the mindfork.io site URL in project metadata (done)
 - Post-M9: the Windows installer can provision the Python sandbox (done)
 - Release 0.9.5 (prepared)
+- Post-M9: demo screenshots — stage 1 (fixture, frame dumps, raster tool) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -863,3 +864,58 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   (`cyrillic_scan`, `link_check`, `doc_index_check`) green too. No live run needed
   (version + docs, app code untouched). The version in CLAUDE.md's "## Status"
   header was refreshed; the test count and date there were already current.
+
+### Post-M9: demo screenshots — stage 1 (fixture, frame dumps, raster tool) (done)
+- **The screenshot problem for the public opening**: captures of a real session
+  would expose private conversations, and hand-made screenshots rot as the app
+  evolves — the standing answer to rot here is a gate, not discipline. Design
+  plan [docs/demo-screenshots.md](../demo-screenshots.md); forks confirmed by
+  the user 2026-08-10: interactive `mindfork demo` adopted as stage 3, capture
+  set = chat / chat list / settings twice (Model+**Tools** — the latter added
+  by the user as the best single showcase) / self-model, **Dark+Light x EN**,
+  rot control = a drift-gate unit test. Branch `feat/demo-screenshots-mvp`.
+- **Everything stays test-side** — the release binary gains no capture surface:
+  `features/demo` is a code-generated showcase conversation (GFM table, bash
+  block, Mermaid flowchart, LaTeX, expanded thoughts, a `note_save` tool card)
+  with fixed ids and timestamps; `shared/shot` captures a rendered `Buffer` to
+  JSON (per-cell symbol/RGB/modifiers; wide glyphs emitted once with their
+  span; named-ANSI mapped to xterm values; canvas constants live next to the
+  palettes in `theme.rs`); `app/demo_shots` holds the recipe (`ChatScreen`,
+  `set_settings(Dark, En)`, `Ready` server statuses, `TestBackend` 116x44) and
+  the `#[ignore]` regenerator writing `artwork/screenshots/dumps/`.
+- **`tools/screenshots.py`** (Pillow + fontTools — the `build-wordmarks.py`
+  third-party precedent): glyphs are placed by grid cell, so the dump's
+  geometry is authoritative and font metrics cannot drift the layout;
+  JetBrains Mono is probed the wordmark script's way (system fonts, JBR
+  bundles), with cmap-routed symbol fallbacks (Segoe UI Symbol/Emoji, Segoe
+  UI, DejaVu); 2x supersampling; a glyph no font covers is a **named WARNING
+  and exit 2**, not silent tofu. First catch: `U+1D65` (subscript v from
+  `$M_{kv}$`) — in Segoe UI, absent from JetBrains Mono and Segoe UI Symbol.
+- **What the render-look-adjust loop caught** (three rounds): a Mermaid branch
+  draws ~17 rows tall, so the first fixture pushed the table and the thoughts
+  off-frame — the conversation was recomposed until the final exchange fits
+  one viewport; the status bar wraps at 110 columns and fits at 116; and a
+  needle phrase (`"from the hardware"`) word-wrapped across rows, failing
+  `contains` over row-joined text while perfectly visible — the joined-rows
+  trap (lessons §2), needles are single-line-safe now.
+- **Guards on the recipe**: determinism (two captures serialize byte-equal),
+  grid coverage (every row's widths sum to the frame width), and an on-screen
+  assertion for the showcase content (title, thoughts, table verdict,
+  flowchart node, tool card) — a fixture edit that scrolls the subject out of
+  frame fails the build instead of shipping a screenshot of nothing. The
+  drift gate proper (fresh render vs committed dumps) is stage 2.
+- **Tests**: 1971 unit green (+9: 4 capture, 2 fixture, 3 recipe), 85
+  `#[ignore]` (84 live smokes + the new dump regenerator, which is not a live
+  test — it needs no server, only deliberate invocation). **No live run**:
+  capture is render-only, touching no engine/memory/tool path (AGENTS.md §3).
+- **What the Sonar gate caught on the PR** (new-code security rating C → gate
+  red): two `pythonsecurity:S8707` — the new *agentic workflows* path-injection
+  rule: `--dumps`/`--out` flowed from argparse into `read_text`/`mkdir`
+  unvalidated. Fixed by canonicalize-and-confine to the repository
+  (`under_repo()`: `Path.resolve()` + `is_relative_to(REPO)` — not a
+  `startswith` prefix, the partial-traversal pitfall the rule documents; the
+  refusal names the path and the base). Alongside it: S3776 (`render()`
+  cognitive complexity 34 → split into `cell_colors`/`draw_cell`/`render`,
+  verified byte-identical output) and S1172 (a genuinely dead `size`
+  parameter). The rule class is LLM-era and will meet every future
+  path-taking tool script — recorded in lessons §1.

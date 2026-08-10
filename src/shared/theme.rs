@@ -148,6 +148,17 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     spinner: &['|', '/', '-', '\\'],
 };
 
+/// Canvas backgrounds for generated screenshots (docs/demo-screenshots.md).
+/// The app itself never paints a background — a real terminal supplies it —
+/// so captures need a concrete one. These are the backgrounds the Dark/Light
+/// palettes are tuned against; they live here (not in the Python renderer) so
+/// the intended canvas has one source of truth next to the palettes.
+/// Test-gated with the capture pipeline (`shared/shot.rs`).
+#[cfg(test)]
+pub const SHOT_CANVAS_DARK: Color = Color::Rgb(15, 17, 21);
+#[cfg(test)]
+pub const SHOT_CANVAS_LIGHT: Color = Color::Rgb(250, 250, 252);
+
 /// Semantic interface colors. `Copy` — cheap to pass into render by value.
 /// `Hash` — the palette serves as a cache key (e.g. the built syntect
 /// code-highlighting theme in `shared/markdown.rs`).

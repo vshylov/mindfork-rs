@@ -82,6 +82,16 @@ groups need Python 3.11+, which the tools cannot assume. **Recorded twice.**
 — *SonarQube backlog — triage + stage 1 (Python tools)*, *SonarQube follow-up —
 the doc gate's regexes and one test's complexity*.
 
+**A new `tools/*.py` that takes a CLI path must canonicalize and confine it
+before touching the file system.** SonarQube's agentic-workflows rule
+(`pythonsecurity:S8707`) reads every `open`/`mkdir`/`read_text` on an unvalidated
+argparse path as an injection sink — two of them dropped a PR's new-code
+security rating to C and blocked the gate. The fix it accepts: `Path.resolve()`
+then `is_relative_to(base)` against the directory the tool is meant to work in —
+not a `startswith` prefix test, which the rule's own documentation calls out as
+the partial-path-traversal pitfall.
+— *demo screenshots — stage 1*.
+
 **The `LICENSE` file is a machine input; keep it byte-identical to the canonical
 text.** An addendum appended to it — however clearly marked as "not part of the MIT
 License" — makes the `MIT` SPDX identifier published in `Cargo.toml`, `nfpm.yaml` and
