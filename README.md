@@ -26,6 +26,40 @@ it runs on **Windows** and **Linux**.
 > second opinion. The full story is in [spec.md](spec.md); the original idea,
 > in [docs/history/request.md](docs/history/request.md).
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/screenshots/chat-dark-en.png">
+    <img src="artwork/screenshots/chat-light-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
+  </picture>
+</p>
+
+Every screenshot in this README is **generated from code** against a demo
+profile — never captured from a real session — and a gate test fails the
+build the moment they drift from what the app actually renders
+([docs/demo-screenshots.md](docs/demo-screenshots.md)).
+
+<details>
+<summary><b>More screens</b> — the chat list, settings (model &amp; tools), and the assistant's self-model</summary>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/screenshots/chat-list-dark-en.png">
+    <img src="artwork/screenshots/chat-list-light-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" width="900">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/screenshots/settings-model-dark-en.png">
+    <img src="artwork/screenshots/settings-model-light-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" width="900">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/screenshots/settings-tools-dark-en.png">
+    <img src="artwork/screenshots/settings-tools-light-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" width="900">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/screenshots/self-model-dark-en.png">
+    <img src="artwork/screenshots/self-model-light-en.png" alt="the self-model screen (F3): the assistant's summary, goals with statuses, its model of the user, and dated observations" width="900">
+  </picture>
+</p>
+</details>
+
 ---
 
 ## Features
