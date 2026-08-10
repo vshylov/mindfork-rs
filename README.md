@@ -7,597 +7,432 @@
 
 [![Website](https://img.shields.io/badge/web-mindfork.io-c25a27.svg)](https://mindfork.io)
 [![CI](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/vshylov/mindfork-rs)](https://github.com/vshylov/mindfork-rs/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A console (TUI) AI chat app in Rust.** Built for **local** models
-**Gemma 3/4** and **Qwen 3.5/3.6** (via **llama.cpp `llama-server`**), but through a single
-engine contract it also supports **cloud APIs**: **OpenAI**, **Google Gemini**,
-**Anthropic (Claude)** and **xAI (Grok)** — see [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
-UI — on [ratatui](https://ratatui.rs). Platforms: **Windows** and **Linux**.
-Architecture — **Feature-Sliced Design (FSD)**.
+**mindfork is an AI chat that lives in your terminal.** It talks to local
+models — **Gemma 3/4** and **Qwen 3.5/3.6** via
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, or any
+OpenAI-compatible server (vLLM / LM Studio / Ollama) — and, through the same
+engine contract, to the **OpenAI**, **Google Gemini**, **Anthropic (Claude)**
+and **xAI (Grok)** clouds. The UI is built on [ratatui](https://ratatui.rs);
+it runs on **Windows** and **Linux**.
 
-> The project's idea is not just "yet another LLM client," but an attempt to make local
-> Gemma/Qwen **more self-aware and interesting to talk to**, by giving the model tools for
-> self-reflection: read and change its own system message and sampling
-> parameters, keep notes about the user, spin up a short-lived sub-agent
-> for a "second opinion." Details are in [spec.md](spec.md) (and in the original
-> requirements doc [docs/history/request.md](docs/history/request.md)).
+> mindfork is not trying to be yet another LLM client. The premise is that a
+> local Gemma or Qwen becomes **more self-aware and more interesting to talk
+> to** once it is given room to reflect: it keeps notes about you, maintains a
+> self-model it can revisit, reads and adjusts its own system message and
+> sampling mid-conversation, and can summon a short-lived sub-agent for a
+> second opinion. The full story is in [spec.md](spec.md); the original idea,
+> in [docs/history/request.md](docs/history/request.md).
 
 ---
 
 ## Features
 
-**Chat and interface**
-- Full chat cycle in the terminal: response **streaming**, generation interruption,
-  server state in the status bar.
-- **Token counter** in the status bar (conversation + response as one number): grows
-  as generation proceeds, visible right from the start. Before the server responds,
-  the conversation is shown as an estimate (`~`), then replaced with the exact number
-  from `usage` (`stream_options.include_usage`).
-- **Chat list** (`Esc`, full-screen): search by title **or by message content**
-  (`Ctrl+F` toggles; full-text, matches fragments of words), two sort orders
-  (by creation / modification date), rename (`F2`), new/clone/delete,
-  model-generated **auto-title** (`Ctrl+R` in the list window).
-- **In-feed search** (`Ctrl+F` in a chat): finds text in the open conversation —
-  every match highlighted, a counter, `Enter`/`Shift+Enter` to step through them,
-  landing on the matched line rather than the top of the message.
-- **Message-level search** (`Ctrl+G` in the list's content mode): the matching
-  **messages** themselves, grouped by chat, each with an excerpt around the
-  match (highlighted), its role and date; `Enter` opens the chat right at that
-  message, which is marked in the feed with the searched word highlighted inside
-  it. `Esc` from there goes back to the results as you left them (same selection
-  and scroll), so you can work through the hits one by one; a further `Esc` goes
-  on to the chat list.
-- **Copy the conversation to the clipboard** (`F5`) — both in the main window (the
-  active chat) and in the chat list (the selected one); cross-platform via `arboard`.
-- **Message feed** with its own **Markdown** renderer (theme, code highlighting,
-  **GFM tables** with smart column layout, **Mermaid diagrams** as text-mode
-  graphics — flowchart/sequence, with a hard fallback to the source and a settings
-  toggle) and **Unicode approximation of LaTeX**
-  inside `$…$`/`\(…\)` (Greek letters, arrows, operators, fractions, roots,
-  functions `\log`/`\sin`/…, subscripts/superscripts — no rasterization, friendly to
-  a JupyterLab terminal), and collapsible **"thoughts" (CoT)** (`Ctrl+T`) and
-  **tool call** (`Ctrl+O`) blocks — both collapsed by default, with the choice
-  remembered per chat.
-- A custom **multiline input box** (`Shift+Enter` — line break, `Enter` — send) with
-  word wrap, precise cursor positioning, **fast multiline paste from the clipboard**
-  (`Ctrl+V` — line breaks are kept as text, not sent), **clear input with undo**
-  (`Ctrl+K` — delete all text, repeat — restore it), and an **emoji picker popup**
-  (`Ctrl+B` — inserts at the cursor position, remembers the last pick).
-- **Regenerate** the last response (`Ctrl+R`) and **delete the last exchange**
-  (`Ctrl+E`, the user's text is returned to the input box).
-- **Impersonation** (`Ctrl+U`): the model writes the next message **on the user's
-  behalf** — a streaming preview replaces the input box, and on completion the text
-  is inserted into the input (`Esc` cancels). Non-empty input is used as a seed — the
-  model continues what's already there. Separate server and sampling: `shared` (the
-  same server as the assistant) / `managed` / `external` / cloud (`openai` /
-  `gemini` / `claude`).
-- **Live spellcheck** for Russian and English (Hunspell): error underlines,
-  a suggestions popup (`Ctrl+G`), a personal dictionary.
-- **Themes** auto / dark / light, a help/"About" dialog (`F1` / `?`) with tabs:
-  about (author/version/links), hotkeys, commands, license, **disclaimer**
-  (what the author does not answer for — see [DISCLAIMER.md](DISCLAIMER.md)),
-  components.
-- **Interface language** (Russian / English, the "Interface language" field in the
-  "Interface" section): the whole UI chrome — status bar, feed, settings, help, the
-  self-model screen, errors. **Independent of the agents' language** (each profile
-  has its own scaffold language), applies live.
-- **Old-terminal compatibility mode** (a toggle in settings, "Interface" section):
-  for Windows 10 conhost and other emulators without emoji support — safe glyphs
-  (WGL4/ASCII) instead of emoji and rare characters, straight borders instead of
-  rounded ones, an ASCII spinner, popup background dimming by color instead of `DIM`.
-- **Feed scrolling** with the mouse wheel or `PageUp`/`PageDown`. Mouse capture is a
-  **toggle** (`Ctrl+W`): off by default (native mouse text selection works), turns on
-  for wheel scrolling (selection then needs `Shift`).
-- **Layout-independent** Ctrl shortcuts — on Windows they work under any installed
-  keyboard layout (Cyrillic, Greek, Hebrew, …); elsewhere, under Cyrillic.
+### Chat and interface
 
-**AI companion profiles**
-- Unique id, system message, an optional **greeting** (the model starts the
-  conversation first), role names, tool set, sampling defaults.
-- **Custom names for the user and the assistant** ("Persona" group): a set name
-  replaces the feed's role header (in caps — `GAIA` instead of `YOU`) and the label
-  in the `F5` conversation export (`Gaia:` instead of `User:`). Empty by default —
-  then the labels follow the interface language. They apply to existing chats too
-  (resolved from the profile at render time), so they can be changed at any time.
-- **Agent-scaffold language** (the "Scaffold language" field in the Persona
-  subsection): the language of background-task prompts, the self-model scaffold, and
-  tool results — text that the *model* reads (not the language of its replies, which
-  is set by the system message, and not the interface language). Chosen when the
-  profile is created and **locked** once the profile has data (chats / self-model /
-  notes). The default profile is Russian; for an agent in another language, create a
-  new profile and choose the language before the first chat. Ru/En (Tier 1,
-  [docs/history/i18n.md](docs/history/i18n.md)).
-- **Notes and RAG isolation by `profile_id`** — different companions' memories don't
-  mix.
-- Three-tier sampling resolution: `Chat.sampling_override → Profile.default →
-  global`.
-- **Rich sampling** on top of the standard OpenAI fields — llama.cpp extensions right
-  in the request body: `min_p`, `top_n_sigma`, `typical_p`, penalties
-  (`repeat_penalty`, DRY, XTC), `mirostat`, `seed`. For **livelier and more
-  unpredictable** replies: **dynamic temperature** (`dynatemp_range`/`_exponent` —
-  temperature adapts to per-token entropy), **adaptive-p** (`adaptive_target`/
-  `_decay`), **DRY breakers** (`dry_sequence_breakers`), and a configurable
-  **sampler order** (`samplers`). Every field is optional and sent only when set.
+- **Streaming** replies you can interrupt at any moment; server state and a
+  **live token counter** in the status bar — an estimate at first, replaced by
+  the server's exact `usage` numbers as they arrive.
+- A **Markdown renderer of its own**: themed code highlighting, GFM tables with
+  smart column layout, **Mermaid diagrams drawn as text-mode graphics**, and a
+  Unicode approximation of **LaTeX** inside `$…$` (Greek letters, fractions,
+  roots, sub/superscripts) — no rasterization, friendly to any terminal.
+- **"Thoughts" (CoT) and tool calls fold away** (`Ctrl+T` / `Ctrl+O`) —
+  collapsed by default, the choice remembered per chat.
+- A **multiline input box** with word wrap, selection, undo/redo, fast
+  multiline paste, clear-with-undo (`Ctrl+K`) and an emoji picker (`Ctrl+B`).
+- **Live spellcheck** for English and Russian (Hunspell): underlines, a
+  suggestions popup (`Ctrl+G`), a personal dictionary.
+- **Search everywhere**: inside the open conversation (`Ctrl+F`, every match
+  highlighted, `Enter` steps through them) — or across *all* chats, by title or
+  by full message text, down to the individual message opened right at the
+  match (`Ctrl+G` from the chat list).
+- A full-screen **chat list** (`Esc`): search, two sort orders, and
+  model-written **auto-titles**; `F2` rename · `Ctrl+N` new · `Ctrl+D` clone ·
+  `Del` delete · `F5` copy.
+- **Regenerate** the last reply (`Ctrl+R`), **take back** the last exchange
+  (`Ctrl+E` — your text returns to the input box), **copy** a whole
+  conversation to the clipboard (`F5`).
+- **Impersonation** (`Ctrl+U`): the model drafts your next message *for* you —
+  streamed as a preview, seeded with whatever you had already typed, editable
+  before sending. It can even run on its own server and sampling.
+- Comfortable everywhere else: dark / light / auto **themes**; an interface in
+  **English or Russian**, switchable live and independent of the model's
+  language; **layout-independent shortcuts** (Cyrillic, Greek, Hebrew, …);
+  mouse-wheel scrolling; and a **compatibility mode** for old terminals
+  (Windows 10 conhost: safe glyphs, straight borders, no emoji).
 
-**Tools (client-side agentic loop)**
-- **Introspection:** `get/set_sampling`, `get/set_system_message`,
-  `get_last_user_message_time` — the model can change its own behavior mid-conversation.
-- **Memory:** `note_save` / `note_recall`, **RAG** `rag_add` / `rag_search`
-  (chunking + embeddings + kNN via sqlite-vec). Chunking follows best practices:
-  splitting on sentence/word boundaries with **overlap**, small paragraphs get
-  grouped; markdown is split **semantically** (by headings, protecting code blocks).
-  On search, neighboring chunks are **stitched** back together via the overlap —
-  saves context and doesn't confuse the model with a repeat.
-- **Attaching files to a chat:** `/file attach <path>` attaches a text file to the
-  current chat, `/file remove <name|#N>` takes it away, `/file list` shows what is
-  attached. The file's text is passed to the model with **every** message of that
-  chat, so it can be asked about at any point — and removing it genuinely takes it
-  out of what the model sees. Unlike `/rag add`, this is chat-scoped, needs no
-  embedding server, and delivers the file **in full** rather than as
-  search-matched fragments. Attachable: any text file (source code, configs,
-  logs), plus `.html`/`.pdf`/`.docx`. The content is snapshotted when attached, so
-  the conversation stays coherent even if the file later changes. A file above the
-  budget isn't refused — it is attached "by reference": the prompt gets its name,
-  size and beginning, and the model reads the rest **page by page** on demand
-  (`attachment_read`), so even a multi-megabyte file can be worked through without
-  flooding the context. Such a file is also **indexed for semantic search** in the
-  background, so the model can jump straight to the right place
-  (`attachment_search`) instead of paging through hundreds of pages — the index is
-  scoped to that one chat and never mixes with the profile's knowledge base. If no
-  embedding server is configured, indexing is simply skipped and everything else
-  keeps working. Budgets live in settings ("Memory" → "Attachments"); the
-  status bar shows a `§ files: N (~tokens)` chip with what the attachments
-  actually cost per message.
-- **History compression:** a long conversation eventually stops fitting the
-  model's context window, and the engine then refuses the request outright. The
-  older part of a chat is folded into a rolling summary sent in place of those
-  messages — automatically once the conversation reaches a share of the window,
-  or on demand with `/compact`. **Nothing is deleted**: the feed, search and
-  export still show everything, and the boundary is marked by a divider you can
-  unfold (with `Ctrl+T`, together with the "thoughts" blocks) to read the summary.
-  What the summary had to leave out is still reachable — the assistant can read
-  the folded part back page by page and search it by words, so a question about
-  the beginning of a long conversation is answered from the actual messages
-  rather than guessed. That search needs no embedding server. On by default
-  where it can act, and fully switchable off in settings → "Memory" → "Context".
-- **Loading files into RAG from the input box:** `/rag add <path> [-r]` commands
-  (indexes a file or directory, recursively with the flag; currently `*.txt`/`*.md`)
-  and `/rag remove <path>` (removes a file/directory from the store). Indexing runs
-  in the background, with a progress indicator and spinner; re-adding a file
-  **replaces** its chunks (no duplicates). Command input is highlighted yellow and
-  skipped by spellcheck. **`/rag list`** shows the store's sources (chunk count,
-  date), **`/rag rebuild`** reindexes the store after changing chunk size/overlap
-  (configurable in the "Tools" section). Sources' original text is stored in the
-  DB, so reindexing doesn't need the source files on disk.
-- **Changing the embedding model — `/reindex`:** a change is detected
-  automatically (the vector size alone doesn't give it away — two different
-  models can share one), and everything the previous model indexed is set aside
-  rather than thrown away. Memory rebuilds itself as you use it; **`/reindex`**
-  rebuilds the lot in one pass — memory, the search indexes of attached files
-  and **every** profile's knowledge base — by re-embedding the text already
-  stored, so no source files are needed and nothing has to be re-attached. It
-  runs in the background and is safe to interrupt: running it again continues
-  from where it stopped. Until the knowledge base is done, search over it says
-  plainly that it can't compare its vectors instead of answering from them. The
-  checks that spot duplicate notes and near-identical traits **follow the model
-  too** — every model rates similarity on its own scale, so the app measures the
-  new one's scale once and shifts the cut-offs to match.
-- **Reading messages aloud (`/tts`):** `/tts` reads the last message, `/tts N` — the
-  last N, `/tts all` — the whole conversation, `/tts stop` — stops it,
-  `/tts pause`/`/tts resume` — pause and resume (handy for long text). Code,
-  ` ```mermaid ` diagrams, tables, and formulas are **skipped with a short spoken
-  note**, and "thoughts" and tool calls aren't read at all. The provider is
-  configured separately from the chat (the "Text-to-speech" tab in the "Model"
-  section): the OpenAI cloud (default, `gpt-4o-mini-tts`/`onyx`), the Gemini cloud,
-  or any third-party OpenAI-compatible TTS server; the cloud key is shared with chat.
-  You can set a **separate user voice** — then `/tts all` reads the user's and the
-  assistant's lines in different voices. Playback runs as a pipeline (the next chunk
-  is synthesized while the current one plays); no sound card — a clear note, not a
-  crash.
-- **`call_subagent(system_message, message)`** — an independent single-turn request
-  with no history, tools, or recursion; a model-driven "second opinion."
-- **Web search** `web_search` — an in-house implementation with multi-provider
-  fallback (DuckDuckGo lite/html → Mojeek → Ecosia) and anti-bot throttling
-  detection. By default it fetches result pages, extracts readable text, and
-  re-ranks them by relevance to the query (via embeddings); turned off with the
-  `fetch_content` argument or the `config.tools.web_fetch_content` setting.
-- **`fetch_url(url, focus?, summarize?)`** — fetch a page and summarize it with the
-  model (like `call_subagent`); `focus` steers the summary, `summarize=false` returns
-  the extracted text without the model. Gated by the web-access switch.
-- **`youtube_watch(url, focus?, start?, end?, transcript?)`** — watch a YouTube
-  video and tell what is **said and shown** in it, with timestamps. Needs a Gemini
-  API key (the same one used for chat): it is the only provider that takes video,
-  so this works whatever your chat engine is — including a local model. Without a
-  key the tool still returns the title, channel, length and the author's
-  description. Long videos are refused with a suggestion to ask for a segment
-  (`start`/`end`); the ceiling and the frame-sampling detail are in settings →
-  "Tools" → "Video". Gated by the web-access switch.
-  With `transcript: true` you also get the words themselves — and if they are
-  large, they arrive as a **chat attachment** (`/file list`) that the model reads
-  page by page and searches, instead of filling the conversation. A transcript
-  costs the same as watching: it is the same request.
-- **`python_exec`** — runs Python in an **isolated Wasmer/WASIX sandbox** (by
-  default: no access to the host's files, network gated by a toggle, preinstalled
-  **numpy / pandas / requests** packages, no Python needed on the host) or in the
-  **local interpreter** (the previous behavior). The tool itself is **off by
-  default**. Interrupted on timeout (process kill), a "one task at a time" gate, an
-  optional memory limit (Windows). The sandbox is installed with one command,
-  `mindfork sandbox setup`; see
-  [ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md).
-- **Files** `fs_read` / `fs_write` / `fs_list` — read/write/list local files (**off
-  by default**, like Python). An optional `fs_root` "sandbox" restricts access to a
-  given directory (escaping via `..` is blocked).
-- **`calculate(expression)`** — a math-expression evaluator (its own parser:
-  arithmetic, powers, parentheses, constants, and functions). No network/disk access.
-- **`current_time(format?)`** — the current date/time (local zone + UTC; `format` is
-  a `strftime` string). No network/disk access.
-- **Response-structure control** (optional, off by default):
-  **`send_followup_message`** — the assistant finishes the current message, calls the
-  tool, and writes a **second reply** as a separate bubble right after the first;
-  **`rewrite_current_message`** — if it realizes mid-way that the answer is wrong, it
-  discards the reply so far and writes it again (the discarded text is kept for
-  manual recovery). Enabled with toggles in profile settings. Verified against live
-  Gemma 4 and Qwen 3.6.
-- **Plugins: MCP-server tools** — plugs in any tools from the **Model Context
-  Protocol** ecosystem (files, git, GitHub, databases, browser, …) as external stdio
-  servers: servers are configured in the settings screen's **"Plugins"** section —
-  command, arguments and environment (or by hand in `settings.json`). A server's
-  token can be **entered right in the app** and is stored encrypted for this
-  computer, so it never appears in the settings file; naming an operating-system
-  variable instead still works. An existing configuration from another MCP client
-  (`claude_desktop_config.json` and its relatives) can be **imported by file
-  path** — the imported servers arrive switched off. Their tools
-  show up in the profile toggles under a "Plugins (MCP)" group. **Double opt-in** (a
-  master switch, off by default, plus a per-profile toggle), **TOFU catalog pinning**
-  (a change to a server's tool set/descriptions requires re-confirmation —
-  protection against tampering), full tool descriptions are visible in settings, as
-  are server statuses; result clipping, per-call timeouts, cancel with Esc. See
-  [docs/install.md §4.2](docs/install.md) and
-  [ADR 0007](docs/decisions/0007-plugins-mcp-host-import-format.md).
-- **Global switches**: the effective set = `profile ∩ globally enabled` (web gates
-  `web_search`+`fetch_url`, Python gates `python_exec`, file access gates `fs_*`, MCP
-  tools are gated by the `mcp.enabled` master switch); `calculate`/`current_time` are
-  safe and always available.
-- **Confirmation before a dangerous call** (`tools.confirm_dangerous`, **off by
-  default**): the loop stops and shows the call — the code, the path — before
-  running `python_exec`, `fs_write` or any MCP tool. `Enter` runs it, `A` allows
-  that tool until the answer is finished, `Esc` declines without throwing the
-  answer away (the model is told and carries on). Reads and the assistant's own
-  notes are never asked about. See [spec §9.8](spec.md).
+### Companion profiles
 
-**Other**
-- **Settings screen** (`Ctrl+P`): model/server, inference, sampling, profiles,
-  tools, interface. The "Model/server", "Sampling", and "Profiles" sections have
-  **"Assistant"/"Impersonation"** subsections. Changing the model **restarts** the
-  managed server on the fly. The managed server lets you configure
-  **FlashAttention** (`--flash-attn`) and **speculative decoding** (`--spec-type`,
-  including `draft-mtp` for MTP models — a multiplier speed boost).
-- **Python sandbox**: `mindfork sandbox setup` — installs an isolated WASIX
-  environment (downloads `wasmer` + `python.webc` + numpy/pandas/requests packages
-  from a lock list with sha256 verification) for the sandbox mode of the
-  `python_exec` tool.
-- **Import** from other applications: `mindfork import <file>` — a documented,
-  neutral [mindfork-import](docs/import-format.md) format (JSON); an external
-  converter reads the source application's format and emits the file, and import is
-  idempotent (re-running it doesn't create duplicates).
-- **Backup/restore**: `mindfork backup [-o FILE] [-c 0..9] [-p PASSWORD]` and
-  `mindfork restore <archive> [-p PASSWORD]` (a zip with configurable compression;
-  restore is transactional — a pre-restore copy of the prior data and a rollback on
-  failure). **Backups can be password-protected** (AES-256; the archive still opens
-  in 7-Zip/WinZip): the password comes from `-p` or from the settings, where it is
-  stored encrypted and bound to this computer. A restore accepts both an encrypted
-  and an unencrypted archive, and a wrong password is refused before anything is
-  replaced. Write the password down separately — it does not travel to another
-  computer, and without it the archive cannot be restored.
-- **Portability and install-time defaults**: by default all data lives in a `data/`
-  subdirectory next to the binary (the folder/USB stick is self-contained); a
-  `defaults.json` file can move it to the standard OS folder or an arbitrary
-  directory **and** set the agent-scaffold language for new profiles
-  (`default_language`, ru/en — the installer fills it in based on the user's choice
-  during setup). Atomic writes + `.bak`, soft delete with cascade.
+- Each companion is a **profile**: its own system message, an optional
+  **greeting** (it speaks first), role names, tool set, sampling defaults —
+  and its own isolated memory. Notes and knowledge never leak between
+  companions.
+- The assistant maintains a **self-model** — a summary of who it is, goals,
+  traits, and a narrative of observations about you — browsable on its own
+  screen (`F3`) and refined over time by background reflection and
+  consolidation.
+- **Custom names** for you and the assistant (the feed shows `GAIA` instead of
+  `YOU`, exports follow suit), and a per-profile **scaffold language** — the
+  language of the prompts and tool results the *model* reads (English or
+  Russian), separate from both the UI language and the language it replies in.
+- **Sampling worth playing with**: beyond the OpenAI basics, the llama.cpp
+  extensions — `min_p`, **dynamic temperature**, DRY and XTC penalties,
+  mirostat, adaptive-p, `top_n_sigma`, seeds, even the sampler order. Resolved
+  three tiers deep (chat override → profile → global); every field is optional
+  and sent only when set, and the UI hides what a given provider won't accept.
+
+### Memory and knowledge
+
+- **Notes** (`note_save` / `note_recall`) — the model's own long-term memory,
+  with semantic recall and a link graph connecting related notes.
+- A **RAG knowledge base**: `/rag add <file|dir>` indexes documents in the
+  background (sentence-aware chunking with overlap, semantic markdown
+  splitting, and stitching neighboring chunks back together on retrieval);
+  `/rag list` shows the sources, `/rag rebuild` reindexes after tuning. Source
+  text is kept in the database, so reindexing never needs the original files.
+- **Chat attachments**: `/file attach <path>` pins a text file (source code,
+  configs, logs, `.html` / `.pdf` / `.docx`) to the conversation — its full
+  text travels with every message, and removing it genuinely removes it. A
+  file too big for the context is attached **by reference** instead: the model
+  reads it page by page (`attachment_read`) and searches it semantically
+  (`attachment_search`), so even a multi-megabyte file is workable.
+- **History compression**: when a long chat outgrows the model's context
+  window, the older part folds into a rolling summary — automatically, or on
+  demand with `/compact`. **Nothing is deleted**: the feed, search and export
+  still show everything, and the assistant can read the folded range back page
+  by page instead of guessing about the start of the conversation.
+- **Change your embedding model freely**: the switch is detected
+  automatically, and `/reindex` re-embeds notes, attachments and every
+  profile's knowledge base in one resumable background pass — even the
+  similarity thresholds are recalibrated to the new model's scale.
+
+### Tools — a client-side agentic loop
+
+- **Introspection**: the model can read and change its own sampling and system
+  message mid-conversation, and check when you last wrote.
+- **Web**: `web_search` — an in-house implementation with multi-engine
+  fallback (DuckDuckGo → Mojeek → Ecosia), page fetching and semantic
+  re-ranking of results; `fetch_url` — page to summary (or raw extracted
+  text).
+- **`youtube_watch`** — what is said *and shown* in a video, with timestamps;
+  transcripts too, arriving as a chat attachment when large. Needs a Gemini
+  API key (the one provider that takes video) — and works whatever your chat
+  engine is, including a local model.
+- **Python** (`python_exec`) — in an isolated **Wasmer/WASIX sandbox**: no
+  host file access, network behind a toggle, numpy / pandas / requests
+  preinstalled, no Python needed on the host (`mindfork sandbox setup` — one
+  command). A local-interpreter mode exists for those who want it.
+- **Files** — `fs_read` / `fs_write` / `fs_list`, optionally jailed to one
+  directory (escaping via `..` is blocked).
+- **`call_subagent`** — a clean-room second opinion: one turn, no history, no
+  tools, no recursion.
+- **MCP plugins** — tools from any
+  [Model Context Protocol](https://modelcontextprotocol.io) stdio server (git,
+  GitHub, databases, browser, …), configured in settings or imported from
+  `claude_desktop_config.json` and its relatives. Server tokens are stored
+  encrypted for this machine, and the tool catalog is **TOFU-pinned**: a
+  server quietly changing its tools requires your re-confirmation.
+- **Reading aloud**: `/tts` speaks the last message (or the last N, or the
+  whole conversation) via OpenAI, Gemini or any OpenAI-compatible TTS server —
+  with an optional separate voice for your lines; code, tables and diagrams
+  are skipped with a short spoken note.
+- Small and always safe: **`calculate`** (its own expression parser —
+  arithmetic, powers, constants, functions) and **`current_time`** — no
+  network, no disk.
+- **Response-structure control** (opt-in): the assistant may send a follow-up
+  as a second bubble, or discard and rewrite a reply it realizes is wrong
+  halfway through.
+- **Safety by default**: Python, file access, web and MCP all sit behind
+  global switches *and* per-profile toggles (MCP is a double opt-in), and an
+  optional **confirmation prompt** shows exactly what a dangerous call is
+  about to run — `Enter` allows it, `Esc` declines without derailing the
+  answer.
+
+### Your data
+
+- **Portable by default**: everything lives in a `data/` folder next to the
+  binary — the folder (or the USB stick it is on) is self-contained. A
+  `defaults.json` can point elsewhere, including the standard OS directories.
+- **Plain formats**: JSON for config, profiles and chats (atomic writes +
+  `.bak`), SQLite (+ sqlite-vec) for notes and RAG; **soft delete**
+  everywhere.
+- **Backup and restore** built in: `mindfork backup` / `mindfork restore` —
+  a zip archive with optional **AES-256 password protection** and a
+  transactional restore (a pre-restore copy, rollback on failure). The
+  password does not travel to other machines — write it down.
+- **API keys stay yours**: entered right in settings, stored encrypted and
+  bound to this machine (DPAPI on Windows, a `machine-id`-derived key on
+  Linux), never displayed back; one key serves chat, impersonation and
+  embeddings. CI and advanced setups can name an environment variable instead.
+- **Import** from other applications through a documented, neutral JSON
+  format ([docs/import-format.md](docs/import-format.md)); importing twice
+  creates no duplicates.
 
 ---
 
-## Architecture
+## Getting started
 
-The inference engine sits behind the **`EngineBackend`** trait (`shared/api/contract`),
-and the app is an HTTP client to it; embedding the model (an rlib with candle/CUDA) is
-deliberately **not used**. Several providers are supported behind one contract
-([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
-- **a local OpenAI-compatible server** — managed `llama-server` (the app spawns the
-  process itself) or any external one (vLLM / LM Studio / Ollama), `OpenAiClient`
-  (Chat Completions, sampling is sent as-is);
-- **the OpenAI cloud** — `ResponsesClient` (Responses API `/v1/responses`, a Bearer
-  key): reasoning summaries ("thoughts"), `reasoning.effort`, `text.verbosity`;
-  reasoning is resent along with a tool call (the reasoning item);
-- **the Google Gemini cloud** — a native `GeminiClient` (`generateContent`,
-  `x-goog-api-key`): "thoughts" summaries (`thinkingConfig.includeThoughts`), depth
-  via `thinkingLevel` (3.x) / `thinkingBudget` (2.5), `top_k`; the thought signature
-  (`thoughtSignature`) is resent on a tool call (required for Gemini 3);
-- **the Anthropic (Claude) cloud** — `AnthropicClient` (Messages API
-  `/v1/messages`, `x-api-key`) with **extended thinking (CoT)**: adaptive thinking +
-  visible "thoughts", correct even with tool calls (resending the thinking block with
-  its signature within the same turn);
-- **the xAI (Grok) cloud** — the same `OpenAiClient`, and the only cloud that needs
-  no client of its own: xAI's Chat Completions endpoint already streams reasoning in
-  `reasoning_content` and takes a tool result back with no thinking signature
-  (docs/research/grok-xai-provider.md).
+### 1. Install
 
-The provider is chosen in settings with a single mode selector (`managed` /
-`external` / `openai` / `gemini` / `claude` / `grok`). **The API key is entered right in
-settings** (the "API key" field): it's stored **encrypted and tied to this machine**
-(Windows — DPAPI, Linux — a key derived from `machine-id`), so the settings file can
-be moved between machines — on a new one the key is entered again, and back on the
-original it's read again. A stored key is never shown or copied; input is masked,
-`Del` deletes it. The key is shared across chat, impersonation, and embeddings for
-one provider. An alternative for CI and advanced setups is the "API key (env)" field
-with an **environment variable name** (used if no key is entered). The layers above
-`EngineBackend` (orchestrator, agentic loop, tools, UI) don't depend on the provider.
-
-The engine configuration is **nested**: each mode/provider has its own settings
-sub-section (`managed` / `external` / `openai` / `gemini` / `claude`), so several can
-stay configured at once and you can **switch without losing anything**. The settings
-screen shows only the fields for the selected mode, and in the cloud it hides
-sampling parameters the provider doesn't accept (their values are kept for local
-models). This applies to the assistant engine, the impersonation server, and
-embeddings alike.
-
-> **Why not xinfer.** The project was originally designed around the lightweight
-> `xinfer` library, but it turned out to be too raw for Gemma 4 (incoherent output,
-> builds poorly on Windows). The working backend is **llama.cpp `llama-server`**
-> (OpenAI protocol, `--jinja`). Launching and the protocol are in
-> [docs/install.md §3](docs/install.md).
-
-Key decisions:
-- **The agentic loop is client-side** (in the orchestrator): stream → tool calls →
-  execution → a new request, up to `max_tool_rounds`. Tools return a result +
-  effects; the orchestrator — the sole owner of `Chat` — applies effects without
-  locks.
-- **A unidirectional UI↔orchestrator flow**: `AppCommand`s go up, `AppEvent`s go
-  down; `generation_id` drops stale chunks; an `Idle / Generating / Cancelling` state
-  machine.
-- **EOS** by token id on the server (the `stop` field isn't sent — an
-  anti-self-cutoff measure); "thoughts" from `delta.reasoning_content` with a
-  fallback to parsing `<think>` (llama.cpp); for Claude — `thinking_delta` + a
-  signature; for OpenAI Responses — `reasoning.summary` + a reasoning item; for
-  Gemini — parts with `thought:true` + `thoughtSignature` on the call (all so the
-  round trip stays correct with tool use).
-- **Storage**: JSON (config/profiles/chats) + SQLite/sqlite-vec (notes/RAG),
-  isolation by `profile_id`, soft delete everywhere.
-- **Embeddings** — a dedicated embedding server
-  ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)).
-
-### Structure (FSD, dependencies strictly downward)
-
-`app → screens → widgets → features → entities → shared`
-
-| Layer | Contents |
-|---|---|
-| `src/app/` | orchestrator, events, TUI loop, server supervisor, tokio↔UI bridge |
-| `src/screens/` | screens: `chat`, `settings` (emit `*Intent`, unaware of `app`) |
-| `src/widgets/` | `message_feed`, `input_box`, `chat_list`, `profile_list`, `status_bar` |
-| `src/features/` | `tools/*`, `spellcheck/*`, `profiles`, `chat_search_sort`, `rename_chat`, `migration` |
-| `src/entities/` | domain types: `chat`, `message`, `profile`, `note`, `rag`, `sampling` |
-| `src/shared/` | `api` (`contract` + implementations `openai` (Chat Completions + `responses/`), `gemini`, `anthropic`, `managed` behind the `EngineBackend` trait), `storage`, `config`, `paths`, `theme`, `markdown`, `wrap`, `keys`, `logging`, … |
-
-UI crates were chosen for ratatui 0.30
-([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): `tui-scrollview`, input —
-a **custom widget** (gives full control over `Shift+Enter` vs `Enter`, scrolling, and
-spellcheck underlines). Markdown — a **custom renderer** on top of `pulldown-cmark`
-(tables + delimiter-scoped LaTeX + theming,
-[ADR 0003](docs/decisions/0003-own-markdown-renderer.md)).
-
----
-
-## Build and run
-
-Requires **Rust** (edition 2024, a recent stable toolchain).
+Grab a build from the
+[releases](https://github.com/vshylov/mindfork-rs/releases): a Windows
+**installer** or zip archive, Linux **deb / rpm / pkg.tar.zst** packages or a
+tar.gz. Or build from source with a recent stable Rust (edition 2024):
 
 ```bash
-cargo build --release          # binary in target/release/
-cargo run                      # dev run (needs a REAL terminal)
+cargo build --release          # binary lands in target/release/
 ```
 
-> The TUI requires a real TTY. In a headless environment the app "hangs" — that's expected.
+> mindfork is a TUI and needs a **real terminal**. In a headless environment
+> it will appear to hang — that is the missing TTY, not a bug.
 
-### Connecting a model (llama.cpp)
+### 2. Connect a model
 
-Example of external mode — start `llama-server` manually and point the app at the URL:
+Three routes; all of them can stay configured side by side, and switching
+between them loses nothing.
+
+**A cloud provider.** Open settings (`Ctrl+P`), pick the mode — `openai` /
+`gemini` / `claude` / `grok` — and paste your API key right there: it is
+stored encrypted and machine-bound, and never shown back.
+
+**An external local server.** Run any OpenAI-compatible server and point the
+app at it — llama.cpp shown here; vLLM / LM Studio / Ollama work the same way:
 
 ```bash
-# terminal 1: inference server (--jinja is required for the Gemma format and tool-calling)
+# --jinja is required for the chat template and tool calling
 llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
   --host 0.0.0.0 --port 8000 -ngl 99 -c 8192 --jinja
 ```
 
+Then set the URL in settings (mode `external`), or via the environment — note
+the `/v1`:
+
 ```powershell
-# terminal 2 (PowerShell): tell the app where to connect
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
 cargo run
 ```
 
-In **managed mode** the app launches `llama-server` itself (the binary path + GGUF
-are set on the settings screen `Ctrl+P` or via env vars):
+**A managed server.** The app launches and supervises `llama-server` itself:
+set the binary and the GGUF paths in settings (`Ctrl+P`), or via
+`MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,
+`MINDFORK_CTX`, `MINDFORK_PORT`). A missing model file is reported immediately
+instead of hanging on "connecting…". Settings also expose **FlashAttention**
+and **speculative decoding** (`ngram-*` needs no extra model; `draft-*` takes
+a draft model, including `draft-mtp` for MTP models — a multiplier speed-up).
 
-```powershell
-$env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"
-$env:MINDFORK_MODEL     = "C:\GGUF\google_gemma-4-E4B-it-Q4_1.gguf"
-$env:MINDFORK_NGL       = "99"     # GPU layers (opt.)
-$env:MINDFORK_CTX       = "8192"   # context (opt.)
-$env:MINDFORK_PORT      = "8000"   # opt.
-```
+### 3. Optional extras
 
-If the GGUF file isn't found or isn't accessible in managed mode, the app
-**immediately** shows a clear error in the status bar (instead of hanging on "server:
-connecting…" until the load timeout) — the model's presence is checked before
-`llama-server` is even launched.
+- **Embeddings** (semantic memory, RAG, attachment search) use a dedicated
+  server: `MINDFORK_EMBED_URL`, or a managed one via `MINDFORK_EMBED_BIN` /
+  `_MODEL` / `_PORT`. Not configured? Those features decline politely with a
+  clear message — everything else keeps working.
+- **Spellcheck dictionaries** (Hunspell `en_US`, `en_GB`, `ru_RU`) ship with
+  the repository and the release archives; the build copies them next to the
+  binary. No dictionaries directory → spellcheck simply stays off.
+- **Python sandbox**: `mindfork sandbox setup` provisions the isolated WASIX
+  environment in one command (everything downloaded from a lock list with
+  sha256 verification).
 
-In managed mode the settings screen exposes **FlashAttention** (`--flash-attn`:
-`auto`/`on`/`off`) and **speculative decoding** (`--spec-type`) — it speeds up
-generation by drafting ahead. `draft-*` types need a separate draft model (`-md` +
-`-ngld`/`--spec-draft-n-max`/`-n-min`); for **MTP models** (e.g.
-`mtp-gemma-4-12B-it.gguf` as the draft for a regular `gemma-4-12B-it`) — `draft-mtp`;
-`ngram-*` types don't need a separate model. The draft fields in the UI are visible
-only for `draft-*`.
-
-Embeddings for RAG use a **dedicated** server: `MINDFORK_EMBED_URL` (external) or
-`MINDFORK_EMBED_BIN` / `_MODEL` / `_PORT` (managed). Not configured → RAG returns a
-clear error, everything else keeps working.
-
-Full instructions (modes, dictionaries, import, data paths) are in
+The long version — modes, data paths, locales, import, live tests — is in
 **[docs/install.md](docs/install.md)**.
-
-### Spellcheck dictionaries
-
-Hunspell pairs `*.aff` + `*.dic` (`en_US`, `en_GB`, `ru_RU`) go into `dictionaries/`
-at the project root; `build.rs` copies them next to the binary during the build. No
-directory → spellcheck is simply off (doesn't crash). The dictionaries themselves
-**aren't part of the repository** (`.gitignore`).
 
 ---
 
-## Hotkeys
+## Keys and commands
+
+`F1` (or `?`) opens the built-in help with all of this and more; the
+highlights:
 
 | Key | Action |
 |---|---|
-| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break, for terminals without the kitty protocol) |
-| `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut selection · paste from clipboard |
-| `Esc` | back: chat list (the same key closes it) — or the search results, if the chat was opened from a hit · cancel generation |
-| `Ctrl+Q` / `F10` | quit (including from the chat list) |
-| `F1` / `?` | help/"About" dialog (tabs: about · hotkeys · commands · license · disclaimer · components; `Tab`/`←→` — switch tabs) |
-| `Ctrl+P` | settings screen |
-| in the chat list (`Esc`) | search, sort orders, `F2`/`Ctrl+N`/`Ctrl+D`/`Del`, `Ctrl+R` auto-title, `F5` copy |
-| `Ctrl+F` | in a chat: find in this conversation (`Enter`/`↓` next, `Shift+Enter`/`↑` previous, `Esc` close); in the chat list: switch the search between titles and message content |
-| `Ctrl+G` | in the chat list (content mode): the matching messages themselves — `Enter` opens the chat at the message (`Esc` there returns to the results) |
-| `F5` | copy the chat conversation to the clipboard (active / selected in the list) |
+| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol) |
+| `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results you came from |
+| `Ctrl+Q` / `F10` | quit |
+| `F1` / `?` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
+| `Ctrl+P` | settings |
+| `F3` | the self-model screen — what the assistant currently thinks about itself, and about you |
 | `Ctrl+N` | new chat (with a profile picker) |
-| `Ctrl+R` | regenerate the last response |
-| `Ctrl+E` | delete the last exchange (text → back into the input box) |
-| `Ctrl+U` | write a message on the user's behalf (impersonation) |
-| `Ctrl+K` | clear all input text (undo with `Ctrl+Z`) |
-| `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit |
-| `Home` / `End` | a ladder: `Home` — the text on the on-screen row, its start, then the whole line's; `End` — the row's end, then the line's |
-| `Ctrl+T` | collapse/expand "thoughts" (remembered per chat) |
-| `Ctrl+O` | collapse/expand tool calls — the header stays, the arguments/result fold away (per chat) |
-| `Ctrl+G` | in the input box: spellcheck suggestions |
-| `Ctrl+B` | emoji picker popup (inserts at the cursor position) |
-| `Ctrl+W` | toggle: mouse wheel ↔ text selection |
-| click / drag with the mouse in the input box | cursor / text selection (with `Ctrl+W` capture on) |
-| `PageUp` / `PageDown` / mouse wheel | scroll the feed |
-| `/file attach <path>` | attach a text file to the chat (an input-box command) |
-| `/file remove <name\|#N>` · `/file list` | remove an attachment / show what is attached |
-| `/rag add <path> [-r]` | index a file/directory into RAG (an input-box command) |
-| `/rag remove <path>` | remove a file/directory from RAG (an input-box command) |
-| `/reindex` | re-embed everything with the current embedding model (an input-box command) |
-| `/compact` | fold the earlier part of the conversation into a rolling summary so it keeps fitting the context window (an input-box command) |
+| `Ctrl+R` | regenerate the last reply |
+| `Ctrl+E` | take back the last exchange (your text returns to the input box) |
+| `Ctrl+U` | impersonation: the model writes your next message |
+| `F5` | copy the conversation to the clipboard |
+| `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
+| `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
+| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls |
+| `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
+| `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
+| `Ctrl+Z` / `Ctrl+Y` | undo / redo in the input box |
+| `Ctrl+B` | emoji picker |
+| `Home` / `End` | a ladder: first the on-screen row, then the whole line |
+| `Ctrl+W` | toggle mouse capture: wheel scrolling ↔ native text selection |
+| `PageUp` / `PageDown` / wheel | scroll the feed |
+
+> The mouse wheel and text selection share one terminal mechanism, so capture
+> is a toggle (`Ctrl+W`): off (default) — select text natively; on — the wheel
+> scrolls the feed and selection needs `Shift`. `Ctrl` shortcuts are
+> layout-independent: on Windows under any installed layout, elsewhere under
+> Cyrillic.
+
+Slash commands, typed straight into the input box:
+
+| Command | What it does |
+|---|---|
+| `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
+| `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
+| `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
+| `/reindex` | re-embed everything with the current embedding model |
+| `/compact` | fold the older part of the chat into a rolling summary |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
-| `/tts stop` · `pause` · `resume` | stop / pause / resume reading aloud |
+| `/tts stop` · `pause` · `resume` | control playback |
 
-Ctrl shortcuts are layout-independent: on Windows they are resolved through the
-keyboard layout itself, so any installed layout works (Cyrillic, Greek, Hebrew, …);
-on Linux — under Cyrillic, plus whatever the terminal itself falls back to (the VTE
-family — GNOME Terminal & co. — handles every layout on its own).
+---
 
-> **The mouse wheel and text selection share one terminal mechanism** (mouse
-> reporting), so capture is a toggle (`Ctrl+W`). Off (default): the mouse selects
-> text as usual. On: the wheel scrolls the feed, and text can be selected by holding
-> `Shift` (Windows Terminal and most terminals support this). The current mode is
-> shown in the status bar.
+## How it's built
+
+The app is an HTTP client to an inference engine behind the **`EngineBackend`**
+trait — it deliberately embeds no ML stack
+([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)). Five
+providers live behind that one contract:
+
+- **a local OpenAI-compatible server** — managed `llama-server` or any
+  external one (Chat Completions; the llama.cpp sampling extensions pass
+  straight through);
+- **OpenAI** — the Responses API: reasoning summaries, `reasoning.effort`,
+  `text.verbosity`;
+- **Google Gemini** — native `generateContent`: thought summaries, thinking
+  depth, `top_k`, thought signatures resent on tool calls;
+- **Anthropic (Claude)** — the Messages API with extended thinking, keeping
+  the thinking-block round trip correct across tool use;
+- **xAI (Grok)** — the same client as local llama.cpp: the one cloud that
+  needed no client of its own.
+
+Each mode keeps its own settings sub-section, so several providers stay
+configured at once and switching loses nothing; the settings screen shows only
+the fields the selected provider actually accepts.
+
+Decisions that shape the code:
+
+- **The agentic loop is client-side**: stream → tool calls → execution → a new
+  request. Tools return a result plus effects; the orchestrator — the sole
+  owner of `Chat` — applies them, so there are no locks.
+- **Unidirectional UI↔orchestrator flow**: `AppCommand`s go up, `AppEvent`s
+  come down; `generation_id` drops stale chunks; an
+  `Idle / Generating / Cancelling` state machine.
+- **EOS by token id** on the server — the `stop` field is never sent (an
+  anti-self-cutoff measure). "Thoughts" arrive through each provider's native
+  channel, with parsing `<think>` out of the content as the fallback.
+- **Storage**: JSON + SQLite/sqlite-vec, isolation by `profile_id`, soft
+  delete everywhere; embeddings come from a dedicated server
+  ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)).
+- **A custom markdown renderer and input widget**
+  ([ADR 0003](docs/decisions/0003-own-markdown-renderer.md),
+  [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) — full control
+  over tables, LaTeX, theming, `Shift+Enter`, and spellcheck underlines.
+
+> The project was originally designed around the lightweight `xinfer` library,
+> which turned out too raw in practice — the working engine is llama.cpp, and
+> the switch is recorded honestly in
+> [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
+
+The structure follows **Feature-Sliced Design**, dependencies pointing
+strictly downward: `app → screens → widgets → features → entities → shared`.
+
+| Layer | Contents |
+|---|---|
+| `src/app/` | orchestrator, events, TUI loop, server supervisor, tokio↔UI bridge |
+| `src/screens/` | screens: `chat`, `settings`, `self_model` (emit `*Intent`, unaware of `app`) |
+| `src/widgets/` | `message_feed`, `input_box`, `chat_list`, `profile_list`, `status_bar` |
+| `src/features/` | `tools/*`, `spellcheck/*`, `profiles`, search/sort, `migration`, backup, compaction |
+| `src/entities/` | domain types: `chat`, `message`, `profile`, `note`, `rag`, `sampling`, `self_model` |
+| `src/shared/` | `api` (the `EngineBackend` implementations: `openai`, `gemini`, `anthropic`, `managed`), `storage`, `config`, `paths`, `theme`, `markdown`, `i18n`, `secrets`, `sandbox`, `mcp`, … |
+
+The full code map with invariants is
+[docs/architecture.md](docs/architecture.md).
 
 ---
 
 ## Development
 
 ```bash
-cargo test                                 # unit tests (no server needed; 971 green)
+cargo test                                 # unit tests — no server needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Smoke tests against a live model are marked `#[ignore]` and run manually (they're
-silently skipped without the required env var):
+Anything that needs a real model is an `#[ignore]` smoke test — silently
+skipped unless the matching env var points at a live server:
 
 ```powershell
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"   # chat server (URL includes /v1)
-$env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"   # embedder (memory/RAG smokes)
-$env:MINDFORK_ENGINE_KEY = "..."                        # opt.: Bearer key, if the server wants one
-$env:MINDFORK_EMBED_KEY  = "..."                        # opt.: same for the embedder
+$env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"   # embedder (memory / RAG smokes)
 cargo test -- --ignored --nocapture --test-threads=1
 ```
 
-No local GPU? The same suite runs against a rented one — `python tools/e2e_hf.py run`
-creates a pair of ephemeral Hugging Face Inference Endpoints (a real `llama-server`
-with the same model and quantization), runs the smokes, and deletes them, verifying
-the deletion. Also available in CI as the **Live e2e** workflow
-(`workflow_dispatch`). See [docs/install.md §7.2](docs/install.md).
+No local GPU? `python tools/e2e_hf.py run` rents a pair of ephemeral Hugging
+Face inference endpoints (a real `llama-server`, same model and quantization),
+runs the same suite against them, and verifiably deletes them afterwards; the
+same gate exists in CI as the manually triggered **Live e2e** workflow. See
+[docs/install.md](docs/install.md) §7.
 
-They cover streaming/finish, anti-self-cutoff on the EOS text (`<|im_end|>` for Qwen
-and `<end_of_turn>` for Gemma), tool-calling, "thoughts", sampling extensions, and
-control tools, plus end-to-end self-model/notes/narrative tests (gates, the graph,
-reflection, consolidation, cross-organ links). **25 `#[ignore]` smokes ran green
-against Gemma 4 31B + bge-m3** (`llama-server`, ~370s).
-
-**Conventions:** Rust edition 2024; `anyhow` in application layers, `thiserror` in
-`shared` library modules; logs go only to a file (`logs/`, stdout is taken by the
-TUI); tests live next to the code (`#[cfg(test)]`); comments and documentation are in
-English. Dependencies flow strictly downward through the FSD layers. Before
-committing: `cargo fmt`, `cargo clippy`, `cargo test` — everything green.
+Conventions in brief: Rust edition 2024; `anyhow` in application layers,
+`thiserror` in `shared`; logs go to a file only (the TUI owns stdout); tests
+live next to the code; comments and docs are in English; FSD dependencies
+point strictly downward. Before every commit: `cargo fmt`, `cargo clippy`,
+`cargo test` — all green. The full task workflow (design doc → branch → live
+run → docs → PR) is **[AGENTS.md](AGENTS.md)**; the traps worth knowing before
+touching anything are [docs/lessons.md](docs/lessons.md).
 
 ---
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** — a quick project orientation, the map of the other
-  documents, and status (M0–M9 done).
-- **[spec.md](spec.md)** — the full engineering spec (source of truth).
-- **[docs/journal/](docs/journal/)** — the engineering log, split by subsystem
-  (engine, storage, tools, memory, UI, i18n, platform): how each part got the way
-  it is, with the decisions and live-run outcomes behind it.
-- **[docs/install.md](docs/install.md)** — install, run, the engine (llama.cpp), the
-  OpenAI-compatible protocol, dictionaries, import.
-- **[docs/decisions/](docs/decisions/)** — ADRs (UI crates, the embedding server, the
-  markdown renderer, the engine contract and multi-provider inference, the Python
-  sandbox on Wasmer/WASIX).
-- **[docs/history/](docs/history/)** — archive: the original requirements doc
-  ([request.md](docs/history/request.md)) and the completed M0–M9 plan
-  ([plan.md](docs/history/plan.md)).
+- **[docs/install.md](docs/install.md)** — install, run, engines, env vars,
+  dictionaries, import, live tests.
+- **[spec.md](spec.md)** — the full engineering spec: behavior, "what" and
+  "why". The source of truth.
+- **[docs/architecture.md](docs/architecture.md)** — the code map: layers,
+  modules, flows, lifecycles, invariants.
+- **[CLAUDE.md](CLAUDE.md)** — orientation for contributors (human and AI
+  alike): the map of which document answers which question.
+- **[docs/journal/](docs/journal/)** — the engineering log, split by
+  subsystem: how each part got the way it is, with decisions and live-run
+  outcomes.
+- **[docs/decisions/](docs/decisions/)** — the ADRs: recorded architectural
+  decisions.
+- **[docs/lessons.md](docs/lessons.md)** — traps this project has already hit,
+  written down so nobody hits them twice.
+- **[docs/roadmap.md](docs/roadmap.md)** — what may come next.
+- **[docs/history/](docs/history/)** — the original request and the finished
+  track plans.
+- **[CHANGELOG.md](CHANGELOG.md)** — what each release changed, in user
+  language.
 
 ## License and disclaimer
 
 The software is under the **MIT License** ([LICENSE](LICENSE)) — the standard
 text, unmodified.
 
-It ships **no model**. Every word on screen is written by a model you chose and
-obtained yourself, local or cloud, and the app applies no content filtering or
-moderation of its own — by design, an "uncensored" fine-tune runs exactly as
-readily as an aligned one. What that means for warranty and liability, for the
-tools a model can invoke on your machine, and for what leaves it when you use a
-cloud provider, is spelled out in **[DISCLAIMER.md](DISCLAIMER.md)** — also
-readable in the app on the `F1` → "Disclaimer" tab. It supplements the license
-and takes nothing away from it.
+It ships **no model**. Every word on screen is written by a model you chose
+and obtained yourself, local or cloud, and the app applies no content
+filtering or moderation of its own — by design, an "uncensored" fine-tune runs
+exactly as readily as an aligned one. What that means for warranty and
+liability, for the tools a model can invoke on your machine, and for what
+leaves it when you use a cloud provider, is spelled out in
+**[DISCLAIMER.md](DISCLAIMER.md)** — also readable in the app on the `F1` →
+"Disclaimer" tab. It supplements the license and takes nothing away from it.
 
-## Status
+## Project status
 
-The entire **M0–M9** plan is implemented, plus extensive post-M9 work. The chat
-cycle, isolated profiles, tools with a client-side agentic loop, a sub-agent, web
-search and Python behind switches, the settings screen, import from LameLLaMA,
-themes, live spellcheck, loading files into RAG with `/rag add|remove` commands
-(smart chunking with overlap + semantic markdown + stitching on retrieval),
-**user impersonation** (`Ctrl+U`, shared/managed/external), the **self-model /
-user-model** screen (`F3`), and **notes connectivity** (semantic recall, the link
-graph, superseding with a "scar," auto-"sleep," narrative as notes). An **isolated
-Python sandbox**
-([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)): `python_exec` isolated
-in WASIX via a `wasmer` sidecar (numpy/pandas/requests, network behind a toggle, a
-memory limit on Windows), installed with `mindfork sandbox setup`.
-**Multi-provider inference**
-([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)): local llama.cpp
-plus the **OpenAI (Responses API) / Google Gemini (native `generateContent`) /
-Anthropic (Claude)** clouds behind a single contract, each with reasoning/"thoughts"
-summaries and a correct round trip on tool use. **971 unit tests** green;
-`#[ignore]` smokes ran against the live **Gemma 4 31B + bge-m3** stack
-(`llama-server`), **Claude 4.x** against the live Anthropic API, **Gemini 3.1 Pro**
-against the live Gemini API with a key, and the **Python sandbox** against a live
-`wasmer` (Windows).
+Actively developed; the current release is
+**[v0.9.5](https://github.com/vshylov/mindfork-rs/releases)** — see the
+[changelog](CHANGELOG.md) for what's new and the [roadmap](docs/roadmap.md)
+for what may come next. The original ten-milestone plan
+([docs/history/plan.md](docs/history/plan.md)) is long finished; development
+continues in small, reviewed tracks. As of v0.9.5 the suite stands at
+**1962 unit tests** plus **84 live smoke tests** that get run against real
+stacks — a local `llama-server` (Gemma 4 + bge-m3) and the live cloud APIs —
+before provider-touching changes ship.
