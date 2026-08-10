@@ -683,6 +683,70 @@ async fn wait_for_exit(exited: &Option<CancellationToken>) {
     }
 }
 
+/// The demo mode's supervisor (`mindfork demo`): a scripted backend for chat
+/// and impersonation and a deterministic in-process embedder — `Ready`
+/// immediately, no child processes, no network, no background probes (the
+/// statuses are true by construction, there is nothing to probe). Isolation
+/// from the real data root is the caller's job: `main` boots it on a
+/// throwaway root. Unlike [`MockSupervisor`] it carries no test machinery —
+/// no call counters, no unavailability switches.
+pub struct DemoSupervisor {
+    backend: Arc<dyn EngineBackend>,
+}
+
+impl DemoSupervisor {
+    pub fn new(backend: Arc<dyn EngineBackend>) -> Self {
+        Self { backend }
+    }
+}
+
+impl ServerSupervisor for DemoSupervisor {
+    fn apply_chat(
+        &self,
+        _settings: &EngineSettings,
+        _stored_key: Option<&str>,
+        _cancel: CancellationToken,
+        _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
+    ) -> ChatSetup {
+        ChatSetup {
+            backend: Some(self.backend.clone()),
+            handle: None,
+            status: ServerStatus::Ready,
+        }
+    }
+
+    fn apply_embed(
+        &self,
+        _settings: &EmbedSettings,
+        _stored_key: Option<&str>,
+        _cancel: CancellationToken,
+        _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
+    ) -> EmbedSetup {
+        EmbedSetup {
+            embedder: Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
+            handle: None,
+            status: ServerStatus::Ready,
+        }
+    }
+
+    fn apply_impersonation(
+        &self,
+        _settings: &ImpersonationEngineSettings,
+        _stored_key: Option<&str>,
+        _cancel: CancellationToken,
+        _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
+    ) -> ChatSetup {
+        ChatSetup {
+            backend: Some(self.backend.clone()),
+            handle: None,
+            status: ServerStatus::Ready,
+        }
+    }
+}
+
 /// A mock supervisor for orchestrator tests: hands back a given chat backend and a
 /// deterministic embedder, counts `apply_chat` calls (checking a restart on model
 /// change, DoD M8). No real processes.

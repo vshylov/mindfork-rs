@@ -1,8 +1,17 @@
 # Demo mode and generated screenshots — design plan
 
-Status: **forks decided by the user 2026-08-10; stage 1 merged (go on the
-hero shot); stage 2 (the full set + the drift gate + README embeds) done;
-stage 3 (the interactive `mindfork demo`) pending.**
+Status: **track complete (2026-08-10).** Forks decided by the user
+2026-08-10; stage 1 (MVP hero shot) merged on a go; stage 2 (the full
+capture set + the drift gate + README embeds) merged; stage 3 (the
+interactive `mindfork demo`) shipped the un-gated mock engine, the demo
+supervisor, the seeded throwaway root and the CLI subcommand. Stage 4 (an
+SVG writer for mindfork.io) was deliberately deferred to the site work and
+lives in [docs/roadmap.md](../roadmap.md). One deviation from §4 as written:
+the "demo" marker landed in the **feed header caption** (the engine is
+honestly named `demo (mock engine)` via the external-mode model name — zero
+new UI surface) rather than as a dedicated status-bar chip, which would have
+overloaded the background-tasks slot or grown new render/height plumbing for
+one word.
 
 ## 1. Context and goal
 

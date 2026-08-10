@@ -36,7 +36,7 @@ it runs on **Windows** and **Linux**.
 Every screenshot in this README is **generated from code** against a demo
 profile — never captured from a real session — and a gate test fails the
 build the moment they drift from what the app actually renders
-([docs/demo-screenshots.md](docs/demo-screenshots.md)).
+([docs/history/demo-screenshots.md](docs/history/demo-screenshots.md)).
 
 <details>
 <summary><b>More screens</b> — the chat list, settings (model &amp; tools), and the assistant's self-model</summary>
@@ -208,6 +208,11 @@ build the moment they drift from what the app actually renders
 ---
 
 ## Getting started
+
+**Just looking?** `mindfork demo` boots the app with sample data and a
+scripted engine — no model, no API key, and nothing touched outside a
+temporary folder that is removed on exit. When it wins you over, the real
+setup is below.
 
 ### 1. Install
 

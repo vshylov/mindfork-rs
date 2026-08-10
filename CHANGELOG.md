@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **Demo mode — try the app without a model.** `mindfork demo` boots the real
+  TUI on sample data with a scripted engine: a showcase conversation (a table,
+  a flowchart drawn in the terminal, a tool call), a filled chat list, a
+  living self-model on `F3`, and streamed canned replies that say plainly what
+  they are. No server, no API key; nothing outside a temporary folder is
+  touched, and the folder is removed on exit. The feed header honestly labels
+  the engine `demo (mock engine)`; a real engine connects any time in settings
+  (`Ctrl+P`).
+
 ## [0.9.5] — 2026-08-09
 
 ### Added

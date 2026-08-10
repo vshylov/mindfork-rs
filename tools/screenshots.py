@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render frame dumps into screenshot images (docs/demo-screenshots.md).
+"""Render frame dumps into screenshot images (docs/history/demo-screenshots.md).
 
 Why: screenshots of a real session would expose private data and rot as the
 app evolves. Instead the app renders its screens headlessly from a demo

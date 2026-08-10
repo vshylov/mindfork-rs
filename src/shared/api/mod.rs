@@ -12,7 +12,8 @@ pub mod managed;
 pub mod openai;
 pub mod thoughts;
 
-#[cfg(test)]
+// Production since the demo mode (`mindfork demo`) boots on it; tests were
+// the original and remain the main consumer.
 pub mod mock;
 
 pub use anthropic::AnthropicClient;

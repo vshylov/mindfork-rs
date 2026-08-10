@@ -1,4 +1,4 @@
-//! Frame capture for generated screenshots (docs/demo-screenshots.md).
+//! Frame capture for generated screenshots (docs/history/demo-screenshots.md).
 //!
 //! Walks a rendered ratatui [`Buffer`] and serializes it cell by cell —
 //! symbol, foreground, background, modifiers — into a JSON-stable

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -29,6 +29,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.9.5 (prepared)
 - Post-M9: demo screenshots — stage 1 (fixture, frame dumps, raster tool) (done)
 - Post-M9: demo screenshots — stage 2 (the full set, the drift gate, README embeds) (done)
+- Post-M9: demo screenshots — stage 3 (the interactive `mindfork demo`) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -870,7 +871,8 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **The screenshot problem for the public opening**: captures of a real session
   would expose private conversations, and hand-made screenshots rot as the app
   evolves — the standing answer to rot here is a gate, not discipline. Design
-  plan [docs/demo-screenshots.md](../demo-screenshots.md); forks confirmed by
+  plan [docs/history/demo-screenshots.md](../history/demo-screenshots.md)
+  (in `docs/` while the track ran); forks confirmed by
   the user 2026-08-10: interactive `mindfork demo` adopted as stage 3, capture
   set = chat / chat list / settings twice (Model+**Tools** — the latter added
   by the user as the best single showcase) / self-model, **Dark+Light x EN**,
@@ -970,3 +972,52 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   attribute) mapped through a single constructor call site, leaving CPD no
   ten-line window to match. Verified value-identical the cheap way: the
   drift gate stayed green with zero dump changes.
+
+### Post-M9: demo screenshots — stage 3 (the interactive `mindfork demo`) (done)
+- **The track''s last planned stage** (design plan moved to
+  [docs/history/demo-screenshots.md](../history/demo-screenshots.md) with this
+  PR — the track is complete; stage 4, an SVG writer for the site, is
+  deliberately deferred and recorded in the roadmap). Branch `feat/demo-mode`.
+  The ask: "try the app without downloading a model" — the real TUI on seeded
+  data with a scripted engine, touching nothing outside a temp folder.
+- **Un-gating, minimally**: `shared/api/mock` compiles into the release binary
+  now, but only `cycling` — the demo''s constructor — is un-gated;
+  `scripted`/`sequence`/`cancellable` stay `#[cfg(test)]` pointwise (clippy
+  itself insisted: a constructor nothing outside tests calls is dead release
+  code). `MockSupervisor` stays test-only; the demo gets its own ~50-line
+  `DemoSupervisor` (chat/impersonation = the scripted backend, embed =
+  `MockEmbedder`, everything `Ready` synchronously) instead of inheriting
+  test machinery.
+- **`MockBackend::cycling(scripts, delay_ms)`**: rotates scripts endlessly
+  (`sequence` runs dry into empty turns — wrong shape for a conversation) and
+  paces chunks (18 ms) so streaming looks like streaming. Replies are
+  **self-contained by design**: a background call (impersonation, regenerate)
+  may consume a script out of turn, so no reply depends on which question
+  preceded it — each says something true about the app, and the first one
+  names what it is (the close-the-door rule, lessons §4).
+- **Provisioning is the fixture, promoted**: `demo::provision` seeds config
+  (engine `external` with model name `demo (mock engine)` — the feed header
+  caption becomes the honest demo marker for free; the status-bar chip the
+  plan sketched was rejected as new UI surface for one word), the "Gaia"
+  profile (fixed id now, plus a greeting so a fresh chat also says what the
+  demo is), the showcase chat, eight filler chats with real two-message
+  excerpts (titles/dates shared with the list capture via one `ROWS` table),
+  and the seeded self-model for `F3`.
+- **`main` boots it before the real root is touched**: the `demo` arm branches
+  ahead of `ensure_dirs`/logging, gets its own temp root
+  (`%TEMP%/mindfork-demo-<pid>`), skips the single-instance guard (a demo may
+  run next to the real app), data migration (the root is born current) and
+  `MINDFORK_*` env overrides (the environment belongs to the real app), and
+  removes the root on clean exit. The shared launch core was extracted as
+  `launch_tui(paths, supervisor, apply_env, loc)` — `run_tui` and `run_demo`
+  are now two thin wrappers over it.
+- **Verification**: the whole loop runs headlessly in
+  `orchestrator/tests/demo.rs` — a provisioned root bootstraps onto the
+  showcase chat, a user message streams the self-describing reply, a second
+  message gets a *different* one (cycling, not repetition). Provisioning is
+  pinned complete and idempotent; CLI parsing and both help pages are tested;
+  the capture drift gate stayed green throughout — the new profile fields
+  (id, greeting) provably moved no pixel of the committed set. **1977 unit
+  tests green (+5), 85 `#[ignore]`.** No live-model run (the engine is the
+  mock by definition); the one thing only a human can judge — the demo in a
+  real terminal — is the review step: `cargo run -- demo`.

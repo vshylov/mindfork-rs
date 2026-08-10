@@ -148,7 +148,7 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     spinner: &['|', '/', '-', '\\'],
 };
 
-/// Canvas backgrounds for generated screenshots (docs/demo-screenshots.md).
+/// Canvas backgrounds for generated screenshots (docs/history/demo-screenshots.md).
 /// The app itself never paints a background — a real terminal supplies it —
 /// so captures need a concrete one. These are the backgrounds the Dark/Light
 /// palettes are tuned against; they live here (not in the Python renderer) so
