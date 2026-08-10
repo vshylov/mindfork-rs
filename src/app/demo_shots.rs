@@ -1,4 +1,4 @@
-//! Capture recipes for the generated screenshots (docs/demo-screenshots.md).
+//! Capture recipes for the generated screenshots (docs/history/demo-screenshots.md).
 //!
 //! Each recipe builds a screen from the demo fixture (`features/demo`), renders
 //! it into a `TestBackend` and serializes the frame (`shared/shot`). The

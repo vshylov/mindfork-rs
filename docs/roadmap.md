@@ -18,6 +18,11 @@ but the change the numbers argue for was rejected on behavioural grounds, so
 what remains is a partial gain rather than the headline one
 ([prompt-caching.md](research/prompt-caching.md)).
 
+**Deferred by design**: an SVG writer for the generated screenshots (the
+demo-screenshots track's stage 4,
+[history/demo-screenshots.md](history/demo-screenshots.md)) — waits for the
+mindfork.io site work, which will set the sizes and themes it must serve.
+
 ## Memory, self-model, knowledge
 The project's flagship track (self-model / notes / connectivity / RAG). The
 core, the **self-model consolidation** (A), **RAG: sources and retrieval** (B)

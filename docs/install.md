@@ -695,6 +695,14 @@ cargo run            # dev
 ./target/release/mindfork-rs   # release
 ```
 
+To look around before configuring anything, run the **demo**: sample data and
+a scripted engine in a throwaway temp folder (removed on exit), no model or
+key needed —
+
+```bash
+mindfork-rs demo
+```
+
 Needs a **real terminal** (TUI). In a headless environment the app "hangs" — that's
 normal. Basic keys: `F1` — help, `Ctrl+P` — settings, `Esc` — chat list
 (open/close) and cancel generation, `Ctrl+N` — new chat,

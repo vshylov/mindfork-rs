@@ -56,6 +56,9 @@ pub enum CliCommand {
     },
     /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
+    /// Launch the interactive demo (`demo`): a throwaway data root and a
+    /// scripted engine — the app without a model.
+    Demo,
     /// Show help (general or for a subcommand).
     Help { topic: Option<HelpTopic> },
     /// Show the version (`-V`/`--version`).
@@ -72,6 +75,7 @@ pub enum HelpTopic {
     SandboxSetup,
     Locales,
     LocalesExport,
+    Demo,
 }
 
 /// Parses arguments (after the program name). `Err` — an already print-ready
@@ -94,6 +98,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
         "locales" => parse_locales(rest, loc),
+        "demo" => parse_demo(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_command(loc, other)),
     }
@@ -203,6 +208,18 @@ fn parse_sandbox_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String
         force,
         enable_python,
     })
+}
+
+fn parse_demo(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    // `demo` takes no arguments; the first token decides everything.
+    match toks.first() {
+        None => Ok(CliCommand::Demo),
+        Some(&("-h" | "--help")) => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Demo),
+        }),
+        Some(&a) if a.starts_with('-') => Err(unknown_option(loc, a)),
+        Some(&a) => Err(unexpected_arg(loc, a)),
+    }
 }
 
 fn parse_locales(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -377,9 +394,11 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork-rs [COMMAND]\n\n{commands}\n\
-             {b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{lc:<20}{cl}\n\n\
+             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
+            dm = "  demo",
+            cd = loc.t("cli.help.cmd.demo"),
             b = "  backup",
             cb = loc.t("cli.help.cmd.backup"),
             r = "  restore",
@@ -441,6 +460,11 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
         ),
+        Some(HelpTopic::Demo) => format!(
+            "{d}\n\n{usage} mindfork-rs demo\n\n{n}",
+            d = loc.t("cli.help.cmd.demo"),
+            n = loc.t("cli.help.demo.note"),
+        ),
         Some(HelpTopic::Locales) => format!(
             "{d}\n\n{usage} mindfork-rs locales <COMMAND>\n\n{commands}\n{e:<12}{ce}",
             d = loc.t("cli.help.cmd.locales"),
@@ -474,6 +498,35 @@ mod tests {
     #[test]
     fn no_args_is_run() {
         assert_eq!(p(&[]).unwrap(), CliCommand::Run);
+    }
+
+    /// `demo` takes no arguments: bare → the command, `--help` → its topic,
+    /// anything else → a localized refusal, not a silent ignore.
+    #[test]
+    fn demo_parses_bare_and_help_only() {
+        assert_eq!(p(&["demo"]).unwrap(), CliCommand::Demo);
+        assert_eq!(
+            p(&["demo", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::Demo)
+            }
+        );
+        assert!(p(&["demo", "--force"]).is_err(), "unknown option refused");
+        assert!(p(&["demo", "extra"]).is_err(), "stray argument refused");
+    }
+
+    /// The demo appears in the general help and has a topic page.
+    #[test]
+    fn demo_help_is_rendered() {
+        let loc = locale(Lang::En);
+        let general = render_help(None, loc);
+        assert!(general.contains("demo"), "listed in the command table");
+        let topic = render_help(Some(HelpTopic::Demo), loc);
+        assert!(topic.contains("mindfork-rs demo"));
+        assert!(
+            topic.contains("temporary folder"),
+            "the note must say where the data lives"
+        );
     }
 
     #[test]

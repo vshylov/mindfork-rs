@@ -12,7 +12,6 @@ pub mod cli;
 pub mod compact_command;
 pub mod compaction;
 pub mod data_migration;
-#[cfg(test)]
 pub mod demo;
 pub mod doc_extract;
 pub mod file_command;

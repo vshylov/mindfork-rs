@@ -419,6 +419,7 @@ mod attachments;
 mod chats;
 mod compaction;
 mod confirm;
+mod demo;
 mod generation;
 mod impersonation;
 mod live;

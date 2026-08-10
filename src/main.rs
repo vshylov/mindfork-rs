@@ -20,7 +20,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent};
 use crate::app::orchestrator::{self, OrchestratorDeps};
-use crate::app::supervisor::LlamaSupervisor;
+use crate::app::supervisor::{DemoSupervisor, LlamaSupervisor, ServerSupervisor};
 use crate::features::backup::{self, RestoreOutcome};
 use crate::features::cli::{self, CliCommand};
 use crate::shared::config::{AppConfig, ServerMode};
@@ -101,6 +101,12 @@ fn real_main(
     loc: &Locale,
     locale_warnings: &[String],
 ) -> anyhow::Result<ExitCode> {
+    // The demo never touches the real data root — branch off before the real
+    // root's directories or log file are even created. Its own root, logging
+    // and cleanup live in `run_demo`.
+    if matches!(command, CliCommand::Demo) {
+        return run_demo(loc, locale_warnings);
+    }
     paths.ensure_dirs().with_context(|| {
         loc.tf(
             "cli.ctx.ensure_dirs",
@@ -143,6 +149,7 @@ fn real_main(
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::Run => run_tui(paths, loc),
+        CliCommand::Demo => unreachable!("handled above, before the real root is touched"),
         CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
     }
 }
@@ -177,6 +184,68 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     // The error is an already-localized message (features/data_migration). See release-engineering.md §3.4.
     features::data_migration::run(paths, loc)?;
 
+    launch_tui(paths, Arc::new(LlamaSupervisor), true, loc)
+}
+
+/// `mindfork demo` — the real TUI on a throwaway root with a scripted engine
+/// (the demo-screenshots track, stage 3). Deliberately skipped relative to
+/// [`run_tui`]: the single-instance guard (a demo may run next to the real
+/// app), data migration (the root is born current) and the `MINDFORK_*` env
+/// overrides (the environment belongs to the real app). The root is removed
+/// on a clean exit; a crash leaves at most a folder in the OS temp dir.
+fn run_demo(loc: &Locale, locale_warnings: &[String]) -> anyhow::Result<ExitCode> {
+    let root = std::env::temp_dir().join(format!("mindfork-demo-{}", std::process::id()));
+    let paths = Paths::with_root(&root);
+    paths.ensure_dirs().with_context(|| {
+        loc.tf(
+            "cli.ctx.ensure_dirs",
+            &[("path", &root.display().to_string())],
+        )
+    })?;
+    let _logging =
+        logging::init(&paths, loc).with_context(|| loc.t("cli.ctx.init_logging").to_string())?;
+    for w in locale_warnings {
+        tracing::warn!("{w}");
+    }
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        root = %root.display(),
+        "mindfork demo starting"
+    );
+
+    // Provision, then drop this handle: the orchestrator inside `launch_tui`
+    // opens its own storage and must stay the sole writer (spec §4.4.2).
+    {
+        let storage = Storage::open(paths.clone())
+            .with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
+        features::demo::provision(&storage)
+            .with_context(|| loc.t("cli.ctx.provision_demo").to_string())?;
+    }
+
+    let backend = Arc::new(crate::shared::api::mock::MockBackend::cycling(
+        features::demo::demo_replies(),
+        DEMO_STREAM_DELAY_MS,
+    ));
+    let result = launch_tui(&paths, Arc::new(DemoSupervisor::new(backend)), false, loc);
+    // Leave nothing behind: the promise is "your machine, untouched".
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+/// Pause between the demo engine's chunks: streaming should look like
+/// streaming, not like a page load.
+const DEMO_STREAM_DELAY_MS: u64 = 18;
+
+/// The shared TUI launch: tokio runtime, storage, orchestrator, UI loop,
+/// shutdown. [`run_tui`] wraps it with the single-instance guard and data
+/// migration; [`run_demo`] boots it on a throwaway root with the scripted
+/// supervisor and `apply_env: false`.
+fn launch_tui(
+    paths: &Paths,
+    supervisor: Arc<dyn ServerSupervisor>,
+    apply_env: bool,
+    loc: &Locale,
+) -> anyhow::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -199,14 +268,16 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     if fresh_config {
         config.interface.language = paths.default_language();
     }
-    apply_env_overrides(&mut config);
+    if apply_env {
+        apply_env_overrides(&mut config);
+    }
 
     runtime.spawn(orchestrator::run(OrchestratorDeps {
         cmd_rx,
         evt_tx: evt_tx.clone(),
         storage,
         config,
-        supervisor: Arc::new(LlamaSupervisor),
+        supervisor,
         // New profiles' scaffold language — from defaults.json (axis A, docs/history/i18n.md).
         default_language: paths.default_language(),
     }));

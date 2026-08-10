@@ -3,7 +3,7 @@
 Every image here is rendered **from code**, never captured from a live
 session — so no private data can leak into them, and they cannot silently rot
 as the app evolves. The pipeline is described in
-[docs/demo-screenshots.md](../../docs/demo-screenshots.md):
+[docs/history/demo-screenshots.md](../../docs/history/demo-screenshots.md):
 
 1. `src/features/demo.rs` — a fixed showcase conversation, chat list, config
    and self-model (fixed ids and timestamps: captures are byte-stable);
