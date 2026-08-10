@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -30,6 +30,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — stage 1 (fixture, frame dumps, raster tool) (done)
 - Post-M9: demo screenshots — stage 2 (the full set, the drift gate, README embeds) (done)
 - Post-M9: demo screenshots — stage 3 (the interactive `mindfork demo`) (done)
+- Post-M9: demo screenshots — stage 4 (SVG writer for mindfork.io) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1021,3 +1022,32 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   tests green (+5), 85 `#[ignore]`.** No live-model run (the engine is the
   mock by definition); the one thing only a human can judge — the demo in a
   real terminal — is the review step: `cargo run -- demo`.
+
+### Post-M9: demo screenshots — stage 4 (SVG writer for mindfork.io) (done)
+
+- **The deferred vector half of the screenshot pipeline** (deferred by the
+  demo-screenshots plan until the site could set the sizes and themes it
+  must serve; shipped with the website track's S4, branch
+  `feat/screenshots-svg`). `tools/screenshots.py` gained `--format
+  png|svg|both` (default both) and a `render_svg`: merged background
+  rects, one `<text>` per row with a `<tspan>` per same-style run,
+  classes for bold/italic/underline/strikethrough, solo middle-anchored
+  tspans for wide and fallback-font cells — the vector cousin of the raster
+  path's centered fallback drawing. The `<style>` is scoped under the
+  root id, so a copy inlined into a page cannot leak rules into it; the
+  font arrives by `@font-face` reference (`--svg-font-base`, default
+  `/fonts/` — the site serves its own woff2).
+- **Two measured traps.** Pillow's px-hinted `getlength("0")` said 10.0
+  where the font's true advance is 9.6 (0.6 em at 16 px) — browsers lay
+  glyphs out unhinted, so a grid built on 10.0 would leave every long run
+  landing short of its cells; the grid now comes straight from the font
+  tables (`hmtx`/`hhea`/`head`), and every multi-cell run also
+  carries `textLength` as insurance against a viewer substituting a
+  font with a different advance. And glyphs outside JetBrains Mono's
+  coverage (`✦`, `⚒`) render from the viewer's fallback fonts — exact
+  on the PNG, viewer-dependent in SVG; accepted, since the PNG remains the
+  byte-exact reference.
+- **Outcome**: 8–17 KB per frame against the PNGs' 100–400 KB, crisp at
+  any zoom. PNG stays the README format — GitHub cannot load fonts into an
+  embedded SVG. The consuming side (inlining, theme pairing) is the
+  website journal's S4 entry.

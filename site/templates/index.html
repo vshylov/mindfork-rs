@@ -21,7 +21,8 @@
   <div class="wrap">
     <figure class="term">
       <div class="term-bar"><span class="term-title">mindfork — chat</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-      <img src="/screenshots/chat-dark-en.png" data-dark="/screenshots/chat-dark-en.png" data-light="/screenshots/chat-light-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a tool card" fetchpriority="high">
+      <div class="only-dark">{{ load_data(path="static/screenshots/chat-dark-en.svg", format="plain") | safe }}</div>
+      <div class="only-light">{{ load_data(path="static/screenshots/chat-light-en.svg", format="plain") | safe }}</div>
     </figure>
   </div>
 </section>
@@ -46,22 +47,26 @@
     <div class="shot-grid">
       <figure class="term">
         <div class="term-bar"><span class="term-title">chats</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-        <img src="/screenshots/chat-list-dark-en.png" data-dark="/screenshots/chat-list-dark-en.png" data-light="/screenshots/chat-list-light-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" loading="lazy">
+        <div class="only-dark">{{ load_data(path="static/screenshots/chat-list-dark-en.svg", format="plain") | safe }}</div>
+        <div class="only-light">{{ load_data(path="static/screenshots/chat-list-light-en.svg", format="plain") | safe }}</div>
         <figcaption>The chat list — search, sort, per-profile isolation.</figcaption>
       </figure>
       <figure class="term">
         <div class="term-bar"><span class="term-title">settings — model</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-        <img src="/screenshots/settings-model-dark-en.png" data-dark="/screenshots/settings-model-dark-en.png" data-light="/screenshots/settings-model-light-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" loading="lazy">
+        <div class="only-dark">{{ load_data(path="static/screenshots/settings-model-dark-en.svg", format="plain") | safe }}</div>
+        <div class="only-light">{{ load_data(path="static/screenshots/settings-model-light-en.svg", format="plain") | safe }}</div>
         <figcaption>A managed llama-server — or any OpenAI-compatible endpoint.</figcaption>
       </figure>
       <figure class="term">
         <div class="term-bar"><span class="term-title">settings — tools</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-        <img src="/screenshots/settings-tools-dark-en.png" data-dark="/screenshots/settings-tools-dark-en.png" data-light="/screenshots/settings-tools-light-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" loading="lazy">
+        <div class="only-dark">{{ load_data(path="static/screenshots/settings-tools-dark-en.svg", format="plain") | safe }}</div>
+        <div class="only-light">{{ load_data(path="static/screenshots/settings-tools-light-en.svg", format="plain") | safe }}</div>
         <figcaption>The tool loop: web, Python sandbox, files, video, MCP.</figcaption>
       </figure>
       <figure class="term">
         <div class="term-bar"><span class="term-title">self-model</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-        <img src="/screenshots/self-model-dark-en.png" data-dark="/screenshots/self-model-dark-en.png" data-light="/screenshots/self-model-light-en.png" alt="the self-model screen: the assistant's summary, goals with statuses, its model of the user, and dated observations" loading="lazy">
+        <div class="only-dark">{{ load_data(path="static/screenshots/self-model-dark-en.svg", format="plain") | safe }}</div>
+        <div class="only-light">{{ load_data(path="static/screenshots/self-model-light-en.svg", format="plain") | safe }}</div>
         <figcaption>The self-model — what it remembers between sessions.</figcaption>
       </figure>
     </div>

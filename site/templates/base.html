@@ -21,7 +21,8 @@
 <header class="site-head">
   <div class="wrap head-row">
     <a class="brand" href="/" aria-label="mindfork — home">
-      <img class="wordmark" src="/brand/mindfork-wordmark-dark.svg" data-dark="/brand/mindfork-wordmark-dark.svg" data-light="/brand/mindfork-wordmark-light.svg" alt="mindfork" height="22">
+      <img class="wordmark only-dark" src="/brand/mindfork-wordmark-dark.svg" alt="mindfork" height="22">
+      <img class="wordmark only-light" src="/brand/mindfork-wordmark-light.svg" alt="mindfork" height="22">
     </a>
     <nav class="site-nav">
       <a href="/blog/">Blog</a>
@@ -50,24 +51,14 @@
 </footer>
 <script>
 (function(){
-  var root = document.documentElement;
-  function sync(t){
-    var imgs = document.querySelectorAll("img[data-dark]");
-    for (var i = 0; i < imgs.length; i++){
-      var im = imgs[i];
-      im.src = (t === "light" && im.dataset.light) ? im.dataset.light : im.dataset.dark;
-    }
-  }
   var btn = document.getElementById("theme-toggle");
-  if (btn){
-    btn.addEventListener("click", function(){
-      var t = root.dataset.theme === "dark" ? "light" : "dark";
-      root.dataset.theme = t;
-      try { localStorage.setItem("theme", t); } catch(e){}
-      sync(t);
-    });
-  }
-  sync(root.dataset.theme);
+  if (!btn) return;
+  btn.addEventListener("click", function(){
+    var root = document.documentElement;
+    var t = root.dataset.theme === "dark" ? "light" : "dark";
+    root.dataset.theme = t;
+    try { localStorage.setItem("theme", t); } catch(e){}
+  });
 })();
 </script>
 </body>

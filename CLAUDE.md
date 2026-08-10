@@ -161,16 +161,18 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-10, version 0.9.5)
+## Status (2026-08-11, version 0.9.5)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **1977 unit tests
 green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
-most recent tracks: the **mindfork.io website, stages S1–S3** (a Zola site
-under `site/`, terminal-styled on the brand palette, Zola pinned to 0.22.1 for
-a Windows template-discovery regression in 0.23.x; **live at
-https://mindfork.io** — one CloudFormation stack `infra/website.cfn.yaml`:
-private S3 + OAC, CloudFront, ACM, Route53; `site.yml` deploys from CI on
-push to main through the stack's OIDC role, no stored keys;
+most recent tracks: the **mindfork.io website, S1–S4 — track complete** (a
+Zola site under `site/`, terminal-styled on the brand palette, **live at
+https://mindfork.io**: one CloudFormation stack `infra/website.cfn.yaml` —
+private S3 + OAC, CloudFront, ACM, Route53 — with CI deploys on push to main
+through the stack's OIDC role, no stored keys; the landing inlines
+screenshots as generated SVG — the demo-screenshots stage 4, shipped from
+the site side; Zola pinned to 0.22.1 for a Windows template-discovery
+regression in 0.23.x;
 [docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)),
 **demo screenshots + demo mode** (a private-data-free,
 rot-gated capture pipeline — demo fixture → headless frame dumps →

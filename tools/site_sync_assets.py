@@ -32,9 +32,10 @@ COPIES: list[tuple[str, str]] = [
 
 def main() -> int:
     pairs = list(COPIES)
-    shots = sorted((ROOT / "artwork" / "screenshots").glob("*.png"))
+    shots_dir = ROOT / "artwork" / "screenshots"
+    shots = sorted(shots_dir.glob("*.png")) + sorted(shots_dir.glob("*.svg"))
     if not shots:
-        print("error: no PNGs under artwork/screenshots/", file=sys.stderr)
+        print("error: no renders under artwork/screenshots/", file=sys.stderr)
         return 1
     pairs += [
         (f"artwork/screenshots/{p.name}", f"site/static/screenshots/{p.name}")
