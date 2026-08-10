@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}<title>{{ page.title }} — mindfork</title>{% endblock %}
+{% block desc %}{% if page.description %}<meta name="description" content="{{ page.description }}">{% else %}<meta name="description" content="{{ config.description }}">{% endif %}{% endblock %}
+
+{% block content %}
+<article class="prose-wrap">
+  <div class="wrap narrow">
+    <h1 class="post-h1">{{ page.title }}</h1>
+    <p class="post-meta mono">{% if page.date %}{{ page.date }} · {% endif %}{{ page.reading_time }} min read</p>
+    <div class="prose">
+      {{ page.content | safe }}
+    </div>
+  </div>
+</article>
+{% endblock %}

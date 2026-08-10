@@ -1,5 +1,11 @@
 /target
 __pycache__/
+# Website (site/, docs/research/mindfork-io-website.md): build output and the
+# brand assets mirrored from artwork/ by tools/site_sync_assets.py.
+site/public/
+site/static/screenshots/
+site/static/brand/
+site/static/favicon.ico
 # Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).
 /lcov.info
 # Editor state. Written by VS Code / Cursor when the SonarQube IDE extension

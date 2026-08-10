@@ -143,7 +143,7 @@ def print_fmt_spans(line: str, state: str | None) -> tuple[list[tuple[int, int]]
 
 
 # Whole files that legitimately keep Cyrillic and are skipped entirely.
-SKIP_EXT = (".png", ".ico", ".dic", ".aff")
+SKIP_EXT = (".png", ".ico", ".dic", ".aff", ".woff2")
 SKIP_FILES = {
     "locales/ru.json",
     # The migration glossary is a RU -> EN mapping table: the Russian column is

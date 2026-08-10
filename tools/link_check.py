@@ -91,7 +91,14 @@ def tracked_markdown():
     out = subprocess.run(
         ["git", "ls-files", "*.md"], capture_output=True, text=True, check=True
     ).stdout
-    return [Path(line) for line in out.splitlines() if line]
+    # `site/` content links live in Zola's URL space (`@/…`, absolute site
+    # paths) — path-resolution semantics don't apply to them, and `zola build`
+    # checks that space itself. See docs/research/mindfork-io-website.md §5.5.
+    return [
+        p
+        for p in (Path(line) for line in out.splitlines() if line)
+        if p.parts[:1] != ("site",)
+    ]
 
 
 def strip_code(lines):

@@ -1,0 +1,48 @@
+// Terminal window chrome around screenshots — the site's core visual motif.
+
+.term {
+  margin: 0;
+  background: var(--term-bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  background: var(--term-bar);
+  border-bottom: 1px solid var(--line);
+}
+.term-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--line);
+  &:nth-child(1) {
+    background: var(--accent);
+  }
+  &:nth-child(2) {
+    background: var(--branch);
+  }
+}
+.term-title {
+  margin-left: 8px;
+  font: 500 12px var(--font-mono);
+  color: var(--muted);
+}
+.term img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+figure.term figcaption {
+  font: 12.5px var(--font-mono);
+  color: var(--muted);
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--term-bar);
+}

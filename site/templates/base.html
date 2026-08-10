@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block title %}<title>{{ config.title }} — an AI chat that lives in your terminal</title>{% endblock %}
+{% block desc %}<meta name="description" content="{{ config.description }}">{% endblock %}
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" type="image/svg+xml" href="/brand/mindfork-icon-transparent.svg">
+<link rel="apple-touch-icon" href="/brand/mindfork-icon-256.png">
+<meta property="og:site_name" content="mindfork">
+<meta property="og:image" content="{{ get_url(path='brand/mindfork-icon-256.png') }}">
+<meta name="twitter:card" content="summary">
+<link rel="alternate" type="application/atom+xml" title="mindfork news" href="{{ get_url(path='atom.xml') }}">
+<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/JetBrainsMono-ExtraBold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ get_url(path='style.css') }}">
+<script>(function(){var t="dark";try{t=localStorage.getItem("theme")||(window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");}catch(e){}document.documentElement.dataset.theme=t;})();</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="/" aria-label="mindfork — home">
+      <img class="wordmark" src="/brand/mindfork-wordmark-dark.svg" data-dark="/brand/mindfork-wordmark-dark.svg" data-light="/brand/mindfork-wordmark-light.svg" alt="mindfork" height="22">
+    </a>
+    <nav class="site-nav">
+      <a href="/blog/">Blog</a>
+      <a href="/articles/">Articles</a>
+      <a href="{{ config.extra.github }}">GitHub</a>
+      <button id="theme-toggle" type="button" aria-label="Toggle color theme">◐</button>
+    </nav>
+  </div>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <div class="foot-brand">
+      <img src="/brand/mindfork-icon-transparent.svg" alt="" width="18" height="18">
+      <span class="mono foot-name">mindfork</span>
+      <span class="foot-tagline mono">{{ config.extra.tagline }}</span>
+    </div>
+    <div class="foot-links">
+      <a href="{{ config.extra.github }}">GitHub</a>
+      <a href="{{ get_url(path='atom.xml') }}">Atom feed</a>
+      <span>© 2026 Vladimir Shylov · MIT</span>
+    </div>
+  </div>
+</footer>
+<script>
+(function(){
+  var root = document.documentElement;
+  function sync(t){
+    var imgs = document.querySelectorAll("img[data-dark]");
+    for (var i = 0; i < imgs.length; i++){
+      var im = imgs[i];
+      im.src = (t === "light" && im.dataset.light) ? im.dataset.light : im.dataset.dark;
+    }
+  }
+  var btn = document.getElementById("theme-toggle");
+  if (btn){
+    btn.addEventListener("click", function(){
+      var t = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = t;
+      try { localStorage.setItem("theme", t); } catch(e){}
+      sync(t);
+    });
+  }
+  sync(root.dataset.theme);
+})();
+</script>
+</body>
+</html>

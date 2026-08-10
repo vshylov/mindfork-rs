@@ -1,0 +1,29 @@
+# mindfork.io — site configuration.
+# Track/design doc: docs/research/mindfork-io-website.md
+#
+# Zola is pinned to 0.22.1 for now: 0.23.0–0.23.2 don't discover templates/
+# on Windows (getzola/zola#3229; the fix is merged, unreleased). The file is
+# named `config.toml`, not `zola.toml`, for the same reason — 0.22 reads only
+# this name, and 0.23 reads it as a fallback. Templates use no shortcodes and
+# only v1/v2-compatible Tera, so the future bump to 0.23.x is a version
+# number, not a migration.
+
+base_url = "https://mindfork.io"
+title = "mindfork"
+description = "A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux."
+default_language = "en"
+
+compile_sass = true
+build_search_index = false
+generate_feeds = true
+feed_filenames = ["atom.xml"]
+
+[markdown]
+
+[markdown.highlighting]
+theme = "catppuccin-mocha"
+
+[extra]
+tagline = "TUI · RUST · LOCAL LLM"
+github = "https://github.com/vshylov/mindfork-rs"
+releases = "https://github.com/vshylov/mindfork-rs/releases"

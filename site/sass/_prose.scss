@@ -1,0 +1,72 @@
+// Article / blog-post body typography.
+
+.prose-wrap {
+  padding: 60px 0 72px;
+}
+.post-h1 {
+  font-size: clamp(30px, 4.5vw, 40px);
+}
+.post-meta {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0 0 34px;
+}
+
+.prose {
+  font-size: 17px;
+
+  p,
+  li {
+    line-height: 1.75;
+  }
+  h2 {
+    margin-top: 44px;
+    font-size: 21px;
+  }
+  h3 {
+    margin-top: 30px;
+  }
+  pre {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.55;
+    code {
+      background: none;
+      border: none;
+      padding: 0;
+    }
+  }
+  blockquote {
+    margin: 0;
+    padding: 2px 20px;
+    border-left: 3px solid var(--accent);
+    color: var(--muted);
+  }
+  img {
+    max-width: 100%;
+    border-radius: 10px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 15px;
+  }
+  th,
+  td {
+    border: 1px solid var(--line);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 36px 0;
+  }
+}
