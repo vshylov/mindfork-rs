@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  mindfork.io static website: a private S3 bucket behind CloudFront (Origin
+  Access Control), an ACM certificate (apex + wildcard), Route53 aliases, and
+  the least-privilege GitHub Actions deploy role (OIDC, no stored keys).
+  Design and decisions: docs/research/mindfork-io-website.md section 5.3.
+  Deploy in us-east-1 only - the CloudFront viewer certificate must live
+  there, and the whole stack keeps to one region on purpose.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: mindfork.io
+    Description: Apex domain; www is derived from it.
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Default: Z0725539OZLHCKB3LW5G
+    Description: The existing public hosted zone for DomainName.
+  GitHubSub:
+    Type: String
+    Default: "repo:vshylov/mindfork-rs:ref:refs/heads/main"
+    Description: OIDC subject the deploy role trusts (repo + branch).
+  CreateGitHubOidcProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: >-
+      An account can hold only one provider per URL; pass "false" if
+      token.actions.githubusercontent.com already exists in this account.
+
+Conditions:
+  MakeOidc: !Equals [!Ref CreateGitHubOidcProvider, "true"]
+
+Resources:
+  # The bucket name is deliberately auto-generated: a dotted name (e.g.
+  # "mindfork.io-site") would break TLS between CloudFront and the S3
+  # regional endpoint, since the *.s3.us-east-1.amazonaws.com wildcard
+  # covers a single label only.
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOac
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # DNS-validated via the hosted zone: CloudFormation writes the validation
+  # CNAME itself and waits for issuance. The wildcard SAN makes future
+  # subdomains (docs., demo.) free. One DomainValidationOptions entry on
+  # purpose: apex and *.apex share the identical validation CNAME, and
+  # listing both makes the handler write the same record twice - Route53
+  # answers 400 "invalid set of changes" (measured, first deploy attempt).
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub "*.${DomainName}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  Oac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Two jobs in one viewer-request function: 301 www to the apex, and append
+  # index.html to Zola's trailing-slash directory URLs - a private S3 REST
+  # origin serves no directory indexes itself (research doc section 3.1).
+  UrlRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-url-rewrite"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: "www->apex redirect + directory index rewrite"
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host ? request.headers.host.value : '';
+          if (host === 'www.${DomainName}') {
+            return {
+              statusCode: 301,
+              statusDescription: 'Moved Permanently',
+              headers: { location: { value: 'https://${DomainName}' + request.uri } }
+            };
+          }
+          if (request.uri.endsWith('/')) {
+            request.uri += 'index.html';
+          } else if (!request.uri.includes('.')) {
+            request.uri += '/index.html';
+          }
+          return request;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${DomainName} static site"
+        Aliases:
+          - !Ref DomainName
+          - !Sub "www.${DomainName}"
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: s3-site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt Oac.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: s3-site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          # Managed-CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          # Managed-SecurityHeadersPolicy (HSTS, nosniff, XFO, referrer)
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt UrlRewriteFunction.FunctionMetadata.FunctionARN
+        # A missing key answers 403 under OAC (no ListBucket); both map to
+        # the site's own 404 page.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+            ErrorCachingMinTTL: 60
+          - ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+            ErrorCachingMinTTL: 60
+
+  DnsRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: !Sub "${DomainName} -> CloudFront aliases"
+      RecordSets:
+        # Z2FDTNDATAQYW2 is CloudFront's fixed alias hosted zone id.
+        - Name: !Ref DomainName
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Ref DomainName
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Sub "www.${DomainName}"
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Sub "www.${DomainName}"
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeOidc
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS validates GitHub's OIDC issuer through its own trust store these
+      # days; the thumbprints are kept for the API's sake.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mindfork-site-deploy
+      Description: >-
+        GitHub Actions deploy role for the mindfork.io site: s3 sync into the
+        site bucket and one CloudFront invalidation - nothing else.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeOidc
+                - !Ref GitHubOidcProvider
+                - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Ref GitHubSub
+      Policies:
+        - PolicyName: site-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: SyncList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SiteBucket.Arn
+              - Sid: SyncObjects
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub "${SiteBucket.Arn}/*"
+              - Sid: Invalidate
+                Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+Outputs:
+  BucketName:
+    Description: Sync target for `aws s3 sync site/public/ s3://<bucket> --delete`.
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: Invalidation target.
+    Value: !Ref Distribution
+  DistributionDomain:
+    Description: The distribution's own hostname (works before DNS settles).
+    Value: !GetAtt Distribution.DomainName
+  CertificateArn:
+    Value: !Ref Certificate
+  DeployRoleArn:
+    Description: role-to-assume for aws-actions/configure-aws-credentials.
+    Value: !GetAtt DeployRole.Arn
+  SiteUrl:
+    Value: !Sub "https://${DomainName}"
