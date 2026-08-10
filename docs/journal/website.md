@@ -10,10 +10,11 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (2)
+## Entries (3)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
+- Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -97,3 +98,27 @@ read [lessons.md](../lessons.md).
   role `arn:aws:iam::976877302614:role/mindfork-site-deploy`.
 - No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged, gates green;
   the stage's live run is the deployed site itself.
+
+### Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
+
+- **`.github/workflows/site.yml`** (branch `feat/website-ci`): pull requests
+  touching `site/**`, `artwork/**`, the asset-mirror script or the workflow
+  itself get a **build gate** — pinned Zola 0.22.1
+  (`taiki-e/install-action`, matching local dev until getzola/zola#3229
+  ships), the asset mirror, `zola check --skip-external-links` (internal
+  links only: external checking would put CI at the mercy of other people's
+  servers), `zola build`. Push to main on the same paths, plus
+  `workflow_dispatch` for a manual redeploy, runs the **deploy**: build →
+  `configure-aws-credentials@v6` assumes `mindfork-site-deploy` through the
+  job's OIDC token — no stored keys anywhere — then `aws s3 sync --delete`
+  and one `/*` invalidation (a single path, inside the free 1000/month).
+  The bucket and distribution ids are the stack's outputs, recorded as job
+  env next to a comment pointing at `infra/website.cfn.yaml`. Superseded PR
+  builds cancel each other; main deploys queue and never cancel mid-sync.
+- **Proven end to end the same day**: the gate leg ran green on its own PR
+  (#294 — the workflow sits in its own path filter), and the merge commit
+  fired the deploy leg: run success, the deploy job took **15 s** (the gate
+  job correctly skipped on push), and the site answered 200 after. What
+  remains of the track is S4 — the screenshot SVG writer and content.
+- No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged, gates
+  green; the stage's live run is the deploy run itself.

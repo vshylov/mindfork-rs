@@ -384,7 +384,11 @@ untouched until the design is reviewed.
   the handler write the same record twice and Route53 answered 400 (the
   first stack rolled back; the template carries the comment).
 - **S3 — CI deploy** (`feat/website-ci`): `site.yml` (PR build gate +
-  main deploy via OIDC role from the stack).
+  main deploy via OIDC role from the stack). **Done 2026-08-10** — the gate
+  leg ran green on PR #294 itself (the workflow sits in its own path
+  filter) and the merge commit fired the first deploy: success, 15 s, the
+  site answered 200 after. No stored keys — the job's OIDC token assumes
+  the stack's `mindfork-site-deploy` role.
 - **S4 — screenshots SVG writer + content**: the deferred stage 4 of the
   demo-screenshots track, built to the site's settled sizes/themes; content
   fill (features page, first articles), `ru` when F4 says so.
