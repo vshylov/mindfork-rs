@@ -369,7 +369,10 @@ untouched until the design is reviewed.
 - **S1 — scaffold and design** (`feat/website-scaffold`): `site/` with
   config, templates, Sass on the brand palette, landing + blog + articles
   skeletons, first news post; local `zola serve` preview. Gate: user
-  reviews the design live.
+  reviews the design live. **Done 2026-08-10 — design approved**, with one
+  review amendment: the terminal chrome dropped its macOS traffic-light
+  dots for right-aligned Windows/Linux caption glyphs (`─ □ ✕`) — the app
+  does not run on macOS, and the frames must not suggest it.
 - **S2 — infra** (`feat/website-infra`): `infra/website.cfn.yaml`, stack
   deployed, cert issued, DNS live, first manual `s3 sync` — https://mindfork.io
   answers. Gate: the site is up.

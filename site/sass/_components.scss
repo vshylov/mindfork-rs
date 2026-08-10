@@ -83,6 +83,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 26px;
+  align-items: start; // windows take their natural height, no stretched voids
 }
 
 // Feature cards
