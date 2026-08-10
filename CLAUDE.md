@@ -160,16 +160,19 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-09, version 0.9.5)
+## Status (2026-08-10, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **1962 unit tests
-green, 84 `#[ignore]` live smokes**. The most recent tracks: **Grok (xAI) as a
+The **M0–M9** plan is done, plus extensive post-M9 work — **1971 unit tests
+green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
+most recent tracks: **generated demo screenshots** (a private-data-free,
+rot-gated capture pipeline: demo fixture → headless frame dumps →
+`tools/screenshots.py`; plan and stages in
+[docs/demo-screenshots.md](docs/demo-screenshots.md)), **Grok (xAI) as a
 fourth cloud provider** (the first one added without a client of its own — see
 [docs/research/grok-xai-provider.md](docs/research/grok-xai-provider.md)), the
 **history compression** track (a rolling summary keeps a long chat inside the
 model's context window — `/compact`, an automatic trigger, and read-back tools
-for the folded range), **per-section budgets for the self-model injection**, and
-this documentation refactor.
+for the folded range), and the documentation refactor.
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

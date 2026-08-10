@@ -17,6 +17,8 @@ pub mod paths;
 pub mod sandbox;
 pub mod secrets;
 pub mod server;
+#[cfg(test)]
+pub mod shot;
 pub mod storage;
 pub mod theme;
 pub mod tokens;
