@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}<title>{{ section.title }} — mindfork</title>{% endblock %}
+{% block desc %}<meta name="description" content="{{ section.description }}">{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="crumb mono">~/mindfork/blog</p>
+    <h1>{{ section.title }}</h1>
+    <p class="lede">{{ section.description }}</p>
+  </div>
+</section>
+<section class="listing">
+  <div class="wrap">
+    <ul class="post-list big">
+      {% for p in section.pages %}
+      <li>
+        <span class="post-date mono">{{ p.date }}</span>
+        <div class="post-cell">
+          <a class="post-title" href="{{ p.permalink }}">{{ p.title }}</a>
+          {% if p.description %}<p class="post-desc">{{ p.description }}</p>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endblock %}

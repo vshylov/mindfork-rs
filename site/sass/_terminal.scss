@@ -1,0 +1,47 @@
+// Terminal window chrome around screenshots — the site's core visual motif.
+
+.term {
+  margin: 0;
+  background: var(--term-bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+// Windows/Linux-style caption bar: title on the left, `─ □ ✕` glyphs on the
+// right. Deliberately NOT macOS traffic lights — the app runs on Windows and
+// Linux, and the chrome should not suggest otherwise.
+.term-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--term-bar);
+  border-bottom: 1px solid var(--line);
+}
+.term-title {
+  font: 500 12px var(--font-mono);
+  color: var(--muted);
+}
+.term-controls {
+  font: 400 11px var(--font-mono);
+  color: var(--muted);
+  letter-spacing: 0.55em;
+  margin-right: -0.55em; // trailing letter-space compensation
+  white-space: nowrap;
+  user-select: none;
+}
+.term img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+figure.term figcaption {
+  font: 12.5px var(--font-mono);
+  color: var(--muted);
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--term-bar);
+}

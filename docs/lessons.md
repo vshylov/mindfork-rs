@@ -428,6 +428,15 @@ the user picked. Two smaller ones: a Pascal `{ }` comment containing an app cons
 selection per AppId, so a clean retest needs a clean registry state.
 — *the Windows installer can provision the Python sandbox*.
 
+**The newest Zola broke Windows twice over; reproduce on a pristine site before
+doubting your own config.** 0.23.0–0.23.2 do not discover `templates/` on Windows at
+all (upstream getzola/zola#3229 — "Template not found" for every custom template), and
+0.22.1's file-watcher never fires there, so `zola serve` keeps serving stale pages
+until restarted. The site pins 0.22.1 with the config named `config.toml` (both majors
+read that name); the dev loop is "edit → restart serve". A five-minute `zola init`
+repro answered what staring at correct templates could not.
+— *website — research + S1 scaffold (Zola, terminal-styled)*.
+
 ---
 
 ## 7. i18n, gates and localization

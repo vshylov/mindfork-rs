@@ -50,6 +50,7 @@ Two rules that follow from that:
 | working on **localization** | [docs/journal/i18n.md](docs/journal/i18n.md) · the i18n plans in `docs/history/` |
 | working on **packaging, installers, releases, branding** | architecture §12 · AGENTS.md §6 · [docs/journal/release.md](docs/journal/release.md) |
 | working on **CI workflows**, jobs, caches, the live-test gate | architecture §12 · AGENTS.md §6 · [docs/journal/ci.md](docs/journal/ci.md) |
+| working on the **website** — mindfork.io, `site/` | [docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md) · [docs/journal/website.md](docs/journal/website.md) |
 | working on **static analysis or a repository gate** | AGENTS.md §4, §6 · [docs/journal/quality.md](docs/journal/quality.md) |
 | **moving code without changing behaviour** | architecture §3 · [docs/journal/refactors.md](docs/journal/refactors.md) |
 | asking "how did it get this way" about M3–M9 | [docs/journal/milestones.md](docs/journal/milestones.md) · [docs/history/plan.md](docs/history/plan.md) |
@@ -164,7 +165,12 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **1977 unit tests
 green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
-most recent tracks: **demo screenshots + demo mode** (a private-data-free,
+most recent tracks: the **mindfork.io website, stage S1** (a Zola site under
+`site/`, terminal-styled on the brand palette, Zola pinned to 0.22.1 for a
+Windows template-discovery regression in 0.23.x; hosting decided — private S3
+behind CloudFront in one CloudFormation stack;
+[docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)),
+**demo screenshots + demo mode** (a private-data-free,
 rot-gated capture pipeline — demo fixture → headless frame dumps →
 `tools/screenshots.py` — plus the interactive `mindfork demo`: the real TUI on
 seeded data with a scripted engine, nothing touched outside a temp folder;

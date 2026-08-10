@@ -1,0 +1,43 @@
+// Brand palette (artwork/README.md) mapped onto UI roles.
+// Dark is the default; light applies via the explicit toggle ([data-theme])
+// or, with JS unavailable, via prefers-color-scheme.
+
+@mixin light-vars {
+  --bg: #fafafa;
+  --bg-2: #ffffff;
+  --term-bg: #ffffff;
+  --term-bar: #f4f4f5;
+  --fg: #27272a;
+  --fg-strong: #18181b;
+  --muted: #52525b;
+  --line: #e4e4e7;
+  --accent: #c25a27;
+  --accent-link: #a84e22;
+  --branch: #5c6370;
+  --shadow: 0 12px 32px rgba(24, 24, 27, 0.1);
+}
+
+:root {
+  --bg: #09090b;
+  --bg-2: #101013;
+  --term-bg: #0c0c0e;
+  --term-bar: #131318;
+  --fg: #d4d4d8;
+  --fg-strong: #fafafa;
+  --muted: #9d9da8;
+  --line: #232329;
+  --accent: #c25a27;
+  --accent-link: #e0783f;
+  --branch: #5c6370;
+  --shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  @include light-vars;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    @include light-vars;
+  }
+}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}<title>{{ section.title }}</title>{% endblock %}
+{% block desc %}<meta name="description" content="{{ section.description }}">{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="wrap">
+    <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
+    <h1>{{ section.extra.hero_title }}</h1>
+    <p class="lede">{{ section.extra.hero_sub }}</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="{{ config.extra.releases }}">Download</a>
+      <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
+    </div>
+    <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.</p>
+  </div>
+</section>
+
+<section class="shot">
+  <div class="wrap">
+    <figure class="term">
+      <div class="term-bar"><span class="term-title">mindfork — chat</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+      <img src="/screenshots/chat-dark-en.png" data-dark="/screenshots/chat-dark-en.png" data-light="/screenshots/chat-light-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a tool card" fetchpriority="high">
+    </figure>
+  </div>
+</section>
+
+<section class="features">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <div class="card-grid">
+      {% for f in section.extra.features %}
+      <div class="card">
+        <h3>{{ f.title }}</h3>
+        <p>{{ f.desc }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="gallery">
+  <div class="wrap">
+    <h2>Around the app</h2>
+    <div class="shot-grid">
+      <figure class="term">
+        <div class="term-bar"><span class="term-title">chats</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+        <img src="/screenshots/chat-list-dark-en.png" data-dark="/screenshots/chat-list-dark-en.png" data-light="/screenshots/chat-list-light-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" loading="lazy">
+        <figcaption>The chat list — search, sort, per-profile isolation.</figcaption>
+      </figure>
+      <figure class="term">
+        <div class="term-bar"><span class="term-title">settings — model</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+        <img src="/screenshots/settings-model-dark-en.png" data-dark="/screenshots/settings-model-dark-en.png" data-light="/screenshots/settings-model-light-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" loading="lazy">
+        <figcaption>A managed llama-server — or any OpenAI-compatible endpoint.</figcaption>
+      </figure>
+      <figure class="term">
+        <div class="term-bar"><span class="term-title">settings — tools</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+        <img src="/screenshots/settings-tools-dark-en.png" data-dark="/screenshots/settings-tools-dark-en.png" data-light="/screenshots/settings-tools-light-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" loading="lazy">
+        <figcaption>The tool loop: web, Python sandbox, files, video, MCP.</figcaption>
+      </figure>
+      <figure class="term">
+        <div class="term-bar"><span class="term-title">self-model</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+        <img src="/screenshots/self-model-dark-en.png" data-dark="/screenshots/self-model-dark-en.png" data-light="/screenshots/self-model-light-en.png" alt="the self-model screen: the assistant's summary, goals with statuses, its model of the user, and dated observations" loading="lazy">
+        <figcaption>The self-model — what it remembers between sessions.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="news">
+  <div class="wrap">
+    <h2>Latest news</h2>
+    {% set blog = get_section(path="blog/_index.md") %}
+    <ul class="post-list">
+      {% for p in blog.pages %}{% if loop.index <= 3 %}
+      <li>
+        <span class="post-date mono">{{ p.date }}</span>
+        <a class="post-title" href="{{ p.permalink }}">{{ p.title }}</a>
+      </li>
+      {% endif %}{% endfor %}
+    </ul>
+    <p class="more-row"><a class="more mono" href="/blog/">All posts →</a></p>
+  </div>
+</section>
+{% endblock %}

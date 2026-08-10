@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}<title>404 — mindfork</title>{% endblock %}
+
+{% block content %}
+<section class="err">
+  <div class="wrap">
+    <p class="err-code mono"><span class="ps1">$</span>cat /404<br>cat: /404: No such file or directory</p>
+    <h1>There's nothing here.</h1>
+    <p class="lede">The page moved, or never existed. <a href="/">Back to the prompt →</a></p>
+  </div>
+</section>
+{% endblock %}
