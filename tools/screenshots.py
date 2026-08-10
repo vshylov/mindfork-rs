@@ -5,9 +5,12 @@ Why: screenshots of a real session would expose private data and rot as the
 app evolves. Instead the app renders its screens headlessly from a demo
 fixture and serializes each frame as JSON (`cargo test dump_demo_frames --
 --ignored` writes `artwork/screenshots/dumps/*.json`; a drift-gate test keeps
-those dumps honest). This script is the raster half: it places every glyph at
-its grid cell — the dump's geometry is authoritative, no font-metrics
-guesswork — and writes PNGs for the README and the site.
+those dumps honest). This script renders them: **PNG** for the README (GitHub
+cannot load fonts into an embedded SVG) and **SVG** for mindfork.io (crisp at
+any zoom; the font arrives by `@font-face` reference, served by the site
+itself — the demo-screenshots track's stage 4, built once the site had set
+the sizes and themes it needs). Both place every glyph at its grid cell — the
+dump's geometry is authoritative, no font-metrics guesswork.
 
 The dump format (`src/shared/shot.rs::ShotFrame`): frame metadata (grid size,
 canvas colors) plus rows of cells `{s, w?, fg?, bg?, m?}` where `w` is the
@@ -18,13 +21,17 @@ Fonts: JetBrains Mono (the brand font; OFL) probed from the system the same
 way `artwork/build-wordmarks.py` does, with symbol-font fallbacks for glyphs
 outside its coverage (rounded borders and box drawing are in; `✦`/`⚒`-class
 symbols usually are not). The TTFs are deliberately not vendored; pass
-`--font-dir` if probing fails.
+`--font-dir` if probing fails. The SVG writer uses the same faces for
+geometry only (cell advance, ascent); the glyphs themselves are drawn by the
+viewer from the site's webfonts, with the SVG `<style>` scoped under the
+root id so an inlined copy cannot leak rules into the page.
 
 Third-party deps (the `build-wordmarks.py` precedent): Pillow for raster,
 fontTools for cmap coverage — `pip install pillow fonttools`.
 
 Usage:
-    python tools/screenshots.py                 # all dumps -> artwork/screenshots/
+    python tools/screenshots.py                 # all dumps -> PNG + SVG
+    python tools/screenshots.py --format svg    # vectors only
     python tools/screenshots.py --only chat-dark-en --size 17
 """
 
@@ -108,7 +115,19 @@ class Faces:
         for key, filename in VARIANTS.items():
             path = find_variant(font_dir, filename) or regular
             self.primary[key] = ImageFont.truetype(str(path), px)
-        self.primary_cmap = set(TTFont(str(regular)).getBestCmap())
+        tt = TTFont(str(regular))
+        self.primary_cmap = set(tt.getBestCmap())
+        # Em-relative metrics straight from the font tables — the SVG grid
+        # must use the *true* advance (0.6 em for JetBrains Mono), because
+        # browsers lay glyphs out unhinted: Pillow's px-hinted `getlength`
+        # (10.0 at 16 px vs the true 9.6) would make every long run land
+        # short of its grid cells.
+        upm = tt["head"].unitsPerEm
+        hhea = tt["hhea"]
+        zero_glyph = tt.getBestCmap()[ord("0")]
+        self.em_advance = tt["hmtx"][zero_glyph][0] / upm
+        self.em_ascent = hhea.ascent / upm
+        self.em_height = (hhea.ascent - hhea.descent + hhea.lineGap) / upm
         self.fallbacks: list[tuple[ImageFont.FreeTypeFont, set[int]]] = []
         for cand in FALLBACKS:
             p = Path(cand)
@@ -245,6 +264,178 @@ def render(dump: Path, out_dir: Path, faces: Faces, pad: int) -> Path:
     return out
 
 
+def svg_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def fmt(v: float) -> str:
+    """Compact coordinate: two decimals, trailing zeros trimmed."""
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def hexs(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def svg_label(stem: str) -> str:
+    """Accessible label from a dump stem like `settings-model-dark-en`."""
+    for theme in ("dark", "light"):
+        marker = f"-{theme}-"
+        if marker in stem:
+            screen, _, _ = stem.partition(marker)
+            return f"mindfork — the {screen.replace('-', ' ')} screen, {theme} theme"
+    return f"mindfork — {stem}"
+
+
+def render_svg(dump: Path, out_dir: Path, faces: Faces, pad: int, px: int, font_base: str) -> Path:
+    """One dump -> one SVG: merged background rects + one <text> per row with
+    a <tspan> per same-style run.
+
+    Runs keep the grid honest by construction: every run's `x` is set from
+    the cell index, so advance drift can never accumulate across runs, and
+    within a run every glyph is the primary monospace face at native advance.
+    Cells the primary font does not cover, and wide (w=2) cells, become solo
+    anchored-middle tspans centered in their box — the vector cousin of the
+    raster path's centered fallback drawing.
+    """
+    frame = json.loads(dump.read_text(encoding="utf-8"))
+    canvas_bg = parse_hex(frame["canvas_bg"])
+    canvas_fg = parse_hex(frame["canvas_fg"])
+
+    cell_w = px * faces.em_advance  # the font's true advance, unhinted
+    ascent = px * faces.em_ascent
+    cell_h = px * faces.em_height
+    width = frame["width"] * cell_w + 2 * pad
+    height = frame["height"] * cell_h + 2 * pad
+    sid = dump.stem
+
+    out: list[str] = []
+    out.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" id="{sid}" '
+        f'viewBox="0 0 {fmt(width)} {fmt(height)}" width="{fmt(width)}" height="{fmt(height)}" '
+        f'role="img" aria-label="{svg_label(sid)}">'
+    )
+    # Scoped under #id: an inlined copy must not leak rules into the page.
+    # The @font-face URLs are site-absolute — the site serves the woff2.
+    out.append("<style>")
+    for weight, style, filename in (
+        (400, "normal", "JetBrainsMono-Regular.woff2"),
+        (700, "normal", "JetBrainsMono-Bold.woff2"),
+        (400, "italic", "JetBrainsMono-Italic.woff2"),
+    ):
+        out.append(
+            "@font-face{font-family:'JetBrains Mono';"
+            f"src:url('{font_base}{filename}') format('woff2');"
+            f"font-weight:{weight};font-style:{style};font-display:swap}}"
+        )
+    out.append(
+        f"#{sid} text{{font:{px}px 'JetBrains Mono',monospace;fill:{hexs(canvas_fg)}}}"
+        f"#{sid} .b{{font-weight:700}}"
+        f"#{sid} .i{{font-style:italic}}"
+        f"#{sid} .u{{text-decoration:underline}}"
+        f"#{sid} .st{{text-decoration:line-through}}"
+        f"#{sid} .u.st{{text-decoration:underline line-through}}"
+    )
+    out.append("</style>")
+    out.append(f'<rect width="100%" height="100%" fill="{hexs(canvas_bg)}"/>')
+
+    for y, row in enumerate(frame["rows"]):
+        row_y = pad + y * cell_h
+        # Pass 1 — background rects, consecutive same-bg cells merged.
+        x = 0
+        run_x, run_w, run_bg = 0, 0, None
+        for cell in row:
+            w = cell.get("w", 1)
+            _, bg = cell_colors(cell, canvas_fg, canvas_bg)
+            key = bg if bg != canvas_bg else None
+            if key == run_bg:
+                run_w += w
+            else:
+                if run_bg is not None:
+                    out.append(
+                        f'<rect x="{fmt(pad + run_x * cell_w)}" y="{fmt(row_y)}" '
+                        f'width="{fmt(run_w * cell_w)}" height="{fmt(cell_h)}" fill="{hexs(run_bg)}"/>'
+                    )
+                run_x, run_w, run_bg = x, w, key
+            x += w
+        if run_bg is not None:
+            out.append(
+                f'<rect x="{fmt(pad + run_x * cell_w)}" y="{fmt(row_y)}" '
+                f'width="{fmt(run_w * cell_w)}" height="{fmt(cell_h)}" fill="{hexs(run_bg)}"/>'
+            )
+
+        # Pass 2 — text runs. A run key is (fg, B, I, U, S); spaces join the
+        # current run only when the full key matches, else they end it.
+        spans: list[str] = []
+        run_chars: list[str] = []
+        run_key: tuple | None = None
+        run_x = 0
+        run_cells = 0
+
+        def flush() -> None:
+            nonlocal run_chars, run_key, run_cells
+            if run_key is None or not "".join(run_chars).strip():
+                run_chars, run_key, run_cells = [], None, 0
+                return
+            fg, mods = run_key
+            classes = " ".join(
+                cls
+                for flag, cls in (("B", "b"), ("I", "i"), ("U", "u"), ("S", "st"))
+                if flag in mods
+            )
+            attrs = [f'x="{fmt(pad + run_x * cell_w)}"']
+            # textLength pins the run's end to the grid even if a viewer
+            # substitutes a font with a slightly different advance.
+            if run_cells > 1:
+                attrs.append(f'textLength="{fmt(run_cells * cell_w)}"')
+            if classes:
+                attrs.append(f'class="{classes}"')
+            if fg != canvas_fg:
+                attrs.append(f'fill="{hexs(fg)}"')
+            spans.append(f"<tspan {' '.join(attrs)}>{svg_escape(''.join(run_chars))}</tspan>")
+            run_chars, run_key, run_cells = [], None, 0
+
+        x = 0
+        for cell in row:
+            w = cell.get("w", 1)
+            mods = cell.get("m", "")
+            fg, _ = cell_colors(cell, canvas_fg, canvas_bg)
+            s = cell["s"]
+            hidden = "H" in mods or not s.strip() and "U" not in mods and "S" not in mods
+            covered = all(ord(c) in faces.primary_cmap or ord(c) < 0x20 for c in s)
+            solo = w > 1 or not covered
+            key = (fg, "".join(m for m in "BIUS" if m in mods))
+            if hidden and s == " " and run_key == key:
+                run_chars.append(s)  # a space continues a same-style run
+                run_cells += 1
+            elif hidden:
+                flush()
+            elif solo:
+                flush()
+                center = pad + (x + w / 2) * cell_w
+                fill = f' fill="{hexs(fg)}"' if fg != canvas_fg else ""
+                spans.append(
+                    f'<tspan x="{fmt(center)}" text-anchor="middle"{fill}>{svg_escape(s)}</tspan>'
+                )
+            elif run_key == key:
+                run_chars.append(s)
+                run_cells += 1
+            else:
+                flush()
+                run_x, run_key, run_chars, run_cells = x, key, [s], 1
+            x += w
+        flush()
+        if spans:
+            out.append(
+                f'<text xml:space="preserve" y="{fmt(row_y + ascent)}">{"".join(spans)}</text>'
+            )
+
+    out.append("</svg>")
+    path = out_dir / f"{dump.stem}.svg"
+    path.write_text("\n".join(out), encoding="utf-8", newline="\n")
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dumps", type=Path, default=DUMPS, help="dump directory or a single .json")
@@ -253,6 +444,17 @@ def main() -> int:
     parser.add_argument("--size", type=int, default=16, help="font size in px (default 16)")
     parser.add_argument("--pad", type=int, default=24, help="canvas padding in px (default 24)")
     parser.add_argument("--font-dir", type=Path, help="directory with JetBrainsMono-*.ttf")
+    parser.add_argument(
+        "--format",
+        choices=("png", "svg", "both"),
+        default="both",
+        help="which renders to write (default both)",
+    )
+    parser.add_argument(
+        "--svg-font-base",
+        default="/fonts/",
+        help="URL prefix for the SVG @font-face sources (default /fonts/, the site's own)",
+    )
     args = parser.parse_args()
 
     dumps_root = under_repo(args.dumps, "--dumps")
@@ -266,14 +468,21 @@ def main() -> int:
         return 1
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    faces = Faces(args.font_dir, args.size * SS)
+    faces_png = Faces(args.font_dir, args.size * SS) if args.format in ("png", "both") else None
+    faces_svg = Faces(args.font_dir, args.size) if args.format in ("svg", "both") else None
     for dump in dumps:
-        out = render(dump, out_dir, faces, args.pad)
-        print(f"{dump.name} -> {out.relative_to(REPO)}")
-    if faces.missing:
+        if faces_png:
+            out = render(dump, out_dir, faces_png, args.pad)
+            print(f"{dump.name} -> {out.relative_to(REPO)}")
+        if faces_svg:
+            out = render_svg(dump, out_dir, faces_svg, args.pad, args.size, args.svg_font_base)
+            print(f"{dump.name} -> {out.relative_to(REPO)}")
+    missing = (faces_png.missing if faces_png else set()) | (
+        faces_svg.missing if faces_svg else set()
+    )
+    if missing:
         # Name what did not render rather than shipping silent tofu.
-        glyphs = " ".join(sorted(faces.missing))
-        print(f"WARNING: no font covered: {glyphs}", file=sys.stderr)
+        print(f"WARNING: no font covered: {' '.join(sorted(missing))}", file=sys.stderr)
         return 2
     return 0
 

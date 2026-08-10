@@ -10,11 +10,12 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (3)
+## Entries (4)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
 - Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
+- Post-M9: website — S4: vector screenshots + the engine article (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -122,3 +123,31 @@ read [lessons.md](../lessons.md).
   remains of the track is S4 — the screenshot SVG writer and content.
 - No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged, gates
   green; the stage's live run is the deploy run itself.
+
+### Post-M9: website — S4: vector screenshots + the engine article (done)
+
+- **All ten screenshots on the landing are now inline SVG** (the writer
+  itself — the release journal's "demo screenshots — stage 4" entry):
+  Zola's `load_data(format="plain")` inlines both theme variants of each
+  frame, and the pairing is pure CSS (`.only-dark`/`.only-light`), so
+  the image-swap script is gone — the theme toggle is once again the
+  site's only JavaScript. `index.html` grew to 133 KB raw (~30 KB over
+  the wire — CloudFront compresses), buying zero image requests on the
+  landing and text that stays crisp at any zoom; the PNGs remain for the
+  README and as the byte-exact reference.
+- **One cascade lesson, measured in the preview**: the visibility
+  utilities lost to a later component rule — `.wordmark { display:block
+  }` out-cascaded `.only-light { display:none }` at equal specificity,
+  showing both wordmarks side by side. The utilities now carry
+  `!important`, which is exactly the tool's intended use.
+- JetBrainsMono-**Italic**.woff2 joined the site fonts (thinking blocks
+  are italic); the asset mirror copies `*.svg` alongside `*.png`.
+- **Second article** — "Why the engine is a server, not a library": the
+  engine-contract story (embedded runtime tried and rejected,
+  managed/external modes, cloud providers as sibling implementations,
+  honest sampling, EOS by token id), sourced from ADR 0004 and CLAUDE.md.
+  `ru` stays deferred on F4's own terms — content stabilizes in English
+  first.
+- No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged; the
+  stage's check is the built site itself, verified in the local preview
+  in both themes.

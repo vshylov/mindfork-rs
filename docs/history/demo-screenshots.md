@@ -5,8 +5,11 @@ Status: **track complete (2026-08-10).** Forks decided by the user
 capture set + the drift gate + README embeds) merged; stage 3 (the
 interactive `mindfork demo`) shipped the un-gated mock engine, the demo
 supervisor, the seeded throwaway root and the CLI subcommand. Stage 4 (an
-SVG writer for mindfork.io) was deliberately deferred to the site work and
-lives in [docs/roadmap.md](../roadmap.md). One deviation from §4 as written:
+SVG writer for mindfork.io) was deliberately deferred until the site work
+had set the sizes and themes it must serve — and shipped with the site's
+own stage S4 on 2026-08-11: [docs/journal/release.md](../journal/release.md)
+("demo screenshots — stage 4") and
+[docs/journal/website.md](../journal/website.md). One deviation from §4 as written:
 the "demo" marker landed in the **feed header caption** (the engine is
 honestly named `demo (mock engine)` via the external-mode model name — zero
 new UI surface) rather than as a dedicated status-bar chip, which would have

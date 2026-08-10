@@ -27,6 +27,34 @@
     sans-serif;
 }
 
+// Theme-paired content (inline screenshot SVGs, the wordmark): the dark
+// variant shows by default, the light one under the explicit toggle or —
+// with JS unavailable — under the OS preference. Pure CSS, no swap script.
+// `!important` is deliberate: these are visibility utilities, and a
+// component's own `display` (e.g. `.wordmark { display: block }`) must not
+// out-cascade them.
+.only-light {
+  display: none !important;
+}
+:root[data-theme="light"] {
+  .only-dark {
+    display: none !important;
+  }
+  .only-light {
+    display: block !important;
+  }
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    .only-dark {
+      display: none !important;
+    }
+    .only-light {
+      display: block !important;
+    }
+  }
+}
+
 * {
   box-sizing: border-box;
 }

@@ -1,6 +1,8 @@
 # mindfork.io — the project website: stack research and track design
 
-Status: research + design plan, forks pending the user's decision (2026-08-10).
+Status: **track complete (2026-08-11)** — S1–S4 done, the site is live at
+https://mindfork.io; decisions in §7, stage outcomes in §8. Originally:
+research + design plan (2026-08-10).
 Verified facts below carry their sources; AWS and Zola facts were checked
 against primary documentation and release pages on 2026-08-10, and the account
 state was inspected with the read-only `aws` CLI the same day.
@@ -392,6 +394,11 @@ untouched until the design is reviewed.
 - **S4 — screenshots SVG writer + content**: the deferred stage 4 of the
   demo-screenshots track, built to the site's settled sizes/themes; content
   fill (features page, first articles), `ru` when F4 says so.
+  **Done 2026-08-11** — the writer shipped (release journal, "demo
+  screenshots — stage 4": true-advance grid from the font tables,
+  `textLength` insurance, id-scoped styles), all ten frames are inlined on
+  the landing with pure-CSS theme pairing (the image-swap script is gone),
+  and the second article is up. `ru` remains open on F4's own terms.
 
 Each stage is its own branch/PR per AGENTS.md §2; S1 needs no live-stack run
 (pure static output — stated explicitly per AGENTS.md §3), S2's "live run"
