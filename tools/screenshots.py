@@ -35,6 +35,7 @@ import glob
 import json
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -136,60 +137,99 @@ def blend(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[i
     return tuple(round(x + (y - x) * t) for x, y in zip(a, b))  # type: ignore[return-value]
 
 
-def render(dump: Path, out_dir: Path, faces: Faces, size: int, pad: int) -> Path:
+def under_repo(path: Path, what: str) -> Path:
+    """Canonicalize a CLI-supplied path and confine it to the repository.
+
+    The tool reads dumps and writes images only under the repo by design.
+    Resolve first, then check containment with `is_relative_to` — not a
+    `startswith` prefix test, the partial-traversal pitfall — which is the
+    validation `pythonsecurity:S8707` asks of agent-invokable CLIs.
+    """
+    resolved = path.resolve()
+    if not resolved.is_relative_to(REPO):
+        sys.exit(f"{what}: {path} resolves outside the repository ({REPO})")
+    return resolved
+
+
+class Metrics(NamedTuple):
+    """Pixel geometry shared by every cell of a sheet."""
+
+    cell_w: int
+    cell_h: int
+    ascent: int
+
+
+def cell_colors(
+    cell: dict, canvas_fg: tuple[int, int, int], canvas_bg: tuple[int, int, int]
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Effective fg/bg after the R(everse) and D(im) modifiers."""
+    fg = parse_hex(cell["fg"]) if "fg" in cell else canvas_fg
+    bg = parse_hex(cell["bg"]) if "bg" in cell else canvas_bg
+    mods = cell.get("m", "")
+    if "R" in mods:
+        fg, bg = bg, fg
+    if "D" in mods:
+        fg = blend(fg, bg, 0.45)
+    return fg, bg
+
+
+def draw_cell(
+    draw: ImageDraw.ImageDraw,
+    faces: Faces,
+    cell: dict,
+    x0: int,
+    y0: int,
+    m: Metrics,
+    canvas_fg: tuple[int, int, int],
+    canvas_bg: tuple[int, int, int],
+) -> None:
+    """One cell: background, glyph, underline/strikethrough."""
+    mods = cell.get("m", "")
+    fg, bg = cell_colors(cell, canvas_fg, canvas_bg)
+    box_w = cell.get("w", 1) * m.cell_w
+    if bg != canvas_bg:
+        draw.rectangle((x0, y0, x0 + box_w - 1, y0 + m.cell_h - 1), fill=bg)
+
+    s = cell["s"]
+    if s.strip() and "H" not in mods:
+        font, is_primary = faces.pick(s, mods)
+        if is_primary and cell.get("w", 1) == 1:
+            draw.text((x0, y0 + m.ascent), s, font=font, fill=fg, anchor="ls")
+        else:
+            # Fallback faces are proportional and wide glyphs span two cells:
+            # center in the box on the shared baseline.
+            draw.text((x0 + box_w / 2, y0 + m.ascent), s, font=font, fill=fg, anchor="ms")
+    if "U" in mods:
+        uy = y0 + m.ascent + max(2, SS)
+        draw.line((x0, uy, x0 + box_w - 1, uy), fill=fg, width=SS)
+    if "S" in mods:
+        sy = y0 + round(m.cell_h * 0.55)
+        draw.line((x0, sy, x0 + box_w - 1, sy), fill=fg, width=SS)
+
+
+def render(dump: Path, out_dir: Path, faces: Faces, pad: int) -> Path:
     frame = json.loads(dump.read_text(encoding="utf-8"))
-    cols, rows_n = frame["width"], frame["height"]
     canvas_bg = parse_hex(frame["canvas_bg"])
     canvas_fg = parse_hex(frame["canvas_fg"])
 
     mono = faces.primary[""]
-    cell_w = round(mono.getlength("0"))
     ascent, descent = mono.getmetrics()
-    cell_h = ascent + descent
+    m = Metrics(cell_w=round(mono.getlength("0")), cell_h=ascent + descent, ascent=ascent)
     pad_px = pad * SS
 
-    img = Image.new("RGB", (cols * cell_w + 2 * pad_px, rows_n * cell_h + 2 * pad_px), canvas_bg)
+    img = Image.new(
+        "RGB",
+        (frame["width"] * m.cell_w + 2 * pad_px, frame["height"] * m.cell_h + 2 * pad_px),
+        canvas_bg,
+    )
     draw = ImageDraw.Draw(img)
-
     for y, row in enumerate(frame["rows"]):
         x = 0
         for cell in row:
-            w = cell.get("w", 1)
-            fg = parse_hex(cell["fg"]) if "fg" in cell else canvas_fg
-            bg = parse_hex(cell["bg"]) if "bg" in cell else canvas_bg
-            mods = cell.get("m", "")
-            if "R" in mods:
-                fg, bg = bg, fg
-            if "D" in mods:
-                fg = blend(fg, bg, 0.45)
-
-            x0, y0 = pad_px + x * cell_w, pad_px + y * cell_h
-            box_w = w * cell_w
-            if bg != canvas_bg:
-                draw.rectangle((x0, y0, x0 + box_w - 1, y0 + cell_h - 1), fill=bg)
-
-            s = cell["s"]
-            if s.strip() and "H" not in mods:
-                font, is_primary = faces.pick(s, mods)
-                if is_primary and w == 1:
-                    draw.text((x0, y0 + ascent), s, font=font, fill=fg, anchor="ls")
-                else:
-                    # Fallback faces are proportional and wide glyphs span two
-                    # cells: center in the box on the shared baseline.
-                    draw.text(
-                        (x0 + box_w / 2, y0 + ascent),
-                        s,
-                        font=font,
-                        fill=fg,
-                        anchor="ms",
-                    )
-            if "U" in mods:
-                uy = y0 + ascent + max(2, SS)
-                draw.line((x0, uy, x0 + box_w - 1, uy), fill=fg, width=SS)
-            if "S" in mods:
-                sy = y0 + round(cell_h * 0.55)
-                draw.line((x0, sy, x0 + box_w - 1, sy), fill=fg, width=SS)
-            x += w
+            draw_cell(
+                draw, faces, cell, pad_px + x * m.cell_w, pad_px + y * m.cell_h, m, canvas_fg, canvas_bg
+            )
+            x += cell.get("w", 1)
 
     img = img.resize((img.width // SS, img.height // SS), Image.LANCZOS)
     out = out_dir / f"{dump.stem}.png"
@@ -207,17 +247,20 @@ def main() -> int:
     parser.add_argument("--font-dir", type=Path, help="directory with JetBrainsMono-*.ttf")
     args = parser.parse_args()
 
-    dumps = [args.dumps] if args.dumps.is_file() else sorted(args.dumps.glob("*.json"))
+    dumps_root = under_repo(args.dumps, "--dumps")
+    out_dir = under_repo(args.out, "--out")
+
+    dumps = [dumps_root] if dumps_root.is_file() else sorted(dumps_root.glob("*.json"))
     if args.only:
         dumps = [d for d in dumps if args.only in d.stem]
     if not dumps:
-        print(f"no dumps under {args.dumps} — run: cargo test dump_demo_frames -- --ignored")
+        print(f"no dumps under {dumps_root} — run: cargo test dump_demo_frames -- --ignored")
         return 1
 
-    args.out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     faces = Faces(args.font_dir, args.size * SS)
     for dump in dumps:
-        out = render(dump, args.out, faces, args.size, args.pad)
+        out = render(dump, out_dir, faces, args.pad)
         print(f"{dump.name} -> {out.relative_to(REPO)}")
     if faces.missing:
         # Name what did not render rather than shipping silent tofu.

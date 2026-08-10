@@ -908,3 +908,14 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `#[ignore]` (84 live smokes + the new dump regenerator, which is not a live
   test — it needs no server, only deliberate invocation). **No live run**:
   capture is render-only, touching no engine/memory/tool path (AGENTS.md §3).
+- **What the Sonar gate caught on the PR** (new-code security rating C → gate
+  red): two `pythonsecurity:S8707` — the new *agentic workflows* path-injection
+  rule: `--dumps`/`--out` flowed from argparse into `read_text`/`mkdir`
+  unvalidated. Fixed by canonicalize-and-confine to the repository
+  (`under_repo()`: `Path.resolve()` + `is_relative_to(REPO)` — not a
+  `startswith` prefix, the partial-traversal pitfall the rule documents; the
+  refusal names the path and the base). Alongside it: S3776 (`render()`
+  cognitive complexity 34 → split into `cell_colors`/`draw_cell`/`render`,
+  verified byte-identical output) and S1172 (a genuinely dead `size`
+  parameter). The rule class is LLM-era and will meet every future
+  path-taking tool script — recorded in lessons §1.
