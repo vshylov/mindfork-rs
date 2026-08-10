@@ -961,3 +961,12 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Tests**: 1972 unit green (+1: the drift gate; the determinism, grid and
   showcase guards now sweep the whole matrix), 85 `#[ignore]` unchanged.
   **No live run** — render-only, no engine/memory/tool path (AGENTS.md §3).
+- **What the Sonar gate caught on the PR** (new-code duplication 13% > 3%,
+  zero issues): `chat_summaries()`'s eight per-chat constructor calls,
+  exploded by rustfmt into identical multi-line blocks, formed a **sliding
+  self-duplicate** — the same file matched itself seven lines apart over a
+  49-line window. The fix is shape, not content: the rows became a
+  `#[rustfmt::skip]` data table (one row per line, the canonical use of the
+  attribute) mapped through a single constructor call site, leaving CPD no
+  ten-line window to match. Verified value-identical the cheap way: the
+  drift gate stayed green with zero dump changes.

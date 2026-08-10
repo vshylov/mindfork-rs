@@ -157,81 +157,48 @@ pub fn app_config(theme: Theme) -> AppConfig {
 /// plausible topics with fixed dates and counts — enough rows to fill the
 /// stage-2 frame without scrolling.
 pub fn chat_summaries() -> Vec<ChatSummary> {
-    let mk =
-        |slot: u128, title: &str, count: usize, created: DateTime<Utc>, modified: DateTime<Utc>| {
-            ChatSummary {
-                id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6c69_7374_0000_0000 + slot),
-                title: title.into(),
-                created_at: created,
-                modified_at: modified,
-                message_count: count,
-            }
-        };
-    vec![
+    // Fixture rows as data — one constructor call site, one row per line. A
+    // repeated constructor block per chat reads the same but trips the
+    // duplication detector (eight structurally identical multi-line blocks in
+    // a row are a sliding self-duplicate), and rustfmt would reflow the rows
+    // right back into that shape — hence the skip: this is a table, and the
+    // row-per-line layout is the point.
+    // Columns: title, message count, created (m,d,h,min), modified (m,d,h,min).
+    type Row = (
+        &'static str,
+        usize,
+        (u32, u32, u32, u32),
+        (u32, u32, u32, u32),
+    );
+    #[rustfmt::skip]
+    const ROWS: [Row; 8] = [
+        ("Sampler settings for livelier replies",  18, (7, 29,  9, 12), (7, 30, 21, 40)),
+        ("Speculative decoding: draft models",     12, (7, 29,  8,  0), (7, 29, 19,  5)),
+        ("Refactoring a god object in Rust",       41, (7, 26, 14, 30), (7, 27, 17, 52)),
+        ("What does the DRY penalty actually do?",  9, (7, 25, 11,  3), (7, 25, 12, 44)),
+        ("Trip notes: the Dolomites in October",   26, (7, 20, 18, 15), (7, 22, 20, 31)),
+        ("Reading list: attention papers",         15, (7, 17,  7, 45), (7, 19, 23, 10)),
+        ("Backup dry run before the update",        7, (7, 18, 16, 20), (7, 18, 16, 58)),
+        ("Mermaid diagrams in the terminal",       11, (7, 15, 13,  0), (7, 16, 10, 27)),
+    ];
+    let mut chats = vec![ChatSummary {
+        id: chat_id(),
+        title: CHAT_TITLE.into(),
+        created_at: date(8, 1, 10, 0),
+        modified_at: date(8, 1, 10, 3),
+        message_count: 4,
+    }];
+    chats.extend(ROWS.iter().enumerate().map(|(i, (title, count, c, m))| {
         ChatSummary {
-            id: chat_id(),
-            title: CHAT_TITLE.into(),
-            created_at: date(8, 1, 10, 0),
-            modified_at: date(8, 1, 10, 3),
-            message_count: 4,
-        },
-        mk(
-            1,
-            "Sampler settings for livelier replies",
-            18,
-            date(7, 29, 9, 12),
-            date(7, 30, 21, 40),
-        ),
-        mk(
-            2,
-            "Speculative decoding: draft models",
-            12,
-            date(7, 29, 8, 0),
-            date(7, 29, 19, 5),
-        ),
-        mk(
-            3,
-            "Refactoring a god object in Rust",
-            41,
-            date(7, 26, 14, 30),
-            date(7, 27, 17, 52),
-        ),
-        mk(
-            4,
-            "What does the DRY penalty actually do?",
-            9,
-            date(7, 25, 11, 3),
-            date(7, 25, 12, 44),
-        ),
-        mk(
-            5,
-            "Trip notes: the Dolomites in October",
-            26,
-            date(7, 20, 18, 15),
-            date(7, 22, 20, 31),
-        ),
-        mk(
-            6,
-            "Reading list: attention papers",
-            15,
-            date(7, 17, 7, 45),
-            date(7, 19, 23, 10),
-        ),
-        mk(
-            7,
-            "Backup dry run before the update",
-            7,
-            date(7, 18, 16, 20),
-            date(7, 18, 16, 58),
-        ),
-        mk(
-            8,
-            "Mermaid diagrams in the terminal",
-            11,
-            date(7, 15, 13, 0),
-            date(7, 16, 10, 27),
-        ),
-    ]
+            // Slots continue the stage-2 numbering (1-based after the hero).
+            id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6c69_7374_0000_0000 + i as u128 + 1),
+            title: (*title).into(),
+            created_at: date(c.0, c.1, c.2, c.3),
+            modified_at: date(m.0, m.1, m.2, m.3),
+            message_count: *count,
+        }
+    }));
+    chats
 }
 
 /// The self-model the `F3` capture shows: a companion that has already lived
