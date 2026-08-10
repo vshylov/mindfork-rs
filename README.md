@@ -384,7 +384,10 @@ live next to the code; comments and docs are in English; FSD dependencies
 point strictly downward. Before every commit: `cargo fmt`, `cargo clippy`,
 `cargo test` — all green. The full task workflow (design doc → branch → live
 run → docs → PR) is **[AGENTS.md](AGENTS.md)**; the traps worth knowing before
-touching anything are [docs/lessons.md](docs/lessons.md).
+touching anything are [docs/lessons.md](docs/lessons.md). Contributions are
+welcome — **[CONTRIBUTING.md](CONTRIBUTING.md)** is the short human-facing
+version of all this, and security reports go through
+[SECURITY.md](SECURITY.md).
 
 ---
 
