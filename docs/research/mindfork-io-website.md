@@ -275,7 +275,12 @@ index rewrite). Trailing-slash directory URLs — Zola's native output.
   `*.mindfork.io` SAN (future `docs.`/`demo.` subdomains cost nothing),
   DNS-validated into the existing zone, auto-issued;
 - `AWS::CloudFront::Function` (`cloudfront-js-2.0`, AutoPublish) — index
-  rewrite + www→apex redirect;
+  rewrite + www→apex redirect + the optional maintenance IP allowlist
+  (stack parameter `AllowedIps`, empty = public; a non-empty list also
+  turns the distribution's IPv6 off so an IPv4 allowlist can't lock its
+  own author out). Chosen over a WAF web ACL on cost: WAF is ~$5/month
+  per ACL against §5.6's whole-site cent, and the function runs ahead of
+  the cache, so no invalidation is needed either way;
 - `AWS::CloudFront::Distribution` — aliases apex+www, the cert, HTTP/3,
   IPv6, compression, managed `CachingOptimized` policy, managed
   `SecurityHeadersPolicy` response headers, custom error responses
