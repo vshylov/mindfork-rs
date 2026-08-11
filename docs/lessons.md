@@ -199,6 +199,27 @@ and the probe retries 30 times. Virtual time was already working — the *connec
 the cost. Making the stub actually listen took it to 2 s.
 — *readiness probe for the embedding server*.
 
+**A committed render that shows a calendar date shows it in local time — keep fixture
+timestamps mid-day UTC.** The screens format dates through the local offset, so a
+narrative segment stamped 21:55 UTC rendered `[2026-07-31]` on the regenerating machine
+(UTC+3) and would render `[2026-07-30]` on CI (UTC) — a gate that compares committed
+renders goes red on one side or the other. Mid-day UTC times are stable across every
+timezone the dumps travel between. Corollary: a screen that lists items newest-first
+*by insertion* needs its fixture vec appended in chronological order, or the visible
+dates scramble.
+— *demo screenshots — a uniform gallery and a richer hero*.
+
+**The duplication gate matches *normalized* tokens against a *density* bar — bulk
+fixture data belongs in one flat literal.** A PR failed at **24.7%** new-code
+duplication (bar ≤ 3%) with every literal different: repeated constructor blocks and
+same-shape one-line tuple rows are sliding self-duplicates once literals are
+normalized away — `jscpd`, which compares exact tokens, reports 0% on the same files,
+which is how you tell the two models apart. And because the bar is a density, shapes
+that big PRs got away with fail a small PR. Hoist table-shaped fixture data into one
+raw-string literal parsed by a few unique lines: one string is one token, and there is
+nothing left to match.
+— *demo screenshots — a uniform gallery and a richer hero*.
+
 ---
 
 ## 3. Measure; do not assume
