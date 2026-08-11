@@ -28,6 +28,12 @@ use crate::shared::storage::Storage;
 /// Title of the showcase chat (shown in the feed header).
 pub const CHAT_TITLE: &str = "Gemma 4 on a 12 GB GPU";
 
+/// The unsent draft in the input box: the hero must show a *live* seat — an
+/// empty prompt reads as a screensaver. The question also sets up the next
+/// beat of the demo world: the settings capture shows exactly this draft
+/// model configured, and the chat list holds the speculative-decoding chat.
+pub const INPUT_DRAFT: &str = "And speculative decoding — is a 1B draft worth it on this card?";
+
 /// Fixed chat id — captures must not depend on a fresh `Uuid::new_v4()`.
 pub fn chat_id() -> Uuid {
     Uuid::from_u128(0x6d69_6e64_666f_726b_5f64_656d_6f5f_3031)
@@ -97,6 +103,10 @@ pub fn showcase_messages() -> Vec<Message> {
          save a note about my setup.",
     );
 
+    // The decision tree renders with three perfectly straight legs only for
+    // these exact label widths (mermaid-text centers nodes by content) —
+    // rewording a label can bend the middle edge into a `┌─┘` jog. Eyeball
+    // the regenerated dump after any edit here.
     let mut m4 = message(
         MessageRole::Assistant,
         3,
@@ -107,8 +117,9 @@ pub fn showcase_messages() -> Vec<Message> {
          | Q6_K | tight | quality first |\n\n\
          ```mermaid\n\
          flowchart TD\n\
-             A{Need the full 16k?} -->|yes| B[Q5_K_M, KV headroom]\n\
-             A -->|no| C[Q6_K, quality first]\n\
+             A{How much context?} -->|8k| B[Q6_K — quality first]\n\
+             A -->|16k| C[Q5_K_M — sweet spot]\n\
+             A -->|32k| D[Q4_K_M — KV headroom]\n\
          ```\n\n\
          Note saved. The cache rule to remember: $M_{kv} \\propto L$ — double \
          the window, double the cache.",
@@ -170,6 +181,14 @@ pub fn app_config(theme: Theme) -> AppConfig {
     c.engine.managed.model_path = Some("C:\\models\\gemma-4-12B-it-Q5_K_M.gguf".into());
     c.engine.managed.gpu_layers = 99;
     c.engine.managed.context_size = 16384;
+    // Speculative decoding with a 1B draft: the demo user acted on the
+    // "Speculative decoding: draft models" chat, and the hero's input draft
+    // asks about exactly this. Also what fills the Model/server capture —
+    // draft-* types reveal four more parameter rows (settings::helpers).
+    c.engine.managed.spec_type = crate::shared::config::SpecType::DraftSimple;
+    c.engine.managed.draft_model = Some("C:\\models\\gemma-4-1B-it-Q8_0.gguf".into());
+    c.engine.managed.draft_gpu_layers = Some(99);
+    c.engine.managed.draft_n_max = Some(16);
     c
 }
 
@@ -184,49 +203,91 @@ type Row = (
 );
 
 /// The filler chats behind both the list capture and the interactive demo's
-/// chat list. One row per line — a repeated constructor block per chat trips
-/// the duplication detector (eight structurally identical multi-line blocks
-/// are a sliding self-duplicate), and rustfmt would reflow the rows right
-/// back into that shape — hence the skip: this is a table, and the
-/// row-per-line layout is the point.
+/// chat list — enough of them to fill the uniform gallery frame (PANEL_H in
+/// `app/demo_shots.rs`) to the last row. Sorted by `modified` descending, the
+/// list screen's default order. One row per line — a repeated constructor
+/// block per chat trips the duplication detector (structurally identical
+/// multi-line blocks are a sliding self-duplicate), and rustfmt would reflow
+/// the rows right back into that shape — hence the skip: this is a table,
+/// and the row-per-line layout is the point.
 #[rustfmt::skip]
-const ROWS: [Row; 8] = [
-    ("Sampler settings for livelier replies",  18, (7, 29,  9, 12), (7, 30, 21, 40)),
-    ("Speculative decoding: draft models",     12, (7, 29,  8,  0), (7, 29, 19,  5)),
-    ("Refactoring a god object in Rust",       41, (7, 26, 14, 30), (7, 27, 17, 52)),
-    ("What does the DRY penalty actually do?",  9, (7, 25, 11,  3), (7, 25, 12, 44)),
-    ("Trip notes: the Dolomites in October",   26, (7, 20, 18, 15), (7, 22, 20, 31)),
-    ("Reading list: attention papers",         15, (7, 17,  7, 45), (7, 19, 23, 10)),
-    ("Backup dry run before the update",        7, (7, 18, 16, 20), (7, 18, 16, 58)),
-    ("Mermaid diagrams in the terminal",       11, (7, 15, 13,  0), (7, 16, 10, 27)),
+const ROWS: [Row; 21] = [
+    ("Why is prompt eval slow on long chats?",  14, (7, 31, 17,  5), (7, 31, 18, 22)),
+    ("Grammar-constrained JSON output",         13, (7, 30, 20, 11), (7, 31,  9, 14)),
+    ("Sampler settings for livelier replies",   18, (7, 29,  9, 12), (7, 30, 21, 40)),
+    ("Speculative decoding: draft models",      12, (7, 29,  8,  0), (7, 29, 19,  5)),
+    ("Embeddings: why bge-m3 for the notes",    10, (7, 28, 12, 40), (7, 28, 14,  3)),
+    ("Refactoring a god object in Rust",        41, (7, 26, 14, 30), (7, 27, 17, 52)),
+    ("A tokio deadlock, found and fixed",       33, (7, 26,  9, 12), (7, 26, 21, 35)),
+    ("What does the DRY penalty actually do?",   9, (7, 25, 11,  3), (7, 25, 12, 44)),
+    ("MCP servers worth installing",            16, (7, 24, 10,  2), (7, 24, 11, 47)),
+    ("Terminal fonts and box-drawing glyphs",    8, (7, 23, 19,  1), (7, 23, 19, 58)),
+    ("Trip notes: the Dolomites in October",    26, (7, 20, 18, 15), (7, 22, 20, 31)),
+    ("Shrink the system prompt, keep the voice", 11, (7, 21, 14, 30), (7, 21, 15, 26)),
+    ("RAG chunk size for code search",          19, (7, 20, 21, 15), (7, 20, 22, 44)),
+    ("Reading list: attention papers",          15, (7, 17,  7, 45), (7, 19, 23, 10)),
+    ("Backup dry run before the update",         7, (7, 18, 16, 20), (7, 18, 16, 58)),
+    ("Regex or a real parser?",                 23, (7, 17,  8, 50), (7, 17, 12, 19)),
+    ("Mermaid diagrams in the terminal",        11, (7, 15, 13,  0), (7, 16, 10, 27)),
+    ("Wool or synthetic for autumn hikes?",     12, (7, 15, 18, 44), (7, 15, 20,  5)),
+    ("Naming things: a short rant",             27, (7, 14, 13, 20), (7, 14, 16, 31)),
+    ("Reading GGUF metadata in Python",          9, (7, 13, 10,  5), (7, 13, 11, 58)),
+    ("First week with mindfork: impressions",    5, (7, 12, 20, 30), (7, 12, 21, 12)),
 ];
 
 /// A two-message excerpt per filler chat, aligned with [`ROWS`] by index —
 /// the interactive demo's chats open to a real (if brief) exchange, so the
 /// list, search and export all have something true to show.
 #[rustfmt::skip]
-const ROW_BODIES: [(&str, &str); 8] = [
+const ROW_BODIES: [(&str, &str); 21] = [
+    ("Generation is fine, but the pause before the first token keeps growing. What gives?",
+     "That pause is prompt eval: after an edit or a compaction the whole history is re-scored before the first new token. Keep FlashAttention on and watch `prompt eval time` in the server log — past ~10k tokens the wait is mostly that."),
+    ("Can I force valid JSON out of the model for tool results?",
+     "Yes — llama.cpp compiles a `json_schema` from the request into a GBNF grammar, and the sampler simply cannot emit an invalid token. Strictness is free; the model only loses the option to ramble."),
     ("What's a good starting point to make replies less flat?",
      "Raise the temperature a touch and add `min_p 0.05` — then one knob at a time. Dynamic temperature (`dynatemp_range`) is the fun one: it adapts to per-token entropy."),
     ("Do draft models actually help on a single GPU?",
      "Yes, when the draft is much smaller than the target: `--spec-type draft` with a ~1B draft for a 12B model often lands 1.5-2x. The `ngram` variants need no second model — try those first."),
+    ("Why bge-m3 for the knowledge base and not something newer?",
+     "Multilingual, an 8k input window, and one model covers notes and chat attachments alike. Dense retrieval does the heavy lifting; the full-text index catches the exact-match tail."),
     ("My `AppState` struct has 40 fields. Where do I start?",
      "Group the fields by who mutates them together — each cluster is a struct candidate. Then move methods to the cluster that owns their data; the borrow checker will referee."),
+    ("Two tasks each hold a lock and await the other. How do I even see this?",
+     "`tokio-console` shows both tasks parked on `Mutex::lock`. The cure is ordering: acquire the locks in one global order — or merge them; a message channel often deletes the second lock outright."),
     ("What does the DRY penalty actually do?",
      "It penalizes verbatim repetition of recent sequences, scaled by match length — it kills loops without flattening style the way a high `repeat_penalty` does."),
+    ("Which MCP servers are actually useful day to day?",
+     "Filesystem and fetch cover most of it; add a search server if you live outside the browser. Anything more exotic — write your own: the protocol fits in fifty lines."),
+    ("Why do table borders fall apart in my terminal?",
+     "Your font lacks the box-drawing block, so the terminal substitutes a wider glyph and the grid drifts. JetBrains Mono or Cascadia fixes it — or flip on compat mode and the frames go ASCII."),
     ("Three days around Cortina in October — doable?",
      "Doable, but pack for two seasons: the rifugi start closing mid-October. The Tre Cime loop, Cinque Torri and Lago di Sorapis cover the greatest hits."),
+    ("My system prompt is 900 tokens. What survives a trim?",
+     "Keep the identity, the tools and the two rules you actually enforce; cut the examples first — a model infers style from the voice, not from a list of adjectives. 300 tokens reads the same."),
+    ("What chunk size works for retrieving code?",
+     "Whole functions beat fixed windows: split on definitions and keep the signature with the body. For prose, 400-600 tokens with a little overlap is the boring answer that works."),
     ("Which attention papers should I read after the 2017 one?",
      "Sparse and linear attention surveys, FlashAttention for the systems side, then RoPE and its long-context descendants — that's the spine of the modern stack."),
     ("Anything to check before I update?",
      "Run `mindfork backup -p <password>`, then restore it into a scratch folder. A backup you never restored is a hope, not a backup."),
+    ("At what point does a regex stop being enough?",
+     "The moment you reach for a lookbehind to balance brackets. Nesting means a grammar — and a forty-line recursive descent is usually clearer than the clever pattern it replaces."),
     ("Can you draw a flowchart right in the chat?",
      "Yes — fence a ```mermaid block: flowcharts and sequence diagrams render as text graphics, and anything else falls back to the source."),
+    ("Base layer for wet cold — wool or synthetic?",
+     "Merino for the long smell-proof days, synthetic for the wet ones: it dries in an hour where wool sulks. Drizzle above zero — synthetic; crisp and dry — merino."),
+    ("Why is `Manager` always a design smell?",
+     "Because it names the absence of a decision — everything manages something. Name the responsibility (`Scheduler`, `Registry`, `Janitor`) and half the design questions answer themselves."),
+    ("How do I read a GGUF header without loading the model?",
+     "The header is plain: magic, version, then key-value pairs — the `gguf` package on PyPI reads it in three lines. Quant type, context length and the tokenizer are all right there."),
+    ("So, a week in — what stuck?",
+     "The notes: answers that start from what we already established feel different. And `Ctrl+T` — reading the thinking taught me how to ask better questions."),
 ];
 
 /// The chat list: the showcase chat on top (active), then a spread of
-/// plausible topics with fixed dates and counts — enough rows to fill the
-/// stage-2 frame without scrolling. Capture-only (the interactive demo's
+/// plausible topics with fixed dates and counts — exactly enough rows to
+/// fill the uniform gallery frame (`app/demo_shots.rs::PANEL_H`) with no
+/// scrolling and no trailing void. Capture-only (the interactive demo's
 /// list comes from the real seeded chats).
 #[cfg(test)]
 pub fn chat_summaries() -> Vec<ChatSummary> {
@@ -276,7 +337,10 @@ pub fn self_model() -> SelfModel {
         summary: "I run locally and help with practical engineering — model \
                   sizing, Rust, the occasional trip plan. I prefer measured \
                   numbers to adjectives, and I write things down: advice \
-                  should start from remembered facts, not fresh guesses."
+                  should start from remembered facts, not fresh guesses. The \
+                  current thread is fitting Gemma 4 onto a 12 GB card without \
+                  giving up context; the next experiment on the list is a 1B \
+                  draft for speculative decoding."
             .into(),
         goals: vec![
             goal(
@@ -294,29 +358,71 @@ pub fn self_model() -> SelfModel {
                 None,
             ),
             goal(
+                4,
+                "Measure the 1B draft's speedup and save the number, not the impression.",
+                GoalStatus::Active,
+                date(7, 31, 18, 40),
+                None,
+            ),
+            goal(
                 3,
                 "Index the llama.cpp server docs into the knowledge base.",
                 GoalStatus::Completed,
                 date(7, 16, 15, 0),
                 Some(date(7, 19, 11, 20)),
             ),
+            goal(
+                5,
+                "Turn the October trip research into a packing-checklist note.",
+                GoalStatus::Completed,
+                date(7, 18, 9, 15),
+                Some(date(7, 21, 17, 30)),
+            ),
         ],
         user_model: UserModel {
-            perceived_traits: vec!["methodical".into(), "impatient with vague answers".into()],
-            current_interests: vec!["local model tuning".into(), "terminal tooling".into()],
+            perceived_traits: vec![
+                "methodical".into(),
+                "impatient with vague answers".into(),
+                "allergic to hand-waving".into(),
+            ],
+            current_interests: vec![
+                "local model tuning".into(),
+                "terminal tooling".into(),
+                "speculative decoding".into(),
+            ],
             relationship_dynamic: "Collaborative and direct; jokes land better after the numbers."
                 .into(),
         },
+        // Chronological vec order — the screen shows the narrative newest-
+        // -first by *insertion*, the way a real profile accretes segments.
+        // Times stay mid-day UTC: the screen renders dates in local time, and
+        // a near-midnight timestamp would show a different calendar day on
+        // CI (UTC) than on the machine that regenerated the dumps.
         narrative: vec![
+            segment(
+                4,
+                "The packing checklist came out of three scattered chats — consolidation is where notes earn their keep.",
+                date(7, 21, 17, 35),
+            ),
             segment(
                 1,
                 "Tables beat prose here: comparisons get read, paragraphs get skimmed.",
                 date(7, 24, 19, 40),
             ),
             segment(
+                5,
+                "Trip planning keeps landing between engineering questions — the terminal is a place to live, not a topic.",
+                date(7, 26, 19, 2),
+            ),
+            segment(
                 2,
                 "The 12 GB VRAM budget keeps coming up — saved it as a note so I stop re-asking.",
                 date(7, 28, 10, 15),
+            ),
+            segment(
+                6,
+                "Answers that cite the note they came from get fewer follow-ups — receipts beat repetition.",
+                date(7, 30, 15, 55),
             ),
             segment(
                 3,
@@ -352,6 +458,9 @@ pub fn showcase_chat() -> Chat {
     chat.modified_at = at(3);
     chat.messages = showcase_messages();
     chat.feed_view = feed_view();
+    // The same unsent question the hero screenshot shows in the input box —
+    // the interactive demo opens mid-thought, ready to send.
+    chat.draft = INPUT_DRAFT.into();
     chat
 }
 
@@ -546,7 +655,7 @@ mod tests {
         );
 
         let files = storage.json().chat_files().unwrap();
-        assert_eq!(files.len(), 9, "the showcase chat + 8 fillers");
+        assert_eq!(files.len(), 22, "the showcase chat + 21 fillers");
         let showcase = storage.json().load_chat(chat_id()).unwrap().unwrap();
         assert_eq!(showcase.messages.len(), 4);
         assert!(

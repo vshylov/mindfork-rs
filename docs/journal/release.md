@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -31,6 +31,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — stage 2 (the full set, the drift gate, README embeds) (done)
 - Post-M9: demo screenshots — stage 3 (the interactive `mindfork demo`) (done)
 - Post-M9: demo screenshots — stage 4 (SVG writer for mindfork.io) (done)
+- Post-M9: demo screenshots — a uniform gallery and a richer hero (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1051,3 +1052,54 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   any zoom. PNG stays the README format — GitHub cannot load fonts into an
   embedded SVG. The consuming side (inlining, theme pairing) is the
   website journal's S4 entry.
+
+### Post-M9: demo screenshots — a uniform gallery and a richer hero (done)
+
+- **The gallery panels now share one height** (branch
+  `feat/screenshot-polish`). The site's 2×2 `shot-grid` was showing four
+  windows of three different heights (22/30/30/24 rows) — visibly ragged.
+  The per-screen "hug the content" heights are replaced by one
+  `PANEL_H = 30`, and 30 is not arbitrary: the settings **Tools** section —
+  the richest capture — fills its parameter area exactly at that height, so
+  any shared height had to be at least 30, and anything more re-opens the
+  empty-rows problem the old constants existed to avoid.
+- **The fixture was stocked to meet the height instead of padding frames
+  with void.** The chat list grew from 9 to 22 dialogs — 13 new filler rows,
+  each with a real two-message excerpt (`ROWS`/`ROW_BODIES` stay one
+  index-aligned table), so the interactive demo's list, search and export
+  gained content too, and 22 fills the 30-row list area to the last row.
+  The self-model grew to five goals (two completed), three traits, three
+  interests and six observations. The Model/server capture now shows
+  speculative decoding configured (`draft-simple`, a 1B draft at
+  `-ngld 99`) — the four draft fields fill the section's trailing rows,
+  and the demo world stays coherent: the chat list holds the
+  "Speculative decoding: draft models" conversation that recommends
+  exactly this setup.
+- **The hero got a fuller diagram and a live input box.** The two-branch
+  flowchart (six bare edge rows, asymmetric slashes) became a three-branch
+  context tree — `8k → Q6_K / 16k → Q5_K_M / 32k → Q4_K_M` — the same
+  13 rows, but symmetric and generalizing the table above it instead of
+  restating it (the LaTeX cache-rule line is now its caption). The label
+  wordings were **brute-forced against `mermaid-text`**: node centering
+  depends on exact label widths, and one character more ("cache headroom"
+  for "KV headroom") bends the middle leg into a `┌─┘` jog — a comment in
+  the fixture pins the constraint. The input box now holds a
+  typed-but-unsent follow-up about the 1B draft (`INPUT_DRAFT`), seeded
+  into `showcase_chat().draft` too, so `mindfork demo` opens mid-thought
+  exactly like the screenshot.
+- **One trap found live: the screens render dates in local time.** A
+  narrative segment stamped 21:55 UTC displayed `[2026-07-31]` on the
+  regenerating machine (UTC+3) but would display `[2026-07-30]` on CI
+  (UTC) — the drift gate red on one side or the other. Fixture timestamps
+  that reach a rendered date now stay mid-day UTC (recorded in
+  lessons §2). Related: the self-model screen lists the narrative
+  newest-first **by insertion**, so the vec must append in chronological
+  order or the visible dates scramble.
+- **Verification**: the showcase needles grew with the content (the typed
+  draft, the list's last row, `draft-simple`, the newest observation), so
+  a fixture edit that shrinks a fill or scrolls the subject out of frame
+  fails the ordinary suite. **1977 unit tests green, 85 `#[ignore]`**
+  (content-only change — no new tests, none removed). No live-model run —
+  capture-side only, the engine untouched. The site was rebuilt on the
+  synced assets and measured in the preview: all four gallery figures
+  render at exactly equal height in both themes.

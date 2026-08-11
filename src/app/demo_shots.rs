@@ -24,17 +24,17 @@ use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::shot::{self, ShotFrame};
 use crate::shared::theme::Palette;
 
-/// One width for the whole set — the gallery reads as one terminal. Heights
-/// are per screen: the hero needs room for the final exchange, the panel
-/// screens are captured at their natural content height instead of dragging
-/// half a frame of empty rows.
+/// One width for the whole set — the gallery reads as one terminal. The hero
+/// stands alone at its own height (room for the final exchange); the four
+/// gallery panels share one height, so the site's 2×2 `shot-grid` lines up
+/// instead of presenting four ragged windows.
 pub const SHOT_W: u16 = 116;
 pub const HERO_H: u16 = 44;
-/// Panel heights hug their content (fixture rows + chrome + the hotkey bar):
-/// empty terminal makes a poor gallery.
-pub const LIST_H: u16 = 22;
-pub const SETTINGS_H: u16 = 30;
-pub const SELF_MODEL_H: u16 = 24;
+/// One height for every gallery panel. 30 is not arbitrary: the settings
+/// Tools section — the richest capture — fills its parameter area exactly at
+/// this height, and the fixture stocks the other screens (22 chats, the
+/// grown self-model) so none of them drags half a frame of empty rows.
+pub const PANEL_H: u16 = 30;
 
 /// The captured matrix (per the user's fork decisions, design plan §5):
 /// Dark + Light, English.
@@ -97,7 +97,9 @@ pub fn chat_frame(theme: Theme) -> ShotFrame {
         demo::chat_id(),
         demo::CHAT_TITLE.into(),
         &demo::showcase_messages(),
-        "",
+        // The typed-but-unsent follow-up: the input box is part of the
+        // showcase, and an empty prompt reads as a screensaver.
+        demo::INPUT_DRAFT,
         demo::feed_view(),
         None,
         None,
@@ -114,7 +116,7 @@ pub fn list_frame(theme: Theme) -> ShotFrame {
         Palette::for_theme(theme),
         locale(Lang::En),
     );
-    capture("chat-list", theme, LIST_H, |f| screen.render(f))
+    capture("chat-list", theme, PANEL_H, |f| screen.render(f))
 }
 
 /// The settings screen. `tools == false` captures the opening "Model/server"
@@ -139,7 +141,7 @@ pub fn settings_frame(theme: Theme, tools: bool) -> ShotFrame {
     } else {
         "settings-model"
     };
-    capture(id, theme, SETTINGS_H, |f| screen.render(f))
+    capture(id, theme, PANEL_H, |f| screen.render(f))
 }
 
 /// The self-model screen (`F3`): summary, goals, the user model and the
@@ -150,7 +152,7 @@ pub fn self_model_frame(theme: Theme) -> ShotFrame {
         Palette::for_theme(theme),
         locale(Lang::En),
     );
-    capture("self-model", theme, SELF_MODEL_H, |f| screen.render(f))
+    capture("self-model", theme, PANEL_H, |f| screen.render(f))
 }
 
 /// The full capture set for one theme, in gallery order.
@@ -237,19 +239,42 @@ mod tests {
                     "Q5_K_M",
                     "sizing",
                     "sweet spot",
-                    "Need the full 16k?",
+                    "How much context?",
+                    "KV headroom",
+                    // The typed draft is part of the composition — an edit
+                    // that grows the feed must not push the input's text out.
+                    "1B draft",
                 ],
             ),
             (
                 "chat-list",
-                &[demo::CHAT_TITLE, "Speculative", "Dolomites", "Mermaid"],
+                &[
+                    demo::CHAT_TITLE,
+                    "Speculative",
+                    "Dolomites",
+                    "Mermaid",
+                    // The last fixture row: the list fills the frame to the
+                    // bottom, so losing it means the fill shrank.
+                    "First week with mindfork",
+                ],
             ),
-            ("settings-model", &["llama-server.exe", "16384"]),
+            (
+                "settings-model",
+                &["llama-server.exe", "16384", "draft-simple", "gemma-4-1B"],
+            ),
             (
                 "settings-tools",
                 &["Agentic loop", "Wasmer sandbox", "Web search"],
             ),
-            ("self-model", &["reproducible", "VRAM", "methodical"]),
+            (
+                "self-model",
+                &[
+                    "reproducible",
+                    "VRAM",
+                    "methodical",
+                    "receipts beat repetition",
+                ],
+            ),
         ];
         for frame in all_frames(Theme::Dark) {
             let text = frame_text(&frame);
