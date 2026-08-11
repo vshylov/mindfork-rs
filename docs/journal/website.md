@@ -184,5 +184,15 @@ read [lessons.md](../lessons.md).
   index rewrite and the www redirect; a stranger gets 403 on apex, on
   www and over IPv6; with `AllowedIps` empty every case behaves exactly
   as it did before the change.
+- **Deployed and checked against the live edge** (2026-08-11, stack
+  `mindfork-website` → `UPDATE_COMPLETE`, distribution `Deployed`, the
+  four pre-existing parameters preserved by `deploy`'s use-previous
+  behaviour). From the allowlisted address: `/`, `/blog/`, `/atom.xml`
+  200 and `www` 301 → apex; `mindfork.io` no longer answers AAAA, as the
+  IPv6 switch intends. The published LIVE function was then exercised
+  through `aws cloudfront test-function` — the only way to put an
+  arbitrary viewer IP in front of it: a stranger gets 403 with the
+  branded body on apex and on www, while the allowlisted viewer still
+  gets the index rewrite and the www redirect.
 - No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged; the
   stage's live run is the stack deploy itself.
