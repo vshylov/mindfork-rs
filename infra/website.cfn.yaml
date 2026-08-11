@@ -27,9 +27,21 @@ Parameters:
     Description: >-
       An account can hold only one provider per URL; pass "false" if
       token.actions.githubusercontent.com already exists in this account.
+  AllowedIps:
+    Type: String
+    Default: ""
+    Description: >-
+      Temporary maintenance lockdown: a comma-separated list of viewer IPs
+      allowed to reach the site; everyone else gets 403 at the edge. Empty
+      (the default) means the site is public. The check lives in the
+      viewer-request function, so it runs before the cache and needs no
+      invalidation; while a list is set the distribution also drops IPv6, so
+      an IPv4-only allowlist cannot lock its own author out.
 
 Conditions:
   MakeOidc: !Equals [!Ref CreateGitHubOidcProvider, "true"]
+  # Whether the site is currently restricted to AllowedIps.
+  LockedDown: !Not [!Equals [!Ref AllowedIps, ""]]
 
 Resources:
   # The bucket name is deliberately auto-generated: a dotted name (e.g.
@@ -95,20 +107,45 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # Two jobs in one viewer-request function: 301 www to the apex, and append
-  # index.html to Zola's trailing-slash directory URLs - a private S3 REST
-  # origin serves no directory indexes itself (research doc section 3.1).
+  # Three jobs in one viewer-request function: the optional IP allowlist,
+  # 301 www to the apex, and append index.html to Zola's trailing-slash
+  # directory URLs - a private S3 REST origin serves no directory indexes
+  # itself (research doc section 3.1).
+  #
+  # The allowlist is a function rather than a WAF web ACL on purpose: WAF
+  # costs ~$5/month per web ACL plus per-rule and per-request charges, which
+  # is two orders of magnitude over this site's whole bill (research doc
+  # section 5.6), while a viewer-request function is a fraction of a cent per
+  # million requests and is removed by clearing one stack parameter. It runs
+  # before the cache lookup, so a cached page is gated too.
   UrlRewriteFunction:
     Type: AWS::CloudFront::Function
     Properties:
       Name: !Sub "${AWS::StackName}-url-rewrite"
       AutoPublish: true
       FunctionConfig:
-        Comment: "www->apex redirect + directory index rewrite"
+        Comment: "ip allowlist + www->apex redirect + directory index rewrite"
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub |
+        var ALLOWED_IPS = '${AllowedIps}'.split(',')
+          .map(function (ip) { return ip.trim(); })
+          .filter(function (ip) { return ip.length > 0; });
+
         function handler(event) {
           var request = event.request;
+          // Empty list = public site; otherwise everything but the listed
+          // viewers is refused at the edge, before cache and before origin.
+          if (ALLOWED_IPS.length > 0 && ALLOWED_IPS.indexOf(event.viewer.ip) === -1) {
+            return {
+              statusCode: 403,
+              statusDescription: 'Forbidden',
+              headers: {
+                'content-type': { value: 'text/html; charset=utf-8' },
+                'cache-control': { value: 'no-store' }
+              },
+              body: '<!doctype html><meta charset="utf-8"><title>mindfork.io</title><body style="background:#09090b;color:#a1a1aa;font:16px/1.6 ui-monospace,monospace;padding:3rem"><h1 style="color:#c25a27;font-size:1.25rem">mindfork.io is temporarily private</h1><p>The site is closed while it is being built. It will be back.</p></body>'
+            };
+          }
           var host = request.headers.host ? request.headers.host.value : '';
           if (host === 'www.${DomainName}') {
             return {
@@ -136,7 +173,13 @@ Resources:
           - !Sub "www.${DomainName}"
         DefaultRootObject: index.html
         HttpVersion: http2and3
-        IPV6Enabled: true
+        # IPv6 is off while an allowlist is set: the viewer address the
+        # function compares is whatever family the browser connected over, so
+        # a dual-stack visitor with an IPv4-only allowlist would lock itself
+        # out. With AAAA gone from the distribution every viewer arrives over
+        # IPv4. The Route53 AAAA aliases can stay - they answer NODATA and
+        # clients fall back.
+        IPV6Enabled: !If [LockedDown, false, true]
         PriceClass: PriceClass_All
         ViewerCertificate:
           AcmCertificateArn: !Ref Certificate

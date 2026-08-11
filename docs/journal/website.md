@@ -10,12 +10,13 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (4)
+## Entries (5)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
 - Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
 - Post-M9: website — S4: vector screenshots + the engine article (done)
+- Post-M9: website — the maintenance IP allowlist (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -151,3 +152,37 @@ read [lessons.md](../lessons.md).
 - No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged; the
   stage's check is the built site itself, verified in the local preview
   in both themes.
+
+### Post-M9: website — the maintenance IP allowlist (done)
+
+- **The site can now be closed to everyone but a listed viewer** while it
+  is still being built, matching the repository being private: the stack
+  gained an `AllowedIps` parameter (comma-separated, empty = public), and
+  the existing viewer-request function refuses anything else with a 403
+  and a short branded page. Branch `feat/site-ip-allowlist`.
+- **A CloudFront Function, not a WAF web ACL** — decided on cost and on
+  reversibility. WAF is ~$5/month per web ACL plus per-rule and
+  per-request charges; this site's entire bill is ~$0.01/month (research
+  §5.6), so the guard would have cost 500× the thing it guards. The
+  function is a fraction of a cent per million invocations, it is the
+  same resource that already does the www→apex redirect, and lifting the
+  lockdown is `AllowedIps=""` — one parameter, no resource to delete.
+- **Viewer-request, so caching is not a hole**: the gate runs before the
+  cache lookup, which means an already-cached page is refused too and no
+  invalidation is part of either direction of the switch.
+- **IPv6 goes off while a list is set** (`IPV6Enabled: !If [LockedDown,
+  false, true]`). The address the function compares is whichever family
+  the browser actually connected over, so a dual-stack visitor holding an
+  IPv4-only allowlist would 403 itself — the classic way to lock yourself
+  out of your own maintenance page. Dropping AAAA from the distribution
+  forces every viewer onto IPv4; the Route53 AAAA aliases can stay, they
+  answer NODATA and clients fall back.
+- **Verified before deploying, since a mistake here is a locked door**:
+  the template was parsed and the function rendered through its `!Sub`
+  (1412 bytes, well inside CloudFront's 10 KB limit), then the handler
+  was exercised in both modes — allowed viewer passes and still gets the
+  index rewrite and the www redirect; a stranger gets 403 on apex, on
+  www and over IPv6; with `AllowedIps` empty every case behaves exactly
+  as it did before the change.
+- No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged; the
+  stage's live run is the stack deploy itself.

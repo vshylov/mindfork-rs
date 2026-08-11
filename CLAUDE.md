@@ -167,7 +167,10 @@ The **M0–M9** plan is done, plus extensive post-M9 work — **1977 unit tests
 green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
 most recent tracks: the **mindfork.io website, S1–S4 — track complete** (a
 Zola site under `site/`, terminal-styled on the brand palette, **live at
-https://mindfork.io**: one CloudFormation stack `infra/website.cfn.yaml` —
+https://mindfork.io** — currently behind a temporary maintenance IP
+allowlist while the repository is private (the stack's `AllowedIps`
+parameter; set it empty to reopen): one CloudFormation stack
+`infra/website.cfn.yaml` —
 private S3 + OAC, CloudFront, ACM, Route53 — with CI deploys on push to main
 through the stack's OIDC role, no stored keys; the landing inlines
 screenshots as generated SVG — the demo-screenshots stage 4, shipped from
