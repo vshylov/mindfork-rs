@@ -209,6 +209,17 @@ timezone the dumps travel between. Corollary: a screen that lists items newest-f
 dates scramble.
 — *demo screenshots — a uniform gallery and a richer hero*.
 
+**The duplication gate matches *normalized* tokens against a *density* bar — bulk
+fixture data belongs in one flat literal.** A PR failed at **24.7%** new-code
+duplication (bar ≤ 3%) with every literal different: repeated constructor blocks and
+same-shape one-line tuple rows are sliding self-duplicates once literals are
+normalized away — `jscpd`, which compares exact tokens, reports 0% on the same files,
+which is how you tell the two models apart. And because the bar is a density, shapes
+that big PRs got away with fail a small PR. Hoist table-shaped fixture data into one
+raw-string literal parsed by a few unique lines: one string is one token, and there is
+nothing left to match.
+— *demo screenshots — a uniform gallery and a richer hero*.
+
 ---
 
 ## 3. Measure; do not assume

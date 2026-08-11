@@ -1095,11 +1095,18 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   lessons §2). Related: the self-model screen lists the narrative
   newest-first **by insertion**, so the vec must append in chronological
   order or the visible dates scramble.
-- **Verification**: the showcase needles grew with the content (the typed
-  draft, the list's last row, `draft-simple`, the newest observation), so
-  a fixture edit that shrinks a fill or scrolls the subject out of frame
-  fails the ordinary suite. **1977 unit tests green, 85 `#[ignore]`**
-  (content-only change — no new tests, none removed). No live-model run —
-  capture-side only, the engine untouched. The site was rebuilt on the
-  synced assets and measured in the preview: all four gallery figures
-  render at exactly equal height in both themes.
+- **The quality gate then measured the fixture's shape, and won.** The PR's
+  first analysis failed on **24.7% new-code duplication (bar ≤ 3%)** with
+  every literal in the file different — because Sonar's Rust CPD compares
+  **normalized** tokens (`jscpd`, which compares exact tokens, reports 0%
+  on the same two files), so five `goal(…)` blocks, six `segment(…)`
+  blocks and 21 same-shape tuple rows are all sliding self-duplicates;
+  and because the bar is a *density*, the same shapes that sailed through
+  the big stage-1–3 PRs blew past 3% on this small one. The fix moved the
+  bulk data out of token space entirely: the chat rows, the Q/A excerpts,
+  the goals and the narrative are now four flat raw-string tables (one
+  string literal = one token) parsed by `ts`/`table_lines`/`rows`/`bodies`
+  — ~30 unique lines replacing ~150 structurally repeated ones — and the
+  showcase-needle arrays became one-line match arms. The **drift gate is
+  what made the refactor safe**: the committed dumps never changed, so
+  green meant the parsed tables reproduce the old values byte for byte.

@@ -230,60 +230,34 @@ mod tests {
     /// or strings that render on one line (the joined-rows trap, lessons §2).
     #[test]
     fn frames_show_their_showcase() {
-        let needles: [(&str, &[&str]); 5] = [
-            (
-                "chat",
-                &[
-                    demo::CHAT_TITLE,
-                    "note_save",
-                    "Q5_K_M",
-                    "sizing",
-                    "sweet spot",
-                    "How much context?",
-                    "KV headroom",
-                    // The typed draft is part of the composition — an edit
-                    // that grows the feed must not push the input's text out.
-                    "1B draft",
-                ],
-            ),
-            (
-                "chat-list",
-                &[
-                    demo::CHAT_TITLE,
-                    "Speculative",
-                    "Dolomites",
-                    "Mermaid",
-                    // The last fixture row: the list fills the frame to the
-                    // bottom, so losing it means the fill shrank.
-                    "First week with mindfork",
-                ],
-            ),
-            (
-                "settings-model",
-                &["llama-server.exe", "16384", "draft-simple", "gemma-4-1B"],
-            ),
-            (
-                "settings-tools",
-                &["Agentic loop", "Wasmer sandbox", "Web search"],
-            ),
-            (
-                "self-model",
-                &[
-                    "reproducible",
-                    "VRAM",
-                    "methodical",
-                    "receipts beat repetition",
-                ],
-            ),
-        ];
+        // One row per screen (the skip keeps it that way): notable needles —
+        // "1B draft" pins the typed input draft (an edit that grows the feed
+        // must not push the input's text out), "First week with mindfork" is
+        // the list's last fixture row (the fill reaches the frame's bottom),
+        // "receipts beat repetition" the newest self-model observation.
+        #[rustfmt::skip]
+        let needles = |screen: &str| -> &'static [&'static str] {
+            match screen {
+                "chat" => &["note_save", "Q5_K_M", "sizing", "sweet spot", "How much context?", "KV headroom", "1B draft"],
+                "chat-list" => &["Speculative", "Dolomites", "Mermaid", "First week with mindfork"],
+                "settings-model" => &["llama-server.exe", "16384", "draft-simple", "gemma-4-1B"],
+                "settings-tools" => &["Agentic loop", "Wasmer sandbox", "Web search"],
+                "self-model" => &["reproducible", "VRAM", "methodical", "receipts beat repetition"],
+                other => panic!("no needles for {other}"),
+            }
+        };
         for frame in all_frames(Theme::Dark) {
             let text = frame_text(&frame);
-            let expected = needles
-                .iter()
-                .find(|(id, _)| *id == frame.screen)
-                .unwrap_or_else(|| panic!("no needles for {}", frame.screen))
-                .1;
-            for needle in expected {
+            // The chat title heads both the feed and the list — checked once
+            // here rather than repeated per row above.
+            if matches!(frame.screen.as_str(), "chat" | "chat-list") {
+                assert!(
+                    text.contains(demo::CHAT_TITLE),
+                    "{}: title missing",
+                    frame.screen
+                );
+            }
+            for needle in needles(&frame.screen) {
                 assert!(
                     text.contains(needle),
                     "{}: {needle:?} is not on screen:\n{text}",
