@@ -294,6 +294,159 @@ def svg_label(stem: str) -> str:
     return f"mindfork — {stem}"
 
 
+class SvgGrid(NamedTuple):
+    """Sub-pixel geometry shared by every cell of one SVG sheet."""
+
+    cell_w: float
+    cell_h: float
+    ascent: float
+    pad: int
+
+
+def bg_rect(run_x: int, run_w: int, row_y: float, grid: SvgGrid, bg: tuple[int, int, int]) -> str:
+    """One merged background rect, cell units -> px."""
+    return (
+        f'<rect x="{fmt(grid.pad + run_x * grid.cell_w)}" y="{fmt(row_y)}" '
+        f'width="{fmt(run_w * grid.cell_w)}" height="{fmt(grid.cell_h)}" fill="{hexs(bg)}"/>'
+    )
+
+
+def svg_bg_rects(
+    row: list[dict],
+    row_y: float,
+    grid: SvgGrid,
+    canvas_fg: tuple[int, int, int],
+    canvas_bg: tuple[int, int, int],
+) -> list[str]:
+    """Pass 1 — background rects, consecutive same-bg cells merged."""
+    rects: list[str] = []
+    x = 0
+    run_x, run_w, run_bg = 0, 0, None
+    for cell in row:
+        w = cell.get("w", 1)
+        _, bg = cell_colors(cell, canvas_fg, canvas_bg)
+        key = bg if bg != canvas_bg else None
+        if key == run_bg:
+            run_w += w
+        else:
+            if run_bg is not None:
+                rects.append(bg_rect(run_x, run_w, row_y, grid, run_bg))
+            run_x, run_w, run_bg = x, w, key
+        x += w
+    if run_bg is not None:
+        rects.append(bg_rect(run_x, run_w, row_y, grid, run_bg))
+    return rects
+
+
+class TextRun:
+    """Pass-2 state: the pending same-style tspan run."""
+
+    def __init__(self) -> None:
+        self.chars: list[str] = []
+        self.key: tuple | None = None
+        self.x = 0
+        self.cells = 0
+
+    def start(self, x: int, key: tuple, s: str) -> None:
+        self.x, self.key, self.chars, self.cells = x, key, [s], 1
+
+    def extend(self, s: str) -> None:
+        self.chars.append(s)
+        self.cells += 1
+
+    def take(self) -> tuple[tuple | None, str, int, int]:
+        """Return (key, text, x, cells), resetting the run."""
+        key, text, x, cells = self.key, "".join(self.chars), self.x, self.cells
+        self.chars, self.key, self.cells = [], None, 0
+        return key, text, x, cells
+
+
+def flush_run(
+    run: TextRun, spans: list[str], grid: SvgGrid, canvas_fg: tuple[int, int, int]
+) -> None:
+    """Emit the pending run as one <tspan>, if it holds visible text."""
+    key, text, run_x, cells = run.take()
+    if key is None or not text.strip():
+        return
+    fg, mods = key
+    classes = " ".join(
+        cls for flag, cls in (("B", "b"), ("I", "i"), ("U", "u"), ("S", "st")) if flag in mods
+    )
+    attrs = [f'x="{fmt(grid.pad + run_x * grid.cell_w)}"']
+    # textLength pins the run's end to the grid even if a viewer
+    # substitutes a font with a slightly different advance.
+    if cells > 1:
+        attrs.append(f'textLength="{fmt(cells * grid.cell_w)}"')
+    if classes:
+        attrs.append(f'class="{classes}"')
+    if fg != canvas_fg:
+        attrs.append(f'fill="{hexs(fg)}"')
+    spans.append(f"<tspan {' '.join(attrs)}>{svg_escape(text)}</tspan>")
+
+
+def fill_attr(fg: tuple[int, int, int], canvas_fg: tuple[int, int, int]) -> str:
+    """` fill="#…"` when the fg differs from the canvas default, else empty."""
+    return f' fill="{hexs(fg)}"' if fg != canvas_fg else ""
+
+
+def cell_traits(
+    cell: dict,
+    faces: Faces,
+    canvas_fg: tuple[int, int, int],
+    canvas_bg: tuple[int, int, int],
+) -> tuple[str, int, tuple[int, int, int], tuple, bool, bool]:
+    """-> (s, w, fg, key, hidden, solo): what the pass-2 dispatch runs on."""
+    w = cell.get("w", 1)
+    mods = cell.get("m", "")
+    fg, _ = cell_colors(cell, canvas_fg, canvas_bg)
+    s = cell["s"]
+    hidden = "H" in mods or not s.strip() and "U" not in mods and "S" not in mods
+    covered = all(ord(c) in faces.primary_cmap or ord(c) < 0x20 for c in s)
+    solo = w > 1 or not covered
+    key = (fg, "".join(m for m in "BIUS" if m in mods))
+    return s, w, fg, key, hidden, solo
+
+
+def svg_text_spans(
+    row: list[dict],
+    faces: Faces,
+    grid: SvgGrid,
+    canvas_fg: tuple[int, int, int],
+    canvas_bg: tuple[int, int, int],
+) -> list[str]:
+    """Pass 2 — text runs. A run key is (fg, B, I, U, S); spaces join the
+    current run only when the full key matches, else they end it. Cells the
+    primary font does not cover, and wide (w=2) cells, become solo
+    anchored-middle tspans centered in their box — the vector cousin of the
+    raster path's centered fallback drawing.
+    """
+    spans: list[str] = []
+    run = TextRun()
+    x = 0
+    for cell in row:
+        s, w, fg, key, hidden, solo = cell_traits(cell, faces, canvas_fg, canvas_bg)
+        # A cell extends the current run only on a full style-key match: for
+        # a hidden cell a plain space qualifies, for a visible one any glyph
+        # the primary face places at native advance (i.e. not solo).
+        if key == run.key and (s == " " if hidden else not solo):
+            run.extend(s)
+        elif hidden:
+            flush_run(run, spans, grid, canvas_fg)
+        elif solo:
+            flush_run(run, spans, grid, canvas_fg)
+            center = grid.pad + (x + w / 2) * grid.cell_w
+            spans.append(
+                f'<tspan x="{fmt(center)}" text-anchor="middle"{fill_attr(fg, canvas_fg)}>'
+                f"{svg_escape(s)}</tspan>"
+            )
+        else:
+            flush_run(run, spans, grid, canvas_fg)
+            run.start(x, key, s)
+        x += w
+    flush_run(run, spans, grid, canvas_fg)
+    return spans
+
+
 def render_svg(dump: Path, out_dir: Path, faces: Faces, pad: int, px: int, font_base: str) -> Path:
     """One dump -> one SVG: merged background rects + one <text> per row with
     a <tspan> per same-style run.
@@ -301,19 +454,19 @@ def render_svg(dump: Path, out_dir: Path, faces: Faces, pad: int, px: int, font_
     Runs keep the grid honest by construction: every run's `x` is set from
     the cell index, so advance drift can never accumulate across runs, and
     within a run every glyph is the primary monospace face at native advance.
-    Cells the primary font does not cover, and wide (w=2) cells, become solo
-    anchored-middle tspans centered in their box — the vector cousin of the
-    raster path's centered fallback drawing.
     """
     frame = json.loads(dump.read_text(encoding="utf-8"))
     canvas_bg = parse_hex(frame["canvas_bg"])
     canvas_fg = parse_hex(frame["canvas_fg"])
 
-    cell_w = px * faces.em_advance  # the font's true advance, unhinted
-    ascent = px * faces.em_ascent
-    cell_h = px * faces.em_height
-    width = frame["width"] * cell_w + 2 * pad
-    height = frame["height"] * cell_h + 2 * pad
+    grid = SvgGrid(
+        cell_w=px * faces.em_advance,  # the font's true advance, unhinted
+        cell_h=px * faces.em_height,
+        ascent=px * faces.em_ascent,
+        pad=pad,
+    )
+    width = frame["width"] * grid.cell_w + 2 * pad
+    height = frame["height"] * grid.cell_h + 2 * pad
     sid = dump.stem
 
     out: list[str] = []
@@ -347,94 +500,12 @@ def render_svg(dump: Path, out_dir: Path, faces: Faces, pad: int, px: int, font_
     out.append(f'<rect width="100%" height="100%" fill="{hexs(canvas_bg)}"/>')
 
     for y, row in enumerate(frame["rows"]):
-        row_y = pad + y * cell_h
-        # Pass 1 — background rects, consecutive same-bg cells merged.
-        x = 0
-        run_x, run_w, run_bg = 0, 0, None
-        for cell in row:
-            w = cell.get("w", 1)
-            _, bg = cell_colors(cell, canvas_fg, canvas_bg)
-            key = bg if bg != canvas_bg else None
-            if key == run_bg:
-                run_w += w
-            else:
-                if run_bg is not None:
-                    out.append(
-                        f'<rect x="{fmt(pad + run_x * cell_w)}" y="{fmt(row_y)}" '
-                        f'width="{fmt(run_w * cell_w)}" height="{fmt(cell_h)}" fill="{hexs(run_bg)}"/>'
-                    )
-                run_x, run_w, run_bg = x, w, key
-            x += w
-        if run_bg is not None:
-            out.append(
-                f'<rect x="{fmt(pad + run_x * cell_w)}" y="{fmt(row_y)}" '
-                f'width="{fmt(run_w * cell_w)}" height="{fmt(cell_h)}" fill="{hexs(run_bg)}"/>'
-            )
-
-        # Pass 2 — text runs. A run key is (fg, B, I, U, S); spaces join the
-        # current run only when the full key matches, else they end it.
-        spans: list[str] = []
-        run_chars: list[str] = []
-        run_key: tuple | None = None
-        run_x = 0
-        run_cells = 0
-
-        def flush() -> None:
-            nonlocal run_chars, run_key, run_cells
-            if run_key is None or not "".join(run_chars).strip():
-                run_chars, run_key, run_cells = [], None, 0
-                return
-            fg, mods = run_key
-            classes = " ".join(
-                cls
-                for flag, cls in (("B", "b"), ("I", "i"), ("U", "u"), ("S", "st"))
-                if flag in mods
-            )
-            attrs = [f'x="{fmt(pad + run_x * cell_w)}"']
-            # textLength pins the run's end to the grid even if a viewer
-            # substitutes a font with a slightly different advance.
-            if run_cells > 1:
-                attrs.append(f'textLength="{fmt(run_cells * cell_w)}"')
-            if classes:
-                attrs.append(f'class="{classes}"')
-            if fg != canvas_fg:
-                attrs.append(f'fill="{hexs(fg)}"')
-            spans.append(f"<tspan {' '.join(attrs)}>{svg_escape(''.join(run_chars))}</tspan>")
-            run_chars, run_key, run_cells = [], None, 0
-
-        x = 0
-        for cell in row:
-            w = cell.get("w", 1)
-            mods = cell.get("m", "")
-            fg, _ = cell_colors(cell, canvas_fg, canvas_bg)
-            s = cell["s"]
-            hidden = "H" in mods or not s.strip() and "U" not in mods and "S" not in mods
-            covered = all(ord(c) in faces.primary_cmap or ord(c) < 0x20 for c in s)
-            solo = w > 1 or not covered
-            key = (fg, "".join(m for m in "BIUS" if m in mods))
-            if hidden and s == " " and run_key == key:
-                run_chars.append(s)  # a space continues a same-style run
-                run_cells += 1
-            elif hidden:
-                flush()
-            elif solo:
-                flush()
-                center = pad + (x + w / 2) * cell_w
-                fill = f' fill="{hexs(fg)}"' if fg != canvas_fg else ""
-                spans.append(
-                    f'<tspan x="{fmt(center)}" text-anchor="middle"{fill}>{svg_escape(s)}</tspan>'
-                )
-            elif run_key == key:
-                run_chars.append(s)
-                run_cells += 1
-            else:
-                flush()
-                run_x, run_key, run_chars, run_cells = x, key, [s], 1
-            x += w
-        flush()
+        row_y = pad + y * grid.cell_h
+        out.extend(svg_bg_rects(row, row_y, grid, canvas_fg, canvas_bg))
+        spans = svg_text_spans(row, faces, grid, canvas_fg, canvas_bg)
         if spans:
             out.append(
-                f'<text xml:space="preserve" y="{fmt(row_y + ascent)}">{"".join(spans)}</text>'
+                f'<text xml:space="preserve" y="{fmt(row_y + grid.ascent)}">{"".join(spans)}</text>'
             )
 
     out.append("</svg>")
