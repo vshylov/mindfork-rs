@@ -507,14 +507,29 @@ async fn i18n_en_profile_title_e2e_live() {
 }
 
 /// Live i18n Tier 2 smoke (docs/history/i18n.md, group 2c): an en profile + `current_time`.
-/// The tool result must carry the English label "Local time:" and contain no
-/// Cyrillic (utility tools are localized). Needs no network/sandbox.
-/// Run:
+/// The subject is Tier 2b — **a tool result is localized in the profile's
+/// language** — not the tool's formatting options.
+///
+/// `current_time` has two legitimate result shapes (`features/tools/datetime.rs`):
+/// without a `format` argument it renders the localized label plus UTC
+/// ("Local time: … / UTC: …"), and **with** one it renders only the strftime
+/// string, which carries no scaffold text in any language. So the label can only
+/// be asserted against a call that passed no `format`, and the tool description
+/// openly advertises `format` — an assertion that demands the label of *every*
+/// call fails whenever the model takes that option, i.e. for the wrong reason
+/// (docs/lessons.md §2). The alternative is therefore removed rather than hoped
+/// away (§9): only `current_time` is enabled, and both the system message and
+/// the prompt ask for an argument-free call, with one explicit re-ask if the
+/// model passes `format` anyway. The Cyrillic check still applies to every
+/// shape — under a `ru` profile the label, and the bad-format error, are
+/// Russian — and the label check applies to the argument-free calls, of which at
+/// least one is required, so neither assertion can pass vacuously.
+///
+/// Needs no network/sandbox. Run:
 /// `MINDFORK_ENGINE_URL=…/v1 cargo test utils_en_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn utils_en_e2e_live() {
-    use crate::features::tools::all_tool_ids;
     let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -522,7 +537,10 @@ async fn utils_en_e2e_live() {
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "English".into(),
-            system_message: "You are a helpful assistant. Reply in English.".into(),
+            system_message: "You are a helpful assistant. Reply in English. \
+                 When you call the current_time tool, call it with no arguments \
+                 at all — never pass the format parameter."
+                .into(),
         })
         .unwrap();
     let pl = wait_for(
@@ -540,7 +558,8 @@ async fn utils_en_e2e_live() {
             id: pid,
             edit: Box::new(ProfileEdit {
                 language: Some(crate::shared::i18n::Lang::En),
-                enabled_tools: Some(all_tool_ids()),
+                // Only the tool under test — nothing else can be reached for.
+                enabled_tools: Some(vec!["current_time".to_string()]),
                 ..Default::default()
             }),
         })
@@ -554,25 +573,80 @@ async fn utils_en_e2e_live() {
         .await
         .unwrap();
 
-    let (_t, calls) = run_turn_capture(
+    /// True when the call passed no usable `format` — i.e. the result is the
+    /// localized default shape. Unparsable arguments count as "format passed":
+    /// the label cannot be claimed for a shape we could not determine.
+    fn no_format(args: &str) -> bool {
+        let t = args.trim();
+        if t.is_empty() {
+            return true;
+        }
+        match serde_json::from_str::<serde_json::Value>(t) {
+            // Mirrors the tool's own reading of the argument (datetime.rs):
+            // absent, non-string or blank all fall back to the default shape.
+            Ok(v) => v
+                .get("format")
+                .and_then(|f| f.as_str())
+                .is_none_or(|s| s.trim().is_empty()),
+            Err(_) => false,
+        }
+    }
+    let current_time = |calls: Vec<(String, String, String)>| -> Vec<(String, String)> {
+        calls
+            .into_iter()
+            .filter(|(n, _, _)| n == "current_time")
+            .map(|(_, a, r)| (a, r))
+            .collect()
+    };
+
+    let (_t, calls) = run_turn_capture_args(
         &cmd_tx,
         &mut evt_rx,
-        "What is the current date and time? Use the current_time tool.",
+        "What is the current date and time? Call the current_time tool \
+         with no arguments (do not pass format).",
     )
     .await;
+    let mut ct = current_time(calls);
+    if !ct.iter().any(|(a, _)| no_format(a)) {
+        // The model took the `format` option despite both instructions; ask once
+        // more, as explicitly as the tool contract allows. Two refusals is a
+        // model-behaviour failure worth seeing, not a flake to absorb.
+        eprintln!("current_time called with format only: {ct:#?} — re-asking");
+        let (_t2, calls2) = run_turn_capture_args(
+            &cmd_tx,
+            &mut evt_rx,
+            "Call current_time once more with an empty argument object {}, \
+             passing no format, and show me its raw output.",
+        )
+        .await;
+        ct.extend(current_time(calls2));
+    }
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
-    eprintln!("utils calls: {calls:#?}");
+    eprintln!("utils calls: {ct:#?}");
 
     let has_cyr = |s: &str| {
         s.chars()
             .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
     };
-    let ct: Vec<&(String, String)> = calls.iter().filter(|(n, _)| n == "current_time").collect();
-    assert!(!ct.is_empty(), "expected current_time call: {calls:?}");
-    for (_, r) in &ct {
-        assert!(!has_cyr(r), "current_time result has cyrillic: {r:?}");
+    assert!(!ct.is_empty(), "expected a current_time call");
+    // Holds for both shapes: the ru default label and the ru bad-format error are Cyrillic.
+    for (a, r) in &ct {
+        assert!(
+            !has_cyr(r),
+            "current_time result has cyrillic (args {a:?}): {r:?}"
+        );
+    }
+    // The localized label exists only in the argument-free shape — require one.
+    let plain: Vec<&(String, String)> = ct.iter().filter(|(a, _)| no_format(a)).collect();
+    assert!(
+        !plain.is_empty(),
+        "the model passed `format` on every current_time call, so the localized \
+         label was never rendered — the i18n claim is untested: {ct:#?}"
+    );
+    for (_, r) in plain {
         assert!(r.contains("Local time:"), "expected English label: {r:?}");
+        assert!(r.contains("UTC:"), "expected the UTC line: {r:?}");
     }
 }
 
