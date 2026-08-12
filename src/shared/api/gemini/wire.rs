@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
-use crate::shared::api::contract::{ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
 // ---------- request ----------
 
@@ -231,7 +231,7 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
     for m in &req.messages {
         match m.role {
             ApiRole::System => continue,
-            ApiRole::User => push("user", text_parts(&m.content)),
+            ApiRole::User => push("user", user_parts(m)),
             ApiRole::Assistant => {
                 let mut parts = text_parts(&m.content);
                 for tc in &m.tool_calls {
@@ -283,6 +283,31 @@ fn text_parts(content: &str) -> Vec<Value> {
     } else {
         vec![json!({ "text": content })]
     }
+}
+
+/// The parts of a user turn: images (each behind its label) first, then the text.
+///
+/// `inline_data` carries the payload in the request itself. Gemini also offers the Files
+/// API, and its docs recommend it for large or reused media — but that is a second
+/// service with its own lifecycle, and inline data is what the 20 MB request ceiling
+/// comfortably fits once images are downscaled at attach time (spec §9.10). The
+/// precedent in this codebase is `shared/video/gemini.rs`, which pushes a `file_data`
+/// part the same way.
+fn user_parts(m: &ApiMessage) -> Vec<Value> {
+    if m.images.is_empty() {
+        return text_parts(&m.content);
+    }
+    let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
+    for image in &m.images {
+        if let Some(label) = &image.label {
+            parts.push(json!({ "text": label }));
+        }
+        parts.push(json!({
+            "inline_data": { "mime_type": image.mime, "data": image.data.as_ref() }
+        }));
+    }
+    parts.extend(text_parts(&m.content));
+    parts
 }
 
 /// Recovers the function name from a synthesized `tool_call_id` of the shape `"{name}-{index}"`
@@ -435,6 +460,60 @@ mod tests {
             },
             tools: vec![],
         }
+    }
+
+    /// The mirror of the Chat Completions guarantee (spec §9.10): a user turn with no
+    /// images keeps exactly the one text part it always had.
+    #[test]
+    fn a_text_only_user_turn_is_unchanged_by_the_image_support() {
+        let json = serde_json::to_value(build_request(
+            &base_req(vec![ApiMessage::user("привет")]),
+            "gemini-2.5-flash",
+        ))
+        .unwrap();
+        let parts = json["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "привет");
+    }
+
+    #[test]
+    fn images_become_inline_data_parts_ahead_of_the_text() {
+        let msg =
+            ApiMessage::user("what is this?").with_images(vec![crate::shared::api::ApiImage::new(
+                "image/png",
+                "QUJD",
+                Some("Image #1 — \"a.png\":".into()),
+            )]);
+        let json =
+            serde_json::to_value(build_request(&base_req(vec![msg]), "gemini-2.5-flash")).unwrap();
+        let parts = json["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["text"], "Image #1 — \"a.png\":");
+        assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(
+            parts[1]["inline_data"]["data"], "QUJD",
+            "bare base64, not a data: URI — Gemini takes the payload raw"
+        );
+        assert_eq!(parts[2]["text"], "what is this?");
+    }
+
+    /// Two images in one turn keep their order and each keeps its own label, so
+    /// "the second picture" means the same thing to the model and to the user.
+    #[test]
+    fn several_images_keep_their_order_and_labels() {
+        let msg = ApiMessage::user("").with_images(vec![
+            crate::shared::api::ApiImage::new("image/png", "AAA", Some("Image #1:".into())),
+            crate::shared::api::ApiImage::new("image/jpeg", "BBB", Some("Image #2:".into())),
+        ]);
+        let json =
+            serde_json::to_value(build_request(&base_req(vec![msg]), "gemini-2.5-flash")).unwrap();
+        let parts = json["contents"][0]["parts"].as_array().unwrap();
+        // Four parts, not five: an image-only message adds no trailing empty text.
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0]["text"], "Image #1:");
+        assert_eq!(parts[1]["inline_data"]["data"], "AAA");
+        assert_eq!(parts[2]["text"], "Image #2:");
+        assert_eq!(parts[3]["inline_data"]["mime_type"], "image/jpeg");
     }
 
     #[test]

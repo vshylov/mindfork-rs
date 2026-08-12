@@ -6,14 +6,16 @@
 > A compact summary of what recently closed is at the end of the file.
 
 ## Most valuable next
-The unprioritized list below is an idea bank of equal weight; these are called out
-as the highest-payoff tracks (real user pain / direct savings):
-1. **Multimodality (images)** — **stage 1 done** (`/image attach|remove|list`
-   against a local `llama-server --mmproj` and Grok); what remains is **stage 2**,
-   the three other cloud wire formats (Anthropic `image` blocks, Gemini
-   `inline_data`, OpenAI Responses `input_image`), each already verified live
-   with a real key. [multimodal-images.md](research/multimodal-images.md),
-   spec §9.10.
+The unprioritized list below is an idea bank of equal weight; this section calls
+out the highest-payoff tracks (real user pain / direct savings). **It is empty
+right now** — the three that stood here have all been closed or settled, and the
+next one is whatever the next round of use argues for.
+
+**Multimodality (images)** left this list on 2026-08-13 — **track complete**,
+both stages: `/image attach|remove|list` works against a local
+`llama-server --mmproj` and all four clouds
+([multimodal-images.md](research/multimodal-images.md), spec §9.10). What was
+deliberately left open is below, under "Feed and chat UI" and "Tools".
 
 **Retry/backoff on cloud errors** left this list on 2026-08-12 — **done**, both
 stages (see "Recently closed").
@@ -203,10 +205,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   engine fields.
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
-- **Multimodality — what stage 1 left open**
-  ([multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
-  - **stage 2** — the Anthropic/Gemini/Responses wire formats (the shapes are
-    verified, the work is three request builders and one smoke each);
+- **Multimodality — what the track left open** (both stages are **done**, see
+  "Recently closed"; [multimodal-images.md](research/multimodal-images.md) §5,
+  spec §9.10):
   - **paste an image from the clipboard** (`arboard` is already a dependency;
     its `image-data` feature unlocks `get_image()`) — deferred because the
     Windows paste pipeline is its own minefield (docs/lessons.md §6);
@@ -381,6 +382,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Images in a message** (stages 1–2, complete): `/image attach|remove|list`
+  shows a picture to a local `llama-server --mmproj` and to all four clouds. The
+  decision that shaped everything else was **not** copying `/file`: an image is
+  staged for the *next message* rather than pinned to the chat, because that is
+  what every provider's wire format models and because a chat-scoped set would
+  rewrite the head of the prompt — measured, the append-only shape keeps
+  llama.cpp's prefix cache across an image turn. A request carrying no images
+  stays byte-identical to what the app sent before the feature, in all four
+  formats, which is what makes the change safe for every existing conversation.
+  Capability is *asked* (`/props` `modalities.vision`), never inferred from a
+  model name, and an engine that cannot say is trusted rather than refused.
+  Images are downscaled and normalized to png/jpeg once, at attach time, since
+  xAI takes nothing else and an unscaled photo would ride every later turn. See
+  [multimodal-images.md](research/multimodal-images.md), spec §9.10.
 - **Retry/backoff on cloud errors** (stages 1–2, complete): a transient provider
   failure no longer costs the turn. The one-line roadmap item turned out to be
   **three** defects, two of them invisible, and stage 1 closed those first: a

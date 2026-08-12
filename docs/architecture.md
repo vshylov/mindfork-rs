@@ -947,7 +947,13 @@ OpenAI-compatible proxy/gateway).
   has images** — a text-only request stays byte-identical to what the client sent
   before the feature, which the prefix cache and Gemma's two template branches
   both depend on (pinned by `a_text_only_request_is_unchanged_by_the_image_support`).
-  The three other cloud formats are stage 2.
+  The other three formats follow the same rule in their own dialects:
+  `AntBlock::Image{source:{type:"base64",media_type,data}}` (Anthropic),
+  an `inline_data` part (Gemini), and `input_image` with a `data:` URI inside a
+  `content` array (Responses) — each with its own "text-only is unchanged" test.
+  Every backend puts **images before text**, and each image behind a label part
+  built in the app layer (axis A), so one prompt behaves the same wherever it
+  goes.
 - **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
   `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
   contract" shape as `context_budget`, and delegated by `RetryBackend` for the

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::entities::sampling::ReasoningEffort;
-use crate::shared::api::contract::{ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
 /// The default `max_tokens` if unset in sampling (Anthropic requires the field).
 pub const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -87,6 +87,24 @@ pub enum AntBlock {
         tool_use_id: String,
         content: String,
     },
+    /// An image the user attached (spec §9.10). Anthropic takes three source types
+    /// (base64, a URL, a Files-API `file_id`); we send base64, because the payload is
+    /// already in hand — the chat file stores it — and the other two would add an upload
+    /// round trip or a hosting requirement for no gain at our sizes.
+    Image {
+        source: AntImageSource,
+    },
+}
+
+/// The `source` of an [`AntBlock::Image`]. Only the base64 variant exists here; the
+/// struct is separate (rather than inline fields) because Anthropic nests it, and
+/// `media_type` is a required sibling of the data rather than a guess from the bytes.
+#[derive(Debug, Serialize)]
+pub struct AntImageSource {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,7 +180,7 @@ fn build_messages(req: &ChatRequest) -> Vec<AntMessage> {
     let mut out: Vec<AntMessage> = Vec::new();
     for m in &req.messages {
         let (role, blocks): (&'static str, Vec<AntBlock>) = match m.role {
-            ApiRole::User => ("user", text_blocks(&m.content)),
+            ApiRole::User => ("user", user_blocks(m)),
             ApiRole::Assistant => {
                 let mut blocks = Vec::new();
                 // A thinking block (with a signature) must go FIRST in an assistant turn with
@@ -226,6 +244,34 @@ fn text_blocks(content: &str) -> Vec<AntBlock> {
             text: content.to_string(),
         }]
     }
+}
+
+/// The blocks of a user turn: images (each behind its label) first, then the text.
+///
+/// Images before text is Anthropic's own documented recommendation, and it is the order
+/// every backend in this project uses so that a prompt behaves the same wherever it is
+/// sent. A message with no images produces exactly what [`text_blocks`] always did.
+fn user_blocks(m: &ApiMessage) -> Vec<AntBlock> {
+    if m.images.is_empty() {
+        return text_blocks(&m.content);
+    }
+    let mut blocks = Vec::with_capacity(m.images.len() * 2 + 1);
+    for image in &m.images {
+        if let Some(label) = &image.label {
+            blocks.push(AntBlock::Text {
+                text: label.clone(),
+            });
+        }
+        blocks.push(AntBlock::Image {
+            source: AntImageSource {
+                kind: "base64",
+                media_type: image.mime.clone(),
+                data: image.data.to_string(),
+            },
+        });
+    }
+    blocks.extend(text_blocks(&m.content));
+    blocks
 }
 
 // ---------- streaming events ----------
@@ -348,6 +394,60 @@ mod tests {
             },
             tools: vec![],
         }
+    }
+
+    /// A user turn with no images must serialize exactly as it did before image
+    /// support — one text block, nothing else. The mirror of the Chat Completions
+    /// guarantee (spec §9.10): a text-only conversation cannot change shape because a
+    /// sibling feature landed.
+    #[test]
+    fn a_text_only_user_turn_is_unchanged_by_the_image_support() {
+        let body = build_request(&req(vec![ApiMessage::user("привет")]), "claude-x", false);
+        let json = serde_json::to_value(&body).unwrap();
+        let content = json["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "привет");
+    }
+
+    #[test]
+    fn images_become_base64_blocks_ahead_of_the_text() {
+        let msg =
+            ApiMessage::user("what is this?").with_images(vec![crate::shared::api::ApiImage::new(
+                "image/png",
+                "QUJD",
+                Some("Image #1 — \"a.png\":".into()),
+            )]);
+        let json = serde_json::to_value(build_request(&req(vec![msg]), "claude-x", false)).unwrap();
+        let content = json["messages"][0]["content"].as_array().unwrap();
+        // Label, image, then the user's own words — the order Anthropic documents.
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Image #1 — \"a.png\":");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(
+            content[1]["source"]["data"], "QUJD",
+            "the payload is bare base64 here, NOT a data: URI — that is the OpenAI shape"
+        );
+        assert_eq!(content[2]["text"], "what is this?");
+    }
+
+    /// An image-only message ("look at this") must not grow an empty text block:
+    /// Anthropic rejects a blank `text`, so this is a 400 rather than cosmetics.
+    #[test]
+    fn an_image_only_turn_carries_no_empty_text_block() {
+        let msg = ApiMessage::user("").with_images(vec![crate::shared::api::ApiImage::new(
+            "image/jpeg",
+            "QQ==",
+            None,
+        )]);
+        let json = serde_json::to_value(build_request(&req(vec![msg]), "claude-x", false)).unwrap();
+        let content = json["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["media_type"], "image/jpeg");
     }
 
     #[test]

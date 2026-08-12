@@ -331,6 +331,49 @@ mod ignored_smoke {
         ));
     }
 
+    /// Image input (spec §9.10): an `inline_data` part reaches the model and is
+    /// described. Verified live before the wire was written — see
+    /// docs/research/multimodal-images.md §2.2.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
+    async fn image_input_is_described() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
+                    crate::shared::api::ApiImage::new(
+                        "image/png",
+                        &crate::shared::api::blue_square_png_base64(),
+                        None,
+                    ),
+                ]),
+            ],
+            // 2.5-flash thinks by default and the budget is shared with the reply, so a
+            // small cap here would return an empty answer rather than a wrong one.
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
+                ChatChunk::Finished(_) => break,
+                _ => {}
+            }
+        }
+        eprintln!("gemini vision reply: {text}");
+        crate::shared::api::assert_sees_blue_square(&text, "gemini");
+    }
+
     /// Reasoning summary: with `thinking=true`, "thoughts" (Thoughts) and the reply arrive.
     /// `max_tokens` is generous — thought tokens eat into the reply budget.
     #[tokio::test]

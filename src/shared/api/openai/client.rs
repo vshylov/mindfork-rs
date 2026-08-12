@@ -1207,6 +1207,42 @@ mod grok_smoke {
         );
     }
 
+    /// Image input over Chat Completions (spec §9.10). This is the *same* wire the
+    /// local `llama-server` gets — the shapes are byte-identical, which is why one
+    /// change served both — so this smoke is what proves the shared builder is right
+    /// for a cloud too, not just for llama.cpp.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GROK_KEY (live xAI API)"]
+    async fn image_input_is_described() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GROK_KEY not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
+                    crate::shared::api::ApiImage::new(
+                        "image/png",
+                        &crate::shared::api::blue_square_png_base64(),
+                        None,
+                    ),
+                ]),
+            ],
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, _thoughts, finish) = super::ignored_smoke::collect(
+            client.chat_stream(req, Default::default()).await.unwrap(),
+        )
+        .await;
+        println!("grok vision reply: finish={finish:?} text={text}");
+        crate::shared::api::assert_sees_blue_square(&text, "grok");
+    }
+
     /// A full tool round-trip **without** echoing any thinking signature back. Every
     /// other cloud 400s on this (Anthropic wants the signed thinking block, OpenAI
     /// Responses the reasoning item, Gemini 3 a per-call `thoughtSignature`); Grok
