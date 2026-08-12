@@ -183,6 +183,15 @@ documentation refactor got three consecutive green `link_check` runs over a
 prefer a filesystem walk to a git listing when writing the fix.
 — *the documentation refactor — CLAUDE.md became a router*.
 
+**A provider's *optional* output cannot be an assertion — assert the deterministic
+half.** A smoke required Anthropic's `display:"summarized"` to yield non-empty
+"thoughts"; measured, the turn returns `thoughts=0, signature=380, text=50` — thinking
+really ran (a signature that long only exists for a real thinking block) and the
+provider simply summarized a short one to nothing. Assert the signature, which is empty
+the moment `thinking` leaves the request, and *log* the summary. Weakening an assertion
+is only safe if the remaining one can still fail: verify that with a live mutation.
+— *engine failures stop being silent*.
+
 **When a live smoke fails, suspect the fixture before the feature.** One took **four**
 attempts, each failing its own precondition: the model could answer from memory; the
 target was the only named entry, so the summary kept exactly what had to be lost;

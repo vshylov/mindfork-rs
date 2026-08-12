@@ -363,6 +363,9 @@ mod ignored_smoke {
                     finish = Some(r);
                     break;
                 }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
@@ -373,7 +376,26 @@ mod ignored_smoke {
         ));
     }
 
-    /// Phase A: with thinking enabled, both "thoughts" and their signature arrive.
+    /// Phase A: with thinking enabled, extended thinking runs and its signature
+    /// arrives; the visible **summary is best-effort**.
+    ///
+    /// The original assertion — `display:"summarized"` implies non-empty
+    /// "thoughts" — turned out not to be an invariant, and it had been failing:
+    /// **measured** on `claude-opus-4-8` (2026-08-12, five runs, clean streams with
+    /// no error chunk) the turn comes back `thoughts=0 chars, signature=380 chars,
+    /// text=50 chars`. A signature that long only exists for a real thinking block,
+    /// so thinking *did* happen — Anthropic simply summarized a short one to
+    /// nothing. The deterministic claims are therefore the signature (which is also
+    /// what the tool-use round-trip depends on, and which is empty if `thinking` is
+    /// ever dropped from the request or `signature_delta` stops being parsed) and
+    /// the answer itself; the summary is logged, not asserted. Same shape as the
+    /// OpenAI Responses sibling, whose comment already said "on a trivial task the
+    /// summary might be absent".
+    ///
+    /// `reasoning_effort: High` is kept for the reason its tool-use sibling states:
+    /// `thinking:{type:"adaptive"}` lets the model decide *whether* to think, and
+    /// without the nudge a trivial prompt can skip reasoning altogether — which
+    /// would empty the signature too, and that assertion is the point of this smoke.
     #[tokio::test]
     #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
     async fn extended_thinking_streams_thoughts_and_signature() {
@@ -389,6 +411,7 @@ mod ignored_smoke {
             sampling: SamplingConfig {
                 max_tokens: Some(2048),
                 thinking: Some(true),
+                reasoning_effort: Some(crate::entities::sampling::ReasoningEffort::High),
                 ..Default::default()
             },
             tools: vec![],
@@ -403,12 +426,28 @@ mod ignored_smoke {
                 ChatChunk::ThoughtsSignature(r) => signature.push_str(&r.signature),
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Finished(_) => break,
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
-        // display:summarized → non-empty "thoughts"; the signature is present.
-        assert!(!thoughts.is_empty(), "expected summarized thoughts");
-        assert!(!signature.is_empty(), "expected thinking signature");
+        eprintln!(
+            "thoughts={} chars, signature={} chars, text={} chars",
+            thoughts.len(),
+            signature.len(),
+            text.len()
+        );
+        if thoughts.is_empty() {
+            eprintln!("note: the provider delivered no thinking summary for this turn");
+        }
+        assert!(
+            !signature.is_empty(),
+            "expected a thinking signature — extended thinking did not run \
+             (thoughts={} chars, text={} chars)",
+            thoughts.len(),
+            text.len()
+        );
         assert!(!text.is_empty(), "expected final answer");
     }
 
@@ -468,6 +507,9 @@ mod ignored_smoke {
                     reason = r;
                     break;
                 }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
@@ -517,6 +559,9 @@ mod ignored_smoke {
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
+                }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
                 }
                 _ => {}
             }

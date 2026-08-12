@@ -306,6 +306,9 @@ mod ignored_smoke {
                     finish = Some(r);
                     break;
                 }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
@@ -346,6 +349,9 @@ mod ignored_smoke {
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Finished(_) => break,
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
@@ -390,6 +396,9 @@ mod ignored_smoke {
                 ChatChunk::Finished(r) => {
                     reason = r;
                     break;
+                }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
                 }
                 _ => {}
             }
@@ -452,6 +461,9 @@ mod ignored_smoke {
                     reason = r;
                     break;
                 }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
+                }
                 _ => {}
             }
         }
@@ -491,6 +503,9 @@ mod ignored_smoke {
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
+                }
+                ChatChunk::Error { message, .. } => {
+                    eprintln!("engine error: {message}");
                 }
                 _ => {}
             }

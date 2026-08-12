@@ -1609,16 +1609,28 @@ of the per-model parameter rules.
   Anthropic client through a **real socket and a real SSE body** rather than serde
   alone — which is precisely how the swallowed `error` event survived: the type parsed
   fine, the client dropped it.
-- **Smoke — partial GO.** The reference stack was down, so this ran against the local
-  CPU fallback (`llama-server`, `TheDrummer_Gemma-3-R1-4B-v1-Q8_0`, `-c 512`), which is
-  the right instrument for *server* behaviour. New live smoke
-  `an_oversized_prompt_is_a_typed_non_transient_error` — **GO**: a real `400` comes back
-  as `status=Some(400)`, `transient=false`, and the body survives intact
-  (`exceed_context_size_error … n_ctx: 512`), so the overflow advice still fires. Of the
-  six `OpenAiClient` smokes, three passed (streaming, sampling extensions, anti-EOS —
-  i.e. the rewritten send/status path on the happy path) and three failed on **model
-  capability**, not transport: a 4B non-reasoning model emits no `reasoning_content` and
-  did not call the tools. The diff touches **zero** lines of tool-call parsing, which is
-  how those are told apart from a regression. **Still owed**: the orchestrator e2e set
-  and the four cloud providers' smokes (Anthropic's in-stream error is covered
-  hermetically, but the live provider paths need the reference stack and API keys).
+- **Smoke — GO** (2026-08-12, reference stack `gemma-4-31B_q4_0-it` + `bge-m3`, and all
+  four clouds with real keys).
+  - **New live smoke** `an_oversized_prompt_is_a_typed_non_transient_error` — GO on both
+    stacks: a real `400` arrives as `status=Some(400)`, `transient=false`, body intact
+    (`exceed_context_size_error … "n_ctx":16384`), so the overflow advice still fires.
+  - `OpenAiClient` **7/7**, OpenAI Responses **3/3**, Gemini **4/4**, Grok/xAI **3/3**,
+    Anthropic **3/3**, orchestrator e2e **30/30** (750 s).
+  - Two things the run cost, both worth recording. **First**, the *first* e2e run was
+    27/30 — `attachment_read`, `history_read_back…` and `impersonation_after_compaction…`
+    failed, then passed individually and the whole set came back 30/30 on a clean rerun:
+    flakes, and the reason the project's rule is to distrust a single run. **Second**,
+    a genuinely wrong-premise smoke was found and fixed:
+    `extended_thinking_streams_thoughts_and_signature` asserted that
+    `display:"summarized"` yields non-empty "thoughts". Measured on `claude-opus-4-8`
+    (five runs, clean streams): `thoughts=0, signature=380, text=50`. A signature that
+    long only exists for a real thinking block, so thinking *did* run — Anthropic
+    summarized a short one to nothing. It now asserts the signature (empty the moment
+    `thinking` leaves the request — verified by a live mutation) and logs the summary's
+    absence, matching the OpenAI Responses sibling that already said "on a trivial task
+    the summary might be absent".
+  - Diagnosing that turned up the same defect this branch fixes **inside the smokes'
+    own harness**: their collect loops swallowed `ChatChunk::Error` in a `_ => {}` arm,
+    so the failure read as "empty thoughts" with no word of an engine error. Every cloud
+    smoke now prints it — and the silence of that line is what proved the Anthropic
+    stream was clean rather than failing.
