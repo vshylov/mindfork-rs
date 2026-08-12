@@ -799,6 +799,14 @@ Details:
   persistence (`record_to_api`); `wire::build_contents` resends it alongside
   `functionCall`. Confirmed against live Gemini 3.1 Pro (round trip without
   `400`).
+- **Engine failures reach the feed** (spec §6.8). `stream_round` handles both paths
+  — the pre-stream `Err` and the in-stream `ChatChunk::Error` — through one
+  `engine_error_key`/`engine_error_note` pair, so they cannot describe the same
+  condition differently. Four answers: the two overflow messages of §6.7,
+  `ui.err.generation_interrupted` when text or "thoughts" had already been
+  streamed (the reply is a fragment — say so and name `Ctrl+R`), and
+  `ui.err.generation_failed` otherwise. The partial reply is still finalized and
+  persisted, as before; what is new is that the feed says why it stopped.
 - **EOS.** Stopping is strictly by the model's special-token id (server-side); the
   application **doesn't send** a text-based EOS `stop` string (anti-self-abort).
 - **Regeneration** truncates history through the last user message inclusive
@@ -810,7 +818,12 @@ Details:
 ## 6. Engine layer (`shared/api`)
 
 The transport is hidden behind two traits — this gives engine swappability,
-multi-provider support, and mocking in tests. The module is laid out by family
+multi-provider support, and mocking in tests. Two small modules are shared by
+every client: **`error`** (`EngineError` — status, `Retry-After` and the
+provider's body kept as fields; `check_status`; the transient/permanent
+classification) and **`http`** (one `reqwest::Client` with a 10 s **connect**
+timeout, and `send_cancellable`, which puts the initial POST inside the
+cancellation token's reach) — see spec §6.8. The rest is laid out by family
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
@@ -915,7 +928,13 @@ OpenAI-compatible proxy/gateway).
   top-level, tool results → `tool_result` blocks in user, adjacent roles
   merged).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
-  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Finished`.
+  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Error{message,transient}` |
+  `Finished`. `Error` is the stream's error channel: a failure that arrives after
+  the response cannot be an `Err` (the caller holds the stream), so each client
+  yields it right before `Finished(Error)` — Anthropic's in-stream `error` event,
+  a Gemini error payload, an OpenAI-shaped error object inside a llama.cpp `200`
+  stream, or a dropped connection. `transient` is the retry verdict (spec §6.8);
+  nothing consumes it until the retry decorator lands.
   `ToolCallAccumulator` collects calls split across chunks by `index`; `Usage`
   (`prompt_tokens`/`completion_tokens`) arrives as a final chunk when
   `stream_options.include_usage=true` — the token counter. `ThoughtsSignature`

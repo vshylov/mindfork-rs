@@ -163,9 +163,14 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-12, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **1977 unit tests
-green, 85 `#[ignore]`** (84 live smokes + the screenshot-dump regenerator). The
-most recent tracks: the **mindfork.io website, S1–S4 — track complete** (a
+The **M0–M9** plan is done, plus extensive post-M9 work — **2011 unit tests
+green, 86 `#[ignore]`** (85 live smokes + the screenshot-dump regenerator). The
+most recent tracks: **cloud-error retry/backoff, stage 1** (engine failures stop
+being silent — a mid-answer failure is reported instead of leaving a fragment on
+screen, `Esc` interrupts a request that is still connecting, and status /
+`Retry-After` survive as fields on a typed `EngineError` for the retry decorator
+to come; [docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md)),
+the **mindfork.io website, S1–S4 — track complete** (a
 Zola site under `site/`, terminal-styled on the brand palette, **live at
 https://mindfork.io** — currently behind a temporary maintenance IP
 allowlist while the repository is private (the stack's `AllowedIps`

@@ -443,6 +443,7 @@ fn spawn_compact(
             let mut text = String::new();
             let mut thoughts = String::new();
             let mut truncated = false;
+            let mut failure: Option<String> = None;
             while let Some(chunk) = stream.next().await {
                 match chunk {
                     ChatChunk::Text(t) => text.push_str(&t),
@@ -453,10 +454,19 @@ fn spawn_compact(
                         truncated = matches!(reason, crate::shared::api::FinishReason::Length);
                         break;
                     }
+                    // Unlike the other background turns this one is reported to the
+                    // user when they asked for it (`/compact` is owed an answer), so
+                    // the reason is carried out instead of only logged — otherwise a
+                    // roll killed mid-stream would report whatever fragment arrived
+                    // as if it were a summary.
+                    ChatChunk::Error { message, .. } => failure = Some(message),
                     ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)
                     | ChatChunk::Usage(_) => {}
                 }
+            }
+            if let Some(err) = failure {
+                anyhow::bail!("{err}");
             }
             Ok::<(String, String, bool), anyhow::Error>((text, thoughts, truncated))
         };

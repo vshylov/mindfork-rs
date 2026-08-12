@@ -807,6 +807,120 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
     assert_eq!(discarded[0].tool_calls[0].name, "rewrite_current_message");
 }
 
+/// A bounded [`wait_for`].
+///
+/// The shared helper blocks until the event channel *closes*, so a regression that
+/// simply stops emitting an event makes a test hang rather than fail — and in CI a
+/// hang reads as broken infrastructure instead of a broken promise. Measured while
+/// mutation-testing the note below: with its `send` removed the test ran past ten
+/// minutes; bounded, it fails in five seconds.
+async fn wait_for_bounded<F: Fn(&AppEvent) -> bool>(
+    rx: &mut UnboundedReceiver<AppEvent>,
+    what: &str,
+    pred: F,
+) -> AppEvent {
+    tokio::time::timeout(std::time::Duration::from_secs(5), wait_for(rx, pred))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
+        .unwrap_or_else(|| panic!("the event stream closed before {what}"))
+}
+
+/// The regression this whole change exists for: a provider that dies **after** the
+/// stream opened used to end the turn silently — `Finished(Error)` pushes no note
+/// (only `Cancelled` does), so a reply cut off mid-sentence was indistinguishable
+/// from a finished one, and the only trace was a line in the file log.
+#[tokio::test]
+async fn a_mid_stream_error_reaches_the_feed_and_keeps_the_partial_reply() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("Половина отв".into()),
+        ChatChunk::Error {
+            message: "overloaded_error: Overloaded".into(),
+            transient: true,
+        },
+        ChatChunk::Finished(FinishReason::Error),
+    ])) as Arc<dyn EngineBackend>;
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = dir.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+
+    // The note comes before Finished, and `wait_for` drains — so it must be
+    // pulled first or the wait below eats it.
+    let AppEvent::Error(note) = wait_for_bounded(&mut evt_rx, "the failure note", |e| {
+        matches!(e, AppEvent::Error(_))
+    })
+    .await
+    else {
+        unreachable!("filtered on Error")
+    };
+    assert!(
+        note.contains("overloaded_error"),
+        "the note must carry what the provider said, got {note:?}"
+    );
+    wait_for_bounded(&mut evt_rx, "Finished", |e| {
+        matches!(e, AppEvent::Finished { .. })
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // What did arrive is still there — the note explains it, it does not replace it.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(chat.messages.len(), 2, "{:?}", chat.messages);
+    assert_eq!(chat.messages[1].role, MessageRole::Assistant);
+    assert_eq!(chat.messages[1].text, "Половина отв");
+}
+
+/// Which advice a failed turn gets. Asserted as the *decision* (the bundle key)
+/// rather than the prose, so a translation edit cannot break it and a wrong branch
+/// cannot pass.
+#[test]
+fn the_failure_note_is_chosen_by_condition() {
+    use crate::app::orchestrator::generation::engine_error_key;
+
+    let overflow =
+        "engine returned status 400: {\"error\":{\"type\":\"exceed_context_size_error\"}}";
+    let plain = "overloaded_error: Overloaded";
+
+    // Overflow wins over everything: it is the one failure with a specific way
+    // out, and which way out depends on whether compression is switched on.
+    assert_eq!(
+        engine_error_key(overflow, true, false),
+        "ui.err.context_overflow"
+    );
+    assert_eq!(
+        engine_error_key(overflow, false, false),
+        "ui.err.context_overflow_off"
+    );
+    // ...including when text was already on screen — pointing at `/compact` beats
+    // "press Ctrl+R", which would just overflow again.
+    assert_eq!(
+        engine_error_key(overflow, true, true),
+        "ui.err.context_overflow"
+    );
+    // Anything else: text already on screen means a fragment, so say so and name
+    // the way to a whole reply; nothing on screen is a plain failure.
+    assert_eq!(
+        engine_error_key(plain, true, true),
+        "ui.err.generation_interrupted"
+    );
+    assert_eq!(
+        engine_error_key(plain, true, false),
+        "ui.err.generation_failed"
+    );
+}
+
 #[tokio::test]
 async fn send_without_backend_emits_error() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);

@@ -429,6 +429,9 @@ async fn summarize_text(
             match chunk {
                 ChatChunk::Text(t) => out.push_str(&t),
                 ChatChunk::Finished(_) => break,
+                ChatChunk::Error { message, .. } => {
+                    tracing::warn!(error = %message, "engine error while summarizing a page");
+                }
                 ChatChunk::Thoughts(_)
                 | ChatChunk::ThoughtsSignature(_)
                 | ChatChunk::ToolCall(_)

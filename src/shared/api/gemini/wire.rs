@@ -330,11 +330,31 @@ pub struct GenResponse {
     pub candidates: Vec<Candidate>,
     #[serde(default)]
     pub usage_metadata: Option<UsageMetadata>,
+    /// An error, reported with the **same** shape as a non-streaming one
+    /// (documented). Every other field here defaults, so such an event used to
+    /// deserialize as a perfectly valid empty chunk and end the turn as a silent
+    /// `Stop` — see docs/research/cloud-retry-backoff.md §1.2.
+    #[serde(default)]
+    pub error: Option<GenError>,
     /// Prompt feedback: populated when the **request** itself is blocked
     /// by the filter (then `candidates` is empty) — otherwise an empty reply would look like an ordinary
     /// `STOP` with no explanation. See [`PromptFeedback`].
     #[serde(default)]
     pub prompt_feedback: Option<PromptFeedback>,
+}
+
+/// A Gemini error payload: the HTTP-ish `code`, prose `message`, and the canonical
+/// `status` name (`UNAVAILABLE`/`RESOURCE_EXHAUSTED`/`INTERNAL`/…), which is what
+/// says whether another attempt could succeed.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenError {
+    #[serde(default)]
+    pub code: Option<u16>,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub status: String,
 }
 
 /// Prompt feedback. `block_reason` (`SAFETY`/`OTHER`/…) is present when the
@@ -687,5 +707,58 @@ mod tests {
         assert_eq!(fc.args["x"], 1);
         assert_eq!(p.thought_signature.as_deref(), Some("SIG"));
         assert_eq!(r.candidates[0].finish_reason.as_deref(), Some("STOP"));
+    }
+}
+
+/// An error payload inside an open stream. The trap being pinned: every field of
+/// [`GenResponse`] defaults, so before `error` existed such a payload parsed as a
+/// perfectly valid empty chunk and the turn ended as a silent `Stop`.
+#[cfg(test)]
+mod stream_error_tests {
+    use super::*;
+
+    #[test]
+    fn an_error_payload_is_recognized_and_classified() {
+        let data =
+            r#"{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}"#;
+        let resp: GenResponse = serde_json::from_str(data).unwrap();
+        let err = resp.error.expect("the error payload must be read");
+        assert_eq!(err.code, Some(503));
+        assert_eq!(err.status, "UNAVAILABLE");
+        assert!(crate::shared::api::error::stream_error_transient(
+            &err.status,
+            err.code
+        ));
+        // And it is not mistaken for content.
+        assert!(resp.candidates.is_empty());
+    }
+
+    #[test]
+    fn a_quota_error_is_transient_but_an_argument_error_is_not() {
+        let quota = r#"{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED"}}"#;
+        let bad = r#"{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}"#;
+        for (data, expected) in [(quota, true), (bad, false)] {
+            let err = serde_json::from_str::<GenResponse>(data)
+                .unwrap()
+                .error
+                .unwrap();
+            assert_eq!(
+                crate::shared::api::error::stream_error_transient(&err.status, err.code),
+                expected,
+                "{data}"
+            );
+        }
+    }
+
+    /// An ordinary chunk must not grow an error out of nowhere.
+    #[test]
+    fn a_normal_chunk_carries_no_error() {
+        let data = r#"{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}"#;
+        assert!(
+            serde_json::from_str::<GenResponse>(data)
+                .unwrap()
+                .error
+                .is_none()
+        );
     }
 }

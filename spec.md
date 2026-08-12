@@ -413,8 +413,11 @@ pub struct ChatRequest {
 pub enum ChatChunk {
     Text(String),                           // a delta of the main text
     Thoughts(String),                       // a delta of "thoughts" (reasoning_content or <think>)
+    ThoughtsSignature(ThinkingRef),         // reasoning to resend on tool-use (Anthropic/OpenAI)
     ToolCallDelta(ToolCallDelta),           // accumulating tool_calls
-    Finished { reason: FinishReason },      // Stop | ToolCalls | Length | Cancelled
+    Usage(TokenUsage),                      // the server's exact token counts
+    Error { message, transient },           // a failure after the stream opened (see 6.8)
+    Finished { reason: FinishReason },       // Stop | ToolCalls | Length | Cancelled | Error
 }
 ```
 
@@ -498,6 +501,53 @@ The whole conversation is sent on every request, so a long chat eventually stops
 - **When it is already too late**, the failure says what to do instead of handing back the provider's raw JSON in a generic wrapper — and *which* advice depends on the switch: with compression on it names `/compact`, with it off it names the setting. Pointing at a command that would refuse is a dead end, not a hint.
 - **UI** — `/compact` runs it on demand. The feed draws a muted divider at the boundary, carrying the summary as a foldable block that expands together with the "thoughts" blocks (`Ctrl+T`, [11.3](#113-chat-window)) — no separate hotkey and no extra per-chat state. A quiet status-bar chip shows a roll in progress. A background roll that fails stays silent and spends a strike in the background-task failure streak (three consecutive failures alert once); a roll the user asked for reports its failure immediately, since a command just typed is owed an answer.
 - **Off by default? No — on**, where it can act at all: what it prevents is strictly worse than what it does, and the divider keeps it visible. But it is **fully switchable off** (`compaction.enabled`, settings → "Memory" → "Context"), and off means *inert*: no splice, the full history is sent exactly as before the feature existed, `/compact` refuses with a pointer at the setting, and the stored summary is kept rather than discarded — so off → on → off is lossless in both directions.
+
+### 6.8. Transient engine failures and what the user is told
+
+Cloud providers shed load as a matter of course (`429`, `500`/`503`, Anthropic's
+dedicated `529 overloaded_error`), and a connection can die at any point. The
+contract splits such a failure by **when** it happens, because that decides both
+what can be said and what could be done about it.
+
+- **Before the stream opens** — a transport failure or a non-2xx status — is an
+  `Err` from `chat_stream`, carrying `EngineError { kind, status, retry_after,
+  message }`. The status and any `Retry-After` are kept as fields rather than
+  buried in prose (the header in seconds for OpenAI/Anthropic, OpenAI's
+  `retry-after-ms`, and for Gemini — which sends no header — the
+  `google.rpc.RetryInfo` hint inside the 429 body). The provider's own body is
+  never swallowed: its first 500 characters are part of the message, which is what
+  lets [§6.7](#67-history-compression-rolling-summary) recognize an overflow and
+  answer with `/compact` instead of a generic wrapper.
+- **After the stream opens** the failure cannot be an `Err` — the caller already
+  holds the stream — so it arrives as `ChatChunk::Error { message, transient }`
+  immediately before `Finished(Error)`. This channel exists because such failures
+  were previously invisible: the partial reply was kept and nothing said it was a
+  fragment, and for Anthropic — whose documented in-stream `error` event is how a
+  `529` arrives once a stream is accepted — a truncation was indistinguishable
+  from a completed answer.
+- **What the user sees** is one of four things, chosen in one place so the two
+  paths above cannot describe the same condition differently: the two overflow
+  messages of §6.7; *"the reply was cut short"* plus a pointer to `Ctrl+R`, when
+  text had already reached the screen (a fragment is a different situation from a
+  failure to answer, and a message that does not say which leaves the user
+  guessing); or the generic failure. Overflow outranks the fragment wording —
+  naming `Ctrl+R` there would invite a retry that overflows again. Background
+  turns (auto-title, reflection) log the reason instead, since the failure streak
+  already reports them; a **compaction roll** is the exception and reports it,
+  because `/compact` was just typed and is owed an answer.
+- **`transient`** says whether another attempt could succeed. It is derived from
+  the status (`408`/`429`/`500`/`502`/`503`/`504`/`529` — the set converges across
+  every provider) or, with no status line left to read, from the provider's error
+  *name*. A `400` is never transient: llama.cpp's `exceed_context_size_error` is
+  compression's job, not a retry's. Nothing acts on the flag yet — automatic
+  retry with backoff is the next stage of
+  [docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md).
+- **Timeouts.** Engine clients bound only the **connect** phase (10 s). A stream
+  legitimately stays open for minutes and a local prefill can be silent for tens
+  of seconds, so a total or idle timeout would cut healthy generations; what is
+  bounded is the case with no healthy reading — nobody answering at all. The
+  initial request is sent inside the cancellation token's reach, so `Esc` works
+  while connecting rather than only once bytes are flowing.
 
 ---
 

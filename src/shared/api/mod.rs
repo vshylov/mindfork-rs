@@ -7,7 +7,9 @@
 
 pub mod anthropic;
 pub mod contract;
+pub mod error;
 pub mod gemini;
+pub mod http;
 pub mod managed;
 pub mod openai;
 pub mod thoughts;

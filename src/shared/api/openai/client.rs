@@ -14,6 +14,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
     TokenUsage, ToolCallDelta,
 };
+use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
+use crate::shared::api::http;
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
 /// A client to an OpenAI-compatible inference server (local/external `llama-server`,
@@ -45,7 +47,7 @@ impl OpenAiClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
-            http: reqwest::Client::new(),
+            http: http::engine_client(),
             base_url,
             api_key: None,
             model: None,
@@ -125,25 +127,16 @@ impl EngineBackend for OpenAiClient {
             wire::build_chat_request(&req, true, self.model.as_deref(), self.omit_effort_none);
         let url = format!("{}/chat/completions", self.base_url);
 
-        let response = self
-            .auth(self.http.post(&url))
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        // Don't swallow the error body: llama.cpp/OpenAI servers put the reason in JSON
-        // (`{"error":{"message":...}}`); without it "error status" is useless. Log it
-        // to a file and surface it in the error text (truncating long bodies). See §7.
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let detail: String = body.trim().chars().take(500).collect();
-            tracing::warn!(%status, body = %detail, "engine returned an error status");
-            if detail.is_empty() {
-                anyhow::bail!("engine returned status {status}");
-            }
-            anyhow::bail!("engine returned status {status}: {detail}");
-        }
+        // Cancellable: until this moved inside the token's reach, `Esc` could not
+        // interrupt a request that had not yet produced a stream.
+        let Some(response) =
+            http::send_cancellable(self.auth(self.http.post(&url)).json(&body), &cancel).await?
+        else {
+            return Ok(http::cancelled_stream());
+        };
+        // The error body is not swallowed (llama.cpp/OpenAI servers put the reason
+        // in JSON); status, `Retry-After` and the text all come back typed.
+        let response = error::check_status(SUBJECT_ENGINE, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -171,7 +164,12 @@ impl EngineBackend for OpenAiClient {
                                 break;
                             }
                             Some(Err(err)) => {
-                                tracing::warn!(error = %err, "SSE stream error");
+                                // A dropped connection is the canonical retryable
+                                // failure — and, until it was surfaced, the canonical
+                                // silent truncation.
+                                let message = error::chain_text(&err);
+                                tracing::warn!(error = %message, "SSE stream error");
+                                yield ChatChunk::Error { message, transient: true };
                                 yield ChatChunk::Finished(FinishReason::Error);
                                 break;
                             }
@@ -231,6 +229,22 @@ impl EngineBackend for OpenAiClient {
                                         }
                                     }
                                     Err(err) => {
+                                        // llama.cpp (and OpenAI-compatible proxies) can put an
+                                        // error object into an already-open 200 stream instead
+                                        // of a chunk (ggml-org/llama.cpp#14566). It fails to
+                                        // parse as a chunk, and skipping it silently is how a
+                                        // failed turn used to look like a finished one.
+                                        if let Some(e) = wire::parse_stream_error(&event.data) {
+                                            tracing::warn!(
+                                                name = %e.name,
+                                                transient = e.transient,
+                                                message = %e.message,
+                                                "engine reported an error inside the stream"
+                                            );
+                                            yield ChatChunk::Error { message: e.message, transient: e.transient };
+                                            yield ChatChunk::Finished(FinishReason::Error);
+                                            break;
+                                        }
                                         tracing::warn!(error = %err, data = %event.data, "failed to parse SSE chunk");
                                     }
                                 }
@@ -296,20 +310,14 @@ impl Embedder for OpenAiClient {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("POST {url}"))?;
+            // No `.with_context(|| format!("POST {url}"))` here on purpose:
+            // `anyhow` prints only the outermost context, so that wrapper used to
+            // replace the reason ("connection refused") with the bare URL.
+            .map_err(|err| error::EngineError::transport(&err))?;
         // Don't swallow the error body (like chat_stream): llama-server puts the reason in
         // JSON (e.g. "input is too large to process. increase the physical batch
         // size" for a too-long chunk) — without it "error status" is useless.
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let detail: String = body.trim().chars().take(500).collect();
-            tracing::warn!(%status, body = %detail, "embeddings request returned an error status");
-            if detail.is_empty() {
-                anyhow::bail!("embedder returned status {status}");
-            }
-            anyhow::bail!("embedder returned status {status}: {detail}");
-        }
+        let response = error::check_status(SUBJECT_EMBEDDER, response).await?;
         let resp: wire::EmbeddingResponse = response
             .json()
             .await
@@ -663,6 +671,9 @@ mod ignored_smoke {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                 ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                // Say why: a smoke whose engine failed mid-stream would otherwise
+                // assert on empty text with nothing in the output explaining it.
+                ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
@@ -695,6 +706,64 @@ mod ignored_smoke {
             finish,
             Some(FinishReason::Stop | FinishReason::Length)
         ));
+    }
+
+    /// A real rejection from a real server, checked as a **typed** error rather
+    /// than as prose.
+    ///
+    /// This is the path every non-2xx takes (`check_status`), and the properties it
+    /// has to hold are the ones the layers above decide on: the status survives,
+    /// the server's own body survives (so the overflow classifier still fires and
+    /// the user gets the `/compact` advice instead of a generic wrapper), and a
+    /// `400` is **not** reported as worth retrying — the coming retry decorator
+    /// would otherwise spend its whole budget on a prompt that can never fit
+    /// (docs/research/cloud-retry-backoff.md §5).
+    ///
+    /// The prompt is deliberately far larger than any context this project runs
+    /// against: llama.cpp answers `400` *before* the prefill starts (measured —
+    /// spec §6.7), so the size costs nothing and the smoke cannot silently pass by
+    /// fitting.
+    #[tokio::test]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+    async fn an_oversized_prompt_is_a_typed_non_transient_error() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("word ".repeat(120_000))],
+            sampling: SamplingConfig {
+                max_tokens: Some(16),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        // `expect_err` would need `ChatStream: Debug`, which a boxed stream isn't.
+        let err = match client.chat_stream(req, Default::default()).await {
+            Ok(_) => panic!("a prompt this size cannot fit any context window"),
+            Err(err) => err,
+        };
+        let typed = err
+            .downcast_ref::<crate::shared::api::error::EngineError>()
+            .expect("the status must reach the caller as a typed error");
+        eprintln!(
+            "status={:?} transient={} retry_after={:?}\nmessage={}",
+            typed.status,
+            typed.is_transient(),
+            typed.retry_after,
+            typed.message
+        );
+        assert_eq!(typed.status, Some(400), "the status must survive");
+        assert!(
+            !typed.is_transient(),
+            "an oversized prompt must not be reported as retryable"
+        );
+        assert!(
+            crate::features::compaction::is_context_overflow(&typed.message),
+            "the server's body must survive so the advice can be picked: {}",
+            typed.message
+        );
     }
 
     /// Asks the model to print the literal EOS text and then say `DONE` —

@@ -178,15 +178,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   `env` map half is **done**, spec §9.6); UI management of other machines'
   entries ("forget this computer") — also where an explicit cleanup of MCP
   secrets orphaned by a rename or delete belongs.
-- **Retry/backoff on cloud provider network errors** — clients currently
-  surface the error body but don't retry (transient 429/5xx/timeouts).
-  **Researched (2026-08-12)** — verified provider semantics, the design and
-  its forks: [cloud-retry-backoff.md](research/cloud-retry-backoff.md);
-  awaiting fork decisions before implementation. The research also found two
-  adjacent defects the track's stage 1 closes: a mid-stream failure is
-  currently *silent* (no feed note; Anthropic's in-stream `error` events are
-  swallowed entirely), and the initial POST has no connect timeout and
-  ignores `Esc` until the connection opens.
+- **Retry/backoff on cloud provider network errors** — **stage 1 done, stage 2
+  open.** Design, verified provider semantics and the settled forks:
+  [cloud-retry-backoff.md](research/cloud-retry-backoff.md).
+  **Stage 1 (done)** closed the two adjacent defects the research turned up and
+  built the plumbing: a mid-answer failure is now reported instead of leaving a
+  silent fragment (Anthropic's in-stream `error` events were swallowed
+  entirely), the initial POST has a connect timeout and honours `Esc`, and the
+  status / `Retry-After` survive as fields on a typed `EngineError`.
+  **Stage 2 (open)** is the retry itself: a `RetryBackend` decorator over
+  cloud/external backends, retrying only before the first content chunk —
+  3 attempts, 1 s/2 s with jitter, `Retry-After` honoured up to 30 s, plus a
+  status-bar chip while it waits.
 - **Configurable health-check cadence.** The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
   relaunch budget (≤3 per 5 min) are constants. Nothing has asked for them to be

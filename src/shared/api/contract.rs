@@ -235,6 +235,27 @@ pub enum ChatChunk {
     ToolCall(ToolCallDelta),
     /// The token counter (`usage`) — usually a separate chunk before finishing.
     Usage(TokenUsage),
+    /// The turn failed **after** the stream was already open.
+    ///
+    /// This is the stream's error channel, and it exists because such a failure
+    /// cannot be returned as `Err`: the caller already holds the stream. Every
+    /// client yields it immediately before `Finished(`[`FinishReason::Error`]`)`,
+    /// so a consumer that only watches `Finished` behaves exactly as it did
+    /// before.
+    ///
+    /// Before it existed, an in-stream failure was a `tracing::warn!` and nothing
+    /// more: a reply cut off mid-sentence was indistinguishable from a finished
+    /// one — Anthropic's in-stream `error` event (its `529 overloaded_error`
+    /// arrives this way), an OpenAI-shaped error object inside a `200` stream from
+    /// llama.cpp, a Gemini error payload, a dropped connection. See
+    /// docs/research/cloud-retry-backoff.md §1.2.
+    ///
+    /// `transient` says whether another attempt could succeed
+    /// ([`stream_error_transient`](super::error::stream_error_transient)). Nothing
+    /// reads it yet — the retry decorator (stage 2 of that research) is its
+    /// consumer; it is carried now so the clients' classification lives in one
+    /// place from the start.
+    Error { message: String, transient: bool },
     /// Generation finished.
     Finished(FinishReason),
 }

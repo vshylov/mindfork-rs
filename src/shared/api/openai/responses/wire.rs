@@ -255,10 +255,18 @@ pub enum RespEvent {
         #[serde(default)]
         response: Option<RespBody>,
     },
+    /// The response died after the stream had been accepted. The reason travels in
+    /// the response object's `error`, which is why it is carried here rather than
+    /// dropped — a bare "failed" is a note that says nothing.
     #[serde(rename = "response.failed")]
-    Failed,
+    Failed {
+        #[serde(default)]
+        response: Option<RespBody>,
+    },
     #[serde(rename = "error")]
     Error {
+        #[serde(default)]
+        code: Option<String>,
         #[serde(default)]
         message: Option<String>,
     },
@@ -296,6 +304,19 @@ pub enum RespItem {
 pub struct RespBody {
     #[serde(default)]
     pub usage: Option<RespUsage>,
+    /// Populated on `response.failed` — why the response died mid-stream.
+    #[serde(default)]
+    pub error: Option<RespError>,
+}
+
+/// The `error` object of a failed response: a string `code`
+/// (`rate_limit_exceeded`, `server_error`, …) plus prose.
+#[derive(Debug, Default, Deserialize)]
+pub struct RespError {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: String,
 }
 
 /// The token counter of a Responses reply (`input_tokens`/`output_tokens` +
@@ -566,5 +587,64 @@ mod tests {
                 ..
             }
         ));
+    }
+}
+
+/// Terminal failure events. Both used to end the turn with no reason attached —
+/// `response.failed` carried none at all, and the `error` event's went to the log.
+#[cfg(test)]
+mod failure_event_tests {
+    use super::*;
+
+    #[test]
+    fn response_failed_carries_its_reason() {
+        let data = r#"{"type":"response.failed","response":{"id":"resp_1","status":"failed",
+            "error":{"code":"server_error","message":"The model failed to generate a response."}}}"#;
+        let RespEvent::Failed { response } = serde_json::from_str(data).unwrap() else {
+            panic!("expected response.failed")
+        };
+        let err = response
+            .and_then(|r| r.error)
+            .expect("the reason must survive");
+        assert_eq!(err.code.as_deref(), Some("server_error"));
+        assert!(err.message.contains("failed to generate"));
+        assert!(crate::shared::api::error::stream_error_transient(
+            err.code.as_deref().unwrap_or_default(),
+            None
+        ));
+    }
+
+    /// A `failed` without an error object must still parse — the note then names
+    /// the event rather than nothing.
+    #[test]
+    fn response_failed_without_a_reason_still_parses() {
+        let data = r#"{"type":"response.failed"}"#;
+        let RespEvent::Failed { response } = serde_json::from_str(data).unwrap() else {
+            panic!("expected response.failed")
+        };
+        assert!(response.is_none());
+    }
+
+    #[test]
+    fn the_error_event_carries_code_and_message() {
+        let data = r#"{"type":"error","code":"rate_limit_exceeded","message":"Rate limit reached","param":null,"sequence_number":7}"#;
+        let RespEvent::Error { code, message } = serde_json::from_str(data).unwrap() else {
+            panic!("expected an error event")
+        };
+        assert_eq!(code.as_deref(), Some("rate_limit_exceeded"));
+        assert_eq!(message.as_deref(), Some("Rate limit reached"));
+    }
+
+    /// `response.completed` must keep parsing now that RespBody has a new field.
+    #[test]
+    fn completed_still_parses_with_usage() {
+        let data = r#"{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":7,
+            "output_tokens_details":{"reasoning_tokens":2}}}}"#;
+        let RespEvent::Completed { response } = serde_json::from_str(data).unwrap() else {
+            panic!("expected response.completed")
+        };
+        let u = response.usage.unwrap();
+        assert_eq!((u.input_tokens, u.output_tokens), (5, 7));
+        assert!(response.error.is_none());
     }
 }

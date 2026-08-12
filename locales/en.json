@@ -1108,6 +1108,7 @@
   "ui.err.no_active_chat": "No active chat",
   "ui.err.impersonation_failed": "Impersonation error: {err}",
   "ui.err.generation_failed": "Generation error: {err}",
+  "ui.err.generation_interrupted": "The reply was cut short — the engine failed mid-answer: {err}. What did arrive is kept; press Ctrl+R to generate it again.",
   "ui.err.context_overflow": "The conversation no longer fits the model's context window. Run /compact to fold the older messages into a summary, or start a new chat. Server reply: {err}",
   "ui.err.context_overflow_off": "The conversation no longer fits the model's context window. History compression is off — turn it on in settings, section \"Memory\" -> \"Context\", and it will fold the older messages into a summary by itself. Server reply: {err}",
   "ui.err.load_data_failed": "Data load error: {err}",

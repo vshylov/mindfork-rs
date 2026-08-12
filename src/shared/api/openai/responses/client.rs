@@ -7,7 +7,7 @@
 //! Responses has no embeddings — [`Embedder`](crate::shared::api::contract::Embedder)
 //! takes a separate source (ADR 0002), like Anthropic.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_stream::stream;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
@@ -18,6 +18,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
     ToolCallDelta,
 };
+use crate::shared::api::error::{self, SUBJECT_RESPONSES};
+use crate::shared::api::http;
 
 /// A client to the OpenAI Responses API.
 pub struct ResponsesClient {
@@ -37,7 +39,7 @@ impl ResponsesClient {
     ) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
-            http: reqwest::Client::new(),
+            http: http::engine_client(),
             base_url,
             api_key: api_key.into(),
             model: model.into(),
@@ -51,26 +53,11 @@ impl EngineBackend for ResponsesClient {
         let body = wire::build_request(&req, &self.model, true);
         let url = format!("{}/responses", self.base_url);
 
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        // Don't swallow the error body (like the other clients): OpenAI puts the reason in JSON
-        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let detail: String = body.trim().chars().take(500).collect();
-            tracing::warn!(%status, body = %detail, "openai responses returned an error status");
-            if detail.is_empty() {
-                anyhow::bail!("engine (OpenAI Responses) returned status {status}");
-            }
-            anyhow::bail!("engine (OpenAI Responses) returned status {status}: {detail}");
-        }
+        let request = self.http.post(&url).bearer_auth(&self.api_key).json(&body);
+        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+            return Ok(http::cancelled_stream());
+        };
+        let response = error::check_status(SUBJECT_RESPONSES, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -92,7 +79,9 @@ impl EngineBackend for ResponsesClient {
                                 break;
                             }
                             Some(Err(err)) => {
-                                tracing::warn!(error = %err, "SSE stream error (openai responses)");
+                                let message = error::chain_text(&err);
+                                tracing::warn!(error = %message, "SSE stream error (openai responses)");
+                                yield ChatChunk::Error { message, transient: true };
                                 yield ChatChunk::Finished(FinishReason::Error);
                                 break;
                             }
@@ -170,14 +159,37 @@ impl EngineBackend for ResponsesClient {
                                         yield ChatChunk::Finished(FinishReason::Length);
                                         break;
                                     }
-                                    Ok(RespEvent::Failed) => {
+                                    Ok(RespEvent::Failed { response }) => {
+                                        let e = response.and_then(|r| r.error).unwrap_or_default();
+                                        let code = e.code.unwrap_or_default();
+                                        let transient = error::stream_error_transient(&code, None);
+                                        tracing::warn!(
+                                            %code,
+                                            transient,
+                                            message = %e.message,
+                                            "openai responses failed mid-stream"
+                                        );
+                                        yield ChatChunk::Error {
+                                            message: error::stream_error_text(&code, &e.message),
+                                            transient,
+                                        };
                                         yield ChatChunk::Finished(FinishReason::Error);
                                         break;
                                     }
-                                    Ok(RespEvent::Error { message }) => {
-                                        if let Some(m) = message {
-                                            tracing::warn!(message = %m, "openai responses error event");
-                                        }
+                                    Ok(RespEvent::Error { code, message }) => {
+                                        let code = code.unwrap_or_default();
+                                        let message = message.unwrap_or_default();
+                                        let transient = error::stream_error_transient(&code, None);
+                                        tracing::warn!(
+                                            %code,
+                                            transient,
+                                            %message,
+                                            "openai responses error event"
+                                        );
+                                        yield ChatChunk::Error {
+                                            message: error::stream_error_text(&code, &message),
+                                            transient,
+                                        };
                                         yield ChatChunk::Finished(FinishReason::Error);
                                         break;
                                     }

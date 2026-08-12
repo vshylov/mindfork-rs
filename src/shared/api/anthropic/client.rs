@@ -5,7 +5,7 @@
 //! Anthropic has no embeddings — [`Embedder`](super::super::contract::Embedder) isn't
 //! implemented here (RAG uses a separate embedder, ADR 0002).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_stream::stream;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
@@ -16,6 +16,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
     ToolCallDelta,
 };
+use crate::shared::api::error::{self, SUBJECT_ANTHROPIC};
+use crate::shared::api::http;
 
 /// The Anthropic API version (the mandatory `anthropic-version` header).
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -38,7 +40,7 @@ impl AnthropicClient {
     ) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
-            http: reqwest::Client::new(),
+            http: http::engine_client(),
             base_url,
             api_key: api_key.into(),
             model: model.into(),
@@ -62,27 +64,16 @@ impl EngineBackend for AnthropicClient {
         let body = wire::build_request(&req, &self.model, true);
         let url = format!("{}/v1/messages", self.base_url);
 
-        let response = self
+        let request = self
             .http
             .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        // Don't swallow the error body (like OpenAiClient): Anthropic puts the reason in JSON
-        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let detail: String = body.trim().chars().take(500).collect();
-            tracing::warn!(%status, body = %detail, "anthropic returned an error status");
-            if detail.is_empty() {
-                anyhow::bail!("engine (Anthropic) returned status {status}");
-            }
-            anyhow::bail!("engine (Anthropic) returned status {status}: {detail}");
-        }
+            .json(&body);
+        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+            return Ok(http::cancelled_stream());
+        };
+        let response = error::check_status(SUBJECT_ANTHROPIC, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -103,7 +94,9 @@ impl EngineBackend for AnthropicClient {
                                 break;
                             }
                             Some(Err(err)) => {
-                                tracing::warn!(error = %err, "SSE stream error (anthropic)");
+                                let message = error::chain_text(&err);
+                                tracing::warn!(error = %message, "SSE stream error (anthropic)");
+                                yield ChatChunk::Error { message, transient: true };
                                 yield ChatChunk::Finished(FinishReason::Error);
                                 break;
                             }
@@ -166,6 +159,25 @@ impl EngineBackend for AnthropicClient {
                                         yield ChatChunk::Finished(reason);
                                         break;
                                     }
+                                    // The documented way a failure arrives once the
+                                    // stream is open: `overloaded_error` here is the
+                                    // `529` that would have been the status code a
+                                    // moment earlier.
+                                    Ok(AntStreamEvent::Error { error: e }) => {
+                                        let transient = error::stream_error_transient(&e.name, None);
+                                        tracing::warn!(
+                                            name = %e.name,
+                                            transient,
+                                            message = %e.message,
+                                            "anthropic reported an error inside the stream"
+                                        );
+                                        yield ChatChunk::Error {
+                                            message: error::stream_error_text(&e.name, &e.message),
+                                            transient,
+                                        };
+                                        yield ChatChunk::Finished(FinishReason::Error);
+                                        break;
+                                    }
                                     Ok(AntStreamEvent::Other) => {}
                                     Err(err) => {
                                         tracing::warn!(error = %err, data = %event.data, "failed to parse anthropic SSE chunk");
@@ -185,6 +197,120 @@ impl EngineBackend for AnthropicClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serves one canned `text/event-stream` response on a local port and returns its
+    /// base URL.
+    ///
+    /// A real socket and a real SSE body, so the whole client is exercised —
+    /// `eventsource` framing, the wire enum, the chunks that come out — rather than
+    /// serde alone. The alternative (asserting on `AntStreamEvent` only) is what let
+    /// the swallowed `error` event survive: the type parsed fine, it was the client
+    /// that dropped it.
+    fn serve_sse(events: &'static [&'static str]) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            // Read the request head so the client's write completes.
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            let mut body = String::new();
+            for e in events {
+                body.push_str(&format!("data: {e}\n\n"));
+            }
+            let _ = sock.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = sock.flush();
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    async fn collect(stream: ChatStream) -> Vec<ChatChunk> {
+        let mut out = Vec::new();
+        let mut stream = stream;
+        while let Some(c) = stream.next().await {
+            let last = matches!(c, ChatChunk::Finished(_));
+            out.push(c);
+            if last {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The headline defect: Anthropic sheds load *after* accepting the stream, and
+    /// that event used to fall into `AntStreamEvent::Other` — so the connection then
+    /// closed, the `None` arm reported `Finished(Stop)`, and an overloaded
+    /// truncation was byte-for-byte a normal completion.
+    #[tokio::test]
+    async fn an_overloaded_error_mid_stream_ends_the_turn_as_an_error() {
+        let base = serve_sse(&[
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Half an ans"}}"#,
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        ]);
+        let client = AnthropicClient::new(base, "k", "claude-x");
+        let req = ChatRequest {
+            system: None,
+            messages: vec![crate::shared::api::contract::ApiMessage::user("hi")],
+            sampling: Default::default(),
+            tools: vec![],
+        };
+        let chunks = collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+
+        assert!(
+            chunks.contains(&ChatChunk::Text("Half an ans".into())),
+            "the partial text still arrives: {chunks:?}"
+        );
+        let Some(ChatChunk::Error { message, transient }) = chunks
+            .iter()
+            .find(|c| matches!(c, ChatChunk::Error { .. }))
+            .cloned()
+        else {
+            panic!("the error must reach the consumer, not just the log: {chunks:?}");
+        };
+        assert!(message.contains("overloaded_error"), "{message}");
+        assert!(transient, "an overloaded provider is worth another attempt");
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Error)),
+            "and the turn must not end as a plain Stop: {chunks:?}"
+        );
+    }
+
+    /// The other half of the same claim: a stream that ends normally must still end
+    /// as `Stop`, with no error chunk invented.
+    #[tokio::test]
+    async fn a_clean_stream_still_finishes_without_an_error_chunk() {
+        let base = serve_sse(&[
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
+        ]);
+        let client = AnthropicClient::new(base, "k", "claude-x");
+        let req = ChatRequest {
+            system: None,
+            messages: vec![crate::shared::api::contract::ApiMessage::user("hi")],
+            sampling: Default::default(),
+            tools: vec![],
+        };
+        let chunks = collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        assert!(
+            !chunks.iter().any(|c| matches!(c, ChatChunk::Error { .. })),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Stop))
+        );
+    }
 
     #[test]
     fn stop_reason_mapping() {

@@ -231,7 +231,13 @@ fn text_blocks(content: &str) -> Vec<AntBlock> {
 // ---------- streaming events ----------
 
 /// An Anthropic SSE stream event (the tag is the `type` field in `data`). Uninteresting events
-/// (`ping`, `content_block_stop`, `message_stop`, `error`) land in [`AntStreamEvent::Other`].
+/// (`ping`, `content_block_stop`, `message_stop`) land in [`AntStreamEvent::Other`].
+///
+/// `error` is **not** one of them, though it used to be: Anthropic documents that a
+/// failure after the stream opens arrives as an `error` event — an
+/// `overloaded_error` there is the same condition as a pre-stream `529` — and
+/// letting it fall into `Other` made an overloaded truncation identical to a normal
+/// completion (docs/research/cloud-retry-backoff.md §1.2).
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AntStreamEvent {
@@ -251,8 +257,23 @@ pub enum AntStreamEvent {
         #[serde(default)]
         usage: Option<AntUsage>,
     },
+    Error {
+        #[serde(default)]
+        error: AntStreamError,
+    },
     #[serde(other)]
     Other,
+}
+
+/// The payload of an in-stream `error` event. `type` names the condition
+/// (`overloaded_error`, `api_error`, …) and is the half worth showing; `message` is
+/// prose and can be empty.
+#[derive(Debug, Default, Deserialize)]
+pub struct AntStreamError {
+    #[serde(default, rename = "type")]
+    pub name: String,
+    #[serde(default)]
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -569,6 +590,57 @@ mod tests {
                 ..
             } => assert_eq!(signature, "sig-xyz"),
             other => panic!("expected SignatureDelta, got {other:?}"),
+        }
+    }
+}
+
+/// In-stream `error` events — the shape Anthropic sheds load with once a stream is
+/// open. See docs/research/cloud-retry-backoff.md §1.2.
+#[cfg(test)]
+mod stream_error_tests {
+    use super::*;
+
+    #[test]
+    fn an_overloaded_error_event_is_parsed_rather_than_ignored() {
+        // Verbatim from Anthropic's streaming docs.
+        let data = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let event: AntStreamEvent = serde_json::from_str(data).unwrap();
+        let AntStreamEvent::Error { error } = event else {
+            panic!("an error event must not land in Other — that is the defect");
+        };
+        assert_eq!(error.name, "overloaded_error");
+        assert_eq!(error.message, "Overloaded");
+        assert!(crate::shared::api::error::stream_error_transient(
+            &error.name,
+            None
+        ));
+    }
+
+    #[test]
+    fn an_error_event_without_a_message_still_names_the_condition() {
+        let data = r#"{"type":"error","error":{"type":"api_error"}}"#;
+        let AntStreamEvent::Error { error } = serde_json::from_str(data).unwrap() else {
+            panic!("expected an error event")
+        };
+        assert_eq!(
+            crate::shared::api::error::stream_error_text(&error.name, &error.message),
+            "api_error"
+        );
+    }
+
+    /// The events that genuinely carry nothing must keep falling through — the new
+    /// variant must not widen into them.
+    #[test]
+    fn uninteresting_events_still_land_in_other() {
+        for data in [
+            r#"{"type":"ping"}"#,
+            r#"{"type":"message_stop"}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+        ] {
+            assert!(matches!(
+                serde_json::from_str::<AntStreamEvent>(data).unwrap(),
+                AntStreamEvent::Other
+            ));
         }
     }
 }

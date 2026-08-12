@@ -7,7 +7,7 @@
 //! This client gives no embeddings — RAG in Gemini mode takes a separate source
 //! (the OpenAI-compatible `…/v1beta/openai/embeddings`, see the supervisor), like Anthropic.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_stream::stream;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
@@ -17,6 +17,8 @@ use super::wire::{self, GenResponse};
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
 };
+use crate::shared::api::error::{self, SUBJECT_GEMINI};
+use crate::shared::api::http;
 
 /// A client to the native Gemini API.
 pub struct GeminiClient {
@@ -43,7 +45,7 @@ impl GeminiClient {
             .trim()
             .to_string();
         Self {
-            http: reqwest::Client::new(),
+            http: http::engine_client(),
             base_url,
             api_key: api_key.into(),
             model,
@@ -95,26 +97,15 @@ impl EngineBackend for GeminiClient {
             self.base_url, self.model
         );
 
-        let response = self
+        let request = self
             .http
             .post(&url)
             .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        // Don't swallow the error body (like the other clients): Gemini puts the reason in JSON
-        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let detail: String = body.trim().chars().take(500).collect();
-            tracing::warn!(%status, body = %detail, "gemini returned an error status");
-            if detail.is_empty() {
-                anyhow::bail!("engine (Gemini) returned status {status}");
-            }
-            anyhow::bail!("engine (Gemini) returned status {status}: {detail}");
-        }
+            .json(&body);
+        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+            return Ok(http::cancelled_stream());
+        };
+        let response = error::check_status(SUBJECT_GEMINI, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -137,7 +128,9 @@ impl EngineBackend for GeminiClient {
                                 break;
                             }
                             Some(Err(err)) => {
-                                tracing::warn!(error = %err, "SSE stream error (gemini)");
+                                let message = error::chain_text(&err);
+                                tracing::warn!(error = %message, "SSE stream error (gemini)");
+                                yield ChatChunk::Error { message, transient: true };
                                 yield ChatChunk::Finished(FinishReason::Error);
                                 break;
                             }
@@ -153,6 +146,26 @@ impl EngineBackend for GeminiClient {
                                         continue;
                                     }
                                 };
+                                // An error reported inside the stream. Checked before
+                                // anything else: every other field of GenResponse
+                                // defaults, so this payload is otherwise a valid
+                                // empty chunk and the turn ended as a silent Stop.
+                                if let Some(e) = resp.error {
+                                    let transient = error::stream_error_transient(&e.status, e.code);
+                                    tracing::warn!(
+                                        status = %e.status,
+                                        code = ?e.code,
+                                        transient,
+                                        message = %e.message,
+                                        "gemini reported an error inside the stream"
+                                    );
+                                    yield ChatChunk::Error {
+                                        message: error::stream_error_text(&e.status, &e.message),
+                                        transient,
+                                    };
+                                    yield ChatChunk::Finished(FinishReason::Error);
+                                    break;
+                                }
                                 // The prompt was blocked by the filter (candidates is empty) —
                                 // explain via a note, otherwise it would look like an empty STOP.
                                 if let Some(reason) = resp
