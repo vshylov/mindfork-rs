@@ -209,7 +209,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   clipboard paste since; see "Recently closed";
   [multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
   - **images from MCP/tool results** — `shared/mcp.rs` already parses the block
-    it currently drops to `[image content omitted]`;
+    it currently drops to `[image content omitted]`. **Researched and measured**
+    ([mcp-tool-images.md](research/mcp-tool-images.md)): four of five providers
+    carry an image *inside* a tool result, Gemini answers a hard `400`
+    ("Multimodal function responses are not supported for this model") and needs
+    a fallback. Forks await a decision;
   - **attach by URL** — accepted natively by llama.cpp/Anthropic/OpenAI but not
     Gemini, so it needs a client-side download and the SSRF care `fetch_url`
     already had to take;
