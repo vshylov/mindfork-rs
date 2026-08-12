@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::{
     AnthropicClient, Embedder, EngineBackend, GeminiClient, ManagedConfig, OpenAiClient,
-    ResponsesClient, ServerHandle, UnavailableEmbedder, wait_until_ready,
+    ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
@@ -338,7 +338,14 @@ fn external_chat_setup(
                 loc,
             );
             ChatSetup {
-                backend: Some(client),
+                // Retried like a cloud, because that is what it usually is: this
+                // mode's URL is as often a proxy or a gateway (LiteLLM,
+                // OpenRouter) as a local `llama-server`, and those answer `429`/
+                // `502` while we own neither the process nor its capacity. A
+                // genuinely local server loses nothing — its `503 Loading model`
+                // is pre-stream and transient, so it rides out in one wait
+                // (fork F2(a)).
+                backend: Some(retry::RetryBackend::wrap(client)),
                 handle: None,
                 status: ServerStatus::Connecting,
             }
@@ -493,7 +500,11 @@ fn cloud_chat_setup(
         ),
     };
     ChatSetup {
-        backend: Some(backend),
+        // Every cloud provider sheds load as a matter of course, and a cloud
+        // backend is never monitored or relaunched (there is nothing to relaunch
+        // and probing costs money), so a per-request retry is the only recovery
+        // mechanism it will ever have. See docs/research/cloud-retry-backoff.md §3.
+        backend: Some(retry::RetryBackend::wrap(backend)),
         handle: None,
         status: ServerStatus::Ready,
     }

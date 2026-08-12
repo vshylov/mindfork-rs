@@ -1,10 +1,13 @@
 # Retry/backoff on cloud provider errors — research
 
-> Status: **research; forks settled 2026-08-12, implementation in progress**.
-> Roadmap: #1 of "Most valuable next" — *"Retry/backoff on cloud provider
-> network errors — clients currently surface the error body but don't retry
-> (transient 429/5xx/timeouts)"* ([roadmap](../roadmap.md) §Engine and
-> reliability). The decisions are recorded in §6.
+> Status: **implemented — both stages, 2026-08-12**. Forks settled the same day
+> (§6); what actually shipped, and the two places reality differed from this
+> design, are in §10. Journal:
+> [engine.md](../journal/engine.md); behaviour: spec §6.8.
+>
+> The item this closes: *"Retry/backoff on cloud provider network errors —
+> clients currently surface the error body but don't retry (transient
+> 429/5xx/timeouts)"* ([roadmap](../roadmap.md) §Engine and reliability).
 
 ## 1. Problem
 
@@ -420,3 +423,57 @@ happen inside one `stream_round`, the `generation_id` never changes), the
   feature riding on the same `Error` surfacing; out of scope here.
 - Whether the embeddings path (F9) should come right after: `/reindex`
   re-embeds hundreds of chunks and one 429 currently voids a batch.
+
+## 10. What shipped (2026-08-12)
+
+Both stages landed as designed, with every fork taken at its recommended option.
+Two things came out differently, and one gap in this document's own testing plan
+turned out to matter.
+
+**Stage 1** (`fix/engine-error-surfacing`): `EngineError` with status,
+`Retry-After` (header, `retry-after-ms`, or Gemini's body `RetryInfo`) and the
+provider's body as fields, `Display` byte-identical to the four `bail!`s it
+replaced; one `check_status` in place of four copies; a 10 s **connect** timeout
+and a cancellable initial POST; `ChatChunk::Error{message,transient}` plus the
+Anthropic in-stream `error` event, the Gemini error payload, the llama.cpp
+error-object-in-a-200-stream and a reason on `response.failed`; one
+`engine_error_key`/`engine_error_note` pair serving both failure paths, with a
+fourth answer for a reply cut short.
+
+**Stage 2** (`feat/cloud-retry-backoff`): `RetryBackend` over cloud + external,
+3 attempts, ~1 s/~2 s jittered downward, `Retry-After` honoured to 30 s,
+`ChatChunk::Retry` → `AppEvent::Retrying` → a status-bar chip, an interruptible
+backoff.
+
+**Difference 1 — the first attempt runs eagerly.** §5(e) had the decorator return
+its stream immediately and drive every attempt inside it. Implemented that way, a
+failure that is *not* retried (a `400`, a bad key — the common case) would have
+been converted from an `Err` into an `Error` chunk, and `title.rs` distinguishes
+those: an `Err` becomes "title generation failed: «reason»", an empty reply becomes
+a bare "title is empty". So attempt 1 is awaited *before* returning, and only an
+unavoidable wait causes the stream to be returned early. The UI still sees the wait
+live, because the wait is exactly the case that returns the stream.
+
+**Difference 2 — `Usage` had to be exempted from the commit rule.** §5(e) already
+said "Usage alone does not commit", and the reason turned out to be load-bearing
+rather than incidental: Anthropic sends usage in `message_start`, before any
+content, so counting it as commitment would have made **every** Anthropic turn
+unretryable — the provider whose 529 this feature exists for.
+
+**Gap in §8's plan — the live gate did not cover the decorator.** The plan called
+for hermetic HTTP-level tests (delivered: 13, all instant under virtual time) and
+for live runs as "non-regression of every provider path through the decorator". But
+the live e2e harness builds its backend directly via `MockSupervisor`, so nothing
+about the wrapping was exercised against a real model — the decorator would have
+had unit coverage only. Fixed by wrapping the harness's `live_backend()` the same
+way the supervisor wraps an external server, which puts the whole 30-test e2e set
+through it on every run.
+
+**What was measured rather than assumed:** the retry policy's numbers come from the
+provider docs in §2 (SDK defaults, header semantics), not from taste. The one
+number chosen by taste is `RETRY_AFTER_CAP` = 30 s — the reference SDK trusts the
+header up to 120 s, which suits a batch client and not a TUI.
+
+**Groundwork left**, now recorded in the roadmap: the same policy for embeddings,
+TTS and `youtube_watch` (F9); quota-vs-rate `429` discrimination (F5); an
+HTTP-date `Retry-After` (no provider sends one).

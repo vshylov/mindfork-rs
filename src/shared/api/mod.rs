@@ -12,6 +12,7 @@ pub mod gemini;
 pub mod http;
 pub mod managed;
 pub mod openai;
+pub mod retry;
 pub mod thoughts;
 
 // Production since the demo mode (`mindfork demo`) boots on it; tests were

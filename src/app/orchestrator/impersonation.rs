@@ -264,6 +264,16 @@ fn spawn_impersonation(
                             text: t,
                         });
                     }
+                    // A background turn: the retry is worth a log line (a flaky provider is
+                    // otherwise invisible here) but has nothing to show — these turns have no
+                    // chip of their own.
+                    ChatChunk::Retry {
+                        attempt,
+                        max,
+                        delay,
+                    } => {
+                        tracing::info!(attempt, max, ?delay, "retrying a an impersonation turn");
+                    }
                     ChatChunk::Error { message, .. } => {
                         tracing::warn!(error = %message, "engine error while impersonating");
                     }

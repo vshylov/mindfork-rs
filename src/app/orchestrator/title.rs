@@ -148,6 +148,16 @@ fn spawn_title(
                     ChatChunk::Finished(_) => break,
                     // A background turn: the streak counter reports the failure to the
                     // user (three in a row), and the log is where the reason belongs.
+                    // A background turn: the retry is worth a log line (a flaky provider is
+                    // otherwise invisible here) but has nothing to show — these turns have no
+                    // chip of their own.
+                    ChatChunk::Retry {
+                        attempt,
+                        max,
+                        delay,
+                    } => {
+                        tracing::info!(attempt, max, ?delay, "retrying a a title turn");
+                    }
                     ChatChunk::Error { message, .. } => {
                         tracing::warn!(error = %message, "engine error while generating a title");
                     }

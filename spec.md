@@ -539,9 +539,35 @@ what can be said and what could be done about it.
   the status (`408`/`429`/`500`/`502`/`503`/`504`/`529` — the set converges across
   every provider) or, with no status line left to read, from the provider's error
   *name*. A `400` is never transient: llama.cpp's `exceed_context_size_error` is
-  compression's job, not a retry's. Nothing acts on the flag yet — automatic
-  retry with backoff is the next stage of
-  [docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md).
+  compression's job, not a retry's.
+- **A transient failure is retried automatically**, by a decorator around the
+  engine rather than by any of the clients, and only on the **cloud and external**
+  backends: a managed child that died reloads for minutes, and there the
+  supervisor's health monitor and relaunch budget are the recovery mechanism
+  ([§3.4](#34-managing-the-server-lifecycle)). A cloud backend, by contrast, is
+  never monitored or relaunched, so this is the only recovery it has.
+  - **Only before the first content chunk.** Once text, "thoughts" or a tool call
+    has been streamed the turn is *committed* — the user has seen it start, no
+    provider can resume a broken stream, and splicing a regenerated answer under a
+    half-rendered one would be a lie. After that the failure is surfaced and the
+    partial reply kept, as above. Because a tool call counts as content, a round
+    that produced calls is never replayed **by construction**, so no tool effect
+    can fire twice. Retrying happens at this one layer: the orchestrator and the
+    agentic loop re-issue nothing.
+  - **Three attempts** (the default of both first-party SDKs), waiting ~1 s then
+    ~2 s — exponential, jittered *downward* by up to a quarter so many clients do
+    not retry on the same beat. A `Retry-After` is honoured as given (providers
+    state that an earlier retry fails) up to **30 s**; beyond that the request is
+    treated as not retryable and the failure is shown at once, because a provider
+    asking for minutes is describing a quota rather than a blip and a frozen
+    spinner is worse than an error one can read. Quota-flavoured `429`s are not
+    told apart from rate limits — two short waits cost seconds, and a rejected
+    request is not billed.
+  - **The wait is visible and interruptible**: a quiet status-bar chip says which
+    attempt is starting and in how long, and `Esc` during a backoff ends the turn
+    immediately rather than after it.
+  - The policy is a set of constants, not settings — the same choice the health
+    monitor's cadence is kept at.
 - **Timeouts.** Engine clients bound only the **connect** phase (10 s). A stream
   legitimately stays open for minutes and a local prefill can be silent for tens
   of seconds, so a total or idle timeout would cut healthy generations; what is

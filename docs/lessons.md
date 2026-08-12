@@ -603,6 +603,17 @@ back to the *exact* identity rather than to arithmetic that merely ought to canc
 
 ## 9. Live runs and model behaviour
 
+**A decorator is only covered live if the test harness wraps too — check, don't
+assume.** The retry `EngineBackend` decorator sits on every real cloud and external
+turn, and the live e2e set appeared to exercise it; it did not. The harness builds its
+backend directly through `MockSupervisor`, so the wrapping had unit coverage only, and a
+mistake in how it hands a stream over — the head it replays, the commit point, the
+delegated `context_budget` the compaction trigger reads — would never have met a real
+model. One line in `live_backend()` put the whole set through it. Whenever production
+composes a layer the harness constructs by hand, ask which of the two the live gate is
+actually testing.
+— *retry with backoff on transient cloud failures*.
+
 **Run the live gate when the change touches engine, memory or tool paths — even when it
 looks local.** `build_request` and `effective_tool_ids` sit on *every* turn, so "it only
 affects a compacted chat" still warrants the full e2e set. Skip it for pure rendering,

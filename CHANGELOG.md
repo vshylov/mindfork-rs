@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A blip on a cloud provider no longer costs you the turn.** When a provider
+  rate-limits or sheds load (`429`, `5xx`, Claude's "overloaded"), the request
+  is retried automatically — three attempts, waiting about a second and then
+  two, honouring the provider's own `Retry-After` when it sends one. The status
+  bar says which attempt is running and how long the wait is, and `Esc` cuts it
+  short. This matters most in a long turn: one blip on the eighth tool round
+  used to throw away the whole turn's work. Retries stop as soon as the answer
+  starts arriving, so nothing you have already read is ever re-generated and no
+  tool runs twice; a provider asking for more than 30 seconds is reported
+  instead of hidden behind a spinner. Applies to the cloud providers and to
+  "external" servers (a proxy or gateway); a locally managed `llama-server` is
+  still recovered by the existing health monitor.
+
 ### Fixed
 
 - **A reply that gets cut off now says so.** When the engine failed *after* the

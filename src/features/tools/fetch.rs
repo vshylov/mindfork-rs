@@ -429,6 +429,16 @@ async fn summarize_text(
             match chunk {
                 ChatChunk::Text(t) => out.push_str(&t),
                 ChatChunk::Finished(_) => break,
+                // A background turn: the retry is worth a log line (a flaky provider is
+                // otherwise invisible here) but has nothing to show — these turns have no
+                // chip of their own.
+                ChatChunk::Retry {
+                    attempt,
+                    max,
+                    delay,
+                } => {
+                    tracing::info!(attempt, max, ?delay, "retrying a a page-summary turn");
+                }
                 ChatChunk::Error { message, .. } => {
                     tracing::warn!(error = %message, "engine error while summarizing a page");
                 }

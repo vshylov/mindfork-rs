@@ -459,6 +459,16 @@ fn spawn_compact(
                     // the reason is carried out instead of only logged — otherwise a
                     // roll killed mid-stream would report whatever fragment arrived
                     // as if it were a summary.
+                    // A background turn: the retry is worth a log line (a flaky provider is
+                    // otherwise invisible here) but has nothing to show — these turns have no
+                    // chip of their own.
+                    ChatChunk::Retry {
+                        attempt,
+                        max,
+                        delay,
+                    } => {
+                        tracing::info!(attempt, max, ?delay, "retrying a a compaction turn");
+                    }
                     ChatChunk::Error { message, .. } => failure = Some(message),
                     ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)

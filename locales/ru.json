@@ -1628,6 +1628,7 @@
   "ui.err.compact_timeout": "Модель не успела вернуть резюме.",
   "ui.err.bg_compaction": "Сжатие истории",
   "ui.chat.bg.compact": "сжатие",
+  "ui.chat.bg.retry": "повтор {attempt}/{max} через {secs} с",
   "ui.help.compact": "свернуть раннюю часть переписки в резюме",
   "ui.settings.group.context": "Контекст",
   "ui.settings.field.compact_enabled": "Сжатие истории",

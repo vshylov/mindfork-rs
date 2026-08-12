@@ -1266,6 +1266,23 @@ async fn stream_round(
                             reasoning: Some(base_reasoning + u.reasoning_tokens),
                         });
                     }
+                    // The engine is waiting before another attempt (spec §6.8). Not
+                    // a failure yet, so nothing is recorded — only shown, and only
+                    // while it lasts.
+                    ChatChunk::Retry {
+                        attempt,
+                        max,
+                        delay,
+                    } => {
+                        let _ = evt_tx.send(AppEvent::Retrying {
+                            generation_id: id,
+                            attempt,
+                            max,
+                            // Rounded up: a chip reading "in 0 s" while it waits
+                            // would be its own small lie.
+                            delay_secs: delay.as_secs().max(1),
+                        });
+                    }
                     // A failure that arrived *after* the stream opened. Before this
                     // arm the reply simply stopped — the partial text was kept and
                     // persisted with nothing on screen saying why, so an overloaded
