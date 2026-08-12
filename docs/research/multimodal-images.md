@@ -1,7 +1,12 @@
 # Research: image input for local and cloud models (multimodality)
 
-**Status:** research complete, forks await the user's decision (2026-08-12).
-Roadmap item #1 ("Multimodality (images)"). The request: attach images to
+**Status:** research complete; **user's decision, 2026-08-12: all eight forks go
+with the recommendations below** (F1 = staging onto the next message, F2 =
+base64 in the chat JSON, F3 = the `image` crate with downscale-on-attach, F4 =
+`/props` probe + optimistic unknown, F5 = per-image label parts on, F6 = a chip
+line in the feed, F7 = the stated caps, deferred items stay deferred).
+Stage 1 (local + Grok) is being implemented. Roadmap item #1
+("Multimodality (images)"). The request: attach images to
 messages with commands mirroring the file attachments —
 `/image attach <path>`, `/image remove <name|#N>`, `/image list` — so that
 vision-capable models can see them: the local Gemma 4 via `llama-server
