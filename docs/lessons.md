@@ -658,6 +658,18 @@ understates reality where the real coverage comes from `#[ignore]` live smokes a
 coverage run does not execute.
 — *the quality gate stopped judging new-code coverage*.
 
+**A green PR quality gate still ships maintainability findings — it judges new-code
+*ratings*, not counts.** A handful of new smells cannot flip an A rating, so they
+surface as open issues on the next `main` analysis instead: twice now (two S8786
+regexes + one S3776 after the 2026-08-07/08 merges; an S3776 at complexity 50 + an
+S1871 in the screenshots SVG writer after 2026-08-10) — while the security-class
+S8707, which does move a rating, blocked its PR on the spot. For a new or reshaped
+`tools/*.py`, or any function a change grew, run the file through the Sonar MCP
+snippet analyzer before the PR: one tool call, the server's own rules, and the
+backlog stays at zero.
+— *SonarQube follow-up — the doc gate's regexes and one test's complexity*,
+*SonarQube follow-up — the screenshots SVG writer*.
+
 **On CI, distrust a single run.** Identical code produced Windows test phases of
 359 / 469 / 376 / 386 / 927 s; a controlled local measurement is the trustworthy one. The
 outlier was diagnosed by joining per-test CI timings against local ones — a 3.9x median

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -22,6 +22,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the quality gate stopped judging new-code coverage (done)
 - Post-M9: the documentation refactor — CLAUDE.md became a router (done)
 - Post-M9: SonarQube follow-up — the doc gate's regexes and one test's complexity (done)
+- Post-M9: SonarQube follow-up — the screenshots SVG writer (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -645,3 +646,44 @@ three findings are invisible from the workflow's own status):
   `doc_index_check` all clean. **No live run required** (AGENTS.md §3): a dev
   script and a test-module refactor — no engine, memory, tool or provider path
   is touched. No CHANGELOG entry — internal tooling and tests (§4).
+
+### Post-M9: SonarQube follow-up — the screenshots SVG writer (done)
+
+- **The 2026-08-10 analysis of `main` left two open issues** — the quality
+  gate itself stayed OK, because it judges new-code *ratings*, which a pair of
+  maintainability smells cannot flip: `python:S3776` on
+  `tools/screenshots.py::render_svg`, at cognitive complexity **50** against
+  the 15 allowed, and `python:S1871` — two identical "extend the current run"
+  branches in its pass-2 dispatch. The function arrived with the site track's
+  S4 (vector screenshots) carrying the whole SVG pipeline in one body: the
+  scoped `<style>` block, per-row background-rect merging, and the text-run
+  state machine as a `flush()` closure over five `nonlocal`s. Branch
+  `fix/sonar-screenshots`.
+- **Closed by the stage-2/4 recipe — mechanical extraction, no Accept**, along
+  the seams the code's own comments had already drawn. "Pass 1" became
+  `svg_bg_rects` (+ `bg_rect` for the rect string it emitted from two places);
+  "Pass 2" became `svg_text_spans` over `cell_traits` (the per-cell
+  classification); the closure's five `nonlocal`s became a `TextRun` state
+  holder (`start`/`extend`/`take`) with a module-level `flush_run`; and a
+  `SvgGrid` NamedTuple — the sub-pixel cousin of the raster `Metrics` —
+  carries cell_w/cell_h/ascent/pad. `render_svg` keeps parsing, the header,
+  the style block and the row loop.
+- **The S1871 twins merged into one guard** instead of staying as two arms
+  with one body: a cell extends the run iff the style key matches and —
+  hidden — it is a plain space, or — visible — the primary face can place it
+  at native advance (`key == run.key and (s == " " if hidden else not solo)`).
+  The six-way behaviour table is unchanged; the remaining branches are
+  distinct again.
+- **Verification leaned on the pipeline's determinism** (the lessons.md
+  regeneration recipe): all 10 dumps re-rendered **byte-identical to the 20
+  committed artifacts** (10 PNG + 10 SVG) — first *before* the change, proving
+  the local faces faithful, then after it, proving zero output drift. The
+  refactored file also went back through the analyzer itself (the MCP snippet
+  tool, this follow-up series' pattern): **0 issues** — both findings gone,
+  nothing new introduced.
+- **1977 unit tests green, 85 `#[ignore]`** (no Rust touched — the exact
+  baseline), clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/
+  `doc_index_check` all clean. **No live run required** (AGENTS.md §3): a dev
+  script only — no engine, memory, tool or provider path. No CHANGELOG entry —
+  internal tooling (§4). The gate-green-but-findings-ship gap is now a
+  `docs/lessons.md` §10 line.
