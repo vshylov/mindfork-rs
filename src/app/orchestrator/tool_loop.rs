@@ -184,6 +184,9 @@ async fn read_round(mut stream: ChatStream) -> (String, Vec<ApiToolCall>, Finish
                 reason = r;
                 break;
             }
+            ChatChunk::Error { message, .. } => {
+                tracing::warn!(error = %message, "engine error in a background tool loop");
+            }
             ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Usage(_) => {}
         }
     }

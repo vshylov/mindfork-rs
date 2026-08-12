@@ -1128,6 +1128,49 @@ pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
     ctx.attachments = list.into();
 }
 
+/// The feed note for a failed turn.
+///
+/// One helper for **both** failure paths — the pre-stream `Err` and the in-stream
+/// [`ChatChunk::Error`] — so the two can never drift into describing the same
+/// condition differently.
+///
+/// - The conversation outgrew the window: say what to do about it rather than
+///   handing back raw provider JSON in a generic wrapper. Which advice depends on
+///   the switch — naming `/compact` while compression is off would send the user to
+///   a command that refuses (spec §6.7, sub-decision S4).
+/// - `partial` — text or "thoughts" already reached the screen, so the reply is a
+///   fragment rather than a failure to answer. Saying only "generation error"
+///   there leaves the user guessing whether what they can see is the whole
+///   answer, which is the defect class this project keeps re-learning
+///   (docs/lessons.md §4): name what happened *and* the way to a whole reply.
+fn engine_error_note(
+    err: &str,
+    compaction_enabled: bool,
+    partial: bool,
+    ui_loc: &'static crate::shared::i18n::Locale,
+) -> String {
+    ui_loc.tf(
+        engine_error_key(err, compaction_enabled, partial),
+        &[("err", err)],
+    )
+}
+
+/// Which of the four things to tell the user — split out from
+/// [`engine_error_note`] so the decision can be tested as a decision, without
+/// asserting on localized prose.
+pub(super) fn engine_error_key(err: &str, compaction_enabled: bool, partial: bool) -> &'static str {
+    match (
+        crate::features::compaction::is_context_overflow(err),
+        compaction_enabled,
+        partial,
+    ) {
+        (true, true, _) => "ui.err.context_overflow",
+        (true, false, _) => "ui.err.context_overflow_off",
+        (false, _, true) => "ui.err.generation_interrupted",
+        (false, _, false) => "ui.err.generation_failed",
+    }
+}
+
 /// Streams a single request, relaying `Text`/`Thoughts` to the UI, accumulating
 /// tool calls and the token counter. `base_tokens`/`base_reasoning` — tokens/
 /// reasoning tokens accumulated by previous rounds; the UI counter grows
@@ -1223,6 +1266,23 @@ async fn stream_round(
                             reasoning: Some(base_reasoning + u.reasoning_tokens),
                         });
                     }
+                    // A failure that arrived *after* the stream opened. Before this
+                    // arm the reply simply stopped — the partial text was kept and
+                    // persisted with nothing on screen saying why, so an overloaded
+                    // provider looked like a model that had finished talking
+                    // (docs/research/cloud-retry-backoff.md §1.2).
+                    ChatChunk::Error { message, .. } => {
+                        let partial = !text.is_empty() || !thoughts.is_empty();
+                        let _ = evt_tx.send(AppEvent::Error(engine_error_note(
+                            &message,
+                            compaction_enabled,
+                            partial,
+                            ui_loc,
+                        )));
+                        // The client always yields `Finished(Error)` next; setting the
+                        // reason here keeps this correct even if one ever stops.
+                        reason = FinishReason::Error;
+                    }
                     ChatChunk::Finished(r) => {
                         reason = r;
                         break;
@@ -1232,20 +1292,12 @@ async fn stream_round(
         }
         Err(err) => {
             let err = err.to_string();
-            // The conversation outgrew the window: say what to do about it rather
-            // than handing back raw provider JSON in a generic wrapper. Which
-            // advice depends on the switch — naming `/compact` while compression
-            // is off would send the user to a command that refuses (spec §6.7,
-            // sub-decision S4).
-            let key = match (
-                crate::features::compaction::is_context_overflow(&err),
+            let _ = evt_tx.send(AppEvent::Error(engine_error_note(
+                &err,
                 compaction_enabled,
-            ) {
-                (true, true) => "ui.err.context_overflow",
-                (true, false) => "ui.err.context_overflow_off",
-                (false, _) => "ui.err.generation_failed",
-            };
-            let _ = evt_tx.send(AppEvent::Error(ui_loc.tf(key, &[("err", &err)])));
+                false,
+                ui_loc,
+            )));
             reason = FinishReason::Error;
         }
     }

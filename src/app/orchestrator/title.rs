@@ -146,6 +146,11 @@ fn spawn_title(
                     // out of the last substantive line of the reasoning.
                     ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                     ChatChunk::Finished(_) => break,
+                    // A background turn: the streak counter reports the failure to the
+                    // user (three in a row), and the log is where the reason belongs.
+                    ChatChunk::Error { message, .. } => {
+                        tracing::warn!(error = %message, "engine error while generating a title");
+                    }
                     ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)
                     | ChatChunk::Usage(_) => {}

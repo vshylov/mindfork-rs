@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reply that gets cut off now says so.** When the engine failed *after* the
+  answer had started arriving — an overloaded cloud provider, a dropped
+  connection — generation simply stopped: the half-written reply stayed on
+  screen with nothing indicating it was a fragment, and on Claude such a
+  truncation was indistinguishable from a finished answer. Every provider's
+  mid-answer failure is now reported in the feed, with what the provider said
+  and a pointer to `Ctrl+R`; what did arrive is still kept.
+- **`Esc` interrupts a request that is still connecting.** The engine clients
+  had no connect timeout and ignored cancellation until the first bytes of the
+  reply arrived, so a wrong port or a silently dropping firewall left the chat
+  generating forever with no way back.
+- **A network failure now shows the reason.** "Connection refused" and friends
+  were replaced by the bare request URL before reaching the screen.
+
 ### Added
 
 - **Demo mode — try the app without a model.** `mindfork demo` boots the real

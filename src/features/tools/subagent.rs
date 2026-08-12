@@ -118,6 +118,9 @@ impl Tool for CallSubagent {
                     ChatChunk::Text(t) => text.push_str(&t),
                     ChatChunk::Finished(_) => break,
                     // "Thoughts", tool deltas, and the subagent's token counter are ignored.
+                    ChatChunk::Error { message, .. } => {
+                        tracing::warn!(error = %message, "engine error in a sub-agent call");
+                    }
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)

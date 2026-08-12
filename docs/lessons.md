@@ -120,9 +120,22 @@ pipeline is deterministic.
 surviving mutation indicts the *mutation* as often as the test: one "survived" only
 because it had been applied to a different section than the test measured. Conversely,
 nine mutations in one change caught eight defects and the ninth exposed a genuinely
-untested claim, without which the whole fix was never consulted.
+untested claim, without which the whole fix was never consulted. A third outcome is
+neither: the mutation is real but **no realistic input distinguishes it**. Loosening an
+exact string match to `contains` survived because no provider error name contains
+another as a substring — the fixture, not the code, was the problem. The fix is to
+assert the *input contract* instead (feed it the one shape a call site could plausibly
+confuse it with), or to stop claiming the property in the comment.
 — *self-model injection — per-section budgets*, *MCP servers — secrets for the `env`
-map and JSON import*.
+map and JSON import*, *engine failures stop being silent*.
+
+**A test that waits on an event must bound the wait, or a regression hangs instead of
+failing.** The orchestrator's `wait_for` helper blocks until the event channel
+*closes*, so removing the code under test made a run sit past ten minutes; wrapped in
+a five-second `timeout` it fails immediately and says what it was waiting for. In CI a
+hang reads as broken infrastructure rather than a broken promise, which is the worse
+of the two failure modes.
+— *engine failures stop being silent*.
 
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so
@@ -169,6 +182,15 @@ documentation refactor got three consecutive green `link_check` runs over a
 `git add`. When you add a tree, stage it before you believe a gate about it, and
 prefer a filesystem walk to a git listing when writing the fix.
 — *the documentation refactor — CLAUDE.md became a router*.
+
+**A provider's *optional* output cannot be an assertion — assert the deterministic
+half.** A smoke required Anthropic's `display:"summarized"` to yield non-empty
+"thoughts"; measured, the turn returns `thoughts=0, signature=380, text=50` — thinking
+really ran (a signature that long only exists for a real thinking block) and the
+provider simply summarized a short one to nothing. Assert the signature, which is empty
+the moment `thinking` leaves the request, and *log* the summary. Weakening an assertion
+is only safe if the remaining one can still fail: verify that with a live mutation.
+— *engine failures stop being silent*.
 
 **When a live smoke fails, suspect the fixture before the feature.** One took **four**
 attempts, each failing its own precondition: the model could answer from memory; the

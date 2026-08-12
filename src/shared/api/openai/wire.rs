@@ -293,6 +293,64 @@ pub struct ChatCompletionChunk {
     pub usage: Option<Usage>,
 }
 
+/// An error object delivered **inside** an already-open `200` SSE stream, instead
+/// of a chunk.
+///
+/// llama.cpp does this (ggml-org/llama.cpp#14566), and OpenAI-compatible proxies
+/// inherit the shape: the payload is the ordinary `{"error":{…}}` envelope, so it
+/// fails to deserialize as a [`ChatCompletionChunk`] and used to be dropped with a
+/// log line — leaving the turn to end as an ordinary `Stop`.
+#[derive(Debug, Deserialize)]
+struct StreamErrorEnvelope {
+    error: StreamErrorBody,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamErrorBody {
+    #[serde(default)]
+    message: String,
+    /// The provider's error name (`server_error`, `exceed_context_size_error`, …).
+    #[serde(default, rename = "type")]
+    name: String,
+    /// Either an HTTP status (llama.cpp sends a number) or a string code
+    /// (OpenAI sends `"context_length_exceeded"`).
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+}
+
+/// An in-stream error, parsed: what to show and whether another attempt could
+/// succeed.
+pub struct StreamError {
+    pub message: String,
+    pub name: String,
+    pub transient: bool,
+}
+
+/// Reads an SSE `data:` payload as an error envelope.
+///
+/// `None` when it is not one — which is the common case, since this is only tried
+/// after a chunk failed to parse. An envelope carrying neither a name nor a
+/// message is also `None`: it would produce a note that says nothing, which is
+/// the defect this path exists to fix.
+pub fn parse_stream_error(data: &str) -> Option<StreamError> {
+    let env: StreamErrorEnvelope = serde_json::from_str(data).ok()?;
+    let body = env.error;
+    if body.name.trim().is_empty() && body.message.trim().is_empty() {
+        return None;
+    }
+    let status = body.code.as_ref().and_then(|c| c.as_u64()).and_then(|c| {
+        // A status is the only numeric code we can interpret; anything else
+        // (a millisecond field, an id) must not be read as one.
+        u16::try_from(c).ok().filter(|s| (100..=599).contains(s))
+    });
+    let transient = crate::shared::api::error::stream_error_transient(&body.name, status);
+    Some(StreamError {
+        message: crate::shared::api::error::stream_error_text(&body.name, &body.message),
+        name: body.name,
+        transient,
+    })
+}
+
 /// The `usage` block of the server response (the token counter). `completion_tokens_details.
 /// reasoning_tokens` is returned by OpenAI-compat/llama.cpp servers with a reasoning model
 /// (included in `completion_tokens`); absent → `0`.
@@ -654,5 +712,62 @@ mod tests {
         assert_eq!(json["messages"][1]["tool_call_id"], "c1");
         // A request without tools must not contain tool_choice.
         assert!(json.get("tool_choice").is_none());
+    }
+}
+
+/// Error objects delivered inside an already-open `200` stream
+/// (ggml-org/llama.cpp#14566) — see [`parse_stream_error`].
+#[cfg(test)]
+mod stream_error_tests {
+    use super::*;
+
+    #[test]
+    fn a_llama_cpp_server_error_is_transient() {
+        // llama.cpp puts the HTTP status in `code` as a number.
+        let data = r#"{"error":{"code":500,"message":"failed to decode","type":"server_error"}}"#;
+        let e = parse_stream_error(data).expect("an error envelope must be recognized");
+        assert!(e.transient);
+        assert!(e.message.contains("failed to decode"));
+        assert_eq!(e.name, "server_error");
+    }
+
+    /// The trap: a context overflow also arrives as an `*_error` type, and retrying
+    /// it would burn attempts on a request that can never fit.
+    #[test]
+    fn a_context_overflow_is_not_transient() {
+        let data = r#"{"error":{"code":400,"message":"the request exceeds the available context size","type":"exceed_context_size_error"}}"#;
+        let e = parse_stream_error(data).unwrap();
+        assert!(!e.transient);
+        // And the text still reaches the overflow classifier, which picks the advice.
+        assert!(crate::features::compaction::is_context_overflow(&e.message));
+    }
+
+    #[test]
+    fn a_string_code_does_not_read_as_a_status() {
+        let data = r#"{"error":{"code":"context_length_exceeded","message":"too long","type":"invalid_request_error"}}"#;
+        let e = parse_stream_error(data).unwrap();
+        assert!(!e.transient, "a 4xx-class name must not be retried");
+    }
+
+    #[test]
+    fn a_rate_limit_name_is_transient_without_any_code() {
+        let data = r#"{"error":{"message":"slow down","type":"rate_limit_exceeded"}}"#;
+        assert!(parse_stream_error(data).unwrap().transient);
+    }
+
+    /// Everything that is not an error envelope must stay `None`, or an ordinary
+    /// parse hiccup would end the turn.
+    #[test]
+    fn non_errors_are_not_mistaken_for_errors() {
+        for data in [
+            r#"{"choices":[{"delta":{"content":"hi"},"index":0}]}"#,
+            r#"{"usage":{"prompt_tokens":1,"completion_tokens":2}}"#,
+            "not json at all",
+            // An envelope that names nothing would produce a note saying nothing.
+            r#"{"error":{}}"#,
+            r#"{"error":{"message":"   ","type":""}}"#,
+        ] {
+            assert!(parse_stream_error(data).is_none(), "{data}");
+        }
     }
 }

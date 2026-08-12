@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -39,6 +39,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: history compression — stage 3 (the read-back tools) (done)
 - Post-M9: impersonation sends the compacted conversation (done)
 - Post-M9: Grok (xAI) as a cloud provider (done)
+- Post-M9: engine failures stop being silent (stage 1 of retry/backoff) (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1513,3 +1514,123 @@ of the per-model parameter rules.
   smokes green against `api.x.ai` — reasoning deltas arrive, a tool result
   replays without a signature, and `effort=none` no longer fails. 1962 unit tests
   green.
+
+### Post-M9: engine failures stop being silent (stage 1 of retry/backoff) (done)
+- **Context**: stage 1 of the retry/backoff track
+  ([docs/research/cloud-retry-backoff.md](../research/cloud-retry-backoff.md), forks
+  settled 2026-08-12). Reading the code for that research found the roadmap's
+  one-line item ("clients surface the error body but don't retry") was really
+  **three** defects, and two of them were invisible. This stage fixes those two and
+  builds the plumbing the retry decorator needs; the retry itself is stage 2.
+- **Defect 1 — a mid-stream failure was silent truncation.** Once the HTTP response
+  arrived, nothing could reach the user: a failure yielded
+  `ChatChunk::Finished(FinishReason::Error)`, and `finish_generation` pushes a feed
+  note only for `Cancelled`. So the partial reply was kept, persisted, and left on
+  screen with *nothing* saying it was a fragment. Worse for **Anthropic**: its
+  documented in-stream `error` event (an `overloaded_error` there is the same
+  condition as a pre-stream `529`) fell into `AntStreamEvent::Other`, the connection
+  then closed, and the `None` arm reported `Finished(`**`Stop`**`)` — an overloaded
+  truncation was byte-for-byte a normal completion. **Gemini** was the same shape by
+  a different route: every field of `GenResponse` is `#[serde(default)]`, so an error
+  payload deserialized as a perfectly valid empty chunk. llama.cpp's
+  error-object-inside-a-200-stream (ggml-org/llama.cpp#14566) failed chunk parsing and
+  was skipped with a log line. Four providers, four ways to end a broken turn as a
+  finished one.
+- **Defect 2 — a hung connection could not be escaped.** No engine client set any
+  `reqwest` timeout (`Client::new()` has none at all), and the initial `send()` sat
+  **outside** the `select!` on the cancel token, so cancellation only took effect once
+  SSE events were flowing. A host that accepts nothing (firewall drop, dead VPN, wrong
+  port) left the turn in `Generating` forever; `Esc` moved it to `Cancelling` and there
+  it stayed. The TTS and video clients had both halves right already — the engine
+  clients were the outlier.
+- **Defect 3 — the status was thrown away** (the retry blocker). All four clients ended
+  a non-2xx with `bail!("… status {status}: {body}")`, so the code and any
+  `Retry-After` survived only as substrings of a sentence. And a *transport* failure
+  reached the feed as a **bare URL**: the call sites wrapped it in
+  `.with_context(|| format!("POST {url}"))` and `anyhow`'s `Display` prints only the
+  outermost context, so "connection refused" was never shown at all.
+- **What shipped**:
+  - `shared/api/error.rs` — `EngineError { kind, status, retry_after, message }`
+    (`thiserror`, satisfying the CLAUDE.md convention that `shared` uses it).
+    `Display` is the message, rendered at construction, so the text is
+    **byte-for-byte** what the four `bail!`s produced — `OVERFLOW_MARKERS`, the locale
+    strings and the tests reading them are untouched, and a test pins it. One
+    `check_status` helper replaces four copies of the same block. `retry_after` reads
+    all three forms providers actually use: the seconds header (OpenAI, Anthropic),
+    OpenAI's `retry-after-ms`, and — Gemini having no header — the undocumented
+    `google.rpc.RetryInfo.retryDelay` in the 429 body. Nothing consumes it yet; stage 2
+    does.
+  - `shared/api/http.rs` — one `engine_client()` with a **connect** timeout of 10 s
+    (deliberately *only* connect: an SSE stream lives for minutes and a local prefill
+    can be silent for tens of seconds, so a total or idle timeout would cut healthy
+    generations — which is why none was ever set), and `send_cancellable`, which puts
+    the initial POST inside the token's reach. Cancellation there answers with
+    `cancelled_stream()`, never an error, so it cannot read as a failed turn (nor, in
+    stage 2, be retried).
+  - `ChatChunk::Error { message, transient }` — the stream's error channel, since a
+    post-response failure cannot be returned as `Err`. Every client yields it
+    immediately before `Finished(Error)`, so a consumer watching only `Finished`
+    behaves exactly as before. Adding the variant made the compiler enumerate all
+    **seven** consumers, which is the reason it is a variant rather than a side channel.
+  - The orchestrator finally says so: one `engine_error_note`/`engine_error_key` pair
+    serves **both** failure paths (pre-stream `Err` and in-stream `Error`), so the two
+    can never drift. A fourth answer, `ui.err.generation_interrupted`, fires when text
+    or "thoughts" already reached the screen — that reply is a *fragment*, and saying
+    only "generation error" leaves the user guessing whether what they can see is the
+    whole answer (lessons §4). Overflow still wins over it: pointing at `/compact`
+    beats "press `Ctrl+R`", which would just overflow again.
+  - Background turns log the reason instead (the failure streak already reports them),
+    with one exception: a **compaction roll** carries it out as an error, because
+    `/compact` was just typed and is owed an answer — otherwise a roll killed
+    mid-stream reported whatever fragment arrived as if it were a summary.
+- **`transient` classification** lives in exactly two places: `RETRYABLE_STATUSES`
+  (`408/429/500/502/503/504/529` — the set converges across all five providers) and
+  `TRANSIENT_ERROR_NAMES` for failures with no status line left to read. `400` is
+  deliberately absent: llama.cpp's `exceed_context_size_error` is compaction's job, not
+  a retry's. Name matching is **exact**, so a code that merely ends in `_error` cannot
+  be read as transient.
+- **Mutation-tested, six mutations, all caught** — after one initially survived and one
+  exposed a bad test:
+  - dropping the mid-stream note; adding `400` to the retryable set; removing `429`
+    from it; collapsing the `interrupted` branch; putting the Anthropic `error` event
+    back into `Other` — each turns a test red.
+  - **The survivor**: loosening exact name matching to `contains` changed nothing,
+    because no real error name contains another as a substring — the *fixture* could
+    not discriminate, so the exactness was untested rather than wrong. Fixed by
+    asserting the function's input contract instead: hand it the composed text from
+    `stream_error_text` (the shape a call site could plausibly confuse it with) and it
+    must answer "not transient" — failing closed on a misread input, and the only case
+    that makes the exactness observable at all.
+  - **The bad test**: dropping the note made the orchestrator test **hang** rather than
+    fail, because the shared `wait_for` blocks until the event channel closes. It now
+    uses a bounded wrapper — a hang in CI reads as broken infrastructure, not a broken
+    promise.
+- **Tests**: 2011 unit (from 1977), 86 `#[ignore]`. Two of the new ones drive the
+  Anthropic client through a **real socket and a real SSE body** rather than serde
+  alone — which is precisely how the swallowed `error` event survived: the type parsed
+  fine, the client dropped it.
+- **Smoke — GO** (2026-08-12, reference stack `gemma-4-31B_q4_0-it` + `bge-m3`, and all
+  four clouds with real keys).
+  - **New live smoke** `an_oversized_prompt_is_a_typed_non_transient_error` — GO on both
+    stacks: a real `400` arrives as `status=Some(400)`, `transient=false`, body intact
+    (`exceed_context_size_error … "n_ctx":16384`), so the overflow advice still fires.
+  - `OpenAiClient` **7/7**, OpenAI Responses **3/3**, Gemini **4/4**, Grok/xAI **3/3**,
+    Anthropic **3/3**, orchestrator e2e **30/30** (750 s).
+  - Two things the run cost, both worth recording. **First**, the *first* e2e run was
+    27/30 — `attachment_read`, `history_read_back…` and `impersonation_after_compaction…`
+    failed, then passed individually and the whole set came back 30/30 on a clean rerun:
+    flakes, and the reason the project's rule is to distrust a single run. **Second**,
+    a genuinely wrong-premise smoke was found and fixed:
+    `extended_thinking_streams_thoughts_and_signature` asserted that
+    `display:"summarized"` yields non-empty "thoughts". Measured on `claude-opus-4-8`
+    (five runs, clean streams): `thoughts=0, signature=380, text=50`. A signature that
+    long only exists for a real thinking block, so thinking *did* run — Anthropic
+    summarized a short one to nothing. It now asserts the signature (empty the moment
+    `thinking` leaves the request — verified by a live mutation) and logs the summary's
+    absence, matching the OpenAI Responses sibling that already said "on a trivial task
+    the summary might be absent".
+  - Diagnosing that turned up the same defect this branch fixes **inside the smokes'
+    own harness**: their collect loops swallowed `ChatChunk::Error` in a `_ => {}` arm,
+    so the failure read as "empty thoughts" with no word of an engine error. Every cloud
+    smoke now prints it — and the silence of that line is what proved the Anthropic
+    stream was clean rather than failing.

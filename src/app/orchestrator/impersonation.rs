@@ -264,6 +264,9 @@ fn spawn_impersonation(
                             text: t,
                         });
                     }
+                    ChatChunk::Error { message, .. } => {
+                        tracing::warn!(error = %message, "engine error while impersonating");
+                    }
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)
