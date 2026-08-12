@@ -101,6 +101,17 @@ few lines is a large fraction of it. Anything the project wants to say around th
 license goes in a separate file, and a gate test pins the license file's shape.
 — *a disclaimer for what the models say and do*.
 
+**To re-render the screenshots you need JetBrains Mono as TTF, and the machine
+probably does not have it.** The family is deliberately not vendored, so
+`tools/screenshots.py` probes the system and exits when the probe misses. Do not
+go hunting for an installer: the woff2 faces the website already ships
+(`site/static/fonts/`) are the **full** family, not a subset, and `fontTools`
+(with `brotli`) writes them back out as TTFs for `--font-dir`. Confirm the faces
+are faithful before trusting a regeneration — re-render at the *old* settings
+first and check the images come back byte-identical, which is cheap because the
+pipeline is deterministic.
+— *the canvas padding measured in cells*.
+
 ---
 
 ## 2. Testing discipline
