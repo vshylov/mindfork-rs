@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::ReasoningEffort;
-use crate::shared::api::contract::{ApiMessage, ChatRequest};
+use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
 // The only consumer of this client is the local/external llama.cpp `llama-server`
 // (managed/external). The clouds moved to their own protocols: OpenAI → Responses
@@ -144,27 +144,41 @@ pub enum WireContent {
     Parts(Vec<serde_json::Value>),
 }
 
-/// Builds a message's `content`: images (each preceded by its label, when it has one),
-/// then the text. Images come **first** because Anthropic documents that ordering as the
-/// better-performing one and no other provider cares; keeping one order across all four
-/// backends means a prompt behaves the same wherever it is sent.
+/// Builds a message's `content`: images (each preceded by its label, when it has one) and
+/// the text, in a role-dependent order.
+///
+/// A **user** turn puts its images first: Anthropic documents that ordering as the
+/// better-performing one and no other provider cares, so keeping one order across all four
+/// backends means a prompt behaves the same wherever it is sent. A **tool** result inverts
+/// it — the text is the tool's actual answer and the image only illustrates it, and
+/// Anthropic's images-first advice is about a user's request rather than a tool's output
+/// (docs/research/mcp-tool-images.md §2.2).
+///
+/// A `role:"tool"` message takes the very same content-parts array a user message does —
+/// verified live on both llama.cpp and grok-4.5, the two servers this client talks to.
 fn wire_content(m: &ApiMessage) -> WireContent {
     if m.images.is_empty() {
         // For an assistant turn with tool_calls the content can legitimately be empty.
         return WireContent::Text(m.content.clone());
     }
+    let text_part = |text: &str| serde_json::json!({ "type": "text", "text": text });
+    // A tool result leads with its text; every other role leads with its images.
+    let text_leads = m.role == ApiRole::Tool;
     let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
+    if text_leads && !m.content.is_empty() {
+        parts.push(text_part(&m.content));
+    }
     for image in &m.images {
         if let Some(label) = &image.label {
-            parts.push(serde_json::json!({ "type": "text", "text": label }));
+            parts.push(text_part(label));
         }
         parts.push(serde_json::json!({
             "type": "image_url",
             "image_url": { "url": format!("data:{};base64,{}", image.mime, image.data) },
         }));
     }
-    if !m.content.is_empty() {
-        parts.push(serde_json::json!({ "type": "text", "text": m.content }));
+    if !text_leads && !m.content.is_empty() {
+        parts.push(text_part(&m.content));
     }
     WireContent::Parts(parts)
 }
@@ -584,6 +598,82 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["image_url"]["url"], "data:image/png;base64,AAA");
         assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,BBB");
+    }
+
+    /// The same guarantee, on the tool side: a tool result that carries no image must
+    /// still serialize as a bare string — not a one-element parts array. This is the
+    /// shape every stored conversation replays, so a change here would re-prefill the
+    /// llama.cpp prefix cache for every chat that ever called a tool.
+    #[test]
+    fn a_tool_result_without_images_is_unchanged() {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::tool("call-1", "42")],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        assert_eq!(json["messages"][0]["role"], "tool");
+        assert!(
+            json["messages"][0]["content"].is_string(),
+            "a tool result with no images must stay a string, got {:?}",
+            json["messages"][0]["content"]
+        );
+        assert_eq!(json["messages"][0]["content"], "42");
+    }
+
+    /// A tool result that produced a screenshot (an MCP image result, spec §9.10):
+    /// the same content-parts array a user message uses, but with the tool's own text
+    /// **first** — it is the answer, and the image illustrates it.
+    #[test]
+    fn a_tool_result_image_follows_the_result_text() {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::tool("call-1", "screenshot taken").with_images(vec![image(
+                    "image/png",
+                    "QUJD",
+                    Some("Image #1 — \"shot.png\":"),
+                )]),
+            ],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        assert_eq!(json["messages"][0]["role"], "tool");
+        assert_eq!(json["messages"][0]["tool_call_id"], "call-1");
+        let parts = json["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        // Result text, then the image's label, then the image itself.
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "screenshot taken");
+        assert_eq!(parts[1]["type"], "text");
+        assert_eq!(parts[1]["text"], "Image #1 — \"shot.png\":");
+        assert_eq!(parts[2]["type"], "image_url");
+        assert_eq!(
+            parts[2]["image_url"]["url"], "data:image/png;base64,QUJD",
+            "a tool result carries the payload as the same data URI a user image does"
+        );
+    }
+
+    /// A tool that returns *only* an image (no prose) must not grow an empty text part —
+    /// the mirror of the user-side rule.
+    #[test]
+    fn an_image_only_tool_result_carries_no_empty_text_part() {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::tool("call-1", "").with_images(vec![image(
+                "image/jpeg",
+                "QQ==",
+                None,
+            )])],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        let parts = json["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["image_url"]["url"], "data:image/jpeg;base64,QQ==");
     }
 
     #[test]

@@ -953,7 +953,12 @@ OpenAI-compatible proxy/gateway).
   `content` array (Responses) — each with its own "text-only is unchanged" test.
   Every backend puts **images before text**, and each image behind a label part
   built in the app layer (axis A), so one prompt behaves the same wherever it
-  goes.
+  goes. A **tool result** may carry images too (spec §9.10): there the result
+  text leads and the images follow it, inside the tool result itself — except on
+  **Gemini**, whose multimodal `functionResponse` is a hard `400`, so its builder
+  emits them as user parts immediately after the response. The choice is static
+  per provider; a request with no images serializes byte-identically to before in
+  all four formats, each with its own test.
 - **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
   `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
   contract" shape as `context_budget`, and delegated by `RetryBackend` for the

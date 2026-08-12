@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
-use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
 
 // ---------- request ----------
 
@@ -258,17 +258,23 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
             // name in the tool message, but there's `tool_call_id` = the client-synthesized
             // `"{name}-{index}"` (see client.rs) — the name is recovered from it
             // (Gemini matches by name). `response` must be an object.
+            // Images a tool returned do NOT go inside the functionResponse: a multimodal
+            // functionResponse is a hard `400` ("Multimodal function responses are not
+            // supported for this model"). They are emitted as ordinary parts right after
+            // it, in the same `role:"user"` content — which is where Gemini already puts a
+            // tool result anyway, so the model sees the picture next to the answer it
+            // belongs to. Chosen statically per provider, never by sending and catching the
+            // 400 (fork F1-A, docs/research/mcp-tool-images.md).
             ApiRole::Tool => {
                 let name = tool_name_from_id(m.tool_call_id.as_deref());
-                push(
-                    "user",
-                    vec![json!({
-                        "functionResponse": {
-                            "name": name,
-                            "response": { "result": m.content },
-                        }
-                    })],
-                );
+                let mut parts = vec![json!({
+                    "functionResponse": {
+                        "name": name,
+                        "response": { "result": m.content },
+                    }
+                })];
+                parts.extend(image_parts(&m.images));
+                push("user", parts);
             }
         }
     }
@@ -297,8 +303,16 @@ fn user_parts(m: &ApiMessage) -> Vec<Value> {
     if m.images.is_empty() {
         return text_parts(&m.content);
     }
-    let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
-    for image in &m.images {
+    let mut parts = image_parts(&m.images);
+    parts.extend(text_parts(&m.content));
+    parts
+}
+
+/// `inline_data` parts, each preceded by its label when it has one. Shared by the user turn
+/// and the tool result (fork F1-A) so an image looks the same wherever it entered the chat.
+fn image_parts(images: &[ApiImage]) -> Vec<Value> {
+    let mut parts = Vec::with_capacity(images.len() * 2);
+    for image in images {
         if let Some(label) = &image.label {
             parts.push(json!({ "text": label }));
         }
@@ -306,7 +320,6 @@ fn user_parts(m: &ApiMessage) -> Vec<Value> {
             "inline_data": { "mime_type": image.mime, "data": image.data.as_ref() }
         }));
     }
-    parts.extend(text_parts(&m.content));
     parts
 }
 
@@ -514,6 +527,100 @@ mod tests {
         assert_eq!(parts[1]["inline_data"]["data"], "AAA");
         assert_eq!(parts[2]["text"], "Image #2:");
         assert_eq!(parts[3]["inline_data"]["mime_type"], "image/jpeg");
+    }
+
+    /// The tool-side mirror: a result with no images is exactly the one plain
+    /// `functionResponse` part it always was — nothing added, nothing reshaped.
+    #[test]
+    fn a_tool_result_without_images_is_a_plain_function_response() {
+        let r = base_req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "calc-0".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("calc-0", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
+        let parts = json["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        let fr = &parts[0]["functionResponse"];
+        assert_eq!(fr["name"], "calc");
+        assert_eq!(fr["response"], json!({ "result": "2" }));
+    }
+
+    /// Fork F1-A: Gemini answers a **multimodal `functionResponse` with a hard 400**
+    /// ("Multimodal function responses are not supported for this model"). So the
+    /// `functionResponse` stays text-only and the images follow it as ordinary parts of
+    /// the same `role:"user"` content — where a tool result already lives here.
+    #[test]
+    fn a_tool_result_image_follows_the_function_response_instead_of_entering_it() {
+        let r = base_req(vec![
+            ApiMessage::user("сними скриншот"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "screenshot-0".into(),
+                    name: "screenshot".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("screenshot-0", "screenshot taken").with_images(vec![
+                crate::shared::api::ApiImage::new(
+                    "image/png",
+                    "QUJD",
+                    Some("Image #1 — \"shot.png\":".into()),
+                ),
+            ]),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
+        let content = &json["contents"][2];
+        assert_eq!(content["role"], "user");
+        let parts = content["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        // [0] the functionResponse — text only. This is the 400 the fork avoids: no
+        // inline_data, no parts, nothing but the textual result.
+        let fr = &parts[0]["functionResponse"];
+        assert_eq!(fr["name"], "screenshot");
+        assert_eq!(
+            fr["response"],
+            json!({ "result": "screenshot taken" }),
+            "a multimodal functionResponse is a hard 400 — the image must never land inside it"
+        );
+        assert!(fr.get("parts").is_none());
+        // [1..] the image, labelled, as a sibling part of the same user content.
+        assert_eq!(parts[1]["text"], "Image #1 — \"shot.png\":");
+        assert_eq!(parts[2]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(
+            parts[2]["inline_data"]["data"], "QUJD",
+            "bare base64, not a data: URI — Gemini takes the payload raw"
+        );
+    }
+
+    /// A tool that returns only an image still emits its `functionResponse` (Gemini
+    /// matches call↔response positionally, so dropping it would break the turn), with an
+    /// empty `result` and the image beside it.
+    #[test]
+    fn an_image_only_tool_result_still_emits_its_function_response() {
+        let r = base_req(vec![ApiMessage::tool("screenshot-0", "").with_images(
+            vec![crate::shared::api::ApiImage::new(
+                "image/jpeg",
+                "QQ==",
+                None,
+            )],
+        )]);
+        let json = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
+        let parts = json["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["functionResponse"]["name"], "screenshot");
+        assert_eq!(parts[0]["functionResponse"]["response"]["result"], "");
+        assert_eq!(parts[1]["inline_data"]["data"], "QQ==");
     }
 
     #[test]

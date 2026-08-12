@@ -32,6 +32,18 @@ pub struct ToolCallRecord {
     /// have one signature per turn, not persisted). See docs/research/gemini-native-client.md §2.3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
+    /// How many images this call returned (spec §9.10). A **count**, deliberately: the
+    /// pixels live on the `Tool` message the call produced, and the feed only needs to
+    /// know a chip is due. Persisting the count is what makes a reloaded conversation
+    /// show the same block as a live one, without the feed having to walk to another
+    /// message to find out. Additive — old records read as `0`.
+    #[serde(default, skip_serializing_if = "crate::entities::message::is_zero")]
+    pub images: usize,
+}
+
+/// `skip_serializing_if` for a count that is almost always zero.
+pub(crate) fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A snapshot of the generation parameters actually applied to the message.
@@ -205,6 +217,7 @@ mod tests {
             arguments: serde_json::json!({}),
             result: None,
             thought_signature: Some("SIG".into()),
+            images: 0,
         };
         let json = serde_json::to_string(&with_sig).unwrap();
         assert!(json.contains("thought_signature"));
@@ -217,6 +230,7 @@ mod tests {
             arguments: serde_json::json!({}),
             result: None,
             thought_signature: None,
+            images: 0,
         };
         assert!(
             !serde_json::to_string(&no_sig)

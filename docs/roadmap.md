@@ -91,7 +91,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - deferred schemas ("tool search") — context budget with many servers.
   - per-server tool count ceiling.
   - server `instructions` → system prompt.
-  - non-text result blocks (currently — a placeholder).
+  - non-text result blocks: **images are done** (spec §9.10,
+    [mcp-tool-images.md](research/mcp-tool-images.md)); audio and resource blocks
+    are still placeholders, and nothing downstream can carry them yet.
   - WASM sandbox for untrusted tools.
   - localization of client wire errors (currently — a technical layer).
 
@@ -208,12 +210,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Multimodality — what the track left open** (both stages **done**, and
   clipboard paste since; see "Recently closed";
   [multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
-  - **images from MCP/tool results** — `shared/mcp.rs` already parses the block
-    it currently drops to `[image content omitted]`. **Researched and measured**
-    ([mcp-tool-images.md](research/mcp-tool-images.md)): four of five providers
-    carry an image *inside* a tool result, Gemini answers a hard `400`
-    ("Multimodal function responses are not supported for this model") and needs
-    a fallback. Forks await a decision;
   - **attach by URL** — accepted natively by llama.cpp/Anthropic/OpenAI but not
     Gemini, so it needs a client-side download and the SSRF care `fetch_url`
     already had to take;

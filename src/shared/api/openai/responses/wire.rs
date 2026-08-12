@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
 
 // ---------- request ----------
 
@@ -160,7 +160,7 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
             ApiRole::Tool => items.push(json!({
                 "type": "function_call_output",
                 "call_id": m.tool_call_id.clone().unwrap_or_default(),
-                "output": m.content,
+                "output": tool_output(m),
             })),
         }
     }
@@ -179,8 +179,38 @@ fn user_content(m: &ApiMessage) -> Value {
     if m.images.is_empty() {
         return json!(m.content);
     }
+    let mut parts = image_parts(&m.images);
+    if !m.content.is_empty() {
+        parts.push(json!({ "type": "input_text", "text": m.content }));
+    }
+    json!(parts)
+}
+
+/// The `output` of a `function_call_output` item (spec §9.10,
+/// docs/research/mcp-tool-images.md §2.2).
+///
+/// Responses accepts an **array of parts** here as well as a string — verified live on
+/// gpt-5-nano — which is how an MCP screenshot reaches the model. The result text comes
+/// first (it is the tool's answer; the image illustrates it), then each image behind its
+/// label. With no images the output stays the bare string it always was, so no stored
+/// conversation changes shape.
+fn tool_output(m: &ApiMessage) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
     let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
-    for image in &m.images {
+    if !m.content.is_empty() {
+        parts.push(json!({ "type": "input_text", "text": m.content }));
+    }
+    parts.extend(image_parts(&m.images));
+    json!(parts)
+}
+
+/// Image parts, each preceded by its label when it has one. Shared by the user message and
+/// the tool output so both carry the payload in the same `data:` URI form.
+fn image_parts(images: &[ApiImage]) -> Vec<Value> {
+    let mut parts = Vec::with_capacity(images.len() * 2);
+    for image in images {
         if let Some(label) = &image.label {
             parts.push(json!({ "type": "input_text", "text": label }));
         }
@@ -189,10 +219,7 @@ fn user_content(m: &ApiMessage) -> Value {
             "image_url": format!("data:{};base64,{}", image.mime, image.data),
         }));
     }
-    if !m.content.is_empty() {
-        parts.push(json!({ "type": "input_text", "text": m.content }));
-    }
-    json!(parts)
+    parts
 }
 
 /// An assistant turn's `input` items: the reasoning item (which must precede
@@ -436,6 +463,83 @@ mod tests {
             serde_json::to_value(build_request(&base_req(vec![msg]), "gpt-5", false)).unwrap();
         let parts = json["input"][0]["content"].as_array().unwrap();
         assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["image_url"], "data:image/jpeg;base64,QQ==");
+    }
+
+    /// The tool-side mirror: a `function_call_output` with no images keeps a bare string
+    /// `output`, not a one-element parts array.
+    #[test]
+    fn a_tool_output_without_images_keeps_its_string_form() {
+        let r = base_req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "call_1".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("call_1", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gpt-x", false)).unwrap();
+        assert_eq!(json["input"][2]["type"], "function_call_output");
+        assert!(
+            json["input"][2]["output"].is_string(),
+            "got {:?}",
+            json["input"][2]["output"]
+        );
+        assert_eq!(json["input"][2]["output"], "2");
+    }
+
+    /// An MCP screenshot tool: the output widens into a parts array — result text first,
+    /// then the labelled image as a `data:` URI on `input_image`.
+    #[test]
+    fn a_tool_output_image_follows_the_result_text() {
+        let r = base_req(vec![
+            ApiMessage::user("сними скриншот"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "call_1".into(),
+                    name: "screenshot".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("call_1", "screenshot taken").with_images(vec![
+                crate::shared::api::ApiImage::new(
+                    "image/png",
+                    "QUJD",
+                    Some("Image #1 — \"shot.png\":".into()),
+                ),
+            ]),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gpt-x", false)).unwrap();
+        let item = &json["input"][2];
+        assert_eq!(item["type"], "function_call_output");
+        assert_eq!(item["call_id"], "call_1");
+        let parts = item["output"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["type"], "input_text");
+        assert_eq!(parts[0]["text"], "screenshot taken");
+        assert_eq!(parts[1]["type"], "input_text");
+        assert_eq!(parts[1]["text"], "Image #1 — \"shot.png\":");
+        assert_eq!(parts[2]["type"], "input_image");
+        assert_eq!(parts[2]["image_url"], "data:image/png;base64,QUJD");
+    }
+
+    /// A tool that returns only an image adds no empty text part.
+    #[test]
+    fn an_image_only_tool_output_carries_no_empty_text_part() {
+        let r = base_req(vec![ApiMessage::tool("call_1", "").with_images(vec![
+            crate::shared::api::ApiImage::new("image/jpeg", "QQ==", None),
+        ])]);
+        let json = serde_json::to_value(build_request(&r, "gpt-x", false)).unwrap();
+        let parts = json["input"][0]["output"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "input_image");
         assert_eq!(parts[0]["image_url"], "data:image/jpeg;base64,QQ==");
     }
 

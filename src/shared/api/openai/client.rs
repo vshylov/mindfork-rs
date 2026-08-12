@@ -774,6 +774,86 @@ mod ignored_smoke {
         crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
     }
 
+    /// A conversation whose **tool result** carries an image (spec §9.10): the model asks
+    /// for a screenshot, the tool returns one, and the user asks what is on it.
+    /// `with_image = false` is the control arm.
+    fn screenshot_turn(with_image: bool) -> ChatRequest {
+        let tool = ApiMessage::tool("call-1", "Screenshot taken.");
+        let tool = if with_image {
+            tool.with_images(vec![crate::shared::api::ApiImage::new(
+                "image/png",
+                &crate::shared::api::green_circle_png_base64(),
+                None,
+            )])
+        } else {
+            tool
+        };
+        ChatRequest {
+            system: None,
+            // The shape a real turn has: the question is asked up front and the tool
+            // result is the last message, so the model answers from it. See the Gemini
+            // twin of this smoke for why a trailing user message is not just unrealistic
+            // but actively misleading there.
+            messages: vec![
+                ApiMessage::user(crate::shared::api::TOOL_VISION_PROMPT),
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![crate::shared::api::ApiToolCall {
+                        id: "call-1".into(),
+                        name: "take_screenshot".into(),
+                        arguments: "{}".into(),
+                        thought_signature: None,
+                    }],
+                ),
+                tool,
+            ],
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                ..Default::default()
+            },
+            tools: vec![ToolSchema {
+                name: "take_screenshot".into(),
+                description: "Take a screenshot of the screen.".into(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            }],
+        }
+    }
+
+    /// An image inside a **tool result** reaches a vision-capable llama.cpp — the path an
+    /// MCP screenshot tool takes (spec §9.10, docs/research/mcp-tool-images.md).
+    ///
+    /// Two arms on purpose. The control, with the identical conversation minus the image,
+    /// must **not** describe the fixture: measured, a blind model answers this question
+    /// confidently anyway, and a one-armed version of this test passed against a feature
+    /// that was doing nothing.
+    #[tokio::test]
+    #[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
+    async fn tool_result_image_is_seen_live() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let (control, _, _) = collect(
+            client
+                .chat_stream(screenshot_turn(false), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        eprintln!("control (no image): {control}");
+        crate::shared::api::assert_sees_green_circle(&control, false, "control");
+
+        let (answer, _, _) = collect(
+            client
+                .chat_stream(screenshot_turn(true), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        eprintln!("tool-result image: {answer}");
+        crate::shared::api::assert_sees_green_circle(&answer, true, "with the image");
+    }
+
     pub(super) async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
         let mut text = String::new();
         let mut thoughts = String::new();

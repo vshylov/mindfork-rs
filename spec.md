@@ -1364,6 +1364,21 @@ append-only shape keeps the prefix cache intact across an image turn
   Gemini/xAI — the safe direction for a cost shown to the user. The
   auto-compaction trigger is unaffected: it reads the server's exact
   `usage.prompt_tokens`, which **includes** image tokens (measured).
+- **A tool can return an image too** (spec §9.6, an MCP screenshot tool is the
+  first producer; research: [docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md)).
+  It lands on the tool-result message and is delivered *inside* the tool result —
+  measured, llama.cpp, Anthropic, OpenAI Responses and xAI all accept it there.
+  **Gemini is the exception**: a multimodal `functionResponse` is a hard `400`
+  ("Multimodal function responses are not supported for this model"), so its
+  builder emits the image as user parts immediately after the response. The
+  choice is made **per provider, statically** — never by sending and catching the
+  error, since a mid-turn retry after a hard failure is exactly what the retry
+  decorator refuses (§6.8). Limits are the ones above plus a **cap of 4 images
+  per tool result**, and the extras are named in the result text rather than
+  dropped in silence. The switch `tools.mcp_images` (**on** by default, settings
+  → "Plugins") decides whether a server's pixels reach the model at all: the MCP
+  double opt-in already gates the *server*, but an image carries a hazard text
+  does not — see §13.4.
 - **UI**: a feed note per command and a status-bar chip for what is staged
   (images are a standing cost once sent, so the pending one has to be visible).
   Rendering the pixels in the terminal is out of scope — see
@@ -2338,6 +2353,18 @@ a quiet "♪ speaking" chip is shown in the status bar.
 ### 13.4. Privacy
 
 - All data is local (JSON + SQLite). External channels — only the web tool and (in managed mode) the inference server's child process on localhost. Web is behind a switch. Notes/RAG isolation by profile is an invariant.
+- **Untrusted content reaching the model.** Text from outside the conversation
+  (an attached file, a fetched page, a tool result) is fenced and framed as DATA
+  rather than instructions ([§9.7](#97-chat-file-attachments-file-attach)). An
+  **image has no such analogue**: instructions can be painted into pixels, the
+  fence idea does not apply, and the feed shows a chip rather than the picture —
+  so the user cannot see what the model was shown. For an image the *user*
+  attached that is their own doing; for one an **MCP server** returns it is a
+  third party's, which is why `tools.mcp_images` exists as a switch separate from
+  enabling the server ([§9.10](#910-images-in-a-message-image-attach)). The
+  mitigation otherwise is the existing one: MCP tools are off by default, gated
+  twice, and count as dangerous for the confirmation prompt
+  ([§9.8](#98-confirmation-for-dangerous-tool-calls)).
 
 ---
 

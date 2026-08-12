@@ -393,6 +393,7 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
     let mut msg = Message::assistant("готово");
     msg.tool_calls = vec![ToolCallRecord {
         thought_signature: None,
+        images: 0,
         id: "c1".into(),
         name: "update_self_model".into(),
         arguments: serde_json::json!({}),

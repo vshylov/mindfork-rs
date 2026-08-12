@@ -31,6 +31,16 @@ split by subsystem.
   cost. If the engine says it cannot see images, the attach is refused up front
   and tells you what to change instead of failing later.
 
+- **A tool's screenshot now reaches the model.** When an MCP server's tool
+  returns an image, it is shown to the model instead of the old
+  "[image content omitted]" note — so a screenshot or a chart a plugin produces
+  can actually be looked at. The tool block in the feed says how many images came
+  back. At most four per result (the rest are counted out loud, not dropped
+  quietly), and each is shrunk to the same limits your own attachments get. New
+  switch in settings → "Plugins": **Let servers send images**, on by default —
+  turn it off if you would rather no third-party picture reached the model, since
+  instructions can be painted into pixels where you would not see them.
+
 - **A blip on a cloud provider no longer costs you the turn.** When a provider
   rate-limits or sheds load (`429`, `5xx`, Claude's "overloaded"), the request
   is retried automatically — three attempts, waiting about a second and then

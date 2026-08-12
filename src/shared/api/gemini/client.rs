@@ -331,6 +331,96 @@ mod ignored_smoke {
         ));
     }
 
+    /// The **fallback** an image in a tool result takes on Gemini, and the only place it
+    /// is exercised end to end (fork F1-A of docs/research/mcp-tool-images.md).
+    ///
+    /// Gemini is the one provider that refuses a multimodal `functionResponse` — measured,
+    /// a hard `400` "Multimodal function responses are not supported for this model" —
+    /// so its builder emits the image as user parts *after* the response instead. This
+    /// test is what proves that detour still reaches the model, and that the request is
+    /// accepted at all: a regression putting the image back inside the `functionResponse`
+    /// would fail here with that 400 rather than silently degrade.
+    ///
+    /// Control arm included, for the reason recorded in §2.1 of that document.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
+    async fn tool_result_image_takes_the_user_part_fallback() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY not set");
+            return;
+        };
+        let turn = |with_image: bool| {
+            let tool = ApiMessage::tool("take_screenshot-0", "Screenshot taken.");
+            let tool = if with_image {
+                tool.with_images(vec![crate::shared::api::ApiImage::new(
+                    "image/png",
+                    &crate::shared::api::green_circle_png_base64(),
+                    None,
+                )])
+            } else {
+                tool
+            };
+            ChatRequest {
+                system: None,
+                // The shape a real turn has: the question is asked **up front**, and the
+                // tool result is the last message — the model answers from it. A trailing
+                // user message would be unrealistic *and* wrong here: Gemini puts a tool
+                // result in a `user` content and adjacent same-role contents merge, so the
+                // question would end up sharing one content with the `functionResponse` —
+                // measured, Gemini then returns an empty candidate (`STOP`, zero
+                // completion tokens) while still billing the image.
+                messages: vec![
+                    ApiMessage::user(crate::shared::api::TOOL_VISION_PROMPT),
+                    ApiMessage::assistant_tool_calls(
+                        "",
+                        vec![crate::shared::api::ApiToolCall {
+                            id: "take_screenshot-0".into(),
+                            name: "take_screenshot".into(),
+                            arguments: "{}".into(),
+                            thought_signature: None,
+                        }],
+                    ),
+                    tool,
+                ],
+                sampling: SamplingConfig {
+                    max_tokens: Some(2048),
+                    // Thinking muted, or there is no answer to assert on: 2.5-flash
+                    // thinks by default and the budget is **shared** with the reply, so
+                    // both arms come back empty and the failure reads as "the image did
+                    // not arrive" (docs/lessons.md §3 — measured here first).
+                    reasoning_budget: Some(0),
+                    ..Default::default()
+                },
+                tools: vec![crate::shared::api::ToolSchema {
+                    name: "take_screenshot".into(),
+                    description: "Take a screenshot of the screen.".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                }],
+            }
+        };
+        let read = async |req| {
+            let mut stream: ChatStream = client.chat_stream(req, Default::default()).await.unwrap();
+            let mut text = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => text.push_str(&t),
+                    ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
+                    ChatChunk::Finished(_) => break,
+                    _ => {}
+                }
+            }
+            text
+        };
+
+        let control = read(turn(false)).await;
+        eprintln!("gemini control (no image): {control}");
+        crate::shared::api::assert_sees_green_circle(&control, false, "control");
+
+        let answer = read(turn(true)).await;
+        eprintln!("gemini tool-result image: {answer}");
+        crate::shared::api::assert_sees_green_circle(&answer, true, "with the image");
+    }
+
     /// Image input (spec §9.10): an `inline_data` part reaches the model and is
     /// described. Verified live before the wire was written — see
     /// docs/research/multimodal-images.md §2.2.

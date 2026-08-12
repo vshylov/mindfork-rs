@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::entities::sampling::ReasoningEffort;
-use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
 
 /// The default `max_tokens` if unset in sampling (Anthropic requires the field).
 pub const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -85,7 +85,7 @@ pub enum AntBlock {
     },
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: AntToolResultContent,
     },
     /// An image the user attached (spec §9.10). Anthropic takes three source types
     /// (base64, a URL, a Files-API `file_id`); we send base64, because the payload is
@@ -94,6 +94,21 @@ pub enum AntBlock {
     Image {
         source: AntImageSource,
     },
+}
+
+/// The `content` of an [`AntBlock::ToolResult`]: a plain string, or an array of blocks.
+///
+/// Anthropic accepts both, and the array form is the only way an image can ride along with
+/// a tool's answer (verified live on claude-haiku-4-5,
+/// docs/research/mcp-tool-images.md §2.2). The `untagged` representation is what keeps the
+/// promise: a result with no images serializes as the bare JSON string this builder has
+/// always emitted, byte for byte. Pinned by
+/// `a_tool_result_without_images_keeps_its_string_content`.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum AntToolResultContent {
+    Text(String),
+    Blocks(Vec<AntBlock>),
 }
 
 /// The `source` of an [`AntBlock::Image`]. Only the base64 variant exists here; the
@@ -212,13 +227,7 @@ fn build_messages(req: &ChatRequest) -> Vec<AntMessage> {
                 ("assistant", blocks)
             }
             // A tool result → a tool_result block inside a user message.
-            ApiRole::Tool => (
-                "user",
-                vec![AntBlock::ToolResult {
-                    tool_use_id: m.tool_call_id.clone().unwrap_or_default(),
-                    content: m.content.clone(),
-                }],
-            ),
+            ApiRole::Tool => ("user", vec![tool_result_block(m)]),
             // The system message goes as the top-level `system` field, not in messages.
             ApiRole::System => continue,
         };
@@ -255,8 +264,16 @@ fn user_blocks(m: &ApiMessage) -> Vec<AntBlock> {
     if m.images.is_empty() {
         return text_blocks(&m.content);
     }
-    let mut blocks = Vec::with_capacity(m.images.len() * 2 + 1);
-    for image in &m.images {
+    let mut blocks = image_blocks(&m.images);
+    blocks.extend(text_blocks(&m.content));
+    blocks
+}
+
+/// Image blocks, each preceded by its label when it has one. Shared by the user turn and
+/// the tool result, so both carry an image in exactly the same base64 shape.
+fn image_blocks(images: &[ApiImage]) -> Vec<AntBlock> {
+    let mut blocks = Vec::with_capacity(images.len() * 2);
+    for image in images {
         if let Some(label) = &image.label {
             blocks.push(AntBlock::Text {
                 text: label.clone(),
@@ -270,8 +287,30 @@ fn user_blocks(m: &ApiMessage) -> Vec<AntBlock> {
             },
         });
     }
-    blocks.extend(text_blocks(&m.content));
     blocks
+}
+
+/// The `tool_result` block for a tool message (spec §9.10, docs/research/mcp-tool-images.md).
+///
+/// With no images the `content` stays the plain string it always was. With images it
+/// becomes an array of blocks — the tool's own text **first** (it is the answer; the image
+/// illustrates it), then each image behind its label. Anthropic's images-before-text advice
+/// is about a user's request, not a tool's output, so the user ordering is deliberately not
+/// mirrored here.
+fn tool_result_block(m: &ApiMessage) -> AntBlock {
+    let tool_use_id = m.tool_call_id.clone().unwrap_or_default();
+    if m.images.is_empty() {
+        return AntBlock::ToolResult {
+            tool_use_id,
+            content: AntToolResultContent::Text(m.content.clone()),
+        };
+    }
+    let mut blocks = text_blocks(&m.content);
+    blocks.extend(image_blocks(&m.images));
+    AntBlock::ToolResult {
+        tool_use_id,
+        content: AntToolResultContent::Blocks(blocks),
+    }
 }
 
 // ---------- streaming events ----------
@@ -448,6 +487,107 @@ mod tests {
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["type"], "image");
         assert_eq!(content[0]["source"]["media_type"], "image/jpeg");
+    }
+
+    /// The tool-side half of the same guarantee: without images the `tool_result`
+    /// `content` must stay a bare JSON **string**, not a one-element block array. Every
+    /// stored conversation that ever called a tool replays through this path.
+    #[test]
+    fn a_tool_result_without_images_keeps_its_string_content() {
+        let r = req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "t1".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("t1", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "claude-x", false)).unwrap();
+        let block = &json["messages"][2]["content"][0];
+        assert_eq!(block["type"], "tool_result");
+        assert!(
+            block["content"].is_string(),
+            "a result with no images must serialize as a string, got {:?}",
+            block["content"]
+        );
+        assert_eq!(block["content"], "2");
+    }
+
+    /// An MCP screenshot tool: `tool_result.content` widens into an array of blocks —
+    /// the result text first, then the labelled image as bare base64.
+    #[test]
+    fn a_tool_result_image_becomes_a_block_after_the_result_text() {
+        let r = req(vec![
+            ApiMessage::user("сними скриншот"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "t1".into(),
+                    name: "screenshot".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("t1", "screenshot taken").with_images(vec![
+                crate::shared::api::ApiImage::new(
+                    "image/png",
+                    "QUJD",
+                    Some("Image #1 — \"shot.png\":".into()),
+                ),
+            ]),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "claude-x", false)).unwrap();
+        let block = &json["messages"][2]["content"][0];
+        assert_eq!(block["type"], "tool_result");
+        assert_eq!(block["tool_use_id"], "t1");
+        let inner = block["content"].as_array().unwrap();
+        assert_eq!(inner.len(), 3);
+        assert_eq!(inner[0]["type"], "text");
+        assert_eq!(inner[0]["text"], "screenshot taken");
+        assert_eq!(inner[1]["type"], "text");
+        assert_eq!(inner[1]["text"], "Image #1 — \"shot.png\":");
+        assert_eq!(inner[2]["type"], "image");
+        assert_eq!(inner[2]["source"]["type"], "base64");
+        assert_eq!(inner[2]["source"]["media_type"], "image/png");
+        assert_eq!(
+            inner[2]["source"]["data"], "QUJD",
+            "bare base64 inside a tool_result too — never a data: URI"
+        );
+    }
+
+    /// A tool that returns only an image must not add an empty `text` block: Anthropic
+    /// rejects a blank `text`, so this is a 400 rather than cosmetics.
+    #[test]
+    fn an_image_only_tool_result_carries_no_empty_text_block() {
+        let r = req(vec![
+            ApiMessage::user("сними скриншот"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "t1".into(),
+                    name: "screenshot".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("t1", "").with_images(vec![crate::shared::api::ApiImage::new(
+                "image/jpeg",
+                "QQ==",
+                None,
+            )]),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "claude-x", false)).unwrap();
+        let inner = json["messages"][2]["content"][0]["content"]
+            .as_array()
+            .unwrap();
+        assert_eq!(inner.len(), 1);
+        assert_eq!(inner[0]["type"], "image");
+        assert_eq!(inner[0]["source"]["media_type"], "image/jpeg");
     }
 
     #[test]

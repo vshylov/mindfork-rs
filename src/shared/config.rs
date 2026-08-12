@@ -698,6 +698,15 @@ pub struct ToolSettings {
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
     pub confirm_dangerous: bool,
+    /// Let an image returned by an MCP tool reach the model (spec §9.10, fork F3 of
+    /// docs/research/mcp-tool-images.md). **On** by default: a user who enabled a
+    /// screenshot server wants its screenshots, and the server is already behind a
+    /// double opt-in. Separate from that opt-in because pixels carry a hazard text does
+    /// not — instructions painted into an image are invisible to the user, and the
+    /// DATA framing that fences a text block has no image analogue (spec §13.4). Off
+    /// keeps the server and its text results, and the placeholder still says an image
+    /// was returned.
+    pub mcp_images: bool,
 }
 
 impl Default for ToolSettings {
@@ -716,6 +725,7 @@ impl Default for ToolSettings {
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_timeout_secs: DEFAULT_SUBAGENT_TIMEOUT_SECS,
             confirm_dangerous: false,
+            mcp_images: true,
         }
     }
 }

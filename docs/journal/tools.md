@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -32,6 +32,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: MCP servers in the settings window (done)
 - Post-M9: MCP servers — secrets for the `env` map and JSON import (stage 2, done)
 - Post-M9: page fidelity for `fetch_url` (+ two neighbouring traps) (done)
+- Post-M9: images returned by MCP tools (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1620,3 +1621,78 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   confirmation. The right scope even though no orchestrator code changed: a tool
   now emits an effect on a path that previously never did, and the tool registry
   sits on every turn.
+
+### Post-M9: images returned by MCP tools (done)
+
+**What.** An image block in an MCP tool result stops being `[image content omitted]` and
+is shown to the model. It rides on the tool-result `Message` and is delivered inside the
+tool result itself on four of five engines; Gemini gets a fallback. Research and the live
+matrix: [mcp-tool-images.md](../research/mcp-tool-images.md); behaviour — spec §9.10,
+§13.4.
+
+**The measurement that mattered was the one that showed the first measurement was
+wrong.** Round 1 sent a blue-square fixture inside a tool result and every arm answered
+"blue background, white square" — an apparently clean pass. Adding a **control with no
+image at all** produced "light blue background, white five-pointed star": the model was
+answering the *question*, confidently, from nothing. Re-run with a green field and a white
+**circle**, the control's invention diverged and the signal became readable. Both live
+smokes shipped here carry that control arm, and the fixture is deliberately a different
+shape and colour from the one the user-image smokes use.
+
+Reading the chat template had also predicted the wrong answer: Gemma's template extracts
+only `text` parts from a tool result, so an image looked doomed. It is not — llama.cpp
+lifts media out of *any* message's content parts before templating. The template was the
+wrong instrument, the same shape as "use the project's own client, not curl and awk".
+
+**Live matrix** (2026-08-13, each arm a matched pair with a control):
+
+| Engine | Image inside the tool result |
+|---|---|
+| llama.cpp `gemma-4-31B` + mmproj | works (+51 prompt tokens) |
+| Anthropic `claude-haiku-4-5` | works (`tool_result.content` blocks) |
+| OpenAI Responses `gpt-5-nano` | works (`function_call_output.output` parts) |
+| xAI `grok-4.5` | works (content parts) |
+| Gemini `gemini-2.5-flash` | **HTTP 400** — "Multimodal function responses are not supported for this model" |
+
+**Key decisions** (all five forks confirmed by the user on 2026-08-13):
+
+- **Gemini gets a per-provider fallback** (F1-A): the `functionResponse` stays text-only
+  and the images follow it as user parts in the same turn. Chosen **statically**, never by
+  sending and catching the 400 — a mid-turn retry after a hard failure is exactly what the
+  retry decorator refuses once a turn is committed.
+- **The domain needed nothing new.** A tool result is a `Message` with role `Tool`, and
+  `Message.images` has existed since the first multimodality stage — so no storage, no
+  migration, no new persistence path. `ToolCallRecord` gained an image **count** (not the
+  pixels) so a reloaded conversation renders the same block as a live one without the feed
+  walking to another message to find out.
+- **A cap of 4 per result, stated out loud** (F2). An MCP server is third-party code and
+  every image it returns rides every later turn. The dropped ones are named in the result
+  text: a silent cap reads as "the tool returned four images" when it returned fifty.
+- **`tools.mcp_images`, default on** (F3). The MCP double opt-in gates the *server*; this
+  gates its *pixels*, because an image carries a hazard text does not — instructions can be
+  painted into it, the DATA fencing that protects text has no analogue, and the feed shows
+  a chip rather than the picture. Recorded in spec §13.4.
+- **The seam is on the tool contract, the producer is MCP only** (F5): `ToolOutcome.images`
+  exists for a future built-in screenshot tool, but nothing invents a consumer for a path
+  with no producer today.
+- **A chip, not pixels** (F4) — `# N image(s) returned` on the tool block, in both the
+  collapsed and expanded forms, since it is part of what the call did rather than a detail
+  `Ctrl+O` reveals.
+
+**A fixture trap worth recording.** The first version of both smokes ended with a trailing
+user question after the tool result. On Gemini that is not merely unrealistic: a tool
+result lives in a `user` content and adjacent same-role contents merge, so the question
+ended up sharing one content with the `functionResponse` — and Gemini returned an empty
+candidate (`STOP`, zero completion tokens) **while still billing the image** (prompt
+341 vs 83 tokens). The diagnosis came from the token counts, not the text. Both smokes now
+use the shape a real turn has: the question up front, the tool result last.
+
+**Tests.** Unit: the MCP client (an image block is carried, audio and a payload-less image
+keep their placeholder, the cap drops extras and says how many), the switch in both
+directions, and twelve wire tests — three per backend — pinning that a tool result with no
+images serializes byte-identically to before, that the image lands in that provider's own
+shape after the result text, and (Gemini) that the `functionResponse` carries no image at
+all. Live: `tool_result_image_is_seen_live` (llama.cpp) and
+`tool_result_image_takes_the_user_part_fallback` (Gemini) — **both GO**, each with its
+control arm; the Anthropic and Responses shapes are covered by the probes recorded in the
+research doc plus their wire tests.
