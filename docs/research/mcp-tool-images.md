@@ -1,6 +1,11 @@
 # Research: images returned by tools (MCP)
 
-**Status:** research complete, forks await the user's decision (2026-08-13).
+**Status:** research complete; **user's decision, 2026-08-13: all five forks go
+with the recommendations below** (F1 = a per-provider user-part fallback on
+Gemini, F2 = the `config.images` limits plus a stated per-result cap of 4,
+F3 = a `tools.mcp_images` switch defaulting to on, F4 = a chip rather than
+rendered pixels, F5 = the seam on the tool contract with only the MCP producer).
+Implementation follows.
 Roadmap item: "images from MCP/tool results". Everything in §2 was measured
 **live** on 2026-08-13 against the reference stack and four real cloud keys —
 each arm with a **control**, because the first probe round produced a confident
