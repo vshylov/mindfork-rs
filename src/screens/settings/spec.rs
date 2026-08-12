@@ -192,6 +192,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         XBinary => text(|c, t| c.engine.managed.binary = opt(t)),
         XModel => text(|c, t| c.engine.managed.model_path = opt(t)),
+        XMmproj => text(|c, t| c.engine.managed.mmproj = opt(t)),
         XDraftModel => text(|c, t| c.engine.managed.draft_model = opt(t)),
         XDraftNgl => int(|c, t| {
             c.engine.managed.draft_gpu_layers = parse_opt_num(t, c.engine.managed.draft_gpu_layers)
@@ -247,6 +248,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         IxBinary => text(|c, t| c.impersonation_engine.managed.binary = opt(t)),
         IxModel => text(|c, t| c.impersonation_engine.managed.model_path = opt(t)),
+        IxMmproj => text(|c, t| c.impersonation_engine.managed.mmproj = opt(t)),
         IxDraftModel => text(|c, t| c.impersonation_engine.managed.draft_model = opt(t)),
         IxDraftNgl => int(|c, t| {
             let m = &mut c.impersonation_engine.managed;
@@ -444,6 +446,23 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         AttachPage => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.attachments.page_tokens = v;
+            }
+        }),
+        ImageMaxCount => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.images.max_count = v;
+            }
+        }),
+        // Typed in MB, stored in bytes — see `mb_to_bytes` for why the row is not
+        // simply the raw field.
+        ImageMaxBytes => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.images.max_bytes = mb_to_bytes(v);
+            }
+        }),
+        ImageDownscale => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.images.downscale_px = v;
             }
         }),
         SmMaxNarrative => int(|c, t| {

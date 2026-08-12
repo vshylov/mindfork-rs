@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::wire;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
-    TokenUsage, ToolCallDelta,
+    TokenUsage, ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
 use crate::shared::api::http;
@@ -117,6 +117,32 @@ impl OpenAiClient {
             bail!("server is still loading the model (503)");
         }
         Ok(())
+    }
+
+    /// Fetches llama.cpp's `/props` — the server's own description of what it is
+    /// running. One helper for both capability questions ([`EngineBackend::context_budget`]
+    /// and [`EngineBackend::vision`]), so a server is asked in one shape and either
+    /// answer can be added without a second endpoint.
+    ///
+    /// Any failure — a server without the endpoint (vLLM, LM Studio, a cloud proxy),
+    /// a network error, a body that doesn't parse — is `None`, i.e. "cannot say".
+    /// Logged at debug, since not answering is normal here.
+    async fn props(&self) -> Option<Props> {
+        let url = props_url(&self.base_url);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no answer from /props");
+                return None;
+            }
+        };
+        match resp.json().await {
+            Ok(p) => Some(p),
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "/props did not parse");
+                None
+            }
+        }
     }
 }
 
@@ -266,29 +292,31 @@ impl EngineBackend for OpenAiClient {
     ///
     /// Any failure — a server without the endpoint (vLLM, LM Studio, a cloud
     /// proxy), a network error, a body that doesn't parse — is `None`, i.e.
-    /// "cannot say". Logged at debug, since not answering is normal here.
+    /// "cannot say" (see [`Self::props`]).
     async fn context_budget(&self) -> Option<u32> {
-        let url = props_url(&self.base_url);
-        let resp = match self.auth(self.http.get(&url)).send().await {
-            Ok(r) if r.status().is_success() => r,
-            other => {
-                tracing::debug!(%url, ok = other.is_ok(), "no context budget from /props");
-                return None;
-            }
-        };
-        let props: Props = match resp.json().await {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::debug!(%url, error = %err, "/props did not parse");
-                return None;
-            }
-        };
         // A zero would be a nonsense window; treat it as "cannot say" rather than
         // as a budget every prompt exceeds.
-        props
+        self.props()
+            .await?
             .default_generation_settings
             .and_then(|g| g.n_ctx)
             .filter(|&n| n > 0)
+    }
+
+    /// Reads llama.cpp's `/props` → `modalities.vision` (measured on b10322).
+    ///
+    /// The same fetch [`Self::context_budget`] makes, read one field further along —
+    /// not a second endpoint. A server that answers without a `modalities` key is
+    /// [`VisionSupport::Unknown`], **not** `Unsupported`: everything that is not
+    /// llama.cpp (vLLM, LM Studio, a proxy) omits the key, and answering "no" there
+    /// would refuse a working vision setup on the strength of a field the server
+    /// never claimed to speak.
+    async fn vision(&self) -> VisionSupport {
+        match self.props().await.and_then(|p| p.modalities?.vision) {
+            Some(true) => VisionSupport::Supported,
+            Some(false) => VisionSupport::Unsupported,
+            None => VisionSupport::Unknown,
+        }
     }
 }
 
@@ -348,11 +376,21 @@ fn server_root_url(base_url: &str, path: &str) -> String {
 #[derive(serde::Deserialize)]
 struct Props {
     default_generation_settings: Option<PropsGeneration>,
+    /// What the loaded model accepts besides text. Measured on llama.cpp b10322:
+    /// `"modalities": {"vision": true, "video": true, "audio": false}`. Absent on
+    /// every server that is not llama.cpp — hence `Option`, and hence
+    /// [`VisionSupport::Unknown`] rather than "no".
+    modalities: Option<PropsModalities>,
 }
 
 #[derive(serde::Deserialize)]
 struct PropsGeneration {
     n_ctx: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct PropsModalities {
+    vision: Option<bool>,
 }
 
 #[cfg(test)]
@@ -610,6 +648,83 @@ mod tests {
             );
             let _ = server.join();
         }
+    }
+
+    /// The measured shape of `/props` on a vision build (llama.cpp b10322): the
+    /// `modalities` object sits next to `default_generation_settings`, which is why
+    /// one fetch answers both questions.
+    #[tokio::test]
+    async fn vision_true_in_props_is_supported() {
+        let (url, server) = one_shot_server(
+            "200 OK",
+            r#"{"default_generation_settings":{"n_ctx":16384},
+                "modalities":{"vision":true,"video":true,"audio":false}}"#,
+        );
+        assert_eq!(
+            OpenAiClient::new(url).vision().await,
+            VisionSupport::Supported
+        );
+        assert!(
+            server.join().unwrap().starts_with("GET /props "),
+            "asked at the server root, outside /v1"
+        );
+    }
+
+    /// A model loaded without `--mmproj` says so explicitly — and that *is* an
+    /// answer, so it must not be softened into "cannot say".
+    #[tokio::test]
+    async fn vision_false_in_props_is_unsupported() {
+        let (url, server) = one_shot_server(
+            "200 OK",
+            r#"{"modalities":{"vision":false,"video":false,"audio":false}}"#,
+        );
+        assert_eq!(
+            OpenAiClient::new(url).vision().await,
+            VisionSupport::Unsupported
+        );
+        let _ = server.join();
+    }
+
+    /// Every way of not being told is `Unknown`, never `Unsupported`: an arbitrary
+    /// OpenAI-compatible server (vLLM, LM Studio, a proxy) has no `modalities` key
+    /// at all, and reading its silence as "no" would refuse a working vision setup.
+    #[tokio::test]
+    async fn a_server_that_does_not_report_modalities_is_unknown() {
+        for (status, body) in [
+            // No `/props` endpoint at all.
+            ("404 Not Found", "{}"),
+            ("500 Internal Server Error", "{}"),
+            // Answers `/props`, but says nothing about modalities.
+            (
+                "200 OK",
+                r#"{"default_generation_settings":{"n_ctx":16384}}"#,
+            ),
+            // The key is there but the field is not (a future/older build).
+            ("200 OK", r#"{"modalities":{"audio":false}}"#),
+            ("200 OK", "not json at all"),
+        ] {
+            let (url, server) = one_shot_server(status, body);
+            assert_eq!(
+                OpenAiClient::new(url).vision().await,
+                VisionSupport::Unknown,
+                "status={status} body={body}"
+            );
+            let _ = server.join();
+        }
+    }
+
+    /// The projector question must not disturb the context-window answer: both are
+    /// read from the same body, and `context_budget` keeps its old behaviour on a
+    /// `/props` that now also carries `modalities`.
+    #[tokio::test]
+    async fn modalities_do_not_disturb_the_context_budget() {
+        let (url, server) = one_shot_server(
+            "200 OK",
+            r#"{"default_generation_settings":{"n_ctx":16384},"total_slots":4,
+                "modalities":{"vision":true}}"#,
+        );
+        assert_eq!(OpenAiClient::new(url).context_budget().await, Some(16384));
+        let _ = server.join();
     }
 
     /// An unreachable host must not hang or panic — it simply cannot say.

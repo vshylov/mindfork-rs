@@ -172,6 +172,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         // The bare orchestrator has no loop draining this channel; attachment
         // tests go through `spawn_orch` (the real `run` loop) end to end.
         attach_tx: unbounded_channel().0,
+        // Same for images: staging is exercised through the real loop.
+        image_tx: unbounded_channel().0,
+        staged_images: Default::default(),
         bg: std::collections::HashMap::new(),
         bg_done_tx: unbounded_channel().0,
         consolidate_counts: std::collections::HashMap::new(),
@@ -346,13 +349,31 @@ async fn run_turn_capture(
     evt_rx: &mut UnboundedReceiver<AppEvent>,
     text: &str,
 ) -> (String, Vec<(String, String)>) {
+    let (out, calls) = run_turn_capture_args(cmd_tx, evt_rx, text).await;
+    (out, calls.into_iter().map(|(n, _, r)| (n, r)).collect())
+}
+
+/// Like [`run_turn_capture`], but keeps the call **arguments** too — triples
+/// (tool name, arguments, result). Needed when the result's shape depends on
+/// what the model passed, so the assertion can be made against the shape it
+/// actually chose rather than the one it was expected to choose.
+async fn run_turn_capture_args(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> (String, Vec<(String, String, String)>) {
     cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
     let mut out = String::new();
     let mut calls = Vec::new();
     while let Some(ev) = evt_rx.recv().await {
         match &ev {
             AppEvent::Chunk { text, .. } => out.push_str(text),
-            AppEvent::ToolCall { name, result, .. } => calls.push((name.clone(), result.clone())),
+            AppEvent::ToolCall {
+                name,
+                arguments,
+                result,
+                ..
+            } => calls.push((name.clone(), arguments.clone(), result.clone())),
             AppEvent::Finished { .. } => break,
             _ => {}
         }
@@ -432,6 +453,7 @@ mod compaction;
 mod confirm;
 mod demo;
 mod generation;
+mod images;
 mod impersonation;
 mod live;
 mod mcp;

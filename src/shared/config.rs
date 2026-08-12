@@ -248,6 +248,12 @@ pub struct ManagedSettings {
     pub binary: Option<String>,
     /// Path to the GGUF model (`-m`).
     pub model_path: Option<String>,
+    /// Path to the multimodal projector (`--mmproj`) — the second GGUF that ships
+    /// next to a vision model's weights and turns image pixels into the tokens the
+    /// language model reads. Without it `llama-server` loads a text-only model and
+    /// reports `modalities.vision: false` on `/props`, which is exactly how the app
+    /// learns it cannot take images (spec §9.10). Changing it restarts the server.
+    pub mmproj: Option<String>,
     /// GPU layers (`-ngl`).
     pub gpu_layers: i32,
     /// Context size (`-c`).
@@ -284,6 +290,7 @@ impl Default for ManagedSettings {
         Self {
             binary: None,
             model_path: None,
+            mmproj: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
             context_size: DEFAULT_CONTEXT_SIZE,
             jinja: true,
@@ -782,6 +789,43 @@ impl Default for AttachmentSettings {
             max_total_tokens: DEFAULT_ATTACH_MAX_TOTAL_TOKENS,
             excerpt_tokens: DEFAULT_ATTACH_EXCERPT_TOKENS,
             page_tokens: DEFAULT_ATTACH_PAGE_TOKENS,
+        }
+    }
+}
+
+/// Default cap on how many images one message may carry (spec §9.10, fork F7).
+/// Every image is re-sent on every later turn, so the cap bounds a *standing* cost
+/// rather than one upload.
+pub const DEFAULT_IMAGE_MAX_COUNT: usize = 8;
+/// Default hard ceiling on a single image file, in bytes — the strictest provider
+/// limit (Anthropic's 10 MB base64), checked before decoding so a decompression
+/// bomb never reaches the decoder.
+pub const DEFAULT_IMAGE_MAX_BYTES: u64 = 10 * 1024 * 1024;
+/// Default long-edge ceiling in pixels: Anthropic's standard-resolution tier, and
+/// comfortably above the ~256-token encoder budgets measured on the local stack,
+/// Gemini and xAI (docs/research/multimodal-images.md §2).
+pub const DEFAULT_IMAGE_DOWNSCALE_PX: u32 = 1568;
+
+/// Image-attachment settings (`/image attach`, spec §9.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageSettings {
+    /// How many images one message may carry.
+    pub max_count: usize,
+    /// Files above this size are refused (measured before decoding).
+    pub max_bytes: u64,
+    /// Long-edge ceiling; a larger image is downscaled once, at attach time.
+    /// `0` disables downscaling — format normalization still happens, because the
+    /// provider matrix depends on it (fork F3).
+    pub downscale_px: u32,
+}
+
+impl Default for ImageSettings {
+    fn default() -> Self {
+        Self {
+            max_count: DEFAULT_IMAGE_MAX_COUNT,
+            max_bytes: DEFAULT_IMAGE_MAX_BYTES,
+            downscale_px: DEFAULT_IMAGE_DOWNSCALE_PX,
         }
     }
 }
@@ -1447,6 +1491,8 @@ pub struct AppConfig {
     pub rag: RagSettings,
     /// Chat file-attachment budgets (`/file attach`).
     pub attachments: AttachmentSettings,
+    /// Image-attachment limits (`/image attach`, spec §9.10).
+    pub images: ImageSettings,
     /// Conversation history compression (rolling summary, `/compact`).
     pub compaction: CompactionSettings,
     /// Self-model settings (narrative, prompt-injection volume).
@@ -1501,6 +1547,7 @@ impl Default for AppConfig {
             tools: ToolSettings::default(),
             rag: RagSettings::default(),
             attachments: AttachmentSettings::default(),
+            images: ImageSettings::default(),
             compaction: CompactionSettings::default(),
             self_model: SelfModelSettings::default(),
             notes: NotesSettings::default(),
@@ -1848,6 +1895,52 @@ mod tests {
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
+    }
+
+    /// The projector survives a save/load round trip, and — the load-bearing half —
+    /// changing it makes `EngineSettings` **compare unequal**. That comparison is
+    /// what the orchestrator uses to schedule a server restart, so a field excluded
+    /// from it (a `#[serde(skip)]`, a hand-written `PartialEq`) would leave a
+    /// changed projector running against a stale server: the setting would appear to
+    /// take effect while images kept being refused (docs/lessons.md §3).
+    #[test]
+    fn managed_projector_roundtrips_and_a_change_is_visible_to_the_restart_check() {
+        let c = AppConfig {
+            engine: EngineSettings {
+                mode: ServerMode::Managed,
+                managed: ManagedSettings {
+                    binary: Some("llama-server".into()),
+                    model_path: Some("gemma-4-31B-it.gguf".into()),
+                    mmproj: Some("mmproj-gemma-4-31B-it.gguf".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let back: AppConfig = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(c, back);
+        assert_eq!(
+            back.engine.managed.mmproj.as_deref(),
+            Some("mmproj-gemma-4-31B-it.gguf")
+        );
+
+        let mut changed = c.clone();
+        changed.engine.managed.mmproj = Some("mmproj-other.gguf".into());
+        assert_ne!(changed.engine, c.engine, "a changed projector must restart");
+        let mut cleared = c.clone();
+        cleared.engine.managed.mmproj = None;
+        assert_ne!(cleared.engine, c.engine, "clearing it must restart too");
+    }
+
+    /// An older `settings.json` — written before the projector existed — still
+    /// loads, with the field defaulting to "not set".
+    #[test]
+    fn a_config_without_the_projector_still_loads() {
+        let json = r#"{"engine":{"mode":"managed","managed":{"model_path":"m.gguf"}}}"#;
+        let c: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.engine.managed.mmproj, None);
+        assert_eq!(c.engine.managed.model_path.as_deref(), Some("m.gguf"));
     }
 
     #[test]

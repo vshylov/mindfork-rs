@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::ReasoningEffort;
-use crate::shared::api::contract::ChatRequest;
+use crate::shared::api::contract::{ApiMessage, ChatRequest};
 
 // The only consumer of this client is the local/external llama.cpp `llama-server`
 // (managed/external). The clouds moved to their own protocols: OpenAI → Responses
@@ -121,11 +121,52 @@ pub struct StreamOptions {
 pub struct WireMessage {
     pub role: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<WireContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WireToolCall>>,
+}
+
+/// The `content` of a wire message: a bare string, or an array of content parts.
+///
+/// A message with no images serializes as a **plain string**, byte-identical to what this
+/// client sent before images existed. That is deliberate and load-bearing rather than
+/// cosmetic: llama.cpp reuses its prefix cache on a matching rendered prompt, and Gemma's
+/// chat template handles the string and the parts array in two different branches — so a
+/// blanket switch to parts would re-prefill every existing conversation and change the
+/// prompt of every text-only turn on every provider. Parts appear only when there is an
+/// image to carry. Pinned by `a_text_only_request_is_unchanged_by_the_image_support`.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum WireContent {
+    Text(String),
+    Parts(Vec<serde_json::Value>),
+}
+
+/// Builds a message's `content`: images (each preceded by its label, when it has one),
+/// then the text. Images come **first** because Anthropic documents that ordering as the
+/// better-performing one and no other provider cares; keeping one order across all four
+/// backends means a prompt behaves the same wherever it is sent.
+fn wire_content(m: &ApiMessage) -> WireContent {
+    if m.images.is_empty() {
+        // For an assistant turn with tool_calls the content can legitimately be empty.
+        return WireContent::Text(m.content.clone());
+    }
+    let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
+    for image in &m.images {
+        if let Some(label) = &image.label {
+            parts.push(serde_json::json!({ "type": "text", "text": label }));
+        }
+        parts.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,{}", image.mime, image.data) },
+        }));
+    }
+    if !m.content.is_empty() {
+        parts.push(serde_json::json!({ "type": "text", "text": m.content }));
+    }
+    WireContent::Parts(parts)
 }
 
 /// The OpenAI wrapper for a tool schema (`{type:"function", function:{...}}`).
@@ -174,7 +215,7 @@ pub fn build_chat_request(
     if let Some(system) = &req.system {
         messages.push(WireMessage {
             role: "system",
-            content: Some(system.clone()),
+            content: Some(WireContent::Text(system.clone())),
             tool_call_id: None,
             tool_calls: None,
         });
@@ -200,7 +241,7 @@ pub fn build_chat_request(
         messages.push(WireMessage {
             role: m.role.as_wire(),
             // For an assistant with tool_calls, content can be empty.
-            content: Some(m.content.clone()),
+            content: Some(wire_content(m)),
             tool_call_id: m.tool_call_id.clone(),
             tool_calls,
         });
@@ -454,6 +495,95 @@ mod tests {
         assert_eq!(json["messages"][0]["role"], "system");
         assert_eq!(json["messages"][1]["role"], "user");
         assert_eq!(json["messages"][1]["content"], "hi");
+    }
+
+    fn image(mime: &str, data: &str, label: Option<&str>) -> crate::shared::api::ApiImage {
+        crate::shared::api::ApiImage {
+            mime: mime.to_string(),
+            data: std::sync::Arc::from(data),
+            label: label.map(str::to_string),
+        }
+    }
+
+    /// The guarantee the whole design rests on: adding image support must not change a
+    /// single byte of a request that carries no images. llama.cpp reuses its prefix cache
+    /// on a matching rendered prompt, and Gemma's chat template routes a string and a
+    /// parts array through different branches — so a blanket switch to parts would
+    /// re-prefill every existing conversation and silently change every text-only turn on
+    /// every provider.
+    #[test]
+    fn a_text_only_request_is_unchanged_by_the_image_support() {
+        let req = ChatRequest {
+            system: Some("be brief".into()),
+            messages: vec![
+                ApiMessage::user("hi"),
+                ApiMessage::assistant("hello"),
+                ApiMessage::tool("call-1", "42"),
+            ],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        // Every content is a bare JSON string, exactly as before content parts existed.
+        for i in 0..4 {
+            assert!(
+                json["messages"][i]["content"].is_string(),
+                "message {i} must serialize its content as a string, got {:?}",
+                json["messages"][i]["content"]
+            );
+        }
+        assert_eq!(json["messages"][0]["content"], "be brief");
+        assert_eq!(json["messages"][1]["content"], "hi");
+        assert_eq!(json["messages"][3]["content"], "42");
+    }
+
+    #[test]
+    fn images_become_content_parts_ahead_of_the_text() {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("what is this?").with_images(vec![image(
+                "image/png",
+                "QUJD",
+                Some("Image #1 — \"a.png\":"),
+            )])],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        let parts = json["messages"][0]["content"].as_array().unwrap();
+        // Label, then image, then the user's own text — the order Anthropic documents
+        // and the one we keep across all four backends.
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "Image #1 — \"a.png\":");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(
+            parts[1]["image_url"]["url"], "data:image/png;base64,QUJD",
+            "the payload must be a data URI, which is what llama.cpp and xAI both accept"
+        );
+        assert_eq!(parts[2]["type"], "text");
+        assert_eq!(parts[2]["text"], "what is this?");
+    }
+
+    #[test]
+    fn several_images_keep_their_order_and_a_labelless_one_emits_no_text_part() {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("").with_images(vec![
+                image("image/png", "AAA", None),
+                image("image/jpeg", "BBB", None),
+            ])],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false, None, false)).unwrap();
+        let parts = json["messages"][0]["content"].as_array().unwrap();
+        // Two images, no labels, and no empty trailing text part: an image-only message
+        // is a legitimate request ("look at this"), and a blank text part is noise the
+        // template would still render.
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["image_url"]["url"], "data:image/png;base64,AAA");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,BBB");
     }
 
     #[test]

@@ -32,11 +32,13 @@ impl ChatScreen {
     /// Assembles the status-bar state snapshot in one place — a new indicator
     /// adds a field here rather than extending `status_bar::render`/`height`'s
     /// signatures. `background` is passed separately (the owning `String` at the
-    /// call site outlives the borrow).
+    /// call site outlives the borrow) — and so are the two attachment chips, for
+    /// the same reason.
     fn status_model<'a>(
         &'a self,
         background: Option<&'a str>,
         attachments: Option<&'a str>,
+        staged_images: Option<&'a str>,
     ) -> status_bar::StatusModel<'a> {
         status_bar::StatusModel {
             statuses: &self.statuses,
@@ -49,6 +51,7 @@ impl ChatScreen {
             background,
             speaking: self.speaking,
             attachments,
+            staged_images,
             esc_target: self.esc_target,
         }
     }
@@ -93,9 +96,10 @@ impl ChatScreen {
         // overlap `&mut self.feed_view` below).
         let background = self.background_hint();
         let files = self.attachments_hint();
+        let images = self.staged_images_hint();
         let status_h = status_bar::height(
             frame.area().width as usize,
-            &self.status_model(background.as_deref(), files.as_deref()),
+            &self.status_model(background.as_deref(), files.as_deref(), images.as_deref()),
             &self.palette,
             self.loc,
         );
@@ -138,7 +142,7 @@ impl ChatScreen {
         status_bar::render(
             frame,
             status_area,
-            &self.status_model(background.as_deref(), files.as_deref()),
+            &self.status_model(background.as_deref(), files.as_deref(), images.as_deref()),
             &self.palette,
             self.loc,
         );

@@ -72,7 +72,13 @@ impl Orchestrator {
             return;
         }
         let text = text.trim().to_string();
-        if text.is_empty() {
+        // An empty message is normally nothing to send — unless images are staged, in
+        // which case "look at this" with no words is a complete request (spec §9.10).
+        let has_staged_images = self
+            .active_id
+            .and_then(|id| self.staged_images.get(&id))
+            .is_some_and(|staged| !staged.is_empty());
+        if text.is_empty() && !has_staged_images {
             return;
         }
         let Some(active_id) = self.active_id else {
@@ -88,13 +94,18 @@ impl Orchestrator {
             return;
         };
 
+        // Staging is consumed here and nowhere else: the images become part of the
+        // message, and from this point `/image remove` can no longer reach them. Taken
+        // only after every early return above, so a failed send leaves them staged.
+        let images = self.take_staged_images(active_id);
+
         // Add the user's message to the history and echo it in the feed. The UI
         // cleared the input box on send — also clear the chat's saved draft.
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            chat.push_message(Message::user(&text));
+            chat.push_message(Message::user(&text).with_images(images));
             chat.draft.clear();
         }
         self.mark_dirty(active_id);

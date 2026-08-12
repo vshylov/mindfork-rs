@@ -6,10 +6,12 @@ use uuid::Uuid;
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
+use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 pub use crate::features::chat_search::FeedFocus;
 use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
+pub use crate::features::image_command::ImageProgress;
 use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
 pub use crate::features::tools::confirm::ToolDecision;
@@ -152,6 +154,15 @@ pub enum AppCommand {
     /// Show the active chat's attachments (the `/file list` command). The result
     /// is a `FileProgress::Listed` event.
     FileList,
+    /// Stage an image for the next message (the `/image attach <path>` command).
+    /// Reading, decoding and downscaling run as a background task; the result arrives as
+    /// an `ImageProgress` event. See spec §9.10.
+    ImageAttach { path: String },
+    /// Unstage an image by display name, path, or `#N` (`/image remove <target>`).
+    ImageRemove { target: String },
+    /// Show what is staged for the next message (`/image list`). The result is an
+    /// `ImageProgress::Listed` event.
+    ImageList,
     /// Speak the active chat's messages (the `/tts [N|all]` command). The orchestrator
     /// (the owner of `Chat`) takes a **snapshot** of the conversation at command time and
     /// starts a background synthesis/playback task. A new command interrupts the current
@@ -383,6 +394,13 @@ pub enum AppEvent {
     /// chat activation and after every attach/remove, like `CharacterNames`.
     /// Cards only: the text itself never travels through the event channel.
     Attachments(Vec<AttachmentInfo>),
+    /// Outcome of an `/image` command (staged/unstaged/list/error) — a note in the feed.
+    /// See spec §9.10.
+    ImageProgress(ImageProgress),
+    /// The images staged for the next message — for the status-bar chip. Sent on chat
+    /// activation, after every attach/remove, and when a turn consumes the staged set
+    /// (then empty). Cards only: the payload never travels through the event channel.
+    StagedImages(Vec<ImageInfo>),
     /// A snapshot of the active profile's "self-model" (a reply to `RequestSelfModel`)
     /// for the viewer screen (`F3`). `None` — the model hasn't been created yet. `Box` —
     /// a large type, don't bloat the enum. See docs/history/self-model-mvp.md.

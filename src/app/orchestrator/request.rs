@@ -3,8 +3,9 @@
 use crate::entities::attachment::{AttachMode, Attachment, format_bytes};
 use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+use crate::entities::message_image::MessageImage;
 use crate::entities::sampling::SamplingConfig;
-use crate::shared::api::{ApiMessage, ApiToolCall, ChatRequest};
+use crate::shared::api::{ApiImage, ApiMessage, ApiToolCall, ChatRequest};
 use crate::shared::config::{AttachmentSettings, CompactionSettings};
 use crate::shared::i18n::Locale;
 
@@ -12,10 +13,12 @@ use crate::shared::i18n::Locale;
 /// go through [`ChatRequest::system`] (here — `None`). Assistant messages with
 /// tool calls and tool results are rebuilt for a correct history
 /// (strict order validation by the server, contract §3.2).
-fn message_to_api(message: &Message) -> Option<ApiMessage> {
+fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
     match message.role {
         MessageRole::System => None,
-        MessageRole::User => Some(ApiMessage::user(&message.text)),
+        MessageRole::User => {
+            Some(ApiMessage::user(&message.text).with_images(images_to_api(&message.images, loc)))
+        }
         MessageRole::Assistant => {
             if message.tool_calls.is_empty() {
                 Some(ApiMessage::assistant(&message.text))
@@ -29,6 +32,27 @@ fn message_to_api(message: &Message) -> Option<ApiMessage> {
             .as_ref()
             .map(|id| ApiMessage::tool(id, &message.text)),
     }
+}
+
+/// Domain images → the request form, each carrying the label part emitted just before it
+/// (spec §9.10, fork F5 of docs/research/multimodal-images.md).
+///
+/// The label is numbered from 1 and names the file, matching what `/image list` showed
+/// the user — so "the chart in `plot.png`" means the same thing on both sides of the
+/// conversation. It is scaffold the *model* reads, hence the profile language (axis A).
+fn images_to_api(images: &[MessageImage], loc: &Locale) -> Vec<ApiImage> {
+    images
+        .iter()
+        .enumerate()
+        .map(|(i, image)| ApiImage {
+            mime: image.mime.clone(),
+            data: std::sync::Arc::from(image.data.as_str()),
+            label: Some(loc.tf(
+                "prompt.images.label",
+                &[("n", &(i + 1).to_string()), ("name", &image.name)],
+            )),
+        })
+        .collect()
 }
 
 /// Domain tool-call record → the request-body form (arguments as a JSON string).
@@ -99,7 +123,7 @@ pub(super) fn build_request(
         ),
         messages: chat.messages[upto..]
             .iter()
-            .filter_map(message_to_api)
+            .filter_map(|m| message_to_api(m, cx.loc))
             .collect(),
         sampling,
         tools,

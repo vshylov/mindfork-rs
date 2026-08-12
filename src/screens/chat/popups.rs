@@ -248,6 +248,12 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.file_attach", "ui.help.file_attach"),
     ("ui.help.k.file_remove", "ui.help.file_remove"),
     ("/file list", "ui.help.file_list"),
+    // Images sit right after the files: the same verbs and the same `#N`
+    // addressing, but staged for the **next message** rather than pinned to the
+    // chat — the descriptions carry that difference (spec §9.10).
+    ("ui.help.k.image_attach", "ui.help.image_attach"),
+    ("ui.help.k.image_remove", "ui.help.image_remove"),
+    ("/image list", "ui.help.image_list"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
@@ -823,6 +829,34 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn image_commands_are_listed_in_the_commands_tab() {
+        // AGENTS.md §3 — a new command has to be discoverable in `F1`. They sit
+        // right after the `/file` block: same verbs, neighbouring wording.
+        let at = |label: &str| {
+            HELP_COMMANDS
+                .iter()
+                .position(|(k, _)| *k == label)
+                .unwrap_or_else(|| panic!("{label} is missing from HELP_COMMANDS"))
+        };
+        let files = at("/file list");
+        assert_eq!(at("ui.help.k.image_attach"), files + 1);
+        assert_eq!(at("ui.help.k.image_remove"), files + 2);
+        assert_eq!(at("/image list"), files + 3);
+
+        // …and all three actually render, descriptions included — and those
+        // descriptions say "next message", not "this chat": that is the whole
+        // difference from `/file`, and the help is where a user learns it.
+        let text = commands_tab_text();
+        for label in ["/image attach", "/image remove", "/image list"] {
+            assert!(text.contains(label), "the command label {label}: {text}");
+        }
+        assert!(
+            text.contains("к следующему сообщению"),
+            "the staged-for-the-next-message wording: {text}"
+        );
     }
 
     #[test]

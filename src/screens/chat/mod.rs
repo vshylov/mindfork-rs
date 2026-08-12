@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
+use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
@@ -123,6 +124,17 @@ pub enum ChatIntent {
     },
     /// Show the chat's attachments (command `/file list`).
     FileList,
+    /// Stage an image for the next message (command `/image attach <path>`). See
+    /// spec §9.10.
+    ImageAttach {
+        path: String,
+    },
+    /// Unstage an image (command `/image remove <name|#N>`).
+    ImageRemove {
+        target: String,
+    },
+    /// Show the images staged for the next message (command `/image list`).
+    ImageList,
     /// Speak the chat's messages (command `/tts`, `/tts N`, `/tts all`). See spec §11.9.
     Tts(crate::features::tts_command::TtsScope),
     /// Stop speech (command `/tts stop`).
@@ -461,6 +473,12 @@ pub struct ChatScreen {
     /// status-bar chip. Updated by `AppEvent::Attachments`. See
     /// docs/file-attachments.md.
     attachments: Vec<AttachmentInfo>,
+    /// Cards for the images staged for the **next message** (`/image attach`) —
+    /// for the status-bar chip. Updated by `AppEvent::StagedImages`. Separate
+    /// from [`Self::attachments`] because the lifetime differs: an attachment is
+    /// pinned to the chat, a staged image leaves this list the moment the
+    /// message carrying it is sent. See spec §9.10.
+    staged_images: Vec<ImageInfo>,
     /// Impersonation state (`Ctrl+U`); `None` — not running. See spec §11.8.
     impersonation: Option<ImpersonationState>,
     /// Whether a tool was called after the last text chunk of the streaming
@@ -528,6 +546,7 @@ impl ChatScreen {
             esc_target: EscTarget::default(),
             rag: None,
             attachments: Vec::new(),
+            staged_images: Vec::new(),
             impersonation: None,
             pending_text_sep: false,
             pending_thoughts_sep: false,
@@ -711,6 +730,7 @@ impl ChatScreen {
 
 mod attachments;
 mod feed;
+mod images;
 mod impersonation;
 mod input;
 mod popups;

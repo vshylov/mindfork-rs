@@ -192,6 +192,9 @@ impl Orchestrator {
         }
         self.chats.retain(|c| c.id != id);
         self.saves.forget(id);
+        // Staging is keyed by chat, so a deleted chat's slot has to go with it —
+        // otherwise its images would be carried into whatever the screen shows next.
+        self.forget_staged_images(id);
         // A hidden chat never appears in the list, so it must not appear in
         // content-search results either (see [`super::search`]).
         self.forget_chat_index(id);

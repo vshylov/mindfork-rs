@@ -153,6 +153,10 @@ pub(super) fn apply_event(
         // Always applied to the chat screen (like `CharacterNames`): the chip
         // must be current whichever screen is visible right now.
         AppEvent::Attachments(items) => screen.set_attachments(items),
+        AppEvent::ImageProgress(progress) => screen.set_image_progress(progress),
+        // Same reasoning as the attachments chip: the staged-image cost has to be
+        // current whichever screen happens to be visible.
+        AppEvent::StagedImages(items) => screen.set_staged_images(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
         AppEvent::SelfModelView(model) => show_self_model(screen, active, *model),
@@ -413,6 +417,9 @@ pub(super) fn dispatch(
         ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,
+        ChatIntent::ImageAttach { path } => AppCommand::ImageAttach { path },
+        ChatIntent::ImageRemove { target } => AppCommand::ImageRemove { target },
+        ChatIntent::ImageList => AppCommand::ImageList,
         ChatIntent::Tts(scope) => AppCommand::Tts(scope),
         ChatIntent::TtsStop => AppCommand::TtsStop,
         ChatIntent::TtsPause => AppCommand::TtsPause,

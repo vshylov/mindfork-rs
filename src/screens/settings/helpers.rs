@@ -100,6 +100,7 @@ pub(super) fn num_field<T: ToString>(id: FieldId, label: &str, value: T) -> Fiel
 pub(super) struct ManagedFieldIds {
     binary: FieldId,
     model: FieldId,
+    mmproj: FieldId,
     ngl: FieldId,
     ctx: FieldId,
     flash_attn: FieldId,
@@ -123,6 +124,7 @@ pub(super) struct ManagedFieldIds {
 pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     binary: FieldId::XBinary,
     model: FieldId::XModel,
+    mmproj: FieldId::XMmproj,
     ngl: FieldId::XNgl,
     ctx: FieldId::XCtx,
     flash_attn: FieldId::XFlashAttn,
@@ -143,6 +145,7 @@ pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
 pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     binary: FieldId::IxBinary,
     model: FieldId::IxModel,
+    mmproj: FieldId::IxMmproj,
     ngl: FieldId::IxNgl,
     ctx: FieldId::IxCtx,
     flash_attn: FieldId::IxFlashAttn,
@@ -179,6 +182,10 @@ pub(super) fn managed_rows(
         loc.t("ui.settings.group.model"),
         vec![
             text_row(ids.model, loc.t("ui.settings.field.gguf"), &m.model_path),
+            // Directly under the GGUF path: the projector is the second half of the
+            // same download, and pairing them is what makes the connection obvious.
+            text_row(ids.mmproj, loc.t("ui.settings.field.mmproj"), &m.mmproj)
+                .describe(loc.t("ui.settings.desc.mmproj")),
             num_field(ids.ctx, loc.t("ui.settings.field.context"), m.context_size),
             row(
                 ids.jinja,
@@ -352,6 +359,27 @@ pub(super) fn parse_opt_num<T: std::str::FromStr + Copy>(
     } else {
         text.parse().ok().or(current)
     }
+}
+
+/// Bytes in one megabyte — the unit the image size limit is *shown* in while the
+/// config stores bytes ([`crate::shared::config::ImageSettings::max_bytes`]).
+/// Nobody types a byte count, and every provider quotes its own ceiling in MB.
+pub(super) const BYTES_PER_MB: u64 = 1024 * 1024;
+
+/// The stored byte ceiling as whole megabytes, for display. Truncating is
+/// deliberate: the row is an editable number, so it must round-trip through
+/// [`mb_to_bytes`] unchanged, which rounding up would break.
+pub(super) fn bytes_to_mb(bytes: u64) -> u64 {
+    bytes / BYTES_PER_MB
+}
+
+/// Megabytes typed in the row back into stored bytes.
+///
+/// Floored at 1 MB: zero is not a limit anyone means — it would refuse every image
+/// ever attached, which reads as "the feature is broken" rather than as a setting.
+/// Same taste as the compaction threshold's clamp.
+pub(super) fn mb_to_bytes(mb: u64) -> u64 {
+    mb.max(1) * BYTES_PER_MB
 }
 
 /// A numeric row from `Option<T>` (None → "—").

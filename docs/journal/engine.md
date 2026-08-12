@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Grok (xAI) as a cloud provider (done)
 - Post-M9: engine failures stop being silent (stage 1 of retry/backoff) (done)
 - Post-M9: retry with backoff on transient cloud failures (stage 2, track complete) (done)
+- Post-M9: images in a message — stage 1 (local + Grok) (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1713,3 +1714,72 @@ of the per-model parameter rules.
   would never have met a real model. Fixed by wrapping the harness's `live_backend()` the
   same way the supervisor wraps an external server, which puts all 30 e2e tests through
   it on every future run — and is what the 771 s figure above measures.
+
+### Post-M9: images in a message — stage 1 (local + Grok) (done)
+
+**What.** `/image attach <path>` · `/image remove <name|#N>` · `/image list`: an image
+is staged for the **next** message and reaches a vision-capable model as a content part.
+Stage 1 covers the local `llama-server` (`--mmproj`) and xAI Grok — one wire change
+serves both, since their request shapes are byte-identical. The three remaining cloud
+formats are stage 2. Research, live measurements and the eight forks:
+[docs/research/multimodal-images.md](../research/multimodal-images.md); behaviour —
+spec §9.10.
+
+**Why this shape.** The obvious move was to copy `/file` wholesale, and it is wrong.
+An attachment is chat-scoped and lives in the **system prompt**; an image cannot,
+because every provider takes images as *message* content parts only. Fork F1 therefore
+made staging message-scoped, and the measurement backs it: replaying an image turn keeps
+llama.cpp's prefix cache (`cache_n = 73` of 78, an appended turn prefills 23), whereas a
+chat-scoped set would rewrite the head of the prompt on every attach and remove.
+
+**Key decisions** (all eight forks confirmed by the user on 2026-08-12):
+
+- **The payload lives base64 in the chat file** (F2), like an attachment's text
+  snapshot: self-contained backup/export, no I/O while building a request. Affordable
+  only because of the next point.
+- **Preparation at attach time** (F3, the `image` crate, trimmed features): downscale to
+  1568 px long edge and normalize to png/jpeg. Both halves were load-bearing rather than
+  polish — xAI accepts *only* jpg/png, so an un-normalized webp would attach fine and
+  fail at send on exactly one provider; and an unscaled phone photo rides every
+  subsequent turn. An image already png/jpeg and already within the ceiling is passed
+  through **byte for byte**, so a screenshot keeps its exact pixels.
+- **Capability is asked, not guessed** (F4). `EngineBackend::vision()` reads
+  llama.cpp's `/props` → `modalities.vision` — the same fetch `context_budget` already
+  makes — and the clouds answer statically. Deliberately no model-name allowlist: that is
+  the trap the Grok research recorded for reasoning detection. `Unknown` (any server
+  without `/props` — vLLM, LM Studio, a proxy) attaches **optimistically** with a neutral
+  note; refusing there would break every user running a vision model behind a plain
+  OpenAI-compatible endpoint.
+- **A no-image request is byte-identical to before.** `WireMessage.content` widened to an
+  untagged `Text | Parts`, and parts are emitted **only** when an image is present. This
+  is pinned by its own test: llama.cpp reuses the prefix cache on a matching rendered
+  prompt, and Gemma's template routes string content and a parts array through different
+  branches — a blanket switch would have silently re-prefilled every stored conversation
+  and changed every text-only turn on every provider.
+- **A per-image label part** (F5, `Image #1 — "chart.png":`, axis A) — Anthropic
+  documents labelling, and it is what lets a model name the file the user sees in
+  `/image list`.
+- **Staging is session-only.** What was staged and never sent is a half-finished thought;
+  persisting it would resurrect images into a message written days later. It is consumed
+  by the send and by nothing else, after every early return, so a failed send leaves it
+  intact.
+
+**Measured live before any code** (2026-08-12, `gemma-4-31B_q4_0-it` + its mmproj,
+llama.cpp b10322, `-c 16384`): single-image, two-image, composition and history-replay
+questions all answered correctly; a 3000x2000 / 1.5 MB png is resized server-side rather
+than refused; image tokens are included in `usage.prompt_tokens` (+51 for 128x128, ~+258
+from a megapixel up), so the auto-compaction trigger needed no change at all. One
+real-key probe per cloud pinned the other three wire shapes for stage 2. A first probe
+round returned four empty answers and was a fixture bug, not a finding — `max_tokens: 64`
+starves a reasoning model before it emits any content (docs/lessons.md §3).
+
+**Tests.** Unit coverage across the slice: the entity (patch-formula estimate, `#N`
+resolution, additive serde), `image_prepare` (byte-for-byte pass-through, downscale
+arithmetic, alpha forcing png, a photographic source shrinking as jpeg, undecodable and
+empty input), the parser (`/image` vs `/file` vs `/images`, quoted paths, `delete` is not
+a verb, plus the all-locales gate), the wire (the byte-identical guarantee, part order,
+several images, no empty trailing text part), and seven orchestrator integration tests
+(staged image reaches the model on the message and not in the system prompt, persists,
+is consumed by the send and not repeated, unstaging, idempotent restage, the count cap's
+message naming both ways out, an image-only message still sending). Live:
+`image_attachment_e2e_live` — two turns, so history replay is proven and not assumed.

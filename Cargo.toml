@@ -37,6 +37,19 @@ futures-util = "0.3.32"
 # Deriving the API-key encryption key from machine-id (HKDF-SHA256; `sha2` is already present).
 # The pattern is prescribed by systemd's documentation — machine-id isn't used raw.
 hkdf = "0.12.4"
+# Decoding, downscaling and re-encoding images attached with `/image attach`
+# (spec §9.10). `default-features = false` keeps only the decoders users actually
+# drop into a chat; the encoders we emit are png and jpeg alone, because xAI accepts
+# nothing else and normalizing once at attach time keeps the provider matrix uniform.
+# Without it a phone photo would ride **every** turn at full size, and a webp would be
+# attachable on three providers out of four. See docs/research/multimodal-images.md §5 F3.
+image = { version = "0.25.9", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+    "gif",
+    "bmp",
+] }
 # Rendering ```mermaid blocks in the feed as Unicode/ASCII graphics (flowchart/sequence,
 # a whitelist + a hard fallback to the source). Pure Rust (only ascii-dag is net-new);
 # ≥0.56.1 is mandatory — 0.56.0 panicked/corrupted labels on Cyrillic (our upstream fix,

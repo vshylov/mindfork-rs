@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::entities::message_image::MessageImage;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::config::ServerMode;
 
@@ -80,6 +81,12 @@ pub struct Message {
     /// For the `Tool` role: the tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    /// Images attached to this message (spec §9.10). Message-scoped, unlike file
+    /// attachments: an image belongs to the turn that introduced it and is replayed as
+    /// ordinary history afterwards. Additive (ADR 0006 F12) — old chats read unchanged
+    /// and a chat without images serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<MessageImage>,
 }
 
 fn default_true() -> bool {
@@ -101,11 +108,20 @@ impl Message {
             metadata: None,
             tool_call_id: None,
             tool_name: None,
+            images: Vec::new(),
         }
     }
 
     pub fn user(text: impl Into<String>) -> Self {
         Self::new(MessageRole::User, text)
+    }
+
+    /// A user message carrying the images staged with `/image attach` (spec §9.10).
+    /// Builder-style, because the images are known only at send time — staging lives in
+    /// the orchestrator until the turn that consumes it.
+    pub fn with_images(mut self, images: Vec<MessageImage>) -> Self {
+        self.images = images;
+        self
     }
 
     pub fn assistant(text: impl Into<String>) -> Self {
@@ -142,6 +158,38 @@ mod tests {
         assert!(m.is_markdown);
         assert!(m.tool_calls.is_empty());
         assert!(m.thoughts.is_none());
+    }
+
+    #[test]
+    fn images_are_additive_and_not_serialized_when_empty() {
+        // A message without images must serialize exactly as it did before the field
+        // existed — that is what keeps every stored chat readable by both binaries.
+        let plain = Message::user("hi");
+        assert!(!serde_json::to_string(&plain).unwrap().contains("images"));
+        // And an old chat file, which has no such key, reads with no migration.
+        let raw = format!(
+            r#"{{"id":"{}","role":"user","text":"hi","timestamp":"2026-06-14T00:00:00Z"}}"#,
+            Uuid::nil()
+        );
+        let m: Message = serde_json::from_str(&raw).unwrap();
+        assert!(m.images.is_empty());
+
+        // With an image the payload round-trips whole (it is the chat file that stores
+        // it — fork F2 of docs/research/multimodal-images.md).
+        let with_image = Message::user("look").with_images(vec![
+            crate::entities::message_image::MessageImage::new(
+                "a.png",
+                "D:\\a.png",
+                "image/png",
+                40,
+                30,
+                "AAAA".into(),
+            ),
+        ]);
+        let json = serde_json::to_string(&with_image).unwrap();
+        assert!(json.contains("\"images\""));
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, with_image);
     }
 
     #[test]

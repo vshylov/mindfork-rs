@@ -33,6 +33,7 @@ mod consolidation;
 mod embed_guard;
 mod engines;
 mod generation;
+mod images;
 mod impersonation;
 mod mcp;
 mod profiles;
@@ -79,6 +80,7 @@ use self::background::BgSlot;
 use self::compaction::{CompactResult, ContextDiscovery};
 use self::engines::EngineManager;
 use self::generation::GenResult;
+use self::images::{ImageAttachResult, StagedImages};
 use self::mcp::{McpEvent, McpManager};
 use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
@@ -161,6 +163,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // Internal channel for reading/extracting an attached file (`/file attach`):
     // a blocking task sends back the extracted text, the loop inserts it into the chat.
     let (attach_tx, mut attach_rx) = unbounded_channel::<AttachResult>();
+    // The same shape for `/image attach`: decoding and downscaling a photo is far too
+    // slow to run on the command loop.
+    let (image_tx, mut image_rx) = unbounded_channel::<ImageAttachResult>();
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
         evt_tx,
@@ -184,6 +189,8 @@ pub async fn run(deps: OrchestratorDeps) {
         done_tx,
         rag_cancel: None,
         attach_tx,
+        image_tx,
+        staged_images: StagedImages::default(),
         tts_cancel: None,
         tts_gen: None,
         tts_playback: None,
@@ -294,6 +301,11 @@ pub async fn run(deps: OrchestratorDeps) {
                     orch.handle_mcp_event(evt);
                 }
             }
+            res = image_rx.recv() => {
+                if let Some(res) = res {
+                    orch.handle_image_result(res);
+                }
+            }
             res = attach_rx.recv() => {
                 if let Some(res) = res {
                     orch.handle_attach_result(res);
@@ -399,6 +411,13 @@ struct Orchestrator {
     /// Channel for results of reading/extracting an attached file (`/file attach`,
     /// a blocking task → the loop). See [`attachments`].
     attach_tx: UnboundedSender<AttachResult>,
+    /// Channel for results of reading/decoding an attached image (`/image attach`,
+    /// a background task → the loop). See [`images`].
+    image_tx: UnboundedSender<ImageAttachResult>,
+    /// Images staged for each chat's **next** message (`/image attach`, spec §9.10).
+    /// Session-only and deliberately not persisted: what was staged but never sent is a
+    /// half-finished thought, not conversation state. See [`images`].
+    staged_images: StagedImages,
     /// Cancellation token for the current speech (`/tts`) and its generation
     /// (`None` — not running). Stop points are collected in
     /// [`Orchestrator::stop_tts`] (see [`tts`]).
@@ -572,6 +591,9 @@ impl Orchestrator {
             AppCommand::FileAttach { path } => self.handle_file_attach(path),
             AppCommand::FileRemove { target } => self.handle_file_remove(target),
             AppCommand::FileList => self.handle_file_list(),
+            AppCommand::ImageAttach { path } => self.handle_image_attach(path),
+            AppCommand::ImageRemove { target } => self.handle_image_remove(target),
+            AppCommand::ImageList => self.handle_image_list(),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),
             AppCommand::TtsPause => self.handle_tts_pause(),
@@ -877,6 +899,7 @@ impl Orchestrator {
         });
         self.emit_character_names();
         self.emit_attachments();
+        self.emit_staged_images();
         self.remember_active_chat(id);
     }
 

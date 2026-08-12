@@ -3,6 +3,7 @@
 pub mod attachment;
 pub mod chat;
 pub mod message;
+pub mod message_image;
 pub mod note;
 pub mod profile;
 pub mod rag;
