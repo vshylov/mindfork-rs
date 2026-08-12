@@ -9,7 +9,8 @@
 The unprioritized list below is an idea bank of equal weight; these are called out
 as the highest-payoff tracks (real user pain / direct savings):
 1. **Multimodality (images)** (§Engine and reliability) — a big feature with
-   demand.
+   demand. Research done, forks await decisions:
+   [multimodal-images.md](research/multimodal-images.md).
 
 **Retry/backoff on cloud errors** left this list on 2026-08-12 — **done**, both
 stages (see "Recently closed").
@@ -200,7 +201,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
 - **Multimodality support** (images) — if the model/`llama-server` supports
-  vision; passing images from clipboard/file.
+  vision; passing images from clipboard/file. Researched and verified live
+  against the reference stack and all four clouds —
+  [multimodal-images.md](research/multimodal-images.md).
 - **YouTube — groundwork** (stages 1 and 2 are **done**, see "Recently closed";
   [youtube-integration.md](research/youtube-integration.md),
   [youtube-transcript.md](history/youtube-transcript.md), spec §9.9):
