@@ -83,21 +83,55 @@ pub fn prepare(bytes: &[u8], downscale_px: u32) -> Result<PreparedImage, Prepare
         .map_err(|e| PrepareError::Failed(e.to_string()))?
         .decode()
         .map_err(|e| PrepareError::Failed(e.to_string()))?;
-    let decoded = if needs_downscale {
-        // Lanczos3 over the cheaper filters: downscaling by 2–8x is where a nearest or
-        // triangle filter visibly destroys small text.
-        decoded.resize(
-            downscale_px,
-            downscale_px,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else {
-        decoded
-    };
-
+    let decoded = downscale(decoded, needs_downscale.then_some(downscale_px));
     // Alpha cannot survive jpeg, and a png source is kept as png regardless: both are the
     // "graphics, not photograph" case, where lossy artifacts are the expensive kind.
     let keep_png = format == ImageFormat::Png || decoded.color().has_alpha();
+    encode(&decoded, keep_png)
+}
+
+/// Prepares raw RGBA pixels for attachment — what the clipboard hands over
+/// (`arboard::ImageData`: row-major RGBA8, no container format at all). Same downscale
+/// ceiling as [`prepare`].
+///
+/// **Always encoded as png**, unlike [`prepare`], which picks jpeg for photographic
+/// sources. The dominant clipboard image in a developer's terminal is a screenshot, and
+/// jpeg artifacts on small text are exactly the expensive failure — while the size that
+/// would justify jpeg is already bounded by the downscale.
+pub fn prepare_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    downscale_px: u32,
+) -> Result<PreparedImage, PrepareError> {
+    // A clipboard that reports a size its buffer cannot back is not something to guess
+    // about: a wrong stride would render as diagonal garbage rather than fail.
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|px| px.checked_mul(4));
+    if width == 0 || height == 0 || expected != Some(rgba.len()) {
+        return Err(PrepareError::Undecodable);
+    }
+    let buf = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or(PrepareError::Undecodable)?;
+    let decoded = image::DynamicImage::ImageRgba8(buf);
+    let needs = downscale_px > 0 && width.max(height) > downscale_px;
+    let decoded = downscale(decoded, needs.then_some(downscale_px));
+    encode(&decoded, true)
+}
+
+/// Resizes to a long-edge ceiling, or returns the image untouched when `to` is `None`.
+fn downscale(decoded: image::DynamicImage, to: Option<u32>) -> image::DynamicImage {
+    match to {
+        // Lanczos3 over the cheaper filters: downscaling by 2–8x is where a nearest or
+        // triangle filter visibly destroys small text.
+        Some(px) => decoded.resize(px, px, image::imageops::FilterType::Lanczos3),
+        None => decoded,
+    }
+}
+
+/// Encodes to png or jpeg and reports the matching MIME type.
+fn encode(decoded: &image::DynamicImage, keep_png: bool) -> Result<PreparedImage, PrepareError> {
     let mut out = Vec::new();
     if keep_png {
         decoded
@@ -113,7 +147,6 @@ pub fn prepare(bytes: &[u8], downscale_px: u32) -> Result<PreparedImage, Prepare
             .encode_image(&rgb)
             .map_err(|e| PrepareError::Failed(e.to_string()))?;
     }
-
     Ok(PreparedImage {
         mime: if keep_png { "image/png" } else { "image/jpeg" },
         width: decoded.width(),
@@ -231,6 +264,68 @@ mod tests {
                 .unwrap()
                 .format(),
             Some(ImageFormat::Jpeg)
+        );
+    }
+
+    /// Raw RGBA is what the clipboard hands over — no container, so the only thing
+    /// standing between us and diagonal garbage is the size check.
+    #[test]
+    fn raw_rgba_from_the_clipboard_becomes_a_png() {
+        let rgba: Vec<u8> = (0..40 * 30).flat_map(|i| [i as u8, 20, 30, 255]).collect();
+        let prepared = prepare_rgba(40, 30, &rgba, 1568).unwrap();
+        assert_eq!(prepared.mime, "image/png");
+        assert_eq!((prepared.width, prepared.height), (40, 30));
+        assert_eq!(
+            ImageReader::new(Cursor::new(&prepared.bytes))
+                .with_guessed_format()
+                .unwrap()
+                .format(),
+            Some(ImageFormat::Png)
+        );
+    }
+
+    /// A screenshot stays png even when it is fully opaque, where [`prepare`] would pick
+    /// jpeg for the same pixels: small text is the content people paste, and jpeg
+    /// artifacts on it are the expensive failure.
+    #[test]
+    fn an_opaque_clipboard_image_is_still_png_not_jpeg() {
+        let rgba: Vec<u8> = (0..64 * 64)
+            .flat_map(|i| [(i % 256) as u8, ((i / 3) % 256) as u8, 90, 255])
+            .collect();
+        assert_eq!(prepare_rgba(64, 64, &rgba, 1568).unwrap().mime, "image/png");
+    }
+
+    #[test]
+    fn a_large_clipboard_image_is_downscaled_like_any_other() {
+        let rgba = vec![128u8; 2400 * 1200 * 4];
+        let prepared = prepare_rgba(2400, 1200, &rgba, 1568).unwrap();
+        assert_eq!((prepared.width, prepared.height), (1568, 784));
+    }
+
+    #[test]
+    fn rgba_with_a_buffer_that_does_not_match_its_size_is_refused() {
+        // One pixel short, one pixel long, and the degenerate sizes: all refused rather
+        // than reinterpreted at a guessed stride.
+        assert_eq!(
+            prepare_rgba(4, 4, &[0u8; 4 * 4 * 4 - 4], 1568),
+            Err(PrepareError::Undecodable)
+        );
+        assert_eq!(
+            prepare_rgba(4, 4, &[0u8; 4 * 4 * 4 + 4], 1568),
+            Err(PrepareError::Undecodable)
+        );
+        assert_eq!(
+            prepare_rgba(0, 4, &[], 1568),
+            Err(PrepareError::Undecodable)
+        );
+        assert_eq!(
+            prepare_rgba(4, 0, &[], 1568),
+            Err(PrepareError::Undecodable)
+        );
+        // And a size whose byte count would overflow is a refusal, not a panic.
+        assert_eq!(
+            prepare_rgba(u32::MAX, u32::MAX, &[0u8; 4], 1568),
+            Err(PrepareError::Undecodable)
         );
     }
 

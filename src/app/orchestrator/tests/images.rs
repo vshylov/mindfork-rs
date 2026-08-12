@@ -289,6 +289,115 @@ async fn a_non_image_file_is_refused_and_nothing_is_staged() {
     assert!(items.is_empty());
 }
 
+/// Opaque RGBA pixels, the shape `arboard` hands over for a clipboard image.
+fn rgba(width: u32, height: u32) -> crate::app::events::ClipboardImage {
+    let pixels = (0..width as usize * height as usize)
+        .flat_map(|i| [(i % 256) as u8, 70, 130, 255])
+        .collect();
+    crate::app::events::ClipboardImage {
+        width,
+        height,
+        rgba: pixels,
+    }
+}
+
+#[tokio::test]
+async fn a_pasted_image_is_staged_and_travels_with_the_message() {
+    let backend = Arc::new(CapturingBackend {
+        last: Mutex::new(None),
+    });
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
+
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(48, 24))))
+        .unwrap();
+    let info = wait_staged(&mut evt_rx).await;
+    // No file exists, so the name is synthetic — and png, which is what the clipboard
+    // path always encodes (a screenshot must not pick up jpeg artifacts on small text).
+    assert_eq!(info.name, "clipboard.png");
+    assert_eq!(info.mime, "image/png");
+    assert_eq!((info.width, info.height), (48, 24));
+
+    cmd_tx
+        .send(AppCommand::SendMessage("what is this?".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let req = backend.last.lock().unwrap().clone().expect("a request");
+    assert_eq!(req.messages[0].images.len(), 1);
+    assert_eq!(req.messages[0].images[0].mime, "image/png");
+}
+
+/// Two pastes must stage two images. Dedupe is by source, and a constant one would make
+/// the second screenshot silently replace the first — the failure mode that would cost a
+/// user the thing they just copied.
+#[tokio::test]
+async fn pasting_twice_stages_two_images_under_distinct_names() {
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(32, 32))))
+        .unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard.png");
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(32, 32))))
+        .unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard-2.png");
+
+    cmd_tx.send(AppCommand::ImageList).unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Listed { .. }))
+    })
+    .await
+    .unwrap();
+    let AppEvent::ImageProgress(ImageProgress::Listed { items }) = ev else {
+        unreachable!()
+    };
+    assert_eq!(items.len(), 2);
+}
+
+/// A clipboard that reports a size its buffer cannot back is refused with its own
+/// message: it is not the user's file being wrong, so it must not read that way.
+#[tokio::test]
+async fn a_malformed_clipboard_buffer_is_refused_and_nothing_is_staged() {
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    let mut broken = rgba(16, 16);
+    broken.rgba.truncate(10);
+
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(broken)))
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Failed(_)))
+    })
+    .await
+    .unwrap();
+    let AppEvent::ImageProgress(ImageProgress::Failed(msg)) = ev else {
+        unreachable!()
+    };
+    // *Which* refusal, not merely that one happened: the clipboard-specific message
+    // rather than the generic "could not process" one — a user whose own file is fine
+    // must not be told it is not. Compared through the key, so it holds in every locale.
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(msg, loc.t("ui.err.image_clipboard_unusable"));
+    assert!(
+        msg.contains("/image attach"),
+        "the refusal must name the route that still works: {msg}"
+    );
+
+    cmd_tx.send(AppCommand::ImageList).unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Listed { .. }))
+    })
+    .await
+    .unwrap();
+    let AppEvent::ImageProgress(ImageProgress::Listed { items }) = ev else {
+        unreachable!()
+    };
+    assert!(items.is_empty());
+}
+
 #[tokio::test]
 async fn a_message_with_only_an_image_is_still_sent() {
     let backend = Arc::new(CapturingBackend {

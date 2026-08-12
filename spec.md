@@ -1280,10 +1280,30 @@ whole conversation on every mutation. Measured on the reference stack, the
 append-only shape keeps the prefix cache intact across an image turn
 (`cache_n = 73` of 78; an appended turn prefills 23 tokens).
 
-- **Commands**: `/image attach <path>`, `/image remove <name|#N>`,
-  `/image list` — the same surface and the same `#N` addressing as `/file`, so
-  what `/image list` numbers is what `remove` accepts. As everywhere, the
-  removal verb is only `remove`, never `delete`.
+- **Commands**: `/image attach <path>`, `/image paste`,
+  `/image remove <name|#N>`, `/image list` — the same surface and the same `#N`
+  addressing as `/file`, so what `/image list` numbers is what `remove` accepts.
+  As everywhere, the removal verb is only `remove`, never `delete`.
+- **Pasting from the clipboard** has **two** routes, and the command is the
+  reliable one. Whether `Ctrl+V` ever reaches the application is the *terminal's*
+  decision: Windows Terminal binds it to its own paste, and since an image on the
+  clipboard produces no text to inject, the app would see nothing at all — the
+  same shape as the supplementary-plane paste that produces no key events
+  ([§11.5](#115-input-and-editing-spellcheck)). So `/image paste` exists, works
+  in every terminal, and is what the help overlay names; `Ctrl+V` is a
+  convenience where the terminal forwards it. When it does and the clipboard
+  holds no image, it pastes **text**, which is what the overlay has always
+  promised that key does.
+  The clipboard is read by `runtime`, not by the orchestrator — a UI-layer side
+  effect, like `Ctrl+C` copying — so the orchestrator is handed pixels rather
+  than a request to go and look. arboard normalizes each platform's storage
+  (`CF_DIB`, `image/png`, `NSImage`) to raw RGBA, so there is no container to
+  sniff; the encode happens on the blocking pool with everything else.
+  A pasted image has no file, so it gets the first free `clipboard*.png` name and
+  a source that cannot collide — pasting twice stages two images rather than the
+  second replacing the first. It is **always encoded as png**, unlike a file,
+  whose photographic formats become jpeg: the dominant clipboard image is a
+  screenshot, and jpeg artifacts on small text are the expensive failure.
 - **Staging.** `attach` does not create a message; it stages the image for the
   **next** one. Staging lives in the orchestrator, is keyed by chat, and is
   **session-only** — what was staged and never sent is a half-finished thought,

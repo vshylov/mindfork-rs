@@ -9,9 +9,11 @@ repository = "https://github.com/vshylov/mindfork-rs"
 [dependencies]
 ansi-to-tui = "8.0.1"
 anyhow = "1.0.103"
-# Clipboard (Windows + Linux). `default-features = false` disables image data
-# (which pulls in the `image` crate): we only need text. See copying the chat conversation.
-arboard = { version = "3.4.1", default-features = false }
+# Clipboard (Windows + Linux). `image-data` is on for pasting an image into a message
+# (spec §9.10): it pulls the `image` crate, which this project already depends on for
+# preparing attached images, so the feature costs a couple of extra decoders rather than a
+# new dependency tree. No other default feature is wanted.
+arboard = { version = "3.4.1", default-features = false, features = ["image-data"] }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
 # Decoding audio from TTS-provider responses (Gemini returns PCM as base64

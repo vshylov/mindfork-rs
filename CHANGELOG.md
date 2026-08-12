@@ -17,7 +17,10 @@ split by subsystem.
 ### Added
 
 - **You can show the model a picture.** `/image attach <path>` puts an image on
-  your next message, `/image list` shows what is waiting, and
+  your next message, `/image paste` takes one straight off the clipboard (so a
+  screenshot needs no file at all — `Ctrl+V` does it too, in terminals that let
+  the key through; Windows Terminal keeps it for its own paste, which is why the
+  command exists), `/image list` shows what is waiting, and
   `/image remove <name|#N>` takes one back off. It works with a local
   vision-capable model (start `llama-server` with a projector — the new
   "Vision projector (--mmproj)" setting, or `MINDFORK_MMPROJ`) and with **all

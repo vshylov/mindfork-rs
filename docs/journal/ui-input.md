@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -31,6 +31,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: universal layout-independent hotkeys — stage 3, upstream crossterm (submitted)
 - Post-M9: spellcheck skips URLs and email addresses (done)
 - Post-M9: `Home`/`End` as a ladder of stops (done)
+- Post-M9: pasting an image from the clipboard (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -892,3 +893,70 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   `link_check` clean.
 - **A live run isn't required** (AGENTS.md §3): cursor movement inside one
   widget — no engine, memory, tool or provider path is touched.
+
+### Post-M9: pasting an image from the clipboard (done)
+
+**What.** `/image paste` and `Ctrl+V` stage the image sitting on the system clipboard, so
+a screenshot never has to be saved to a file first. The last deferred item of the
+multimodality track (spec §9.10).
+
+**The finding that shaped it: `Ctrl+V` alone cannot work.** The app has never had a
+`Ctrl+V` handler — pasting works because the *terminal* injects the clipboard text, which
+unix delivers as a bracketed-paste event and Windows as a run of ordinary key events that
+`chunk_batch` reassembles. An image produces **no text**, so the terminal injects nothing
+and the app sees nothing at all. Windows Terminal compounds it by binding `Ctrl+V` to its
+own paste and never forwarding the key. This is the same shape as the known
+supplementary-plane limitation recorded in this file: a paste that yields no key events
+cannot be observed. Hence two routes, and the **command** is the reliable one:
+`/image paste` works in every terminal and is what the help overlay names; `Ctrl+V` is a
+convenience where the key is forwarded at all.
+
+**Key decisions.**
+
+- **`Ctrl+V` with no image on the clipboard pastes text.** The help overlay has always
+  advertised `Ctrl+V — paste`, and until now that was a statement about the terminal
+  rather than about the app. On a terminal that forwards the key it was simply false.
+  Making the handler fall back to text makes the promise true where it can be, and costs
+  nothing where the terminal handles it first. A typed `/image paste` deliberately does
+  **not** fall back: the user asked for an image, so an absent one is reported, naming
+  `/image attach` as the route that does not involve the clipboard.
+- **The clipboard is read in `runtime`**, not in the orchestrator — the same arrangement
+  `Ctrl+C` uses, since only `runtime` holds the `arboard` client. The orchestrator is
+  handed pixels (`AppCommand::ImagePaste(Box<ClipboardImage>)`) rather than a request to
+  go and look, which also keeps it testable without a clipboard at all: the integration
+  tests feed RGBA directly.
+- **Un-encoded across the channel, encoded on the blocking pool.** arboard hands over raw
+  RGBA (it normalizes `CF_DIB` / `image/png` / `NSImage` itself, so there is no container
+  to sniff). Encoding a screenshot costs tens of milliseconds and the clipboard is read on
+  the **input thread**, so the png is produced where every other image already is.
+- **Always png**, unlike a file, where a photographic source becomes jpeg. The dominant
+  clipboard image in a terminal is a screenshot and jpeg artifacts on small text are the
+  expensive failure; the size that would argue for jpeg is already bounded by the same
+  downscale every image gets.
+- **A synthetic name and a colliding-proof source.** No file exists, so a pasted image
+  takes the first free `clipboard*.png` and a `clipboard:<uuid>` source. Dedupe is by
+  source, so a constant one would have made a second screenshot silently replace the
+  first — the failure that would cost the user the thing they had just copied.
+- **`arboard`'s `image-data` feature is now on.** The comment that turned it off cited the
+  `image` crate it pulls; that crate has been a direct dependency since stage 1 of this
+  track, so the original cost argument had expired.
+
+**Tests.** Unit: `prepare_rgba` (raw RGBA to png, opaque input still png, downscale,
+and every mismatched-buffer case refused rather than reinterpreted at a guessed stride —
+including a size whose byte count overflows); the parser (`/image paste`, and a gate that
+the usage line names every subcommand in both locales); the chat screen (both routes
+produce an intent and differ only in the text fallback; the command is highlighted while
+typing); the orchestrator (a paste stages and travels with the message, two pastes get
+distinct names, a malformed buffer is refused with *its own* message — asserted through
+the locale key, since the fixture runs in `ru`).
+
+**Smoke — GO** (2026-08-13, Windows 11): `clipboard_image_round_trip`, `#[ignore]` because
+it clobbers the developer's real clipboard, puts a 64x32 image on the system clipboard,
+reads it back and encodes it — size preserved, colours intact (asserted as ">100 distinct
+colours" rather than byte equality, since a platform may composite or reorder channels),
+3045 bytes of png out. That is the check the roadmap asked for when it deferred this: only
+a real clipboard can show the feature is actually wired on the platform.
+
+**A live model run is not required** (AGENTS.md §3): this changes where an image's pixels
+come from, not what is sent — the request path, the wire formats and the staging are the
+ones stage 1 and 2 already covered live.

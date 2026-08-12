@@ -594,6 +594,7 @@ impl Orchestrator {
             AppCommand::ImageAttach { path } => self.handle_image_attach(path),
             AppCommand::ImageRemove { target } => self.handle_image_remove(target),
             AppCommand::ImageList => self.handle_image_list(),
+            AppCommand::ImagePaste(image) => self.handle_image_paste(*image),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),
             AppCommand::TtsPause => self.handle_tts_pause(),

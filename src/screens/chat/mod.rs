@@ -135,6 +135,18 @@ pub enum ChatIntent {
     },
     /// Show the images staged for the next message (command `/image list`).
     ImageList,
+    /// Stage the image on the system clipboard (`Ctrl+V`, command `/image paste`).
+    ///
+    /// The clipboard is read by `runtime`, not here and not by the orchestrator — it is a
+    /// UI-layer side effect, and only `runtime` holds the `arboard` client (the same
+    /// arrangement [`ChatIntent::CopyToClipboard`] uses).
+    ///
+    /// `text_fallback` says what to do when the clipboard holds no image: `Ctrl+V` must
+    /// still paste text, because that is what the help overlay has always promised the key
+    /// does; a typed `/image paste` must not, and says instead that there is no image.
+    PasteImage {
+        text_fallback: bool,
+    },
     /// Speak the chat's messages (command `/tts`, `/tts N`, `/tts all`). See spec §11.9.
     Tts(crate::features::tts_command::TtsScope),
     /// Stop speech (command `/tts stop`).

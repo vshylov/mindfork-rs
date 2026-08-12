@@ -205,12 +205,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   engine fields.
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
-- **Multimodality — what the track left open** (both stages are **done**, see
-  "Recently closed"; [multimodal-images.md](research/multimodal-images.md) §5,
-  spec §9.10):
-  - **paste an image from the clipboard** (`arboard` is already a dependency;
-    its `image-data` feature unlocks `get_image()`) — deferred because the
-    Windows paste pipeline is its own minefield (docs/lessons.md §6);
+- **Multimodality — what the track left open** (both stages **done**, and
+  clipboard paste since; see "Recently closed";
+  [multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
   - **images from MCP/tool results** — `shared/mcp.rs` already parses the block
     it currently drops to `[image content omitted]`;
   - **attach by URL** — accepted natively by llama.cpp/Anthropic/OpenAI but not
@@ -394,7 +391,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   Capability is *asked* (`/props` `modalities.vision`), never inferred from a
   model name, and an engine that cannot say is trusted rather than refused.
   Images are downscaled and normalized to png/jpeg once, at attach time, since
-  xAI takes nothing else and an unscaled photo would ride every later turn. See
+  xAI takes nothing else and an unscaled photo would ride every later turn.
+  **Clipboard paste** followed (`/image paste`, plus `Ctrl+V` where the terminal
+  forwards it): the app never had a `Ctrl+V` handler at all — pasting works
+  because the *terminal* injects text, and an image injects nothing — so the
+  command is the route that works everywhere and the key is the convenience. See
   [multimodal-images.md](research/multimodal-images.md), spec §9.10.
 - **Retry/backoff on cloud errors** (stages 1–2, complete): a transient provider
   failure no longer costs the turn. The one-line roadmap item turned out to be

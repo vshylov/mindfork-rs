@@ -501,6 +501,9 @@ pub(super) fn dispatch(
             decision,
         },
         ChatIntent::CopyToClipboard(_) => return false,
+        // Like `CopyToClipboard`: handled in `handle_key_event`, which is the only place
+        // holding the `arboard` client. It never reaches here.
+        ChatIntent::PasteImage { .. } => return false,
     };
     let _ = cmd_tx.send(command);
     false
