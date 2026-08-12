@@ -9,10 +9,12 @@
 //! waiting to be sent, and `/image list` numbers exactly the set `/image remove`
 //! can still reach — once a message goes out, its images are no longer here.
 
+use super::ChatScreen;
 use super::attachments::format_tokens;
-use super::*;
 use crate::entities::attachment::format_bytes;
+use crate::entities::message_image::ImageInfo;
 use crate::features::image_command::ImageProgress;
+use crate::shared::i18n::Locale;
 
 impl ChatScreen {
     /// Updates the cards for the images staged for the next message
