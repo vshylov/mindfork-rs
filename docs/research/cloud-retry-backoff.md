@@ -1,10 +1,10 @@
 # Retry/backoff on cloud provider errors — research
 
-> Status: **research, pre-decision** (2026-08-12). Roadmap: #1 of "Most
-> valuable next" — *"Retry/backoff on cloud provider network errors — clients
-> currently surface the error body but don't retry (transient
-> 429/5xx/timeouts)"* ([roadmap](../roadmap.md) §Engine and reliability).
-> Forks in §6 need the user's decision before implementation.
+> Status: **research; forks settled 2026-08-12, implementation in progress**.
+> Roadmap: #1 of "Most valuable next" — *"Retry/backoff on cloud provider
+> network errors — clients currently surface the error body but don't retry
+> (transient 429/5xx/timeouts)"* ([roadmap](../roadmap.md) §Engine and
+> reliability). The decisions are recorded in §6.
 
 ## 1. Problem
 
@@ -294,7 +294,12 @@ owns it), web_search's no-retry, the readiness gate, `GenState` (retries
 happen inside one `stream_round`, the `generation_id` never changes), the
 `stop`-field and EOS invariants, storage.
 
-## 6. Forks (need the user's decision before implementation)
+## 6. Forks (settled)
+
+> **User's decision (2026-08-12): every fork below goes to its recommended
+> option — F1(a), F2(a), F3(a), F4 as stated, F5(a), F6(a), F7(a), F8(a),
+> F9(a).** Implementation follows §7 in two PRs: stage 1
+> `fix/engine-error-surfacing`, stage 2 `feat/cloud-retry-backoff`.
 
 - **F1 — where the retry lives.**
   **(a) `RetryBackend` decorator over `EngineBackend`, progress as stream
