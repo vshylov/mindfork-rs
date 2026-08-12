@@ -234,6 +234,9 @@ impl ServerSupervisor for LlamaSupervisor {
                     let cfg = ManagedConfig {
                         binary: bin.into(),
                         model_path: m.model_path.clone(),
+                        // An embedding model has no image encoder — the projector is
+                        // a chat-server setting only.
+                        mmproj: None,
                         gpu_layers: m.gpu_layers,
                         context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
                         jinja: false, // the embedding server doesn't need a chat template
@@ -396,6 +399,7 @@ fn managed_config(s: &ManagedSettings) -> ManagedConfig {
     ManagedConfig {
         binary: s.binary.clone().unwrap_or_default().into(),
         model_path: s.model_path.clone(),
+        mmproj: s.mmproj.clone(),
         gpu_layers: s.gpu_layers,
         context_size: s.context_size,
         jinja: s.jinja,
@@ -1064,6 +1068,42 @@ mod tests {
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+    }
+
+    /// The projector reaches the child process, and a typo in it is reported the
+    /// same way a missing GGUF is — rather than starting a server that quietly has
+    /// no vision and only fails much later, at the first image send.
+    #[tokio::test]
+    async fn managed_carries_the_projector_and_reports_a_missing_one() {
+        const MISSING: &str = "no/such/mmproj.gguf";
+        // No `model_path`, so the model preflight is skipped and the projector's is
+        // the one under test.
+        let managed = ManagedSettings {
+            binary: Some("llama-server".into()),
+            mmproj: Some(MISSING.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            managed_config(&managed).mmproj.as_deref(),
+            Some(MISSING),
+            "the setting must reach the launch config"
+        );
+
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Managed,
+            managed,
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        assert!(setup.backend.is_none());
+        match setup.status {
+            ServerStatus::Disconnected(msg) => {
+                let expected = ru().tf("ui.err.managed.mmproj_not_found", &[("path", MISSING)]);
+                assert!(msg.contains(&expected), "{msg}");
+            }
             other => panic!("expected Disconnected, got {other:?}"),
         }
     }

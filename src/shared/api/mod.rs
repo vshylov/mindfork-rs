@@ -21,8 +21,9 @@ pub mod mock;
 
 pub use anthropic::AnthropicClient;
 pub use contract::{
-    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
+    ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
     FinishReason, ThinkingBlock, ThinkingRef, ToolCallAccumulator, ToolSchema, UnavailableEmbedder,
+    VisionSupport,
 };
 pub use gemini::GeminiClient;
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};

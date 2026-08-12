@@ -20,6 +20,10 @@ pub struct ManagedConfig {
     pub binary: PathBuf,
     /// Path to the GGUF model (`-m`).
     pub model_path: Option<String>,
+    /// Path to the multimodal projector (`--mmproj`) — the companion GGUF that
+    /// gives a vision model its image encoder. `None` — not passed, and the server
+    /// then serves a text-only model.
+    pub mmproj: Option<String>,
     /// GPU layers (`-ngl`).
     pub gpu_layers: i32,
     /// Context size (`-c`).
@@ -75,6 +79,12 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     if let Some(m) = &cfg.model_path {
         args.push("-m".into());
         args.push(m.clone());
+    }
+    // The vision projector: passed only when configured, so a text-only setup keeps
+    // the exact command line it had before images existed.
+    if let Some(p) = &cfg.mmproj {
+        args.push("--mmproj".into());
+        args.push(p.clone());
     }
     if cfg.jinja {
         args.push("--jinja".into());
@@ -188,6 +198,19 @@ impl ServerHandle {
             bail!(
                 "{}",
                 loc.tf("ui.err.managed.draft_not_found", &[("path", draft)])
+            );
+        }
+        // And for the vision projector (`--mmproj`). Worth its own check for a
+        // second reason beyond the crash: a typo here is the one failure that could
+        // *look* like it worked — the server would come up serving a text-only
+        // model, and the only symptom would be images being refused later, far from
+        // the setting that caused it (docs/lessons.md §3).
+        if let Some(mmproj) = &cfg.mmproj
+            && !std::path::Path::new(mmproj).is_file()
+        {
+            bail!(
+                "{}",
+                loc.tf("ui.err.managed.mmproj_not_found", &[("path", mmproj)])
             );
         }
 
@@ -328,6 +351,7 @@ mod tests {
         ManagedConfig {
             binary: PathBuf::from("llama-server"),
             model_path: None,
+            mmproj: None,
             gpu_layers: 99,
             context_size: 8192,
             jinja: true,
@@ -458,6 +482,46 @@ mod tests {
             Ok(_) => panic!("expected an error about a missing draft model file"),
         };
         assert!(err.to_string().contains("черновой модели"), "{err}");
+    }
+
+    /// The projector flag is emitted only when configured: a text-only setup must
+    /// keep the exact command line it had before images existed.
+    #[test]
+    fn mmproj_flag_present_only_when_set() {
+        assert!(!build_args(&base_cfg()).contains(&"--mmproj".to_string()));
+        let cfg = ManagedConfig {
+            model_path: Some("gemma.gguf".into()),
+            mmproj: Some("mmproj-gemma.gguf".into()),
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let p = args
+            .iter()
+            .position(|a| a == "--mmproj")
+            .expect("--mmproj present");
+        assert_eq!(args[p + 1], "mmproj-gemma.gguf");
+    }
+
+    /// A typo'd projector path must be caught before `spawn`. Left unchecked it is
+    /// the one managed misconfiguration that *looks* healthy: the server comes up
+    /// serving a text-only model and only image sends fail, far from the cause.
+    #[test]
+    fn launch_missing_mmproj_file_errors_before_spawn() {
+        const MISSING: &str = "definitely/missing/mmproj-xyz.gguf";
+        let cfg = ManagedConfig {
+            model_path: None,
+            mmproj: Some(MISSING.into()),
+            ..base_cfg()
+        };
+        let err = match ServerHandle::launch(&cfg, ru()) {
+            Err(e) => e,
+            Ok(_) => panic!("expected an error about a missing projector file"),
+        };
+        // Compared against the locale's own text rather than a hardcoded substring:
+        // this pins that the *projector* preflight fired (and not `spawn`, or one of
+        // the neighbouring preflights) without duplicating the wording here.
+        let expected = ru().tf("ui.err.managed.mmproj_not_found", &[("path", MISSING)]);
+        assert!(err.to_string().contains(&expected), "{err}");
     }
 
     #[test]

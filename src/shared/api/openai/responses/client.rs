@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::wire::{self, RespEvent, RespItem};
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
-    ToolCallDelta,
+    ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::error::{self, SUBJECT_RESPONSES};
 use crate::shared::api::http;
@@ -201,6 +201,17 @@ impl EngineBackend for ResponsesClient {
         };
 
         Ok(Box::pin(s))
+    }
+
+    /// OpenAI takes images on every current model, so the answer is static.
+    ///
+    /// Deliberately **not** a model-name allowlist: a hardcoded list of vision
+    /// models goes stale the week after it is written and then lies confidently —
+    /// the trap docs/research/grok-xai-provider.md recorded for reasoning detection.
+    /// A genuinely text-only model returns a clear provider error on send, which is
+    /// a far better failure than refusing an attach on a guess.
+    async fn vision(&self) -> VisionSupport {
+        VisionSupport::Supported
     }
 }
 

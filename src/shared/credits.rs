@@ -63,6 +63,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("flate2", "1.1.9", "MIT OR Apache-2.0"),
     ("futures-util", "0.3.32", "MIT OR Apache-2.0"),
     ("hkdf", "0.12.4", "MIT OR Apache-2.0"),
+    ("image", "0.25.10", "MIT OR Apache-2.0"),
     ("mermaid-text", "0.57.0", "MIT"),
     ("pdf-extract", "0.12.0", "MIT"),
     ("pulldown-cmark", "0.13.4", "MIT"),

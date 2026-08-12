@@ -172,6 +172,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         // The bare orchestrator has no loop draining this channel; attachment
         // tests go through `spawn_orch` (the real `run` loop) end to end.
         attach_tx: unbounded_channel().0,
+        // Same for images: staging is exercised through the real loop.
+        image_tx: unbounded_channel().0,
+        staged_images: Default::default(),
         bg: std::collections::HashMap::new(),
         bg_done_tx: unbounded_channel().0,
         consolidate_counts: std::collections::HashMap::new(),
@@ -432,6 +435,7 @@ mod compaction;
 mod confirm;
 mod demo;
 mod generation;
+mod images;
 mod impersonation;
 mod live;
 mod mcp;

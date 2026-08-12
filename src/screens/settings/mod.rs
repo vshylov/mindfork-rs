@@ -430,6 +430,10 @@ enum FieldId {
     XUrl,
     XBinary,
     XModel,
+    /// The multimodal projector (`--mmproj`) that gives the managed model its image
+    /// encoder — next to the GGUF path, because it is the second half of the same
+    /// download. See spec §9.10.
+    XMmproj,
     /// The cloud/multi-model model's name (`model_name`).
     XModelName,
     /// The env-variable name holding the API key (cloud).
@@ -456,6 +460,8 @@ enum FieldId {
     IxUrl,
     IxBinary,
     IxModel,
+    /// The impersonation engine's projector (see [`FieldId::XMmproj`]).
+    IxMmproj,
     IxModelName,
     IxApiKeyEnv,
     /// The cloud API key for the impersonation engine (see [`FieldId::XApiKey`]).
@@ -610,6 +616,16 @@ enum FieldId {
     AttachMaxTotal,
     AttachExcerpt,
     AttachPage,
+    // Image attachments (`/image attach`, spec §9.10). Their own group: the
+    // attachment budgets above are counted in estimated tokens, these in images,
+    // megabytes and pixels — the same header over both would read as one scale.
+    /// How many images one message may carry.
+    ImageMaxCount,
+    /// Per-file ceiling. Shown in **MB**, stored in bytes (`images.max_bytes`) —
+    /// nobody types a byte count, and the provider limits are quoted in MB.
+    ImageMaxBytes,
+    /// Long-edge ceiling in pixels; `0` disables downscaling.
+    ImageDownscale,
     // Self-model (narrative, prompt injection)
     SmMaxNarrative,
     SmNarrativeInPrompt,

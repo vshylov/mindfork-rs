@@ -88,6 +88,12 @@ pub struct StatusModel<'a> {
     /// count and standing token cost; `None` — nothing attached. See
     /// docs/file-attachments.md.
     pub attachments: Option<&'a str>,
+    /// Images staged for the **next message** (`/image attach`) — a quiet chip
+    /// with their count and token cost; `None` — nothing staged. A second chip
+    /// rather than a line in the first: the two costs behave differently
+    /// (an attachment is paid every turn, a staged image once, on the next
+    /// send), and merging them would claim otherwise. See spec §9.10.
+    pub staged_images: Option<&'a str>,
     /// Where `Esc` goes from here — it decides the `Esc` hint's wording.
     pub esc_target: EscTarget,
 }
@@ -99,6 +105,13 @@ const SPEAKING_GLYPH: char = '♪';
 /// no compat-mode replacement (an emoji paperclip would be two columns and would
 /// shift the hotkey grid on legacy terminals).
 const ATTACH_GLYPH: char = '§';
+
+/// The staged-images glyph. Same constraint as [`ATTACH_GLYPH`]: WGL4 and
+/// exactly one column, so it needs no compat-mode replacement and cannot shift
+/// the hotkey grid (an emoji camera/picture would be two columns wide). ASCII
+/// `#` reads as "a picture" next to `§` "a document" without borrowing either
+/// glyph's meaning.
+const IMAGE_GLYPH: char = '#';
 
 /// Draws the status line in `area`. When hotkeys don't fit by width, they
 /// wrap onto the next lines as a neat grid (like in the chat-list overlay);
@@ -279,6 +292,13 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
     if let Some(files) = model.attachments {
         state.push(sep());
         state.push(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
+    }
+    // Images staged for the next message (`/image attach`): the same quiet
+    // style, its own chip — this cost is about to be paid once, by the send the
+    // user is composing, and it disappears with it.
+    if let Some(images) = model.staged_images {
+        state.push(sep());
+        state.push(Span::styled(format!("{IMAGE_GLYPH} {images}"), muted));
     }
     state
 }
@@ -561,6 +581,7 @@ mod tests {
             background: None,
             speaking: false,
             attachments: None,
+            staged_images: None,
             esc_target: EscTarget::default(),
         }
     }
@@ -667,6 +688,7 @@ mod tests {
                 background: Some("рефлексия"),
                 speaking: false,
                 attachments: None,
+                staged_images: None,
                 esc_target: EscTarget::default(),
             };
             lines(200, &m, &compat, ru())
@@ -772,6 +794,7 @@ mod tests {
                 background: None,
                 speaking: false,
                 attachments: None,
+                staged_images: None,
                 esc_target: EscTarget::default(),
             };
             lines(200, &m, &Palette::default(), ru())
@@ -925,10 +948,43 @@ mod tests {
             background: Some("рефлексия"),
             speaking: true,
             attachments: Some("файлы: 2 (~3.1k)"),
+            staged_images: Some("изображения: 1 (~1.2k)"),
             esc_target: EscTarget::SearchResults,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();
+    }
+
+    /// The staged-images chip is a second, independent one — a file attachment
+    /// and an image staged for the next message are different costs and must not
+    /// share a slot. Its glyph stays **one column** wide, or the right-aligned
+    /// hotkey grid shifts on the terminals that measure it differently
+    /// (docs/lessons.md §5).
+    #[test]
+    fn staged_images_chip_is_separate_and_one_column() {
+        let statuses = ready();
+        let text = |files, images| {
+            let mut m = model(&statuses, false, 0, None, false, false);
+            m.attachments = files;
+            m.staged_images = images;
+            lines(200, &m, &Palette::default(), ru())
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        };
+        // Nothing staged — no image chip at all.
+        let empty = text(None, None);
+        assert!(!empty.contains(IMAGE_GLYPH), "{empty}");
+        // Staged images get their own chip and do not displace the files one.
+        let both = text(Some("файлы: 2 (~3.1k)"), Some("изображения: 1 (~1.2k)"));
+        assert!(both.contains("§ файлы: 2"), "{both}");
+        assert!(both.contains("# изображения: 1"), "{both}");
+        // And images alone show without any files attached.
+        let alone = text(None, Some("изображения: 1 (~1.2k)"));
+        assert!(alone.contains("# изображения: 1"), "{alone}");
+        assert!(!alone.contains(ATTACH_GLYPH), "{alone}");
+        assert_eq!(str_w(&IMAGE_GLYPH.to_string()), 1, "one column");
     }
 
     /// `Esc` means "go back", and the bar is the only place on screen that says

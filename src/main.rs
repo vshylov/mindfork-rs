@@ -743,8 +743,9 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
 /// priority over `settings.json`, so a quick launch against a server doesn't require
 /// editing the file. Affects only the chat/embedding servers:
 /// - `MINDFORK_ENGINE_URL` — an external chat server (any OpenAI-compatible one);
-/// - `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
-///   `MINDFORK_PORT`) — a managed `llama-server`;
+/// - `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_MMPROJ` vision
+///   projector, `MINDFORK_NGL`, `MINDFORK_CTX`, `MINDFORK_PORT`) — a managed
+///   `llama-server`;
 /// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`,
 ///   `MINDFORK_EMBED_PORT`) — the embedding server.
 fn apply_env_overrides(config: &mut AppConfig) {
@@ -762,6 +763,11 @@ fn apply_engine_env(config: &mut AppConfig) {
         config.engine.managed.binary = Some(bin);
         if let Ok(m) = std::env::var("MINDFORK_MODEL") {
             config.engine.managed.model_path = Some(m);
+        }
+        // The vision projector that ships next to the model's GGUF (spec §9.10):
+        // without it the managed server is text-only and says so on `/props`.
+        if let Ok(p) = std::env::var("MINDFORK_MMPROJ") {
+            config.engine.managed.mmproj = Some(p);
         }
         if let Some(ngl) = std::env::var("MINDFORK_NGL")
             .ok()

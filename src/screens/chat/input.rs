@@ -296,7 +296,7 @@ impl ChatScreen {
     }
 
     /// `Enter` on the input box: slash commands (`/rag`, `/reindex`,
-    /// `/compact`, `/file`, `/tts`) are intercepted and never go out as
+    /// `/compact`, `/file`, `/image`, `/tts`) are intercepted and never go out as
     /// messages; anything else is sent (unless a turn is already generating).
     fn handle_enter(&mut self) -> Option<ChatIntent> {
         let text = self.input.text();
@@ -313,6 +313,9 @@ impl ChatScreen {
             return intent;
         }
         if let Some(intent) = self.try_file_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_image_command(&text) {
             return intent;
         }
         if let Some(intent) = self.try_tts_command(&text) {
@@ -397,6 +400,27 @@ impl ChatScreen {
             Ok(FileCommand::List) => Some(ChatIntent::FileList),
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
+                None
+            }
+        })
+    }
+
+    /// An image slash command (`/image …`) — not a message either; the
+    /// decoding and downscaling happen in the background, so it works during
+    /// generation like `/file`. Sits right after `/file` in the chain: the two
+    /// are neighbours in wording and the user reaches for both while writing.
+    /// See spec §9.10. Returns `None` when the text is not an `/image` command.
+    fn try_image_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::image_command::ImageCommand;
+        let parsed = crate::features::image_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(ImageCommand::Attach { path }) => Some(ChatIntent::ImageAttach { path }),
+            Ok(ImageCommand::Remove { target }) => Some(ChatIntent::ImageRemove { target }),
+            Ok(ImageCommand::List) => Some(ChatIntent::ImageList),
+            Err(msg) => {
+                self.push_error(&self.loc.tf("ui.image.failed", &[("err", &msg)]));
                 None
             }
         })
@@ -684,8 +708,8 @@ impl ChatScreen {
         true
     }
 
-    /// Whether the current input is a command (`/rag …`, `/tts …`,
-    /// `/reindex`, `/compact`). Such text is highlighted yellow and isn't spellchecked. See
+    /// Whether the current input is a command (`/rag …`, `/file …`, `/image …`,
+    /// `/tts …`, `/reindex`, `/compact`). Such text is highlighted yellow and isn't spellchecked. See
     /// spec §11.5.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
@@ -700,6 +724,7 @@ impl ChatScreen {
             || crate::features::reindex_command::parse(&text, self.loc).is_some()
             || crate::features::compact_command::parse(&text, self.loc).is_some()
             || crate::features::file_command::parse(&text, self.loc).is_some()
+            || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
 

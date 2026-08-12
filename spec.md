@@ -1264,6 +1264,91 @@ JavaScript shell — measured, zero paragraphs and zero list items — so
 readability extracted nothing and the answer was "failed to extract readable
 text". It now returns the same metadata block and points at `youtube_watch`.
 
+### 9.10. Images in a message (`/image attach`)
+
+The user attaches an image and a vision-capable model sees it. Research, live
+measurements and the fork decisions:
+[docs/research/multimodal-images.md](docs/research/multimodal-images.md).
+
+Deliberately **not** shaped like a file attachment ([§9.7](#97-chat-file-attachments-file-attach)),
+despite the matching commands. An attachment is chat-scoped and re-injected into
+the **system prompt** every turn; an image is **message-scoped** — it belongs to
+the turn that introduced it and is replayed afterwards as ordinary history. That
+is not a preference: every provider takes images as *message content parts*
+only, and a set that could change at the head of the prompt would re-prefill the
+whole conversation on every mutation. Measured on the reference stack, the
+append-only shape keeps the prefix cache intact across an image turn
+(`cache_n = 73` of 78; an appended turn prefills 23 tokens).
+
+- **Commands**: `/image attach <path>`, `/image remove <name|#N>`,
+  `/image list` — the same surface and the same `#N` addressing as `/file`, so
+  what `/image list` numbers is what `remove` accepts. As everywhere, the
+  removal verb is only `remove`, never `delete`.
+- **Staging.** `attach` does not create a message; it stages the image for the
+  **next** one. Staging lives in the orchestrator, is keyed by chat, and is
+  **session-only** — what was staged and never sent is a half-finished thought,
+  not conversation state, and persisting it would resurrect images into a
+  message written days later. The send consumes the staged set; from that moment
+  the image is history and `remove` says so rather than pretending otherwise.
+- **A message with only an image is a complete request** ("look at this"), so an
+  empty send is refused only when nothing is staged either.
+- **Storage**: the payload is base64 **inside the chat file**, next to the
+  message (`Message.images`, additive — old chats read unchanged, ADR 0006 F12).
+  The chat stays self-contained for backup/export and building a request does no
+  I/O — the same doctrine as an attachment's text snapshot. What makes it
+  affordable is the preparation below.
+- **Preparation at attach time** (`features::image_prepare`): decode, downscale
+  the long edge to `images.downscale_px` (1568 by default — Anthropic's
+  standard-resolution ceiling, comfortably above the ~256-token encoder budgets
+  measured on llama.cpp, Gemini and xAI), and normalize the format to **png or
+  jpeg**. Both halves earn their keep: xAI accepts nothing else, so an
+  un-normalized webp would be attachable on three providers out of four and fail
+  at send; and an unscaled phone photo would ride *every* turn, billed and
+  uploaded whole each time. An image that is already png/jpeg and already within
+  the ceiling is passed through **byte for byte** — a screenshot keeps its exact
+  pixels, since recompression is what makes small text unreadable. png stays
+  png, transparency forces png, everything else becomes jpeg q85.
+- **Delivery**: `request::message_to_api` turns `Message.images` into content
+  parts, and each backend emits its own shape — `image_url` with a `data:` URI
+  (llama.cpp Chat Completions **and** xAI, byte-identical), `image`/`source` for
+  Anthropic, `inline_data` for Gemini, `input_image` for Responses. Each image
+  is preceded by a short label part (`Image #1 — "chart.png":`) in the
+  **profile** language (axis A), which is what lets the model refer to a file by
+  the name the user sees. Images come before text, the ordering Anthropic
+  documents.
+- **A request with no images is byte-identical to what the app sent before the
+  feature existed** — content stays a bare JSON string rather than a
+  one-element parts array. Pinned by a test, because llama.cpp reuses its prefix
+  cache on a matching rendered prompt and Gemma's template routes the two shapes
+  through different branches: a blanket switch would silently re-prefill every
+  existing conversation.
+- **Capability, asked rather than guessed** (`EngineBackend::vision`): llama.cpp
+  answers from `/props` (`modalities.vision`) — the same fetch `context_budget`
+  already makes; the clouds answer statically. A model-name allowlist is
+  deliberately not used: it goes stale and then lies. Three outcomes, three
+  behaviours — **no** refuses the attach and names what would fix it (the
+  `--mmproj` setting for a managed server, the model/provider choice otherwise);
+  **yes** attaches silently; **cannot say** (any server without `/props`)
+  attaches with a neutral note, because refusing there would break every vLLM or
+  LM Studio user running a vision model.
+- **The managed server** gains `--mmproj` (settings, or `MINDFORK_MMPROJ`), with
+  the same missing-file preflight the draft model has: a typo'd projector must
+  fail loudly rather than start a server that is silently blind.
+- **Limits** (`config.images`, spec §12.1): `max_count` per message (8),
+  `max_bytes` per file (10 MB — the strictest provider, checked before decoding
+  so an enormous file never reaches the decoder), `downscale_px`. The count cap
+  is checked *before* the work, so a user at the limit is told immediately
+  rather than after a multi-second decode.
+- **Token accounting**: the displayed estimate is Anthropic's patch formula
+  (`⌈w/28⌉ × ⌈h/28⌉`), which over-estimates the local stack and roughly matches
+  Gemini/xAI — the safe direction for a cost shown to the user. The
+  auto-compaction trigger is unaffected: it reads the server's exact
+  `usage.prompt_tokens`, which **includes** image tokens (measured).
+- **UI**: a feed note per command and a status-bar chip for what is staged
+  (images are a standing cost once sent, so the pending one has to be visible).
+  Rendering the pixels in the terminal is out of scope — see
+  [docs/roadmap.md](docs/roadmap.md).
+
 ---
 
 ## 10. AI-companion profiles

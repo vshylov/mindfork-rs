@@ -2441,6 +2441,184 @@ fn compaction_page_size_commits() {
     assert_eq!(s.config.compaction.page_tokens, 1200);
 }
 
+/// The projector sits directly under the GGUF path, in the same "Model" group and
+/// on both managed engines: it is the second half of the same download, and a user
+/// who found one has found the other.
+#[test]
+fn managed_model_group_pairs_the_projector_with_the_gguf() {
+    let mut s = screen();
+    // Impersonation defaults to `shared` (no server of its own), and then its tab
+    // shows no managed rows at all — put it in managed mode so the pair is there to
+    // check on both engines.
+    s.config.impersonation_engine.mode = ImpersonationMode::Managed;
+    for (tab, model, mmproj) in [
+        (ModelTab::Assistant, FieldId::XModel, FieldId::XMmproj),
+        (ModelTab::Impersonation, FieldId::IxModel, FieldId::IxMmproj),
+    ] {
+        let fields = s.model_fields_for(tab);
+        let at = |id: FieldId| fields.iter().position(|f| f.id == id);
+        let (mi, pi) = (
+            at(model).unwrap_or_else(|| panic!("{model:?} missing")),
+            at(mmproj).unwrap_or_else(|| panic!("{mmproj:?} missing")),
+        );
+        assert_eq!(pi, mi + 1, "{mmproj:?} must follow {model:?}");
+        assert_eq!(
+            fields[pi].group, fields[mi].group,
+            "the projector must share the GGUF's group"
+        );
+        assert!(
+            field_desc(&s, mmproj).is_some(),
+            "{mmproj:?} has no description"
+        );
+    }
+}
+
+/// Editing the projector row writes `managed.mmproj` — and an empty entry clears it
+/// back to `None`, which is how a vision setup is turned off again.
+#[test]
+fn projector_path_commits_and_clears() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XMmproj);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in "mmproj-gemma.gguf".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(
+                c.engine.managed.mmproj.as_deref(),
+                Some("mmproj-gemma.gguf")
+            )
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    goto_field_again(&mut s, FieldId::XMmproj);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.managed.mmproj, None),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+/// The three image rows share their own group, sit right after the file-attachment
+/// budgets, and each carries a description.
+#[test]
+fn image_group_follows_the_attachment_budgets() {
+    let s = screen();
+    let fields = s.memory_fields();
+    let ids: Vec<FieldId> = fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.id,
+                FieldId::AttachPage
+                    | FieldId::ImageMaxCount
+                    | FieldId::ImageMaxBytes
+                    | FieldId::ImageDownscale
+            )
+        })
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            FieldId::AttachPage,
+            FieldId::ImageMaxCount,
+            FieldId::ImageMaxBytes,
+            FieldId::ImageDownscale,
+        ],
+        "the image rows follow the attachment budgets"
+    );
+    let group = |id: FieldId| fields.iter().find(|f| f.id == id).unwrap().group;
+    let images = group(FieldId::ImageMaxCount);
+    assert_ne!(
+        images,
+        group(FieldId::AttachPage),
+        "images are their own group — tokens and megabytes are not one scale"
+    );
+    for id in [
+        FieldId::ImageMaxCount,
+        FieldId::ImageMaxBytes,
+        FieldId::ImageDownscale,
+    ] {
+        assert_eq!(group(id), images, "{id:?} left the images group");
+        assert!(field_desc(&s, id).is_some(), "{id:?} has no description");
+    }
+}
+
+/// The image budgets commit through the `field_spec` access table like their
+/// neighbours — and the size limit converts **both ways**: the row is megabytes, the
+/// config is bytes, so a value typed in must come back out of the row unchanged.
+#[test]
+fn image_budgets_commit_and_the_size_limit_round_trips_through_mb() {
+    fn edit(id: FieldId, typed: &str) -> (AppConfig, SettingsScreen) {
+        let mut s = screen();
+        goto_section(&mut s, Section::Memory);
+        goto_field(&mut s, id);
+        assert_eq!(field_num_kind(id), Some(NumKind::Int), "{id:?} is an int");
+
+        // A non-numeric entry keeps the editor open and flags the error.
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        s.handle_key(key(KeyCode::Char('x')));
+        assert!(s.handle_key(key(KeyCode::Enter)).is_none(), "{id:?}");
+        assert!(s.editor.as_ref().is_some_and(|e| e.error.is_some()));
+
+        s.handle_key(ctrl('k'));
+        for c in typed.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        match s.handle_key(key(KeyCode::Enter)) {
+            Some(SettingsIntent::SaveConfig(c)) => (*c, s),
+            other => panic!("{id:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+
+    assert_eq!(edit(FieldId::ImageMaxCount, "3").0.images.max_count, 3);
+    assert_eq!(
+        edit(FieldId::ImageDownscale, "1024").0.images.downscale_px,
+        1024
+    );
+
+    // The row is in MB, the config in bytes.
+    let (cfg, s) = edit(FieldId::ImageMaxBytes, "5");
+    assert_eq!(cfg.images.max_bytes, 5 * BYTES_PER_MB);
+    // ...and the row shows what was typed, not the byte count — the value has to
+    // survive a redraw, or the next edit would be seeded with megabytes-worth of
+    // bytes and multiply the limit again.
+    let shown = s
+        .memory_fields()
+        .into_iter()
+        .find(|f| f.id == FieldId::ImageMaxBytes)
+        .map(|f| value_text(&f.kind, s.loc()))
+        .expect("the size-limit row");
+    assert_eq!(shown, "5");
+
+    // Zero is not a limit anyone means — it would refuse every image ever attached.
+    assert_eq!(
+        edit(FieldId::ImageMaxBytes, "0").0.images.max_bytes,
+        BYTES_PER_MB
+    );
+}
+
+/// The default row shows the shipped ceiling in megabytes, so the units the
+/// description promises are the units the user sees before touching anything.
+#[test]
+fn the_default_size_limit_is_shown_in_megabytes() {
+    assert_eq!(
+        bytes_to_mb(crate::shared::config::DEFAULT_IMAGE_MAX_BYTES),
+        10
+    );
+    assert_eq!(
+        mb_to_bytes(10),
+        crate::shared::config::DEFAULT_IMAGE_MAX_BYTES
+    );
+}
+
 #[test]
 fn fields_carry_group_headers() {
     // The section's fields are marked with semantic groups (group headers in the UI).

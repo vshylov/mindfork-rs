@@ -295,7 +295,28 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     `draft-mtp`; `ngram-*` don't require one. Draft-model fields in settings are
     shown only for `draft-*` types; the draft model's path is also checked before
     launch.
+  - **Vision projector** (`--mmproj`): the settings field "Vision projector
+    (--mmproj)" sits directly under the GGUF path, and what it enables is image
+    input — `/image attach` (spec §9.10). A vision model ships as *two* files: the
+    weights and an `mmproj-*.gguf` projector that turns pixels into tokens the
+    language model reads. For the reference model
+    (`google/gemma-4-31B-it-qat-q4_0-gguf` on Hugging Face) the projector is in the
+    same repository, next to the weights — download both. Without it `llama-server`
+    serves a text-only model: it still answers normally, but images are refused.
+    Like the model and draft paths, the projector's path is checked before launch (a
+    typo gives an immediate "projector file not found …" instead of a server that
+    quietly has no vision), and changing it **restarts** the server.
 - **external** — connects to an already-running server by URL.
+
+**How the app knows whether images are accepted.** It asks the server, rather than
+matching model names: `llama-server` reports `modalities` on its `/props` endpoint
+(`{"vision": true, "video": true, "audio": false}`) — the same request that already
+supplies the context window. `vision: true` → images are accepted, `false` → the
+attach is refused with a message pointing at the `--mmproj` field. A server that
+reports no `modalities` at all (vLLM, LM Studio, a proxy, any cloud) is treated as
+"cannot say" and the attach is allowed: a send-time provider error is a better
+outcome than refusing a setup that works. The four cloud providers answer
+"supported" outright — every current-generation model on them takes images.
 
 Example of a manual launch (external):
 
@@ -356,6 +377,7 @@ $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
 # or a managed llama-server:
 $env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"
 $env:MINDFORK_MODEL     = "C:\GGUF\google_gemma-4-E4B-it-Q4_1.gguf"
+$env:MINDFORK_MMPROJ    = "C:\GGUF\mmproj-google_gemma-4-E4B-it.gguf"  # vision (opt.)
 $env:MINDFORK_NGL       = "99"     # GPU layers (opt.)
 $env:MINDFORK_CTX       = "8192"   # context (opt.)
 $env:MINDFORK_PORT      = "8000"   # opt.

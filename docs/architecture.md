@@ -180,6 +180,9 @@ src/
 │  │  │                     read/extract → mode by budget → the chat; background
 │  │  │                     indexing of a by-reference file into the chat-scoped
 │  │  │                     semantic index (best-effort, spec §9.7)
+│  │  ├─ images.rs          images staged for the next message (`/image attach`):
+│  │  │                     capability probe + background decode/downscale → staging
+│  │  │                     (session-only, per chat), consumed by the send (spec §9.10)
 │  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
@@ -341,6 +344,11 @@ src/
 │  │                        spans notes, attachments and every profile's base)
 │  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
 │  │                        (chat attachments, spec §9.7, docs/file-attachments.md)
+│  ├─ image_command.rs      /image attach|remove|list parser + ImageProgress
+│  │                        (images staged for the next message, spec §9.10)
+│  ├─ image_prepare.rs      decode/downscale/normalize an attached image to png|jpeg
+│  │                        (the `image` crate; a png already within the ceiling is
+│  │                        passed through byte for byte)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
@@ -364,6 +372,9 @@ src/
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
+│  ├─ message_image.rs      MessageImage/ImageInfo — an image carried BY A MESSAGE
+│  │                        (base64 payload in the chat file, patch-formula estimate);
+│  │                        message-scoped, unlike attachment.rs (spec §9.10)
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
 │  ├─ note.rs               Note
 │  ├─ rag.rs                RagDocument / RagHit
@@ -928,6 +939,22 @@ OpenAI-compatible proxy/gateway).
   own wire format (OpenAI Chat Completions or Anthropic Messages: system →
   top-level, tool results → `tool_result` blocks in user, adjacent roles
   merged).
+- **`ApiMessage.images`** (`Vec<ApiImage>`: mime + base64 `Arc<str>` + a label
+  part) carries image input (spec §9.10). `Arc` because `RetryBackend` clones the
+  whole request per attempt. In the Chat Completions family (llama.cpp **and**
+  xAI, whose shapes are byte-identical) `WireMessage.content` is an untagged
+  `Text(String) | Parts(Vec<Value>)`, and **parts are emitted only when a message
+  has images** — a text-only request stays byte-identical to what the client sent
+  before the feature, which the prefix cache and Gemma's two template branches
+  both depend on (pinned by `a_text_only_request_is_unchanged_by_the_image_support`).
+  The three other cloud formats are stage 2.
+- **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
+  `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
+  contract" shape as `context_budget`, and delegated by `RetryBackend` for the
+  same reason. `OpenAiClient` answers from the `/props` fetch it already makes
+  (`modalities.vision`); the clouds answer statically; anything without `/props`
+  stays `Unknown`, which the orchestrator treats optimistically. Managed servers
+  gain `--mmproj` (`ManagedConfig`, with the missing-file preflight `-md` has).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Error{message,transient}` |
   `Finished`. `Error` is the stream's error channel: a failure that arrives after

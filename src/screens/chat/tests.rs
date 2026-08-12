@@ -1960,6 +1960,153 @@ fn file_list_note_numbers_items_for_removal() {
     assert!(note.text.contains("notes.md"), "{}", note.text);
 }
 
+/// A staged-image card for the tests — `est_tokens` is what the chip and the
+/// listing actually add up, so it is set explicitly rather than derived.
+fn image_info(
+    name: &str,
+    bytes: usize,
+    est_tokens: usize,
+) -> crate::entities::message_image::ImageInfo {
+    crate::entities::message_image::ImageInfo {
+        name: name.into(),
+        mime: "image/png".into(),
+        width: 800,
+        height: 600,
+        bytes,
+        est_tokens,
+    }
+}
+
+#[test]
+fn image_command_intercepted_on_enter() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    // A path with spaces (quoted) — the whole thing is one argument.
+    type_str(&mut s, "/image attach \"d:\\my pics\\chart 1.png\"");
+    let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        intent,
+        Some(ChatIntent::ImageAttach {
+            path: "d:\\my pics\\chart 1.png".into(),
+        })
+    );
+    assert!(s.input.is_empty(), "the field is cleared after the command");
+    assert!(
+        !s.feed.iter().any(|m| m.role == FeedRole::User),
+        "a command must not go out as a message"
+    );
+
+    type_str(&mut s, "/image remove #2");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::ImageRemove {
+            target: "#2".into()
+        })
+    );
+    type_str(&mut s, "/image list");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::ImageList)
+    );
+    assert!(!s.feed.iter().any(|m| m.role == FeedRole::User));
+}
+
+#[test]
+fn invalid_image_command_shows_note_and_does_not_send() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    type_str(&mut s, "/image attach");
+    let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(intent, None, "an invalid command isn't sent as a message");
+    // Errors go into the feed as a service note (there is no separate error role).
+    assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+    assert!(!s.feed.iter().any(|m| m.role == FeedRole::User));
+}
+
+#[test]
+fn image_input_is_recognized_as_command() {
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "/image attach a.png");
+    assert!(
+        s.input_is_command(),
+        "the input box highlights it and skips spellcheck"
+    );
+    // A malformed one is recognized too — it's still a command, not prose.
+    s.input.clear();
+    type_str(&mut s, "/image");
+    assert!(s.input_is_command());
+    // Prose that merely mentions the word isn't.
+    s.input.clear();
+    type_str(&mut s, "look at the image below");
+    assert!(!s.input_is_command());
+}
+
+#[test]
+fn staged_image_chip_shows_count_and_standing_cost() {
+    let mut s = ChatScreen::new();
+    assert_eq!(
+        s.staged_images_hint(),
+        None,
+        "no chip without staged images"
+    );
+
+    s.set_staged_images(vec![
+        image_info("chart.png", 120_000, 1200),
+        image_info("photo.jpg", 300_000, 300),
+    ]);
+    let hint = s.staged_images_hint().expect("a chip with staged images");
+    assert!(hint.contains('2'), "the count of images: {hint}");
+    // The cost of the next turn: both images together (1200 + 300).
+    assert!(hint.contains("1.5k"), "the cost of the next send: {hint}");
+    // Sending clears the staging — the chip goes with it (the orchestrator
+    // reports an empty set), unlike the attachments chip which stays.
+    s.set_staged_images(Vec::new());
+    assert_eq!(s.staged_images_hint(), None, "the chip goes with the send");
+}
+
+#[test]
+fn image_list_note_numbers_items_for_removal() {
+    use crate::features::image_command::ImageProgress;
+    let mut s = ChatScreen::new();
+    s.set_image_progress(ImageProgress::Listed {
+        items: vec![
+            image_info("chart.png", 120_000, 1200),
+            image_info("photo.jpg", 4096, 400),
+        ],
+    });
+    let note = s
+        .feed
+        .iter()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note in the feed");
+    // The `#N` handles are what `/image remove #N` accepts, in listing order.
+    assert!(note.text.contains("#1 chart.png"), "{}", note.text);
+    assert!(note.text.contains("#2 photo.jpg"), "{}", note.text);
+    let first = note.text.find("#1").unwrap();
+    let second = note.text.find("#2").unwrap();
+    assert!(
+        first < second,
+        "numbering follows the listing: {}",
+        note.text
+    );
+}
+
+#[test]
+fn empty_image_list_says_sent_images_are_not_staged() {
+    use crate::features::image_command::ImageProgress;
+    let mut s = ChatScreen::new();
+    s.set_image_progress(ImageProgress::Listed { items: Vec::new() });
+    let note = s
+        .feed
+        .iter()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note in the feed");
+    // The empty listing is not "you have no images" — it has to distinguish
+    // staged-for-the-next-message from already sent, or `/image remove` looks
+    // broken to whoever wants an image out of the conversation.
+    assert_eq!(note.text, s.loc.t("ui.image.list_empty"), "{}", note.text);
+}
+
 #[test]
 fn rag_progress_banner_lifecycle() {
     let mut s = ChatScreen::new();

@@ -16,6 +16,18 @@ split by subsystem.
 
 ### Added
 
+- **You can show the model a picture.** `/image attach <path>` puts an image on
+  your next message, `/image list` shows what is waiting, and
+  `/image remove <name|#N>` takes one back off. It works with a local
+  vision-capable model (start `llama-server` with a projector — the new
+  "Vision projector (--mmproj)" setting, or `MINDFORK_MMPROJ`) and with Grok;
+  the other cloud providers follow in the next release. png, jpeg, webp, gif and
+  bmp are accepted and converted to what the providers take; a large image is
+  shrunk once, when you attach it, so it does not cost you upload and tokens on
+  every later turn. The status bar shows what is staged and roughly what it will
+  cost. If the engine says it cannot see images, the attach is refused up front
+  and tells you what to change instead of failing later.
+
 - **A blip on a cloud provider no longer costs you the turn.** When a provider
   rate-limits or sheds load (`429`, `5xx`, Claude's "overloaded"), the request
   is retried automatically — three attempts, waiting about a second and then

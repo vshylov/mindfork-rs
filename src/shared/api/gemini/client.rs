@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::wire::{self, GenResponse};
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
+    VisionSupport,
 };
 use crate::shared::api::error::{self, SUBJECT_GEMINI};
 use crate::shared::api::http;
@@ -227,6 +228,17 @@ impl EngineBackend for GeminiClient {
         };
 
         Ok(Box::pin(s))
+    }
+
+    /// Gemini takes images on every current model, so the answer is static.
+    ///
+    /// Deliberately **not** a model-name allowlist: a hardcoded list of vision
+    /// models goes stale the week after it is written and then lies confidently —
+    /// the trap docs/research/grok-xai-provider.md recorded for reasoning detection.
+    /// A genuinely text-only model returns a clear provider error on send, which is
+    /// a far better failure than refusing an attach on a guess.
+    async fn vision(&self) -> VisionSupport {
+        VisionSupport::Supported
     }
 }
 

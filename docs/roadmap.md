@@ -8,9 +8,12 @@
 ## Most valuable next
 The unprioritized list below is an idea bank of equal weight; these are called out
 as the highest-payoff tracks (real user pain / direct savings):
-1. **Multimodality (images)** (§Engine and reliability) — a big feature with
-   demand. Research done, forks await decisions:
-   [multimodal-images.md](research/multimodal-images.md).
+1. **Multimodality (images)** — **stage 1 done** (`/image attach|remove|list`
+   against a local `llama-server --mmproj` and Grok); what remains is **stage 2**,
+   the three other cloud wire formats (Anthropic `image` blocks, Gemini
+   `inline_data`, OpenAI Responses `input_image`), each already verified live
+   with a real key. [multimodal-images.md](research/multimodal-images.md),
+   spec §9.10.
 
 **Retry/backoff on cloud errors** left this list on 2026-08-12 — **done**, both
 stages (see "Recently closed").
@@ -200,10 +203,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   engine fields.
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
-- **Multimodality support** (images) — if the model/`llama-server` supports
-  vision; passing images from clipboard/file. Researched and verified live
-  against the reference stack and all four clouds —
-  [multimodal-images.md](research/multimodal-images.md).
+- **Multimodality — what stage 1 left open**
+  ([multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
+  - **stage 2** — the Anthropic/Gemini/Responses wire formats (the shapes are
+    verified, the work is three request builders and one smoke each);
+  - **paste an image from the clipboard** (`arboard` is already a dependency;
+    its `image-data` feature unlocks `get_image()`) — deferred because the
+    Windows paste pipeline is its own minefield (docs/lessons.md §6);
+  - **images from MCP/tool results** — `shared/mcp.rs` already parses the block
+    it currently drops to `[image content omitted]`;
+  - **attach by URL** — accepted natively by llama.cpp/Anthropic/OpenAI but not
+    Gemini, so it needs a client-side download and the SSRF care `fetch_url`
+    already had to take;
+  - **rendering images in the feed** (kitty/sixel/iTerm2, or a halfblock
+    renderer over the decoded pixels) — today a sent image shows as a chip.
 - **YouTube — groundwork** (stages 1 and 2 are **done**, see "Recently closed";
   [youtube-integration.md](research/youtube-integration.md),
   [youtube-transcript.md](history/youtube-transcript.md), spec §9.9):

@@ -15,6 +15,8 @@ pub mod data_migration;
 pub mod demo;
 pub mod doc_extract;
 pub mod file_command;
+pub mod image_command;
+pub mod image_prepare;
 pub mod import;
 pub mod mcp_import;
 pub mod profiles;

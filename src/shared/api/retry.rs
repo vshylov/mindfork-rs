@@ -37,7 +37,9 @@ use async_stream::stream;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::contract::{ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason};
+use super::contract::{
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, VisionSupport,
+};
 use super::error::EngineError;
 
 /// How many attempts a turn gets in total, the initial one included.
@@ -359,6 +361,15 @@ impl EngineBackend for RetryBackend {
     async fn context_budget(&self) -> Option<u32> {
         self.inner.context_budget().await
     }
+
+    /// Delegated for the same reason, and it is the same hole: every cloud backend
+    /// is wrapped in this decorator, so a `RetryBackend` that fell back to the
+    /// trait's default would answer `Unknown` for a Claude backend that knows
+    /// perfectly well it takes images — a silent capability regression of exactly
+    /// the shape docs/lessons.md §9 records.
+    async fn vision(&self) -> VisionSupport {
+        self.inner.vision().await
+    }
 }
 
 #[cfg(test)]
@@ -388,6 +399,7 @@ mod tests {
         outcomes: Mutex<VecDeque<Outcome>>,
         calls: AtomicUsize,
         budget: Option<u32>,
+        vision: VisionSupport,
     }
 
     impl Scripted {
@@ -396,6 +408,7 @@ mod tests {
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
                 budget: None,
+                vision: VisionSupport::Unknown,
             })
         }
 
@@ -428,6 +441,10 @@ mod tests {
 
         async fn context_budget(&self) -> Option<u32> {
             self.budget
+        }
+
+        async fn vision(&self) -> VisionSupport {
+            self.vision
         }
     }
 
@@ -689,6 +706,25 @@ mod tests {
         Arc::get_mut(&mut scripted).unwrap().budget = Some(16384);
         let backend = RetryBackend::wrap(scripted);
         assert_eq!(backend.context_budget().await, Some(16384));
+    }
+
+    /// The sibling of the test above, and the same trap: every cloud backend is
+    /// wrapped in this decorator, so a forgotten delegation would report `Unknown`
+    /// for a backend that answers `Supported` — image attachments would silently
+    /// lose their capability check on all four providers (docs/lessons.md §9).
+    #[tokio::test]
+    async fn vision_is_delegated() {
+        // The default is `Unknown`, so a delegation test has to assert on a value
+        // the decorator could not have produced by falling through.
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().vision = VisionSupport::Supported;
+        let backend = RetryBackend::wrap(scripted);
+        assert_eq!(backend.vision().await, VisionSupport::Supported);
+
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().vision = VisionSupport::Unsupported;
+        let backend = RetryBackend::wrap(scripted);
+        assert_eq!(backend.vision().await, VisionSupport::Unsupported);
     }
 
     /// An explicit policy is what lets a test pin the shape without waiting on the

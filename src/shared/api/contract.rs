@@ -80,11 +80,39 @@ pub struct ThinkingRef {
     pub signature: String,
 }
 
+/// An image passed to the model as part of a message's content (spec §9.10).
+///
+/// Provider-agnostic on purpose: every backend takes base64 plus a MIME type, and each
+/// wraps them differently (`image_url` with a `data:` URI for Chat Completions and xAI,
+/// an `image`/`source` block for Anthropic, `inline_data` for Gemini, `input_image` for
+/// Responses). See docs/research/multimodal-images.md §2.2 for the four verified shapes.
+///
+/// `data` is an [`Arc<str>`] rather than a `String` because [`super::retry::RetryBackend`]
+/// clones the whole [`ChatRequest`] per attempt: a megabyte of base64 copied on every
+/// retry would be a real cost for no reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiImage {
+    /// `image/png` or `image/jpeg` — normalized at attach time.
+    pub mime: String,
+    /// The payload, base64, without a `data:` prefix.
+    pub data: std::sync::Arc<str>,
+    /// A short text part emitted immediately **before** the image (`Image #1 — "a.png":`).
+    /// Anthropic documents labelling images when several are present, and it is the only
+    /// way a model can refer to one by the name the user sees in `/image list`. Built in
+    /// the app layer, because it is prompt scaffold in the **profile** language (axis A)
+    /// and the wire layer has no locale.
+    pub label: Option<String>,
+}
+
 /// A conversation message passed to the model.
 #[derive(Debug, Clone)]
 pub struct ApiMessage {
     pub role: ApiRole,
     pub content: String,
+    /// Images carried by this message (spec §9.10). Empty for every message that has
+    /// none, which is what keeps a text-only request byte-identical to what the app sent
+    /// before the feature existed — see the wire builders.
+    pub images: Vec<ApiImage>,
     /// The tool-call id (for the `Tool` role).
     pub tool_call_id: Option<String>,
     /// Tool calls (for the `Assistant` role that initiated a tool call).
@@ -103,6 +131,7 @@ impl ApiMessage {
             tool_call_id: None,
             tool_calls: Vec::new(),
             thinking: None,
+            images: Vec::new(),
         }
     }
 
@@ -113,6 +142,7 @@ impl ApiMessage {
             tool_call_id: None,
             tool_calls: Vec::new(),
             thinking: None,
+            images: Vec::new(),
         }
     }
 
@@ -124,6 +154,7 @@ impl ApiMessage {
             tool_call_id: None,
             tool_calls,
             thinking: None,
+            images: Vec::new(),
         }
     }
 
@@ -134,6 +165,12 @@ impl ApiMessage {
         self
     }
 
+    /// Attaches images to the message (builder-style). See [`ApiImage`].
+    pub fn with_images(mut self, images: Vec<ApiImage>) -> Self {
+        self.images = images;
+        self
+    }
+
     pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: ApiRole::Tool,
@@ -141,6 +178,7 @@ impl ApiMessage {
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: Vec::new(),
             thinking: None,
+            images: Vec::new(),
         }
     }
 }
@@ -362,6 +400,40 @@ pub trait EngineBackend: Send + Sync {
     async fn context_budget(&self) -> Option<u32> {
         None
     }
+
+    /// Whether this engine can accept images in a request (spec §9.10).
+    ///
+    /// Same shape and the same reasoning as [`context_budget`](Self::context_budget):
+    /// capability is engine knowledge, so it is answered here rather than guessed by the
+    /// layer above. The default is [`VisionSupport::Unknown`] — "cannot say", never
+    /// "no" — because the honest answer for an arbitrary OpenAI-compatible server is that
+    /// we do not know, and refusing an attach on that basis would be wrong for every
+    /// vLLM/LM Studio user running a vision model.
+    ///
+    /// [`super::openai::OpenAiClient`] overrides it with llama.cpp's `/props`
+    /// (`modalities.vision`), which is the same fetch `context_budget` already makes; the
+    /// cloud backends answer [`VisionSupport::Supported`] statically, since every
+    /// current-generation model on all four providers takes images and a legacy text-only
+    /// model produces a clear provider error on send. A model-name allowlist is
+    /// deliberately not used — it goes stale and then lies, the trap
+    /// docs/research/grok-xai-provider.md recorded for reasoning detection.
+    async fn vision(&self) -> VisionSupport {
+        VisionSupport::Unknown
+    }
+}
+
+/// Whether an engine accepts image input. See [`EngineBackend::vision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VisionSupport {
+    /// The engine cannot be asked (no `/props`, or it did not answer). Attaching is
+    /// allowed with a neutral note: a send-time provider error is a better outcome than
+    /// refusing a capability the server may well have.
+    #[default]
+    Unknown,
+    Supported,
+    /// The engine answered "no images" — the only case where an attach is refused, and
+    /// the refusal names what would fix it (the `mmproj` setting, for a managed server).
+    Unsupported,
 }
 
 /// What a text is being embedded *as*.

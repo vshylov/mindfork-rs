@@ -326,6 +326,109 @@ async fn file_attachment_e2e_live() {
     );
 }
 
+/// Live e2e for image attachments (spec §9.10): an image staged with `/image attach`
+/// reaches a vision-capable model, and **is still seen a turn later**, replayed out of
+/// history rather than re-staged.
+///
+/// The fixture is a generated image, not a photograph, so the assertion is objective and
+/// no pretrained knowledge can answer it: a solid blue field with a large white square in
+/// the middle. Two turns, because history replay is the half a unit test cannot settle —
+/// the first proves the image arrived, the second proves the stored message re-sent it.
+///
+/// Requires the server to be started with `--mmproj` (`/props` then reports
+/// `modalities.vision`); against a text-only server this fails loudly rather than
+/// skipping, which is deliberate — a vision smoke that quietly passes on a blind model is
+/// worse than none (docs/lessons.md §9). `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
+async fn image_attachment_e2e_live() {
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // A blue field with a centred white square — two facts to check, both objective.
+    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
+        if (160..352).contains(&x) && (160..352).contains(&y) {
+            image::Rgb([255u8, 255, 255])
+        } else {
+            image::Rgb([20u8, 60, 200])
+        }
+    });
+    let path = dir.path().join("figure.png");
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+
+    cmd_tx
+        .send(AppCommand::ImageAttach {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let staged = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
+                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("attach: {staged:?}");
+    assert!(
+        matches!(
+            staged,
+            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
+        ),
+        "the image was refused before it ever reached the model: {staged:?}"
+    );
+
+    // Turn 1 — the image is on the message being sent.
+    let (first, _) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "What is the background colour of this image, and what shape is in the centre? \
+         Answer in a few words.",
+    )
+    .await;
+    eprintln!("turn 1 reply: {first}");
+
+    // Turn 2 — nothing new is staged; the model can only answer from the replayed
+    // history, which is what this half of the test exists to prove.
+    let (second, _) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "What colour was the square in the image I sent? One word.",
+    )
+    .await;
+    eprintln!("turn 2 reply: {second}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let first = first.to_lowercase();
+    assert!(
+        first.contains("blue"),
+        "the model must see the background colour, got: {first}"
+    );
+    assert!(
+        first.contains("square"),
+        "the model must see the centred shape, got: {first}"
+    );
+    assert!(
+        second.to_lowercase().contains("white"),
+        "the image must still be visible a turn later, replayed from history, got: {second}"
+    );
+}
+
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
 /// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
 /// (the bootstrap profile is locked: it already has a default chat), set it to En, create a

@@ -1097,6 +1097,33 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.attach_page")),
             ],
         ));
+        // Image attachments get their own group rather than joining the one above:
+        // those budgets are counted in estimated tokens, these in images, megabytes
+        // and pixels, and one header over both would read as a single scale.
+        rows.extend(grouped(
+            loc.t("ui.settings.group.images"),
+            vec![
+                row(
+                    FieldId::ImageMaxCount,
+                    loc.t("ui.settings.field.image_max_count"),
+                    FieldKind::Text(self.config.images.max_count.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.image_max_count")),
+                // Shown in MB, stored in bytes (`mb_to_bytes`/`bytes_to_mb`).
+                row(
+                    FieldId::ImageMaxBytes,
+                    loc.t("ui.settings.field.image_max_bytes"),
+                    FieldKind::Text(bytes_to_mb(self.config.images.max_bytes).to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.image_max_bytes")),
+                row(
+                    FieldId::ImageDownscale,
+                    loc.t("ui.settings.field.image_downscale"),
+                    FieldKind::Text(self.config.images.downscale_px.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.image_downscale")),
+            ],
+        ));
         rows.extend(grouped(
             loc.t("ui.settings.group.notes"),
             vec![
