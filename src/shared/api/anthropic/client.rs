@@ -96,8 +96,7 @@ impl EngineBackend for AnthropicClient {
                             Some(Err(err)) => {
                                 let message = error::chain_text(&err);
                                 tracing::warn!(error = %message, "SSE stream error (anthropic)");
-                                yield ChatChunk::Error { message, transient: true };
-                                yield ChatChunk::Finished(FinishReason::Error);
+                                for chunk in ChatChunk::failure(message, true) { yield chunk; }
                                 break;
                             }
                             Some(Ok(event)) => {
@@ -171,11 +170,8 @@ impl EngineBackend for AnthropicClient {
                                             message = %e.message,
                                             "anthropic reported an error inside the stream"
                                         );
-                                        yield ChatChunk::Error {
-                                            message: error::stream_error_text(&e.name, &e.message),
-                                            transient,
-                                        };
-                                        yield ChatChunk::Finished(FinishReason::Error);
+                                        let message = error::stream_error_text(&e.name, &e.message);
+                                        for chunk in ChatChunk::failure(message, transient) { yield chunk; }
                                         break;
                                     }
                                     Ok(AntStreamEvent::Other) => {}

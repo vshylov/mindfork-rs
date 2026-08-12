@@ -130,8 +130,7 @@ impl EngineBackend for GeminiClient {
                             Some(Err(err)) => {
                                 let message = error::chain_text(&err);
                                 tracing::warn!(error = %message, "SSE stream error (gemini)");
-                                yield ChatChunk::Error { message, transient: true };
-                                yield ChatChunk::Finished(FinishReason::Error);
+                                for chunk in ChatChunk::failure(message, true) { yield chunk; }
                                 break;
                             }
                             Some(Ok(event)) => {
@@ -159,11 +158,8 @@ impl EngineBackend for GeminiClient {
                                         message = %e.message,
                                         "gemini reported an error inside the stream"
                                     );
-                                    yield ChatChunk::Error {
-                                        message: error::stream_error_text(&e.status, &e.message),
-                                        transient,
-                                    };
-                                    yield ChatChunk::Finished(FinishReason::Error);
+                                    let message = error::stream_error_text(&e.status, &e.message);
+                                    for chunk in ChatChunk::failure(message, transient) { yield chunk; }
                                     break;
                                 }
                                 // The prompt was blocked by the filter (candidates is empty) —

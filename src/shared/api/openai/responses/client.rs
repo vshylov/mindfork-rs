@@ -81,8 +81,7 @@ impl EngineBackend for ResponsesClient {
                             Some(Err(err)) => {
                                 let message = error::chain_text(&err);
                                 tracing::warn!(error = %message, "SSE stream error (openai responses)");
-                                yield ChatChunk::Error { message, transient: true };
-                                yield ChatChunk::Finished(FinishReason::Error);
+                                for chunk in ChatChunk::failure(message, true) { yield chunk; }
                                 break;
                             }
                             Some(Ok(event)) => {
@@ -169,11 +168,8 @@ impl EngineBackend for ResponsesClient {
                                             message = %e.message,
                                             "openai responses failed mid-stream"
                                         );
-                                        yield ChatChunk::Error {
-                                            message: error::stream_error_text(&code, &e.message),
-                                            transient,
-                                        };
-                                        yield ChatChunk::Finished(FinishReason::Error);
+                                        let message = error::stream_error_text(&code, &e.message);
+                                        for chunk in ChatChunk::failure(message, transient) { yield chunk; }
                                         break;
                                     }
                                     Ok(RespEvent::Error { code, message }) => {
@@ -186,11 +182,8 @@ impl EngineBackend for ResponsesClient {
                                             %message,
                                             "openai responses error event"
                                         );
-                                        yield ChatChunk::Error {
-                                            message: error::stream_error_text(&code, &message),
-                                            transient,
-                                        };
-                                        yield ChatChunk::Finished(FinishReason::Error);
+                                        let message = error::stream_error_text(&code, &message);
+                                        for chunk in ChatChunk::failure(message, transient) { yield chunk; }
                                         break;
                                     }
                                     // Other events (created/in_progress/part.added/…) and

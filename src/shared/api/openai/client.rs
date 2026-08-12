@@ -169,8 +169,7 @@ impl EngineBackend for OpenAiClient {
                                 // silent truncation.
                                 let message = error::chain_text(&err);
                                 tracing::warn!(error = %message, "SSE stream error");
-                                yield ChatChunk::Error { message, transient: true };
-                                yield ChatChunk::Finished(FinishReason::Error);
+                                for chunk in ChatChunk::failure(message, true) { yield chunk; }
                                 break;
                             }
                             Some(Ok(event)) => {
@@ -241,8 +240,7 @@ impl EngineBackend for OpenAiClient {
                                                 message = %e.message,
                                                 "engine reported an error inside the stream"
                                             );
-                                            yield ChatChunk::Error { message: e.message, transient: e.transient };
-                                            yield ChatChunk::Finished(FinishReason::Error);
+                                            for chunk in ChatChunk::failure(e.message, e.transient) { yield chunk; }
                                             break;
                                         }
                                         tracing::warn!(error = %err, data = %event.data, "failed to parse SSE chunk");

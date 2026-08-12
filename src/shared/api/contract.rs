@@ -260,6 +260,24 @@ pub enum ChatChunk {
     Finished(FinishReason),
 }
 
+impl ChatChunk {
+    /// The pair of chunks that ends a failed stream: the reason, then the
+    /// terminator.
+    ///
+    /// The **ordering is a contract**, which is why it lives here rather than
+    /// being spelled out at each of the eight places a client gives up (four
+    /// transport drops, four provider error payloads). A consumer that watches
+    /// only [`Finished`](ChatChunk::Finished) must still see it — that is what
+    /// keeps this addition backwards-compatible — and a client that yielded the
+    /// error alone would leave the turn generating forever.
+    pub fn failure(message: String, transient: bool) -> [ChatChunk; 2] {
+        [
+            ChatChunk::Error { message, transient },
+            ChatChunk::Finished(FinishReason::Error),
+        ]
+    }
+}
+
 /// An accumulator of tool calls from streaming deltas (by `index`).
 #[derive(Debug, Default)]
 pub struct ToolCallAccumulator {
