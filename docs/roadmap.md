@@ -6,12 +6,13 @@
 > A compact summary of what recently closed is at the end of the file.
 
 ## Most valuable next
-The unprioritized list below is an idea bank of equal weight; these three are
-called out as the highest-payoff tracks (real user pain / direct savings):
-1. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
-   reliability.
-2. **Multimodality (images)** (§Engine and reliability) — a big feature with
+The unprioritized list below is an idea bank of equal weight; these are called out
+as the highest-payoff tracks (real user pain / direct savings):
+1. **Multimodality (images)** (§Engine and reliability) — a big feature with
    demand.
+
+**Retry/backoff on cloud errors** left this list on 2026-08-12 — **done**, both
+stages (see "Recently closed").
 
 **Prompt caching** left this list on 2026-08-08: it is researched and measured,
 but the change the numbers argue for was rejected on behavioural grounds, so
@@ -178,18 +179,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   `env` map half is **done**, spec §9.6); UI management of other machines'
   entries ("forget this computer") — also where an explicit cleanup of MCP
   secrets orphaned by a rename or delete belongs.
-- **Retry/backoff on cloud provider network errors** — **stage 1 done, stage 2
-  open.** Design, verified provider semantics and the settled forks:
-  [cloud-retry-backoff.md](research/cloud-retry-backoff.md).
-  **Stage 1 (done)** closed the two adjacent defects the research turned up and
-  built the plumbing: a mid-answer failure is now reported instead of leaving a
-  silent fragment (Anthropic's in-stream `error` events were swallowed
-  entirely), the initial POST has a connect timeout and honours `Esc`, and the
-  status / `Retry-After` survive as fields on a typed `EngineError`.
-  **Stage 2 (open)** is the retry itself: a `RetryBackend` decorator over
-  cloud/external backends, retrying only before the first content chunk —
-  3 attempts, 1 s/2 s with jitter, `Retry-After` honoured up to 30 s, plus a
-  status-bar chip while it waits.
+- **Retry/backoff — groundwork** (the track itself is **done**, both stages, see
+  "Recently closed"; [cloud-retry-backoff.md](research/cloud-retry-backoff.md)):
+  - the same policy for the **other HTTP callers** (fork F9, recorded rather than
+    built): embeddings above all — `/reindex` re-embeds hundreds of chunks and one
+    `429` currently voids a batch — plus TTS and `youtube_watch`. Each has its own
+    degradation story today, so none is broken; they simply do not recover.
+  - **quota-vs-rate `429` discrimination** (F5): today a billing-flavoured `429`
+    costs two short waits before the body is shown. A marker blacklist in the
+    `OVERFLOW_MARKERS` shape would skip them; left out until the wasted seconds
+    actually bite.
+  - **`Retry-After` as an HTTP-date** is read as "no hint" — no provider we speak
+    to sends that form, so parsing it would be code with no caller.
 - **Configurable health-check cadence.** The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
   relaunch budget (≤3 per 5 min) are constants. Nothing has asked for them to be
@@ -364,6 +365,25 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Retry/backoff on cloud errors** (stages 1–2, complete): a transient provider
+  failure no longer costs the turn. The one-line roadmap item turned out to be
+  **three** defects, two of them invisible, and stage 1 closed those first: a
+  failure arriving *after* the answer started was silent — the partial reply stayed
+  on screen with nothing marking it a fragment, and on Claude an in-stream
+  `error` event (how a `529` arrives once a stream is accepted) was swallowed
+  entirely, so an overloaded truncation was byte-for-byte a normal completion;
+  the initial POST had no connect timeout and ignored `Esc` until the first bytes;
+  and the status was thrown away, which is what made a retry unimplementable.
+  Stage 2 added the retry itself as a **decorator** over the cloud and external
+  backends — three attempts, ~1 s then ~2 s with downward jitter, `Retry-After`
+  honoured as given up to 30 s and refused beyond it, the wait shown as a
+  status-bar chip and interruptible by `Esc`. The safety property falls out of one
+  rule rather than needing its own: a retry is allowed only while the turn is
+  *uncommitted*, and since a tool call counts as content, a round that emitted
+  calls can never be replayed — so no tool effect fires twice. Managed servers are
+  deliberately left to the health monitor and relaunch budget, which is the honest
+  recovery for a child that reloads for minutes. See
+  [cloud-retry-backoff.md](research/cloud-retry-backoff.md), spec §6.8.
 - **History compression / rolling summary** (stages 0–3, complete): a long
   conversation keeps fitting the model's context window. The older part is
   folded into a rolling summary — on request (`/compact`) and, once a turn's

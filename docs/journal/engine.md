@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -40,6 +40,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: impersonation sends the compacted conversation (done)
 - Post-M9: Grok (xAI) as a cloud provider (done)
 - Post-M9: engine failures stop being silent (stage 1 of retry/backoff) (done)
+- Post-M9: retry with backoff on transient cloud failures (stage 2, track complete) (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1634,3 +1635,81 @@ of the per-model parameter rules.
     so the failure read as "empty thoughts" with no word of an engine error. Every cloud
     smoke now prints it — and the silence of that line is what proved the Anthropic
     stream was clean rather than failing.
+
+### Post-M9: retry with backoff on transient cloud failures (stage 2, track complete) (done)
+- **What**: a transient provider failure (`429`, `5xx`, Anthropic's `529`
+  `overloaded_error`, a dropped connection) is retried automatically instead of ending
+  the turn. Stage 2 — and the last — of
+  [docs/research/cloud-retry-backoff.md](../research/cloud-retry-backoff.md); stage 1
+  made those failures visible and typed, which is what made this implementable at all.
+- **Shape: a decorator, not a change to the clients** (fork F1(a)). `RetryBackend`
+  wraps an `EngineBackend`, so one implementation serves all five providers and every
+  call site, the clients stay ignorant of policy, and the whole thing is testable
+  against a scripted inner backend with **no network**. Applied to **cloud and
+  external** only (F2(a)): a managed child that died reloads for minutes, and there the
+  health monitor plus `RestartBudget` are the honest recovery mechanism — a
+  three-attempt burst against a loading server is noise. External is wrapped *because*
+  it is usually cloud-shaped: that URL is as often a proxy or gateway (LiteLLM,
+  OpenRouter) as a local server, and a genuinely local one loses nothing since its
+  `503 Loading model` is pre-stream and rides out in a single wait.
+- **The safety property, and how it is enforced.** A retry is allowed only while the
+  turn is *uncommitted* — nothing but `Usage` has been yielded (F3(a)). The moment
+  `Text`/`Thoughts`/`ThoughtsSignature`/`ToolCall` appears the stream is handed over
+  untouched. Because **a tool call is content**, a round that emitted calls can never be
+  replayed, so no tool effect can fire twice: the property falls out of the commit rule
+  rather than needing a rule of its own. `Usage` deliberately does *not* commit —
+  Anthropic reports it in `message_start`, before a single token, so treating it as
+  content would have made every Anthropic turn unretryable. Retrying happens at this one
+  layer (the SRE single-layer rule): the orchestrator and the agentic loop re-issue
+  nothing.
+- **Why attempt 1 runs eagerly.** `chat_stream` awaits the first attempt before
+  returning, so a failure that will *not* be retried keeps exactly the shape stage 1
+  gave it — an `Err` for a pre-stream failure, an `Error` chunk for an in-stream one.
+  That matters beyond tidiness: `title.rs` turns an `Err` into "title generation failed:
+  <reason>" but an empty reply into a bare "title is empty", so a decorator that
+  converted every failure into chunks would have quietly degraded that message. Only
+  once a wait is unavoidable is the stream returned, with the remaining attempts running
+  inside it — which is the only way a chip can be shown *during* the wait rather than
+  after it.
+- **Policy** (F4, constants — F6(a)): `MAX_ATTEMPTS=3` (both first-party SDKs' default),
+  `1 s → 2 s` (`BASE_DELAY`×`BACKOFF_FACTOR`), jitter **downward** by ≤25% (the
+  openai-python shape: spreading retries earlier cannot push a client past a deadline it
+  was told about), `Retry-After` honoured **as given** up to `RETRY_AFTER_CAP=30 s` and
+  treated as non-retryable beyond it. Jitter reads the wall clock rather than adding a
+  `rand` dependency — the requirement is only that many clients not pick the same
+  instant, and it keeps working under `tokio::time::pause`, which freezes timers but not
+  `SystemTime`. Quota-vs-rate `429` discrimination stayed out (F5(a)): two short waits
+  cost seconds, and a rejected request is not billed.
+- **The wait is visible and interruptible** (F7(a)): `ChatChunk::Retry{attempt, max,
+  delay}` → `AppEvent::Retrying` → a quiet status-bar chip ("retrying 2/3 in 2 s"),
+  composed into the same `·`-separated strip as the background tasks and cleared by
+  whatever ends the wait — content or the turn finishing — so it cannot outlive what it
+  describes. The backoff sleeps inside a `select!` on the turn's `CancellationToken`,
+  so `Esc` ends the turn at once instead of after the wait (the `managed.rs` readiness
+  poll's shape).
+- **Tests**: 2026 unit (from 2011), 86 `#[ignore]`. Thirteen for the decorator, all
+  hermetic and instant under `start_paused` virtual time; the load-bearing assertion
+  throughout is the inner backend's **call count**, because "retried" and "did not
+  retry" are indistinguishable from the chunks alone when the outcome matches.
+  **Seven mutations, all caught**: making content stop committing the turn (the tool-replay
+  hazard), ignoring the `Retry-After` cap, making a permanent failure retryable, an
+  off-by-one budget that allows a fourth attempt, dropping cancellation from the backoff
+  sleep, forgetting to delegate `context_budget`, and not clearing the chip on content.
+  The `context_budget` one guards a real trap: it is how auto-compaction learns the
+  window (spec §6.7), so a decorator that answered `None` would have silently switched
+  the automatic trigger off for every wrapped backend.
+- **Smoke — GO** (2026-08-12, reference stack `gemma-4-31B_q4_0-it` + `bge-m3`, and all
+  four clouds with real keys). Nothing here can *force* a real `429`, so the live gate's
+  job was non-regression of every path now that each one runs through the decorator:
+  `OpenAiClient` 7/7, OpenAI Responses 3/3, Gemini 4/4, Grok 3/3, Anthropic 3/3, and the
+  orchestrator e2e set **30/30**, run twice — once before wrapping and once after
+  (**786 s → 771 s**, so the eager first attempt costs no measurable latency; zero
+  retries fired against a healthy stack, which is the other half of the claim).
+- **The plan's own testing gap, found by checking rather than assuming.** §8 of the
+  research called for live runs as "non-regression of every provider path **through the
+  decorator**" — and the live e2e harness builds its backend directly via
+  `MockSupervisor`, so the wrapping was covered by unit tests only. A decorator that
+  mishandled the head it replays, the commit point, or the delegated `context_budget`
+  would never have met a real model. Fixed by wrapping the harness's `live_backend()` the
+  same way the supervisor wraps an external server, which puts all 30 e2e tests through
+  it on every future run — and is what the 771 s figure above measures.

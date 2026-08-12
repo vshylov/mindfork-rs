@@ -2664,3 +2664,63 @@ fn compaction_shows_a_quiet_background_indicator() {
     let hint = s.background_hint().unwrap();
     assert!(!hint.contains(s.loc().t("ui.chat.bg.compact")), "{hint}");
 }
+
+/// The retry chip (spec §6.8): it carries the numbers, it composes with the
+/// background tasks, and — the part that matters — it cannot outlive the wait it
+/// describes.
+#[test]
+fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
+    let mut s = ChatScreen::new();
+    let gen_id = Uuid::new_v4();
+    s.begin_generation(gen_id);
+    assert_eq!(s.background_hint(), None);
+
+    s.set_retrying(gen_id, 2, 3, 4);
+    let hint = s.background_hint().expect("the chip must be shown");
+    for part in ["2", "3", "4"] {
+        assert!(
+            hint.contains(part),
+            "the numbers must reach the chip: {hint}"
+        );
+    }
+
+    // Composes with a concurrent background task rather than replacing it.
+    s.set_reflecting(true);
+    let hint = s.background_hint().unwrap();
+    assert!(hint.contains(s.loc().t("ui.chat.bg.reflect")), "{hint}");
+    assert!(hint.contains(" · "), "{hint}");
+
+    // Content ends the wait, so the chip goes.
+    s.push_chunk(gen_id, "answer");
+    let hint = s.background_hint().unwrap();
+    assert!(
+        !hint.contains('4'),
+        "content must clear the chip, leaving only the background task: {hint}"
+    );
+
+    // And so does the turn finishing, from the other direction.
+    s.set_retrying(gen_id, 3, 3, 2);
+    assert!(s.background_hint().unwrap().contains('3'));
+    s.finish_generation(gen_id, FinishReason::Error);
+    let hint = s.background_hint().unwrap();
+    assert!(
+        !hint.contains('3'),
+        "a finished turn must not leave a chip behind: {hint}"
+    );
+}
+
+/// A chip from a turn the user has already cancelled must not appear on the next
+/// one — the same staleness rule every streamed event follows (spec §4.4).
+#[test]
+fn a_retry_chip_from_a_stale_generation_is_dropped() {
+    let mut s = ChatScreen::new();
+    let current = Uuid::new_v4();
+    s.begin_generation(current);
+
+    s.set_retrying(Uuid::new_v4(), 2, 3, 9);
+    assert_eq!(
+        s.background_hint(),
+        None,
+        "a chip for another generation must be ignored"
+    );
+}

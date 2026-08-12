@@ -163,13 +163,17 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-12, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2011 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2026 unit tests
 green, 86 `#[ignore]`** (85 live smokes + the screenshot-dump regenerator). The
-most recent tracks: **cloud-error retry/backoff, stage 1** (engine failures stop
-being silent — a mid-answer failure is reported instead of leaving a fragment on
-screen, `Esc` interrupts a request that is still connecting, and status /
-`Retry-After` survive as fields on a typed `EngineError` for the retry decorator
-to come; [docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md)),
+most recent tracks: **cloud-error retry/backoff — track complete** (a transient
+`429`/`5xx`/`529` no longer costs the turn: a `RetryBackend` decorator over the
+cloud and external backends retries three times with jittered backoff, honouring
+`Retry-After` up to 30 s, and only while the turn is *uncommitted* — a tool call
+counts as content, so a round that emitted calls is never replayed and no tool
+effect fires twice; stage 1 first made such failures visible at all, since a
+mid-answer failure used to leave a silent fragment on screen and Anthropic's
+in-stream `error` events were swallowed entirely;
+[docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md), spec §6.8),
 the **mindfork.io website, S1–S4 — track complete** (a
 Zola site under `site/`, terminal-styled on the brand palette, **live at
 https://mindfork.io** — currently behind a temporary maintenance IP

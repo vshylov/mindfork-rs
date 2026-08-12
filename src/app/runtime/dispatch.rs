@@ -173,6 +173,12 @@ pub(super) fn apply_event(
                 settings.set_mcp_import_result(text);
             }
         }
+        AppEvent::Retrying {
+            generation_id,
+            attempt,
+            max,
+            delay_secs,
+        } => screen.set_retrying(generation_id, attempt, max, delay_secs),
         AppEvent::Error(message) => screen.push_error(&message),
         AppEvent::Notice(message) => screen.push_note(&message),
         // A roll can finish for a chat the user has since switched away from.

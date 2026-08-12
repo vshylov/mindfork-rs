@@ -211,9 +211,20 @@ async fn enable_all_tools(
 
 /// The real chat engine from `MINDFORK_ENGINE_URL` (for end-to-end smokes against a live
 /// model). `None` — the variable isn't set (the test is skipped).
+///
+/// **Wrapped in `RetryBackend`, exactly as the supervisor wraps an external
+/// server** (spec §6.8). Without this the whole live e2e set would bypass the
+/// decorator that sits on every real cloud and external turn — it would be covered
+/// by unit tests alone, and a mistake in how it hands a stream over (the head it
+/// replays, the commit point, the delegated `context_budget` the compaction trigger
+/// reads) would not show up against a real model. Since this backend does not fail
+/// transiently in practice, the wrapper is invisible here apart from being
+/// exercised.
 fn live_backend() -> Option<Arc<dyn EngineBackend>> {
     let client = crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")?;
-    Some(Arc::new(client) as Arc<dyn EngineBackend>)
+    Some(crate::shared::api::retry::RetryBackend::wrap(Arc::new(
+        client,
+    )))
 }
 
 /// The real embedder from `MINDFORK_EMBED_URL` (for live smokes — bge-m3 etc.);

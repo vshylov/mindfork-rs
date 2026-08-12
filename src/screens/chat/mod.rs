@@ -442,6 +442,11 @@ pub struct ChatScreen {
     /// Whether a background history compaction is running (a quiet indicator).
     /// See spec §6.7, docs/research/history-compression.md §6.5.
     compacting: bool,
+    /// The already-composed "retrying n/m in k s" label while the engine waits
+    /// before another attempt, or `None` (spec §6.8). Unlike its neighbours this is
+    /// a string rather than a flag, because the chip carries the numbers; it is
+    /// cleared by content or by the turn finishing, so it cannot outlive the wait.
+    retrying: Option<String>,
     /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
     /// status bar.
     speaking: bool,
@@ -518,6 +523,7 @@ impl ChatScreen {
             consolidating: false,
             self_consolidating: false,
             compacting: false,
+            retrying: None,
             speaking: false,
             esc_target: EscTarget::default(),
             rag: None,
@@ -658,6 +664,12 @@ impl ChatScreen {
         }
         if self.compacting {
             parts.push(self.loc.t("ui.chat.bg.compact"));
+        }
+        // Last, so a retry the user is waiting on reads at the end of the strip
+        // next to the generation indicator rather than in the middle of the
+        // background tasks.
+        if let Some(retry) = &self.retrying {
+            parts.push(retry);
         }
         (!parts.is_empty()).then(|| parts.join(" · "))
     }

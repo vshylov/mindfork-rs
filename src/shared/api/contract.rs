@@ -256,6 +256,22 @@ pub enum ChatChunk {
     /// consumer; it is carried now so the clients' classification lives in one
     /// place from the start.
     Error { message: String, transient: bool },
+    /// A transient failure is being retried, and the next attempt starts in
+    /// `delay`.
+    ///
+    /// Emitted by [`RetryBackend`](super::retry::RetryBackend) *before* it waits,
+    /// so the UI can say what is happening while it happens rather than after —
+    /// silence for up to [`RETRY_AFTER_CAP`](super::retry::RETRY_AFTER_CAP) is the
+    /// door left open (docs/lessons.md §4). `attempt` is the one about to start and
+    /// counts from 2; `max` is the total a turn gets.
+    ///
+    /// Never carries content, so a consumer may ignore it: the turn either
+    /// continues normally afterwards or ends with [`ChatChunk::Error`].
+    Retry {
+        attempt: u32,
+        max: u32,
+        delay: std::time::Duration,
+    },
     /// Generation finished.
     Finished(FinishReason),
 }

@@ -818,12 +818,13 @@ Details:
 ## 6. Engine layer (`shared/api`)
 
 The transport is hidden behind two traits — this gives engine swappability,
-multi-provider support, and mocking in tests. Two small modules are shared by
+multi-provider support, and mocking in tests. Three modules are shared by
 every client: **`error`** (`EngineError` — status, `Retry-After` and the
 provider's body kept as fields; `check_status`; the transient/permanent
-classification) and **`http`** (one `reqwest::Client` with a 10 s **connect**
+classification), **`http`** (one `reqwest::Client` with a 10 s **connect**
 timeout, and `send_cancellable`, which puts the initial POST inside the
-cancellation token's reach) — see spec §6.8. The rest is laid out by family
+cancellation token's reach) and **`retry`** (`RetryBackend`, below) — see
+spec §6.8. The rest is laid out by family
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
@@ -943,6 +944,22 @@ OpenAI-compatible proxy/gateway).
   turn. **Gemini** doesn't send its signature through `ThoughtsSignature`: it's
   per-tool-call, riding the `ToolCallDelta.thought_signature`→`ApiToolCall`→
   `ToolCallRecord` field (persisted). Other backends don't emit signatures.
+- **`RetryBackend`** (`retry.rs`) is an `EngineBackend` **decorator**, applied by
+  the supervisor to the **cloud** and **external** backends only (`cloud_chat_setup`
+  and `external_chat_setup`; managed is left bare — the health monitor and
+  `RestartBudget` own its recovery). It re-issues a request only while the turn is
+  *uncommitted* — nothing but `Usage` has been yielded — so a round that emitted a
+  tool call can never be replayed, and tool effects cannot double-fire. Attempt 1
+  runs **eagerly**, before the stream is returned, which is what preserves the
+  pre-decorator contract: a failure that will not be retried is still an `Err` for a
+  pre-stream failure and an `Error` chunk for an in-stream one. Only once a wait is
+  unavoidable does it return the stream and continue inside it, emitting
+  `ChatChunk::Retry` *before* sleeping (interruptibly, via the turn's
+  `CancellationToken`) so the UI can show the wait while it happens. Policy —
+  constants in the module: 3 attempts, ~1 s/~2 s with downward jitter,
+  `Retry-After` honoured up to 30 s. `context_budget` is delegated, which
+  auto-compaction depends on (spec §6.7). See spec §6.8 and
+  docs/research/cloud-retry-backoff.md.
 - **`ServerHandle`** (`managed.rs`) owns the child `llama-server`: the `Child`
   is handed to a **monitor task** (`spawn_monitor`), which `select!`s between
   its exit (raising an `exited` token) and a `kill` signal (raised in the

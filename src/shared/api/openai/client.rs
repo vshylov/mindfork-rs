@@ -672,6 +672,13 @@ mod ignored_smoke {
                 // Say why: a smoke whose engine failed mid-stream would otherwise
                 // assert on empty text with nothing in the output explaining it.
                 ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
+                ChatChunk::Retry {
+                    attempt,
+                    max,
+                    delay,
+                } => {
+                    eprintln!("retrying {attempt}/{max} in {delay:?}")
+                }
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;

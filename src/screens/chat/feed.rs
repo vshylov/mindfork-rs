@@ -280,10 +280,36 @@ impl ChatScreen {
         }
     }
 
+    /// Shows the "retrying" chip, or clears it when a retry produced content.
+    ///
+    /// The chip is transient by construction: every path that ends the wait —
+    /// content ([`Self::push_chunk`]/[`Self::push_thoughts`]) or the turn finishing
+    /// ([`Self::finish_generation`]) — clears it, so it cannot outlive what it
+    /// describes. Stale generations are dropped, as everywhere (spec §4.4).
+    pub fn set_retrying(&mut self, generation_id: Uuid, attempt: u32, max: u32, delay_secs: u64) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        self.retrying = Some(self.loc.tf(
+            "ui.chat.bg.retry",
+            &[
+                ("attempt", &attempt.to_string()),
+                ("max", &max.to_string()),
+                ("secs", &delay_secs.to_string()),
+            ],
+        ));
+    }
+
+    /// Clears the retry chip: whatever it was waiting for has happened.
+    fn clear_retrying(&mut self) {
+        self.retrying = None;
+    }
+
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {
         if self.current_gen != Some(generation_id) {
             return;
         }
+        self.clear_retrying();
         self.ensure_streaming_bubble();
         if let Some(last) = self.feed.last_mut() {
             // The round's first text after a tool call gets an empty-line
@@ -303,6 +329,7 @@ impl ChatScreen {
         if self.current_gen != Some(generation_id) {
             return;
         }
+        self.clear_retrying();
         self.ensure_streaming_bubble();
         if let Some(last) = self.feed.last_mut() {
             if self.pending_thoughts_sep {
@@ -349,6 +376,7 @@ impl ChatScreen {
         }
         self.generating = false;
         self.current_gen = None;
+        self.clear_retrying();
         if reason == FinishReason::Cancelled {
             self.push_note(self.loc.t("ui.chat.gen_cancelled"));
         }

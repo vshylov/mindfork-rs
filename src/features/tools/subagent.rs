@@ -118,6 +118,16 @@ impl Tool for CallSubagent {
                     ChatChunk::Text(t) => text.push_str(&t),
                     ChatChunk::Finished(_) => break,
                     // "Thoughts", tool deltas, and the subagent's token counter are ignored.
+                    // A background turn: the retry is worth a log line (a flaky provider is
+                    // otherwise invisible here) but has nothing to show — these turns have no
+                    // chip of their own.
+                    ChatChunk::Retry {
+                        attempt,
+                        max,
+                        delay,
+                    } => {
+                        tracing::info!(attempt, max, ?delay, "retrying a a sub-agent turn");
+                    }
                     ChatChunk::Error { message, .. } => {
                         tracing::warn!(error = %message, "engine error in a sub-agent call");
                     }

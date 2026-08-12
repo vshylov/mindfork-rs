@@ -399,6 +399,20 @@ pub enum AppEvent {
     /// Background task activity (auto-reflection/consolidation) for the quiet indicator
     /// in the status bar: `active=true` at the start, `false` on completion. See stage 5.
     BackgroundTask { kind: BackgroundKind, active: bool },
+    /// A transient provider failure is being retried; the next attempt starts in
+    /// `delay_secs`.
+    ///
+    /// Shown as a quiet, transient status-bar chip rather than a feed note: a note
+    /// per attempt would be noise, while saying nothing for up to half a minute is
+    /// the door left open (docs/lessons.md §4). Cleared by the next chunk or by
+    /// `Finished`. Carries `generation_id` so a chip from a turn the user has since
+    /// cancelled cannot linger (spec §4.4).
+    Retrying {
+        generation_id: Uuid,
+        attempt: u32,
+        max: u32,
+        delay_secs: u64,
+    },
     /// An error (for showing in UI).
     Error(String),
     /// A plain informational note in the feed — the counterpart of [`AppEvent::Error`]
