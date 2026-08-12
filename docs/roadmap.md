@@ -180,6 +180,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   secrets orphaned by a rename or delete belongs.
 - **Retry/backoff on cloud provider network errors** — clients currently
   surface the error body but don't retry (transient 429/5xx/timeouts).
+  **Researched (2026-08-12)** — verified provider semantics, the design and
+  its forks: [cloud-retry-backoff.md](research/cloud-retry-backoff.md);
+  awaiting fork decisions before implementation. The research also found two
+  adjacent defects the track's stage 1 closes: a mid-stream failure is
+  currently *silent* (no feed note; Anthropic's in-stream `error` events are
+  swallowed entirely), and the initial POST has no connect timeout and
+  ignores `Esc` until the connection opens.
 - **Configurable health-check cadence.** The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
   relaunch budget (≤3 per 5 min) are constants. Nothing has asked for them to be
