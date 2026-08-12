@@ -10,13 +10,14 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (5)
+## Entries (6)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
 - Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
 - Post-M9: website — S4: vector screenshots + the engine article (done)
 - Post-M9: website — the maintenance IP allowlist (done)
+- Post-M9: website — the hero fetch panel (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -196,3 +197,37 @@ read [lessons.md](../lessons.md).
   gets the index rewrite and the www redirect.
 - No Rust touched — 1977 unit tests / 85 `#[ignore]` unchanged; the
   stage's live run is the stack deploy itself.
+
+### Post-M9: website — the hero fetch panel (done)
+
+- **The hero's top-right quarter was empty on wide screens** — the copy is
+  capped (h1 800px, lede 690px) inside the 1100px wrap, so everything
+  right of the headline down to the chat screenshot was blank. It now
+  holds a neofetch-style **"at a glance" card** in the standard `.term`
+  chrome (branch `feat/site-hero-fetch-panel`): a box-drawing rendition
+  of the brand icon's topology (accent trunk, two `--branch` merges — the
+  same two-tone fork as `artwork/`) beside seven key→value rows: engine /
+  cloud / memory / tools / ui / runs on / license. Every value restates a
+  fact the features section already claims; the panel deliberately shows
+  **no fake command line** (its window title is "mindfork — at a glance")
+  — the only typed commands the site shows remain the real `$ mindfork`
+  and `$ mindfork demo`. Pure HTML+CSS; the theme toggle stays the site's
+  only JavaScript, and the same accent/branch hexes work in both palettes.
+- **Layout**: `.hero-cols` is `grid-template-columns: minmax(0,1fr) auto`
+  with the panel centered against the copy; the headline now wraps to
+  three lines at full width, which reads as intended. Below 1024px the
+  grid collapses and the panel is `display: none` — the single-column
+  hero is untouched, and the panel's facts all exist in the features
+  cards, so narrow viewports lose decoration, not information.
+- **Box-drawing art needs `line-height: 1`.** At the panel's original
+  1.45 the glyph boxes do not touch vertically, so the trunk and branches
+  rendered with a gap per row — the art must set its own line-height and
+  let the glyphs connect (same reason terminals draw box characters at
+  cell height exactly).
+- **A headless screenshot below ~500px wide lied** — see the lessons
+  entry; the DOM (scrollWidth = viewport, panel `display:none`) is what
+  proved the mobile layout unchanged.
+- No Rust touched — 1977 unit tests / 85 `#[ignore]` green
+  (`fmt`/`clippy`/`test` run for the record); an engine live run does not
+  apply (static output). Verified in the local preview (Zola 0.22.1) in
+  both themes at 1440/1280/1024/800px and via DOM checks at 375px.

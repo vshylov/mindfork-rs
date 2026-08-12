@@ -5,15 +5,40 @@
 
 {% block content %}
 <section class="hero">
-  <div class="wrap">
-    <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
-    <h1>{{ section.extra.hero_title }}</h1>
-    <p class="lede">{{ section.extra.hero_sub }}</p>
-    <div class="cta-row">
-      <a class="btn btn-primary" href="{{ config.extra.releases }}">Download</a>
-      <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
+  <div class="wrap hero-cols">
+    <div class="hero-copy">
+      <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
+      <h1>{{ section.extra.hero_title }}</h1>
+      <p class="lede">{{ section.extra.hero_sub }}</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="{{ config.extra.releases }}">Download</a>
+        <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
+      </div>
+      <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.</p>
     </div>
-    <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.</p>
+    <aside class="hero-fetch" aria-label="mindfork at a glance">
+      <div class="term">
+        <div class="term-bar"><span class="term-title">mindfork — at a glance</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+        <div class="fetch-body">
+          <pre class="fetch-art" aria-hidden="true">  │ <span class="b">│</span>
+  ├<span class="b">─╯</span>
+  │
+<span class="b">│</span> │
+<span class="b">╰─</span>┤
+  │
+  │</pre>
+          <dl class="fetch-data">
+            <div><dt>engine</dt><dd>llama.cpp — local GGUF</dd></div>
+            <div><dt>cloud</dt><dd>OpenAI · Anthropic · Gemini · Grok</dd></div>
+            <div><dt>memory</dt><dd>self-model · notes · RAG</dd></div>
+            <div><dt>tools</dt><dd>web · python · files · MCP</dd></div>
+            <div><dt>ui</dt><dd>ratatui · markdown · mermaid</dd></div>
+            <div><dt>runs on</dt><dd>Windows · Linux</dd></div>
+            <div><dt>license</dt><dd>MIT · no telemetry</dd></div>
+          </dl>
+        </div>
+      </div>
+    </aside>
   </div>
 </section>
 

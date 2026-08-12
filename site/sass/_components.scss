@@ -72,6 +72,59 @@
   max-width: 690px;
 }
 
+// Hero fetch panel — a neofetch-style "at a glance" card that fills the
+// hero's right column on wide screens. Pure HTML/CSS (no JS); the art
+// mirrors the brand icon's topology: accent trunk, two --branch merges.
+.hero-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 56px;
+  align-items: center;
+}
+.fetch-body {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 24px;
+  font-family: var(--font-mono);
+}
+.fetch-art {
+  margin: 0;
+  // line-height 1: box-drawing glyphs must touch vertically or the
+  // trunk/branches render with gaps between rows.
+  font: 700 20px/1 var(--font-mono);
+  color: var(--accent);
+  .b {
+    color: var(--branch);
+  }
+}
+.fetch-data {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  > div {
+    display: flex;
+  }
+  dt {
+    flex: none;
+    width: 7ch;
+    color: var(--muted);
+  }
+  dd {
+    margin: 0 0 0 2ch;
+    color: var(--fg);
+    white-space: nowrap;
+  }
+}
+@media (max-width: 1023px) {
+  .hero-cols {
+    display: block;
+  }
+  .hero-fetch {
+    display: none;
+  }
+}
+
 // Screenshot sections
 .shot {
   padding: 26px 0 40px;

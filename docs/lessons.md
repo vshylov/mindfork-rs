@@ -292,6 +292,15 @@ comparison that would have left a server running with an old secret.
 — *confirmation before dangerous tool calls*, *MCP servers in the settings window*,
 *history compression — stage 3*.
 
+**A headless Chromium screenshot narrower than ~500px fabricates overflow on
+Windows.** `--window-size=375` (old and new headless alike) still lays the page
+out at the OS minimum window width and then crops the image to the requested
+size, so text appears cut mid-word at the right edge — a defect the DOM does not
+reproduce (`scrollWidth` equalled the viewport in a real 375px browser). Judge
+narrow-viewport layout from DOM geometry, or capture at ≥500px and reason from
+the breakpoints.
+— *website — the hero fetch panel*.
+
 **A `200` is not proof a parameter works — send a wrong type to find out.** xAI
 silently ignores fields outside its request schema, so `{"totally_bogus_field": 1}`
 and `{"top_k": 40}` both answer `200`; sending `"top_k": "banana"` separates them —
