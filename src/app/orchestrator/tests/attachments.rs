@@ -5,34 +5,9 @@
 use super::*;
 use crate::app::events::FileProgress;
 use crate::entities::attachment::AttachMode;
-use crate::shared::api::ChatRequest;
 use crate::shared::api::EmbedRole;
-use crate::shared::api::contract::ChatStream;
 use crate::shared::config::AttachmentSettings;
-use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-
-/// An engine that remembers the last request it was given and replies with a
-/// fixed text — lets a test assert what actually reached the model.
-struct CapturingBackend {
-    last: Mutex<Option<ChatRequest>>,
-}
-
-#[async_trait::async_trait]
-impl EngineBackend for CapturingBackend {
-    async fn chat_stream(
-        &self,
-        req: ChatRequest,
-        _cancel: CancellationToken,
-    ) -> anyhow::Result<ChatStream> {
-        *self.last.lock().unwrap() = Some(req);
-        let s = async_stream::stream! {
-            yield ChatChunk::Text("ок".to_string());
-            yield ChatChunk::Finished(crate::shared::api::FinishReason::Stop);
-        };
-        Ok(Box::pin(s))
-    }
-}
 
 /// Writes a file into the orchestrator's temp directory and returns its path as
 /// a string (as the user would type it).
@@ -60,9 +35,7 @@ async fn wait_attached(
 
 #[tokio::test]
 async fn attached_file_reaches_the_model_and_persists_in_the_chat() {
-    let backend = Arc::new(CapturingBackend {
-        last: Mutex::new(None),
-    });
+    let backend = CapturingBackend::new();
     let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend.clone()));
     let path = write_file(&dir, "notes.md", "секретное число 4242");
 
@@ -81,7 +54,7 @@ async fn attached_file_reaches_the_model_and_persists_in_the_chat() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    let req = backend.last.lock().unwrap().clone().expect("a request");
+    let req = backend.last_request();
     let system = req.system.expect("a system prompt");
     assert!(system.contains("секретное число 4242"), "{system}");
     assert!(system.contains("notes.md"), "{system}");
@@ -103,9 +76,7 @@ async fn attached_file_reaches_the_model_and_persists_in_the_chat() {
 
 #[tokio::test]
 async fn removing_an_attachment_takes_it_out_of_the_request() {
-    let backend = Arc::new(CapturingBackend {
-        last: Mutex::new(None),
-    });
+    let backend = CapturingBackend::new();
     let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
     let path = write_file(&dir, "secret.txt", "содержимое-маркер");
 
@@ -128,7 +99,7 @@ async fn removing_an_attachment_takes_it_out_of_the_request() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    let req = backend.last.lock().unwrap().clone().unwrap();
+    let req = backend.last_request();
     let system = req.system.unwrap_or_default();
     assert!(
         !system.contains("содержимое-маркер"),

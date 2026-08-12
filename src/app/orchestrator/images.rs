@@ -43,6 +43,30 @@ pub(super) struct ImageAttachResult {
     pub(super) outcome: Result<MessageImage, String>,
 }
 
+/// Where a staging request's pixels come from — the **only** thing that differs between
+/// `/image attach` and `/image paste`. Everything around it (the cap, the capability
+/// probe, the background encode, the staging itself) is one path, in [`Orchestrator::stage_image`].
+enum ImageSource {
+    /// A file the user named. Decoded and normalized by its own extension.
+    File(String),
+    /// Pixels off the system clipboard, plus the synthetic name they will carry (there is
+    /// no file to take one from).
+    Clipboard {
+        image: Box<crate::app::events::ClipboardImage>,
+        name: String,
+    },
+}
+
+impl ImageSource {
+    /// Turns the source into an attachable image. Runs on the blocking pool.
+    fn prepare(self, cfg: &ImageSettings, loc: &'static Locale) -> Result<MessageImage, String> {
+        match self {
+            ImageSource::File(path) => prepare_image(std::path::Path::new(&path), cfg, loc),
+            ImageSource::Clipboard { image, name } => prepare_clipboard(*image, name, cfg, loc),
+        }
+    }
+}
+
 impl Orchestrator {
     /// Starts staging an image for the next message (`/image attach <path>`).
     pub(super) fn handle_image_attach(&mut self, path: String) {
@@ -50,6 +74,29 @@ impl Orchestrator {
         if path.is_empty() {
             return;
         }
+        self.stage_image(ImageSource::File(path));
+    }
+
+    /// Stages an image taken off the system clipboard (`Ctrl+V`, `/image paste`).
+    ///
+    /// The name is chosen here rather than in the background task because it depends on
+    /// what is *already* staged, which only the orchestrator knows.
+    pub(super) fn handle_image_paste(&mut self, image: crate::app::events::ClipboardImage) {
+        let Some(chat_id) = self.active_id else {
+            self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
+            return;
+        };
+        let name = self.free_clipboard_name(chat_id);
+        self.stage_image(ImageSource::Clipboard {
+            image: Box::new(image),
+            name,
+        });
+    }
+
+    /// The one staging path, whatever the pixels came from: refuse early if there is
+    /// nowhere or no room to put them, ask the engine whether it takes images at all, then
+    /// prepare off the command loop and hand the result back through [`ImageAttachResult`].
+    fn stage_image(&mut self, source: ImageSource) {
         let Some(chat_id) = self.active_id else {
             self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
             return;
@@ -94,70 +141,9 @@ impl Orchestrator {
                 });
                 return;
             }
-            let outcome = tokio::task::spawn_blocking(move || {
-                prepare_image(std::path::Path::new(&path), &cfg, loc)
-            })
-            .await
-            .unwrap_or_else(|e| Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())])));
-            let _ = tx.send(ImageAttachResult {
-                chat_id,
-                vision,
-                outcome,
-            });
-        });
-    }
-
-    /// Stages an image taken off the system clipboard (`Ctrl+V`, `/image paste`).
-    ///
-    /// Shares everything with [`Self::handle_image_attach`] except where the pixels come
-    /// from: the same capability probe, the same cap, the same background encode, the same
-    /// staging. What differs is that there is no file — hence a synthetic name and a
-    /// source that cannot collide, so pasting twice stages two images instead of the
-    /// second silently replacing the first.
-    pub(super) fn handle_image_paste(&mut self, image: crate::app::events::ClipboardImage) {
-        let Some(chat_id) = self.active_id else {
-            self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
-            return;
-        };
-        let cfg = self.config.images;
-        let staged = self.staged_images.get(&chat_id).map_or(0, Vec::len);
-        if staged >= cfg.max_count {
-            let msg = self.ui_locale().tf(
-                "ui.err.image_too_many",
-                &[("max", &cfg.max_count.to_string())],
-            );
-            self.fail_image(&msg);
-            return;
-        }
-        let name = self.free_clipboard_name(chat_id);
-        let loc = self.ui_locale();
-        let backend = self.engines.backend_if_ready(loc).ok();
-        let managed = self.config.engine.mode == ServerMode::Managed;
-        let tx = self.image_tx.clone();
-        tokio::spawn(async move {
-            let vision = match &backend {
-                Some(b) => b.vision().await,
-                None => VisionSupport::Unknown,
-            };
-            if vision == VisionSupport::Unsupported {
-                let key = if managed {
-                    "ui.err.image_no_vision_managed"
-                } else {
-                    "ui.err.image_no_vision"
-                };
-                let _ = tx.send(ImageAttachResult {
-                    chat_id,
-                    vision,
-                    outcome: Err(loc.t(key).to_string()),
-                });
-                return;
-            }
-            let outcome =
-                tokio::task::spawn_blocking(move || prepare_clipboard(image, name, &cfg, loc))
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())]))
-                    });
+            let outcome = tokio::task::spawn_blocking(move || source.prepare(&cfg, loc))
+                .await
+                .unwrap_or_else(|e| Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())])));
             let _ = tx.send(ImageAttachResult {
                 chat_id,
                 vision,

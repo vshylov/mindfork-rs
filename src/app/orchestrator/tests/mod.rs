@@ -23,6 +23,47 @@ fn test_embedder() -> Arc<dyn Embedder> {
     Arc::new(MockEmbedder::new(16))
 }
 
+/// An engine that remembers the last request it was given and replies with a fixed
+/// text — lets a test assert what actually *reached the model*, which is the only way to
+/// check an injection (a file in the system prompt, an image on a message) rather than
+/// the bookkeeping around it.
+///
+/// Shared by the attachment and image suites: they ask the same question of the same
+/// object, and two copies would drift apart exactly where they must not.
+pub(super) struct CapturingBackend {
+    pub(super) last: std::sync::Mutex<Option<crate::shared::api::ChatRequest>>,
+}
+
+impl CapturingBackend {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            last: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// The last request the engine was handed. Panics if no turn has run — a test that
+    /// asserts on "the request" when there was none is broken, not passing.
+    pub(super) fn last_request(&self) -> crate::shared::api::ChatRequest {
+        self.last.lock().unwrap().clone().expect("a request")
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for CapturingBackend {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        *self.last.lock().unwrap() = Some(req);
+        let s = async_stream::stream! {
+            yield ChatChunk::Text("ок".to_string());
+            yield ChatChunk::Finished(crate::shared::api::FinishReason::Stop);
+        };
+        Ok(Box::pin(s))
+    }
+}
+
 /// Spins up the orchestrator on a temp storage. Returns the channels and a handle.
 fn spawn_orch(
     backend: Option<Arc<dyn EngineBackend>>,
