@@ -154,7 +154,7 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
             // The system message goes into top-level `instructions`.
             ApiRole::System => continue,
             ApiRole::User => items.push(json!({
-                "type": "message", "role": "user", "content": m.content,
+                "type": "message", "role": "user", "content": user_content(m),
             })),
             ApiRole::Assistant => push_assistant_items(m, &mut items),
             ApiRole::Tool => items.push(json!({
@@ -165,6 +165,34 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
         }
     }
     items
+}
+
+/// The `content` of a user item: the bare string when there are no images, otherwise an
+/// array of typed parts — images (each behind its label) first, then the text.
+///
+/// Responses names its input parts `input_text`/`input_image` rather than the
+/// `text`/`image_url` of Chat Completions, and takes the payload as a `data:` URI on
+/// `image_url` directly (not nested in an object, as the older API does). A message with
+/// no images keeps serializing as a plain string, so nothing about an existing request
+/// changes — the same guarantee the Chat Completions builder makes.
+fn user_content(m: &ApiMessage) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts = Vec::with_capacity(m.images.len() * 2 + 1);
+    for image in &m.images {
+        if let Some(label) = &image.label {
+            parts.push(json!({ "type": "input_text", "text": label }));
+        }
+        parts.push(json!({
+            "type": "input_image",
+            "image_url": format!("data:{};base64,{}", image.mime, image.data),
+        }));
+    }
+    if !m.content.is_empty() {
+        parts.push(json!({ "type": "input_text", "text": m.content }));
+    }
+    json!(parts)
 }
 
 /// An assistant turn's `input` items: the reasoning item (which must precede
@@ -354,6 +382,61 @@ mod tests {
             },
             tools: vec![],
         }
+    }
+
+    /// The mirror of the Chat Completions guarantee (spec §9.10): with no images the
+    /// user item's `content` stays a bare string, not a one-element parts array.
+    #[test]
+    fn a_text_only_user_item_keeps_its_string_content() {
+        let json = serde_json::to_value(build_request(
+            &base_req(vec![ApiMessage::user("привет")]),
+            "gpt-5",
+            false,
+        ))
+        .unwrap();
+        assert_eq!(json["input"][0]["type"], "message");
+        assert!(
+            json["input"][0]["content"].is_string(),
+            "got {:?}",
+            json["input"][0]["content"]
+        );
+        assert_eq!(json["input"][0]["content"], "привет");
+    }
+
+    #[test]
+    fn images_become_input_image_parts_ahead_of_the_text() {
+        let msg =
+            ApiMessage::user("what is this?").with_images(vec![crate::shared::api::ApiImage::new(
+                "image/png",
+                "QUJD",
+                Some("Image #1 — \"a.png\":".into()),
+            )]);
+        let json =
+            serde_json::to_value(build_request(&base_req(vec![msg]), "gpt-5", false)).unwrap();
+        let parts = json["input"][0]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        // Responses names its input parts differently from Chat Completions, and takes
+        // the data URI on `image_url` directly rather than nested in an object.
+        assert_eq!(parts[0]["type"], "input_text");
+        assert_eq!(parts[0]["text"], "Image #1 — \"a.png\":");
+        assert_eq!(parts[1]["type"], "input_image");
+        assert_eq!(parts[1]["image_url"], "data:image/png;base64,QUJD");
+        assert_eq!(parts[2]["type"], "input_text");
+        assert_eq!(parts[2]["text"], "what is this?");
+    }
+
+    #[test]
+    fn an_image_only_item_carries_no_empty_text_part() {
+        let msg = ApiMessage::user("").with_images(vec![crate::shared::api::ApiImage::new(
+            "image/jpeg",
+            "QQ==",
+            None,
+        )]);
+        let json =
+            serde_json::to_value(build_request(&base_req(vec![msg]), "gpt-5", false)).unwrap();
+        let parts = json["input"][0]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["image_url"], "data:image/jpeg;base64,QQ==");
     }
 
     #[test]

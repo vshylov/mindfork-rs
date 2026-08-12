@@ -161,20 +161,24 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-12, version 0.9.5)
+## Status (2026-08-13, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2086 unit tests
-green, 87 `#[ignore]`** (86 live smokes + the screenshot-dump regenerator). The
-most recent tracks: **images in a message — stage 1** (`/image attach|remove|list`
+The **M0–M9** plan is done, plus extensive post-M9 work — **2095 unit tests
+green, 91 `#[ignore]`** (90 live smokes + the screenshot-dump regenerator). The
+most recent tracks: **images in a message — track complete**
+(`/image attach|remove|list`
 stages an image for the **next** message, which is what every provider's wire
-format actually models; it reaches a local `llama-server --mmproj` and Grok
-through one shared change, since their request shapes are byte-identical.
+format actually models; it reaches a local `llama-server --mmproj` and **all four
+clouds** — one shared change served llama.cpp and Grok, whose request shapes are
+byte-identical, and stage 2 added the Anthropic `image` block, Gemini
+`inline_data` and Responses `input_image` dialects.
 Decode/downscale/normalize happens once at attach time — xAI takes png/jpeg only,
 and an unscaled photo would ride every later turn — while a png already within the
 ceiling passes through byte for byte. Capability is *asked*
 (`EngineBackend::vision`, llama.cpp's `/props` `modalities.vision`), never guessed
 from a model name, and a request with no images stays byte-identical to what the
-app sent before the feature, which the prefix cache depends on;
+app sent before the feature — in **all four** wire formats, each with its own
+test, which is what makes the change safe for every stored conversation;
 [docs/research/multimodal-images.md](docs/research/multimodal-images.md), spec §9.10),
 **cloud-error retry/backoff — track complete** (a transient
 `429`/`5xx`/`529` no longer costs the turn: a `RetryBackend` decorator over the

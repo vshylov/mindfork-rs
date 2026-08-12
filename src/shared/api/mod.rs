@@ -42,3 +42,56 @@ pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> 
     let url = std::env::var(url_var).ok()?;
     Some(OpenAiClient::new(url).with_api_key(std::env::var(key_var).ok()))
 }
+
+/// The fixture every provider's vision smoke sends: a 512×512 blue field with a large
+/// white square in the middle, as base64 png (spec §9.10).
+///
+/// Generated rather than committed, and geometric rather than photographic, for the same
+/// reason the compaction smokes plant an invented code: the assertion has to be something
+/// no model could answer from pretraining, and something two humans would describe the
+/// same way. One helper for all four smokes so the four wire formats are compared on
+/// identical bytes — if one provider disagrees, the difference is the format, not the
+/// picture.
+#[cfg(test)]
+pub(crate) fn blue_square_png_base64() -> String {
+    use base64::Engine as _;
+    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
+        if (160..352).contains(&x) && (160..352).contains(&y) {
+            image::Rgb([255u8, 255, 255])
+        } else {
+            image::Rgb([20u8, 60, 200])
+        }
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encoding the fixture png cannot fail");
+    base64::engine::general_purpose::STANDARD.encode(&bytes)
+}
+
+/// What every vision smoke asks, and what its answer has to contain. Kept next to the
+/// fixture so a change to the picture cannot drift away from the question about it.
+#[cfg(test)]
+pub(crate) const VISION_PROMPT: &str = "What is the background colour of this image, and what shape is in the centre? \
+     Answer in a few words.";
+
+/// Asserts a vision answer really describes [`blue_square_png_base64`].
+///
+/// Both halves matter: a model that sees nothing still tends to produce a fluent
+/// sentence, and one that only guesses "blue" from the prompt's wording would miss the
+/// shape. Requiring both is what makes the smoke fail when an image never arrives.
+#[cfg(test)]
+pub(crate) fn assert_sees_blue_square(answer: &str, provider: &str) {
+    let lower = answer.to_lowercase();
+    assert!(
+        lower.contains("blue"),
+        "{provider}: the background colour is missing from the answer: {answer:?}"
+    );
+    assert!(
+        lower.contains("square"),
+        "{provider}: the centred shape is missing from the answer: {answer:?}"
+    );
+}

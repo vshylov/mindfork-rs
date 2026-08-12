@@ -104,6 +104,16 @@ pub struct ApiImage {
     pub label: Option<String>,
 }
 
+impl ApiImage {
+    pub fn new(mime: impl Into<String>, data: &str, label: Option<String>) -> Self {
+        Self {
+            mime: mime.into(),
+            data: std::sync::Arc::from(data),
+            label,
+        }
+    }
+}
+
 /// A conversation message passed to the model.
 #[derive(Debug, Clone)]
 pub struct ApiMessage {

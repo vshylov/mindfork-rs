@@ -44,13 +44,15 @@ fn images_to_api(images: &[MessageImage], loc: &Locale) -> Vec<ApiImage> {
     images
         .iter()
         .enumerate()
-        .map(|(i, image)| ApiImage {
-            mime: image.mime.clone(),
-            data: std::sync::Arc::from(image.data.as_str()),
-            label: Some(loc.tf(
-                "prompt.images.label",
-                &[("n", &(i + 1).to_string()), ("name", &image.name)],
-            )),
+        .map(|(i, image)| {
+            ApiImage::new(
+                image.mime.clone(),
+                &image.data,
+                Some(loc.tf(
+                    "prompt.images.label",
+                    &[("n", &(i + 1).to_string()), ("name", &image.name)],
+                )),
+            )
         })
         .collect()
 }

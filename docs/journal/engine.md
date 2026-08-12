@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: engine failures stop being silent (stage 1 of retry/backoff) (done)
 - Post-M9: retry with backoff on transient cloud failures (stage 2, track complete) (done)
 - Post-M9: images in a message — stage 1 (local + Grok) (done)
+- Post-M9: images in a message — stage 2 (the three cloud formats, track complete) (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1783,3 +1784,54 @@ several images, no empty trailing text part), and seven orchestrator integration
 is consumed by the send and not repeated, unstaging, idempotent restage, the count cap's
 message naming both ways out, an image-only message still sending). Live:
 `image_attachment_e2e_live` — two turns, so history replay is proven and not assumed.
+
+### Post-M9: images in a message — stage 2 (the three cloud formats, track complete) (done)
+
+**What.** The remaining three request builders learn image content parts, so `/image
+attach` now reaches every provider the app supports: Anthropic `image` blocks, Gemini
+`inline_data` parts, and OpenAI Responses `input_image`. Stage 1 had already covered
+llama.cpp and Grok, whose Chat Completions shapes are byte-identical. Track complete.
+
+**Why it was three small changes and not three clients.** The shapes were measured live
+before stage 1 was written (research §2.2), so nothing here was discovery — each backend
+already had the right seam. Anthropic's content was **already** a tagged block array, so
+it gained one variant; Gemini's parts are untyped `Value`, so it gained one `json!`;
+Responses builds `input` items as `Value`, so its user item's `content` widened from a
+string to an array. No contract change, no new persisted field, no migration.
+
+**The invariant that had to hold four times over.** Each builder emits parts **only** when
+a message carries images, and each has its own test asserting a text-only turn is
+unchanged — a bare string for Chat Completions and Responses, a single `text` block for
+Anthropic, one `text` part for Gemini. Stage 1 established why this matters for llama.cpp
+(prefix cache; Gemma's template routes the two content shapes through different branches);
+for the clouds the argument is narrower but the cost of getting it wrong is the same, and
+a per-backend test is cheaper than reasoning about which providers care.
+
+**Sub-decisions.**
+
+- **Order is uniform across all four backends**: images first, each behind its label part,
+  then the user's text. Anthropic documents images-before-text as the better-performing
+  order and nobody else cares, so one order everywhere means a prompt behaves the same
+  wherever it is sent.
+- **An image-only message emits no empty text part** in any format. On Anthropic this is
+  not cosmetic — a blank `text` block is a `400`.
+- **Base64 inline, not the upload APIs.** Anthropic's Files API and Gemini's Files API
+  both exist and both are recommended for large or reused media. Neither is used: the
+  payload is already in hand (the chat file stores it), downscaling at attach time keeps
+  it far inside Gemini's 20 MB request ceiling, and an upload service would add a second
+  lifecycle to manage for no gain at our sizes. Recorded here so it is not re-derived.
+- **One shared fixture for the four smokes** (`shared/api::blue_square_png_base64`, the
+  prompt and the assertion next to it): the same bytes reach all four providers, so a
+  disagreement is the wire format rather than the picture. Generated and geometric for the
+  same reason the compaction smokes plant an invented code — no model can answer it from
+  pretraining, and two humans describe it identically.
+
+**Smoke — GO** (2026-08-13, real keys, all four green on the first run, one tiny request
+each): Anthropic `claude-opus-4-8` — *"The background colour is blue, and there is a white
+square in the centre."*; Gemini `gemini-2.5-flash` — *"Blue background, white square."*;
+OpenAI `gpt-5.5` (Responses) — *"Blue background, white square."*; xAI `grok-4.5` — *"Blue
+background, white square."* The Grok smoke is new too: stage 1 shipped its wire but only
+llama.cpp exercised it live, and the same builder serving a cloud is worth its own
+assertion. The local `orchestrator::tests::live` set was re-run as well, since the
+`ApiImage` constructor introduced here sits on `request::message_to_api`, which is on
+every turn.

@@ -5,8 +5,10 @@ with the recommendations below** (F1 = staging onto the next message, F2 =
 base64 in the chat JSON, F3 = the `image` crate with downscale-on-attach, F4 =
 `/props` probe + optimistic unknown, F5 = per-image label parts on, F6 = a chip
 line in the feed, F7 = the stated caps, deferred items stay deferred).
-Stage 1 (local + Grok) is being implemented. Roadmap item #1
-("Multimodality (images)"). The request: attach images to
+**Implemented — both stages, track complete** (stage 1: local + Grok, 2026-08-12;
+stage 2: Anthropic, Gemini and OpenAI Responses, 2026-08-13). Outcome recorded in
+[docs/journal/engine.md](../journal/engine.md) and spec §9.10; what was left open
+on purpose is in [docs/roadmap.md](../roadmap.md). The request: attach images to
 messages with commands mirroring the file attachments —
 `/image attach <path>`, `/image remove <name|#N>`, `/image list` — so that
 vision-capable models can see them: the local Gemma 4 via `llama-server
