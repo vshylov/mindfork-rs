@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -32,6 +32,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — stage 3 (the interactive `mindfork demo`) (done)
 - Post-M9: demo screenshots — stage 4 (SVG writer for mindfork.io) (done)
 - Post-M9: demo screenshots — a uniform gallery and a richer hero (done)
+- Post-M9: demo screenshots — the canvas padding measured in cells (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1110,3 +1111,37 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   showcase-needle arrays became one-line match arms. The **drift gate is
   what made the refactor safe**: the committed dumps never changed, so
   green meant the parsed tables reproduce the old values byte for byte.
+
+### Post-M9: demo screenshots — the canvas padding measured in cells (done)
+
+- **The renders carried too wide a mat** (branch `fix/screenshot-padding`).
+  `tools/screenshots.py` framed every capture in a flat 24 px of canvas
+  background, and it read as unnatural in both places the images actually
+  live: on GitHub the README embeds the PNG at `width=900` on a page whose
+  background is not the app's, so the mat is a visible border; on
+  mindfork.io the SVG is scaled to the width of the site's terminal chrome
+  (~1.1×), so the mat grew with it and left the app's own frame floating
+  inside the window.
+- **The default is now one character cell** (`PAD_CELLS = 1`, ~10 px at the
+  default 16 px size) — computed from the font's true advance rather than
+  written as a pixel constant, so it stays proportional at any `--size`.
+  `--pad` still overrides it. One cell is what a terminal leaves around its
+  grid, which is the thing these images are pretending to be. The hero PNG
+  goes 1150×994 → 1122×966.
+- **The dumps did not change, so the drift gate stayed green** — this is a
+  rendering-side change only, and the images were regenerated from the
+  committed dumps (`python tools/screenshots.py`, `python
+  tools/site_sync_assets.py`, `zola build`).
+- **A regeneration trap worth writing down: JetBrains Mono is not installed
+  on every machine that has to re-render.** The TTFs are deliberately not
+  vendored, and probing found nothing here. The woff2 faces the site serves
+  (`site/static/fonts/`) are the *full* family, not a subset, so
+  `fontTools` (plus `brotli`) decompresses them back into TTFs for
+  `--font-dir`. Proof that this is faithful and not merely plausible:
+  re-rendering at the old `--pad 24` from those faces reproduced all ten
+  PNGs and all ten SVGs **byte for byte**. The set uses no bold-italic
+  cell, so the missing fourth face costs nothing.
+- **Verification.** The whole SVG delta is the shift: every `x`/`y` moved by
+  exactly −14 and the root box by −28, with the text and structure
+  otherwise identical. The site was rebuilt and both the hero and the 2×2
+  gallery checked in a browser.

@@ -62,6 +62,13 @@ OUT = REPO / "artwork" / "screenshots"
 # drawing at 1:1.
 SS = 2
 
+# Default canvas padding, measured in character cells rather than pixels so it
+# stays proportional at any `--size`. One cell (~10 px at 16 px) is the gutter a
+# terminal leaves around its grid: the earlier flat 24 px read as a wide mat
+# around the capture — obvious on GitHub and on mindfork.io, where the image is
+# scaled up inside the site's window chrome and the mat grew with it.
+PAD_CELLS = 1
+
 # Probed per variant; the first hit wins. Same roots as build-wordmarks.py,
 # plus the per-user Windows font directory.
 FONT_ROOTS = [
@@ -442,7 +449,11 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=OUT, help="output directory")
     parser.add_argument("--only", help="render only dumps whose stem contains this substring")
     parser.add_argument("--size", type=int, default=16, help="font size in px (default 16)")
-    parser.add_argument("--pad", type=int, default=24, help="canvas padding in px (default 24)")
+    parser.add_argument(
+        "--pad",
+        type=int,
+        help=f"canvas padding in px (default: {PAD_CELLS} character cell, ~10 px at size 16)",
+    )
     parser.add_argument("--font-dir", type=Path, help="directory with JetBrainsMono-*.ttf")
     parser.add_argument(
         "--format",
@@ -470,12 +481,16 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     faces_png = Faces(args.font_dir, args.size * SS) if args.format in ("png", "both") else None
     faces_svg = Faces(args.font_dir, args.size) if args.format in ("svg", "both") else None
+    # `em_advance` is size-independent, and --format always selects at least one
+    # writer, so whichever face got loaded answers the padding question for both.
+    em_advance = (faces_png or faces_svg).em_advance  # type: ignore[union-attr]
+    pad = args.pad if args.pad is not None else round(PAD_CELLS * args.size * em_advance)
     for dump in dumps:
         if faces_png:
-            out = render(dump, out_dir, faces_png, args.pad)
+            out = render(dump, out_dir, faces_png, pad)
             print(f"{dump.name} -> {out.relative_to(REPO)}")
         if faces_svg:
-            out = render_svg(dump, out_dir, faces_svg, args.pad, args.size, args.svg_font_base)
+            out = render_svg(dump, out_dir, faces_svg, pad, args.size, args.svg_font_base)
             print(f"{dump.name} -> {out.relative_to(REPO)}")
     missing = (faces_png.missing if faces_png else set()) | (
         faces_svg.missing if faces_svg else set()
