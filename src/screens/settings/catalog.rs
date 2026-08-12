@@ -746,6 +746,15 @@ impl SettingsScreen {
                     FieldKind::Toggle(self.config.mcp.enabled),
                 )
                 .describe(loc.t("ui.settings.desc.mcp_enabled")),
+                // Next to the master switch rather than in "Tools": it is about what a
+                // *server* may hand the model, and it is the second thing to reach for
+                // after deciding to run one at all (spec §9.10).
+                row(
+                    FieldId::TMcpImages,
+                    loc.t("ui.settings.field.mcp_images"),
+                    FieldKind::Toggle(self.config.tools.mcp_images),
+                )
+                .describe(loc.t("ui.settings.desc.mcp_images")),
             ],
         );
         rows.extend(grouped(

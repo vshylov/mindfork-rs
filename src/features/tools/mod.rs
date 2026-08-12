@@ -103,6 +103,12 @@ pub struct ToolContext {
     pub history: Option<Arc<crate::features::compaction::HistoryView>>,
     /// Page size for `history_read`, in estimated tokens (`config.compaction`).
     pub history_page_tokens: usize,
+    /// Whether an image returned by an MCP tool may be shown to the model
+    /// (`config.tools.mcp_images`, fork F3 of docs/research/mcp-tool-images.md).
+    /// Off means the result keeps its `[image content omitted]` placeholder — the
+    /// server and its text results keep working, which is the point of the switch
+    /// being separate from enabling the server.
+    pub mcp_images: bool,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -138,6 +144,9 @@ pub struct ToolParams {
     /// against what window are decisions already taken by the time a tool runs,
     /// and the turn snapshot encodes their outcome.
     pub history_page_tokens: usize,
+    /// Whether an MCP tool's image blocks may reach the model
+    /// (`config.tools.mcp_images`). See [`ToolContext::mcp_images`].
+    pub mcp_images: bool,
 }
 
 impl ToolParams {
@@ -149,6 +158,7 @@ impl ToolParams {
             recall_includes_self: cfg.notes.recall_includes_self,
             attachments: cfg.attachments,
             history_page_tokens: cfg.compaction.page_tokens,
+            mcp_images: cfg.tools.mcp_images,
         }
     }
 }
@@ -188,6 +198,7 @@ impl ToolContext {
             attachment_cfg: params.attachments,
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
+            mcp_images: params.mcp_images,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -290,6 +301,23 @@ pub enum ChatEffect {
 pub struct ToolOutcome {
     pub result: String,
     pub effects: Vec<ChatEffect>,
+    /// Images the tool produced, to be shown to the model alongside `result`
+    /// (spec §9.10, docs/research/mcp-tool-images.md). Raw base64 + MIME as the tool
+    /// handed them over; the orchestrator downscales, normalizes and caps them on the
+    /// same path a user's `/image attach` takes.
+    ///
+    /// The field sits on the contract rather than inside the MCP branch (fork F5) so a
+    /// future built-in tool with a picture to return needs no rework — but **only** the
+    /// MCP adapter fills it today, and nothing invents a consumer for a path with no
+    /// producer.
+    pub images: Vec<ToolImage>,
+}
+
+/// An image a tool returned: base64 payload plus the MIME type it declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolImage {
+    pub mime: String,
+    pub data: String,
 }
 
 impl ToolOutcome {
@@ -298,6 +326,7 @@ impl ToolOutcome {
         Self {
             result: result.into(),
             effects: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -306,7 +335,14 @@ impl ToolOutcome {
         Self {
             result: result.into(),
             effects,
+            images: Vec::new(),
         }
+    }
+
+    /// Attaches images the tool produced (builder-style).
+    pub fn with_images(mut self, images: Vec<ToolImage>) -> Self {
+        self.images = images;
+        self
     }
 }
 
@@ -700,6 +736,7 @@ pub(crate) mod testkit {
             recall_includes_self: false,
             history_page_tokens: crate::shared::config::DEFAULT_COMPACTION_PAGE_TOKENS,
             attachments: crate::shared::config::AttachmentSettings::default(),
+            mcp_images: true,
         }
     }
 

@@ -49,6 +49,10 @@ pub struct FeedToolCall {
     pub result: String,
     /// Offset (in bytes) into `FeedMessage::text` after which the call was made.
     pub text_offset: usize,
+    /// How many images the call returned (spec §9.10). The block shows a chip rather
+    /// than the picture — rendering pixels in a terminal is its own roadmap item, and
+    /// the count is what makes an otherwise invisible cost visible.
+    pub images: usize,
 }
 
 /// An item of the message feed.
@@ -115,6 +119,7 @@ impl FeedMessage {
                 arguments: tc.arguments.to_string(),
                 result: tc.result.clone().unwrap_or_default(),
                 text_offset: off,
+                images: tc.images,
             })
             .collect();
         Some(Self {
@@ -1405,6 +1410,21 @@ fn push_tool(
         width,
         head_style,
     );
+    // An image the tool returned is in the prompt but nowhere on screen (spec §9.10):
+    // the feed renders text, so without this chip the only visible trace would be
+    // whatever the tool happened to say. Shown in both modes — it is not a detail that
+    // `Ctrl+O` reveals, it is part of what the call did.
+    if tool.images > 0
+        && let Some(line) = lines.last_mut()
+    {
+        line.spans.push(Span::styled(
+            format!(
+                "  {}",
+                loc.tf("ui.feed.tool_images", &[("n", &tool.images.to_string())])
+            ),
+            palette.muted_style(),
+        ));
+    }
     if !expanded {
         // Nothing to reveal — no pill (an argument-less call whose result hasn't
         // arrived yet).
@@ -1666,6 +1686,7 @@ mod tests {
             arguments: "{\"content\":\"x\"}".into(),
             result: "Заметка сохранена".into(),
             text_offset: m.text.len(),
+            images: 0,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let joined: String = lines
@@ -1699,6 +1720,7 @@ mod tests {
             arguments: "{\"code\":\"a = 1\\nprint(a)\"}".into(),
             result: "stdout:\n1".into(),
             text_offset: m.text.len(),
+            images: 0,
         });
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
         assert!(out.contains("python_exec"), "the header stays: {out}");
@@ -1730,6 +1752,7 @@ mod tests {
             arguments: "{\"content\":\"x\"}".into(),
             result: "Заметка сохранена".into(),
             text_offset: m.text.len(),
+            images: 0,
         });
         feed.toggle_tools();
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
@@ -1759,6 +1782,7 @@ mod tests {
             .into(),
             result: "ok".into(),
             text_offset: 0,
+            images: 0,
         });
         let collapsed = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 100, ru()));
         assert!(collapsed.contains('…'), "collapsed truncates: {collapsed}");
@@ -1815,6 +1839,7 @@ mod tests {
             arguments: "{}".into(),
             result: "12:00".into(),
             text_offset: 0,
+            images: 0,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 60, ru()));
         let i_head = rows
@@ -1840,6 +1865,7 @@ mod tests {
             arguments: String::new(),
             result: String::new(),
             text_offset: 0,
+            images: 0,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         assert!(out.contains("current_time"), "the header stays: {out}");
@@ -1860,6 +1886,7 @@ mod tests {
                 arguments: "{}".into(),
                 result: "saved".into(),
                 text_offset: m.text.len(),
+                images: 0,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, loc));
             assert!(
@@ -1886,6 +1913,7 @@ mod tests {
                 arguments: r#"{"code":"import sys; sys.exit(3)"}"#.into(),
                 result: format!("stderr:\nboom\n\n{} 3", loc.t("python.console.exit")),
                 text_offset: m.text.len(),
+                images: 0,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
             // Rendered under `ru()` above on purpose: the labels must follow the
@@ -1907,6 +1935,7 @@ mod tests {
             arguments: r#"{"code":"x"}"#.into(),
             result: format!("stdout:\nhi\n\n{} 3", en.t("python.console.exit")),
             text_offset: m.text.len(),
+            images: 0,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, en));
         assert!(
@@ -2013,6 +2042,7 @@ mod tests {
             arguments: "{}".into(),
             result: "ок".into(),
             text_offset: m.text.len(),
+            images: 0,
         });
         let user = msg(FeedRole::User, "привет", "");
         let compat = Palette::default().with_compat(true);
@@ -2043,6 +2073,7 @@ mod tests {
             arguments: r#"{"code":"print(42)"}"#.into(),
             result: "stdout:\n42".into(),
             text_offset: m.text.len(),
+            images: 0,
         });
         let palette = Palette::for_theme(crate::shared::config::Theme::Dark);
         let lines = feed.build_lines(&[m], &palette, 80, ru());
@@ -2076,6 +2107,7 @@ mod tests {
             arguments: r#"{"code":"raise SystemExit(1)"}"#.into(),
             result: "stderr:\nTraceback here\n\nкод возврата: 1".into(),
             text_offset: 0,
+            images: 0,
         });
         let lines = feed.build_lines(&[m], &palette, 80, ru());
         // The line with the stderr text is colored the error color.
@@ -2108,6 +2140,7 @@ mod tests {
             arguments: "{}".into(),
             result: "ясно".into(),
             text_offset: off,
+            images: 0,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let rows: Vec<String> = lines
@@ -2147,6 +2180,7 @@ mod tests {
             arguments: String::new(),
             result: String::new(),
             text_offset: "до".len(),
+            images: 0,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
@@ -2180,6 +2214,7 @@ mod tests {
             arguments: r#"{"code":"print(1)"}"#.into(),
             result: "stdout:\n1".into(),
             text_offset: "Считаю.".len(),
+            images: 0,
         });
         let next = msg(FeedRole::User, "дальше", "");
         let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
@@ -2209,6 +2244,7 @@ mod tests {
                 arguments: String::new(),
                 result: String::new(),
                 text_offset: 0,
+                images: 0,
             });
         }
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
@@ -2229,6 +2265,7 @@ mod tests {
             arguments: String::new(),
             result: long.trim_end().into(),
             text_offset: 0,
+            images: 0,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 30, ru());
         // The result isn't truncated (no "…") and is laid out across several rows (rail + gutter
@@ -2262,6 +2299,7 @@ mod tests {
         let mut a1 = Message::assistant("Первое сообщение.");
         a1.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "send_followup_message".into(),
             arguments: serde_json::json!({}),
@@ -2295,6 +2333,7 @@ mod tests {
         let mut a1 = Message::assistant("Ищу.");
         a1.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "note_save".into(),
             arguments: serde_json::json!({}),
@@ -2558,6 +2597,7 @@ mod tests {
         let mut r1 = Message::assistant("Ищу.");
         r1.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "note_save".into(),
             arguments: serde_json::json!({}),
@@ -3214,6 +3254,7 @@ mod tests {
                 arguments: "{}".into(),
                 result: "ок".into(),
                 text_offset: m.text.len(),
+                images: 0,
             });
             m
         };

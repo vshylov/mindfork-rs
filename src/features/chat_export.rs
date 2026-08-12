@@ -146,6 +146,7 @@ mod tests {
         m.thoughts = Some("я думаю".into());
         m.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "note_save".into(),
             arguments: serde_json::json!({"text": "заметка"}),
@@ -264,6 +265,7 @@ mod tests {
         let mut m = Message::assistant("");
         m.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "calculate".into(),
             arguments: serde_json::json!({"expr": "2+2"}),
@@ -279,6 +281,7 @@ mod tests {
         let mut m2 = Message::assistant("");
         m2.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
+            images: 0,
             id: "c1".into(),
             name: "calculate".into(),
             arguments: serde_json::json!({}),

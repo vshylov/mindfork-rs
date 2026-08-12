@@ -380,6 +380,7 @@ mod tests {
             arguments: serde_json::json!({}),
             result: result.map(str::to_string),
             thought_signature: None,
+            images: 0,
         }];
         m
     }

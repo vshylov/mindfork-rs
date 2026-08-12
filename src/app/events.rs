@@ -377,6 +377,10 @@ pub enum AppEvent {
         name: String,
         arguments: String,
         result: String,
+        /// How many images the call returned (spec §9.10). A count, not the pixels: the
+        /// feed shows a chip, and megabytes of base64 have no business travelling to a
+        /// widget that renders one line.
+        images: usize,
     },
     /// The assistant decided to write **another** message (the tool
     /// `send_followup_message`): UI finishes the current bubble and starts a new one,

@@ -189,6 +189,7 @@ impl ChatScreen {
         name: String,
         arguments: String,
         result: String,
+        images: usize,
     ) {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
@@ -201,6 +202,7 @@ impl ChatScreen {
                 arguments,
                 result,
                 text_offset,
+                images,
             });
             // Separate the next round's text/thoughts with a separator (matching a reload).
             self.pending_text_sep = true;

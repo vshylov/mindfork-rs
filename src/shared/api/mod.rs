@@ -78,6 +78,56 @@ pub(crate) fn blue_square_png_base64() -> String {
 pub(crate) const VISION_PROMPT: &str = "What is the background colour of this image, and what shape is in the centre? \
      Answer in a few words.";
 
+/// The fixture the **tool-result** image smokes send: a green field with a large white
+/// circle, as base64 png (spec §9.10).
+///
+/// Deliberately a *different* shape and colour from [`blue_square_png_base64`], and the
+/// reason is recorded in docs/research/mcp-tool-images.md §2.1: with a blue-square
+/// fixture every arm answered "blue background, white square" — including a control that
+/// was sent **no image at all**. The model was answering the question, not the picture.
+/// A fixture a plausible guess does not match is what makes these smokes able to fail.
+#[cfg(test)]
+pub(crate) fn green_circle_png_base64() -> String {
+    use base64::Engine as _;
+    let buf = image::ImageBuffer::from_fn(256, 256, |x, y| {
+        let (dx, dy) = (x as i64 - 128, y as i64 - 128);
+        if dx * dx + dy * dy < 60 * 60 {
+            image::Rgb([255u8, 255, 255])
+        } else {
+            image::Rgb([30u8, 160, 60])
+        }
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encoding the fixture png cannot fail");
+    base64::engine::general_purpose::STANDARD.encode(&bytes)
+}
+
+/// What a tool-result image smoke asks about [`green_circle_png_base64`].
+#[cfg(test)]
+pub(crate) const TOOL_VISION_PROMPT: &str = "What is the background colour of the screenshot, and what shape is in the centre? \
+     Answer briefly.";
+
+/// Asserts an answer really describes [`green_circle_png_base64`] — and, for the control
+/// arm, that it does **not**.
+///
+/// The control is the whole point: a model that cannot see the image still answers
+/// confidently (measured: "light blue background, white five-pointed star"), so a smoke
+/// without one passes on a feature that never worked.
+#[cfg(test)]
+pub(crate) fn assert_sees_green_circle(answer: &str, expected: bool, label: &str) {
+    let lower = answer.to_lowercase();
+    let saw = lower.contains("green") && lower.contains("circle");
+    assert_eq!(
+        saw, expected,
+        "{label}: expected sees_green_circle={expected}, got {answer:?}"
+    );
+}
+
 /// Asserts a vision answer really describes [`blue_square_png_base64`].
 ///
 /// Both halves matter: a model that sees nothing still tends to produce a fluent

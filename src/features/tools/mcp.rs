@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
-use super::{Tool, ToolContext, ToolOutcome, meta};
+use super::{Tool, ToolContext, ToolImage, ToolOutcome, meta};
 use crate::entities::profile::ToolId;
 use crate::shared::i18n::Locale;
 use crate::shared::mcp::{McpConnection, McpToolInfo};
@@ -203,11 +203,26 @@ impl Tool for McpTool {
         } else {
             result.text
         };
-        Ok(ToolOutcome::text(clip_result(
-            &text,
-            self.max_result_chars,
-            ctx.loc,
-        )))
+        // Images ride alongside the text rather than inside it (spec §9.10). The switch
+        // is consulted here, at the boundary where third-party pixels would enter the
+        // conversation: a user who turned it off keeps the server and its text results,
+        // and the placeholder the text already carries still says an image existed.
+        let images: Vec<ToolImage> = if ctx.mcp_images {
+            result
+                .images
+                .into_iter()
+                .map(|i| ToolImage {
+                    mime: i.mime,
+                    data: i.data,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(
+            ToolOutcome::text(clip_result(&text, self.max_result_chars, ctx.loc))
+                .with_images(images),
+        )
     }
 
     fn group(&self) -> meta::ToolGroup {
@@ -337,6 +352,84 @@ mod tests {
         assert!(out.effects.is_empty());
         assert!(out.result.starts_with("01234567890123456789"));
         assert!(out.result.contains("усеч"), "{}", out.result);
+    }
+
+    /// A server that answers every call with one text block and one image block.
+    fn conn_with_image_reply() -> Arc<McpConnection> {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_r, client_w) = tokio::io::split(client_io);
+        let (server_r, mut server_w) = tokio::io::split(server_io);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(server_r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                let Some(id) = msg.get("id").cloned() else {
+                    continue;
+                };
+                let reply = json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "content": [
+                        { "type": "text", "text": "Screenshot taken." },
+                        { "type": "image", "data": "QUJD", "mimeType": "image/png" },
+                    ],
+                    "isError": false
+                }});
+                if server_w
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Arc::new(McpConnection::over(client_r, client_w))
+    }
+
+    /// The `tools.mcp_images` switch decides at the boundary where third-party pixels
+    /// would enter the conversation (fork F3 of docs/research/mcp-tool-images.md). Both
+    /// directions are asserted, because a switch that only ever reads one way is
+    /// indistinguishable from no switch at all.
+    #[tokio::test]
+    async fn the_switch_decides_whether_a_server_image_reaches_the_model() {
+        let info = McpToolInfo {
+            name: "screenshot".into(),
+            description: "Take a screenshot".into(),
+            input_schema: json!({ "type": "object" }),
+        };
+
+        let tool = McpTool::new(
+            "test",
+            &info,
+            conn_with_image_reply(),
+            Duration::from_secs(5),
+            1000,
+        );
+        let (_d, _s, mut ctx) = testkit::ctx_with_storage(Uuid::new_v4());
+        ctx.mcp_images = true;
+        let out = tool.invoke(&ctx, json!({})).await.unwrap();
+        assert_eq!(
+            out.images,
+            vec![ToolImage {
+                mime: "image/png".into(),
+                data: "QUJD".into(),
+            }]
+        );
+        assert_eq!(out.result, "Screenshot taken.");
+
+        // Off: the server and its text keep working, only the pixels stay behind.
+        let tool = McpTool::new(
+            "test",
+            &info,
+            conn_with_image_reply(),
+            Duration::from_secs(5),
+            1000,
+        );
+        ctx.mcp_images = false;
+        let out = tool.invoke(&ctx, json!({})).await.unwrap();
+        assert!(out.images.is_empty());
+        assert_eq!(out.result, "Screenshot taken.");
     }
 
     #[tokio::test]

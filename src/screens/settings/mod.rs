@@ -559,6 +559,9 @@ enum FieldId {
     /// Ask before the agentic loop runs a tool marked dangerous
     /// (`tools.confirm_dangerous`, spec §9.8).
     TConfirmDangerous,
+    /// Let an image returned by an MCP tool reach the model (`tools.mcp_images`,
+    /// spec §9.10).
+    TMcpImages,
     EMode,
     EUrl,
     EBinary,

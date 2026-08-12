@@ -27,10 +27,13 @@ fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
                 Some(ApiMessage::assistant_tool_calls(&message.text, calls))
             }
         }
-        MessageRole::Tool => message
-            .tool_call_id
-            .as_ref()
-            .map(|id| ApiMessage::tool(id, &message.text)),
+        // A tool result can carry images too (spec §9.10): an MCP screenshot tool is the
+        // first producer. Four of the five engines accept them inside the tool result
+        // itself; Gemini refuses with a hard 400 and its builder moves them just after it
+        // (docs/research/mcp-tool-images.md §2.2, fork F1).
+        MessageRole::Tool => message.tool_call_id.as_ref().map(|id| {
+            ApiMessage::tool(id, &message.text).with_images(images_to_api(&message.images, loc))
+        }),
     }
 }
 

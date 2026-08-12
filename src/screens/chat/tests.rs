@@ -37,7 +37,7 @@ fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
     s.push_user_message("собери отзывы".into());
     s.begin_generation(id);
     // The assistant called a tool (the assistant bubble is text-empty)...
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into());
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into(), 0);
     // ...the limit is reached — a note goes into the feed.
     s.push_error("Достигнут лимит раундов инструментов (8) — свожу итог.");
     // The forced synthesis streams the final reply.
@@ -93,6 +93,7 @@ fn live_stream_with_tool_matches_reload() {
         "web_search".into(),
         "{\"q\":\"погода\"}".into(),
         "ясно".into(),
+        0,
     );
     s.push_chunk(id, "Сейчас ясно.");
     s.finish_generation(id, FinishReason::Stop);
@@ -106,6 +107,7 @@ fn live_stream_with_tool_matches_reload() {
     let mut r1 = Message::assistant("Ищу погоду.");
     r1.tool_calls = vec![ToolCallRecord {
         thought_signature: None,
+        images: 0,
         id: "c1".into(),
         name: "web_search".into(),
         arguments: serde_json::json!({"q": "погода"}),
@@ -154,6 +156,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     let mut a1 = Message::assistant("Первое сообщение.");
     a1.tool_calls = vec![ToolCallRecord {
         thought_signature: None,
+        images: 0,
         id: "c1".into(),
         name: "send_followup_message".into(),
         arguments: serde_json::json!({}),
@@ -402,7 +405,7 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
     assert!(!s.feed_view.is_following());
 
     // Arrives on its own — the position is kept.
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into());
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into(), 0);
     assert!(!s.feed_view.is_following(), "a tool card must not yank");
     s.push_note("заметка");
     assert!(!s.feed_view.is_following(), "a note must not yank");
@@ -419,7 +422,7 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
     let id2 = gen_id();
     s.begin_generation(id2);
     assert!(s.feed_view.is_following());
-    s.push_tool_call(id2, "web_search".into(), "{}".into(), "ок".into());
+    s.push_tool_call(id2, "web_search".into(), "{}".into(), "ок".into(), 0);
     s.push_note("ещё заметка");
     assert!(s.feed_view.is_following());
 }
@@ -1717,7 +1720,7 @@ fn every_feed_mutator_marks_content_change() {
     s.push_thoughts(id, "мысль");
     assert!(s.take_full_redraw(), "push_thoughts");
 
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into());
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into(), 0);
     assert!(s.take_full_redraw(), "push_tool_call");
 
     s.continue_assistant(id);

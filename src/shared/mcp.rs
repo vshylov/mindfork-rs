@@ -67,10 +67,32 @@ pub struct McpToolInfo {
 #[derive(Debug, Clone)]
 pub struct McpCallResult {
     pub text: String,
+    /// Image blocks the tool returned, in order (spec §9.10,
+    /// docs/research/mcp-tool-images.md). Empty for every tool that returns none,
+    /// which is every tool that existed before this was added.
+    pub images: Vec<McpImage>,
     /// Tool execution error (`isError:true`) — the text is handed to the model
     /// as an error result, this is NOT a protocol error (spec tools §error handling).
     pub is_error: bool,
 }
+
+/// An image block from a tool result: base64 payload plus the MIME type the server
+/// declared. Kept raw here — the client's job is to parse the protocol, and deciding
+/// what is small enough or decodable belongs to the layer that owns the limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpImage {
+    pub mime: String,
+    pub data: String,
+}
+
+/// How many image blocks one tool result may contribute (fork F2 of
+/// docs/research/mcp-tool-images.md).
+///
+/// An MCP server is third-party code, and every image it returns rides **every**
+/// subsequent turn of the conversation — so the ceiling bounds a standing cost, not one
+/// reply. Extras are dropped and **said out loud** in the result text: a silent cap reads
+/// as "the tool returned four images" when it returned fifty.
+pub const MAX_RESULT_IMAGES: usize = 4;
 
 /// The connection's shared writer: written to both by our own requests and by
 /// the reader task (replies to `ping`/`-32601`).
@@ -239,6 +261,14 @@ impl McpConnection {
             )
             .await?;
         let mut text = String::new();
+        let mut images: Vec<McpImage> = Vec::new();
+        let mut dropped = 0usize;
+        let push_line = |text: &mut String, line: &str| {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(line);
+        };
         for block in result
             .get("content")
             .and_then(Value::as_array)
@@ -246,28 +276,52 @@ impl McpConnection {
             .flatten()
         {
             match block.get("type").and_then(Value::as_str) {
-                Some("text") => {
-                    if !text.is_empty() {
-                        text.push('\n');
+                Some("text") => push_line(
+                    &mut text,
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
+                // An image the model can actually be shown (spec §9.10). A block missing
+                // its payload or MIME type is not an image we can send anywhere, so it
+                // keeps the placeholder rather than becoming a broken attachment.
+                Some("image") => match (
+                    block.get("data").and_then(Value::as_str),
+                    block.get("mimeType").and_then(Value::as_str),
+                ) {
+                    (Some(data), Some(mime)) if !data.is_empty() => {
+                        if images.len() < MAX_RESULT_IMAGES {
+                            images.push(McpImage {
+                                mime: mime.to_string(),
+                                data: data.to_string(),
+                            });
+                        } else {
+                            dropped += 1;
+                        }
                     }
-                    text.push_str(
-                        block
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    );
-                }
-                Some(other) => {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(&format!("[{other} content omitted]"));
-                }
+                    _ => push_line(&mut text, "[image content omitted]"),
+                },
+                // Audio and resource blocks stay placeholders: nothing downstream can
+                // carry them, and saying so is better than dropping them silently.
+                Some(other) => push_line(&mut text, &format!("[{other} content omitted]")),
                 None => {}
             }
         }
+        if dropped > 0 {
+            // The cap is stated, never silent — otherwise the model reads the result as
+            // complete and answers about images it was never shown.
+            push_line(
+                &mut text,
+                &format!(
+                    "[{dropped} more image(s) were returned but not included: at most \
+                     {MAX_RESULT_IMAGES} images per tool result]"
+                ),
+            );
+        }
         Ok(McpCallResult {
             text,
+            images,
             is_error: result
                 .get("isError")
                 .and_then(Value::as_bool)
@@ -995,8 +1049,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn call_tool_joins_text_and_placeholders_non_text() {
-        // call_tool on a connection: text blocks are concatenated, image → a placeholder.
+    async fn call_tool_joins_text_and_carries_images() {
+        // Text blocks are concatenated; an image block is **kept** (spec §9.10) rather
+        // than collapsed into the placeholder it used to become.
         let (conn, _fake) = fake_server(scripted);
         let res = conn
             .call_tool(
@@ -1007,9 +1062,89 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(res.text.starts_with("hello"), "{}", res.text);
-        assert!(res.text.contains("[image content omitted]"), "{}", res.text);
+        assert_eq!(res.text, "hello", "the image leaves no placeholder behind");
+        assert_eq!(
+            res.images,
+            vec![McpImage {
+                mime: "image/png".into(),
+                data: "…".into(),
+            }]
+        );
         assert!(!res.is_error);
+    }
+
+    /// The blocks nothing downstream can carry, and the malformed ones, still say so —
+    /// dropping them silently would let the model read the result as complete.
+    #[tokio::test]
+    async fn audio_and_broken_image_blocks_keep_their_placeholder() {
+        let (conn, _fake) = fake_server(|msg| {
+            let id = msg.get("id").cloned().unwrap_or(json!(1));
+            match msg["method"].as_str().unwrap_or_default() {
+                "initialize" => Some(json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "fake", "version": "0.1" }
+                }})),
+                "tools/call" => Some(json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "content": [
+                        { "type": "audio", "data": "…", "mimeType": "audio/wav" },
+                        // An image block with no payload is not an image we can send.
+                        { "type": "image", "mimeType": "image/png" },
+                    ],
+                    "isError": false
+                }})),
+                _ => None,
+            }
+        });
+        let res = conn
+            .call_tool("t", json!({}), Duration::from_secs(2), None)
+            .await
+            .unwrap();
+        assert!(res.images.is_empty());
+        assert!(res.text.contains("[audio content omitted]"), "{}", res.text);
+        assert!(res.text.contains("[image content omitted]"), "{}", res.text);
+    }
+
+    /// The per-result cap is stated, never silent: a model told "4 images" about a reply
+    /// that carried fifty would answer about pictures it was never shown (fork F2).
+    #[tokio::test]
+    async fn the_image_cap_drops_the_extras_and_says_so() {
+        let (conn, _fake) = fake_server(|msg| {
+            let id = msg.get("id").cloned().unwrap_or(json!(1));
+            match msg["method"].as_str().unwrap_or_default() {
+                "initialize" => Some(json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "fake", "version": "0.1" }
+                }})),
+                "tools/call" => {
+                    let blocks: Vec<_> = (0..MAX_RESULT_IMAGES + 3)
+                        .map(|i| {
+                            json!({ "type": "image", "data": format!("d{i}"),
+                                         "mimeType": "image/png" })
+                        })
+                        .collect();
+                    Some(json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "content": blocks, "isError": false
+                    }}))
+                }
+                _ => None,
+            }
+        });
+        let res = conn
+            .call_tool("t", json!({}), Duration::from_secs(2), None)
+            .await
+            .unwrap();
+        assert_eq!(res.images.len(), MAX_RESULT_IMAGES);
+        // The ones kept are the first ones, in order.
+        assert_eq!(res.images[0].data, "d0");
+        assert_eq!(res.images[MAX_RESULT_IMAGES - 1].data, "d3");
+        assert!(
+            res.text.contains('3'),
+            "the count of dropped ones: {}",
+            res.text
+        );
+        assert!(res.text.contains("not included"), "{}", res.text);
     }
 
     #[test]

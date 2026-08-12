@@ -243,6 +243,7 @@ mod tests {
             arguments: serde_json::json!({}),
             result: Some(result.into()),
             thought_signature: None,
+            images: 0,
         }];
         m
     }

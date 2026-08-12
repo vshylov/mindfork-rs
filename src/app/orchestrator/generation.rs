@@ -386,6 +386,7 @@ impl Orchestrator {
             request,
             cancel,
             confirm_dangerous: self.config.tools.confirm_dangerous,
+            image_cfg: self.config.images,
             confirm_rx,
             id,
             chat_id: active_id,
@@ -532,6 +533,10 @@ struct GenSpawn {
     /// gated, so the loop behaves exactly as it did before the feature (spec
     /// §9.8). Snapshotted at the start of the turn, like the other config.
     confirm_dangerous: bool,
+    /// Limits for an image a tool returned (`config.images`): the same downscale
+    /// ceiling and byte cap a user's `/image attach` gets, so third-party pixels
+    /// cannot cost more than the user's own (spec §9.10).
+    image_cfg: crate::shared::config::ImageSettings,
     /// The user's answers to [`AppEvent::ToolConfirmRequest`], routed in by the
     /// orchestrator. The **only** channel in the codebase that runs orchestrator
     /// → task; everything else (`title_tx`, `imp_done`, the background-task done
@@ -665,6 +670,7 @@ fn spawn_generation(spawn: GenSpawn) {
         mut request,
         cancel,
         confirm_dangerous,
+        image_cfg,
         confirm_rx,
         id,
         chat_id,
@@ -726,6 +732,7 @@ fn spawn_generation(spawn: GenSpawn) {
             request,
             cancel,
             confirm_dangerous,
+            image_cfg,
             confirm_rx,
             id,
             max_rounds,
@@ -775,6 +782,7 @@ struct TurnLoop {
     request: ChatRequest,
     cancel: CancellationToken,
     confirm_dangerous: bool,
+    image_cfg: crate::shared::config::ImageSettings,
     confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
     id: Uuid,
     max_rounds: u32,
@@ -1014,9 +1022,16 @@ impl TurnLoop {
         let args: serde_json::Value =
             serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
         let is_control = control::is_control_tool(&call.name);
-        let result = self
+        let CallResult {
+            text: result,
+            images,
+        } = self
             .resolve_call_result(call, &args, is_control, rewrite)
             .await;
+        // Decoded and downscaled here, once, so the same prepared bytes go into the
+        // request and into the stored message — the object the model sees and the object
+        // the chat keeps must be one (spec §9.10).
+        let images = prepare_tool_images(images, self.image_cfg).await;
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
         if !is_control && !rewrite {
@@ -1025,11 +1040,27 @@ impl TurnLoop {
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
                 result: result.clone(),
+                images: images.len(),
             });
         }
-        self.request
-            .messages
-            .push(ApiMessage::tool(&call.id, &result));
+        self.request.messages.push(
+            ApiMessage::tool(&call.id, &result).with_images(
+                images
+                    .iter()
+                    .enumerate()
+                    .map(|(i, image)| {
+                        crate::shared::api::ApiImage::new(
+                            image.mime.clone(),
+                            &image.data,
+                            Some(self.ctx.loc.tf(
+                                "prompt.images.label",
+                                &[("n", &(i + 1).to_string()), ("name", &image.name)],
+                            )),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
         records.push(ToolCallRecord {
             id: call.id.clone(),
             name: call.name.clone(),
@@ -1037,8 +1068,9 @@ impl TurnLoop {
             result: Some(result.clone()),
             // The thought signature (Gemini 3) is persisted — needed on history replay.
             thought_signature: call.thought_signature.clone(),
+            images: images.len(),
         });
-        tool_msgs.push(tool_message(call, result));
+        tool_msgs.push(tool_message(call, result).with_images(images));
     }
 
     /// One call's result text: the disabled/control/rewrite gates, the
@@ -1051,20 +1083,21 @@ impl TurnLoop {
         args: &serde_json::Value,
         is_control: bool,
         rewrite: bool,
-    ) -> String {
+    ) -> CallResult {
         if !self.allowed_has(&call.name) {
             // Protection: the tool is disabled globally/in the profile.
             self.ctx
                 .loc
                 .tf("loop.tool_disabled", &[("name", &call.name)])
+                .into()
         } else if is_control {
             // A control tool: the result is "permission" (the model will
             // see it in the next round). Executed by the loop, not
             // through the registry.
-            control::control_permission_text(&call.name, self.ctx.loc)
+            control::control_permission_text(&call.name, self.ctx.loc).into()
         } else if rewrite {
             // This round is being discarded — side-effect tools aren't executed.
-            self.ctx.loc.t("loop.rewrite_skipped").to_string()
+            self.ctx.loc.t("loop.rewrite_skipped").to_string().into()
         } else if let Some(refusal) = confirm_call(
             ConfirmGate {
                 enabled: self.confirm_dangerous,
@@ -1084,7 +1117,7 @@ impl TurnLoop {
             // open. Either way the loop carries on and the model is
             // told (fork F5) — ending the turn here would throw away
             // the text already streamed.
-            refusal
+            refusal.into()
         } else {
             // Execution under a `select!` with the cancellation token: Esc
             // doesn't wait for a long-running tool (MCP/network) to finish.
@@ -1096,18 +1129,93 @@ impl TurnLoop {
                 res = self.registry.invoke(&call.name, &self.ctx, args.clone()) => Some(res),
             };
             match invoked {
-                None => self.ctx.loc.t("loop.tool_cancelled").to_string(),
+                None => self.ctx.loc.t("loop.tool_cancelled").to_string().into(),
                 Some(Ok(outcome)) => {
                     self.effects.extend(outcome.effects);
-                    outcome.result
+                    CallResult {
+                        text: outcome.result,
+                        images: outcome.images,
+                    }
                 }
-                Some(Err(err)) => self.ctx.loc.tf(
-                    "loop.tool_error",
-                    &[("name", &call.name), ("err", &err.to_string())],
-                ),
+                Some(Err(err)) => self
+                    .ctx
+                    .loc
+                    .tf(
+                        "loop.tool_error",
+                        &[("name", &call.name), ("err", &err.to_string())],
+                    )
+                    .into(),
             }
         }
     }
+}
+
+/// What one tool call produced for the model: its result text, and any images it
+/// returned (spec §9.10). Every gate and refusal path yields text alone — only a real
+/// invocation can produce pixels, which is what `From<String>` keeps cheap to express.
+struct CallResult {
+    text: String,
+    images: Vec<crate::features::tools::ToolImage>,
+}
+
+impl From<String> for CallResult {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            images: Vec::new(),
+        }
+    }
+}
+
+/// Decodes, downscales and re-encodes the images a tool returned, on the blocking pool.
+///
+/// The same preparation a user's `/image attach` gets, for the same reasons (spec §9.10):
+/// third-party pixels must not cost more than the user's own, and a provider that takes
+/// only png/jpeg must not be handed a webp. An image that fails to decode is **dropped**
+/// rather than reported: the tool's own text already said what it returned, and a
+/// half-broken picture is not something the model can act on.
+async fn prepare_tool_images(
+    images: Vec<crate::features::tools::ToolImage>,
+    cfg: crate::shared::config::ImageSettings,
+) -> Vec<crate::entities::message_image::MessageImage> {
+    if images.is_empty() {
+        return Vec::new();
+    }
+    tokio::task::spawn_blocking(move || {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        images
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, image)| {
+                let raw = b64.decode(&image.data).ok()?;
+                if raw.len() as u64 > cfg.max_bytes {
+                    tracing::warn!(bytes = raw.len(), "tool image over the size cap, dropped");
+                    return None;
+                }
+                let prepared =
+                    crate::features::image_prepare::prepare(&raw, cfg.downscale_px).ok()?;
+                Some(crate::entities::message_image::MessageImage::new(
+                    // Numbered from 1, like everything the user sees: the name is what
+                    // the model's label cites, and "the second image" has to mean the
+                    // same thing on both sides.
+                    format!("tool-image-{}.{}", i + 1, ext_of(prepared.mime)),
+                    format!("tool:{}", Uuid::new_v4()),
+                    prepared.mime,
+                    prepared.width,
+                    prepared.height,
+                    b64.encode(&prepared.bytes),
+                ))
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// The file extension matching a prepared image's MIME type.
+fn ext_of(mime: &str) -> &'static str {
+    if mime == "image/jpeg" { "jpg" } else { "png" }
 }
 
 /// Rebuilds the turn's attachment snapshot from the `AddAttachment` effects the
