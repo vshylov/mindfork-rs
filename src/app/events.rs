@@ -19,6 +19,18 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 pub use crate::shared::server::{ServerStatus, ServerStatuses};
 
+/// Raw pixels taken off the system clipboard (`arboard::ImageData`): RGBA8, row-major.
+///
+/// Deliberately un-encoded at this point. Turning a screenshot into a png costs tens of
+/// milliseconds, and the clipboard is read on the **input thread** — so the encode is left
+/// to the orchestrator's blocking pool, where every other image already goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 /// Command from UI to orchestrator.
 #[derive(Debug, Clone)]
 pub enum AppCommand {
@@ -163,6 +175,13 @@ pub enum AppCommand {
     /// Show what is staged for the next message (`/image list`). The result is an
     /// `ImageProgress::Listed` event.
     ImageList,
+    /// Stage an image read off the system clipboard (`Ctrl+V`, `/image paste`).
+    ///
+    /// Carries the pixels rather than a request to read them: the `arboard` client lives
+    /// in `runtime` (a UI-layer side effect, like `CopyToClipboard`), so by the time the
+    /// orchestrator is involved the clipboard has already been consulted. `Box` — an
+    /// uncompressed screenshot is megabytes, and every other variant would pay for it.
+    ImagePaste(Box<ClipboardImage>),
     /// Speak the active chat's messages (the `/tts [N|all]` command). The orchestrator
     /// (the owner of `Chat`) takes a **snapshot** of the conversation at command time and
     /// starts a background synthesis/playback task. A new command interrupts the current

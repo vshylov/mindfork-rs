@@ -159,6 +159,14 @@ impl ChatScreen {
                 }
                 Some(None)
             }
+            // Paste (Ctrl+V): an image off the clipboard if there is one, otherwise the
+            // text — which is what the help overlay has always advertised this key for.
+            // Reaching the app at all is up to the terminal: Windows Terminal binds
+            // Ctrl+V to its own paste and never forwards it, which is exactly why
+            // `/image paste` exists as well (spec §9.10).
+            'v' => Some(Some(ChatIntent::PasteImage {
+                text_fallback: true,
+            })),
             // The settings screen (Ctrl+P) — opens once the settings
             // snapshot has arrived.
             'p' => Some(
@@ -419,6 +427,11 @@ impl ChatScreen {
             Ok(ImageCommand::Attach { path }) => Some(ChatIntent::ImageAttach { path }),
             Ok(ImageCommand::Remove { target }) => Some(ChatIntent::ImageRemove { target }),
             Ok(ImageCommand::List) => Some(ChatIntent::ImageList),
+            // A typed command must not silently turn into a text paste: the user asked
+            // for an image, so an absent one is reported rather than substituted.
+            Ok(ImageCommand::Paste) => Some(ChatIntent::PasteImage {
+                text_fallback: false,
+            }),
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.image.failed", &[("err", &msg)]));
                 None

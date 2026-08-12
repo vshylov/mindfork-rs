@@ -322,6 +322,7 @@ Slash commands, typed straight into the input box:
 |---|---|
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
 | `/image attach <path>` · `/image remove <name\|#N>` · `/image list` | stage an image for your next message / unstage one / list what is staged |
+| `/image paste` | stage the image on the clipboard — a screenshot needs no file. `Ctrl+V` does the same where the terminal forwards it (Windows Terminal keeps that key for its own paste, so the command is the reliable route) |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model |

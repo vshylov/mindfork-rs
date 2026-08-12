@@ -2011,6 +2011,47 @@ fn image_command_intercepted_on_enter() {
     assert!(!s.feed.iter().any(|m| m.role == FeedRole::User));
 }
 
+/// The two ways to paste an image differ in exactly one thing, and it is the thing that
+/// matters: `Ctrl+V` must still paste **text** when the clipboard holds no image (that is
+/// what the help overlay has always promised the key does), while a typed `/image paste`
+/// must not silently turn into a text paste — the user asked for an image.
+#[test]
+fn both_paste_routes_produce_an_intent_and_differ_only_in_the_text_fallback() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::PasteImage {
+            text_fallback: true
+        }),
+        "Ctrl+V keeps working as a text paste when there is no image"
+    );
+
+    type_str(&mut s, "/image paste");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::PasteImage {
+            text_fallback: false
+        })
+    );
+    assert!(s.input.is_empty(), "the field is cleared after the command");
+    assert!(
+        !s.feed.iter().any(|m| m.role == FeedRole::User),
+        "a command must not go out as a message"
+    );
+}
+
+/// `/image paste` is a command like the others, so the input box must highlight it and
+/// skip spellcheck on it — otherwise it reads as a misspelled sentence while being typed.
+#[test]
+fn image_paste_is_recognized_as_a_command_while_typing() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    type_str(&mut s, "/image paste");
+    assert!(s.input_is_command());
+}
+
 #[test]
 fn invalid_image_command_shows_note_and_does_not_send() {
     let mut s = ChatScreen::new();

@@ -30,7 +30,7 @@ use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdat
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
+use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ClipboardImage};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};

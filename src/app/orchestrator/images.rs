@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message_image::{MessageImage, infos, resolve_target};
 use crate::features::image_command::ImageProgress;
-use crate::features::image_prepare::{PrepareError, prepare};
+use crate::features::image_prepare::{PrepareError, prepare, prepare_rgba};
 use crate::shared::api::VisionSupport;
 use crate::shared::config::{ImageSettings, ServerMode};
 use crate::shared::i18n::Locale;
@@ -43,6 +43,30 @@ pub(super) struct ImageAttachResult {
     pub(super) outcome: Result<MessageImage, String>,
 }
 
+/// Where a staging request's pixels come from — the **only** thing that differs between
+/// `/image attach` and `/image paste`. Everything around it (the cap, the capability
+/// probe, the background encode, the staging itself) is one path, in [`Orchestrator::stage_image`].
+enum ImageSource {
+    /// A file the user named. Decoded and normalized by its own extension.
+    File(String),
+    /// Pixels off the system clipboard, plus the synthetic name they will carry (there is
+    /// no file to take one from).
+    Clipboard {
+        image: Box<crate::app::events::ClipboardImage>,
+        name: String,
+    },
+}
+
+impl ImageSource {
+    /// Turns the source into an attachable image. Runs on the blocking pool.
+    fn prepare(self, cfg: &ImageSettings, loc: &'static Locale) -> Result<MessageImage, String> {
+        match self {
+            ImageSource::File(path) => prepare_image(std::path::Path::new(&path), cfg, loc),
+            ImageSource::Clipboard { image, name } => prepare_clipboard(*image, name, cfg, loc),
+        }
+    }
+}
+
 impl Orchestrator {
     /// Starts staging an image for the next message (`/image attach <path>`).
     pub(super) fn handle_image_attach(&mut self, path: String) {
@@ -50,6 +74,29 @@ impl Orchestrator {
         if path.is_empty() {
             return;
         }
+        self.stage_image(ImageSource::File(path));
+    }
+
+    /// Stages an image taken off the system clipboard (`Ctrl+V`, `/image paste`).
+    ///
+    /// The name is chosen here rather than in the background task because it depends on
+    /// what is *already* staged, which only the orchestrator knows.
+    pub(super) fn handle_image_paste(&mut self, image: crate::app::events::ClipboardImage) {
+        let Some(chat_id) = self.active_id else {
+            self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
+            return;
+        };
+        let name = self.free_clipboard_name(chat_id);
+        self.stage_image(ImageSource::Clipboard {
+            image: Box::new(image),
+            name,
+        });
+    }
+
+    /// The one staging path, whatever the pixels came from: refuse early if there is
+    /// nowhere or no room to put them, ask the engine whether it takes images at all, then
+    /// prepare off the command loop and hand the result back through [`ImageAttachResult`].
+    fn stage_image(&mut self, source: ImageSource) {
         let Some(chat_id) = self.active_id else {
             self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
             return;
@@ -94,17 +141,32 @@ impl Orchestrator {
                 });
                 return;
             }
-            let outcome = tokio::task::spawn_blocking(move || {
-                prepare_image(std::path::Path::new(&path), &cfg, loc)
-            })
-            .await
-            .unwrap_or_else(|e| Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())])));
+            let outcome = tokio::task::spawn_blocking(move || source.prepare(&cfg, loc))
+                .await
+                .unwrap_or_else(|e| Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())])));
             let _ = tx.send(ImageAttachResult {
                 chat_id,
                 vision,
                 outcome,
             });
         });
+    }
+
+    /// The first unused `clipboard*.png` name among the chat's staged images, so two
+    /// pastes are told apart in `/image list` and in the label the model reads.
+    fn free_clipboard_name(&self, chat_id: Uuid) -> String {
+        let staged = self.staged_images.get(&chat_id);
+        let taken = |name: &str| {
+            staged.is_some_and(|v| v.iter().any(|i| i.name.eq_ignore_ascii_case(name)))
+        };
+        if !taken(CLIPBOARD_NAME) {
+            return CLIPBOARD_NAME.to_string();
+        }
+        // Bounded by `max_count`, so this always terminates well before the guard.
+        (2..)
+            .map(|n| format!("clipboard-{n}.png"))
+            .find(|name| !taken(name))
+            .unwrap_or_else(|| CLIPBOARD_NAME.to_string())
     }
 
     /// Applies the result of a background prepare: stages the image and reports.
@@ -219,6 +281,58 @@ impl Orchestrator {
 
 /// The staging store: images waiting for the next message, per chat.
 pub(super) type StagedImages = HashMap<Uuid, Vec<MessageImage>>;
+
+/// The display name a pasted image gets when nothing else is staged under it. `.png`
+/// is not a guess — [`prepare_rgba`] always encodes a clipboard image as png.
+const CLIPBOARD_NAME: &str = "clipboard.png";
+
+/// Encodes clipboard pixels into an attachable image (blocking — runs on the blocking
+/// pool). Errors are already localized (axis B).
+fn prepare_clipboard(
+    image: crate::app::events::ClipboardImage,
+    name: String,
+    cfg: &ImageSettings,
+    loc: &'static Locale,
+) -> Result<MessageImage, String> {
+    let prepared = prepare_rgba(image.width, image.height, &image.rgba, cfg.downscale_px).map_err(
+        |e| match e {
+            // The clipboard handed over a buffer that does not match the size it
+            // reported — not the user's doing, and nothing they can fix by choosing a
+            // different file, so it must not read like "your image is broken".
+            PrepareError::Undecodable => loc.t("ui.err.image_clipboard_unusable").to_string(),
+            PrepareError::Failed(err) => loc.tf("ui.err.image_failed", &[("err", &err)]),
+        },
+    )?;
+    // The byte cap applies to what will actually be re-sent every turn. For a file it is
+    // checked before decoding; here there is no file, so the encoded result is the
+    // honest equivalent — the downscale normally keeps it far below.
+    if prepared.bytes.len() as u64 > cfg.max_bytes {
+        return Err(loc.tf(
+            "ui.err.image_too_big",
+            &[
+                (
+                    "size",
+                    &crate::entities::attachment::format_bytes(prepared.bytes.len()),
+                ),
+                (
+                    "max",
+                    &crate::entities::attachment::format_bytes(cfg.max_bytes as usize),
+                ),
+            ],
+        ));
+    }
+    let data = base64::engine::general_purpose::STANDARD.encode(&prepared.bytes);
+    Ok(MessageImage::new(
+        name,
+        // A source that cannot collide with a file path or with another paste: dedupe is
+        // by source, and two screenshots must not silently become one.
+        format!("clipboard:{}", Uuid::new_v4()),
+        prepared.mime,
+        prepared.width,
+        prepared.height,
+        data,
+    ))
+}
 
 /// Reads an image file and prepares it for attachment (blocking — runs on the blocking
 /// pool). Errors are already localized (axis B): they go straight into a feed note.

@@ -28,6 +28,14 @@ pub enum ImageCommand {
     Remove { target: String },
     /// Show what is staged for the next message.
     List,
+    /// Stage the image currently on the system clipboard.
+    ///
+    /// A command rather than only a hotkey because a hotkey cannot be relied on: the
+    /// terminal, not the app, decides whether `Ctrl+V` is ever delivered — Windows
+    /// Terminal binds it to its own paste and swallows it, and with an image on the
+    /// clipboard there is no text to inject, so the app would see nothing at all. This
+    /// route works everywhere. See spec §9.10.
+    Paste,
 }
 
 /// Outcome of an `/image` command, for the feed note / status chip.
@@ -87,6 +95,8 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<ImageCommand, String>> 
         }
     } else if sub.eq_ignore_ascii_case("list") {
         Some(Ok(ImageCommand::List))
+    } else if sub.eq_ignore_ascii_case("paste") {
+        Some(Ok(ImageCommand::Paste))
     } else {
         Some(Err(loc.tf(
             "ui.image.err.unknown_subcommand",
@@ -157,6 +167,30 @@ mod tests {
                 target: "#1".into()
             }))
         );
+    }
+
+    #[test]
+    fn parses_paste_and_takes_no_argument() {
+        assert_eq!(parse("/image paste", en()), Some(Ok(ImageCommand::Paste)));
+        assert_eq!(parse("/IMAGE PASTE", en()), Some(Ok(ImageCommand::Paste)));
+        // Trailing words are ignored rather than rejected: `paste` has nothing to take,
+        // and refusing "/image paste please" would be pedantry, not a service.
+        assert_eq!(
+            parse("/image paste please", en()),
+            Some(Ok(ImageCommand::Paste))
+        );
+    }
+
+    /// The usage line is what an error hands the user, so every subcommand has to be in
+    /// it — a route that exists but is never mentioned may as well not.
+    #[test]
+    fn the_usage_line_names_every_subcommand() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let usage = crate::shared::i18n::locale(lang).t("ui.image.usage");
+            for sub in ["attach", "remove", "list", "paste"] {
+                assert!(usage.contains(sub), "{lang:?} usage omits {sub}: {usage}");
+            }
+        }
     }
 
     #[test]

@@ -163,8 +163,9 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-13, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2095 unit tests
-green, 91 `#[ignore]`** (90 live smokes + the screenshot-dump regenerator). The
+The **M0–M9** plan is done, plus extensive post-M9 work — **2106 unit tests
+green, 92 `#[ignore]`** (90 live smokes + a real-clipboard round trip + the
+screenshot-dump regenerator). The
 most recent tracks: **images in a message — track complete**
 (`/image attach|remove|list`
 stages an image for the **next** message, which is what every provider's wire
@@ -178,7 +179,11 @@ ceiling passes through byte for byte. Capability is *asked*
 (`EngineBackend::vision`, llama.cpp's `/props` `modalities.vision`), never guessed
 from a model name, and a request with no images stays byte-identical to what the
 app sent before the feature — in **all four** wire formats, each with its own
-test, which is what makes the change safe for every stored conversation;
+test, which is what makes the change safe for every stored conversation.
+`/image paste` then took a screenshot straight off the clipboard: the app never
+had a `Ctrl+V` handler at all — pasting works because the *terminal* injects
+text, and an image injects nothing — so the command is the route that works in
+every terminal and the key is the convenience;
 [docs/research/multimodal-images.md](docs/research/multimodal-images.md), spec §9.10),
 **cloud-error retry/backoff — track complete** (a transient
 `429`/`5xx`/`529` no longer costs the turn: a `RetryBackend` decorator over the

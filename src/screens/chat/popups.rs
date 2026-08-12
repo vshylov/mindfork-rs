@@ -254,6 +254,10 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.image_attach", "ui.help.image_attach"),
     ("ui.help.k.image_remove", "ui.help.image_remove"),
     ("/image list", "ui.help.image_list"),
+    // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
+    // the terminal's decision (Windows Terminal binds it to its own paste), and an image
+    // on the clipboard produces no text for the terminal to inject.
+    ("/image paste", "ui.help.image_paste"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),

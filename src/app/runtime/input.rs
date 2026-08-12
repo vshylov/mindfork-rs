@@ -221,7 +221,52 @@ fn handle_key_event(
             }
             false
         }
+        // Pasting from the clipboard (`Ctrl+V`, `/image paste`) — the same reasoning as
+        // above: only this function holds the `arboard` client, so the read happens here
+        // and the orchestrator receives pixels rather than a request to go and look.
+        Some(AnyIntent::Chat(ChatIntent::PasteImage { text_fallback })) => {
+            paste_from_clipboard(text_fallback, screen, active, cmd_tx, clipboard);
+            false
+        }
         Some(intent) => dispatch_any(intent, cmd_tx, screen, active, back),
         None => false,
     }
+}
+
+/// Stages the clipboard's image, or falls back per `text_fallback` (see
+/// [`ChatIntent::PasteImage`]).
+///
+/// The order matters: an image is checked **first**, because a screenshot copied from a
+/// browser often puts both an image and its alt text on the clipboard, and the image is
+/// what the user meant by pressing paste on it.
+fn paste_from_clipboard(
+    text_fallback: bool,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) {
+    if let Some((width, height, rgba)) = clipboard_image(clipboard) {
+        let _ = cmd_tx.send(AppCommand::ImagePaste(Box::new(ClipboardImage {
+            width,
+            height,
+            rgba,
+        })));
+        return;
+    }
+    if text_fallback {
+        // No image: behave exactly as a paste always has. On a terminal that forwards
+        // Ctrl+V this is what makes the key do what the help overlay says it does; on one
+        // that swallows it, nothing reaches us and the terminal has already pasted.
+        if let Some(text) = clipboard_text(clipboard) {
+            active.handle_paste(screen, &text);
+        }
+        return;
+    }
+    // A typed `/image paste` with nothing to paste: say so, and name the route that does
+    // not depend on the clipboard at all.
+    let loc = screen.loc();
+    screen.set_image_progress(crate::features::image_command::ImageProgress::Failed(
+        loc.t("ui.err.image_no_clipboard").to_string(),
+    ));
 }
