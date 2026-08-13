@@ -202,87 +202,147 @@ impl ChatScreen {
 /// are resolved through the locale in [`key_lines`]. Input-box commands (`/…`)
 /// are split out into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
 /// docs/i18n-ui.md.
-pub(super) const HELP_KEYS: &[(&str, &str)] = &[
-    ("Enter", "ui.help.send"),
-    ("Shift+Enter / Alt+Enter", "ui.help.newline"),
-    ("Shift+←/→/↑/↓", "ui.help.select"),
-    ("Ctrl+A", "ui.help.select_all"),
-    ("Ctrl+C", "ui.help.copy"),
-    ("Ctrl+X", "ui.help.cut"),
-    ("Ctrl+V", "ui.help.paste"),
-    ("Esc", "ui.help.esc"),
-    // Only meaningful inside the chat list, but it belongs here: that is where
-    // users look for "how do I search my history?".
-    ("Ctrl+F", "ui.help.search_content"),
-    ("Ctrl+G", "ui.help.search_messages"),
-    ("Ctrl+N", "ui.help.new_chat"),
-    ("F3", "ui.help.self_model"),
-    ("F5", "ui.help.copy_chat"),
-    ("Ctrl+R", "ui.help.regenerate"),
-    ("Ctrl+E", "ui.help.delete_exchange"),
-    ("Ctrl+U", "ui.help.impersonate"),
-    ("Ctrl+K", "ui.help.clear_input"),
-    ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
-    ("Ctrl+←/→", "ui.help.word_move"),
-    ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
-    ("Home", "ui.help.line_home"),
-    ("End", "ui.help.line_end"),
-    ("Ctrl+Home/End", "ui.help.doc_move"),
-    ("Ctrl+P", "ui.help.settings"),
-    ("Ctrl+T", "ui.help.thoughts"),
-    ("Ctrl+O", "ui.help.tool_calls"),
-    ("Ctrl+G", "ui.help.spell"),
-    ("Ctrl+B", "ui.help.emoji"),
-    ("Ctrl+W", "ui.help.mouse_toggle"),
-    ("ui.help.k.mouse", "ui.help.mouse_action"),
-    ("PageUp/PageDown", "ui.help.scroll"),
-    ("F1 / ?", "ui.help.help"),
-    ("Ctrl+Q / F10", "ui.help.quit"),
+///
+/// The outer slice groups related keys; [`key_lines`] draws a blank line
+/// between groups, nothing more — the groups carry no headers, so they need no
+/// locale keys, and flattening them (as the tests do) recovers the exact list
+/// the tab used to be.
+pub(super) const HELP_KEYS: &[&[(&str, &str)]] = &[
+    // Composing a message.
+    &[
+        ("Enter", "ui.help.send"),
+        ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+    ],
+    // Selection and the clipboard.
+    &[
+        ("Shift+←/→/↑/↓", "ui.help.select"),
+        ("Ctrl+A", "ui.help.select_all"),
+        ("Ctrl+C", "ui.help.copy"),
+        ("Ctrl+X", "ui.help.cut"),
+        ("Ctrl+V", "ui.help.paste"),
+    ],
+    // Getting around: chats and search.
+    &[
+        ("Esc", "ui.help.esc"),
+        // Only meaningful inside the chat list, but it belongs here: that is
+        // where users look for "how do I search my history?".
+        ("Ctrl+F", "ui.help.search_content"),
+        ("Ctrl+G", "ui.help.search_messages"),
+        ("Ctrl+N", "ui.help.new_chat"),
+    ],
+    // Acting on the conversation.
+    &[
+        ("F3", "ui.help.self_model"),
+        ("F5", "ui.help.copy_chat"),
+        ("Ctrl+R", "ui.help.regenerate"),
+        ("Ctrl+E", "ui.help.delete_exchange"),
+        ("Ctrl+U", "ui.help.impersonate"),
+    ],
+    // Editing inside the input box.
+    &[
+        ("Ctrl+K", "ui.help.clear_input"),
+        ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+        ("Ctrl+←/→", "ui.help.word_move"),
+        ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+        ("Home", "ui.help.line_home"),
+        ("End", "ui.help.line_end"),
+        ("Ctrl+Home/End", "ui.help.doc_move"),
+    ],
+    // Panels, toggles and the feed.
+    &[
+        ("Ctrl+P", "ui.help.settings"),
+        ("Ctrl+T", "ui.help.thoughts"),
+        ("Ctrl+O", "ui.help.tool_calls"),
+        ("Ctrl+G", "ui.help.spell"),
+        ("Ctrl+B", "ui.help.emoji"),
+        ("Ctrl+W", "ui.help.mouse_toggle"),
+        ("ui.help.k.mouse", "ui.help.mouse_action"),
+        ("PageUp/PageDown", "ui.help.scroll"),
+    ],
+    // The help itself, and the way out.
+    &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
 ];
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
-/// [`HELP_KEYS`]; a command label (`/…`) is drawn in the command color. Split out
-/// of the hotkeys so they don't clutter reading them. See spec §11.7.
-pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
+/// [`HELP_KEYS`] (grouped the same way); a command label (`/…`) is drawn in the
+/// command color. Split out of the hotkeys so they don't clutter reading them.
+/// See spec §11.7.
+pub(super) const HELP_COMMANDS: &[&[(&str, &str)]] = &[
     // Attachments come first — they are the commands a user reaches for while
     // writing a message (see docs/file-attachments.md §4.8).
-    ("ui.help.k.file_attach", "ui.help.file_attach"),
-    ("ui.help.k.file_remove", "ui.help.file_remove"),
-    ("/file list", "ui.help.file_list"),
+    &[
+        ("ui.help.k.file_attach", "ui.help.file_attach"),
+        ("ui.help.k.file_remove", "ui.help.file_remove"),
+        ("/file list", "ui.help.file_list"),
+    ],
     // Images sit right after the files: the same verbs and the same `#N`
     // addressing, but staged for the **next message** rather than pinned to the
     // chat — the descriptions carry that difference (spec §9.10).
-    ("ui.help.k.image_attach", "ui.help.image_attach"),
-    ("ui.help.k.image_remove", "ui.help.image_remove"),
-    ("/image list", "ui.help.image_list"),
-    // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
-    // the terminal's decision (Windows Terminal binds it to its own paste), and an image
-    // on the clipboard produces no text for the terminal to inject.
-    ("/image paste", "ui.help.image_paste"),
-    ("ui.help.k.rag_add", "ui.help.rag_add"),
-    ("ui.help.k.rag_remove", "ui.help.rag_remove"),
-    ("/rag list", "ui.help.rag_list"),
-    ("/rag rebuild", "ui.help.rag_rebuild"),
-    // Sits next to the knowledge-base commands, but is deliberately top-level:
-    // it re-embeds notes, attachments and every profile's base at once.
-    ("/reindex", "ui.help.reindex"),
-    // Chat-scoped, unlike the two above — but still top-level, and it belongs
-    // with the other "housekeeping" commands rather than among the attachments.
-    ("/compact", "ui.help.compact"),
-    ("ui.help.k.tts", "ui.help.tts"),
-    ("/tts stop", "ui.help.tts_stop"),
-    ("/tts pause · resume", "ui.help.tts_pause"),
+    &[
+        ("ui.help.k.image_attach", "ui.help.image_attach"),
+        ("ui.help.k.image_remove", "ui.help.image_remove"),
+        ("/image list", "ui.help.image_list"),
+        // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
+        // the terminal's decision (Windows Terminal binds it to its own paste), and an image
+        // on the clipboard produces no text for the terminal to inject.
+        ("/image paste", "ui.help.image_paste"),
+    ],
+    // The knowledge base.
+    &[
+        ("ui.help.k.rag_add", "ui.help.rag_add"),
+        ("ui.help.k.rag_remove", "ui.help.rag_remove"),
+        ("/rag list", "ui.help.rag_list"),
+        ("/rag rebuild", "ui.help.rag_rebuild"),
+    ],
+    // Housekeeping. `/reindex` sits next to the knowledge-base commands, but is
+    // deliberately top-level: it re-embeds notes, attachments and every
+    // profile's base at once. `/compact` is chat-scoped, unlike its neighbour —
+    // but it belongs here rather than among the attachments.
+    &[
+        ("/reindex", "ui.help.reindex"),
+        ("/compact", "ui.help.compact"),
+    ],
+    // Speech.
+    &[
+        ("ui.help.k.tts", "ui.help.tts"),
+        ("/tts stop", "ui.help.tts_stop"),
+        ("/tts pause · resume", "ui.help.tts_pause"),
+    ],
     // Last, as quitting is in the hotkeys tab: this is the typed route out, for
     // terminals that keep `Ctrl+Q` and `F10` for themselves (VS Code's integrated
     // one binds both). Same reasoning as `/image paste` above.
-    ("/exit · /quit", "ui.help.exit"),
+    &[("/exit · /quit", "ui.help.exit")],
 ];
 
-/// Width of the help/"About" dialog in columns (excluding the border) —
-/// comfortable and stable across tabs, so the window doesn't "jump" on switching.
-pub(super) const HELP_WIDTH: u16 = 76;
-/// Dialog height in rows (excluding the border).
-const HELP_HEIGHT: u16 = 34;
+/// Width bounds of the help/"About" dialog in columns (excluding the border).
+/// The dialog follows the terminal between them ([`help_size`]): the minimum is
+/// the `ru` tab strip's exact budget (its gate test measures against it), the
+/// maximum caps line length for readability on wide terminals. One size for
+/// every tab, so the window doesn't "jump" on switching.
+pub(super) const HELP_MIN_WIDTH: u16 = 76;
+pub(super) const HELP_MAX_WIDTH: u16 = 96;
+/// Height bounds in rows (excluding the border) — same idea as the widths: more
+/// rows on a tall terminal mean less scrolling through the key list.
+const HELP_MIN_HEIGHT: u16 = 34;
+const HELP_MAX_HEIGHT: u16 = 44;
+/// Screen columns/rows the dialog leaves free around itself while growing
+/// toward its maximum. Below the minimum it stops shrinking and
+/// [`centered_rect`] clamps it to the screen instead (hard degradation).
+const HELP_AIR: u16 = 6;
+
+/// The dialog's content size for a `cols`×`rows` screen: grows with the
+/// terminal between the min and max bounds, keeping [`HELP_AIR`] around
+/// itself. The caller adds the border and hands the result to
+/// [`centered_rect`], which clamps to the screen when even the minimum
+/// doesn't fit.
+pub(super) fn help_size(cols: u16, rows: u16) -> (u16, u16) {
+    (
+        cols.saturating_sub(HELP_AIR)
+            .clamp(HELP_MIN_WIDTH, HELP_MAX_WIDTH),
+        rows.saturating_sub(HELP_AIR)
+            .clamp(HELP_MIN_HEIGHT, HELP_MAX_HEIGHT),
+    )
+}
 
 /// Draws the help/"About" dialog centered on screen (KDE/Qt-style): the logo
 /// lockup, a tab strip, and scrollable content for the active tab with a
@@ -296,7 +356,8 @@ pub(super) fn render_help(
     loc: &'static Locale,
 ) {
     let full = frame.area();
-    let area = centered_rect(HELP_WIDTH + 2, HELP_HEIGHT + 2, full);
+    let (content_w, content_h) = help_size(full.width, full.height);
+    let area = centered_rect(content_w + 2, content_h + 2, full);
     frame.render_widget(Clear, area);
 
     // The title carries the brand name+version (language-neutral) next to the
@@ -470,64 +531,91 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     lines
 }
 
-/// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
+/// The "Hotkeys"/"Commands" tabs: groups of `(label, description)` pairs — a
 /// "key" + a description (a command label `/…` uses the command color). The
 /// locale resolves both label keys and descriptions. Shared by both tabs
-/// ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+/// ([`HELP_KEYS`]/[`HELP_COMMANDS`]); groups are separated by a blank line.
 ///
-/// A description too long for `width` **wraps**, hung under the column it starts
-/// in, rather than being clipped at the dialog's edge: the tab is a plain
+/// Every description starts in the **same column** — one past the tab's widest
+/// label — and a description too long for `width` **wraps**, hung under that
+/// column, rather than being clipped at the dialog's edge: the tab is a plain
 /// `Paragraph` with no wrapping of its own, so an over-long row used to lose its
-/// tail mid-word. It is a per-locale hazard — a row can fit in `en` and overflow
-/// in `ru`, so whoever writes the label never sees it (docs/lessons.md §7) — and
+/// tail mid-word. Both are per-locale work — a row can fit in `en` and overflow
+/// in `ru`, so whoever writes the label never sees it (docs/lessons.md §7), and
 /// the label lengths differ per locale too, which is why the column is measured
-/// here rather than fixed as a constant. `column_widths_fit_the_dialog` is the
-/// gate. See spec §11.7.
+/// here (in display columns — a label can carry `↔` or a box-drawing glyph,
+/// where `.len()` would be bytes) rather than fixed as a constant.
+/// `help_rows_fit_the_dialog_in_every_locale` is the gate. See spec §11.7.
 fn key_lines(
-    entries: &[(&str, &str)],
+    groups: &[&[(&str, &str)]],
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> Vec<Line<'static>> {
+    // Resolve every label up front: the description column is shared by the
+    // whole tab, so it has to be measured before any row can be built. Both
+    // label styles pad with a space on each side, so one measurement covers
+    // keycaps and command labels alike.
+    let resolved: Vec<Vec<(Span<'static>, String)>> = groups
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|(k, d)| {
+                    let key = loc.t(k).to_string();
+                    let key_span = if key.starts_with('/') {
+                        Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+                    } else {
+                        palette.keycap(key)
+                    };
+                    (key_span, loc.t(d).to_string())
+                })
+                .collect()
+        })
+        .collect();
+    let label_col = resolved
+        .iter()
+        .flatten()
+        .map(|(span, _)| span_width(span))
+        .max()
+        .unwrap_or(0);
+    // Where every description starts: the indent + the label column + the
+    // separating space.
+    let indent = HELP_PAD.chars().count() + label_col + 1;
+    // `max(1)` only guards against a pathological label eating the whole
+    // dialog (wrap_ranges must not be handed a zero width); with a label that
+    // long the rows overflow anyway, and the gate test is what catches it.
+    let body = width.saturating_sub(indent).max(1);
+    let hang = " ".repeat(indent);
     let mut lines = vec![Line::raw("")];
-    for (k, d) in entries {
-        let key = loc.t(k).to_string();
-        let desc = loc.t(d).to_string();
-        let key_span = if key.starts_with('/') {
-            Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-        } else {
-            palette.keycap(key)
-        };
-        // Where the description starts: the indent + the keycap (both `keycap`
-        // and the command style pad the label with a space on each side) + the
-        // separating space. Measured in display columns — a label can carry `↔`
-        // or a box-drawing glyph, and `.len()` would be bytes.
-        let key_w = span_width(&key_span);
-        let indent = HELP_PAD.chars().count() + key_w + 1;
-        // `max(1)` only guards against a pathological label eating the whole
-        // dialog (wrap_ranges must not be handed a zero width); with a label that
-        // long the row overflows anyway, and the gate test is what catches it.
-        let body = width.saturating_sub(indent).max(1);
-        let chars: Vec<char> = desc.chars().collect();
-        let pad = " ".repeat(indent);
-        for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
-            // `wrap_ranges` spills the break's whitespace into the row it ends
-            // (so the next row starts on a word); it is invisible, but it would
-            // make a row measure wider than it draws.
-            let text: String = chars[from..to].iter().collect();
-            let text = text.trim_end().to_string();
-            lines.push(if i == 0 {
-                Line::from(vec![
-                    Span::raw(HELP_PAD),
-                    key_span.clone(),
-                    Span::styled(format!(" {text}"), Style::new().fg(palette.text)),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::raw(pad.clone()),
-                    Span::styled(text, Style::new().fg(palette.text)),
-                ])
-            });
+    for (gi, group) in resolved.iter().enumerate() {
+        if gi > 0 {
+            lines.push(Line::raw("")); // a breath between the groups
+        }
+        for (key_span, desc) in group {
+            // The gap that carries this row's description to the shared column.
+            let gap = " ".repeat(indent - HELP_PAD.chars().count() - span_width(key_span));
+            let chars: Vec<char> = desc.chars().collect();
+            for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
+                // `wrap_ranges` spills the break's whitespace into the row it ends
+                // (so the next row starts on a word); it is invisible, but it would
+                // make a row measure wider than it draws.
+                let text: String = chars[from..to].iter().collect();
+                let text = text.trim_end().to_string();
+                lines.push(if i == 0 {
+                    Line::from(vec![
+                        Span::raw(HELP_PAD),
+                        key_span.clone(),
+                        Span::raw(gap.clone()),
+                        Span::styled(text, Style::new().fg(palette.text)),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw(hang.clone()),
+                        Span::styled(text, Style::new().fg(palette.text)),
+                    ])
+                });
+            }
         }
     }
     lines
@@ -874,23 +962,76 @@ mod tests {
     #[test]
     fn help_rows_fit_the_dialog_in_every_locale() {
         let palette = Palette::default();
-        let w = HELP_WIDTH as usize;
-        for &lang in crate::shared::i18n::Lang::ALL {
-            let loc = crate::shared::i18n::locale(lang);
-            for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
-                for line in key_lines(entries, &palette, loc, w) {
-                    let width = line_width(&line);
-                    assert!(
-                        width <= w,
-                        "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
-                        line.spans
-                            .iter()
-                            .map(|s| s.content.as_ref())
-                            .collect::<String>()
-                    );
+        // Both ends of the adaptive range: the floor is where the columns are
+        // tightest, the ceiling is where a bound mistake would hide.
+        for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+            for &lang in crate::shared::i18n::Lang::ALL {
+                let loc = crate::shared::i18n::locale(lang);
+                for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)]
+                {
+                    for line in key_lines(entries, &palette, loc, w) {
+                        let width = line_width(&line);
+                        assert!(
+                            width <= w,
+                            "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
+                            line.spans
+                                .iter()
+                                .map(|s| s.content.as_ref())
+                                .collect::<String>()
+                        );
+                    }
                 }
             }
         }
+    }
+
+    /// The neatness the tabs are built around: every description — and every
+    /// wrapped continuation — starts in the same column, whatever the width of
+    /// the label in front of it. Per tab and per locale, since the column is
+    /// measured from the localized labels.
+    #[test]
+    fn descriptions_share_one_column_per_tab() {
+        let palette = Palette::default();
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
+                let lines = key_lines(entries, &palette, loc, HELP_MAX_WIDTH as usize);
+                // The description is always the last span; everything before it
+                // (indent, label, gap — or the hanging indent) is its column.
+                let starts: Vec<usize> = lines
+                    .iter()
+                    .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+                    .map(|l| {
+                        l.spans[..l.spans.len() - 1]
+                            .iter()
+                            .map(span_width)
+                            .sum::<usize>()
+                    })
+                    .collect();
+                assert!(!starts.is_empty(), "{name} rendered no rows ({lang:?})");
+                assert!(
+                    starts.iter().all(|s| s == &starts[0]),
+                    "{name} descriptions start at {starts:?} ({lang:?}) — not one column"
+                );
+                assert!(
+                    starts[0] > HELP_PAD.chars().count(),
+                    "{name} description column collapsed onto the margin ({lang:?})"
+                );
+            }
+        }
+    }
+
+    /// The dialog follows the terminal between its bounds: the classic 76×34 on
+    /// a small screen, growing to the cap on a large one, never past it.
+    #[test]
+    fn the_dialog_follows_the_terminal_between_its_bounds() {
+        // Floor: an 80×24 terminal keeps the historic size (centered_rect then
+        // clamps the height to the screen — that part is not help_size's job).
+        assert_eq!(help_size(80, 24), (HELP_MIN_WIDTH, HELP_MIN_HEIGHT));
+        // In between: the dialog grows with the terminal, keeping its air.
+        assert_eq!(help_size(90, 42), (84, 36));
+        // Ceiling: a wide terminal doesn't stretch the lines past readability.
+        assert_eq!(help_size(200, 60), (HELP_MAX_WIDTH, HELP_MAX_HEIGHT));
     }
 
     /// The other direction (docs/lessons.md §2 — a gate that passes is
@@ -907,12 +1048,12 @@ mod tests {
         // as a bundle key by the i18n gates.
         let long =
             "a description far too long for the dialog to hold on one single row and then some";
-        let lines = key_lines(&[("/x", long)], &palette, loc, HELP_WIDTH as usize);
+        let lines = key_lines(&[&[("/x", long)]], &palette, loc, HELP_MIN_WIDTH as usize);
         // [0] is the leading blank line.
         let rows = &lines[1..];
         assert!(rows.len() > 1, "expected a wrap, got {} row(s)", rows.len());
         for line in rows {
-            assert!(line_width(line) <= HELP_WIDTH as usize, "{line:?}");
+            assert!(line_width(line) <= HELP_MIN_WIDTH as usize, "{line:?}");
         }
         // The hanging indent: HELP_PAD + " /x " + the separating space = 7.
         let indent = HELP_PAD.chars().count() + "/x".chars().count() + 2 + 1;
@@ -935,7 +1076,9 @@ mod tests {
         let mut s = ChatScreen::new();
         s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
         s.help.as_mut().unwrap().tab = HelpTab::Commands;
-        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        // Tall enough for the whole tab, group separators included — these
+        // tests assert on unscrolled content.
+        let mut term = Terminal::new(TestBackend::new(90, 50)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
@@ -948,12 +1091,18 @@ mod tests {
         out
     }
 
+    /// [`HELP_COMMANDS`] in display order, groups flattened away — the list the
+    /// tab renders, for tests that care about order rather than grouping.
+    fn flat_commands() -> Vec<&'static (&'static str, &'static str)> {
+        HELP_COMMANDS.iter().flat_map(|g| g.iter()).collect()
+    }
+
     #[test]
     fn image_commands_are_listed_in_the_commands_tab() {
         // AGENTS.md §3 — a new command has to be discoverable in `F1`. They sit
         // right after the `/file` block: same verbs, neighbouring wording.
         let at = |label: &str| {
-            HELP_COMMANDS
+            flat_commands()
                 .iter()
                 .position(|(k, _)| *k == label)
                 .unwrap_or_else(|| panic!("{label} is missing from HELP_COMMANDS"))
@@ -980,11 +1129,12 @@ mod tests {
     fn reindex_is_listed_in_the_commands_tab() {
         // The catalog carries it next to the knowledge-base commands (AGENTS.md
         // §3 — a new command must be discoverable in `F1`).
-        let pos = HELP_COMMANDS
+        let flat = flat_commands();
+        let pos = flat
             .iter()
             .position(|(k, _)| *k == "/reindex")
             .expect("/reindex is missing from HELP_COMMANDS");
-        let rebuild = HELP_COMMANDS
+        let rebuild = flat
             .iter()
             .position(|(k, _)| *k == "/rag rebuild")
             .expect("/rag rebuild is missing from HELP_COMMANDS");
@@ -1007,11 +1157,12 @@ mod tests {
     fn compact_is_listed_in_the_commands_tab() {
         // AGENTS.md §3 — a new command has to be discoverable in `F1`, or it
         // exists only for whoever read the source.
-        let pos = HELP_COMMANDS
+        let flat = flat_commands();
+        let pos = flat
             .iter()
             .position(|(k, _)| *k == "/compact")
             .expect("/compact is missing from HELP_COMMANDS");
-        let reindex = HELP_COMMANDS
+        let reindex = flat
             .iter()
             .position(|(k, _)| *k == "/reindex")
             .expect("/reindex is missing from HELP_COMMANDS");
@@ -1035,12 +1186,12 @@ mod tests {
         // more than most: a user reaches for it precisely when the documented
         // keys did not work.
         let label = "/exit · /quit";
+        let flat = flat_commands();
         assert_eq!(
-            HELP_COMMANDS
-                .iter()
+            flat.iter()
                 .position(|(k, _)| *k == label)
                 .expect("the quit commands are missing from HELP_COMMANDS"),
-            HELP_COMMANDS.len() - 1,
+            flat.len() - 1,
             "the quit commands close the list"
         );
         // Both spellings the parser accepts are shown — the label is the only

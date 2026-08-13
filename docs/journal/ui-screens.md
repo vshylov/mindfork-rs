@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -39,6 +39,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a settings hint always fits its panel (done)
 - Post-M9: a disclaimer for what the models say and do (done)
 - Post-M9: the help tabs stopped clipping their descriptions (done)
+- Post-M9: the help dialog sizes itself, and its tables align (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1353,3 +1354,53 @@ debounce was done as a separate PR, see below).
 
 **Tests** (+2), 2163 green. **A live run isn't required** (AGENTS.md §3): help-tab
 layout only — no engine, memory or tool path.
+
+### Post-M9: the help dialog sizes itself, and its tables align (done)
+
+- **Asked from a screenshot of the dialog** (branch `feat/help-adaptive-layout`):
+  the window was a fixed 76×34 whatever the terminal, and the "Hotkeys"/"Commands"
+  tabs read as a ragged list — each description started right after its own label,
+  so the left edge of the text wandered per row, and a wrapped continuation hung
+  at a different column on every row that wrapped.
+- **The size now follows the terminal between bounds** (`help_size`):
+  content 76–96 columns × 34–44 rows, keeping `HELP_AIR = 6` screen cells free
+  while growing. The floor is the old size — deliberately: 76 is the `ru` tab
+  strip's exact budget, and the strip gate now measures against
+  `HELP_MIN_WIDTH` by name. The ceiling caps line length for readability (a
+  90-char license line is where reading starts to hurt), and it is a cap, not a
+  target — `centered_rect` still clamps below the floor on a cramped screen, the
+  same hard degradation as before. One size for every tab, so the window still
+  doesn't "jump" on switching; the constants stay in `popups.rs` next to their
+  consumer.
+- **One description column per tab** (`key_lines`): labels are resolved and
+  measured **up front** — the column is one past the tab's widest localized
+  label, so it is per tab *and* per locale (the previous per-row measurement kept
+  each row inside the dialog but aligned nothing). The gap to the column is a
+  plain unstyled span; wrapped continuations hang under the same column, which
+  makes them read as the description's second line rather than as a new entry.
+- **Groups, not headers.** `HELP_KEYS`/`HELP_COMMANDS` became `&[&[(&str,
+  &str)]]` — related entries (composing / selection / navigation / conversation /
+  editing / toggles / exit; files / images / RAG / housekeeping / TTS / exit) are
+  separated by one blank line at render time. Headers were considered and
+  rejected: they would add ~13 locale keys for labels the grouping already
+  implies, and the flat order the tests pin is unchanged — flattening the groups
+  recovers the exact previous list, which is what the order-sensitive tests now
+  do (`flat_commands()`).
+- **Tests** (+2, one replaced): the width gate now runs at **both bounds** of the
+  range; `descriptions_share_one_column_per_tab` pins the alignment itself
+  (mutation-checked — freezing the gap to one space turns it red);
+  `the_dialog_follows_the_terminal_between_its_bounds` pins floor/middle/ceiling
+  of `help_size`. The commands-tab dump tests moved to a 90×50 backend: with the
+  group separators the tab is 23 rows, and the last row (`/exit · /quit`) fell
+  below the fold of the old 90×40 — the assertion caught it, which is the
+  "assert the symptom" family working as intended.
+- **A restore trap worth naming**: after un-mutating the file via
+  `os.replace(backup, file)`, `cargo test` **reused the mutated binary** — the
+  backup's mtime predates the build, so cargo saw nothing to rebuild and the
+  gate stayed red on correct code. `touch` after a byte-level restore. (Related:
+  a Python `io.open(..., 'w')` writes CRLF on Windows — normalize before git
+  sees it.)
+
+**Tests**: 2165 green (+2), 96 `#[ignore]`, clippy `-D warnings`/fmt clean.
+**A live run isn't required** (AGENTS.md §3): help-dialog layout only — no
+engine, memory or tool path.
