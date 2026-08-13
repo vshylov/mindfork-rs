@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The `F1` help window looks after its own layout.** The window now grows with
+  the terminal (between its old 76×34 and a readable cap of 96×44) instead of
+  always taking the small fixed size; in the "Hotkeys" and "Commands" tabs every
+  description starts in the same column, wrapped lines hang under that column,
+  and related entries sit in small groups with a breathing line between them.
+  The "Components" tab lays its tables out like a table of contents — name on
+  the left, version and license aligned to the right edge, a faint dotted
+  leader between — instead of leaving the right half of the window empty.
+
 ### Added
 
 - **`/exit` and `/quit` leave the app.** Until now the only ways out were `Ctrl+Q`

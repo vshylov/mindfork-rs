@@ -200,8 +200,9 @@ impl ChatScreen {
 /// is a literal "key" (ASCII, universal) **or** a `ui.*` key where the label
 /// itself has words (mouse); `desc_key` is always a `ui.*` description key. Both
 /// are resolved through the locale in [`key_lines`]. Input-box commands (`/…`)
-/// are split out into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
-/// docs/i18n-ui.md.
+/// are split out into [`HELP_COMMANDS`] (a separate tab). Related keys sit in
+/// display groups, encoded **outside** the table — [`KEY_GROUP_OPENERS`] names
+/// the row that opens each group. See spec §11.7, docs/i18n-ui.md.
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "ui.help.send"),
     ("Shift+Enter / Alt+Enter", "ui.help.newline"),
@@ -241,8 +242,10 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
 ];
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
-/// [`HELP_KEYS`]; a command label (`/…`) is drawn in the command color. Split out
-/// of the hotkeys so they don't clutter reading them. See spec §11.7.
+/// [`HELP_KEYS`], with the display groups likewise encoded outside the table
+/// ([`COMMAND_GROUP_OPENERS`]); a command label (`/…`) is drawn in the command
+/// color. Split out of the hotkeys so they don't clutter reading them. See
+/// spec §11.7.
 pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // Attachments come first — they are the commands a user reaches for while
     // writing a message (see docs/file-attachments.md §4.8).
@@ -278,11 +281,60 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("/exit · /quit", "ui.help.exit"),
 ];
 
-/// Width of the help/"About" dialog in columns (excluding the border) —
-/// comfortable and stable across tabs, so the window doesn't "jump" on switching.
-pub(super) const HELP_WIDTH: u16 = 76;
-/// Dialog height in rows (excluding the border).
-const HELP_HEIGHT: u16 = 34;
+/// The labels that **open a display group** of [`HELP_KEYS`]: [`key_lines`]
+/// draws one blank line before each of these rows, so related keys read as
+/// small groups (composing · selection/clipboard · navigation · the
+/// conversation · editing · panels/toggles · the way out) without headers —
+/// and without locale keys, since a break carries no text.
+///
+/// The breaks live **outside** the table on purpose: the rows are long-lived,
+/// and any line added among them lands inside the region the SonarQube
+/// copy-paste detector flags on these uniform tuple tables, where every *new*
+/// line counts toward the duplication density (docs/lessons.md §2 — this
+/// table's regrouping is the lesson's third recurrence).
+/// `group_openers_open_real_rows` pins each opener to exactly one row.
+pub(super) const KEY_GROUP_OPENERS: &[&str] =
+    &["Shift+←/→/↑/↓", "Esc", "F3", "Ctrl+K", "Ctrl+P", "F1 / ?"];
+
+/// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
+/// files · images · the knowledge base · housekeeping · speech · the way out.
+const COMMAND_GROUP_OPENERS: &[&str] = &[
+    "ui.help.k.image_attach",
+    "ui.help.k.rag_add",
+    "/reindex",
+    "ui.help.k.tts",
+    "/exit · /quit",
+];
+
+/// Width bounds of the help/"About" dialog in columns (excluding the border).
+/// The dialog follows the terminal between them ([`help_size`]): the minimum is
+/// the `ru` tab strip's exact budget (its gate test measures against it), the
+/// maximum caps line length for readability on wide terminals. One size for
+/// every tab, so the window doesn't "jump" on switching.
+pub(super) const HELP_MIN_WIDTH: u16 = 76;
+pub(super) const HELP_MAX_WIDTH: u16 = 96;
+/// Height bounds in rows (excluding the border) — same idea as the widths: more
+/// rows on a tall terminal mean less scrolling through the key list.
+const HELP_MIN_HEIGHT: u16 = 34;
+const HELP_MAX_HEIGHT: u16 = 44;
+/// Screen columns/rows the dialog leaves free around itself while growing
+/// toward its maximum. Below the minimum it stops shrinking and
+/// [`centered_rect`] clamps it to the screen instead (hard degradation).
+const HELP_AIR: u16 = 6;
+
+/// The dialog's content size for a `cols`×`rows` screen: grows with the
+/// terminal between the min and max bounds, keeping [`HELP_AIR`] around
+/// itself. The caller adds the border and hands the result to
+/// [`centered_rect`], which clamps to the screen when even the minimum
+/// doesn't fit.
+pub(super) fn help_size(cols: u16, rows: u16) -> (u16, u16) {
+    (
+        cols.saturating_sub(HELP_AIR)
+            .clamp(HELP_MIN_WIDTH, HELP_MAX_WIDTH),
+        rows.saturating_sub(HELP_AIR)
+            .clamp(HELP_MIN_HEIGHT, HELP_MAX_HEIGHT),
+    )
+}
 
 /// Draws the help/"About" dialog centered on screen (KDE/Qt-style): the logo
 /// lockup, a tab strip, and scrollable content for the active tab with a
@@ -296,7 +348,8 @@ pub(super) fn render_help(
     loc: &'static Locale,
 ) {
     let full = frame.area();
-    let area = centered_rect(HELP_WIDTH + 2, HELP_HEIGHT + 2, full);
+    let (content_w, content_h) = help_size(full.width, full.height);
+    let area = centered_rect(content_w + 2, content_h + 2, full);
     frame.render_widget(Clear, area);
 
     // The title carries the brand name+version (language-neutral) next to the
@@ -353,11 +406,11 @@ pub(super) fn render_help(
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc),
-        HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc, inner_w),
-        HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc, inner_w),
+        HelpTab::Hotkeys => key_lines(HELP_KEYS, KEY_GROUP_OPENERS, palette, loc, inner_w),
+        HelpTab::Commands => key_lines(HELP_COMMANDS, COMMAND_GROUP_OPENERS, palette, loc, inner_w),
         HelpTab::License => license_lines(palette, inner_w),
         HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
-        HelpTab::Components => component_lines(palette, loc),
+        HelpTab::Components => component_lines(palette, loc, inner_w),
     };
     let total = content.len();
     let view_h = body_area.height as usize;
@@ -471,66 +524,102 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
 }
 
 /// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
-/// "key" + a description (a command label `/…` uses the command color). The
-/// locale resolves both label keys and descriptions. Shared by both tabs
-/// ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+/// "key" + a description (a command label `/…` uses the command color); a
+/// blank line is drawn before every row named in `openers`, separating the
+/// display groups. The locale resolves both label keys and descriptions.
+/// Shared by both tabs ([`HELP_KEYS`]/[`HELP_COMMANDS`], with their
+/// [`KEY_GROUP_OPENERS`]/[`COMMAND_GROUP_OPENERS`]).
 ///
-/// A description too long for `width` **wraps**, hung under the column it starts
-/// in, rather than being clipped at the dialog's edge: the tab is a plain
-/// `Paragraph` with no wrapping of its own, so an over-long row used to lose its
-/// tail mid-word. It is a per-locale hazard — a row can fit in `en` and overflow
-/// in `ru`, so whoever writes the label never sees it (docs/lessons.md §7) — and
-/// the label lengths differ per locale too, which is why the column is measured
-/// here rather than fixed as a constant. `column_widths_fit_the_dialog` is the
-/// gate. See spec §11.7.
+/// Every description starts in the **same column** — one past the tab's widest
+/// label — and a description too long for `width` **wraps**, hung under that
+/// column ([`push_key_entry`]), rather than being clipped at the dialog's edge:
+/// the tab is a plain `Paragraph` with no wrapping of its own, so an over-long
+/// row used to lose its tail mid-word. Both are per-locale work — a row can fit
+/// in `en` and overflow in `ru`, so whoever writes the label never sees it
+/// (docs/lessons.md §7), and the label lengths differ per locale too, which is
+/// why the column is measured here (in display columns — a label can carry `↔`
+/// or a box-drawing glyph, where `.len()` would be bytes) rather than fixed as
+/// a constant. `help_rows_fit_the_dialog_in_every_locale` is the gate. See
+/// spec §11.7.
 fn key_lines(
     entries: &[(&str, &str)],
+    openers: &[&str],
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::raw("")];
-    for (k, d) in entries {
-        let key = loc.t(k).to_string();
-        let desc = loc.t(d).to_string();
-        let key_span = if key.starts_with('/') {
-            Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-        } else {
-            palette.keycap(key)
-        };
-        // Where the description starts: the indent + the keycap (both `keycap`
-        // and the command style pad the label with a space on each side) + the
-        // separating space. Measured in display columns — a label can carry `↔`
-        // or a box-drawing glyph, and `.len()` would be bytes.
-        let key_w = span_width(&key_span);
-        let indent = HELP_PAD.chars().count() + key_w + 1;
-        // `max(1)` only guards against a pathological label eating the whole
-        // dialog (wrap_ranges must not be handed a zero width); with a label that
-        // long the row overflows anyway, and the gate test is what catches it.
-        let body = width.saturating_sub(indent).max(1);
-        let chars: Vec<char> = desc.chars().collect();
-        let pad = " ".repeat(indent);
-        for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
-            // `wrap_ranges` spills the break's whitespace into the row it ends
-            // (so the next row starts on a word); it is invisible, but it would
-            // make a row measure wider than it draws.
-            let text: String = chars[from..to].iter().collect();
-            let text = text.trim_end().to_string();
-            lines.push(if i == 0 {
-                Line::from(vec![
-                    Span::raw(HELP_PAD),
-                    key_span.clone(),
-                    Span::styled(format!(" {text}"), Style::new().fg(palette.text)),
-                ])
+    // Resolve every label up front: the description column is shared by the
+    // whole tab, so it has to be measured before any row can be built. Both
+    // label styles pad with a space on each side, so one measurement covers
+    // keycaps and command labels alike.
+    let resolved: Vec<(bool, Span<'static>, String)> = entries
+        .iter()
+        .map(|(k, d)| {
+            let key = loc.t(k).to_string();
+            let key_span = if key.starts_with('/') {
+                Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
             } else {
-                Line::from(vec![
-                    Span::raw(pad.clone()),
-                    Span::styled(text, Style::new().fg(palette.text)),
-                ])
-            });
+                palette.keycap(key)
+            };
+            (openers.contains(k), key_span, loc.t(d).to_string())
+        })
+        .collect();
+    let label_col = resolved
+        .iter()
+        .map(|(_, span, _)| span_width(span))
+        .max()
+        .unwrap_or(0);
+    // Where every description starts: the indent + the label column + the
+    // separating space.
+    let indent = HELP_PAD.chars().count() + label_col + 1;
+    let mut lines = vec![Line::raw("")];
+    for (opens_group, key_span, desc) in &resolved {
+        if *opens_group {
+            lines.push(Line::raw("")); // a breath between the groups
         }
+        push_key_entry(&mut lines, key_span, desc, palette, width, indent);
     }
     lines
+}
+
+/// One entry of a [`key_lines`] table: the label row with its description
+/// starting at the shared column `indent`, plus wrapped continuations hung
+/// under that same column.
+fn push_key_entry(
+    lines: &mut Vec<Line<'static>>,
+    key_span: &Span<'static>,
+    desc: &str,
+    palette: &Palette,
+    width: usize,
+    indent: usize,
+) {
+    // The gap that carries this row's description to the shared column.
+    let gap = " ".repeat(indent - HELP_PAD.chars().count() - span_width(key_span));
+    // `max(1)` only guards against a pathological label eating the whole
+    // dialog (wrap_ranges must not be handed a zero width); with a label that
+    // long the rows overflow anyway, and the gate test is what catches it.
+    let body = width.saturating_sub(indent).max(1);
+    let chars: Vec<char> = desc.chars().collect();
+    for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
+        // `wrap_ranges` spills the break's whitespace into the row it ends
+        // (so the next row starts on a word); it is invisible, but it would
+        // make a row measure wider than it draws.
+        let text: String = chars[from..to].iter().collect();
+        let text = text.trim_end().to_string();
+        lines.push(if i == 0 {
+            Line::from(vec![
+                Span::raw(HELP_PAD),
+                key_span.clone(),
+                Span::raw(gap.clone()),
+                Span::styled(text, Style::new().fg(palette.text)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled(text, Style::new().fg(palette.text)),
+            ])
+        });
+    }
 }
 
 /// A span's width in terminal columns (not bytes, not `char`s).
@@ -637,10 +726,15 @@ fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
 /// width of the `- ` marker the markdown writer emits.
 const LIST_HANG: usize = 2;
 
-/// The "Components" tab: name (aligned into a column), version, and license.
-/// The name uses the main text color, version and license are muted, columns
-/// line up.
-fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
+/// The "Components" tab: two "table of contents"-style tables — the crates,
+/// then the vendored grammars. The name sits on the left margin; the other two
+/// columns are anchored against the right margin, version under version and
+/// license under license; the run between is a dotted leader in the dialog's
+/// dimmest color, so a row reads across the full width without the columns
+/// drifting apart visually ([`leader_table`]). Left-aligned like every other
+/// tab — an earlier centered-block cut was rejected because nothing else in
+/// the app (or on the site) centers text (user's decision, 2026-08-13).
+fn component_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::raw(""),
         Line::from(Span::styled(
@@ -649,28 +743,7 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
         )),
         Line::raw(""),
     ];
-    let name_w = credits::COMPONENTS
-        .iter()
-        .map(|(n, ..)| n.chars().count())
-        .max()
-        .unwrap_or(0);
-    let ver_w = credits::COMPONENTS
-        .iter()
-        .map(|(_, v, _)| v.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (name, version, license) in credits::COMPONENTS {
-        let name_pad = " ".repeat(name_w + 2 - name.chars().count());
-        let ver_pad = " ".repeat(ver_w + 2 - version.chars().count());
-        lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
-            Span::styled((*name).to_string(), Style::new().fg(palette.text)),
-            Span::raw(name_pad),
-            Span::styled((*version).to_string(), palette.muted_style()),
-            Span::raw(ver_pad),
-            Span::styled((*license).to_string(), palette.muted_style()),
-        ]));
-    }
+    lines.extend(leader_table(credits::COMPONENTS, palette, width));
 
     // Vendored syntax grammars — third-party data rather than crates, hence a
     // section of their own (see shared/credits.rs and syntaxes/SOURCES.md).
@@ -680,27 +753,55 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
         palette.muted_style(),
     )));
     lines.push(Line::raw(""));
-    let lang_w = credits::GRAMMARS
-        .iter()
-        .map(|(n, ..)| n.chars().count())
-        .max()
-        .unwrap_or(0);
-    let repo_w = credits::GRAMMARS
-        .iter()
-        .map(|(_, r, _)| r.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (lang, repo, license) in credits::GRAMMARS.iter() {
-        lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
-            Span::styled((*lang).to_string(), Style::new().fg(palette.text)),
-            Span::raw(" ".repeat(lang_w + 2 - lang.chars().count())),
-            Span::styled((*repo).to_string(), palette.muted_style()),
-            Span::raw(" ".repeat(repo_w + 2 - repo.chars().count())),
-            Span::styled((*license).to_string(), palette.muted_style()),
-        ]));
-    }
+    let grammars: Vec<(&str, &str, &str)> = credits::GRAMMARS.iter().copied().collect();
+    lines.extend(leader_table(&grammars, palette, width));
     lines
+}
+
+/// One table of the "Components" tab: `(name, mid, right)` rows with the name
+/// on the left margin, the `mid` and `right` columns aligned under each other
+/// against the right margin (which mirrors [`HELP_PAD`]), and the gap bridged
+/// by a dotted leader in the border color — the least visible the palette has.
+/// Column math is in characters: every value here is ASCII (crate names,
+/// versions, SPDX expressions, repository pins).
+fn leader_table(
+    rows: &[(&str, &str, &str)],
+    palette: &Palette,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let pad = HELP_PAD.chars().count();
+    let mid_w = rows
+        .iter()
+        .map(|(_, m, _)| m.chars().count())
+        .max()
+        .unwrap_or(0);
+    let right_w = rows
+        .iter()
+        .map(|(.., r)| r.chars().count())
+        .max()
+        .unwrap_or(0);
+    // Where the two anchored columns start.
+    let right_col = width.saturating_sub(pad + right_w);
+    let mid_col = right_col.saturating_sub(2 + mid_w);
+    rows.iter()
+        .map(|(name, mid, right)| {
+            // A space on each side of the dots. On a dialog clamped below the
+            // minimum width the dots run out and the row just clips on the
+            // right — the same hard degradation as every other tab's rows.
+            let dots = mid_col.saturating_sub(pad + name.chars().count() + 2);
+            Line::from(vec![
+                Span::raw(HELP_PAD),
+                Span::styled((*name).to_string(), Style::new().fg(palette.text)),
+                Span::styled(
+                    format!(" {} ", ".".repeat(dots)),
+                    palette.border_style(false),
+                ),
+                Span::styled(format!("{mid:<mid_w$}"), palette.muted_style()),
+                Span::raw("  "),
+                Span::styled((*right).to_string(), palette.muted_style()),
+            ])
+        })
+        .collect()
 }
 
 /// Draws the spellcheck-suggestion popup centered on screen.
@@ -874,23 +975,81 @@ mod tests {
     #[test]
     fn help_rows_fit_the_dialog_in_every_locale() {
         let palette = Palette::default();
-        let w = HELP_WIDTH as usize;
-        for &lang in crate::shared::i18n::Lang::ALL {
-            let loc = crate::shared::i18n::locale(lang);
-            for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
-                for line in key_lines(entries, &palette, loc, w) {
-                    let width = line_width(&line);
-                    assert!(
-                        width <= w,
-                        "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
-                        line.spans
-                            .iter()
-                            .map(|s| s.content.as_ref())
-                            .collect::<String>()
-                    );
+        // Both ends of the adaptive range: the floor is where the columns are
+        // tightest, the ceiling is where a bound mistake would hide.
+        for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+            for &lang in crate::shared::i18n::Lang::ALL {
+                let loc = crate::shared::i18n::locale(lang);
+                for (name, entries, openers) in [
+                    ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+                    ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+                ] {
+                    for line in key_lines(entries, openers, &palette, loc, w) {
+                        let width = line_width(&line);
+                        assert!(
+                            width <= w,
+                            "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
+                            line.spans
+                                .iter()
+                                .map(|s| s.content.as_ref())
+                                .collect::<String>()
+                        );
+                    }
                 }
             }
         }
+    }
+
+    /// The neatness the tabs are built around: every description — and every
+    /// wrapped continuation — starts in the same column, whatever the width of
+    /// the label in front of it. Per tab and per locale, since the column is
+    /// measured from the localized labels.
+    #[test]
+    fn descriptions_share_one_column_per_tab() {
+        let palette = Palette::default();
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for (name, entries, openers) in [
+                ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+                ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+            ] {
+                let lines = key_lines(entries, openers, &palette, loc, HELP_MAX_WIDTH as usize);
+                // The description is always the last span; everything before it
+                // (indent, label, gap — or the hanging indent) is its column.
+                let starts: Vec<usize> = lines
+                    .iter()
+                    .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+                    .map(|l| {
+                        l.spans[..l.spans.len() - 1]
+                            .iter()
+                            .map(span_width)
+                            .sum::<usize>()
+                    })
+                    .collect();
+                assert!(!starts.is_empty(), "{name} rendered no rows ({lang:?})");
+                assert!(
+                    starts.iter().all(|s| s == &starts[0]),
+                    "{name} descriptions start at {starts:?} ({lang:?}) — not one column"
+                );
+                assert!(
+                    starts[0] > HELP_PAD.chars().count(),
+                    "{name} description column collapsed onto the margin ({lang:?})"
+                );
+            }
+        }
+    }
+
+    /// The dialog follows the terminal between its bounds: the classic 76×34 on
+    /// a small screen, growing to the cap on a large one, never past it.
+    #[test]
+    fn the_dialog_follows_the_terminal_between_its_bounds() {
+        // Floor: an 80×24 terminal keeps the historic size (centered_rect then
+        // clamps the height to the screen — that part is not help_size's job).
+        assert_eq!(help_size(80, 24), (HELP_MIN_WIDTH, HELP_MIN_HEIGHT));
+        // In between: the dialog grows with the terminal, keeping its air.
+        assert_eq!(help_size(90, 42), (84, 36));
+        // Ceiling: a wide terminal doesn't stretch the lines past readability.
+        assert_eq!(help_size(200, 60), (HELP_MAX_WIDTH, HELP_MAX_HEIGHT));
     }
 
     /// The other direction (docs/lessons.md §2 — a gate that passes is
@@ -907,12 +1066,12 @@ mod tests {
         // as a bundle key by the i18n gates.
         let long =
             "a description far too long for the dialog to hold on one single row and then some";
-        let lines = key_lines(&[("/x", long)], &palette, loc, HELP_WIDTH as usize);
+        let lines = key_lines(&[("/x", long)], &[], &palette, loc, HELP_MIN_WIDTH as usize);
         // [0] is the leading blank line.
         let rows = &lines[1..];
         assert!(rows.len() > 1, "expected a wrap, got {} row(s)", rows.len());
         for line in rows {
-            assert!(line_width(line) <= HELP_WIDTH as usize, "{line:?}");
+            assert!(line_width(line) <= HELP_MIN_WIDTH as usize, "{line:?}");
         }
         // The hanging indent: HELP_PAD + " /x " + the separating space = 7.
         let indent = HELP_PAD.chars().count() + "/x".chars().count() + 2 + 1;
@@ -935,7 +1094,9 @@ mod tests {
         let mut s = ChatScreen::new();
         s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
         s.help.as_mut().unwrap().tab = HelpTab::Commands;
-        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        // Tall enough for the whole tab, group separators included — these
+        // tests assert on unscrolled content.
+        let mut term = Terminal::new(TestBackend::new(90, 50)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
@@ -946,6 +1107,134 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// The opener contract behind the group breaks: every opener names exactly
+    /// one row of its table (a renamed label would silently orphan its break —
+    /// this is the desync the out-of-table encoding trades for keeping the
+    /// long-lived rows untouched, so it is pinned here), never the first row
+    /// (that would double the leading spacer), and each draws as exactly one
+    /// blank line — the tab's blank rows are the openers plus the leading
+    /// spacer, nothing else.
+    #[test]
+    fn group_openers_open_real_rows() {
+        let palette = Palette::default();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        for (name, entries, openers) in [
+            ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+            ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+        ] {
+            assert!(!openers.is_empty(), "{name} lost its group breaks");
+            for opener in openers {
+                assert_eq!(
+                    entries.iter().filter(|(k, _)| k == opener).count(),
+                    1,
+                    "{name}: opener {opener:?} must name exactly one row"
+                );
+            }
+            assert!(
+                !openers.contains(&entries[0].0),
+                "{name}: the first row cannot open a group"
+            );
+            let lines = key_lines(entries, openers, &palette, loc, HELP_MIN_WIDTH as usize);
+            let blanks = lines
+                .iter()
+                .filter(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+                .count();
+            assert_eq!(
+                blanks,
+                openers.len() + 1,
+                "{name}: openers + the leading spacer"
+            );
+            // …and each break sits immediately BEFORE its opener's row, not
+            // after it or somewhere else (the count alone can't tell).
+            for opener in openers {
+                let label = loc.t(opener);
+                let at = lines
+                    .iter()
+                    .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
+                    .unwrap_or_else(|| panic!("{name}: opener {opener:?} is not rendered"));
+                assert!(
+                    lines[at - 1]
+                        .spans
+                        .iter()
+                        .all(|s| s.content.trim().is_empty()),
+                    "{name}: no blank line before opener {opener:?}"
+                );
+            }
+        }
+    }
+
+    /// The "Components" tab is two leader tables (user's decision 2026-08-13 —
+    /// nothing in the app or on the site centers text): names on the left
+    /// margin, version/license (and repository/license) columns aligned under
+    /// each other against the right margin, dotted leaders bridging the gap in
+    /// the border color. Pinned per table and at both bounds of the width
+    /// range.
+    #[test]
+    fn components_columns_anchor_right_with_leaders() {
+        let palette = Palette::default();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let dim = palette.border_style(false).fg;
+        for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+            let lines = component_lines(&palette, loc, w);
+            for line in &lines {
+                assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
+            }
+            // The two tables are split by the grammars heading; table rows are
+            // the 6-span lines ([pad][name][leader][mid][gap][right]).
+            let heading = lines
+                .iter()
+                .position(|l| {
+                    l.spans
+                        .iter()
+                        .any(|s| s.content.contains(loc.t("ui.components.grammars")))
+                })
+                .expect("the grammars heading");
+            let tables = [&lines[..heading], &lines[heading..]];
+            for (which, table) in tables.into_iter().enumerate() {
+                let rows: Vec<&Line<'static>> =
+                    table.iter().filter(|l| l.spans.len() == 6).collect();
+                assert!(
+                    rows.len() > 10,
+                    "table {which} rendered {} rows",
+                    rows.len()
+                );
+                // Names start on the left margin; mid and right columns start
+                // at one shared column each; the widest right value touches
+                // the mirrored right margin.
+                let col_of = |line: &Line<'static>, span: usize| -> usize {
+                    line.spans[..span].iter().map(span_width).sum()
+                };
+                let mid_col = col_of(rows[0], 3);
+                let right_col = col_of(rows[0], 5);
+                let mut right_end = 0;
+                for row in &rows {
+                    assert_eq!(span_width(&row.spans[0]), HELP_PAD.chars().count());
+                    assert_eq!(col_of(row, 3), mid_col, "mid column drifts: {row:?}");
+                    assert_eq!(col_of(row, 5), right_col, "right column drifts: {row:?}");
+                    // The leader is dots in the dim border color, spaces aside.
+                    let leader = &row.spans[2];
+                    assert_eq!(leader.style.fg, dim, "leader color: {row:?}");
+                    assert!(
+                        leader.content.trim().chars().all(|c| c == '.'),
+                        "leader is not dots: {row:?}"
+                    );
+                    right_end = right_end.max(col_of(row, 5) + span_width(&row.spans[5]));
+                }
+                assert_eq!(
+                    right_end,
+                    w - HELP_PAD.chars().count(),
+                    "table {which} is not anchored to the right margin at {w}"
+                );
+                // At least the short names get a real dotted run, not a stub.
+                assert!(
+                    rows.iter()
+                        .any(|r| r.spans[2].content.matches('.').count() >= 3),
+                    "table {which} has no visible leaders"
+                );
+            }
+        }
     }
 
     #[test]

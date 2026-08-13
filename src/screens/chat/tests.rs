@@ -1,6 +1,6 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
-use super::popups::HELP_KEYS;
+use super::popups::{HELP_KEYS, KEY_GROUP_OPENERS};
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
@@ -1136,8 +1136,10 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     term.draw(|f| s.render(f)).unwrap();
     // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
     // the max (well below what was requested) and the scrollbar thumb is drawn.
+    // The bound: entries + one blank per group opener comfortably exceeds the
+    // tab's line count minus the view (a couple of rows also wrap).
     assert!(
-        s.help.as_ref().unwrap().scroll < HELP_KEYS.len(),
+        s.help.as_ref().unwrap().scroll < HELP_KEYS.len() + KEY_GROUP_OPENERS.len(),
         "scroll clamps to the maximum"
     );
     let buf = term.backend().buffer();
@@ -2412,17 +2414,19 @@ fn help_hides_logo_when_terminal_is_short() {
 /// bundled locale rather than left to luck.
 #[test]
 fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
-    use super::popups::{HELP_WIDTH, help_tab_strip};
+    use super::popups::{HELP_MIN_WIDTH, help_tab_strip};
     use crate::shared::i18n::{Lang, locale};
 
+    // The budget is the dialog's MINIMUM width: the strip has to fit the
+    // smallest window the adaptive sizing ever grants.
     let palette = Palette::default();
     for lang in Lang::ALL {
         let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang));
         let chars: Vec<char> = strip.spans.iter().flat_map(|s| s.content.chars()).collect();
         let width = crate::shared::wrap::display_width(&chars);
         assert!(
-            width <= HELP_WIDTH as usize,
-            "the {} tab strip is {width} columns wide, the dialog is {HELP_WIDTH}",
+            width <= HELP_MIN_WIDTH as usize,
+            "the {} tab strip is {width} columns wide, the dialog is {HELP_MIN_WIDTH}",
             lang.code()
         );
     }

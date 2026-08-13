@@ -2106,11 +2106,20 @@ description, author, version, links — the website `mindfork.io`, the repositor
 writes every word on screen was chosen and downloaded by the user: generated output,
 third-party models and providers, the tools a model can invoke, cloud egress),
 **"Components"** (third-party dependencies — **name, version, license**; the list is checked
-against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests).
+against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests;
+the tab is laid out as **leader tables**: the name on the left margin, the version and
+license columns aligned under each other against the mirrored right margin, and the run
+between bridged by a dotted leader in the dialog's dimmest color — the tab's natural width
+is well under the dialog's, and a left-hugging table left the right half empty, while
+centering it was rejected because nothing else in the app centers text).
 Opens on the "Hotkeys" tab (`F1`/`?` — the familiar help key), and on
 reopening — on the **last-selected** tab (remembered). Navigation:
 `Tab`/`←→` — switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` — scroll the active tab, `Esc`
-(or `F1`/`?` again) — close, `Ctrl+Q`/`F10` — quit. The logo is drawn only
+(or `F1`/`?` again) — close, `Ctrl+Q`/`F10` — quit. The dialog **follows the
+terminal between bounds** — 76–96 columns × 34–44 rows of content — one size for
+every tab, so the window doesn't "jump" on switching: the maximum caps line length
+for readability on a wide screen, and below the minimum the dialog is clamped to
+the screen instead of shrinking further (a hard degradation). The logo is drawn only
 when there's enough height/width (a hard degradation, docs/branding.md §5); the license
 text wraps by word to the dialog's width, and the disclaimer — markdown at the source —
 goes through our own renderer (ADR 0003), with wrapped list items hung under their marker.
@@ -2120,15 +2129,19 @@ The **disclaimer is a tab of its own, not a tail on "License"**: the `LICENSE` f
 byte-identical to the canonical MIT text or the `MIT` SPDX identifier we publish stops being
 truthful and license scanners start reporting "Other" (a `shared::credits` gate test holds
 that line). The strip's labels are width-budgeted — a `screens::chat` gate test checks that
-it fits the dialog in **every** bundled locale, since the tab that overflows is the rightmost
-one and would be silently truncated for one language only.
+it fits the dialog's **minimum** width in **every** bundled locale, since the tab that
+overflows is the rightmost one and would be silently truncated for one language only.
 The **rows of the "Hotkeys"/"Commands" tabs are width-budgeted the same way**, and for the
 same reason: those tabs are plain `Paragraph`s with no wrapping of their own, so a
 description longer than the dialog simply lost its tail mid-word — in `ru` while looking
-fine in `en`, or the other way round. A long description now **wraps, hung under the column
-it starts in** (the description column is measured per row and per locale — the labels
-differ in width between languages, so a fixed constant would be wrong for one of them),
-and a gate test asserts every row of both tables fits in every bundled locale.
+fine in `en`, or the other way round. Each tab is laid out as one table: related entries
+sit in **groups separated by a blank line** (the groups carry no headers, so they need no
+locale keys), and every description starts in the **same column** — one past the tab's
+widest label, measured per tab and per locale in display columns, since the labels differ
+in width between languages and a fixed constant would be wrong for one of them. A long
+description **wraps, hung under that shared column**, and a gate test asserts every row of
+both tables fits at both bounds of the dialog's width range in every bundled locale, with
+a second test pinning the one-column alignment itself.
 Wrapping rather than shortening, because the alternative is writing the help twice: once
 short enough for `en` and once for whichever locale the label is widest in.
 The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME`, not the
