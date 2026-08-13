@@ -1752,6 +1752,18 @@ gemma-4-31B q4_0). One `fetch_url` call, refused, and the model stopped and expl
 to the user — in the scaffold language — that the address is on a local network its tools
 cannot reach, with the stub's connection counter at zero.
 
+**The full `#[ignore]` set was run twice** (this change touches `build_registry`, i.e. how
+*every* tool is constructed), and **no single run was 96/96**: run 1 was 95/1 (947 s) with
+`live_search_returns_results` returning zero results, run 2 was 94/2 (857 s) with two
+`openai::client` smokes failing on `connection closed before message completed` against the
+LAN server — while the search smoke passed. Every failure was re-run in isolation and
+passed (3/3 and 8/8 respectively), no failure repeated, and the union of the two runs covers
+the whole set. Both areas are ones this change cannot reach: the engine clients are outside
+the guard by construction (fork F1), and a search result that *parsed to zero results* is
+proof the request went out and came back — a blocked provider would have taken the "all
+providers unavailable" path instead. The search failure is anti-bot throttling, which the
+suite provokes by design: it drives several web smokes from one IP within a few minutes.
+
 **The first version of that smoke measured nothing, and the fixture was the reason.**
 Pointed at `169.254.169.254`, the model refused **on its own** without ever calling the tool
 ("I am not permitted to access internal network addresses or cloud metadata endpoints"), so

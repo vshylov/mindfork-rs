@@ -666,6 +666,15 @@ sidecar is missing, because an absent sandbox that was meant to be installed sho
 loud.
 — *English source-language migration*.
 
+**Running the whole `#[ignore]` set provokes failures the individual smokes never see.**
+It drives several web smokes from one IP within minutes, and the search providers throttle
+exactly that (a DuckDuckGo challenge arrives as `HTTP 200`); the local server can also drop
+a connection mid-stream under back-to-back load. Two consecutive full runs each failed one
+or two *different* tests, and every one passed on isolated re-run. Read the set as "the
+union of the runs is green, and no failure repeated", not as one clean sweep — and say so
+in the journal instead of quoting the best run.
+— *an address policy for model-chosen URLs*.
+
 **Distinguish a model-behaviour flake from a regression by the diff.** A control-tool
 smoke failed once because the model simply answered without calling the tool, and passed
 on re-run — defensible only because the change touched **zero** files on that path. A
