@@ -475,7 +475,7 @@ leaves it when you use a cloud provider, is spelled out in
 ## Project status
 
 Actively developed; the current release is
-**[v0.9.5](https://github.com/vshylov/mindfork-rs/releases)** — see the
+**[v0.9.6](https://github.com/vshylov/mindfork-rs/releases)** — see the
 [changelog](CHANGELOG.md) for what's new and the [roadmap](docs/roadmap.md)
 for what may come next. The original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished; development
