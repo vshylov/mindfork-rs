@@ -261,6 +261,42 @@ pub(crate) fn search_parameters(
     })
 }
 
+/// The JSON schema of a **paged reader**: a required string naming the target
+/// (an attachment for `attachment_read`, a conversation for `chat_read`) plus
+/// an optional 1-based `page`.
+///
+/// Shared for the same reason [`search_parameters`] is shared by the search
+/// half of each pair: one definition, so the reader contracts cannot drift
+/// apart. The bundle keys are passed whole (the i18n-gate rule above).
+pub(crate) fn paged_read_parameters(
+    loc: &crate::shared::i18n::Locale,
+    target: &str,
+    target_key: &str,
+    page_key: &str,
+) -> serde_json::Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        target.to_string(),
+        serde_json::json!({
+            "type": "string",
+            "description": loc.t(target_key)
+        }),
+    );
+    properties.insert(
+        "page".to_string(),
+        serde_json::json!({
+            "type": "integer",
+            "minimum": 1,
+            "description": loc.t(page_key)
+        }),
+    );
+    serde_json::json!({
+        "type": "object",
+        "properties": properties,
+        "required": [target]
+    })
+}
+
 /// Reads the arguments [`search_parameters`] describes: a trimmed, non-empty
 /// `query` and `top_k` (falling back to `default_k`).
 ///

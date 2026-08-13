@@ -1839,3 +1839,19 @@ same trap in this project (lessons §2, §9).
   pass (the address-policy lesson). Passed twice (solo, then inside the full
   set). Full orchestrator e2e regression — the change sits on every turn's
   `TurnInfo`/catalog path — **34/34 in 832 s**, no repeats needed.
+- **Sonar round** (the PR's first analysis): new-code duplication **4.7%**
+  against the 3% bar — the fourth recorded instance of the duplication-gate
+  trap (lessons §2), this time all code, no fixtures: `search_messages_in`
+  was a scoped twin of `search_messages` (13 lines), `chat_read`'s parameter
+  schema mirrored `attachment_read`'s (18), the smoke's bootstrap prologue
+  mirrored the read-back smoke's (21), and the one line added to three
+  identical background `TurnInfo` builds landed inside already-duplicated
+  blocks. Fixed with shared seams, not suppression: one private
+  `search_messages_where` with an optional `IN` under both public faces; a
+  `paged_read_parameters` helper next to `search_parameters` (the read half
+  of each pair now shares its contract the way the search half always did);
+  `narrow_profile_to` in the live harness (bootstrap + "only the tools under
+  test" in one place); and `Orchestrator::background_tool_ctx` replacing the
+  three drift-prone background build sites — the seam a future `TurnInfo`
+  field will thank. Unit suite unchanged at 2181; the cross-chat smoke re-run
+  green after the cache-path refactor.

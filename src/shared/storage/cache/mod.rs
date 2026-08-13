@@ -335,17 +335,35 @@ impl CacheDb {
     /// the worst case is 163 hits against a cap of 200, so this is a safety
     /// valve rather than an everyday path (docs/history/chat-search-stage2.md §2).
     pub fn search_messages(&self, fts_query: &str, limit: usize) -> Result<Vec<MessageHit>> {
+        self.search_messages_where(fts_query, None, limit)
+    }
+
+    /// The one body under [`Self::search_messages`] and
+    /// [`Self::search_messages_in`]: a single SQL text and row mapping, so the
+    /// scoped twin cannot drift from the original — the rule the FTS escaper
+    /// already lives by. `scope: None` searches every chat.
+    fn search_messages_where(
+        &self,
+        fts_query: &str,
+        scope: Option<&[Uuid]>,
+        limit: usize,
+    ) -> Result<Vec<MessageHit>> {
+        let scope_clause = match scope {
+            Some(ids) => format!(" AND m.chat_id IN ({})", vec!["?"; ids.len()].join(", ")),
+            None => String::new(),
+        };
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT m.chat_id, m.message_id, m.role, m.ts, m.text
              FROM messages_fts f
              JOIN messages m ON m.id = f.rowid
-             WHERE messages_fts MATCH ?1
+             WHERE messages_fts MATCH ?{scope_clause}
              ORDER BY m.chat_id, m.id
-             LIMIT ?2",
-        )?;
+             LIMIT ?"
+        ))?;
+        let params = scoped_params(fts_query, scope.unwrap_or_default(), Some(limit));
         let hits = (|| -> rusqlite::Result<Vec<MessageHit>> {
-            stmt.query_map(params![fts_query, limit as i64], |r| {
+            stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
                 Ok(MessageHit {
                     chat_id: parse_uuid(r.get::<_, String>(0)?),
                     message_id: parse_uuid(r.get::<_, String>(1)?),
@@ -417,31 +435,7 @@ impl CacheDb {
         if chat_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().unwrap();
-        let placeholders = vec!["?"; chat_ids.len()].join(", ");
-        let mut stmt = conn.prepare(&format!(
-            "SELECT m.chat_id, m.message_id, m.role, m.ts, m.text
-             FROM messages_fts f
-             JOIN messages m ON m.id = f.rowid
-             WHERE messages_fts MATCH ? AND m.chat_id IN ({placeholders})
-             ORDER BY m.chat_id, m.id
-             LIMIT ?"
-        ))?;
-        let params = scoped_params(fts_query, chat_ids, Some(limit));
-        let hits = (|| -> rusqlite::Result<Vec<MessageHit>> {
-            stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
-                Ok(MessageHit {
-                    chat_id: parse_uuid(r.get::<_, String>(0)?),
-                    message_id: parse_uuid(r.get::<_, String>(1)?),
-                    role: r.get(2)?,
-                    ts: r.get(3)?,
-                    text: r.get(4)?,
-                })
-            })?
-            .collect()
-        })()
-        .with_context(|| format!("scoped full-text message query {fts_query:?}"))?;
-        Ok(hits)
+        self.search_messages_where(fts_query, Some(chat_ids), limit)
     }
 
     /// How many messages the query matches **within the given chats** — the

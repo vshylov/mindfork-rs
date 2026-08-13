@@ -279,7 +279,7 @@ normalized away — `jscpd`, which compares exact tokens, reports 0% on the same
 which is how you tell the two models apart. And because the bar is a density, shapes
 that big PRs got away with fail a small PR. Hoist table-shaped fixture data into one
 raw-string literal parsed by a few unique lines: one string is one token, and there is
-nothing left to match. **Recorded three times**. The second time it was right about the
+nothing left to match. **Recorded four times**. The second time it was right about the
 *code*: a clipboard-paste PR failed at 8.2% because the paste handler was the attach
 handler copied with a different pixel source — the fix was a shared seam that made the
 source the only difference, and the same seam then absorbed a third source (a URL) for
@@ -292,9 +292,16 @@ a *new* line inside a flagged range. Structure a stable table **from outside it*
 breaks moved to a separate labels const the renderer consults, the tables carry zero
 new lines, and a gate pins each named label to exactly one row (the desync the
 indirection trades for).
+The fourth was three small copies at once: a scoped twin of a search query, a sibling
+reader's parameter schema, and a live smoke's bootstrap prologue — each "the same
+tokens with one difference" — summed to 4.7% on a PR that added them all. The fix was
+the paste-PR seam three times over: one SQL body with an optional `IN`, one
+paged-reader schema helper next to `search_parameters`, one narrow-profile smoke
+helper. When a new thing is a sibling of an existing thing, budget for the seam at
+design time — the pair's *contract* was shared from the start, its boilerplate was not.
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
-its tables align*.
+its tables align*, *cross-chat search for the assistant*.
 
 ---
 

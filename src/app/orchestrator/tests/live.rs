@@ -42,6 +42,37 @@ async fn fill_then_compact(
     (summary, folded)
 }
 
+/// Waits out the bootstrap (profile list + first chat activation) and narrows
+/// the default profile to exactly `tools` — the "remove the alternative" rule
+/// the tool smokes share: a smoke must not depend on the model's mood not to
+/// take a shortcut. Returns the profile id.
+async fn narrow_profile_to(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    tools: Vec<crate::entities::profile::ToolId>,
+) -> Uuid {
+    let profile = wait_for(evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .expect("the bootstrap profile");
+    wait_for(evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(tools),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    profile
+}
+
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
 /// file the model finds the right place **by meaning in one `attachment_search`
 /// call**, instead of walking pages. The payload sits deliberately deep — around
@@ -2321,36 +2352,21 @@ async fn history_read_back_answers_what_the_summary_dropped_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
-        .await
-        .and_then(|e| match e {
-            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
-            _ => None,
-        })
-        .expect("the bootstrap profile");
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
-
     // Only the read-back tools. The first run of this smoke failed on its own
     // validity check and showed why that matters: the model filed the list with
     // `note_save`, so it could answer from memory without ever going back to the
     // history — and the note's *result* then travelled into the digest, which
     // put the whole list into the summary verbatim. Removing the alternative is
-    // the same move `spawn_orch_live_no_embed` makes for attachments: a smoke
-    // must not depend on the model's mood not to take a shortcut.
-    cmd_tx
-        .send(AppCommand::UpdateProfile {
-            id: profile,
-            edit: Box::new(ProfileEdit {
-                enabled_tools: Some(vec![
-                    crate::features::tools::history::HISTORY_READ_ID.into(),
-                    crate::features::tools::history::HISTORY_SEARCH_ID.into(),
-                ]),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
+    // the same move `spawn_orch_live_no_embed` makes for attachments.
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            crate::features::tools::history::HISTORY_READ_ID.into(),
+            crate::features::tools::history::HISTORY_SEARCH_ID.into(),
+        ],
+    )
+    .await;
 
     // The fixture's shape **is** this test's validity, and three earlier
     // attempts failed their own precondition, each teaching a rule:
@@ -2526,31 +2542,17 @@ async fn cross_chat_search_answers_from_another_chat_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
-        .await
-        .and_then(|e| match e {
-            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
-            _ => None,
-        })
-        .expect("the bootstrap profile");
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
-
     // Only the pair under test, and *before* the seed turn — see the doc
     // comment for why the alternative routes must not exist.
-    cmd_tx
-        .send(AppCommand::UpdateProfile {
-            id: profile,
-            edit: Box::new(ProfileEdit {
-                enabled_tools: Some(vec![
-                    crate::features::tools::chats::CHAT_SEARCH_ID.into(),
-                    crate::features::tools::chats::CHAT_READ_ID.into(),
-                ]),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
+    let profile = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            crate::features::tools::chats::CHAT_SEARCH_ID.into(),
+            crate::features::tools::chats::CHAT_READ_ID.into(),
+        ],
+    )
+    .await;
 
     // Chat A: the only place the code exists.
     let (reply, _) = run_turn_capture(

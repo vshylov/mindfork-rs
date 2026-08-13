@@ -343,21 +343,12 @@ impl Tool for ChatRead {
         loc.t("tool.chat_read.desc").into()
     }
     fn parameters(&self, loc: &Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "chat": {
-                    "type": "string",
-                    "description": loc.t("tool.chat_read.param.chat")
-                },
-                "page": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": loc.t("tool.chat_read.param.page")
-                }
-            },
-            "required": ["chat"]
-        })
+        super::paged_read_parameters(
+            loc,
+            "chat",
+            "tool.chat_read.param.chat",
+            "tool.chat_read.param.page",
+        )
     }
 
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
