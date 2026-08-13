@@ -1902,10 +1902,17 @@ which is the trap exactly as recorded; so the description stayed as it was
 and the new argument form went into the key column instead. The credits gate caught the new
 direct dependency (`percent-encoding`, already in the graph via `url`).
 
-**Smoke — pending.** `image_url_attachment_e2e_live` serves the fixture from a local
-listener (no public URL: a smoke must not depend on someone else's uptime, and loopback is
-exactly the case F2 keeps reachable), attaches it by address and asks a real vision model
-what it sees — with a **control arm that stages nothing** and must fail to answer, since
-the last two image tracks each produced a probe that looked green and was a hallucination.
-The reference stack was not up when the work was finished; the run and its outcome belong
-here before the PR (AGENTS.md §3).
+**Smoke — GO** (2026-08-13, reference stack: `llama-server` at 192.168.1.20:8000,
+gemma-4-31B q4_0 + mmproj, `/props` → `modalities.vision: true`; embedder on :8001).
+`image_url_attachment_e2e_live` serves the fixture from a local listener (no public URL: a
+smoke must not depend on someone else's uptime, and loopback is exactly the case F2 keeps
+reachable), attaches it **by address** and asks a real vision model what it sees. The
+control arm ran first and is what makes the result mean anything — with nothing staged the
+model answered *"Please provide the image you are referring to, as it wasn't included in
+your message"*, so the question is not answerable without the pixels; with the downloaded
+image it answered *"Green background, white square."* The attach reported
+`figure.png, 512×512, 5001 bytes, ~361 tok` — the name taken from the URL's path.
+The **whole** local live set was re-run rather than just this test, because the shared
+`staged()` tail this change extracted now sits on the file and clipboard paths too, and
+`message_to_api` is on every turn: **32 passed / 0 failed, 782 s**, `image_attachment_e2e_live`
+included.
