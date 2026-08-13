@@ -25,6 +25,7 @@ use crate::entities::attachment::{Attachment, decide_mode, inline_tokens_excludi
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
+use crate::shared::net::{self, AddressPolicy, GuardedClient};
 
 use super::web::{ACCEPT_HTML, ACCEPT_LANGUAGE, USER_AGENT, extract_rich, truncate_chars};
 use super::{ChatEffect, Tool, ToolContext, ToolOutcome};
@@ -51,22 +52,23 @@ const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// `fetch_url` — fetch a page and (by default) summarize it.
 pub struct FetchUrl {
-    http: reqwest::Client,
+    /// Which addresses this tool may reach is the client's business, not the tool's: the
+    /// model picks the URL, and the default refuses local and private ones (`shared::net`,
+    /// docs/research/fetch-url-address-policy.md).
+    http: GuardedClient,
 }
 
 impl Default for FetchUrl {
     fn default() -> Self {
-        Self::new()
+        Self::new(AddressPolicy::PublicOnly)
     }
 }
 
 impl FetchUrl {
-    pub fn new() -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .unwrap_or_default();
-        Self { http }
+    pub fn new(policy: AddressPolicy) -> Self {
+        Self {
+            http: GuardedClient::new(policy, REQUEST_TIMEOUT),
+        }
     }
 
     /// Fetches the page and extracts readable text. An error → a clear message
@@ -75,12 +77,24 @@ impl FetchUrl {
         let resp = self
             .http
             .get(url)
+            // A blocked literal is refused here, before a request exists.
+            .map_err(|_| anyhow::anyhow!(loc.t("tool.fetch_url.err.address_blocked").to_string()))?
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .header(reqwest::header::ACCEPT, ACCEPT_HTML)
             .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
             .send()
             .await
-            .with_context(|| loc.tf("tool.fetch_url.err.request", &[("url", url)]))?;
+            .map_err(|e| {
+                // A refusal by the address policy is not a network failure, and must not
+                // read as one: "the site is down" invites a retry, and this one can only
+                // fail again (lessons §4).
+                if net::was_blocked(&e) {
+                    anyhow::anyhow!(loc.t("tool.fetch_url.err.address_blocked").to_string())
+                } else {
+                    anyhow::Error::new(e)
+                        .context(loc.tf("tool.fetch_url.err.request", &[("url", url)]))
+                }
+            })?;
         let status = resp.status();
         if !status.is_success() {
             anyhow::bail!(loc.tf(
@@ -246,7 +260,7 @@ impl Tool for FetchUrl {
         if super::youtube::is_youtube_url(url)
             && let Some(id) = super::youtube::video_id(url)
         {
-            let meta = super::youtube::fetch_meta(&self.http, &id)
+            let meta = super::youtube::fetch_meta(self.http.unchecked_inner(), &id)
                 .await
                 .unwrap_or_default();
             let mut out = super::youtube::YoutubeWatch::meta_block(
@@ -519,7 +533,7 @@ mod tests {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
         let page = big_page(Some("Управление памятью в V"));
         let full = page.text.clone();
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .attached_result(&ctx, "https://docs.vlang.io/x.html", None, false, page)
             .await;
 
@@ -568,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn a_titleless_page_is_named_by_its_url() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .attached_result(&ctx, "https://example.com/a", None, false, big_page(None))
             .await;
         let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
@@ -587,7 +601,7 @@ mod tests {
             reply: "краткое содержание".into(),
         });
         let (_d, ctx) = ctx_with_engine(backend.clone());
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .attached_result(&ctx, "https://example.com", None, true, big_page(None))
             .await;
         assert!(
@@ -622,7 +636,7 @@ mod tests {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
         let mut page = big_page(None);
         page.truncated = true;
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .attached_result(&ctx, "https://example.com", None, false, page)
             .await;
         let marker = locale(Lang::Ru).t("tool.fetch_url.result.truncated");
@@ -634,7 +648,7 @@ mod tests {
             truncated: true,
             title: None,
         };
-        let inline = FetchUrl::new()
+        let inline = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &small)
             .await;
         assert!(inline.contains(marker), "got: {inline}");
@@ -650,7 +664,7 @@ mod tests {
             truncated: false,
             title: Some("t".into()),
         };
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &page)
             .await;
         assert!(out.contains("Небольшая страница целиком."), "got: {out}");
@@ -731,7 +745,7 @@ mod tests {
         // The description and the summarization system prompt are localized (en≠ru,
         // no Cyrillic). §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
-        let tool = FetchUrl::new();
+        let tool = FetchUrl::default();
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
         let no_cyr = |s: &str| {
             !s.chars()
@@ -750,7 +764,7 @@ mod tests {
     async fn rejects_non_http_url() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
         assert!(
-            FetchUrl::new()
+            FetchUrl::default()
                 .invoke(&ctx, serde_json::json!({"url": "ftp://x/y"}))
                 .await
                 .is_err()
@@ -761,7 +775,7 @@ mod tests {
     async fn rejects_empty_url() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
         assert!(
-            FetchUrl::new()
+            FetchUrl::default()
                 .invoke(&ctx, serde_json::json!({"url": "  "}))
                 .await
                 .is_err()
@@ -841,7 +855,7 @@ mod tests {
     #[ignore = "requires network access"]
     async fn live_youtube_link_returns_metadata_not_a_dead_end() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .invoke(
                 &ctx,
                 serde_json::json!({"url": "https://youtu.be/dQw4w9WgXcQ"}),
@@ -871,7 +885,7 @@ mod tests {
     #[ignore = "requires network access"]
     async fn live_documentation_page_keeps_its_code() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .invoke(
                 &ctx,
                 serde_json::json!({
@@ -931,7 +945,7 @@ mod tests {
     #[ignore = "requires network access"]
     async fn live_fetch_without_summarize() {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
-        let out = FetchUrl::new()
+        let out = FetchUrl::default()
             .invoke(
                 &ctx,
                 serde_json::json!({"url": "https://example.com", "summarize": false}),

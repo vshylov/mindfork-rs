@@ -344,6 +344,7 @@ fn build_registry(
         subagent_max_tokens: config.tools.subagent_max_tokens,
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
+        web_allow_private: config.tools.web_allow_private,
         fs_root: config.tools.fs_root.clone(),
         // The video slot for `youtube_watch`: settings + the shared Gemini key
         // (ADR 0008). Independent of the chat engine — see `shared::video`.

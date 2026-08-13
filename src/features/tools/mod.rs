@@ -535,6 +535,9 @@ pub struct ToolConfig {
     /// Default for `web_search.fetch_content` (fetching/reranking pages,
     /// `config.tools.web_fetch_content`). The call argument overrides it.
     pub web_fetch_content: bool,
+    /// Whether model-chosen URLs may reach local/private addresses
+    /// (`config.tools.web_allow_private`). Off by default; see `shared::net`.
+    pub web_allow_private: bool,
     /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
     /// Resolved video-understanding slot for `youtube_watch` (`None` — not
@@ -563,6 +566,7 @@ impl Default for ToolConfig {
                 crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
             ),
             web_fetch_content: true,
+            web_allow_private: false,
             fs_root: None,
             video: None,
             sampling_provider: None,
@@ -599,8 +603,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
         cfg.subagent_max_tokens,
         cfg.subagent_timeout,
     )));
-    reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content)));
-    reg.register(Arc::new(fetch::FetchUrl::new()));
+    // Both tools follow addresses the model picked, so both are built on a client that
+    // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
+    let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);
+    reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content, policy)));
+    reg.register(Arc::new(fetch::FetchUrl::new(policy)));
     // Video understanding is a slot of its own (only Gemini takes video at all),
     // so the tool gets a client built from `cfg.video` rather than `ctx.engine`.
     // Unconfigured → registered anyway, degrading to metadata (fork R5a).

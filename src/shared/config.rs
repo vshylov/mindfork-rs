@@ -659,6 +659,15 @@ pub struct ToolSettings {
     /// page content, but adds latency (fetching up to `max_results` pages).
     /// The call's `fetch_content` argument overrides this value.
     pub web_fetch_content: bool,
+    /// Whether tools that follow **model-chosen** URLs (`fetch_url`, and the page fetches
+    /// `web_search` makes) may reach local and private addresses. **Off**: such a URL
+    /// routinely comes from a page the model just read, and on a developer's machine the
+    /// private ranges are where unauthenticated services live (spec §9.3,
+    /// docs/research/fetch-url-address-policy.md). Turning it on is for someone whose
+    /// model should read an internal wiki; it does not affect `/image attach <url>`,
+    /// which the *user* types, or the engine addresses in settings.
+    #[serde(default)]
+    pub web_allow_private: bool,
     /// Python execution. Off by default (the tool's master gate).
     pub python_enabled: bool,
     /// `python_exec` execution mode: the Wasmer sandbox (default) or the local
@@ -714,6 +723,7 @@ impl Default for ToolSettings {
         Self {
             web_enabled: true,
             web_fetch_content: true,
+            web_allow_private: false,
             python_enabled: false,
             python_mode: PythonMode::default(),
             python_path: None,

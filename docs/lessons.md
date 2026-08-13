@@ -166,6 +166,15 @@ invisible only because the default toggle matched.
 — *raw HTML blocks render their text*, *collapsible tool calls*, *chat content search —
 stage 2*.
 
+**A guard that lives next to the call site is a habit; a guard inside the type is an
+invariant.** The address policy shipped first as a check function each caller had to
+remember, with the risky path (`reqwest::Client::get`) still in reach — and the wire test
+promptly connected to `127.0.0.1` through a fully "guarded" client, because `hyper` parses
+an IP-literal host itself and never consults the DNS resolver the guard lived in. Wrapping
+the client so the unchecked path is unreachable is what fixed it. When a security check has
+an "and also call this" step, assume the step will be skipped, including by you.
+— *an address policy for model-chosen URLs*.
+
 **A gate that passes is indistinguishable from a gate that does nothing.**
 Mutation-test gates in *both* directions: re-break a link and it must go red; a file of
 only code-span links must stay green; add one real broken link and it must go red
@@ -191,6 +200,15 @@ provider simply summarized a short one to nothing. Assert the signature, which i
 the moment `thinking` leaves the request, and *log* the summary. Weakening an assertion
 is only safe if the remaining one can still fail: verify that with a live mutation.
 — *engine failures stop being silent*.
+
+**A smoke's target can trigger the model's own refusal, and then it measures nothing.**
+An address-policy smoke aimed at `169.254.169.254` had the model decline on its own —
+*"I am not permitted to access internal network addresses"* — without ever calling the
+tool, so the guard under test never ran. What caught it was asserting that the tool **was**
+called; without that the run reads as a pass. Pick a target the model has no opinion about
+(a plain loopback service the user might ask about), and keep the "it was actually
+exercised" assertion. Same family as the fixture traps below.
+— *an address policy for model-chosen URLs*.
 
 **When a live smoke fails, suspect the fixture before the feature.** One took **four**
 attempts, each failing its own precondition: the model could answer from memory; the
@@ -647,6 +665,15 @@ prints a skip line. Relatedly, one smoke deliberately *fails* rather than skips 
 sidecar is missing, because an absent sandbox that was meant to be installed should be
 loud.
 — *English source-language migration*.
+
+**Running the whole `#[ignore]` set provokes failures the individual smokes never see.**
+It drives several web smokes from one IP within minutes, and the search providers throttle
+exactly that (a DuckDuckGo challenge arrives as `HTTP 200`); the local server can also drop
+a connection mid-stream under back-to-back load. Two consecutive full runs each failed one
+or two *different* tests, and every one passed on isolated re-run. Read the set as "the
+union of the runs is green, and no failure repeated", not as one clean sweep — and say so
+in the journal instead of quoting the best run.
+— *an address policy for model-chosen URLs*.
 
 **Distinguish a model-behaviour flake from a regression by the diff.** A control-tool
 smoke failed once because the model simply answered without calling the tool, and passed

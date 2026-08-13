@@ -96,18 +96,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     are still placeholders, and nothing downstream can carry them yet.
   - WASM sandbox for untrusted tools.
   - localization of client wire errors (currently — a technical layer).
-- **`fetch_url`: no address policy** — found while designing the image URL attach
-  (2026-08-13), where the deferred note had assumed the opposite. The tool checks
-  the **scheme and nothing else**, follows redirects with `reqwest`'s default
-  policy, and inspects no address; its URL can come from a page it fetched a
-  moment earlier, which is the ordinary injection route to a link-local metadata
-  endpoint or an unauthenticated service on the developer's own machine. The
-  reasoning that leaves `/image attach <url>` unfiltered does **not** carry over:
-  there the user types the address, here a model picks it
-  ([image-url-attach.md](research/image-url-attach.md) §6). What shape a guard
-  should take is open — resolve-then-connect against the resolved address, so DNS
-  rebinding cannot slip between the check and the connection, is the candidate —
-  as is whether a local-network exception belongs behind a setting.
+- **`fetch_url`: no address policy** left this list on 2026-08-13 — **done**, and
+  it covers `web_search`'s page fetches too: the check lives inside the client's
+  DNS resolver (so the approved address is the connected one), an IP literal is
+  judged before the request, every redirect hop is re-checked, and
+  `tools.web_allow_private` (off by default) is the way back in
+  ([fetch-url-address-policy.md](research/fetch-url-address-policy.md), spec §9.3).
 
 ## Feed and chat UI
 - **Syntax grammars: user overlay and more languages** — 22 grammars are now

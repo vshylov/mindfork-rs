@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -33,6 +33,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: MCP servers — secrets for the `env` map and JSON import (stage 2, done)
 - Post-M9: page fidelity for `fetch_url` (+ two neighbouring traps) (done)
 - Post-M9: images returned by MCP tools (done)
+- Post-M9: an address policy for model-chosen URLs (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1696,3 +1697,77 @@ all. Live: `tool_result_image_is_seen_live` (llama.cpp) and
 `tool_result_image_takes_the_user_part_fallback` (Gemini) — **both GO**, each with its
 control arm; the Anthropic and Responses shapes are covered by the probes recorded in the
 research doc plus their wire tests.
+
+
+### Post-M9: an address policy for model-chosen URLs (done)
+
+**What.** `fetch_url` and the page fetches `web_search` makes now refuse local and private
+addresses. Before this, both validated the **scheme and nothing else**: `http://127.0.0.1:8000/`,
+the LAN engine on `192.168.1.20`, and the cloud metadata endpoint were ordinary fetches whose
+bodies came back to the model as page text. Design and the seven forks, confirmed before
+implementation: [fetch-url-address-policy.md](../research/fetch-url-address-policy.md).
+
+**Why it is a different question from `/image attach <url>`**, which was deliberately left
+unfiltered three days earlier: there the *user* types the address, in the same box as
+`/image attach <path>`, which reads any file on the machine. Here a model picks it, and its
+URLs routinely come from a page it just read, a search result, or an attached document —
+content this project already treats as untrusted for *instructions*, while it was steering
+where the app connects. The trust levels differ, so the answers differ, and both are now
+written down where the next reader will ask.
+
+**The guard is bound to the connection, not to a check before it.** The address test lives
+inside a `reqwest::dns::Resolve` implementation, so the connector uses exactly the addresses
+the policy returned; a "resolve, check, then connect" shape would leave the second lookup
+free to answer differently (DNS rebinding). Every address a name resolves to is judged, not
+the first — a name with one public and one loopback record is refused rather than raced.
+
+**A guarded resolver turned out not to be a guard, and the wire test is what said so.**
+`hyper` parses an IP-literal host itself and never calls the resolver, so `http://127.0.0.1/`
+went through a fully "guarded" client and returned `200`. The design had predicted the
+mechanism and still shipped the fix as a separate function the *call site* had to remember —
+which is a habit, not an invariant. It became `GuardedClient`: the type owns the resolver and
+the literal check and hands out `get`/`post`, so the unchecked path is unreachable. The one
+exception, `unchecked_inner()`, is for URLs the code itself writes (YouTube metadata) and
+says so in its name.
+
+**The refusal names every closed route** (fork F5, lessons §4): not just "cannot reach that",
+but that no other tool reaches it either, that retrying by IP, by hostname or through a
+redirector is pointless, and that only the *user* can open it — with the new
+`tools.web_allow_private` toggle, off by default. Without those clauses the predictable
+outcome is a model spending three more round trips on requests that must all fail.
+
+**Tests.** +7 unit (2150 green, 96 `#[ignore]`). The classifier is asserted in **both**
+directions — every refused range and its IPv4-mapped spelling, and the public addresses just
+outside each boundary — because a classifier that always says "no" would pass a one-sided
+table. On the wire, a stub on `127.0.0.1` **counts connections**: with the policy on the
+fetch is refused and the count stays **zero**, which is the difference between refusing
+before the connection and after it; with `allow_private` the same fetch succeeds and the
+count is one. A dead port through the permissive policy proves `was_blocked` does not
+mistake an ordinary transport failure for a refusal — without that, every network blip would
+reach the model wearing this message. The existing `live_fetch_without_summarize` smoke is
+now the positive arm: it fetches a public URL through the guarded default.
+
+**Smoke — GO** (2026-08-13, reference stack: `llama-server` at 192.168.1.20:8000,
+gemma-4-31B q4_0). One `fetch_url` call, refused, and the model stopped and explained back
+to the user — in the scaffold language — that the address is on a local network its tools
+cannot reach, with the stub's connection counter at zero.
+
+**The full `#[ignore]` set was run twice** (this change touches `build_registry`, i.e. how
+*every* tool is constructed), and **no single run was 96/96**: run 1 was 95/1 (947 s) with
+`live_search_returns_results` returning zero results, run 2 was 94/2 (857 s) with two
+`openai::client` smokes failing on `connection closed before message completed` against the
+LAN server — while the search smoke passed. Every failure was re-run in isolation and
+passed (3/3 and 8/8 respectively), no failure repeated, and the union of the two runs covers
+the whole set. Both areas are ones this change cannot reach: the engine clients are outside
+the guard by construction (fork F1), and a search result that *parsed to zero results* is
+proof the request went out and came back — a blocked provider would have taken the "all
+providers unavailable" path instead. The search failure is anti-bot throttling, which the
+suite provokes by design: it drives several web smokes from one IP within a few minutes.
+
+**The first version of that smoke measured nothing, and the fixture was the reason.**
+Pointed at `169.254.169.254`, the model refused **on its own** without ever calling the tool
+("I am not permitted to access internal network addresses or cloud metadata endpoints"), so
+the guard was never exercised; only the "the model never called the tool, so nothing was
+tested" assertion caught it. Retargeted at a loopback stub the user might plausibly ask
+about, it measures the guard rather than the model's own reflexes. Third instance of the
+same trap in this project (lessons §2, §9).
