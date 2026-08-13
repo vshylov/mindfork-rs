@@ -27,6 +27,18 @@ title = "A real TUI"
 desc = "Markdown, syntax highlighting, Mermaid diagrams and LaTeX rendered as text, dark and light themes, English and Russian — all in the terminal."
 
 [[extra.features]]
+title = "Show it a picture"
+desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model and with all four clouds."
+
+[[extra.features]]
+title = "Long chats keep working"
+desc = "When a conversation outgrows the model's context window, the early part is folded into a rolling summary — automatically, or on demand with /compact — and the assistant can still read back what was folded away."
+
+[[extra.features]]
+title = "It can read replies aloud"
+desc = "/tts speaks the last message, the last N, or the whole conversation, through OpenAI or Gemini speech — no new vendor to sign up for if you already use one of them."
+
+[[extra.features]]
 title = "Private by construction"
-desc = "Portable data that lives next to the binary, encrypted backups, machine-bound keys, no telemetry. Your data is yours."
+desc = "Portable data that lives next to the binary, encrypted backups, machine-bound keys, no telemetry. The assistant's web tools stay on the public internet — your own machine and network are off limits unless you say otherwise."
 +++
