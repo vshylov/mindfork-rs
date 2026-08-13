@@ -250,8 +250,13 @@ normalized away — `jscpd`, which compares exact tokens, reports 0% on the same
 which is how you tell the two models apart. And because the bar is a density, shapes
 that big PRs got away with fail a small PR. Hoist table-shaped fixture data into one
 raw-string literal parsed by a few unique lines: one string is one token, and there is
-nothing left to match.
-— *demo screenshots — a uniform gallery and a richer hero*.
+nothing left to match. **Recorded twice**, and the second time it was right about the
+*code*: a clipboard-paste PR failed at 8.2% because the paste handler was the attach
+handler copied with a different pixel source — the fix was a shared seam that made the
+source the only difference, and the same seam then absorbed a third source (a URL) for
+almost nothing.
+— *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
+clipboard*, *images in a message — attach by URL*.
 
 ---
 
@@ -310,9 +315,13 @@ only *emits* events and needed a reverse channel; turned an editor into a change
 no new command, event or storage; and turned a planned embedding index into reusing the
 full-text index that already covered every message. It also *found* defects up front — a
 startup path that would have discarded the installer's language choice, and a staleness
-comparison that would have left a server running with an old secret.
+comparison that would have left a server running with an old secret. It equally invalidates
+premises the project *itself* wrote down: a deferred note said attaching an image by URL
+would inherit "the SSRF care `fetch_url` already had to take", and `fetch_url` validates the
+scheme and nothing else — the guard to be reused did not exist, so the question had to be
+answered rather than inherited. Treat a recorded rationale as a claim with a date on it.
 — *confirmation before dangerous tool calls*, *MCP servers in the settings window*,
-*history compression — stage 3*.
+*history compression — stage 3*, *images in a message — attach by URL*.
 
 **A headless Chromium screenshot narrower than ~500px fabricates overflow on
 Windows.** `--window-size=375` (old and new headless alike) still lays the page

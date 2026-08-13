@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: retry with backoff on transient cloud failures (stage 2, track complete) (done)
 - Post-M9: images in a message — stage 1 (local + Grok) (done)
 - Post-M9: images in a message — stage 2 (the three cloud formats, track complete) (done)
+- Post-M9: images in a message — attach by URL (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1835,3 +1836,76 @@ llama.cpp exercised it live, and the same builder serving a cloud is worth its o
 assertion. The local `orchestrator::tests::live` set was re-run as well, since the
 `ApiImage` constructor introduced here sits on `request::message_to_api`, which is on
 every turn.
+
+
+### Post-M9: images in a message — attach by URL (done)
+
+**What.** `/image attach` now takes a web address as well as a path: the image is
+downloaded, prepared and staged exactly as a file is. This closes the smaller of the two
+items the multimodality track left open (roadmap, "Feed and chat UI"); the other one —
+rendering images in the feed — is untouched. Design and the seven forks, all confirmed
+before implementation: [image-url-attach.md](../research/image-url-attach.md).
+
+**The design was decided by reading the staging code first** (lessons §3), and it shrank
+the task twice over. `stage_image` already took an `ImageSource` whose only job is to
+produce bytes, with the cap check, the `/props` capability probe, the background encode,
+the chip and the notes all *below* that seam — so a URL is a third variant, not a third
+pipeline. The one genuine addition is that a download is **async** while decoding is
+blocking, hence a `Staging` step in front: `Staging::Url` resolves to
+`ImageSource::Downloaded` before the blocking half runs, and `Staging::Local` passes
+straight through. Every arm is reachable; there is no "cannot happen" branch. The wire
+adapters, all four request shapes and the byte-identical-without-images guarantee were not
+touched at all — what is staged is an ordinary `MessageImage`.
+
+**Always download; never hand the provider the URL** (fork F1). Four of the five engines
+accept a remote URL natively and Gemini does not, so a pass-through would have meant a
+second wire shape per provider, a format matrix the user discovers at send time (xAI takes
+png/jpeg only, and normalization happens on our side), a URL handed to the provider, and —
+the deciding one — a *stored* conversation that breaks when the link dies. Downloading
+costs one upload on the first turn and buys uniformity everywhere else.
+
+**The premise the roadmap recorded for this item was wrong.** The deferred note said a
+client-side download "drags in SSRF concerns `fetch_url` already had to solve"; `fetch_url`
+validates the **scheme and nothing else**, follows redirects with the default policy, and
+inspects no address. So there was no guard to reuse, and the question had to be answered
+rather than inherited (fork F2). The answer follows *who picks the URL*: this one is typed
+by the user, in the same box as `/image attach <path>`, which reads any file on the disk —
+so an address filter would defend the user against themselves while breaking the LAN case
+this project's own users live in (an image on a NAS or a local dashboard, and the loopback
+address the unit tests serve from). What is enforced instead holds no matter who typed it:
+`http`/`https` only **re-checked after every redirect**, at most 5 hops followed by hand,
+connect and request timeouts, and a hard byte ceiling enforced **on the stream** rather
+than only on `Content-Length` — a header that may be absent or a lie. The model-driven
+half of the question, where the reasoning inverts, is recorded as its own roadmap item
+rather than smuggled in here.
+
+**The refusal names what came back** (fork F6). The bytes are sniffed by the decoder, which
+is the truth; the served `Content-Type` is carried along only so that linking the *page*
+instead of the image on it — by far the likeliest mistake in this feature — answers "that
+address served text/html, not an image … open the image itself" rather than "unsupported
+format", which would send the user to re-save a file that was never the problem
+(lessons §4). Each failure names its own cause: a 403, a redirect loop and an
+over-the-limit image call for three different next actions.
+
+**Tests.** +22 unit (2143 green, 95 `#[ignore]`). The download is covered against a
+hand-rolled `TcpListener` stub, the project's idiom — a 200, a redirect chain inside the
+cap and one over it, a redirect out of `http`, a 404, an empty body, `text/html` at an
+image address, and name derivation from a query string, an empty path and a 200-character
+segment. Two size tests, not one: the `Content-Length` refusal and the same body served
+**without** the header, because the header-only test passes with the stream cap deleted
+(lessons §2 — a gate that passes for the wrong reason). Orchestrator: a URL attach reaches
+the staging slot, dedupes against itself, and a page or an error status stages nothing. The
+help-popup gate caught a real regression on the way: a longer `ui.help.image_attach`
+description pushed the "staged for the *next* message" clause — the whole difference from
+`/file` — off the right edge of the commands panel in `ru` (lessons §7), and only in `ru`,
+which is the trap exactly as recorded; so the description stayed as it was
+and the new argument form went into the key column instead. The credits gate caught the new
+direct dependency (`percent-encoding`, already in the graph via `url`).
+
+**Smoke — pending.** `image_url_attachment_e2e_live` serves the fixture from a local
+listener (no public URL: a smoke must not depend on someone else's uptime, and loopback is
+exactly the case F2 keeps reachable), attaches it by address and asks a real vision model
+what it sees — with a **control arm that stages nothing** and must fail to answer, since
+the last two image tracks each produced a probe that looked green and was a hallucination.
+The reference stack was not up when the work was finished; the run and its outcome belong
+here before the PR (AGENTS.md §3).

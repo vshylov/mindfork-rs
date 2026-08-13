@@ -31,6 +31,14 @@ split by subsystem.
   cost. If the engine says it cannot see images, the attach is refused up front
   and tells you what to change instead of failing later.
 
+- **An image can be attached by its web address.** `/image attach https://…`
+  downloads the picture and stages it for your next message, the same as a file —
+  useful when the image is in a browser rather than on disk. The image itself is
+  stored in the conversation, so it keeps working later even if the link stops
+  working, and it reaches every provider, including the ones that accept no
+  remote addresses. An address that serves a page rather than a picture says so,
+  and names what to attach instead.
+
 - **A tool's screenshot now reaches the model.** When an MCP server's tool
   returns an image, it is shown to the model instead of the old
   "[image content omitted]" note — so a screenshot or a chart a plugin produces

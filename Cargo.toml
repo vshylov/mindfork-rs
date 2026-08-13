@@ -64,6 +64,11 @@ mermaid-text = "0.57.0"
 # "best effort" — a scanned/image-only PDF yields empty text, which is acceptable.
 # See features/doc_extract.rs, docs/rag-sources-retrieval.md §B1b.
 pdf-extract = "0.12.0"
+# Decoding `%XX` in the last path segment of an image URL into the display name
+# (`/image attach <url>`). Already in the graph transitively (via `url`/`reqwest`); the
+# version is pinned to the one in Cargo.lock, so as not to spawn a duplicate.
+# See features/image_fetch.rs.
+percent-encoding = "2.3.2"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # Parsing `word/document.xml` inside a DOCX for indexing into RAG (`/rag add`, stage B1b).
 # Already in the graph transitively (via syntect → plist); the version is pinned to the one in

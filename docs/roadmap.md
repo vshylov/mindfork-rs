@@ -96,6 +96,18 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     are still placeholders, and nothing downstream can carry them yet.
   - WASM sandbox for untrusted tools.
   - localization of client wire errors (currently — a technical layer).
+- **`fetch_url`: no address policy** — found while designing the image URL attach
+  (2026-08-13), where the deferred note had assumed the opposite. The tool checks
+  the **scheme and nothing else**, follows redirects with `reqwest`'s default
+  policy, and inspects no address; its URL can come from a page it fetched a
+  moment earlier, which is the ordinary injection route to a link-local metadata
+  endpoint or an unauthenticated service on the developer's own machine. The
+  reasoning that leaves `/image attach <url>` unfiltered does **not** carry over:
+  there the user types the address, here a model picks it
+  ([image-url-attach.md](research/image-url-attach.md) §6). What shape a guard
+  should take is open — resolve-then-connect against the resolved address, so DNS
+  rebinding cannot slip between the check and the connection, is the candidate —
+  as is whether a local-network exception belongs behind a setting.
 
 ## Feed and chat UI
 - **Syntax grammars: user overlay and more languages** — 22 grammars are now
@@ -210,11 +222,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Multimodality — what the track left open** (both stages **done**, and
   clipboard paste since; see "Recently closed";
   [multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
-  - **attach by URL** — accepted natively by llama.cpp/Anthropic/OpenAI but not
-    Gemini, so it needs a client-side download and the SSRF care `fetch_url`
-    already had to take;
   - **rendering images in the feed** (kitty/sixel/iTerm2, or a halfblock
     renderer over the decoded pixels) — today a sent image shows as a chip.
+  **Attach by URL** left this list on 2026-08-13 — **done**: the bytes are
+  downloaded client-side, so all five engines are served by one path and a dead
+  link cannot break a stored conversation
+  ([image-url-attach.md](research/image-url-attach.md), spec §9.10).
 - **YouTube — groundwork** (stages 1 and 2 are **done**, see "Recently closed";
   [youtube-integration.md](research/youtube-integration.md),
   [youtube-transcript.md](history/youtube-transcript.md), spec §9.9):

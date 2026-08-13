@@ -1997,6 +1997,7 @@ dependencies = [
  "image",
  "mermaid-text",
  "pdf-extract",
+ "percent-encoding",
  "pulldown-cmark",
  "quick-xml",
  "ratatui",

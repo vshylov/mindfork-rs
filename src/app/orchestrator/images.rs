@@ -25,7 +25,8 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message_image::{MessageImage, infos, resolve_target};
 use crate::features::image_command::ImageProgress;
-use crate::features::image_prepare::{PrepareError, prepare, prepare_rgba};
+use crate::features::image_fetch::{self, FetchError, FetchedImage};
+use crate::features::image_prepare::{PrepareError, PreparedImage, prepare, prepare_rgba};
 use crate::shared::api::VisionSupport;
 use crate::shared::config::{ImageSettings, ServerMode};
 use crate::shared::i18n::Locale;
@@ -43,9 +44,20 @@ pub(super) struct ImageAttachResult {
     pub(super) outcome: Result<MessageImage, String>,
 }
 
+/// What the user asked to stage, before anything has been read. The split exists because
+/// exactly one of these needs the network, and therefore cannot run on the blocking pool
+/// with the decoder (fork F1, docs/research/image-url-attach.md).
+enum Staging {
+    /// Pixels that are already on this machine.
+    Local(ImageSource),
+    /// A URL to download first (`/image attach <url>`).
+    Url(String),
+}
+
 /// Where a staging request's pixels come from — the **only** thing that differs between
-/// `/image attach` and `/image paste`. Everything around it (the cap, the capability
-/// probe, the background encode, the staging itself) is one path, in [`Orchestrator::stage_image`].
+/// `/image attach <path>`, `/image attach <url>` and `/image paste`. Everything around it
+/// (the cap, the capability probe, the background encode, the staging itself) is one path,
+/// in [`Orchestrator::stage_image`].
 enum ImageSource {
     /// A file the user named. Decoded and normalized by its own extension.
     File(String),
@@ -55,6 +67,36 @@ enum ImageSource {
         image: Box<crate::app::events::ClipboardImage>,
         name: String,
     },
+    /// Bytes that came off the network, plus the URL they came from — which is both the
+    /// image's `source` (so re-attaching the same URL replaces it) and where its display
+    /// name is taken from.
+    Downloaded {
+        fetched: Box<FetchedImage>,
+        url: String,
+    },
+}
+
+impl Staging {
+    /// Resolves whatever the user named into pixels in hand. Async because a URL is the one
+    /// source that has to be fetched; a local source passes straight through.
+    async fn resolve(
+        self,
+        cfg: &ImageSettings,
+        loc: &'static Locale,
+    ) -> Result<ImageSource, String> {
+        match self {
+            Staging::Local(source) => Ok(source),
+            Staging::Url(url) => {
+                let fetched = image_fetch::fetch(&url, cfg.max_bytes)
+                    .await
+                    .map_err(|e| localize_fetch(&e, cfg.max_bytes, loc))?;
+                Ok(ImageSource::Downloaded {
+                    fetched: Box::new(fetched),
+                    url,
+                })
+            }
+        }
+    }
 }
 
 impl ImageSource {
@@ -63,18 +105,26 @@ impl ImageSource {
         match self {
             ImageSource::File(path) => prepare_image(std::path::Path::new(&path), cfg, loc),
             ImageSource::Clipboard { image, name } => prepare_clipboard(*image, name, cfg, loc),
+            ImageSource::Downloaded { fetched, url } => prepare_downloaded(*fetched, url, cfg, loc),
         }
     }
 }
 
 impl Orchestrator {
-    /// Starts staging an image for the next message (`/image attach <path>`).
+    /// Starts staging an image for the next message (`/image attach <path|url>`).
+    ///
+    /// The two forms are told apart by the scheme rather than by a separate subcommand
+    /// (fork F3): no path on either platform begins with `http://` or `https://`.
     pub(super) fn handle_image_attach(&mut self, path: String) {
         let path = path.trim().to_string();
         if path.is_empty() {
             return;
         }
-        self.stage_image(ImageSource::File(path));
+        if image_fetch::looks_like_url(&path) {
+            self.stage_image(Staging::Url(path));
+        } else {
+            self.stage_image(Staging::Local(ImageSource::File(path)));
+        }
     }
 
     /// Stages an image taken off the system clipboard (`Ctrl+V`, `/image paste`).
@@ -87,16 +137,16 @@ impl Orchestrator {
             return;
         };
         let name = self.free_clipboard_name(chat_id);
-        self.stage_image(ImageSource::Clipboard {
+        self.stage_image(Staging::Local(ImageSource::Clipboard {
             image: Box::new(image),
             name,
-        });
+        }));
     }
 
     /// The one staging path, whatever the pixels came from: refuse early if there is
     /// nowhere or no room to put them, ask the engine whether it takes images at all, then
     /// prepare off the command loop and hand the result back through [`ImageAttachResult`].
-    fn stage_image(&mut self, source: ImageSource) {
+    fn stage_image(&mut self, source: Staging) {
         let Some(chat_id) = self.active_id else {
             self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
             return;
@@ -141,9 +191,17 @@ impl Orchestrator {
                 });
                 return;
             }
-            let outcome = tokio::task::spawn_blocking(move || source.prepare(&cfg, loc))
-                .await
-                .unwrap_or_else(|e| Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())])));
+            // A URL is downloaded here, before the decoder ever runs; every other source
+            // already has its pixels. The cap was checked above, so this cannot start a
+            // download for a message that has no room for it.
+            let outcome = match source.resolve(&cfg, loc).await {
+                Ok(source) => tokio::task::spawn_blocking(move || source.prepare(&cfg, loc))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(loc.tf("ui.err.image_failed", &[("err", &e.to_string())]))
+                    }),
+                Err(err) => Err(err),
+            };
             let _ = tx.send(ImageAttachResult {
                 chat_id,
                 vision,
@@ -321,17 +379,91 @@ fn prepare_clipboard(
             ],
         ));
     }
-    let data = base64::engine::general_purpose::STANDARD.encode(&prepared.bytes);
-    Ok(MessageImage::new(
+    Ok(staged(
+        prepared,
         name,
         // A source that cannot collide with a file path or with another paste: dedupe is
         // by source, and two screenshots must not silently become one.
         format!("clipboard:{}", Uuid::new_v4()),
+    ))
+}
+
+/// Turns downloaded bytes into an attachable image (blocking — runs on the blocking pool).
+///
+/// The size cap was already enforced *during* the download, so what is left here is the
+/// decode — plus the one refusal that deserves its own wording (fork F6).
+fn prepare_downloaded(
+    fetched: FetchedImage,
+    url: String,
+    cfg: &ImageSettings,
+    loc: &'static Locale,
+) -> Result<MessageImage, String> {
+    let prepared = prepare(&fetched.bytes, cfg.downscale_px).map_err(|e| match e {
+        PrepareError::Undecodable => not_an_image(&fetched.content_type, loc),
+        PrepareError::Failed(err) => loc.tf("ui.err.image_failed", &[("err", &err)]),
+    })?;
+    let name = image_fetch::display_name(&fetched.final_url, extension(prepared.mime));
+    // The URL as typed is the source, so attaching it twice replaces rather than
+    // duplicates — the behaviour a file attach already has.
+    Ok(staged(prepared, name, url))
+}
+
+/// The refusal for downloaded bytes that would not decode. When the server *said* what it
+/// was sending and it was not an image, say that: linking the page instead of the image is
+/// the likeliest mistake in this feature, and "unsupported format" would send the user
+/// looking in the wrong place (lessons §4 — a message has to close the door).
+fn not_an_image(content_type: &str, loc: &'static Locale) -> String {
+    if content_type.is_empty() || content_type.starts_with("image/") {
+        loc.t("ui.err.image_undecodable").to_string()
+    } else {
+        loc.tf("ui.err.image_url_not_image", &[("type", content_type)])
+    }
+}
+
+/// The file extension matching a prepared image's MIME type — only ever the two
+/// [`prepare`] can produce.
+fn extension(mime: &str) -> &'static str {
+    if mime == "image/jpeg" { "jpg" } else { "png" }
+}
+
+/// Localizes a download failure (axis B). Every arm names what happened rather than
+/// "could not attach": the user picked this URL and can act on the difference between a
+/// 404, a redirect loop and a file that is simply too big.
+fn localize_fetch(err: &FetchError, max_bytes: u64, loc: &'static Locale) -> String {
+    match err {
+        FetchError::Scheme => loc.t("ui.err.image_url_scheme").to_string(),
+        FetchError::Malformed => loc.t("ui.err.image_url_malformed").to_string(),
+        FetchError::TooManyRedirects => loc.tf(
+            "ui.err.image_url_redirects",
+            &[("max", &image_fetch::MAX_REDIRECTS.to_string())],
+        ),
+        FetchError::Request(e) => loc.tf("ui.err.image_url_request", &[("err", e)]),
+        FetchError::Status(code) => {
+            loc.tf("ui.err.image_url_status", &[("status", &code.to_string())])
+        }
+        FetchError::TooBig => loc.tf(
+            "ui.err.image_url_too_big",
+            &[(
+                "max",
+                &crate::entities::attachment::format_bytes(max_bytes as usize),
+            )],
+        ),
+        FetchError::Empty => loc.t("ui.err.image_url_empty").to_string(),
+    }
+}
+
+/// Builds the staged image from prepared pixels. Shared by every source, so a new one
+/// cannot drift in how the payload is encoded or what the chip is told.
+fn staged(prepared: PreparedImage, name: String, source: String) -> MessageImage {
+    let data = base64::engine::general_purpose::STANDARD.encode(&prepared.bytes);
+    MessageImage::new(
+        name,
+        source,
         prepared.mime,
         prepared.width,
         prepared.height,
         data,
-    ))
+    )
 }
 
 /// Reads an image file and prepares it for attachment (blocking — runs on the blocking
@@ -374,14 +506,10 @@ fn prepare_image(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let data = base64::engine::general_purpose::STANDARD.encode(&prepared.bytes);
-    Ok(MessageImage::new(
+    Ok(staged(
+        prepared,
         name,
         crate::features::rag_ingest::canonical_source(path),
-        prepared.mime,
-        prepared.width,
-        prepared.height,
-        data,
     ))
 }
 
@@ -465,6 +593,71 @@ mod tests {
         assert_eq!((image.width, image.height), (1568, 784));
         // And the stored payload really is the smaller copy, not the original file.
         assert!(image.bytes < std::fs::metadata(&path).unwrap().len() as usize);
+    }
+
+    /// A download failure is judged by *which* message comes back, not merely that one
+    /// does: the difference between "404", "too many redirects" and "over the limit" is
+    /// the only thing the user can act on (lessons §4).
+    #[test]
+    fn every_download_failure_names_what_happened() {
+        let max = ImageSettings::default().max_bytes;
+        let msg = |e: FetchError| localize_fetch(&e, max, en());
+        assert!(msg(FetchError::Status(404)).contains("404"));
+        assert!(msg(FetchError::Request("dns error".into())).contains("dns error"));
+        assert!(
+            msg(FetchError::TooManyRedirects).contains(&image_fetch::MAX_REDIRECTS.to_string())
+        );
+        assert!(msg(FetchError::TooBig).contains("10"), "the limit in MB");
+        // The two refusals that have to point somewhere: a scheme this cannot fetch, and
+        // an address that is not one — both name a route that does work.
+        assert!(msg(FetchError::Scheme).contains("/image attach"));
+        assert!(msg(FetchError::Malformed).contains("Copy image address"));
+    }
+
+    /// Fork F6: the bytes are what decide, and the served `Content-Type` is what explains.
+    /// A server that served a page must be quoted back; anything else stays the honest
+    /// "we cannot read this".
+    #[test]
+    fn an_undecodable_download_is_explained_by_what_the_server_said_it_sent() {
+        let msg = not_an_image("text/html", en());
+        assert!(msg.contains("text/html"), "{msg}");
+        for ct in ["image/heic", ""] {
+            assert_eq!(not_an_image(ct, en()), en().t("ui.err.image_undecodable"));
+        }
+    }
+
+    /// Every new download message, in every bundled language, with nothing unsubstituted
+    /// (i18n gate discipline, docs/lessons.md §7).
+    #[test]
+    fn download_errors_are_localized_for_all_langs() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let mut msgs: Vec<String> = [
+                FetchError::Scheme,
+                FetchError::Malformed,
+                FetchError::TooManyRedirects,
+                FetchError::Request("connection refused".into()),
+                FetchError::Status(404),
+                FetchError::TooBig,
+                FetchError::Empty,
+            ]
+            .into_iter()
+            .map(|e| localize_fetch(&e, ImageSettings::default().max_bytes, loc))
+            .collect();
+            msgs.push(not_an_image("text/html", loc));
+            for msg in msgs {
+                assert!(
+                    !msg.contains('{') && !msg.contains('}'),
+                    "unsubstituted placeholder in {lang:?}: {msg}"
+                );
+                if lang == crate::shared::i18n::Lang::En {
+                    assert!(
+                        !msg.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)),
+                        "Cyrillic leaked into the en message: {msg}"
+                    );
+                }
+            }
+        }
     }
 
     /// The error paths a user actually hits must render in every bundled language with

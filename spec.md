@@ -1280,10 +1280,37 @@ whole conversation on every mutation. Measured on the reference stack, the
 append-only shape keeps the prefix cache intact across an image turn
 (`cache_n = 73` of 78; an appended turn prefills 23 tokens).
 
-- **Commands**: `/image attach <path>`, `/image paste`,
+- **Commands**: `/image attach <path|url>`, `/image paste`,
   `/image remove <name|#N>`, `/image list` — the same surface and the same `#N`
   addressing as `/file`, so what `/image list` numbers is what `remove` accepts.
   As everywhere, the removal verb is only `remove`, never `delete`.
+- **Attaching by address.** `attach` takes a web address as well as a path; the
+  two are told apart by the scheme, since no path begins with `http://` or
+  `https://`. The bytes are **always downloaded here** and never handed to the
+  provider as a URL, even where the provider would take one: that keeps one code
+  path across all five engines (Gemini accepts no remote URL at all), keeps the
+  format normalization below, and — the deciding reason — puts the pixels in the
+  chat, so a link that dies later cannot break a *stored* conversation. The
+  address becomes the image's source, so attaching it twice replaces rather than
+  duplicates, and its last path segment becomes the display name.
+  What the download enforces, and what it deliberately does not: `http`/`https`
+  only, **re-checked after every redirect**, at most five hops, connect and
+  request timeouts, and the `images.max_bytes` ceiling applied **to the stream**
+  as well as to `Content-Length`, which may be absent or untrue. The address
+  itself is *not* filtered — this URL is typed by the user, in the same input box
+  as `/image attach <path>`, which reads any file on the machine, and a private-
+  range filter would break the case these users actually have (an image served by
+  a NAS or a local dashboard) to defend them against themselves. The reasoning
+  inverts wherever a *model* picks the URL, whose address policy is a separate
+  question and a separate roadmap item. For the same reason
+  `tools.web_enabled` does not gate this: that switch governs what the tools do
+  while the model drives, not what the user types.
+  A URL that answers with a page rather than an image is refused **by name** —
+  the bytes are judged by the decoder, but the served `Content-Type` goes into
+  the message, because linking the page instead of the picture on it is the
+  likeliest mistake here and "unsupported format" would send the user looking in
+  the wrong place — a message has to close the door.
+  Forks and the live check: [docs/research/image-url-attach.md](docs/research/image-url-attach.md).
 - **Pasting from the clipboard** has **two** routes, and the command is the
   reliable one. Whether `Ctrl+V` ever reaches the application is the *terminal's*
   decision: Windows Terminal binds it to its own paste, and since an image on the

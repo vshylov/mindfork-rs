@@ -361,3 +361,118 @@ async fn a_message_with_only_an_image_is_still_sent() {
     assert_eq!(req.messages[0].images.len(), 1);
     assert!(req.messages[0].content.is_empty());
 }
+
+/// An image named by URL goes through the same staging slot as a file: same cap, same
+/// chip, same message. What differs is only where the bytes came from
+/// (docs/research/image-url-attach.md, fork F1).
+#[tokio::test]
+async fn an_image_attached_by_url_is_staged_and_named_after_its_path() {
+    use crate::features::image_fetch::stub::{ok_response, png_bytes, serve};
+
+    let backend = CapturingBackend::new();
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
+    let png = png_bytes(48, 24);
+    let (base, _h) = serve(vec![ok_response("image/png", &png, true)]);
+
+    cmd_tx
+        .send(AppCommand::ImageAttach {
+            path: format!("{base}/pics/remote.png"),
+        })
+        .unwrap();
+    let info = wait_staged(&mut evt_rx).await;
+    assert_eq!(info.name, "remote.png", "the name comes from the URL path");
+    assert_eq!((info.width, info.height), (48, 24));
+
+    cmd_tx
+        .send(AppCommand::SendMessage("what is this?".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    // The downloaded pixels ride the message itself — the URL is never handed to the
+    // provider, which is what makes this work on all five engines and survive link rot.
+    let req = backend.last_request();
+    assert_eq!(req.messages[0].images.len(), 1);
+    assert_eq!(req.messages[0].images[0].mime, "image/png");
+    assert!(!req.messages[0].images[0].data.is_empty());
+}
+
+/// Dedupe is by source, and a URL is its own source — so attaching the same address twice
+/// replaces rather than duplicates, exactly as re-attaching a file does.
+#[tokio::test]
+async fn attaching_the_same_url_twice_replaces_the_previous_copy() {
+    use crate::features::image_fetch::stub::{ok_response, png_bytes, serve};
+
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    let png = png_bytes(20, 20);
+    let (base, _h) = serve(vec![
+        ok_response("image/png", &png, true),
+        ok_response("image/png", &png, true),
+    ]);
+    let url = format!("{base}/same.png");
+
+    cmd_tx
+        .send(AppCommand::ImageAttach { path: url.clone() })
+        .unwrap();
+    wait_staged(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::ImageAttach { path: url }).unwrap();
+    wait_staged(&mut evt_rx).await;
+
+    let items = staged_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(items.len(), 1, "re-attaching the same URL is idempotent");
+}
+
+/// The likeliest mistake in this feature: linking the *page* instead of the image on it.
+/// The refusal has to name what came back and where the picture's own address is, or the
+/// user re-types the same URL (lessons §4).
+#[tokio::test]
+async fn a_url_that_serves_a_page_is_refused_with_a_message_naming_what_came_back() {
+    use crate::features::image_fetch::stub::{ok_response, serve};
+
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    let (base, _h) = serve(vec![ok_response(
+        "text/html",
+        b"<html><body>a page</body></html>",
+        true,
+    )]);
+
+    cmd_tx
+        .send(AppCommand::ImageAttach {
+            path: format!("{base}/gallery"),
+        })
+        .unwrap();
+    let msg = wait_refusal(&mut evt_rx).await;
+    assert!(
+        msg.contains("text/html"),
+        "the refusal must name what the server actually served: {msg}"
+    );
+    let items = staged_list(&cmd_tx, &mut evt_rx).await;
+    assert!(items.is_empty(), "nothing may be staged from a page");
+}
+
+/// A URL that answers with an error status must not silently stage nothing: the status is
+/// the one thing the user can act on.
+#[tokio::test]
+async fn a_url_that_answers_with_an_error_status_reports_it() {
+    use crate::features::image_fetch::stub::serve;
+
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    let (base, _h) = serve(vec![
+        b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".to_vec(),
+    ]);
+
+    cmd_tx
+        .send(AppCommand::ImageAttach {
+            path: format!("{base}/private.png"),
+        })
+        .unwrap();
+    let msg = wait_refusal(&mut evt_rx).await;
+    assert!(
+        msg.contains("403"),
+        "the status belongs in the message: {msg}"
+    );
+    assert!(
+        msg.contains("/image attach"),
+        "and the route that still works: {msg}"
+    );
+}
