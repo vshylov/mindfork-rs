@@ -121,6 +121,14 @@ jobs:
       # megabyte. None of it breaks a build. Needs no toolchain, so it runs here.
       - name: Documentation structure (journal indexes + CLAUDE.md size)
         run: python3 tools/doc_index_check.py
+      # The Windows installer shows DISCLAIMER.md on a wizard page, and Inno Setup
+      # renders only text or RTF — so that page reads a generated copy of the file.
+      # Left ungated, an edit to the disclaimer would leave the installer presenting
+      # the previous text while the repository, the release archives and the app's
+      # F1 tab all show the new one. Runs here rather than in packaging.yml: the
+      # trigger that matters is a change to the source, which packaging.yml ignores.
+      - name: The installer's disclaimer page matches DISCLAIMER.md
+        run: python3 tools/wizard_rtf.py --check
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default

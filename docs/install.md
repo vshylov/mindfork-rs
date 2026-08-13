@@ -44,7 +44,12 @@ verify integrity against the release's `sha256sums.txt`.
 
 Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It installs
 **for the current user without administrator rights** (an "all users" option is
-available). The wizard has two custom steps: **application language**
+available). It opens with the **MIT license** (which has to be accepted to
+continue) and the **disclaimer** — the same text as
+[DISCLAIMER.md](../DISCLAIMER.md) and the app's `F1` → "Disclaimer" tab, covering
+what the models may say and do; both are shown in English in either wizard
+language, and both files are installed next to the program. Then come two custom
+steps: **application language**
 (Russian/English) and **data location** — the standard OS folder
 (`%APPDATA%\mindfork-rs\data`, recommended), portable (next to the app), or a custom
 folder. The choice is written to `defaults.json` next to the binary and **is not

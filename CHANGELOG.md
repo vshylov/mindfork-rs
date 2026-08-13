@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **The Windows installer now shows the license and the disclaimer.** The wizard
+  opens with the MIT license (accept it to continue) and then the disclaimer —
+  what the models may say and do, what the tools may do on your machine, and what
+  leaves it for a cloud provider. It is the same text as the app's `F1` →
+  "Disclaimer" tab and the `DISCLAIMER.md` installed next to the program; both
+  texts stay in English in the Russian wizard.
+
 - **The assistant can no longer be talked into fetching your local network.**
   `fetch_url` and the pages `web_search` reads now refuse addresses that are not
   on the public internet — your own machine, your LAN, and the address cloud
