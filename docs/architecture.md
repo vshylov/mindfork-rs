@@ -324,6 +324,12 @@ src/
 │  │  │                     compression is for). Offered only while the chat has a
 │  │  │                     folded range, the same condition that puts the summary
 │  │  │                     block in the prompt — spec §6.7
+│  │  ├─ chats.rs           chat_search + chat_read over the profile's *other*
+│  │  │                     chats (optional, off by default). ChatRef snapshot +
+│  │  │                     snapshot_other_chats — the one place the scope is
+│  │  │                     decided (profile, not this chat, nothing hidden);
+│  │  │                     search over `cache.db` scoped in SQL, reads via the
+│  │  │                     history renderer — spec §9.11
 │  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
@@ -1447,7 +1453,7 @@ by `ToolGroup` (`Ord`).
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
-| Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke` |
+| Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |
 
@@ -1512,6 +1518,17 @@ Implementation notes:
 - **`web_search`** — falls back across providers (DDG lite → DDG html →
   Mojeek → Ecosia); recognizes anti-bot throttling (HTTP 202/403/429) and
   switches providers instead of parsing an empty result set.
+- **Cross-chat pair (`chats.rs`)** — the full-text index is profile-blind
+  and includes the current chat, so the scope lives in a turn snapshot
+  (`ToolContext::other_chats`, built by `snapshot_other_chats` in
+  `start_generation` only when the pair is in the turn's tool set): current
+  profile, current chat excluded, hidden dropped. The query is scoped **in
+  SQL** (`CacheDb::search_messages_in` — a post-filtered global `LIMIT`
+  could be starved by another profile's rows), and `chat_read` re-checks the
+  loaded file against the same boundary before reading. Pages come from the
+  same `HistoryView` renderer and `compaction.page_tokens` as
+  `history_read`, so a search hit's page address is exactly what a read
+  returns — spec §9.11.
 - **RAG** — smart overlapping chunking (`chunk_text`/`chunk_markdown`, sizes
   configurable via `config.rag`/`ChunkParams`); on retrieval, adjacent chunks
   are stitched together by their verbatim overlap (`stitch_hits`). Commands

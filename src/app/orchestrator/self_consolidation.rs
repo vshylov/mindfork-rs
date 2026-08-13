@@ -17,7 +17,7 @@ use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
-use crate::features::tools::{ToolContext, ToolParams, TurnInfo, notes, self_model};
+use crate::features::tools::{notes, self_model};
 use crate::shared::api::{ApiMessage, ChatRequest};
 
 use super::Orchestrator;
@@ -160,21 +160,14 @@ impl Orchestrator {
 
         // The cancellation token — before the context: its clone goes into `ToolContext.cancel`.
         let cancel = CancellationToken::new();
-        let ctx = ToolContext::new(
-            self.tool_deps(backend.clone()),
-            ToolParams::from_config(&self.config),
-            TurnInfo {
-                profile_id,
-                chat_id,
-                system_message,
-                effective_sampling: SamplingConfig::default(),
-                last_user_message_at: last_user,
-                // A background task runs outside a chat turn — no attachments.
-                attachments: std::sync::Arc::from(Vec::new()),
-                history: None,
-                lang,
-                cancel: cancel.clone(),
-            },
+        let ctx = self.background_tool_ctx(
+            backend.clone(),
+            profile_id,
+            chat_id,
+            system_message,
+            last_user,
+            lang,
+            cancel.clone(),
         );
         let sampling = SamplingConfig {
             max_tokens: Some(SELF_CONSOLIDATE_MAX_TOKENS),

@@ -27,6 +27,13 @@ split by subsystem.
 
 ### Added
 
+- **The assistant can search your other chats — if you let it.** Two new
+  tools, `chat_search` and `chat_read`, let the model find and read what other
+  conversations of the same profile said (message text only), for questions
+  like "we discussed this in another chat". Both are **off by default** and
+  not even shown to the model until you enable them per profile in settings →
+  Tools; the current conversation, hidden chats and other profiles stay out
+  of reach.
 - **`/exit` and `/quit` leave the app.** Until now the only ways out were `Ctrl+Q`
   and `F10`, and some terminals keep both keys for themselves — VS Code's
   integrated terminal binds `Ctrl+Q` to the editor and `F10` to the debugger, which

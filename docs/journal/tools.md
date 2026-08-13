@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -34,6 +34,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: page fidelity for `fetch_url` (+ two neighbouring traps) (done)
 - Post-M9: images returned by MCP tools (done)
 - Post-M9: an address policy for model-chosen URLs (done)
+- Post-M9: cross-chat search for the assistant (`chat_search`/`chat_read`) (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1771,3 +1772,86 @@ the guard was never exercised; only the "the model never called the tool, so not
 tested" assertion caught it. Retargeted at a loopback stub the user might plausibly ask
 about, it measures the guard rather than the model's own reflexes. Third instance of the
 same trap in this project (lessons §2, §9).
+
+### Post-M9: cross-chat search for the assistant (`chat_search`/`chat_read`) (done)
+- **The ask, and the constraint that shaped it**: let the assistant find
+  information in the profile's other chats, the way the chat-list message
+  search works — with the user's explicit expectation that some models will
+  abuse such a tool, so it must be toggleable and **off by default**. The
+  containment turned out to cost nothing new: `Tool::enabled_by_default =
+  false` (the self-model/control precedent) puts the pair in the per-profile
+  Tools catalog without enabling it anywhere, `reconcile_tools` never
+  auto-adds optional tools, and a disabled tool is not advertised to the model
+  at all — no schema in the prompt, no temptation (the S12 rationale). A
+  global config gate was considered and rejected (fork F1): two switches for
+  one tool invite the "enabled in profile, still off" confusion this journal
+  already records. Design and all six decided forks:
+  [cross-chat-search-tool.md](../research/cross-chat-search-tool.md), spec §9.11.
+- **What the code survey found** (and the design had to add): the full-text
+  index (`cache.db`) is **profile-blind** — no `profile_id` column, and the
+  whole UI search stack above it is cross-profile *by design* (the chat list
+  shows every profile's chats), with the current chat included. Both
+  boundaries the tools need existed nowhere. They now live in **one turn
+  snapshot**: `ToolContext::other_chats` (the `attachments`/`history`
+  precedent), built by `snapshot_other_chats` — current profile only, current
+  chat excluded (its visible half is the model's own context; its folded half
+  belongs to `history_search`), hidden dropped — and built only when the pair
+  is in the turn's tool set. The snapshot doubles as the address book:
+  whatever a result names, the companion tool can read.
+- **Scoping is in the SQL, not a post-filter** (fork F4):
+  `CacheDb::search_messages_in`/`count_matching_messages_in` take the escaped
+  query plus the chat-id list (`WHERE chat_id IN`, one placeholder each) —
+  a global `LIMIT` filtered afterwards could be starved entirely by another
+  profile's rows, which the cache tests pin with a 20-row foreign chat
+  against a 2-row cap. `CacheDb` keeps taking an already-escaped query (FSD),
+  so the single `to_fts_query` escaper serves its third caller unchanged.
+- **The pair composes like the history pair**: hits are grouped by
+  conversation (the UI's "group, don't rank" — trigram `bm25` stays a weak
+  proxy), conversations by recency, hits by timestamp, and every hit names
+  the **page** of the conversation's transcript — computed by rendering the
+  hit chat through the same `HistoryView` + `compaction.page_tokens` that
+  `chat_read` pages with, so a search address is exactly what a read returns
+  (one chat JSON load + render per shown conversation, bounded by `top_k`).
+  Conversations are addressed by title plus an 8-hex uuid prefix; `chat_read`
+  resolves id-prefix → exact title → substring, reports ambiguity with the
+  candidates' addresses (the `attachment_read` ladder), and re-checks the
+  loaded file against the snapshot's boundary — a stale entry whose file now
+  says "different profile" is refused, not read, pinned by a test that plants
+  a secret in the foreign chat. One deliberate deviation from
+  `history_search`: `top_k` is capped at 20 — one conversation bounds the
+  history pair naturally, a whole profile does not.
+- **Tests**: 12 unit tests on the pair (profile isolation through the
+  snapshot, the stale-reference belt, addressing rungs, page-address ==
+  read-page equality, honest totals, "nothing here" vs "no hits", the
+  punctuation-reaches-the-index probe from the history pair's lesson,
+  catalog/default-set membership, en/ru descriptions) + 2 on the scoped cache
+  queries; suite at **2181 unit / 97 `#[ignore]`**. The demo settings frames
+  drifted by one counter (the tool catalog grew 6→8) — dumps and renders
+  regenerated, the deterministic pipeline changed exactly the four affected
+  frames.
+- **Smoke — GO** (gemma-4-31B q4_0 + bge-m3 via llama-server, the user's live
+  stack): profile narrowed to exactly the pair *before* seeding — the
+  read-back smoke's lesson, since with `note_save` in reach the model files
+  the fact into profile memory and never crosses a conversation — a nonsense
+  code planted in chat A, the question asked in a fresh chat B. The model
+  called `chat_search` once and answered with the exact code; the
+  "tool was actually called" assertion guards against a refusal reading as a
+  pass (the address-policy lesson). Passed twice (solo, then inside the full
+  set). Full orchestrator e2e regression — the change sits on every turn's
+  `TurnInfo`/catalog path — **34/34 in 832 s**, no repeats needed.
+- **Sonar round** (the PR's first analysis): new-code duplication **4.7%**
+  against the 3% bar — the fourth recorded instance of the duplication-gate
+  trap (lessons §2), this time all code, no fixtures: `search_messages_in`
+  was a scoped twin of `search_messages` (13 lines), `chat_read`'s parameter
+  schema mirrored `attachment_read`'s (18), the smoke's bootstrap prologue
+  mirrored the read-back smoke's (21), and the one line added to three
+  identical background `TurnInfo` builds landed inside already-duplicated
+  blocks. Fixed with shared seams, not suppression: one private
+  `search_messages_where` with an optional `IN` under both public faces; a
+  `paged_read_parameters` helper next to `search_parameters` (the read half
+  of each pair now shares its contract the way the search half always did);
+  `narrow_profile_to` in the live harness (bootstrap + "only the tools under
+  test" in one place); and `Orchestrator::background_tool_ctx` replacing the
+  three drift-prone background build sites — the seam a future `TurnInfo`
+  field will thank. Unit suite unchanged at 2181; the cross-chat smoke re-run
+  green after the cache-path refactor.

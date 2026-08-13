@@ -50,21 +50,12 @@ impl Tool for AttachmentRead {
         loc.t("tool.attachment_read.desc").into()
     }
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": loc.t("tool.attachment_read.param.name")
-                },
-                "page": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": loc.t("tool.attachment_read.param.page")
-                }
-            },
-            "required": ["name"]
-        })
+        super::paged_read_parameters(
+            loc,
+            "name",
+            "tool.attachment_read.param.name",
+            "tool.attachment_read.param.page",
+        )
     }
 
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {

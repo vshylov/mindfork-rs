@@ -859,6 +859,42 @@ impl Orchestrator {
         }
     }
 
+    /// Tool context for a **background task** (reflection, notes and
+    /// self-model consolidation): it runs outside any chat turn, so the turn
+    /// snapshot is empty — no attachments, no folded range, no other-chat
+    /// list. One seam instead of three build sites that drifted a field at a
+    /// time whenever `TurnInfo` grew.
+    // One argument per field a background task actually varies; a parameter
+    // struct here would just be `TurnInfo` under another name.
+    #[allow(clippy::too_many_arguments)]
+    fn background_tool_ctx(
+        &self,
+        backend: Arc<dyn crate::shared::api::EngineBackend>,
+        profile_id: Uuid,
+        chat_id: Uuid,
+        system_message: String,
+        last_user: Option<chrono::DateTime<chrono::Utc>>,
+        lang: crate::shared::i18n::Lang,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::features::tools::ToolContext {
+        crate::features::tools::ToolContext::new(
+            self.tool_deps(backend),
+            crate::features::tools::ToolParams::from_config(&self.config),
+            crate::features::tools::TurnInfo {
+                profile_id,
+                chat_id,
+                system_message,
+                effective_sampling: crate::entities::sampling::SamplingConfig::default(),
+                last_user_message_at: last_user,
+                attachments: std::sync::Arc::from(Vec::new()),
+                history: None,
+                other_chats: std::sync::Arc::from(Vec::new()),
+                lang,
+                cancel,
+            },
+        )
+    }
+
     /// Resolves the actual sampling for a chat: `Chat.sampling_override` →
     /// `Profile.default_sampling` → global (spec §8.3).
     fn effective_sampling(&self, chat_id: Uuid) -> SamplingConfig {

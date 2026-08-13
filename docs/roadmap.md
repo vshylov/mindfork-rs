@@ -165,9 +165,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   disposable, that costs a rebuild rather than a migration. Ranking is the other
   open question: the search screen groups by chat precisely to sidestep it, and
   trigram's `bm25` is a weak (though measurably non-degenerate) proxy for
-  relevance. The search itself is done — see "Recently closed",
-  [chat-content-search.md](research/chat-content-search.md) and
-  [chat-search-stage2.md](history/chat-search-stage2.md).
+  relevance. Both would now also pay off twice: the assistant-facing
+  `chat_search`/`chat_read` pair (spec §9.11,
+  [cross-chat-search-tool.md](research/cross-chat-search-tool.md)) reads the
+  same index and inherits the same limits. The search itself is done — see
+  "Recently closed", [chat-content-search.md](research/chat-content-search.md)
+  and [chat-search-stage2.md](history/chat-search-stage2.md).
 - **`cache.db` for chat-list summaries** — the disposable cache introduced for
   content search is a natural home for other cheap-to-recompute state; the chat
   list is currently built by parsing every `chats/*.json` at startup. **Measured

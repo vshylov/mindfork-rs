@@ -11,6 +11,7 @@ mod embed_roles_tests;
 
 pub mod attachment;
 pub mod calc;
+pub mod chats;
 pub mod confirm;
 pub mod control;
 pub mod datetime;
@@ -103,6 +104,14 @@ pub struct ToolContext {
     pub history: Option<Arc<crate::features::compaction::HistoryView>>,
     /// Page size for `history_read`, in estimated tokens (`config.compaction`).
     pub history_page_tokens: usize,
+    /// The *other* chats of the current profile — the whole world of
+    /// `chat_search`/`chat_read` (spec §9.11). A turn snapshot like
+    /// `attachments`, and the scope boundary in one place: the full-text index
+    /// is profile-blind and includes the current chat, so whatever is absent
+    /// from this list does not exist for either tool. Built already filtered
+    /// (current profile, current chat excluded, hidden dropped), and empty
+    /// when the pair is not in the turn's tool set or for background tasks.
+    pub other_chats: std::sync::Arc<[chats::ChatRef]>,
     /// Whether an image returned by an MCP tool may be shown to the model
     /// (`config.tools.mcp_images`, fork F3 of docs/research/mcp-tool-images.md).
     /// Off means the result keeps its `[image content omitted]` placeholder — the
@@ -176,6 +185,10 @@ pub struct TurnInfo {
     /// `None` when nothing is folded, and for background tasks — they have no
     /// chat). See [`ToolContext::history`].
     pub history: Option<Arc<crate::features::compaction::HistoryView>>,
+    /// The other chats of the profile, pre-scoped (empty for background tasks
+    /// and when the cross-chat tools are not offered). See
+    /// [`ToolContext::other_chats`].
+    pub other_chats: std::sync::Arc<[chats::ChatRef]>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -198,6 +211,7 @@ impl ToolContext {
             attachment_cfg: params.attachments,
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
+            other_chats: turn.other_chats,
             mcp_images: params.mcp_images,
             storage: deps.storage,
             engine: deps.engine,
@@ -244,6 +258,42 @@ pub(crate) fn search_parameters(
             }
         },
         "required": ["query"]
+    })
+}
+
+/// The JSON schema of a **paged reader**: a required string naming the target
+/// (an attachment for `attachment_read`, a conversation for `chat_read`) plus
+/// an optional 1-based `page`.
+///
+/// Shared for the same reason [`search_parameters`] is shared by the search
+/// half of each pair: one definition, so the reader contracts cannot drift
+/// apart. The bundle keys are passed whole (the i18n-gate rule above).
+pub(crate) fn paged_read_parameters(
+    loc: &crate::shared::i18n::Locale,
+    target: &str,
+    target_key: &str,
+    page_key: &str,
+) -> serde_json::Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        target.to_string(),
+        serde_json::json!({
+            "type": "string",
+            "description": loc.t(target_key)
+        }),
+    );
+    properties.insert(
+        "page".to_string(),
+        serde_json::json!({
+            "type": "integer",
+            "minimum": 1,
+            "description": loc.t(page_key)
+        }),
+    );
+    serde_json::json!({
+        "type": "object",
+        "properties": properties,
+        "required": [target]
     })
 }
 
@@ -648,6 +698,14 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // model only while there is a folded range at all (see `effective_tool_ids`).
     reg.register(Arc::new(history::HistoryRead));
     reg.register(Arc::new(history::HistorySearch));
+    // Searching/reading the *other* chats of the current profile (spec §9.11).
+    // No gate, but off by default (`enabled_by_default = false`): crossing
+    // conversation boundaries is a deliberate per-profile opt-in, and while it
+    // is off the pair is not advertised to the model at all. The turn snapshot
+    // (`ToolContext::other_chats`) is their whole world — profile-scoped, with
+    // the current chat excluded.
+    reg.register(Arc::new(chats::ChatSearch));
+    reg.register(Arc::new(chats::ChatRead));
     // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
@@ -758,6 +816,8 @@ pub(crate) mod testkit {
             // No attachments by default; tests that need them set `ctx.attachments`.
             attachments: std::sync::Arc::from(Vec::new()),
             history: None,
+            // No other chats by default; tests that need them set `ctx.other_chats`.
+            other_chats: std::sync::Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
         }
