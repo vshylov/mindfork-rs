@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -32,6 +32,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: spellcheck skips URLs and email addresses (done)
 - Post-M9: `Home`/`End` as a ladder of stops (done)
 - Post-M9: pasting an image from the clipboard (done)
+- Post-M9: `/exit` and `/quit` — a typed route out (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -960,3 +961,76 @@ a real clipboard can show the feature is actually wired on the platform.
 **A live model run is not required** (AGENTS.md §3): this changes where an image's pixels
 come from, not what is sent — the request path, the wire formats and the staging are the
 ones stage 1 and 2 already covered live.
+
+### Post-M9: `/exit` and `/quit` — a typed route out (done)
+
+- **Why.** Quitting has had two keys since the selection/undo track moved it off
+  `Ctrl+C`: `Ctrl+Q`, with `F10` as the second option "in case the terminal/DE
+  intercepts `Ctrl+Q`" (spec §11.7). That pairing assumes a host claims at most one
+  of them. VS Code's integrated terminal claims **both** — `Ctrl+Q` is an editor
+  chord, `F10` is the debugger's "step over" — and there the app has no advertised
+  exit at all, since the help overlay teaches exactly those two keys. A slash
+  command is ordinary typed text and reaches the app whatever the host binds, so it
+  is the one route that cannot be taken away. Same argument, already made once in
+  this project: `/image paste` exists next to `Ctrl+V` because Windows Terminal
+  keeps that key (spec §9.10).
+- **Two spellings, not one.** `/exit` and `/quit` are what every REPL, shell and
+  database client answers to; someone hunting for the way out types whichever they
+  already know rather than opening the help they are trying to leave. Kept as one
+  `ALIASES` table so the parser, the help label and the tests cannot drift — the
+  test that pins the label iterates the table rather than repeating the strings.
+- **It quits mid-answer, like the keys.** The check sits after the command chain
+  but *before* `handle_enter`'s `generating` gate, which is what holds ordinary
+  messages back. The test carries its control arm (`/exit please` during generation
+  → `None`), so the assertion is about the command rather than about a gate that
+  might simply not be there.
+- **The trap this actually had: the command would come back as the draft.** Every
+  keystroke sends `SetDraft`, so by the time `Enter` arrives the orchestrator has
+  already been told the box holds `/exit`, and `AppCommand::Quit` writes it to the
+  chat — the next launch would greet the user with the command they used to leave.
+  Clearing the box is not enough on its own: `run_loop` reads the draft at the
+  **top** of the iteration, and the tick that quits breaks out at the bottom, so the
+  clearing edit is never picked up. One flush after the loop (before the caller's
+  `AppCommand::Quit`, which the channel keeps ordered behind it) closes it. Found by
+  reading the loop rather than by running it — the symptom only shows up on the
+  *next* launch, which is the kind a live pass tends to walk past.
+- **It is highlighted while being typed**, like every other command:
+  `input_is_command` gained the parser, so the box turns the whole line the
+  command colour and stops spellchecking it (spec §11.5). Two things fall out of
+  reusing the parser rather than matching a prefix: a *malformed* `/exit now` is
+  still highlighted — it is a command, not prose, and the highlight going away
+  mid-typo would be a lie — while `/exiting` and "how do I quit vim?" stay plain
+  text, which is exactly what happens to them on `Enter`. What the box shows and
+  what `Enter` does come from the same function, so they cannot disagree.
+- **A stray argument leaves a note, not silence.** `/exit now` reports instead of
+  going out to the model, as `/reindex` and `/compact` do — and here the silence
+  would read as "the app refused to quit". The message names the bare command *and*
+  the two keys, so a mistyped quit still ends with a route (lessons §4); a gate test
+  asserts both are present in every bundled locale. The message quotes the spelling
+  the user typed, never the other one, which would read as a different command
+  having been recognized.
+- **Sizing the help row.** The commands tab is a fixed-width strip (76 columns) with
+  no wrap, so a long description is silently clipped — and the first wording was
+  89 columns in `ru`, where the label already costs 15. Measured both locales
+  against the existing rows and shortened to fit inside the table's current
+  envelope. (The hotkeys tab already overflows — `Ctrl+F` is 89 columns in `en` —
+  which is a pre-existing clip, not this change's.)
+
+**Tests** (+11). The parser: every alias bare, padded and upper-cased, driven off
+`ALIASES`; trailing arguments rejected for both; the error names the typed spelling
+and the argument and not the other spelling; neighbouring commands, longer words
+that merely start with one (`/exits`, `/quitter`) and plain prose (`how do I quit
+vim?`) all fall through as messages; the per-locale gate. The chat screen: both
+spellings produce `Quit` and hand back an **empty** draft; quitting during
+generation with its control arm; a mistyped quit notes and does not send; text that
+only resembles the command is sent; and the highlight — both spellings, a malformed
+one, `/exiting` and prose, all driven off `ALIASES`. The help overlay: the row is
+present, last, and renders with its localized description, with the label checked
+against `ALIASES`.
+
+**A live model run is not required** (AGENTS.md §3): this is input-box parsing and
+UI routing — nothing on the engine, memory or tool paths. The one thing unit tests
+cannot reach is the flush itself, which lives in `run_loop` (no TTY under test):
+the screen-level test asserts the empty draft is handed back, and that it *reaches*
+the orchestrator wants a real terminal — type `/exit` with text in the box, relaunch,
+and the box should be empty.

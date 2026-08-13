@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`/exit` and `/quit` leave the app.** Until now the only ways out were `Ctrl+Q`
+  and `F10`, and some terminals keep both keys for themselves — VS Code's
+  integrated terminal binds `Ctrl+Q` to the editor and `F10` to the debugger, which
+  left no advertised way out at all. A typed command reaches the app whatever the
+  host binds. Either spelling works, both quit mid-answer just like the keys, and
+  the commands are listed in `F1` → "Commands".
+
+### Fixed
+
+- **The `F1` help no longer cuts its descriptions off.** In the "Hotkeys" and
+  "Commands" tabs a line too long for the window simply lost its tail mid-word —
+  `/image paste` ended at "works in every termin". Long descriptions now wrap onto
+  the next line, indented under the text they continue.
+
 ## [0.9.6] — 2026-08-13
 
 ### Added

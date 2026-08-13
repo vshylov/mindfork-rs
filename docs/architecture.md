@@ -357,6 +357,8 @@ src/
 │  ├─ image_prepare.rs      decode/downscale/normalize an attached image to png|jpeg
 │  │                        (the `image` crate; a png already within the ceiling is
 │  │                        passed through byte for byte)
+│  ├─ exit_command.rs       /exit | /quit parser — the typed route out, for terminals
+│  │                        that claim both Ctrl+Q and F10 (spec §11.7)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)

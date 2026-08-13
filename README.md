@@ -292,7 +292,7 @@ highlights:
 |---|---|
 | `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol) |
 | `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results you came from |
-| `Ctrl+Q` / `F10` | quit |
+| `Ctrl+Q` / `F10` | quit (or type `/exit` — see the commands below, for terminals that keep both keys for themselves) |
 | `F1` / `?` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
 | `Ctrl+P` | settings |
 | `F3` | the self-model screen — what the assistant currently thinks about itself, and about you |
@@ -332,6 +332,7 @@ Slash commands, typed straight into the input box:
 | `/compact` | fold the older part of the chat into a rolling summary |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | control playback |
+| `/exit` · `/quit` | leave the app. `Ctrl+Q` and `F10` do the same where the terminal forwards them — VS Code's integrated terminal binds both to the editor, so a typed command is the route that always works |
 
 ---
 

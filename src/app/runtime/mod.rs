@@ -402,6 +402,15 @@ fn run_loop(
             quit = true;
         }
     }
+    // The draft is read at the TOP of the loop, so an edit made by the very tick
+    // that quit would never be sent — and `/exit` is exactly that edit: the
+    // command clears the box, and without this flush the box would come back
+    // holding `/exit` on the next launch. The orchestrator applies commands in
+    // order and `AppCommand::Quit` (sent by the caller) writes the chat out, so
+    // this reaches disk. See spec §11.7.
+    if let Some(draft) = screen.take_dirty_draft() {
+        let _ = cmd_tx.send(AppCommand::SetDraft(draft));
+    }
     Ok(())
 }
 

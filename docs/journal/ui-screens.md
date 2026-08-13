@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -38,6 +38,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: undoing an edit on the settings screen (done)
 - Post-M9: a settings hint always fits its panel (done)
 - Post-M9: a disclaimer for what the models say and do (done)
+- Post-M9: the help tabs stopped clipping their descriptions (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1309,3 +1310,46 @@ debounce was done as a separate PR, see below).
   `-D warnings`/fmt/`cyrillic_scan`/`link_check`/`doc_index_check` clean.
 - **A live run isn't required** (AGENTS.md §3): a document, a help tab and
   packaging file lists — no engine, memory, tool or provider path is touched.
+
+### Post-M9: the help tabs stopped clipping their descriptions (done)
+
+- **Symptom**, spotted on a screenshot of the "Commands" tab in `ru`: `/image
+  paste`'s description ended mid-word at the dialog's edge — the last word cut
+  short, with no ellipsis and nothing to say it had been cut.
+- **Cause.** `key_lines` builds one `Line` per entry and hands them to a plain
+  `Paragraph` with no `.wrap()`, inside a dialog of `HELP_WIDTH = 76` columns.
+  Anything wider is dropped by the renderer, silently. Measured across both
+  bundled locales, the overflow was not one row and not one language: in
+  `HELP_COMMANDS`, `/image paste` was 78 columns in `ru` (75 in `en`) and the
+  `/image attach` row 76; in `HELP_KEYS`, `Ctrl+F` was **89** in `en` and
+  84 in `ru`. Exactly the shape lessons §7 describes — a shared fixed-width strip
+  where the label's width *also* differs per locale, so whoever writes the row
+  sees it fit in the language they happen to be reading.
+- **Wrapping, not shortening.** Shortening means writing the help twice — once
+  short enough for `en`, once for whichever locale the label is widest in — and it
+  loses the sentence's content to a layout constraint. The description now wraps
+  through `shared::wrap::wrap_ranges` (already used by the License/Disclaimer
+  tabs) and the continuation is **hung under the column the description starts
+  in**, so the label stays a column rather than a paragraph's first word. The
+  column is measured per row and per locale, in **display columns** — a label can
+  carry `↔` or `│`, where `.len()` would be bytes — and both branches of the label
+  span (`palette.keycap` and the command colour) pad with a space on each side, so
+  one measurement covers both tabs. The scroll model is by line count, so the extra
+  rows need nothing: the tabs already scrolled.
+- **`wrap_ranges` spills the break's whitespace into the row it ends** (so the next
+  row starts on a word, not a space). Invisible when drawn, but it makes a row
+  *measure* wider than it draws — and the gate below measures. Trimmed per row.
+- **The gate, mutation-checked in both directions** (lessons §2). Forward: every
+  row of both tables, in every bundled locale, must fit `HELP_WIDTH`. Reverse: a
+  deliberately over-long description must come back as *several* rows that fit,
+  hung at the right indent, with no word lost. Disabling the wrap (`body =
+  usize::MAX`) turns both red — the width gate reporting the real pre-existing
+  overflow (`HELP_KEYS` at 86 columns in `ru`), which is what makes it more than a
+  restatement of the wrapper. Without the second test the first would be nearly
+  vacuous: after wrapping, the only way to overflow is a label wide enough to eat
+  the dialog on its own.
+- Found while adding `/exit` — sizing that row against the table is what turned up
+  the neighbours ([ui-input.md](ui-input.md), "a typed route out").
+
+**Tests** (+2), 2163 green. **A live run isn't required** (AGENTS.md §3): help-tab
+layout only — no engine, memory or tool path.
