@@ -14,6 +14,8 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-08-13
+
 ### Added
 
 - **The Windows installer now shows the license and the disclaimer.** The wizard
@@ -80,6 +82,15 @@ split by subsystem.
   "external" servers (a proxy or gateway); a locally managed `llama-server` is
   still recovered by the existing health monitor.
 
+- **Demo mode — try the app without a model.** `mindfork demo` boots the real
+  TUI on sample data with a scripted engine: a showcase conversation (a table,
+  a flowchart drawn in the terminal, a tool call), a filled chat list, a
+  living self-model on `F3`, and streamed canned replies that say plainly what
+  they are. No server, no API key; nothing outside a temporary folder is
+  touched, and the folder is removed on exit. The feed header honestly labels
+  the engine `demo (mock engine)`; a real engine connects any time in settings
+  (`Ctrl+P`).
+
 ### Fixed
 
 - **A reply that gets cut off now says so.** When the engine failed *after* the
@@ -95,17 +106,6 @@ split by subsystem.
   generating forever with no way back.
 - **A network failure now shows the reason.** "Connection refused" and friends
   were replaced by the bare request URL before reaching the screen.
-
-### Added
-
-- **Demo mode — try the app without a model.** `mindfork demo` boots the real
-  TUI on sample data with a scripted engine: a showcase conversation (a table,
-  a flowchart drawn in the terminal, a tool call), a filled chat list, a
-  living self-model on `F3`, and streamed canned replies that say plainly what
-  they are. No server, no API key; nothing outside a temporary folder is
-  touched, and the folder is removed on exit. The feed header honestly labels
-  the engine `demo (mock engine)`; a real engine connects any time in settings
-  (`Ctrl+P`).
 
 ## [0.9.5] — 2026-08-09
 
@@ -986,7 +986,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...HEAD
+[0.9.6]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...v0.9.3

@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (6)
+## Entries (7)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -18,6 +18,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — S4: vector screenshots + the engine article (done)
 - Post-M9: website — the maintenance IP allowlist (done)
 - Post-M9: website — the hero fetch panel (done)
+- Post-M9: website — what 0.9.6 changed on the landing page (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -231,3 +232,34 @@ read [lessons.md](../lessons.md).
   (`fmt`/`clippy`/`test` run for the record); an engine live run does not
   apply (static output). Verified in the local preview (Zola 0.22.1) in
   both themes at 1440/1280/1024/800px and via DOM checks at 375px.
+
+
+### Post-M9: website — what 0.9.6 changed on the landing page (done)
+
+**What.** The release of 0.9.6 needed the site to stop describing 0.9.5: a card for image
+input, a release post, and one clause about the new address policy.
+
+**The feature grid went from six cards to nine, and the reason is not decoration.** Adding
+the images card alone made it seven, and `card-grid` is
+`repeat(auto-fit, minmax(280px, 1fr))` — at desktop width that is three columns, so the
+seventh card sat alone in a third row with two columns of empty space. Rather than pad the
+grid for its own sake, the two capabilities the landing page had never mentioned were
+written up: **history compression** (a long conversation folds into a rolling summary, and
+the model can read the folded range back) and **speech** (`/tts` through OpenAI or Gemini).
+Both are real, user-visible and were missing; 3×3 is what they happen to make. Verified by
+rendering, not by reasoning about the CSS — headless Edge against a local `zola serve`, the
+recipe from the earlier website work.
+
+**The privacy card gained a sentence** rather than a card of its own: "the assistant's web
+tools stay on the public internet — your own machine and network are off limits unless you
+say otherwise". The address policy is a property of the thing the card already describes,
+and a separate card would have advertised a *restriction* as a feature.
+
+**The release post** (`blog/2026-08-13-mindfork-0-9-6.md`) leads with images and gives the
+address policy its own section, because the reasoning is the interesting part for a reader:
+the assistant's links are rarely typed by the user — they come off a page it just fetched —
+and that is why the default had to change. Zola derives the post's date from the filename
+prefix and its slug from the rest, so the URL is `/blog/mindfork-0-9-6/`.
+
+No live run: pure site content. The build was verified with the pinned Zola 0.22.1
+(0.23.x still cannot discover `templates/` on Windows — lessons §6).
