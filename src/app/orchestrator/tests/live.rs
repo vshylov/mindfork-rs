@@ -326,6 +326,53 @@ async fn file_attachment_e2e_live() {
     );
 }
 
+/// The image fixture both vision smokes use: a solid field of `field` with a large white
+/// square in the middle. Generated rather than photographed, so the assertion is objective
+/// and no pretrained knowledge can answer it — and parameterized by colour, so the two
+/// smokes cannot pass on each other's reply.
+fn figure_png(field: [u8; 3]) -> Vec<u8> {
+    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
+        if (160..352).contains(&x) && (160..352).contains(&y) {
+            image::Rgb([255u8, 255, 255])
+        } else {
+            image::Rgb(field)
+        }
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    bytes
+}
+
+/// Stages `path` (a file path or a URL — the command takes either) and returns what was
+/// staged. A refusal fails here rather than three turns later: an image that never reached
+/// the model would otherwise read as a model that cannot see.
+async fn attach_image_live(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    path: String,
+) -> crate::entities::message_image::ImageInfo {
+    cmd_tx.send(AppCommand::ImageAttach { path }).unwrap();
+    let staged = wait_for(rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
+                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("attach: {staged:?}");
+    match staged {
+        AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { info, .. }) => info,
+        other => panic!("the image was refused before it ever reached the model: {other:?}"),
+    }
+}
+
 /// Live e2e for image attachments (spec §9.10): an image staged with `/image attach`
 /// reaches a vision-capable model, and **is still seen a turn later**, replayed out of
 /// history rather than re-staged.
@@ -351,45 +398,9 @@ async fn image_attachment_e2e_live() {
         .unwrap();
 
     // A blue field with a centred white square — two facts to check, both objective.
-    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
-        if (160..352).contains(&x) && (160..352).contains(&y) {
-            image::Rgb([255u8, 255, 255])
-        } else {
-            image::Rgb([20u8, 60, 200])
-        }
-    });
     let path = dir.path().join("figure.png");
-    let mut bytes = Vec::new();
-    image::DynamicImage::ImageRgb8(buf)
-        .write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
-    std::fs::write(&path, &bytes).unwrap();
-
-    cmd_tx
-        .send(AppCommand::ImageAttach {
-            path: path.to_string_lossy().into_owned(),
-        })
-        .unwrap();
-    let staged = wait_for(&mut evt_rx, |e| {
-        matches!(
-            e,
-            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
-                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
-        )
-    })
-    .await
-    .unwrap();
-    eprintln!("attach: {staged:?}");
-    assert!(
-        matches!(
-            staged,
-            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
-        ),
-        "the image was refused before it ever reached the model: {staged:?}"
-    );
+    std::fs::write(&path, figure_png([20, 60, 200])).unwrap();
+    attach_image_live(&cmd_tx, &mut evt_rx, path.to_string_lossy().into_owned()).await;
 
     // Turn 1 — the image is on the message being sent.
     let (first, _) = run_turn_live(
@@ -2719,5 +2730,70 @@ async fn impersonation_after_compaction_still_writes_live() {
     assert!(
         !text.trim().is_empty(),
         "empty preview — the compacted request was refused or read as a prefill"
+    );
+}
+
+/// Live e2e for `/image attach <url>` (spec §9.10, docs/research/image-url-attach.md): an
+/// image named by a **web address** is downloaded, staged and seen by the model — the same
+/// pixels a file attach delivers, taking the one path a unit test cannot exercise end to
+/// end (a real download, a real vision model, a real request).
+///
+/// The fixture is served from a local listener rather than a public URL: a smoke must not
+/// depend on someone else's uptime, and a loopback address is exactly the case fork F2
+/// deliberately keeps reachable.
+///
+/// **The control arm is the point.** The same question is asked first with *nothing*
+/// staged; a model that answers it anyway means the fixture is guessable and the green
+/// arm proves nothing — which is how the last two image tracks each produced a probe that
+/// looked green and was a hallucination (docs/lessons.md §9, mcp-tool-images §2.1).
+/// `#[ignore]`, manual against a live vision model.
+#[tokio::test]
+#[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
+async fn image_url_attachment_e2e_live() {
+    use crate::features::image_fetch::stub::{ok_response, serve};
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Deliberately *not* the blue of the file-attach smoke, so a stale reply from that
+    // fixture could not pass this one.
+    let png = figure_png([20, 160, 60]);
+    let (base, _server) = serve(vec![ok_response("image/png", &png, true)]);
+
+    const QUESTION: &str = "What is the background colour of this image, and what shape is \
+                            in the centre? Answer in a few words.";
+
+    // Control — nothing staged. This must fail to answer.
+    let (control, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;
+    eprintln!("control reply (no image staged): {control}");
+
+    let info = attach_image_live(&cmd_tx, &mut evt_rx, format!("{base}/fixtures/figure.png")).await;
+    assert_eq!(info.name, "figure.png", "named after the URL's path");
+
+    let (reply, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;
+    eprintln!("reply with the downloaded image: {reply}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reply = reply.to_lowercase();
+    assert!(
+        reply.contains("green"),
+        "the downloaded image's background colour, got: {reply}"
+    );
+    assert!(
+        reply.contains("square"),
+        "the downloaded image's centred shape, got: {reply}"
+    );
+    let control = control.to_lowercase();
+    assert!(
+        !(control.contains("green") && control.contains("square")),
+        "the control answered without seeing anything — the fixture is guessable, so the \
+         green arm above proves nothing: {control}"
     );
 }

@@ -163,8 +163,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-13, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2121 unit tests
-green, 94 `#[ignore]`** (92 live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2143 unit tests
+green, 95 `#[ignore]`** (92 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
 most recent tracks: **images in a message — track complete**
 (`/image attach|remove|list`
@@ -186,9 +186,16 @@ text, and an image injects nothing — so the command is the route that works in
 every terminal and the key is the convenience. An **MCP tool's** image reaches the
 model too: inside the tool result on four engines, and — since Gemini answers a
 hard `400` there — as user parts right after it on the fifth, chosen per provider
-rather than by catching the error;
+rather than by catching the error. `/image attach` finally learned a **web
+address** as well as a path — the bytes are always downloaded client-side, so one
+path serves all five engines and the pixels live in the chat, where a dead link
+cannot break a stored conversation; designing it found that the SSRF care the
+deferred note promised to inherit from `fetch_url` had never existed, which is
+now its own roadmap item;
 [docs/research/multimodal-images.md](docs/research/multimodal-images.md),
-[docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md), spec §9.10),
+[docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md),
+[docs/research/image-url-attach.md](docs/research/image-url-attach.md),
+spec §9.10),
 **cloud-error retry/backoff — track complete** (a transient
 `429`/`5xx`/`529` no longer costs the turn: a `RetryBackend` decorator over the
 cloud and external backends retries three times with jittered backoff, honouring

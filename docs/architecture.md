@@ -182,7 +182,9 @@ src/
 │  │  │                     semantic index (best-effort, spec §9.7)
 │  │  ├─ images.rs          images staged for the next message (`/image attach`):
 │  │  │                     capability probe + background decode/downscale → staging
-│  │  │                     (session-only, per chat), consumed by the send (spec §9.10)
+│  │  │                     (session-only, per chat), consumed by the send (spec §9.10).
+│  │  │                     One seam for every source: file, clipboard, downloaded —
+│  │  │                     a URL is resolved to bytes first (async), then prepared
 │  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
@@ -346,6 +348,10 @@ src/
 │  │                        (chat attachments, spec §9.7, docs/file-attachments.md)
 │  ├─ image_command.rs      /image attach|remove|list parser + ImageProgress
 │  │                        (images staged for the next message, spec §9.10)
+│  ├─ image_fetch.rs        downloads an image named by URL (`/image attach <url>`):
+│  │                        http(s) only re-checked per redirect, ≤5 hops, timeouts,
+│  │                        a byte ceiling on the stream; the address itself is not
+│  │                        filtered — the user typed it (spec §9.10)
 │  ├─ image_prepare.rs      decode/downscale/normalize an attached image to png|jpeg
 │  │                        (the `image` crate; a png already within the ceiling is
 │  │                        passed through byte for byte)

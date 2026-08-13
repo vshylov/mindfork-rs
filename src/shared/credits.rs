@@ -66,6 +66,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("image", "0.25.10", "MIT OR Apache-2.0"),
     ("mermaid-text", "0.57.0", "MIT"),
     ("pdf-extract", "0.12.0", "MIT"),
+    ("percent-encoding", "2.3.2", "MIT OR Apache-2.0"),
     ("pulldown-cmark", "0.13.4", "MIT"),
     ("quick-xml", "0.39.4", "MIT"),
     ("ratatui", "0.30.1", "MIT"),
