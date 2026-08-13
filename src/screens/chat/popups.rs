@@ -7,6 +7,7 @@ use ratatui::style::Color;
 use super::render::centered_rect;
 use super::*;
 use crate::shared::credits;
+use crate::shared::wrap;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
 /// Left indent of the lockup — matches where the hotkey list starts.
@@ -352,8 +353,8 @@ pub(super) fn render_help(
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc),
-        HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc),
-        HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc),
+        HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc, inner_w),
+        HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc, inner_w),
         HelpTab::License => license_lines(palette, inner_w),
         HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
         HelpTab::Components => component_lines(palette, loc),
@@ -473,10 +474,20 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
 /// "key" + a description (a command label `/…` uses the command color). The
 /// locale resolves both label keys and descriptions. Shared by both tabs
 /// ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+///
+/// A description too long for `width` **wraps**, hung under the column it starts
+/// in, rather than being clipped at the dialog's edge: the tab is a plain
+/// `Paragraph` with no wrapping of its own, so an over-long row used to lose its
+/// tail mid-word. It is a per-locale hazard — a row can fit in `en` and overflow
+/// in `ru`, so whoever writes the label never sees it (docs/lessons.md §7) — and
+/// the label lengths differ per locale too, which is why the column is measured
+/// here rather than fixed as a constant. `column_widths_fit_the_dialog` is the
+/// gate. See spec §11.7.
 fn key_lines(
     entries: &[(&str, &str)],
     palette: &Palette,
     loc: &'static Locale,
+    width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::raw("")];
     for (k, d) in entries {
@@ -487,13 +498,44 @@ fn key_lines(
         } else {
             palette.keycap(key)
         };
-        lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
-            key_span,
-            Span::styled(format!(" {desc}"), Style::new().fg(palette.text)),
-        ]));
+        // Where the description starts: the indent + the keycap (both `keycap`
+        // and the command style pad the label with a space on each side) + the
+        // separating space. Measured in display columns — a label can carry `↔`
+        // or a box-drawing glyph, and `.len()` would be bytes.
+        let key_w = span_width(&key_span);
+        let indent = HELP_PAD.chars().count() + key_w + 1;
+        // `max(1)` only guards against a pathological label eating the whole
+        // dialog (wrap_ranges must not be handed a zero width); with a label that
+        // long the row overflows anyway, and the gate test is what catches it.
+        let body = width.saturating_sub(indent).max(1);
+        let chars: Vec<char> = desc.chars().collect();
+        let pad = " ".repeat(indent);
+        for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
+            // `wrap_ranges` spills the break's whitespace into the row it ends
+            // (so the next row starts on a word); it is invisible, but it would
+            // make a row measure wider than it draws.
+            let text: String = chars[from..to].iter().collect();
+            let text = text.trim_end().to_string();
+            lines.push(if i == 0 {
+                Line::from(vec![
+                    Span::raw(HELP_PAD),
+                    key_span.clone(),
+                    Span::styled(format!(" {text}"), Style::new().fg(palette.text)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(pad.clone()),
+                    Span::styled(text, Style::new().fg(palette.text)),
+                ])
+            });
+        }
     }
     lines
+}
+
+/// A span's width in terminal columns (not bytes, not `char`s).
+fn span_width(span: &Span<'_>) -> usize {
+    wrap::display_width(&span.content.chars().collect::<Vec<_>>())
 }
 
 /// The "License" tab: the app's license text (MIT). Paragraphs (separated by a
@@ -817,6 +859,73 @@ const ARG_PREVIEW_LINES: usize = 12;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The width a rendered line occupies in terminal columns.
+    fn line_width(line: &Line<'_>) -> usize {
+        line.spans.iter().map(span_width).sum()
+    }
+
+    /// The gate behind the wrapping in [`key_lines`]: no row of either tab may
+    /// run past the dialog, in ANY bundled locale. The hazard is one-sided —
+    /// a row that fits in the language you happen to be reading can overflow in
+    /// the other, and what disappears is the tail of a sentence (docs/lessons.md
+    /// §7). The tabs are plain `Paragraph`s with no wrapping of their own, so
+    /// "too wide" means "silently clipped".
+    #[test]
+    fn help_rows_fit_the_dialog_in_every_locale() {
+        let palette = Palette::default();
+        let w = HELP_WIDTH as usize;
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
+                for line in key_lines(entries, &palette, loc, w) {
+                    let width = line_width(&line);
+                    assert!(
+                        width <= w,
+                        "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
+                        line.spans
+                            .iter()
+                            .map(|s| s.content.as_ref())
+                            .collect::<String>()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The other direction (docs/lessons.md §2 — a gate that passes is
+    /// indistinguishable from one that does nothing): a description far too long
+    /// for the dialog produces SEVERAL rows that fit, rather than one that does
+    /// not, and the continuation is hung under the description column instead of
+    /// starting back at the margin.
+    #[test]
+    fn an_overlong_description_wraps_under_its_column() {
+        let palette = Palette::default();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        // Unknown bundle keys are echoed back by `t`, which is what makes a
+        // synthetic entry possible here. No dots — a dotted literal would be read
+        // as a bundle key by the i18n gates.
+        let long =
+            "a description far too long for the dialog to hold on one single row and then some";
+        let lines = key_lines(&[("/x", long)], &palette, loc, HELP_WIDTH as usize);
+        // [0] is the leading blank line.
+        let rows = &lines[1..];
+        assert!(rows.len() > 1, "expected a wrap, got {} row(s)", rows.len());
+        for line in rows {
+            assert!(line_width(line) <= HELP_WIDTH as usize, "{line:?}");
+        }
+        // The hanging indent: HELP_PAD + " /x " + the separating space = 7.
+        let indent = HELP_PAD.chars().count() + "/x".chars().count() + 2 + 1;
+        assert_eq!(rows[1].spans[0].content.as_ref(), " ".repeat(indent));
+        // Nothing was dropped in the process — every word survives the wrap.
+        let joined: String = rows
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<String>();
+        for word in long.split_whitespace() {
+            assert!(joined.contains(word), "{word} was lost: {joined}");
+        }
+    }
 
     /// The "Commands" tab of the help dialog, rendered to text.
     fn commands_tab_text() -> String {

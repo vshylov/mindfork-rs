@@ -2122,6 +2122,15 @@ truthful and license scanners start reporting "Other" (a `shared::credits` gate 
 that line). The strip's labels are width-budgeted — a `screens::chat` gate test checks that
 it fits the dialog in **every** bundled locale, since the tab that overflows is the rightmost
 one and would be silently truncated for one language only.
+The **rows of the "Hotkeys"/"Commands" tabs are width-budgeted the same way**, and for the
+same reason: those tabs are plain `Paragraph`s with no wrapping of their own, so a
+description longer than the dialog simply lost its tail mid-word — in `ru` while looking
+fine in `en`, or the other way round. A long description now **wraps, hung under the column
+it starts in** (the description column is measured per row and per locale — the labels
+differ in width between languages, so a fixed constant would be wrong for one of them),
+and a gate test asserts every row of both tables fits in every bundled locale.
+Wrapping rather than shortening, because the alternative is writing the help twice: once
+short enough for `en` and once for whichever locale the label is widest in.
 The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME`, not the
 package `mindfork-rs`); the same text is set as the **terminal window's title**
 at startup (`SetTitle`, Windows).
