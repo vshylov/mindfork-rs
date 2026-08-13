@@ -599,6 +599,8 @@
   "ui.help.scroll": "scroll the feed",
   "ui.help.help": "this help",
   "ui.help.quit": "quit",
+  "ui.help.exit": "quit — for terminals that intercept Ctrl+Q and F10",
+  "ui.exit.bad_arg": "{cmd} takes no arguments (got: {arg}). Type {cmd} on its own to quit — or press Ctrl+Q / F10.",
   "ui.help.k.mouse": "click/drag mouse",
   "ui.help.k.file_attach": "/file attach <path>",
   "ui.help.k.file_remove": "/file remove <name|#N>",

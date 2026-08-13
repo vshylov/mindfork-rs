@@ -271,6 +271,10 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
+    // Last, as quitting is in the hotkeys tab: this is the typed route out, for
+    // terminals that keep `Ctrl+Q` and `F10` for themselves (VS Code's integrated
+    // one binds both). Same reasoning as `/image paste` above.
+    ("/exit · /quit", "ui.help.exit"),
 ];
 
 /// Width of the help/"About" dialog in columns (excluding the border) —
@@ -912,6 +916,37 @@ mod tests {
         assert!(text.contains("/compact"), "the command label: {text}");
         assert!(
             text.contains("свернуть раннюю часть"),
+            "the localized description: {text}"
+        );
+    }
+
+    #[test]
+    fn exit_is_listed_in_the_commands_tab() {
+        // AGENTS.md §3 — a new command has to be discoverable in `F1`. This one
+        // more than most: a user reaches for it precisely when the documented
+        // keys did not work.
+        let label = "/exit · /quit";
+        assert_eq!(
+            HELP_COMMANDS
+                .iter()
+                .position(|(k, _)| *k == label)
+                .expect("the quit commands are missing from HELP_COMMANDS"),
+            HELP_COMMANDS.len() - 1,
+            "the quit commands close the list"
+        );
+        // Both spellings the parser accepts are shown — the label is the only
+        // place a user learns that `/quit` works too.
+        for alias in crate::features::exit_command::ALIASES {
+            assert!(
+                label.contains(alias),
+                "{alias} is missing from the help label {label:?}"
+            );
+        }
+
+        let text = commands_tab_text();
+        assert!(text.contains(label), "the command label: {text}");
+        assert!(
+            text.contains("перехватывающих Ctrl+Q"),
             "the localized description: {text}"
         );
     }

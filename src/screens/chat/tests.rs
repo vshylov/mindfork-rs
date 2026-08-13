@@ -2915,3 +2915,88 @@ fn a_retry_chip_from_a_stale_generation_is_dropped() {
         "a chip for another generation must be ignored"
     );
 }
+
+// ---------- the quit commands (`/exit`, `/quit`, spec §11.7) ----------
+
+/// Both spellings quit from the input box — the third route out, for terminals
+/// that keep `Ctrl+Q` and `F10` for themselves.
+#[test]
+fn exit_commands_quit_from_the_input_box() {
+    for cmd in crate::features::exit_command::ALIASES {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, cmd);
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ChatIntent::Quit),
+            "{cmd}"
+        );
+        // The command must not survive as the chat's draft: it is cleared here,
+        // and `app::runtime::run_loop` flushes this last state on its way out.
+        assert!(s.input.is_empty(), "{cmd} left text in the box");
+        assert!(
+            s.take_dirty_draft().is_some_and(|d| d.is_empty()),
+            "{cmd} must hand an empty draft back for saving"
+        );
+    }
+}
+
+/// Quitting during generation works, exactly as `Ctrl+Q`/`F10` do — the command
+/// is checked before the `generating` gate that holds back ordinary messages.
+#[test]
+fn exit_command_quits_while_generating() {
+    let mut s = ChatScreen::new();
+    s.begin_generation(gen_id());
+    type_str(&mut s, "/exit");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::Quit)
+    );
+
+    // The control: an ordinary message IS held back while generating, so the
+    // assertion above is about the command and not about a missing gate.
+    let mut s = ChatScreen::new();
+    s.begin_generation(gen_id());
+    type_str(&mut s, "/exit please");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        None
+    );
+}
+
+/// A mistyped quit leaves a note instead of quitting — and instead of going out
+/// to the model, which is what an unrecognized `/…` line would do.
+#[test]
+fn a_mistyped_quit_command_notes_and_does_not_send() {
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "/quit now");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        None,
+        "a malformed command is neither sent nor obeyed"
+    );
+    let note = s
+        .feed
+        .iter()
+        .rev()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note explaining the syntax");
+    // The note has to close the door (docs/lessons.md §4): it names the route
+    // that does work, not only the mistake.
+    assert!(note.text.contains("/quit"), "{}", note.text);
+    assert!(note.text.contains("Ctrl+Q"), "{}", note.text);
+}
+
+/// The words themselves are ordinary things to say to a model, and a longer
+/// command that merely starts with one is not a quit command either.
+#[test]
+fn text_that_only_resembles_a_quit_command_is_sent() {
+    for text in ["exit", "how do I quit vim?", "/exits"] {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, text);
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ChatIntent::Send(text.to_string())),
+            "{text}"
+        );
+    }
+}

@@ -2069,6 +2069,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
 | `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1); the status bar's hint says which · cancel generation |
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
+| `/exit` / `/quit` | quit the application by typed command — the route no terminal can intercept (see below) |
 | `Ctrl+N` | new chat (profile picker) |
 | `Ctrl+P` | the settings screen |
 | `Ctrl+F` | in a chat: in-feed search (§11.3.1); in the chat list: switch the search between titles and message content (§11.2) |
@@ -2154,6 +2155,22 @@ sending) clears the history. **`Ctrl+K`** clears the box (one of the undo units 
 strips XON/XOFF flow control), `F10` is a second option in case the terminal/DE
 intercepts `Ctrl+Q` (`F10` itself opens the emulator's menu on some Linux DEs, but
 can be disabled — the two keys back each other up).
+
+**`/exit` and `/quit` — the third route out.** The two keys back each other up only
+until a host claims *both*, and VS Code's integrated terminal does exactly that (its
+own `Ctrl+Q` chord, `F10` as the debugger's "step over"): the app then has no
+advertised way out at all, and the pair of keys is what the help overlay teaches. A
+slash command is ordinary typed text and reaches the app whatever the host binds, so
+it is the route that cannot be taken away — the same argument that put `/image paste`
+next to `Ctrl+V` ([§9.10](#910-images-in-a-message-image-attach)). **Two spellings, not one**:
+`/exit` and `/quit` are the words every REPL, shell and database client answers to,
+and someone looking for the way out types whichever they already know instead of
+opening the help they are trying to leave. Both behave exactly like the keys: they
+quit during generation too, and a stray argument (`/exit now`) leaves a note naming
+both the bare command and the keys rather than going out to the model — a mistyped
+quit must not read as a refusal to quit. The command clears the input box before
+quitting, and the loop flushes that final draft, so the box does not come back next
+launch holding the command used to leave it.
 
 **Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
 click places the cursor in the chat input box, and a drag grows the selection (the cursor

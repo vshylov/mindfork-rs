@@ -600,6 +600,8 @@
   "ui.help.scroll": "прокрутка ленты",
   "ui.help.help": "эта справка",
   "ui.help.quit": "выход",
+  "ui.help.exit": "выйти — для терминалов, перехватывающих Ctrl+Q и F10",
+  "ui.exit.bad_arg": "{cmd} не принимает аргументов (получено: {arg}). Наберите {cmd} без аргументов, чтобы выйти, — или нажмите Ctrl+Q / F10.",
   "ui.help.k.mouse": "клик/драг мышью",
   "ui.help.k.file_attach": "/file attach <путь>",
   "ui.help.k.file_remove": "/file remove <имя|#N>",

@@ -304,8 +304,9 @@ impl ChatScreen {
     }
 
     /// `Enter` on the input box: slash commands (`/rag`, `/reindex`,
-    /// `/compact`, `/file`, `/image`, `/tts`) are intercepted and never go out as
-    /// messages; anything else is sent (unless a turn is already generating).
+    /// `/compact`, `/file`, `/image`, `/tts`, `/exit`) are intercepted and never
+    /// go out as messages; anything else is sent (unless a turn is already
+    /// generating).
     fn handle_enter(&mut self) -> Option<ChatIntent> {
         let text = self.input.text();
         if text.trim().is_empty() {
@@ -327,6 +328,9 @@ impl ChatScreen {
             return intent;
         }
         if let Some(intent) = self.try_tts_command(&text) {
+            return intent;
+        }
+        if let Some(intent) = self.try_exit_command(&text) {
             return intent;
         }
         if !self.generating {
@@ -454,6 +458,29 @@ impl ChatScreen {
             Ok(TtsCommand::Resume) => Some(ChatIntent::TtsResume),
             Err(arg) => {
                 self.push_note(&self.loc.tf("ui.tts.bad_arg", &[("arg", &arg)]));
+                None
+            }
+        })
+    }
+
+    /// A quit slash command (`/exit`, `/quit`) — a typed route out for terminals
+    /// that swallow both `Ctrl+Q` and `F10` (VS Code's integrated terminal binds
+    /// each of them to the editor). Like the keys, it quits during generation
+    /// too — hence its place after the check chain but before the `generating`
+    /// gate. See spec §11.7.
+    ///
+    /// The box is cleared first: the draft of every keystroke has already reached
+    /// the orchestrator, so leaving `/exit` in it would greet the user with the
+    /// command they used to leave. The runtime flushes this last draft on its way
+    /// out (`app::runtime::run_loop`).
+    fn try_exit_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        let parsed = crate::features::exit_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(()) => Some(ChatIntent::Quit),
+            Err(msg) => {
+                self.push_note(&msg);
                 None
             }
         })
