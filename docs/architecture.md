@@ -300,6 +300,8 @@ src/
 │  │  │                     extractions: extract_readable (prose, for ranking)
 │  │  │                     and extract_rich (+headings/code, for fetch_url)
 │  │  ├─ fetch.rs           fetch_url (page fetch + summarization via the engine;
+│  │  │                     over a shared::net::GuardedClient — the URL is the
+│  │  │                     model's, so local/private addresses are refused;
 │  │  │                     a page over the attachment budget is attached to the
 │  │  │                     chat instead of being cut — ChatEffect::AddAttachment;
 │  │  │                     a YouTube link is answered with metadata + a pointer
@@ -475,6 +477,16 @@ src/
    │                       McpConnection (transport, testable over a duplex) + McpClient
    │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
    │                       .bat/.cmd forbidden). See spec §9.6, ADR 0007
+   ├─ net.rs               address policy for URLs the MODEL chose (fetch_url,
+   │                       web_search page fetches): GuardedClient = a DNS
+   │                       resolver that only returns allowed addresses (so the
+   │                       approved address is the connected one — no rebinding
+   │                       window) + an IP-literal check hyper's connector would
+   │                       otherwise skip + a per-hop redirect check. Off-limits:
+   │                       loopback/private/link-local/CGNAT/multicast/reserved and
+   │                       their IPv4-mapped spellings. tools.web_allow_private
+   │                       opens them; /image attach <url> is NOT affected (the
+   │                       user types that one). See spec §9.3
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
    │                       prime_full_redraw (full-redraw sentinel — space +
    │                       marker modifier, doesn't touch wide-glyph tail cells)

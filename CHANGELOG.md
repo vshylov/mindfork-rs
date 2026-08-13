@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **The assistant can no longer be talked into fetching your local network.**
+  `fetch_url` and the pages `web_search` reads now refuse addresses that are not
+  on the public internet — your own machine, your LAN, and the address cloud
+  providers keep their credentials behind. It matters because the links the
+  assistant follows usually come from a page it just read, and such a page can
+  ask it to open something on your side of the router. If you *do* want one
+  reachable — a wiki or a dashboard on your network — there is a new switch in
+  settings → Tools: **Allow local addresses**, off by default. Attaching an image
+  by address (`/image attach <url>`), which you type yourself, is unaffected, and
+  so is the engine address in settings.
+
 - **You can show the model a picture.** `/image attach <path>` puts an image on
   your next message, `/image paste` takes one straight off the clipboard (so a
   screenshot needs no file at all — `Ctrl+V` does it too, in terminals that let

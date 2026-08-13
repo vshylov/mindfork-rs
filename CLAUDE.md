@@ -163,8 +163,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-13, version 0.9.5)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2143 unit tests
-green, 95 `#[ignore]`** (92 live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2150 unit tests
+green, 96 `#[ignore]`** (92 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
 most recent tracks: **images in a message — track complete**
 (`/image attach|remove|list`
@@ -190,8 +190,11 @@ rather than by catching the error. `/image attach` finally learned a **web
 address** as well as a path — the bytes are always downloaded client-side, so one
 path serves all five engines and the pixels live in the chat, where a dead link
 cannot break a stored conversation; designing it found that the SSRF care the
-deferred note promised to inherit from `fetch_url` had never existed, which is
-now its own roadmap item;
+deferred note promised to inherit from `fetch_url` had never existed — which
+became the **next** track: `fetch_url` and `web_search`'s page fetches now refuse
+anything not publicly routable, with the check inside the client's DNS resolver
+so the approved address is the connected one, an IP-literal check `hyper` would
+otherwise skip, and `tools.web_allow_private` (off) as the way back in;
 [docs/research/multimodal-images.md](docs/research/multimodal-images.md),
 [docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md),
 [docs/research/image-url-attach.md](docs/research/image-url-attach.md),

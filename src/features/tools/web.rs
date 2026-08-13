@@ -146,24 +146,27 @@ pub struct SearchResult {
 
 /// `web_search` — internet search (DuckDuckGo → Mojeek → Ecosia, see [`PROVIDERS`]).
 pub struct WebSearch {
-    http: reqwest::Client,
+    http: crate::shared::net::GuardedClient,
     /// The default value for the `fetch_content` argument (from `config.tools`).
     fetch_content_default: bool,
 }
 
 impl Default for WebSearch {
     fn default() -> Self {
-        Self::new(true)
+        // The guarded policy is the default here too: a caller that does not pass one must
+        // get the safe tool, not the permissive one.
+        Self::new(true, crate::shared::net::AddressPolicy::PublicOnly)
     }
 }
 
 impl WebSearch {
-    pub fn new(fetch_content_default: bool) -> Self {
+    pub fn new(fetch_content_default: bool, policy: crate::shared::net::AddressPolicy) -> Self {
         // A request timeout: otherwise a hung DDG response would hold up the whole turn.
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .unwrap_or_default();
+        // The address policy rides on the same client: the result pages this fetches are
+        // chosen by whatever the search provider ranked, which is one step further from the
+        // model than `fetch_url` and the same threat (fork F1,
+        // docs/research/fetch-url-address-policy.md).
+        let http = crate::shared::net::GuardedClient::new(policy, REQUEST_TIMEOUT);
         Self {
             http,
             fetch_content_default,
@@ -180,13 +183,21 @@ impl WebSearch {
         loc: &crate::shared::i18n::Locale,
     ) -> Result<Option<String>> {
         let req = match provider.method {
-            Method::PostForm => self.http.post(provider.url).form(&[("q", query)]),
+            Method::PostForm => self
+                .http
+                .post(provider.url)
+                .with_context(|| {
+                    loc.tf("tool.web_search.err.url_parse", &[("name", provider.name)])
+                })?
+                .form(&[("q", query)]),
             Method::GetQuery => {
                 let mut url = reqwest::Url::parse(provider.url).with_context(|| {
                     loc.tf("tool.web_search.err.url_parse", &[("name", provider.name)])
                 })?;
                 url.query_pairs_mut().append_pair("q", query);
-                self.http.get(url)
+                self.http.get(url.as_str()).with_context(|| {
+                    loc.tf("tool.web_search.err.url_parse", &[("name", provider.name)])
+                })?
             }
         };
         let resp = req
@@ -215,9 +226,14 @@ impl WebSearch {
     /// error/non-HTML — extraction is "best effort", the search shouldn't fail because of
     /// one unavailable page.
     async fn fetch_content(&self, url: &str) -> Option<String> {
-        let resp = match self
-            .http
-            .get(url)
+        let request = match self.http.get(url) {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::debug!(url, %err, "web search: the result page's address is refused");
+                return None;
+            }
+        };
+        let resp = match request
             // Browser-like headers: some sites return an empty/block page
             // on a "bare" request with no Accept/Accept-Language.
             .header(reqwest::header::USER_AGENT, USER_AGENT)
@@ -890,7 +906,7 @@ mod tests {
         // The web_search description differs between ru/en (catches a forgotten
         // `_loc`), en has no Cyrillic. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
-        let tool = WebSearch::new(true);
+        let tool = WebSearch::default();
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
         assert_ne!(tool.description(ru), tool.description(en));
         let e = tool.description(en);
@@ -1362,7 +1378,7 @@ fn (data &amp;MyType) free() {
     #[tokio::test]
     #[ignore = "requires network access to search providers"]
     async fn live_search_returns_results() {
-        let tool = WebSearch::new(true);
+        let tool = WebSearch::default();
         let (_dir, _storage, ctx) = super::super::testkit::ctx_with_backends(
             uuid::Uuid::new_v4(),
             std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),

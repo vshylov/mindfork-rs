@@ -2797,3 +2797,82 @@ async fn image_url_attachment_e2e_live() {
          green arm above proves nothing: {control}"
     );
 }
+
+/// The address policy against a real model (spec §9.3,
+/// docs/research/fetch-url-address-policy.md).
+///
+/// The unit tests prove the guard refuses; only a live model can settle the half that
+/// matters for a *model-facing* message: that the refusal makes it **stop**. The failure
+/// mode this feature could easily create is a model that reads "cannot reach that" and
+/// tries the same host by IP, then by name, then through a redirector — three more round
+/// trips that must all fail (docs/lessons.md §4).
+///
+/// **The target is a plain loopback service, not the cloud metadata endpoint.** The first
+/// run of this smoke pointed at `169.254.169.254` and the model refused *on its own* —
+/// never calling the tool, so the guard was never exercised and the test proved nothing
+/// (the "never called the tool" assertion is what caught it). A local address the user
+/// plausibly asked about removes that confound. The stub counts connections, so this also
+/// proves end to end that nothing reached the service.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL)"]
+async fn fetch_url_address_policy_e2e_live() {
+    let mut config = AppConfig::default();
+    config.tools.web_enabled = true;
+    // Off is the default; stated here because it is the thing under test.
+    config.tools.web_allow_private = false;
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    let (url, hits) = crate::shared::net::stub::counting_stub();
+    let (reply, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Fetch {url} with fetch_url and tell me what it says. If you cannot, say so and stop."
+        ),
+    )
+    .await;
+    eprintln!("reply: {reply}");
+    for (name, result) in &calls {
+        eprintln!("call {name} -> {result}");
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    let _ = handle.await;
+
+    let fetches: Vec<_> = calls.iter().filter(|(n, _)| n == "fetch_url").collect();
+    assert!(
+        !fetches.is_empty(),
+        "the model never called the tool, so nothing was tested: {calls:?}"
+    );
+    // Compared through the bundle, not a hardcoded phrase: this message is axis A (the
+    // agent scaffold's language), so an English fragment would fail on a `ru` profile for
+    // a reason that has nothing to do with the guard.
+    let refusal = crate::shared::i18n::locale(crate::shared::i18n::Lang::default())
+        .t("tool.fetch_url.err.address_blocked");
+    assert!(
+        fetches.iter().all(|(_, result)| result.contains(refusal)),
+        "every attempt must come back refused, not fetched: {fetches:?}"
+    );
+    // The door has to close: one attempt is the model trying, four is the model hunting
+    // for a way around a message that failed to say there isn't one.
+    assert!(
+        fetches.len() <= 2,
+        "the refusal did not stop the model — {} attempts: {fetches:?}",
+        fetches.len()
+    );
+    // The end-to-end half no unit test can reach: whatever the model tried, the service
+    // itself was never connected to.
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the local service was reached despite the policy"
+    );
+}

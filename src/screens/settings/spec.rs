@@ -65,6 +65,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         TWeb => toggle(|c| c.tools.web_enabled = !c.tools.web_enabled),
         TWebFetch => toggle(|c| c.tools.web_fetch_content = !c.tools.web_fetch_content),
+        TWebAllowPrivate => toggle(|c| c.tools.web_allow_private = !c.tools.web_allow_private),
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
         TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),

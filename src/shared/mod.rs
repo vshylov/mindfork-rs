@@ -13,6 +13,7 @@ pub mod keys;
 pub mod logging;
 pub mod markdown;
 pub mod mcp;
+pub mod net;
 pub mod paths;
 pub mod sandbox;
 pub mod secrets;

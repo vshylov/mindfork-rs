@@ -150,7 +150,10 @@ build the moment they drift from what the app actually renders
 - **Web**: `web_search` — an in-house implementation with multi-engine
   fallback (DuckDuckGo → Mojeek → Ecosia), page fetching and semantic
   re-ranking of results; `fetch_url` — page to summary (or raw extracted
-  text).
+  text). Both stay on the public internet: an address on your own machine or
+  network is refused, since the links the model follows usually come from a page
+  it just read. Settings → Tools → **Allow local addresses** opens them if you
+  actually want that.
 - **`youtube_watch`** — what is said *and shown* in a video, with timestamps;
   transcripts too, arriving as a chat attachment when large. Needs a Gemini
   API key (the one provider that takes video) — and works whatever your chat

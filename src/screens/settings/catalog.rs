@@ -615,6 +615,12 @@ impl SettingsScreen {
                     FieldKind::Toggle(t.web_fetch_content),
                 )
                 .describe(loc.t("ui.settings.desc.web_fetch")),
+                row(
+                    FieldId::TWebAllowPrivate,
+                    loc.t("ui.settings.field.web_allow_private"),
+                    FieldKind::Toggle(t.web_allow_private),
+                )
+                .describe(loc.t("ui.settings.desc.web_allow_private")),
             ],
         ));
         rows.extend(grouped("Python", {

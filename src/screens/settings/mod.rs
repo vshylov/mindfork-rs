@@ -488,6 +488,7 @@ enum FieldId {
     // Tools
     TWeb,
     TWebFetch,
+    TWebAllowPrivate,
     TPython,
     TPythonMode,
     TPythonPath,
