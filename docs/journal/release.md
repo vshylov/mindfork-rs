@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -33,6 +33,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — stage 4 (SVG writer for mindfork.io) (done)
 - Post-M9: demo screenshots — a uniform gallery and a richer hero (done)
 - Post-M9: demo screenshots — the canvas padding measured in cells (done)
+- Post-M9: the Windows installer shows the license and the disclaimer (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1145,3 +1146,74 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   exactly −14 and the root box by −28, with the text and structure
   otherwise identical. The site was rebuilt and both the hero and the 2×2
   gallery checked in a browser.
+
+### Post-M9: the Windows installer shows the license and the disclaimer (done)
+- **The task** (user, 2026-08-13; branch `feat/installer-legal-pages`): the
+  Windows wizard had no legal pages at all. `LICENSE` and `DISCLAIMER.md` were
+  *installed* next to the binary — copied there since the installer's first
+  version and, for the disclaimer, since the notice was written — but nothing
+  ever put them in front of the person clicking through the wizard. Packaging
+  only; the app's source is untouched.
+- **Two pages, one acceptance** (user's decision, 2026-08-13). The MIT text goes
+  on Inno's own license page, where the accept/decline radio gates `Next`; the
+  disclaimer goes on the "info before install" page, read-only, `Next`
+  continues. The alternative — a custom `[Code]` page with an "I have read and
+  accept" checkbox — was offered and declined: the disclaimer *supplements* the
+  license (that is its first sentence, and the whole reason it is a separate
+  file), so making it a second contract to sign would misstate what it is.
+  A third option, a short bilingual summary in `[CustomMessages]`, was declined
+  for the obvious reason: a summary of a legal notice is not the notice.
+- **The license page needs no copy of its own.** `LicenseFile` points straight at
+  the root `LICENSE`, extension-less file and all — ISCC reads it happily, and it
+  is plain ASCII with no markdown precisely because a gate test holds it that way
+  (`credits::license_file_carries_nothing_but_the_mit_text`). The property that
+  keeps SPDX scanners honest is the same one that makes the file directly
+  displayable.
+- **The disclaimer needs one, and it is generated.** `DISCLAIMER.md` is markdown;
+  Inno renders text or RTF and nothing else, so pointed at the source the wizard
+  would show `# Disclaimer`, `**bold**` and `[accompanying file](LICENSE)`
+  verbatim. Hand-maintaining a second copy is the worse answer — the text a user
+  *accepts at install time* would drift from the one in the repository, the
+  release archives and the app's `F1` tab, and nothing would notice. So
+  `tools/wizard_rtf.py` renders `packaging/windows/disclaimer.rtf` from the
+  source, the result is committed (the installer compiles on machines with no
+  Python), and `--check` runs in CI's `lint` job. It lives there rather than in
+  `packaging.yml` because the change that breaks it is an edit to `DISCLAIMER.md`
+  — a path `packaging.yml` does not even trigger on.
+- **The converter covers the subset the file uses** — ATX headings, hard-wrapped
+  paragraphs (unwrapped, so the wizard's memo wraps to its own width), `-` lists
+  with a hanging indent, `---` rules, and inline bold/italic/code/links (a link
+  keeps its text and drops the target, unclickable in a wizard anyway). Anything
+  outside the subset passes through as literal text rather than being dropped: a
+  new construct should show up in the output, not disappear from a legal notice.
+  Every non-ASCII character becomes a `\uNNNN?` escape, so the RTF is pure ASCII
+  — no encoding negotiation with the compiler, and nothing for `cyrillic_scan.py`
+  to trip over should the source ever gain any.
+- **The page is named after what it holds.** The stock "info before install" page
+  calls itself "Information" and asks the user to read "important information" —
+  an understatement for a notice whose closing line says not to use the software
+  if you disagree with it, and it would read as a stray readme rather than the
+  second half of a license → disclaimer pair. `[Messages]` overrides
+  `WizardInfoBefore`/`InfoBeforeLabel` in both languages; the `ru` caption is the
+  borrowed «Дисклеймер» (cyrillic-ok: the ru caption itself), the same word the
+  `F1` tab settled on. The **texts
+  themselves stay English in the `ru` wizard**, matching the app
+  (`shared/credits.rs`): only the chrome around them is localized.
+- **Live run — GO** (Inno Setup 6 on the dev machine, no live model needed — this
+  is packaging): the `.iss` **compiles** with the new pages; the wizard was
+  launched in **both locales** (`/CURRENTUSER /LANG=en|ru`) and screenshotted on
+  each page. The license page shows the MIT text with `Next` **disabled** until
+  "I accept" is chosen; the disclaimer page renders the RTF with real headings,
+  bold, italics and monospaced `llama.cpp` — em dashes included, which is what
+  proves the `\uNNNN?` escapes work. Nothing was installed (the wizard was killed
+  after the captures) and the test `setup.exe` was deleted.
+- **A GUI-automation note for the next such run:** the accept radio's `Alt+A`
+  accelerator is a *different letter* in the `ru` wizard, so a run driven by
+  accelerators silently stays on the license page and screenshots the wrong one.
+  `Tab` into the radio group + `Up` is locale-independent. Also, `GetWindowRect`
+  returns physical pixels while a DPI-unaware PowerShell process draws in scaled
+  ones — a per-window capture comes out clipped; capturing the whole screen does
+  not.
+- **Checks**: no Rust code → **2150 unit tests** green as before, 96 `#[ignore]`;
+  `fmt`/`clippy -D warnings` clean, `cyrillic_scan`/`link_check`/`doc_index_check`
+  /`wizard_rtf --check` clean.
