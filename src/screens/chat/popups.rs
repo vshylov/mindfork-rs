@@ -726,102 +726,80 @@ fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
 /// width of the `- ` marker the markdown writer emits.
 const LIST_HANG: usize = 2;
 
-/// The "Components" tab: name (aligned into a column), version, and license,
-/// then the vendored grammars in the same three-column shape. The name uses the
-/// main text color, version and license are muted, columns line up.
-///
-/// The whole tab is one **centered block** ([`center_block`]): both tables and
-/// their headings share a left edge placed so the block's widest row (usually a
-/// grammar row — the repository pins are long) balances the dialog. At the
-/// dialog's minimum width that indent lands on [`HELP_PAD`] — the floor layout
-/// is exactly the old one — while on a wide screen the tables float toward the
-/// middle instead of leaving the right half of the dialog empty.
+/// The "Components" tab: two "table of contents"-style tables — the crates,
+/// then the vendored grammars. The name sits on the left margin; the other two
+/// columns are anchored against the right margin, version under version and
+/// license under license; the run between is a dotted leader in the dialog's
+/// dimmest color, so a row reads across the full width without the columns
+/// drifting apart visually ([`leader_table`]). Left-aligned like every other
+/// tab — an earlier centered-block cut was rejected because nothing else in
+/// the app (or on the site) centers text (user's decision, 2026-08-13).
 fn component_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::raw(""),
         Line::from(Span::styled(
-            loc.t("ui.components.intro").to_string(),
+            format!("{HELP_PAD}{}", loc.t("ui.components.intro")),
             palette.muted_style(),
         )),
         Line::raw(""),
     ];
-    let name_w = credits::COMPONENTS
-        .iter()
-        .map(|(n, ..)| n.chars().count())
-        .max()
-        .unwrap_or(0);
-    let ver_w = credits::COMPONENTS
-        .iter()
-        .map(|(_, v, _)| v.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (name, version, license) in credits::COMPONENTS {
-        let name_pad = " ".repeat(name_w + 2 - name.chars().count());
-        let ver_pad = " ".repeat(ver_w + 2 - version.chars().count());
-        lines.push(Line::from(vec![
-            Span::styled((*name).to_string(), Style::new().fg(palette.text)),
-            Span::raw(name_pad),
-            Span::styled((*version).to_string(), palette.muted_style()),
-            Span::raw(ver_pad),
-            Span::styled((*license).to_string(), palette.muted_style()),
-        ]));
-    }
+    lines.extend(leader_table(credits::COMPONENTS, palette, width));
 
     // Vendored syntax grammars — third-party data rather than crates, hence a
     // section of their own (see shared/credits.rs and syntaxes/SOURCES.md).
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        loc.t("ui.components.grammars").to_string(),
+        format!("{HELP_PAD}{}", loc.t("ui.components.grammars")),
         palette.muted_style(),
     )));
     lines.push(Line::raw(""));
-    let lang_w = credits::GRAMMARS
-        .iter()
-        .map(|(n, ..)| n.chars().count())
-        .max()
-        .unwrap_or(0);
-    let repo_w = credits::GRAMMARS
-        .iter()
-        .map(|(_, r, _)| r.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (lang, repo, license) in credits::GRAMMARS.iter() {
-        lines.push(Line::from(vec![
-            Span::styled((*lang).to_string(), Style::new().fg(palette.text)),
-            Span::raw(" ".repeat(lang_w + 2 - lang.chars().count())),
-            Span::styled((*repo).to_string(), palette.muted_style()),
-            Span::raw(" ".repeat(repo_w + 2 - repo.chars().count())),
-            Span::styled((*license).to_string(), palette.muted_style()),
-        ]));
-    }
-    center_block(lines, width)
+    let grammars: Vec<(&str, &str, &str)> = credits::GRAMMARS.iter().copied().collect();
+    lines.extend(leader_table(&grammars, palette, width));
+    lines
 }
 
-/// Prepends the same indent to every non-blank line, centering the block's
-/// widest line in `width` — but never left of [`HELP_PAD`], so a block wider
-/// than the dialog degrades to the ordinary left margin instead of losing its
-/// indent altogether.
-fn center_block(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    let block = lines
+/// One table of the "Components" tab: `(name, mid, right)` rows with the name
+/// on the left margin, the `mid` and `right` columns aligned under each other
+/// against the right margin (which mirrors [`HELP_PAD`]), and the gap bridged
+/// by a dotted leader in the border color — the least visible the palette has.
+/// Column math is in characters: every value here is ASCII (crate names,
+/// versions, SPDX expressions, repository pins).
+fn leader_table(
+    rows: &[(&str, &str, &str)],
+    palette: &Palette,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let pad = HELP_PAD.chars().count();
+    let mid_w = rows
         .iter()
-        .map(|line| line.spans.iter().map(span_width).sum::<usize>())
+        .map(|(_, m, _)| m.chars().count())
         .max()
         .unwrap_or(0);
-    let pad = " ".repeat(
-        HELP_PAD
-            .chars()
-            .count()
-            .max(width.saturating_sub(block) / 2),
-    );
-    lines
-        .into_iter()
-        .map(|line| {
-            if line.spans.iter().all(|s| s.content.trim().is_empty()) {
-                return line;
-            }
-            let mut spans = vec![Span::raw(pad.clone())];
-            spans.extend(line.spans);
-            Line::from(spans)
+    let right_w = rows
+        .iter()
+        .map(|(.., r)| r.chars().count())
+        .max()
+        .unwrap_or(0);
+    // Where the two anchored columns start.
+    let right_col = width.saturating_sub(pad + right_w);
+    let mid_col = right_col.saturating_sub(2 + mid_w);
+    rows.iter()
+        .map(|(name, mid, right)| {
+            // A space on each side of the dots. On a dialog clamped below the
+            // minimum width the dots run out and the row just clips on the
+            // right — the same hard degradation as every other tab's rows.
+            let dots = mid_col.saturating_sub(pad + name.chars().count() + 2);
+            Line::from(vec![
+                Span::raw(HELP_PAD),
+                Span::styled((*name).to_string(), Style::new().fg(palette.text)),
+                Span::styled(
+                    format!(" {} ", ".".repeat(dots)),
+                    palette.border_style(false),
+                ),
+                Span::styled(format!("{mid:<mid_w$}"), palette.muted_style()),
+                Span::raw("  "),
+                Span::styled((*right).to_string(), palette.muted_style()),
+            ])
         })
         .collect()
 }
@@ -1187,52 +1165,76 @@ mod tests {
         }
     }
 
-    /// The "Components" tab centers itself: every non-blank line shares one
-    /// indent, the block balances a wide dialog to within a column, and on a
-    /// dialog narrower than the block the indent degrades to [`HELP_PAD`] —
-    /// which is also exactly where the floor-width layout lands.
+    /// The "Components" tab is two leader tables (user's decision 2026-08-13 —
+    /// nothing in the app or on the site centers text): names on the left
+    /// margin, version/license (and repository/license) columns aligned under
+    /// each other against the right margin, dotted leaders bridging the gap in
+    /// the border color. Pinned per table and at both bounds of the width
+    /// range.
     #[test]
-    fn the_components_block_centers_in_the_dialog() {
+    fn components_columns_anchor_right_with_leaders() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let widths = |w: usize| -> (usize, usize) {
+        let dim = palette.border_style(false).fg;
+        for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             let lines = component_lines(&palette, loc, w);
-            let indents: Vec<usize> = lines
+            for line in &lines {
+                assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
+            }
+            // The two tables are split by the grammars heading; table rows are
+            // the 6-span lines ([pad][name][leader][mid][gap][right]).
+            let heading = lines
                 .iter()
-                .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
-                .map(|l| {
-                    let lead = &l.spans[0];
-                    assert!(lead.content.chars().all(|c| c == ' '), "indent span first");
-                    span_width(lead)
+                .position(|l| {
+                    l.spans
+                        .iter()
+                        .any(|s| s.content.contains(loc.t("ui.components.grammars")))
                 })
-                .collect();
-            assert!(!indents.is_empty());
-            assert!(
-                indents.iter().all(|i| i == &indents[0]),
-                "one shared indent, got {indents:?}"
-            );
-            let right = lines
-                .iter()
-                .map(|l| l.spans.iter().map(span_width).sum::<usize>())
-                .max()
-                .unwrap();
-            (indents[0], right)
-        };
-        // Wide dialog: balanced to within a column (the division truncates).
-        let w = HELP_MAX_WIDTH as usize;
-        let (left, right_edge) = widths(w);
-        assert!(
-            left > HELP_PAD.chars().count(),
-            "the block must move off the margin"
-        );
-        let slack = w - right_edge;
-        assert!(
-            left <= slack + 1 && slack <= left + 1,
-            "unbalanced: {left} columns left, {slack} right"
-        );
-        // Narrower than the block: the old left margin, not zero.
-        let (left, _) = widths(40);
-        assert_eq!(left, HELP_PAD.chars().count());
+                .expect("the grammars heading");
+            let tables = [&lines[..heading], &lines[heading..]];
+            for (which, table) in tables.into_iter().enumerate() {
+                let rows: Vec<&Line<'static>> =
+                    table.iter().filter(|l| l.spans.len() == 6).collect();
+                assert!(
+                    rows.len() > 10,
+                    "table {which} rendered {} rows",
+                    rows.len()
+                );
+                // Names start on the left margin; mid and right columns start
+                // at one shared column each; the widest right value touches
+                // the mirrored right margin.
+                let col_of = |line: &Line<'static>, span: usize| -> usize {
+                    line.spans[..span].iter().map(span_width).sum()
+                };
+                let mid_col = col_of(rows[0], 3);
+                let right_col = col_of(rows[0], 5);
+                let mut right_end = 0;
+                for row in &rows {
+                    assert_eq!(span_width(&row.spans[0]), HELP_PAD.chars().count());
+                    assert_eq!(col_of(row, 3), mid_col, "mid column drifts: {row:?}");
+                    assert_eq!(col_of(row, 5), right_col, "right column drifts: {row:?}");
+                    // The leader is dots in the dim border color, spaces aside.
+                    let leader = &row.spans[2];
+                    assert_eq!(leader.style.fg, dim, "leader color: {row:?}");
+                    assert!(
+                        leader.content.trim().chars().all(|c| c == '.'),
+                        "leader is not dots: {row:?}"
+                    );
+                    right_end = right_end.max(col_of(row, 5) + span_width(&row.spans[5]));
+                }
+                assert_eq!(
+                    right_end,
+                    w - HELP_PAD.chars().count(),
+                    "table {which} is not anchored to the right margin at {w}"
+                );
+                // At least the short names get a real dotted run, not a stub.
+                assert!(
+                    rows.iter()
+                        .any(|r| r.spans[2].content.matches('.').count() >= 3),
+                    "table {which} has no visible leaders"
+                );
+            }
+        }
     }
 
     #[test]

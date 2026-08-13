@@ -2107,10 +2107,11 @@ writes every word on screen was chosen and downloaded by the user: generated out
 third-party models and providers, the tools a model can invoke, cloud egress),
 **"Components"** (third-party dependencies — **name, version, license**; the list is checked
 against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests;
-the tab's tables are **centered as one block** — its natural width is well under the
-dialog's, and on a wide dialog a left-hugging table left the right half empty; the shared
-indent floors at the ordinary left margin, which is exactly where the minimum-width layout
-already sat).
+the tab is laid out as **leader tables**: the name on the left margin, the version and
+license columns aligned under each other against the mirrored right margin, and the run
+between bridged by a dotted leader in the dialog's dimmest color — the tab's natural width
+is well under the dialog's, and a left-hugging table left the right half empty, while
+centering it was rejected because nothing else in the app centers text).
 Opens on the "Hotkeys" tab (`F1`/`?` — the familiar help key), and on
 reopening — on the **last-selected** tab (remembered). Navigation:
 `Tab`/`←→` — switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` — scroll the active tab, `Esc`

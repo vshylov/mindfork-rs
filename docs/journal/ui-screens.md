@@ -1401,15 +1401,20 @@ layout only — no engine, memory or tool path.
   (`group_openers_open_real_rows`) pins every opener to exactly one row, never
   the first, and — by position — a blank line immediately before each opener's
   rendered row.
-- **The "Components" tab centers itself** (`center_block`) — the user's
-  follow-up screenshot: at 94 columns the two narrow tables hugged the left
-  edge and the right 40 columns sat empty. Every non-blank line now shares one
-  indent placed so the block's widest row (a grammar row — the repository pins
-  are long) balances the dialog, clamped left at `HELP_PAD`. At the 76-column
-  floor that clamp lands exactly on the old layout — the small-terminal look is
-  byte-for-byte what it was — and row-tracking survives because the columns
-  stay adjacent; spreading the columns apart (and a flush-right license
-  column) were rejected for exactly that tracking.
+- **The "Components" tab became two leader tables** (`leader_table`) — the
+  user's follow-up screenshot: at 94 columns the two narrow tables hugged the
+  left edge and the right 40 columns sat empty. The first fix centered the tab
+  as one block; **rejected by the user** (decision 2026-08-13): nothing else in
+  the app or on the site centers text, and the floating block read as
+  accidental. The shipped layout is the one the user specified — the name on
+  the left margin, the version and license columns aligned under each other
+  against the right margin (which mirrors `HELP_PAD`), and the run between
+  bridged by a dotted leader `.....` in `border_style(false)`, the dimmest
+  color the palette has. The leader is what makes a right-anchored column
+  readable at all: it carries the eye across the gap, which is why the earlier
+  column-spreading and bare flush-right variants had been rejected. Both
+  tables (crates; grammars, whose long repository pins set a different middle
+  column) share one helper and one geometry.
 - **Sonar's second finding, cognitive complexity 17 > 15 on `key_lines`**
   (rust:S3776), resolved by the same reshape: the per-entry wrap-and-push moved
   to `push_key_entry`, leaving `key_lines` as resolve → measure → dispatch.
@@ -1418,8 +1423,10 @@ layout only — no engine, memory or tool path.
   (mutation-checked — freezing the gap to one space turns it red);
   `the_dialog_follows_the_terminal_between_its_bounds` pins floor/middle/ceiling
   of `help_size`; `group_openers_open_real_rows` pins the opener contract;
-  `the_components_block_centers_in_the_dialog` pins the shared indent,
-  the ±1-column balance, and the `HELP_PAD` floor. The commands-tab dump tests
+  `components_columns_anchor_right_with_leaders` pins the leader tables — every
+  row fits, names on the margin, one shared column per anchored pair, the
+  widest license touching the mirrored right margin, dots in the border color —
+  at both width bounds. The commands-tab dump tests
   moved to a 90×50 backend: with the group separators the tab is 23 rows, and
   the last row (`/exit · /quit`) fell below the fold of the old 90×40 — the
   assertion caught it, which is the "assert the symptom" family working as

@@ -21,8 +21,9 @@ split by subsystem.
   always taking the small fixed size; in the "Hotkeys" and "Commands" tabs every
   description starts in the same column, wrapped lines hang under that column,
   and related entries sit in small groups with a breathing line between them.
-  The "Components" tab centers its tables in the wider window instead of
-  leaving the right half empty.
+  The "Components" tab lays its tables out like a table of contents — name on
+  the left, version and license aligned to the right edge, a faint dotted
+  leader between — instead of leaving the right half of the window empty.
 
 ### Added
 
