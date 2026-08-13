@@ -326,6 +326,53 @@ async fn file_attachment_e2e_live() {
     );
 }
 
+/// The image fixture both vision smokes use: a solid field of `field` with a large white
+/// square in the middle. Generated rather than photographed, so the assertion is objective
+/// and no pretrained knowledge can answer it — and parameterized by colour, so the two
+/// smokes cannot pass on each other's reply.
+fn figure_png(field: [u8; 3]) -> Vec<u8> {
+    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
+        if (160..352).contains(&x) && (160..352).contains(&y) {
+            image::Rgb([255u8, 255, 255])
+        } else {
+            image::Rgb(field)
+        }
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    bytes
+}
+
+/// Stages `path` (a file path or a URL — the command takes either) and returns what was
+/// staged. A refusal fails here rather than three turns later: an image that never reached
+/// the model would otherwise read as a model that cannot see.
+async fn attach_image_live(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    path: String,
+) -> crate::entities::message_image::ImageInfo {
+    cmd_tx.send(AppCommand::ImageAttach { path }).unwrap();
+    let staged = wait_for(rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
+                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("attach: {staged:?}");
+    match staged {
+        AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { info, .. }) => info,
+        other => panic!("the image was refused before it ever reached the model: {other:?}"),
+    }
+}
+
 /// Live e2e for image attachments (spec §9.10): an image staged with `/image attach`
 /// reaches a vision-capable model, and **is still seen a turn later**, replayed out of
 /// history rather than re-staged.
@@ -351,45 +398,9 @@ async fn image_attachment_e2e_live() {
         .unwrap();
 
     // A blue field with a centred white square — two facts to check, both objective.
-    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
-        if (160..352).contains(&x) && (160..352).contains(&y) {
-            image::Rgb([255u8, 255, 255])
-        } else {
-            image::Rgb([20u8, 60, 200])
-        }
-    });
     let path = dir.path().join("figure.png");
-    let mut bytes = Vec::new();
-    image::DynamicImage::ImageRgb8(buf)
-        .write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
-    std::fs::write(&path, &bytes).unwrap();
-
-    cmd_tx
-        .send(AppCommand::ImageAttach {
-            path: path.to_string_lossy().into_owned(),
-        })
-        .unwrap();
-    let staged = wait_for(&mut evt_rx, |e| {
-        matches!(
-            e,
-            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
-                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
-        )
-    })
-    .await
-    .unwrap();
-    eprintln!("attach: {staged:?}");
-    assert!(
-        matches!(
-            staged,
-            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
-        ),
-        "the image was refused before it ever reached the model: {staged:?}"
-    );
+    std::fs::write(&path, figure_png([20, 60, 200])).unwrap();
+    attach_image_live(&cmd_tx, &mut evt_rx, path.to_string_lossy().into_owned()).await;
 
     // Turn 1 — the image is on the message being sent.
     let (first, _) = run_turn_live(
@@ -2749,19 +2760,9 @@ async fn image_url_attachment_e2e_live() {
         .await
         .unwrap();
 
-    // A green field with a centred white square — deliberately *not* the blue of the
-    // file-attach smoke, so a stale reply from that fixture could not pass this one.
-    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
-        if (160..352).contains(&x) && (160..352).contains(&y) {
-            image::Rgb([255u8, 255, 255])
-        } else {
-            image::Rgb([20u8, 160, 60])
-        }
-    });
-    let mut png = Vec::new();
-    image::DynamicImage::ImageRgb8(buf)
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .unwrap();
+    // Deliberately *not* the blue of the file-attach smoke, so a stale reply from that
+    // fixture could not pass this one.
+    let png = figure_png([20, 160, 60]);
     let (base, _server) = serve(vec![ok_response("image/png", &png, true)]);
 
     const QUESTION: &str = "What is the background colour of this image, and what shape is \
@@ -2771,25 +2772,7 @@ async fn image_url_attachment_e2e_live() {
     let (control, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;
     eprintln!("control reply (no image staged): {control}");
 
-    cmd_tx
-        .send(AppCommand::ImageAttach {
-            path: format!("{base}/fixtures/figure.png"),
-        })
-        .unwrap();
-    let staged = wait_for(&mut evt_rx, |e| {
-        matches!(
-            e,
-            AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { .. })
-                | AppEvent::ImageProgress(crate::app::events::ImageProgress::Failed(_))
-        )
-    })
-    .await
-    .unwrap();
-    eprintln!("attach by url: {staged:?}");
-    let AppEvent::ImageProgress(crate::app::events::ImageProgress::Attached { info, .. }) = &staged
-    else {
-        panic!("the download was refused before it ever reached the model: {staged:?}");
-    };
+    let info = attach_image_live(&cmd_tx, &mut evt_rx, format!("{base}/fixtures/figure.png")).await;
     assert_eq!(info.name, "figure.png", "named after the URL's path");
 
     let (reply, _) = run_turn_live(&cmd_tx, &mut evt_rx, QUESTION).await;

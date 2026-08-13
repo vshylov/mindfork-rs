@@ -56,6 +56,21 @@ async fn staged_list(
     }
 }
 
+/// Sends `text` and returns the images the backend actually received on the message — the
+/// tail every "a staged image rides the next message" test shares, whatever put it there.
+async fn sent_images(
+    backend: &CapturingBackend,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> Vec<crate::shared::api::ApiImage> {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    wait_for(rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    backend.last_request().messages[0].images.clone()
+}
+
 /// Waits for a refusal and returns its message.
 async fn wait_refusal(rx: &mut UnboundedReceiver<AppEvent>) -> String {
     let ev = wait_for(rx, |e| {
@@ -285,15 +300,9 @@ async fn a_pasted_image_is_staged_and_travels_with_the_message() {
     assert_eq!(info.mime, "image/png");
     assert_eq!((info.width, info.height), (48, 24));
 
-    cmd_tx
-        .send(AppCommand::SendMessage("what is this?".into()))
-        .unwrap();
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
-        .await
-        .unwrap();
-    let req = backend.last_request();
-    assert_eq!(req.messages[0].images.len(), 1);
-    assert_eq!(req.messages[0].images[0].mime, "image/png");
+    let images = sent_images(&backend, &cmd_tx, &mut evt_rx, "what is this?").await;
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].mime, "image/png");
 }
 
 /// Two pastes must stage two images. Dedupe is by source, and a constant one would make
@@ -383,18 +392,12 @@ async fn an_image_attached_by_url_is_staged_and_named_after_its_path() {
     assert_eq!(info.name, "remote.png", "the name comes from the URL path");
     assert_eq!((info.width, info.height), (48, 24));
 
-    cmd_tx
-        .send(AppCommand::SendMessage("what is this?".into()))
-        .unwrap();
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
-        .await
-        .unwrap();
     // The downloaded pixels ride the message itself — the URL is never handed to the
     // provider, which is what makes this work on all five engines and survive link rot.
-    let req = backend.last_request();
-    assert_eq!(req.messages[0].images.len(), 1);
-    assert_eq!(req.messages[0].images[0].mime, "image/png");
-    assert!(!req.messages[0].images[0].data.is_empty());
+    let images = sent_images(&backend, &cmd_tx, &mut evt_rx, "what is this?").await;
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].mime, "image/png");
+    assert!(!images[0].data.is_empty());
 }
 
 /// Dedupe is by source, and a URL is its own source — so attaching the same address twice
