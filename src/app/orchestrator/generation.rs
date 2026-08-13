@@ -281,6 +281,20 @@ impl Orchestrator {
                 .attachment_indexed_ids(active_id)
                 .unwrap_or_default()
         };
+        // The other chats of this profile, for `chat_search`/`chat_read`
+        // (spec §9.11) — built only when the turn actually offers the pair,
+        // like the history render below. The snapshot is those tools' whole
+        // world, so the scope (this profile, not this chat, nothing hidden) is
+        // decided in one place: `snapshot_other_chats`.
+        let chat_tools_on = allowed.iter().any(|t| {
+            t == crate::features::tools::chats::CHAT_SEARCH_ID
+                || t == crate::features::tools::chats::CHAT_READ_ID
+        });
+        let other_chats: Vec<crate::features::tools::chats::ChatRef> = if chat_tools_on {
+            crate::features::tools::chats::snapshot_other_chats(&self.chats, profile_id, active_id)
+        } else {
+            Vec::new()
+        };
 
         // The profile's "self-model" at the start of the turn. Injection into the
         // system prompt happens only if the profile enabled get_self_model (opt-in);
@@ -358,6 +372,7 @@ impl Orchestrator {
                         )
                     })
                     .map(std::sync::Arc::new),
+                other_chats: std::sync::Arc::from(other_chats),
                 lang: profile_lang,
                 cancel: cancel.clone(),
             };

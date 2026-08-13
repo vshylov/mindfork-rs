@@ -132,6 +132,7 @@ impl Orchestrator {
                 // A background task runs outside a chat turn — no attachments.
                 attachments: std::sync::Arc::from(Vec::new()),
                 history: None,
+                other_chats: std::sync::Arc::from(Vec::new()),
                 lang,
                 cancel: cancel.clone(),
             },

@@ -397,6 +397,79 @@ impl CacheDb {
         Ok(ids)
     }
 
+    /// Individual matching messages **within the given chats** — the scoped face
+    /// of [`Self::search_messages`], for the cross-chat tools (spec §9.11). The
+    /// index spans every chat of every profile, so a caller that filtered a
+    /// *global* `LIMIT`-ed result afterwards could have its own hits starved by
+    /// another profile's; scoping inside the query keeps the cap honest.
+    ///
+    /// `chat_ids` becomes one placeholder each (SQLite's ceiling is 32766 —
+    /// thousands of chats fit; the caller passes one profile's list). Empty
+    /// `chat_ids` returns no rows without touching SQL (`IN ()` is a syntax
+    /// error). Ordering and the escaped-query contract are those of
+    /// [`Self::search_messages`].
+    pub fn search_messages_in(
+        &self,
+        fts_query: &str,
+        chat_ids: &[Uuid],
+        limit: usize,
+    ) -> Result<Vec<MessageHit>> {
+        if chat_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = vec!["?"; chat_ids.len()].join(", ");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT m.chat_id, m.message_id, m.role, m.ts, m.text
+             FROM messages_fts f
+             JOIN messages m ON m.id = f.rowid
+             WHERE messages_fts MATCH ? AND m.chat_id IN ({placeholders})
+             ORDER BY m.chat_id, m.id
+             LIMIT ?"
+        ))?;
+        let params = scoped_params(fts_query, chat_ids, Some(limit));
+        let hits = (|| -> rusqlite::Result<Vec<MessageHit>> {
+            stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                Ok(MessageHit {
+                    chat_id: parse_uuid(r.get::<_, String>(0)?),
+                    message_id: parse_uuid(r.get::<_, String>(1)?),
+                    role: r.get(2)?,
+                    ts: r.get(3)?,
+                    text: r.get(4)?,
+                })
+            })?
+            .collect()
+        })()
+        .with_context(|| format!("scoped full-text message query {fts_query:?}"))?;
+        Ok(hits)
+    }
+
+    /// How many messages the query matches **within the given chats** — the
+    /// honest denominator when [`Self::search_messages_in`] hit its cap. Unlike
+    /// [`Self::count_matching_messages`] it needs the join: the scope lives in
+    /// `messages`, not in the FTS shadow.
+    pub fn count_matching_messages_in(&self, fts_query: &str, chat_ids: &[Uuid]) -> Result<usize> {
+        if chat_ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = vec!["?"; chat_ids.len()].join(", ");
+        let params = scoped_params(fts_query, chat_ids, None);
+        let n: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT count(*)
+                     FROM messages_fts f
+                     JOIN messages m ON m.id = f.rowid
+                     WHERE messages_fts MATCH ? AND m.chat_id IN ({placeholders})"
+                ),
+                rusqlite::params_from_iter(params.iter()),
+                |r| r.get(0),
+            )
+            .with_context(|| format!("scoped full-text message count {fts_query:?}"))?;
+        Ok(n as usize)
+    }
+
     /// Number of indexed messages. Test-only for now — nothing in the app reads
     /// it, and gating it (rather than allowing dead code) keeps the module
     /// honest about what is actually wired. Lift the gate if a diagnostic ever
@@ -407,6 +480,24 @@ impl CacheDb {
         let n: i64 = conn.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))?;
         Ok(n as usize)
     }
+}
+
+/// The parameter row for a chat-scoped query: the escaped query, then one id
+/// per `IN` placeholder, then the optional `LIMIT`. One heterogeneous list via
+/// [`rusqlite::types::Value`], because `params!` cannot take a runtime-sized
+/// id list.
+fn scoped_params(
+    fts_query: &str,
+    chat_ids: &[Uuid],
+    limit: Option<usize>,
+) -> Vec<rusqlite::types::Value> {
+    let mut params: Vec<rusqlite::types::Value> = Vec::with_capacity(chat_ids.len() + 2);
+    params.push(fts_query.to_string().into());
+    params.extend(chat_ids.iter().map(|id| id.to_string().into()));
+    if let Some(limit) = limit {
+        params.push((limit as i64).into());
+    }
+    params
 }
 
 /// Brings the cache to [`CACHE_SCHEMA`]. Deliberately *not* the ADR 0006
@@ -598,6 +689,75 @@ mod tests {
         assert_eq!(db.message_count().unwrap(), 2);
         assert_eq!(db.search_chats("\"hello\"").unwrap(), vec![chat]);
         assert!(db.search_chats("\"nothing here\"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn scoped_search_sees_only_the_given_chats() {
+        // The property the cross-chat tools rest on (spec §9.11): the index is
+        // profile-blind, so the scope must hold inside the query — not as a
+        // post-filter a LIMIT could starve.
+        let db = cache();
+        let (mine, foreign) = (Uuid::new_v4(), Uuid::new_v4());
+        db.index_chat(mine, 1, 1, &[msg("shared password phrase")])
+            .unwrap();
+        db.index_chat(foreign, 1, 1, &[msg("shared password phrase")])
+            .unwrap();
+
+        let hits = db.search_messages_in("\"password\"", &[mine], 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chat_id, mine, "the foreign chat must not surface");
+        assert_eq!(
+            db.count_matching_messages_in("\"password\"", &[mine])
+                .unwrap(),
+            1
+        );
+
+        assert!(
+            db.search_messages_in("\"password\"", &[], 10)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            db.count_matching_messages_in("\"password\"", &[]).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn scoped_search_cap_cuts_within_the_scope_not_before_it() {
+        // A global LIMIT applied before the scope filter could return only the
+        // foreign chat's rows and read as "no hits here". The scoped query must
+        // fill its cap from the scope alone, and the scoped count stays the
+        // honest denominator.
+        let db = cache();
+        let (mine, foreign) = (Uuid::new_v4(), Uuid::new_v4());
+        // The foreign chat sorts first by chat_id often enough that an unscoped
+        // LIMIT 2 would take its rows; make it big to force the point.
+        db.index_chat(
+            foreign,
+            1,
+            1,
+            &(0..20)
+                .map(|i| msg(&format!("needle {i}")))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        db.index_chat(
+            mine,
+            1,
+            1,
+            &[msg("needle a"), msg("needle b"), msg("needle c")],
+        )
+        .unwrap();
+
+        let hits = db.search_messages_in("\"needle\"", &[mine], 2).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| h.chat_id == mine));
+        assert_eq!(
+            db.count_matching_messages_in("\"needle\"", &[mine])
+                .unwrap(),
+            3
+        );
     }
 
     #[test]
