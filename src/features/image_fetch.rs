@@ -273,9 +273,17 @@ pub(crate) mod stub {
         out
     }
 
+    /// A 302 — and it **must** say `Connection: close`, like every other response here.
+    /// This stub serves one connection at a time and drops each socket when it is done, so
+    /// a response that lets the client pool the connection is a lie: `reqwest` sends the
+    /// next hop down a socket the server has already closed, and the chain fails with a
+    /// transport error instead of following. Without this header the redirect tests pass
+    /// or fail by timing — green locally and on Linux, red on the Windows runner.
     pub(crate) fn redirect_response(location: &str) -> Vec<u8> {
-        format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n")
-            .into_bytes()
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes()
     }
 }
 

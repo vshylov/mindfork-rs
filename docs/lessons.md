@@ -226,6 +226,17 @@ later one or the test hangs.
 — *confirmation before dangerous tool calls*, *a settings hint always fits its panel*,
 *plugins — stage 3a: MCP host core*.
 
+**A hand-rolled HTTP stub must say `Connection: close`, or the client pools a socket the
+stub has already dropped.** A one-connection-at-a-time stub that answers and closes is
+telling the truth only if the response says so: without the header `reqwest` reuses the
+connection for the next redirect hop, and the request fails in transport instead of
+following. It is **Windows-only in practice** — closing a socket with unread bytes sends
+RST there rather than FIN, and a reset is a hard error where a FIN is just a stale pooled
+connection the client silently reopens. Two redirect tests were green locally and on
+Linux and red on the Windows runner; neither machine reproduces the other, so the CI run
+is the instrument.
+— *images in a message — attach by URL*.
+
 **A slow test is usually paying a real cost, not misbehaving.** A "probe a dead port"
 test ran **63 s**: a connect to a closed local port costs ~2.0 s on Windows (SYN retry)
 and the probe retries 30 times. Virtual time was already working — the *connect* was
