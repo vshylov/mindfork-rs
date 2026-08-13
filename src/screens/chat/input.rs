@@ -749,7 +749,7 @@ impl ChatScreen {
     }
 
     /// Whether the current input is a command (`/rag …`, `/file …`, `/image …`,
-    /// `/tts …`, `/reindex`, `/compact`). Such text is highlighted yellow and isn't spellchecked. See
+    /// `/tts …`, `/reindex`, `/compact`, `/exit`). Such text is highlighted yellow and isn't spellchecked. See
     /// spec §11.5.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
@@ -766,6 +766,7 @@ impl ChatScreen {
             || crate::features::file_command::parse(&text, self.loc).is_some()
             || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
+            || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 
     /// Triggers an irreversible operation (`Ctrl+R`/`Ctrl+E`): either returns
@@ -913,5 +914,30 @@ mod tests {
         s.input.clear();
         type_str(&mut s, "please compact the history");
         assert!(!s.input_is_command());
+    }
+
+    #[test]
+    fn exit_input_is_recognized_as_command() {
+        for cmd in crate::features::exit_command::ALIASES {
+            let mut s = ChatScreen::new();
+            type_str(&mut s, cmd);
+            assert!(
+                s.input_is_command(),
+                "{cmd}: the input box highlights it and skips spellcheck"
+            );
+            // A malformed one is recognized too — it's still a command, not prose.
+            s.input.clear();
+            type_str(&mut s, &format!("{cmd} now"));
+            assert!(s.input_is_command(), "{cmd} now");
+            // A longer word that merely starts with it is prose, and so is a
+            // sentence containing the word — both go out as messages, so both
+            // must look like messages while being typed.
+            s.input.clear();
+            type_str(&mut s, &format!("{cmd}ing"));
+            assert!(!s.input_is_command(), "{cmd}ing");
+            s.input.clear();
+            type_str(&mut s, "how do I quit vim?");
+            assert!(!s.input_is_command());
+        }
     }
 }

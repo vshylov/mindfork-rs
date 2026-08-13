@@ -994,6 +994,14 @@ ones stage 1 and 2 already covered live.
   `AppCommand::Quit`, which the channel keeps ordered behind it) closes it. Found by
   reading the loop rather than by running it — the symptom only shows up on the
   *next* launch, which is the kind a live pass tends to walk past.
+- **It is highlighted while being typed**, like every other command:
+  `input_is_command` gained the parser, so the box turns the whole line the
+  command colour and stops spellchecking it (spec §11.5). Two things fall out of
+  reusing the parser rather than matching a prefix: a *malformed* `/exit now` is
+  still highlighted — it is a command, not prose, and the highlight going away
+  mid-typo would be a lie — while `/exiting` and "how do I quit vim?" stay plain
+  text, which is exactly what happens to them on `Enter`. What the box shows and
+  what `Enter` does come from the same function, so they cannot disagree.
 - **A stray argument leaves a note, not silence.** `/exit now` reports instead of
   going out to the model, as `/reindex` and `/compact` do — and here the silence
   would read as "the app refused to quit". The message names the bare command *and*
@@ -1008,15 +1016,17 @@ ones stage 1 and 2 already covered live.
   envelope. (The hotkeys tab already overflows — `Ctrl+F` is 89 columns in `en` —
   which is a pre-existing clip, not this change's.)
 
-**Tests** (+10). The parser: every alias bare, padded and upper-cased, driven off
+**Tests** (+11). The parser: every alias bare, padded and upper-cased, driven off
 `ALIASES`; trailing arguments rejected for both; the error names the typed spelling
 and the argument and not the other spelling; neighbouring commands, longer words
 that merely start with one (`/exits`, `/quitter`) and plain prose (`how do I quit
 vim?`) all fall through as messages; the per-locale gate. The chat screen: both
 spellings produce `Quit` and hand back an **empty** draft; quitting during
 generation with its control arm; a mistyped quit notes and does not send; text that
-only resembles the command is sent. The help overlay: the row is present, last, and
-renders with its localized description, with the label checked against `ALIASES`.
+only resembles the command is sent; and the highlight — both spellings, a malformed
+one, `/exiting` and prose, all driven off `ALIASES`. The help overlay: the row is
+present, last, and renders with its localized description, with the label checked
+against `ALIASES`.
 
 **A live model run is not required** (AGENTS.md §3): this is input-box parsing and
 UI routing — nothing on the engine, memory or tool paths. The one thing unit tests
