@@ -699,6 +699,8 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `call_subagent` | `{ system_message, message }` | **The key feature** — see [9.3.2](#932-call_subagent). |
 | `send_followup_message` | `{}` | **Control** (opt., off by default) — write one more message as a separate reply. See [9.3.3](#933-conversation-control-tools). |
 | `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
+| `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
+| `chat_read` | `{ chat, page? }` | **Optional, off by default** — read another conversation of the profile as a paged transcript. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
 
 > **Embedding lifecycle**: a **dedicated** embedding server is used (ADR 0002) — a separate process on its own port, started at launch and kept alive; if not configured, RAG returns a clear error. See [decision #4](#161-accepted-decisions).
 
@@ -1411,6 +1413,54 @@ append-only shape keeps the prefix cache intact across an image turn
   (images are a standing cost once sent, so the pending one has to be visible).
   Rendering the pixels in the terminal is out of scope — see
   [docs/roadmap.md](docs/roadmap.md).
+
+### 9.11. Cross-chat search: `chat_search` and `chat_read`
+
+The model-facing counterpart of the chat-list content search (§11.2.1): the
+assistant can find and read what the *other* conversations of the current
+profile said, for when the user points across conversations ("we discussed
+this in another chat"). Design and the decided forks —
+[docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md).
+
+- **`chat_search { query, top_k? }`** runs the escaped query (the single
+  `to_fts_query` escaper, §11.2.1) over the full-text index the application
+  already keeps (`cache.db`, §5.2), scoped **in SQL** to the profile's other
+  chats (`CacheDb::search_messages_in`) — the index itself is profile-blind,
+  and a post-filtered global `LIMIT` could be starved by another profile's
+  rows. Hits come back grouped by conversation (the UI's "group, don't rank"
+  decision), newest conversation first and hits in timestamp order; each hit
+  carries a 480-character snippet, its role and date, and the **page** of
+  that conversation's transcript, and each conversation is addressed by its
+  title plus a short id (8 hex of the uuid). `top_k` defaults to 5 and is
+  capped at 20; if the 200-hit scan cap bites, the honest total is counted
+  and stated.
+- **`chat_read { chat, page? }`** reads one conversation as a paged
+  transcript — the same renderer (`HistoryView`) and page size
+  (`compaction.page_tokens`) as `history_read`, which is what makes the page
+  a hit names the page a read returns. `chat` resolves by short-id prefix,
+  then exact title, then title substring; several matches report the
+  ambiguity with the candidates' addresses, and an unknown reference points
+  back at `chat_search`.
+- **Scope** is a turn snapshot (`ToolContext::other_chats`), built in one
+  place (`snapshot_other_chats`): the current profile's chats only (§9.5),
+  the **current chat excluded** (its visible half is the model's own context;
+  its folded half belongs to `history_search`, §6.7), hidden chats dropped.
+  `chat_read` re-checks the loaded file against the same boundary, so a stale
+  snapshot cannot leak across profiles. Only `message.text` is searchable —
+  thoughts and tool results are not in the index (roadmap: "widening what
+  chat search indexes").
+- **Off by default.** Both tools are optional (`enabled_by_default = false`):
+  present in the per-profile Tools catalog, but no profile gets them without
+  the user's hand — `reconcile_tools` never auto-enables optional tools — and
+  while off they are not advertised to the model at all. That is the abuse
+  containment the feature was designed around: a deliberate per-profile
+  opt-in plus bounded output; no new per-turn call limit (`max_tool_rounds`
+  bounds the loop, as everywhere else).
+- **Degradation** follows the read-back pair: a profile with no other chats
+  answers "nothing here" (as distinct from "no hits"); an unavailable index
+  degrades to a normal answer naming the route that still works; a
+  sub-trigram query, a bad page and an ambiguous reference each state what to
+  do next.
 
 ---
 

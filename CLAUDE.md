@@ -163,12 +163,22 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-13, version 0.9.6)
+## Status (2026-08-14, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2167 unit tests
-green, 96 `#[ignore]`** (92 live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2181 unit tests
+green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **images in a message — track complete**
+most recent tracks: **cross-chat search for the assistant — track complete**
+(`chat_search`/`chat_read`, **off by default** per profile: the model can
+search and read the profile's *other* chats over the full-text index the app
+already keeps — results grouped by conversation and page-addressed through the
+same renderer as `history_read`, so a hit's page is exactly what a read
+returns; the index is profile-blind and includes the current chat, so the
+scope lives in a single turn snapshot — current profile only, current chat
+excluded, hidden dropped — and the SQL is scoped by chat ids so another
+profile's rows cannot starve the cap;
+[docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md),
+spec §9.11), **images in a message — track complete**
 (`/image attach|remove|list`
 stages an image for the **next** message, which is what every provider's wire
 format actually models; it reaches a local `llama-server --mmproj` and **all four

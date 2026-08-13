@@ -138,6 +138,13 @@ build the moment they drift from what the app actually renders
   demand with `/compact`. **Nothing is deleted**: the feed, search and export
   still show everything, and the assistant can read the folded range back page
   by page instead of guessing about the start of the conversation.
+- **Cross-chat search for the assistant** — off by default. Enable
+  `chat_search` / `chat_read` in settings → profile → Tools and the model can
+  find and read what your *other* conversations of the same profile said:
+  results grouped by conversation, each hit naming the transcript page a
+  follow-up read returns. Until you flip the toggles the pair is not even
+  advertised to the model, and either way the current conversation, hidden
+  chats and other profiles stay out of reach.
 - **Change your embedding model freely**: the switch is detected
   automatically, and `/reindex` re-embeds notes, attachments and every
   profile's knowledge base in one resumable background pass — even the

@@ -2507,6 +2507,109 @@ async fn history_read_back_answers_what_the_summary_dropped_live() {
     );
 }
 
+/// Spec §9.11 go/no-go: a fact that exists only in **another** chat of the
+/// profile is reachable through `chat_search`/`chat_read`, and a real model
+/// actually reaches for the pair when the user points across conversations.
+///
+/// Validity: the code is a nonsense token seeded into chat A only, so chat B
+/// has no route to it but the pair — the profile is narrowed to exactly these
+/// two tools (the read-back smoke's lesson: remove the alternative rather than
+/// hope; with `note_save` in reach the model files the fact into profile
+/// memory and never crosses a conversation), and the "tool was actually
+/// called" assertion keeps a refusal or a guess from reading as a pass (the
+/// address-policy smoke's lesson).
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn cross_chat_search_answers_from_another_chat_live() {
+    const CODE: &str = "SIREN-7734";
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(AppConfig::default()) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .expect("the bootstrap profile");
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Only the pair under test, and *before* the seed turn — see the doc
+    // comment for why the alternative routes must not exist.
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(vec![
+                    crate::features::tools::chats::CHAT_SEARCH_ID.into(),
+                    crate::features::tools::chats::CHAT_READ_ID.into(),
+                ]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+
+    // Chat A: the only place the code exists.
+    let (reply, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Запиши в этом разговоре: код поставки нового компрессора — {CODE}. \
+             Просто подтверди, что записал."
+        ),
+    )
+    .await;
+    eprintln!(
+        "seed reply: {}",
+        reply.chars().take(120).collect::<String>()
+    );
+
+    // Chat B of the same profile; A becomes an "other" chat. The post-save
+    // hook indexes A behind the 800 ms save debounce, and there is no event to
+    // wait on for a background index write — so wait the debounce out.
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(profile),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "В другом разговоре этого профиля мы записали код поставки компрессора. \
+         Найди его по другим разговорам и ответь только этим кодом.",
+    )
+    .await;
+    eprintln!("answer: {answer}");
+    eprintln!(
+        "tools called: {:?}",
+        calls.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let used_pair = calls.iter().any(|(name, _)| {
+        name == crate::features::tools::chats::CHAT_SEARCH_ID
+            || name == crate::features::tools::chats::CHAT_READ_ID
+    });
+    assert!(
+        used_pair,
+        "the model must reach across conversations through the pair, not \
+         guess: {calls:?}"
+    );
+    assert!(
+        answer.contains(CODE),
+        "the fact lives only in the other chat and must come back: {answer}"
+    );
+}
+
 /// What only a real server can answer: that `/props` exists on the stack we
 /// actually run against, and that our client reads the field it means to.
 ///
