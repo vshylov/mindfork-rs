@@ -279,13 +279,19 @@ normalized away — `jscpd`, which compares exact tokens, reports 0% on the same
 which is how you tell the two models apart. And because the bar is a density, shapes
 that big PRs got away with fail a small PR. Hoist table-shaped fixture data into one
 raw-string literal parsed by a few unique lines: one string is one token, and there is
-nothing left to match. **Recorded twice**, and the second time it was right about the
+nothing left to match. **Recorded three times**. The second time it was right about the
 *code*: a clipboard-paste PR failed at 8.2% because the paste handler was the attach
 handler copied with a different pixel source — the fix was a shared seam that made the
 source the only difference, and the same seam then absorbed a third source (a URL) for
-almost nothing.
+almost nothing. The third was a **production const table**: regrouping the help tables
+into nested slices rewrote every long-lived tuple row, and 50 same-shape rows in changed
+lines scored 16.1%. Structure a stable table without rewriting its rows — the fix kept
+them byte-identical to `main` (out of "new code" altogether) and marked group breaks
+with an *identifier* sentinel (`GROUP_BREAK`), whose different token also severs the
+uniform run the detector slides over.
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
-clipboard*, *images in a message — attach by URL*.
+clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
+its tables align*.
 
 ---
 

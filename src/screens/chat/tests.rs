@@ -1136,10 +1136,8 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     term.draw(|f| s.render(f)).unwrap();
     // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
     // the max (well below what was requested) and the scrollbar thumb is drawn.
-    // Entries plus one separator per group bound the tab's line count.
-    let rows: usize = HELP_KEYS.iter().map(|g| g.len() + 1).sum();
     assert!(
-        s.help.as_ref().unwrap().scroll < rows,
+        s.help.as_ref().unwrap().scroll < HELP_KEYS.len(),
         "scroll clamps to the maximum"
     );
     let buf = term.backend().buffer();
@@ -2335,10 +2333,8 @@ fn help_shows_logo_when_terminal_is_tall() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Margin: the border (2) + all the keys with their group separators + the
-    // lockup block (top and bottom breathing room).
-    let keys: usize = HELP_KEYS.iter().map(|g| g.len() + 1).sum();
-    let tall = keys as u16 + 2 + LOCKUP_ROWS + 2;
+    // Margin: the border (2) + all the keys + the lockup block (top and bottom breathing room).
+    let tall = HELP_KEYS.len() as u16 + 2 + LOCKUP_ROWS + 2;
     let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 

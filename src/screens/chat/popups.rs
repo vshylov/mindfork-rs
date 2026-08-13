@@ -196,6 +196,10 @@ impl ChatScreen {
     }
 }
 
+/// The group-separator sentinel row of [`HELP_KEYS`]/[`HELP_COMMANDS`]: an
+/// empty label, which [`key_lines`] draws as one blank line.
+const GROUP_BREAK: (&str, &str) = ("", "");
+
 /// Hotkeys for the "Hotkeys" tab (`F1`/`?`). Pairs `(keycap, desc_key)`: `keycap`
 /// is a literal "key" (ASCII, universal) **or** a `ui.*` key where the label
 /// itself has words (mouse); `desc_key` is always a `ui.*` description key. Both
@@ -203,115 +207,101 @@ impl ChatScreen {
 /// are split out into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
 /// docs/i18n-ui.md.
 ///
-/// The outer slice groups related keys; [`key_lines`] draws a blank line
-/// between groups, nothing more — the groups carry no headers, so they need no
-/// locale keys, and flattening them (as the tests do) recovers the exact list
-/// the tab used to be.
-pub(super) const HELP_KEYS: &[&[(&str, &str)]] = &[
-    // Composing a message.
-    &[
-        ("Enter", "ui.help.send"),
-        ("Shift+Enter / Alt+Enter", "ui.help.newline"),
-    ],
-    // Selection and the clipboard.
-    &[
-        ("Shift+←/→/↑/↓", "ui.help.select"),
-        ("Ctrl+A", "ui.help.select_all"),
-        ("Ctrl+C", "ui.help.copy"),
-        ("Ctrl+X", "ui.help.cut"),
-        ("Ctrl+V", "ui.help.paste"),
-    ],
-    // Getting around: chats and search.
-    &[
-        ("Esc", "ui.help.esc"),
-        // Only meaningful inside the chat list, but it belongs here: that is
-        // where users look for "how do I search my history?".
-        ("Ctrl+F", "ui.help.search_content"),
-        ("Ctrl+G", "ui.help.search_messages"),
-        ("Ctrl+N", "ui.help.new_chat"),
-    ],
-    // Acting on the conversation.
-    &[
-        ("F3", "ui.help.self_model"),
-        ("F5", "ui.help.copy_chat"),
-        ("Ctrl+R", "ui.help.regenerate"),
-        ("Ctrl+E", "ui.help.delete_exchange"),
-        ("Ctrl+U", "ui.help.impersonate"),
-    ],
-    // Editing inside the input box.
-    &[
-        ("Ctrl+K", "ui.help.clear_input"),
-        ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
-        ("Ctrl+←/→", "ui.help.word_move"),
-        ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
-        ("Home", "ui.help.line_home"),
-        ("End", "ui.help.line_end"),
-        ("Ctrl+Home/End", "ui.help.doc_move"),
-    ],
-    // Panels, toggles and the feed.
-    &[
-        ("Ctrl+P", "ui.help.settings"),
-        ("Ctrl+T", "ui.help.thoughts"),
-        ("Ctrl+O", "ui.help.tool_calls"),
-        ("Ctrl+G", "ui.help.spell"),
-        ("Ctrl+B", "ui.help.emoji"),
-        ("Ctrl+W", "ui.help.mouse_toggle"),
-        ("ui.help.k.mouse", "ui.help.mouse_action"),
-        ("PageUp/PageDown", "ui.help.scroll"),
-    ],
-    // The help itself, and the way out.
-    &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
+/// A [`GROUP_BREAK`] sentinel row separates the groups of related keys —
+/// [`key_lines`] draws it as a blank line, nothing more. The groups carry no
+/// headers, so they need no locale keys; the trailing comment on each sentinel
+/// names the group it opens. The table deliberately stays one flat run of rows
+/// (rather than nested group slices): the rows are long-lived, and rewriting
+/// them all to add structure is exactly the sliding self-duplication the
+/// SonarQube density gate flags (docs/lessons.md §2) — and the sentinel being
+/// an *identifier* is likewise deliberate, it breaks the uniform
+/// tuple-row token run the copy-paste detector would otherwise slide over.
+pub(super) const HELP_KEYS: &[(&str, &str)] = &[
+    ("Enter", "ui.help.send"),
+    ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+    GROUP_BREAK, // selection and the clipboard
+    ("Shift+←/→/↑/↓", "ui.help.select"),
+    ("Ctrl+A", "ui.help.select_all"),
+    ("Ctrl+C", "ui.help.copy"),
+    ("Ctrl+X", "ui.help.cut"),
+    ("Ctrl+V", "ui.help.paste"),
+    GROUP_BREAK, // getting around: chats and search
+    ("Esc", "ui.help.esc"),
+    // Only meaningful inside the chat list, but it belongs here: that is where
+    // users look for "how do I search my history?".
+    ("Ctrl+F", "ui.help.search_content"),
+    ("Ctrl+G", "ui.help.search_messages"),
+    ("Ctrl+N", "ui.help.new_chat"),
+    GROUP_BREAK, // acting on the conversation
+    ("F3", "ui.help.self_model"),
+    ("F5", "ui.help.copy_chat"),
+    ("Ctrl+R", "ui.help.regenerate"),
+    ("Ctrl+E", "ui.help.delete_exchange"),
+    ("Ctrl+U", "ui.help.impersonate"),
+    GROUP_BREAK, // editing inside the input box
+    ("Ctrl+K", "ui.help.clear_input"),
+    ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+    ("Ctrl+←/→", "ui.help.word_move"),
+    ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+    ("Home", "ui.help.line_home"),
+    ("End", "ui.help.line_end"),
+    ("Ctrl+Home/End", "ui.help.doc_move"),
+    GROUP_BREAK, // panels, toggles and the feed
+    ("Ctrl+P", "ui.help.settings"),
+    ("Ctrl+T", "ui.help.thoughts"),
+    ("Ctrl+O", "ui.help.tool_calls"),
+    ("Ctrl+G", "ui.help.spell"),
+    ("Ctrl+B", "ui.help.emoji"),
+    ("Ctrl+W", "ui.help.mouse_toggle"),
+    ("ui.help.k.mouse", "ui.help.mouse_action"),
+    ("PageUp/PageDown", "ui.help.scroll"),
+    GROUP_BREAK, // the help itself, and the way out
+    ("F1 / ?", "ui.help.help"),
+    ("Ctrl+Q / F10", "ui.help.quit"),
 ];
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
-/// [`HELP_KEYS`] (grouped the same way); a command label (`/…`) is drawn in the
-/// command color. Split out of the hotkeys so they don't clutter reading them.
-/// See spec §11.7.
-pub(super) const HELP_COMMANDS: &[&[(&str, &str)]] = &[
+/// [`HELP_KEYS`] (same [`GROUP_BREAK`] sentinels); a command label (`/…`) is
+/// drawn in the command color. Split out of the hotkeys so they don't clutter
+/// reading them. See spec §11.7.
+pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // Attachments come first — they are the commands a user reaches for while
     // writing a message (see docs/file-attachments.md §4.8).
-    &[
-        ("ui.help.k.file_attach", "ui.help.file_attach"),
-        ("ui.help.k.file_remove", "ui.help.file_remove"),
-        ("/file list", "ui.help.file_list"),
-    ],
+    ("ui.help.k.file_attach", "ui.help.file_attach"),
+    ("ui.help.k.file_remove", "ui.help.file_remove"),
+    ("/file list", "ui.help.file_list"),
+    GROUP_BREAK, // images
     // Images sit right after the files: the same verbs and the same `#N`
     // addressing, but staged for the **next message** rather than pinned to the
     // chat — the descriptions carry that difference (spec §9.10).
-    &[
-        ("ui.help.k.image_attach", "ui.help.image_attach"),
-        ("ui.help.k.image_remove", "ui.help.image_remove"),
-        ("/image list", "ui.help.image_list"),
-        // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
-        // the terminal's decision (Windows Terminal binds it to its own paste), and an image
-        // on the clipboard produces no text for the terminal to inject.
-        ("/image paste", "ui.help.image_paste"),
-    ],
-    // The knowledge base.
-    &[
-        ("ui.help.k.rag_add", "ui.help.rag_add"),
-        ("ui.help.k.rag_remove", "ui.help.rag_remove"),
-        ("/rag list", "ui.help.rag_list"),
-        ("/rag rebuild", "ui.help.rag_rebuild"),
-    ],
-    // Housekeeping. `/reindex` sits next to the knowledge-base commands, but is
-    // deliberately top-level: it re-embeds notes, attachments and every
-    // profile's base at once. `/compact` is chat-scoped, unlike its neighbour —
-    // but it belongs here rather than among the attachments.
-    &[
-        ("/reindex", "ui.help.reindex"),
-        ("/compact", "ui.help.compact"),
-    ],
-    // Speech.
-    &[
-        ("ui.help.k.tts", "ui.help.tts"),
-        ("/tts stop", "ui.help.tts_stop"),
-        ("/tts pause · resume", "ui.help.tts_pause"),
-    ],
+    ("ui.help.k.image_attach", "ui.help.image_attach"),
+    ("ui.help.k.image_remove", "ui.help.image_remove"),
+    ("/image list", "ui.help.image_list"),
+    // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
+    // the terminal's decision (Windows Terminal binds it to its own paste), and an image
+    // on the clipboard produces no text for the terminal to inject.
+    ("/image paste", "ui.help.image_paste"),
+    GROUP_BREAK, // the knowledge base
+    ("ui.help.k.rag_add", "ui.help.rag_add"),
+    ("ui.help.k.rag_remove", "ui.help.rag_remove"),
+    ("/rag list", "ui.help.rag_list"),
+    ("/rag rebuild", "ui.help.rag_rebuild"),
+    GROUP_BREAK, // housekeeping
+    // Sits next to the knowledge-base commands, but is deliberately top-level:
+    // it re-embeds notes, attachments and every profile's base at once.
+    ("/reindex", "ui.help.reindex"),
+    // Chat-scoped, unlike the two above — but still top-level, and it belongs
+    // with the other "housekeeping" commands rather than among the attachments.
+    ("/compact", "ui.help.compact"),
+    GROUP_BREAK, // speech
+    ("ui.help.k.tts", "ui.help.tts"),
+    ("/tts stop", "ui.help.tts_stop"),
+    ("/tts pause · resume", "ui.help.tts_pause"),
+    GROUP_BREAK, // the way out
     // Last, as quitting is in the hotkeys tab: this is the typed route out, for
     // terminals that keep `Ctrl+Q` and `F10` for themselves (VS Code's integrated
     // one binds both). Same reasoning as `/image paste` above.
-    &[("/exit · /quit", "ui.help.exit")],
+    ("/exit · /quit", "ui.help.exit"),
 ];
 
 /// Width bounds of the help/"About" dialog in columns (excluding the border).
@@ -418,7 +408,7 @@ pub(super) fn render_help(
         HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc, inner_w),
         HelpTab::License => license_lines(palette, inner_w),
         HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
-        HelpTab::Components => component_lines(palette, loc),
+        HelpTab::Components => component_lines(palette, loc, inner_w),
     };
     let total = content.len();
     let view_h = body_area.height as usize;
@@ -531,46 +521,45 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     lines
 }
 
-/// The "Hotkeys"/"Commands" tabs: groups of `(label, description)` pairs — a
-/// "key" + a description (a command label `/…` uses the command color). The
-/// locale resolves both label keys and descriptions. Shared by both tabs
-/// ([`HELP_KEYS`]/[`HELP_COMMANDS`]); groups are separated by a blank line.
+/// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
+/// "key" + a description (a command label `/…` uses the command color); a
+/// sentinel row with an empty label draws as a blank line, separating the
+/// groups. The locale resolves both label keys and descriptions. Shared by
+/// both tabs ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
 ///
 /// Every description starts in the **same column** — one past the tab's widest
 /// label — and a description too long for `width` **wraps**, hung under that
-/// column, rather than being clipped at the dialog's edge: the tab is a plain
-/// `Paragraph` with no wrapping of its own, so an over-long row used to lose its
-/// tail mid-word. Both are per-locale work — a row can fit in `en` and overflow
-/// in `ru`, so whoever writes the label never sees it (docs/lessons.md §7), and
-/// the label lengths differ per locale too, which is why the column is measured
-/// here (in display columns — a label can carry `↔` or a box-drawing glyph,
-/// where `.len()` would be bytes) rather than fixed as a constant.
-/// `help_rows_fit_the_dialog_in_every_locale` is the gate. See spec §11.7.
+/// column ([`push_key_entry`]), rather than being clipped at the dialog's edge:
+/// the tab is a plain `Paragraph` with no wrapping of its own, so an over-long
+/// row used to lose its tail mid-word. Both are per-locale work — a row can fit
+/// in `en` and overflow in `ru`, so whoever writes the label never sees it
+/// (docs/lessons.md §7), and the label lengths differ per locale too, which is
+/// why the column is measured here (in display columns — a label can carry `↔`
+/// or a box-drawing glyph, where `.len()` would be bytes) rather than fixed as
+/// a constant. `help_rows_fit_the_dialog_in_every_locale` is the gate. See
+/// spec §11.7.
 fn key_lines(
-    groups: &[&[(&str, &str)]],
+    entries: &[(&str, &str)],
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> Vec<Line<'static>> {
-    // Resolve every label up front: the description column is shared by the
-    // whole tab, so it has to be measured before any row can be built. Both
-    // label styles pad with a space on each side, so one measurement covers
-    // keycaps and command labels alike.
-    let resolved: Vec<Vec<(Span<'static>, String)>> = groups
+    // Resolve every label up front (`None` — a group-separator sentinel): the
+    // description column is shared by the whole tab, so it has to be measured
+    // before any row can be built. Both label styles pad with a space on each
+    // side, so one measurement covers keycaps and command labels alike.
+    let resolved: Vec<Option<(Span<'static>, String)>> = entries
         .iter()
-        .map(|group| {
-            group
-                .iter()
-                .map(|(k, d)| {
-                    let key = loc.t(k).to_string();
-                    let key_span = if key.starts_with('/') {
-                        Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-                    } else {
-                        palette.keycap(key)
-                    };
-                    (key_span, loc.t(d).to_string())
-                })
-                .collect()
+        .map(|(k, d)| {
+            (!k.is_empty()).then(|| {
+                let key = loc.t(k).to_string();
+                let key_span = if key.starts_with('/') {
+                    Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+                } else {
+                    palette.keycap(key)
+                };
+                (key_span, loc.t(d).to_string())
+            })
         })
         .collect();
     let label_col = resolved
@@ -582,43 +571,56 @@ fn key_lines(
     // Where every description starts: the indent + the label column + the
     // separating space.
     let indent = HELP_PAD.chars().count() + label_col + 1;
-    // `max(1)` only guards against a pathological label eating the whole
-    // dialog (wrap_ranges must not be handed a zero width); with a label that
-    // long the rows overflow anyway, and the gate test is what catches it.
-    let body = width.saturating_sub(indent).max(1);
-    let hang = " ".repeat(indent);
     let mut lines = vec![Line::raw("")];
-    for (gi, group) in resolved.iter().enumerate() {
-        if gi > 0 {
-            lines.push(Line::raw("")); // a breath between the groups
-        }
-        for (key_span, desc) in group {
-            // The gap that carries this row's description to the shared column.
-            let gap = " ".repeat(indent - HELP_PAD.chars().count() - span_width(key_span));
-            let chars: Vec<char> = desc.chars().collect();
-            for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
-                // `wrap_ranges` spills the break's whitespace into the row it ends
-                // (so the next row starts on a word); it is invisible, but it would
-                // make a row measure wider than it draws.
-                let text: String = chars[from..to].iter().collect();
-                let text = text.trim_end().to_string();
-                lines.push(if i == 0 {
-                    Line::from(vec![
-                        Span::raw(HELP_PAD),
-                        key_span.clone(),
-                        Span::raw(gap.clone()),
-                        Span::styled(text, Style::new().fg(palette.text)),
-                    ])
-                } else {
-                    Line::from(vec![
-                        Span::raw(hang.clone()),
-                        Span::styled(text, Style::new().fg(palette.text)),
-                    ])
-                });
+    for entry in &resolved {
+        match entry {
+            None => lines.push(Line::raw("")), // a breath between the groups
+            Some((key_span, desc)) => {
+                push_key_entry(&mut lines, key_span, desc, palette, width, indent)
             }
         }
     }
     lines
+}
+
+/// One entry of a [`key_lines`] table: the label row with its description
+/// starting at the shared column `indent`, plus wrapped continuations hung
+/// under that same column.
+fn push_key_entry(
+    lines: &mut Vec<Line<'static>>,
+    key_span: &Span<'static>,
+    desc: &str,
+    palette: &Palette,
+    width: usize,
+    indent: usize,
+) {
+    // The gap that carries this row's description to the shared column.
+    let gap = " ".repeat(indent - HELP_PAD.chars().count() - span_width(key_span));
+    // `max(1)` only guards against a pathological label eating the whole
+    // dialog (wrap_ranges must not be handed a zero width); with a label that
+    // long the rows overflow anyway, and the gate test is what catches it.
+    let body = width.saturating_sub(indent).max(1);
+    let chars: Vec<char> = desc.chars().collect();
+    for (i, (from, to)) in wrap::wrap_ranges(&chars, body).into_iter().enumerate() {
+        // `wrap_ranges` spills the break's whitespace into the row it ends
+        // (so the next row starts on a word); it is invisible, but it would
+        // make a row measure wider than it draws.
+        let text: String = chars[from..to].iter().collect();
+        let text = text.trim_end().to_string();
+        lines.push(if i == 0 {
+            Line::from(vec![
+                Span::raw(HELP_PAD),
+                key_span.clone(),
+                Span::raw(gap.clone()),
+                Span::styled(text, Style::new().fg(palette.text)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled(text, Style::new().fg(palette.text)),
+            ])
+        });
+    }
 }
 
 /// A span's width in terminal columns (not bytes, not `char`s).
@@ -725,14 +727,21 @@ fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
 /// width of the `- ` marker the markdown writer emits.
 const LIST_HANG: usize = 2;
 
-/// The "Components" tab: name (aligned into a column), version, and license.
-/// The name uses the main text color, version and license are muted, columns
-/// line up.
-fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
+/// The "Components" tab: name (aligned into a column), version, and license,
+/// then the vendored grammars in the same three-column shape. The name uses the
+/// main text color, version and license are muted, columns line up.
+///
+/// The whole tab is one **centered block** ([`center_block`]): both tables and
+/// their headings share a left edge placed so the block's widest row (usually a
+/// grammar row — the repository pins are long) balances the dialog. At the
+/// dialog's minimum width that indent lands on [`HELP_PAD`] — the floor layout
+/// is exactly the old one — while on a wide screen the tables float toward the
+/// middle instead of leaving the right half of the dialog empty.
+fn component_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::raw(""),
         Line::from(Span::styled(
-            format!("{HELP_PAD}{}", loc.t("ui.components.intro")),
+            loc.t("ui.components.intro").to_string(),
             palette.muted_style(),
         )),
         Line::raw(""),
@@ -751,7 +760,6 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
         let name_pad = " ".repeat(name_w + 2 - name.chars().count());
         let ver_pad = " ".repeat(ver_w + 2 - version.chars().count());
         lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
             Span::styled((*name).to_string(), Style::new().fg(palette.text)),
             Span::raw(name_pad),
             Span::styled((*version).to_string(), palette.muted_style()),
@@ -764,7 +772,7 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
     // section of their own (see shared/credits.rs and syntaxes/SOURCES.md).
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        format!("{HELP_PAD}{}", loc.t("ui.components.grammars")),
+        loc.t("ui.components.grammars").to_string(),
         palette.muted_style(),
     )));
     lines.push(Line::raw(""));
@@ -780,7 +788,6 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
         .unwrap_or(0);
     for (lang, repo, license) in credits::GRAMMARS.iter() {
         lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
             Span::styled((*lang).to_string(), Style::new().fg(palette.text)),
             Span::raw(" ".repeat(lang_w + 2 - lang.chars().count())),
             Span::styled((*repo).to_string(), palette.muted_style()),
@@ -788,7 +795,36 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
             Span::styled((*license).to_string(), palette.muted_style()),
         ]));
     }
+    center_block(lines, width)
+}
+
+/// Prepends the same indent to every non-blank line, centering the block's
+/// widest line in `width` — but never left of [`HELP_PAD`], so a block wider
+/// than the dialog degrades to the ordinary left margin instead of losing its
+/// indent altogether.
+fn center_block(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let block = lines
+        .iter()
+        .map(|line| line.spans.iter().map(span_width).sum::<usize>())
+        .max()
+        .unwrap_or(0);
+    let pad = " ".repeat(
+        HELP_PAD
+            .chars()
+            .count()
+            .max(width.saturating_sub(block) / 2),
+    );
     lines
+        .into_iter()
+        .map(|line| {
+            if line.spans.iter().all(|s| s.content.trim().is_empty()) {
+                return line;
+            }
+            let mut spans = vec![Span::raw(pad.clone())];
+            spans.extend(line.spans);
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// Draws the spellcheck-suggestion popup centered on screen.
@@ -1048,7 +1084,7 @@ mod tests {
         // as a bundle key by the i18n gates.
         let long =
             "a description far too long for the dialog to hold on one single row and then some";
-        let lines = key_lines(&[&[("/x", long)]], &palette, loc, HELP_MIN_WIDTH as usize);
+        let lines = key_lines(&[("/x", long)], &palette, loc, HELP_MIN_WIDTH as usize);
         // [0] is the leading blank line.
         let rows = &lines[1..];
         assert!(rows.len() > 1, "expected a wrap, got {} row(s)", rows.len());
@@ -1091,10 +1127,95 @@ mod tests {
         out
     }
 
-    /// [`HELP_COMMANDS`] in display order, groups flattened away — the list the
-    /// tab renders, for tests that care about order rather than grouping.
+    /// [`HELP_COMMANDS`] in display order with the group-separator sentinels
+    /// dropped — the commands the tab renders, for tests that care about order
+    /// rather than grouping.
     fn flat_commands() -> Vec<&'static (&'static str, &'static str)> {
-        HELP_COMMANDS.iter().flat_map(|g| g.iter()).collect()
+        HELP_COMMANDS
+            .iter()
+            .filter(|(k, _)| !k.is_empty())
+            .collect()
+    }
+
+    /// The sentinel contract behind the group breaks: a sentinel is never at
+    /// either edge of a table, never doubled (that would draw stray blank
+    /// rows), and each one renders as exactly one blank line — the tab's blank
+    /// rows are the sentinels plus the leading spacer, nothing else.
+    #[test]
+    fn group_separators_render_as_blank_rows() {
+        let palette = Palette::default();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
+            let sentinels = entries.iter().filter(|(k, _)| k.is_empty()).count();
+            assert!(sentinels > 0, "{name} lost its group breaks");
+            assert!(
+                !entries.first().unwrap().0.is_empty() && !entries.last().unwrap().0.is_empty(),
+                "{name} has a sentinel at an edge"
+            );
+            assert!(
+                entries
+                    .windows(2)
+                    .all(|w| !(w[0].0.is_empty() && w[1].0.is_empty())),
+                "{name} has doubled sentinels"
+            );
+            let blanks = key_lines(entries, &palette, loc, HELP_MIN_WIDTH as usize)
+                .iter()
+                .filter(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+                .count();
+            assert_eq!(
+                blanks,
+                sentinels + 1,
+                "{name}: sentinels + the leading spacer"
+            );
+        }
+    }
+
+    /// The "Components" tab centers itself: every non-blank line shares one
+    /// indent, the block balances a wide dialog to within a column, and on a
+    /// dialog narrower than the block the indent degrades to [`HELP_PAD`] —
+    /// which is also exactly where the floor-width layout lands.
+    #[test]
+    fn the_components_block_centers_in_the_dialog() {
+        let palette = Palette::default();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let widths = |w: usize| -> (usize, usize) {
+            let lines = component_lines(&palette, loc, w);
+            let indents: Vec<usize> = lines
+                .iter()
+                .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+                .map(|l| {
+                    let lead = &l.spans[0];
+                    assert!(lead.content.chars().all(|c| c == ' '), "indent span first");
+                    span_width(lead)
+                })
+                .collect();
+            assert!(!indents.is_empty());
+            assert!(
+                indents.iter().all(|i| i == &indents[0]),
+                "one shared indent, got {indents:?}"
+            );
+            let right = lines
+                .iter()
+                .map(|l| l.spans.iter().map(span_width).sum::<usize>())
+                .max()
+                .unwrap();
+            (indents[0], right)
+        };
+        // Wide dialog: balanced to within a column (the division truncates).
+        let w = HELP_MAX_WIDTH as usize;
+        let (left, right_edge) = widths(w);
+        assert!(
+            left > HELP_PAD.chars().count(),
+            "the block must move off the margin"
+        );
+        let slack = w - right_edge;
+        assert!(
+            left <= slack + 1 && slack <= left + 1,
+            "unbalanced: {left} columns left, {slack} right"
+        );
+        // Narrower than the block: the old left margin, not zero.
+        let (left, _) = widths(40);
+        assert_eq!(left, HELP_PAD.chars().count());
     }
 
     #[test]

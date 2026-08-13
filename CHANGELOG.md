@@ -21,6 +21,8 @@ split by subsystem.
   always taking the small fixed size; in the "Hotkeys" and "Commands" tabs every
   description starts in the same column, wrapped lines hang under that column,
   and related entries sit in small groups with a breathing line between them.
+  The "Components" tab centers its tables in the wider window instead of
+  leaving the right half empty.
 
 ### Added
 
