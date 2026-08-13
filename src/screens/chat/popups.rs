@@ -196,49 +196,32 @@ impl ChatScreen {
     }
 }
 
-/// The group-separator sentinel row of [`HELP_KEYS`]/[`HELP_COMMANDS`]: an
-/// empty label, which [`key_lines`] draws as one blank line.
-const GROUP_BREAK: (&str, &str) = ("", "");
-
 /// Hotkeys for the "Hotkeys" tab (`F1`/`?`). Pairs `(keycap, desc_key)`: `keycap`
 /// is a literal "key" (ASCII, universal) **or** a `ui.*` key where the label
 /// itself has words (mouse); `desc_key` is always a `ui.*` description key. Both
 /// are resolved through the locale in [`key_lines`]. Input-box commands (`/…`)
-/// are split out into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
-/// docs/i18n-ui.md.
-///
-/// A [`GROUP_BREAK`] sentinel row separates the groups of related keys —
-/// [`key_lines`] draws it as a blank line, nothing more. The groups carry no
-/// headers, so they need no locale keys; the trailing comment on each sentinel
-/// names the group it opens. The table deliberately stays one flat run of rows
-/// (rather than nested group slices): the rows are long-lived, and rewriting
-/// them all to add structure is exactly the sliding self-duplication the
-/// SonarQube density gate flags (docs/lessons.md §2) — and the sentinel being
-/// an *identifier* is likewise deliberate, it breaks the uniform
-/// tuple-row token run the copy-paste detector would otherwise slide over.
+/// are split out into [`HELP_COMMANDS`] (a separate tab). Related keys sit in
+/// display groups, encoded **outside** the table — [`KEY_GROUP_OPENERS`] names
+/// the row that opens each group. See spec §11.7, docs/i18n-ui.md.
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "ui.help.send"),
     ("Shift+Enter / Alt+Enter", "ui.help.newline"),
-    GROUP_BREAK, // selection and the clipboard
     ("Shift+←/→/↑/↓", "ui.help.select"),
     ("Ctrl+A", "ui.help.select_all"),
     ("Ctrl+C", "ui.help.copy"),
     ("Ctrl+X", "ui.help.cut"),
     ("Ctrl+V", "ui.help.paste"),
-    GROUP_BREAK, // getting around: chats and search
     ("Esc", "ui.help.esc"),
     // Only meaningful inside the chat list, but it belongs here: that is where
     // users look for "how do I search my history?".
     ("Ctrl+F", "ui.help.search_content"),
     ("Ctrl+G", "ui.help.search_messages"),
     ("Ctrl+N", "ui.help.new_chat"),
-    GROUP_BREAK, // acting on the conversation
     ("F3", "ui.help.self_model"),
     ("F5", "ui.help.copy_chat"),
     ("Ctrl+R", "ui.help.regenerate"),
     ("Ctrl+E", "ui.help.delete_exchange"),
     ("Ctrl+U", "ui.help.impersonate"),
-    GROUP_BREAK, // editing inside the input box
     ("Ctrl+K", "ui.help.clear_input"),
     ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
     ("Ctrl+←/→", "ui.help.word_move"),
@@ -246,7 +229,6 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Home", "ui.help.line_home"),
     ("End", "ui.help.line_end"),
     ("Ctrl+Home/End", "ui.help.doc_move"),
-    GROUP_BREAK, // panels, toggles and the feed
     ("Ctrl+P", "ui.help.settings"),
     ("Ctrl+T", "ui.help.thoughts"),
     ("Ctrl+O", "ui.help.tool_calls"),
@@ -255,22 +237,21 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+W", "ui.help.mouse_toggle"),
     ("ui.help.k.mouse", "ui.help.mouse_action"),
     ("PageUp/PageDown", "ui.help.scroll"),
-    GROUP_BREAK, // the help itself, and the way out
     ("F1 / ?", "ui.help.help"),
     ("Ctrl+Q / F10", "ui.help.quit"),
 ];
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
-/// [`HELP_KEYS`] (same [`GROUP_BREAK`] sentinels); a command label (`/…`) is
-/// drawn in the command color. Split out of the hotkeys so they don't clutter
-/// reading them. See spec §11.7.
+/// [`HELP_KEYS`], with the display groups likewise encoded outside the table
+/// ([`COMMAND_GROUP_OPENERS`]); a command label (`/…`) is drawn in the command
+/// color. Split out of the hotkeys so they don't clutter reading them. See
+/// spec §11.7.
 pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // Attachments come first — they are the commands a user reaches for while
     // writing a message (see docs/file-attachments.md §4.8).
     ("ui.help.k.file_attach", "ui.help.file_attach"),
     ("ui.help.k.file_remove", "ui.help.file_remove"),
     ("/file list", "ui.help.file_list"),
-    GROUP_BREAK, // images
     // Images sit right after the files: the same verbs and the same `#N`
     // addressing, but staged for the **next message** rather than pinned to the
     // chat — the descriptions carry that difference (spec §9.10).
@@ -281,27 +262,48 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // the terminal's decision (Windows Terminal binds it to its own paste), and an image
     // on the clipboard produces no text for the terminal to inject.
     ("/image paste", "ui.help.image_paste"),
-    GROUP_BREAK, // the knowledge base
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
     ("/rag rebuild", "ui.help.rag_rebuild"),
-    GROUP_BREAK, // housekeeping
     // Sits next to the knowledge-base commands, but is deliberately top-level:
     // it re-embeds notes, attachments and every profile's base at once.
     ("/reindex", "ui.help.reindex"),
     // Chat-scoped, unlike the two above — but still top-level, and it belongs
     // with the other "housekeeping" commands rather than among the attachments.
     ("/compact", "ui.help.compact"),
-    GROUP_BREAK, // speech
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
-    GROUP_BREAK, // the way out
     // Last, as quitting is in the hotkeys tab: this is the typed route out, for
     // terminals that keep `Ctrl+Q` and `F10` for themselves (VS Code's integrated
     // one binds both). Same reasoning as `/image paste` above.
     ("/exit · /quit", "ui.help.exit"),
+];
+
+/// The labels that **open a display group** of [`HELP_KEYS`]: [`key_lines`]
+/// draws one blank line before each of these rows, so related keys read as
+/// small groups (composing · selection/clipboard · navigation · the
+/// conversation · editing · panels/toggles · the way out) without headers —
+/// and without locale keys, since a break carries no text.
+///
+/// The breaks live **outside** the table on purpose: the rows are long-lived,
+/// and any line added among them lands inside the region the SonarQube
+/// copy-paste detector flags on these uniform tuple tables, where every *new*
+/// line counts toward the duplication density (docs/lessons.md §2 — this
+/// table's regrouping is the lesson's third recurrence).
+/// `group_openers_open_real_rows` pins each opener to exactly one row.
+pub(super) const KEY_GROUP_OPENERS: &[&str] =
+    &["Shift+←/→/↑/↓", "Esc", "F3", "Ctrl+K", "Ctrl+P", "F1 / ?"];
+
+/// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
+/// files · images · the knowledge base · housekeeping · speech · the way out.
+const COMMAND_GROUP_OPENERS: &[&str] = &[
+    "ui.help.k.image_attach",
+    "ui.help.k.rag_add",
+    "/reindex",
+    "ui.help.k.tts",
+    "/exit · /quit",
 ];
 
 /// Width bounds of the help/"About" dialog in columns (excluding the border).
@@ -404,8 +406,8 @@ pub(super) fn render_help(
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc),
-        HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc, inner_w),
-        HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc, inner_w),
+        HelpTab::Hotkeys => key_lines(HELP_KEYS, KEY_GROUP_OPENERS, palette, loc, inner_w),
+        HelpTab::Commands => key_lines(HELP_COMMANDS, COMMAND_GROUP_OPENERS, palette, loc, inner_w),
         HelpTab::License => license_lines(palette, inner_w),
         HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
         HelpTab::Components => component_lines(palette, loc, inner_w),
@@ -523,9 +525,10 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
 
 /// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
 /// "key" + a description (a command label `/…` uses the command color); a
-/// sentinel row with an empty label draws as a blank line, separating the
-/// groups. The locale resolves both label keys and descriptions. Shared by
-/// both tabs ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+/// blank line is drawn before every row named in `openers`, separating the
+/// display groups. The locale resolves both label keys and descriptions.
+/// Shared by both tabs ([`HELP_KEYS`]/[`HELP_COMMANDS`], with their
+/// [`KEY_GROUP_OPENERS`]/[`COMMAND_GROUP_OPENERS`]).
 ///
 /// Every description starts in the **same column** — one past the tab's widest
 /// label — and a description too long for `width` **wraps**, hung under that
@@ -540,45 +543,41 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
 /// spec §11.7.
 fn key_lines(
     entries: &[(&str, &str)],
+    openers: &[&str],
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> Vec<Line<'static>> {
-    // Resolve every label up front (`None` — a group-separator sentinel): the
-    // description column is shared by the whole tab, so it has to be measured
-    // before any row can be built. Both label styles pad with a space on each
-    // side, so one measurement covers keycaps and command labels alike.
-    let resolved: Vec<Option<(Span<'static>, String)>> = entries
+    // Resolve every label up front: the description column is shared by the
+    // whole tab, so it has to be measured before any row can be built. Both
+    // label styles pad with a space on each side, so one measurement covers
+    // keycaps and command labels alike.
+    let resolved: Vec<(bool, Span<'static>, String)> = entries
         .iter()
         .map(|(k, d)| {
-            (!k.is_empty()).then(|| {
-                let key = loc.t(k).to_string();
-                let key_span = if key.starts_with('/') {
-                    Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-                } else {
-                    palette.keycap(key)
-                };
-                (key_span, loc.t(d).to_string())
-            })
+            let key = loc.t(k).to_string();
+            let key_span = if key.starts_with('/') {
+                Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+            } else {
+                palette.keycap(key)
+            };
+            (openers.contains(k), key_span, loc.t(d).to_string())
         })
         .collect();
     let label_col = resolved
         .iter()
-        .flatten()
-        .map(|(span, _)| span_width(span))
+        .map(|(_, span, _)| span_width(span))
         .max()
         .unwrap_or(0);
     // Where every description starts: the indent + the label column + the
     // separating space.
     let indent = HELP_PAD.chars().count() + label_col + 1;
     let mut lines = vec![Line::raw("")];
-    for entry in &resolved {
-        match entry {
-            None => lines.push(Line::raw("")), // a breath between the groups
-            Some((key_span, desc)) => {
-                push_key_entry(&mut lines, key_span, desc, palette, width, indent)
-            }
+    for (opens_group, key_span, desc) in &resolved {
+        if *opens_group {
+            lines.push(Line::raw("")); // a breath between the groups
         }
+        push_key_entry(&mut lines, key_span, desc, palette, width, indent);
     }
     lines
 }
@@ -1003,9 +1002,11 @@ mod tests {
         for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             for &lang in crate::shared::i18n::Lang::ALL {
                 let loc = crate::shared::i18n::locale(lang);
-                for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)]
-                {
-                    for line in key_lines(entries, &palette, loc, w) {
+                for (name, entries, openers) in [
+                    ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+                    ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+                ] {
+                    for line in key_lines(entries, openers, &palette, loc, w) {
                         let width = line_width(&line);
                         assert!(
                             width <= w,
@@ -1030,8 +1031,11 @@ mod tests {
         let palette = Palette::default();
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
-                let lines = key_lines(entries, &palette, loc, HELP_MAX_WIDTH as usize);
+            for (name, entries, openers) in [
+                ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+                ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+            ] {
+                let lines = key_lines(entries, openers, &palette, loc, HELP_MAX_WIDTH as usize);
                 // The description is always the last span; everything before it
                 // (indent, label, gap — or the hanging indent) is its column.
                 let starts: Vec<usize> = lines
@@ -1084,7 +1088,7 @@ mod tests {
         // as a bundle key by the i18n gates.
         let long =
             "a description far too long for the dialog to hold on one single row and then some";
-        let lines = key_lines(&[("/x", long)], &palette, loc, HELP_MIN_WIDTH as usize);
+        let lines = key_lines(&[("/x", long)], &[], &palette, loc, HELP_MIN_WIDTH as usize);
         // [0] is the leading blank line.
         let rows = &lines[1..];
         assert!(rows.len() > 1, "expected a wrap, got {} row(s)", rows.len());
@@ -1127,46 +1131,59 @@ mod tests {
         out
     }
 
-    /// [`HELP_COMMANDS`] in display order with the group-separator sentinels
-    /// dropped — the commands the tab renders, for tests that care about order
-    /// rather than grouping.
-    fn flat_commands() -> Vec<&'static (&'static str, &'static str)> {
-        HELP_COMMANDS
-            .iter()
-            .filter(|(k, _)| !k.is_empty())
-            .collect()
-    }
-
-    /// The sentinel contract behind the group breaks: a sentinel is never at
-    /// either edge of a table, never doubled (that would draw stray blank
-    /// rows), and each one renders as exactly one blank line — the tab's blank
-    /// rows are the sentinels plus the leading spacer, nothing else.
+    /// The opener contract behind the group breaks: every opener names exactly
+    /// one row of its table (a renamed label would silently orphan its break —
+    /// this is the desync the out-of-table encoding trades for keeping the
+    /// long-lived rows untouched, so it is pinned here), never the first row
+    /// (that would double the leading spacer), and each draws as exactly one
+    /// blank line — the tab's blank rows are the openers plus the leading
+    /// spacer, nothing else.
     #[test]
-    fn group_separators_render_as_blank_rows() {
+    fn group_openers_open_real_rows() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        for (name, entries) in [("HELP_KEYS", HELP_KEYS), ("HELP_COMMANDS", HELP_COMMANDS)] {
-            let sentinels = entries.iter().filter(|(k, _)| k.is_empty()).count();
-            assert!(sentinels > 0, "{name} lost its group breaks");
+        for (name, entries, openers) in [
+            ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
+            ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+        ] {
+            assert!(!openers.is_empty(), "{name} lost its group breaks");
+            for opener in openers {
+                assert_eq!(
+                    entries.iter().filter(|(k, _)| k == opener).count(),
+                    1,
+                    "{name}: opener {opener:?} must name exactly one row"
+                );
+            }
             assert!(
-                !entries.first().unwrap().0.is_empty() && !entries.last().unwrap().0.is_empty(),
-                "{name} has a sentinel at an edge"
+                !openers.contains(&entries[0].0),
+                "{name}: the first row cannot open a group"
             );
-            assert!(
-                entries
-                    .windows(2)
-                    .all(|w| !(w[0].0.is_empty() && w[1].0.is_empty())),
-                "{name} has doubled sentinels"
-            );
-            let blanks = key_lines(entries, &palette, loc, HELP_MIN_WIDTH as usize)
+            let lines = key_lines(entries, openers, &palette, loc, HELP_MIN_WIDTH as usize);
+            let blanks = lines
                 .iter()
                 .filter(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
                 .count();
             assert_eq!(
                 blanks,
-                sentinels + 1,
-                "{name}: sentinels + the leading spacer"
+                openers.len() + 1,
+                "{name}: openers + the leading spacer"
             );
+            // …and each break sits immediately BEFORE its opener's row, not
+            // after it or somewhere else (the count alone can't tell).
+            for opener in openers {
+                let label = loc.t(opener);
+                let at = lines
+                    .iter()
+                    .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
+                    .unwrap_or_else(|| panic!("{name}: opener {opener:?} is not rendered"));
+                assert!(
+                    lines[at - 1]
+                        .spans
+                        .iter()
+                        .all(|s| s.content.trim().is_empty()),
+                    "{name}: no blank line before opener {opener:?}"
+                );
+            }
         }
     }
 
@@ -1223,7 +1240,7 @@ mod tests {
         // AGENTS.md §3 — a new command has to be discoverable in `F1`. They sit
         // right after the `/file` block: same verbs, neighbouring wording.
         let at = |label: &str| {
-            flat_commands()
+            HELP_COMMANDS
                 .iter()
                 .position(|(k, _)| *k == label)
                 .unwrap_or_else(|| panic!("{label} is missing from HELP_COMMANDS"))
@@ -1250,12 +1267,11 @@ mod tests {
     fn reindex_is_listed_in_the_commands_tab() {
         // The catalog carries it next to the knowledge-base commands (AGENTS.md
         // §3 — a new command must be discoverable in `F1`).
-        let flat = flat_commands();
-        let pos = flat
+        let pos = HELP_COMMANDS
             .iter()
             .position(|(k, _)| *k == "/reindex")
             .expect("/reindex is missing from HELP_COMMANDS");
-        let rebuild = flat
+        let rebuild = HELP_COMMANDS
             .iter()
             .position(|(k, _)| *k == "/rag rebuild")
             .expect("/rag rebuild is missing from HELP_COMMANDS");
@@ -1278,12 +1294,11 @@ mod tests {
     fn compact_is_listed_in_the_commands_tab() {
         // AGENTS.md §3 — a new command has to be discoverable in `F1`, or it
         // exists only for whoever read the source.
-        let flat = flat_commands();
-        let pos = flat
+        let pos = HELP_COMMANDS
             .iter()
             .position(|(k, _)| *k == "/compact")
             .expect("/compact is missing from HELP_COMMANDS");
-        let reindex = flat
+        let reindex = HELP_COMMANDS
             .iter()
             .position(|(k, _)| *k == "/reindex")
             .expect("/reindex is missing from HELP_COMMANDS");
@@ -1307,12 +1322,12 @@ mod tests {
         // more than most: a user reaches for it precisely when the documented
         // keys did not work.
         let label = "/exit · /quit";
-        let flat = flat_commands();
         assert_eq!(
-            flat.iter()
+            HELP_COMMANDS
+                .iter()
                 .position(|(k, _)| *k == label)
                 .expect("the quit commands are missing from HELP_COMMANDS"),
-            flat.len() - 1,
+            HELP_COMMANDS.len() - 1,
             "the quit commands close the list"
         );
         // Both spellings the parser accepts are shown — the label is the only

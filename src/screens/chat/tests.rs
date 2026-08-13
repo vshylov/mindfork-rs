@@ -1,6 +1,6 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
-use super::popups::HELP_KEYS;
+use super::popups::{HELP_KEYS, KEY_GROUP_OPENERS};
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
@@ -1136,8 +1136,10 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     term.draw(|f| s.render(f)).unwrap();
     // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
     // the max (well below what was requested) and the scrollbar thumb is drawn.
+    // The bound: entries + one blank per group opener comfortably exceeds the
+    // tab's line count minus the view (a couple of rows also wrap).
     assert!(
-        s.help.as_ref().unwrap().scroll < HELP_KEYS.len(),
+        s.help.as_ref().unwrap().scroll < HELP_KEYS.len() + KEY_GROUP_OPENERS.len(),
         "scroll clamps to the maximum"
     );
     let buf = term.backend().buffer();

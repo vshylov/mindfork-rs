@@ -285,10 +285,13 @@ handler copied with a different pixel source — the fix was a shared seam that 
 source the only difference, and the same seam then absorbed a third source (a URL) for
 almost nothing. The third was a **production const table**: regrouping the help tables
 into nested slices rewrote every long-lived tuple row, and 50 same-shape rows in changed
-lines scored 16.1%. Structure a stable table without rewriting its rows — the fix kept
-them byte-identical to `main` (out of "new code" altogether) and marked group breaks
-with an *identifier* sentinel (`GROUP_BREAK`), whose different token also severs the
-uniform run the detector slides over.
+lines scored 16.1%. Keeping the rows byte-identical to `main` and inserting an
+identifier-sentinel row between the groups still failed at 3.3% — the tables' line
+ranges stay flagged whatever token the inserted line carries, and each inserted line is
+a *new* line inside a flagged range. Structure a stable table **from outside it**: the
+breaks moved to a separate labels const the renderer consults, the tables carry zero
+new lines, and a gate pins each named label to exactly one row (the desync the
+indirection trades for).
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
 its tables align*.

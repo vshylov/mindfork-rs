@@ -1382,18 +1382,25 @@ layout only — no engine, memory or tool path.
   conversation / editing / toggles / exit; files / images / RAG / housekeeping /
   TTS / exit) are separated by one blank line at render time. Headers were
   considered and rejected: they would add ~13 locale keys for labels the
-  grouping already implies. The first cut nested the tables into `&[&[(&str,
-  &str)]]` — and SonarCloud failed the PR at **16.1% new-code duplication**
-  (bar ≤ 3%): regrouping rewrote every row, and 50 same-shape tuple rows in
-  *changed* lines are exactly the sliding self-duplicate lessons §2 describes
-  (third recurrence). The shipped form keeps the tables **flat and
-  byte-identical to `main`** — the rows drop out of "new code" entirely — with
-  a `GROUP_BREAK` sentinel row `("", "")` marking each break, and the sentinel
-  is deliberately an *identifier*: a different token than a tuple row, so it
-  also severs the uniform token run the copy-paste detector slides over.
-  Flattened order is unchanged; order-sensitive tests read it through
-  `flat_commands()` (sentinels dropped), and a sentinel-contract gate pins
-  "never at an edge, never doubled, each renders as exactly one blank line".
+  grouping already implies. Getting the breaks past the duplication gate took
+  **three shapes**. The first cut nested the tables into `&[&[(&str, &str)]]` —
+  SonarCloud failed the PR at **16.1% new-code duplication** (bar ≤ 3%):
+  regrouping rewrote every row, and 50 same-shape tuple rows in *changed* lines
+  are exactly the sliding self-duplicate lessons §2 describes (third
+  recurrence). The second kept the rows byte-identical to `main` and inserted a
+  `GROUP_BREAK` sentinel *row* between them, betting that an identifier token
+  would sever the run the detector slides over — measured: **3.3%**, still red.
+  The residual was the sentinels themselves: whatever the tool's normalization,
+  the tables' line ranges stay flagged, and every one of the 12 inserted lines
+  was a *new* line inside a flagged range. The conclusion is stronger than the
+  first lesson: not "don't rewrite the rows" but **"no new line may sit among
+  them at all"** — so the shipped form encodes the breaks *outside* the table:
+  `KEY_GROUP_OPENERS`/`COMMAND_GROUP_OPENERS` name the row that opens each
+  group, and `key_lines` draws the blank line before it. The label-keyed
+  indirection can silently orphan a break when a row is renamed, so a gate
+  (`group_openers_open_real_rows`) pins every opener to exactly one row, never
+  the first, and — by position — a blank line immediately before each opener's
+  rendered row.
 - **The "Components" tab centers itself** (`center_block`) — the user's
   follow-up screenshot: at 94 columns the two narrow tables hugged the left
   edge and the right 40 columns sat empty. Every non-blank line now shares one
@@ -1410,13 +1417,14 @@ layout only — no engine, memory or tool path.
   range; `descriptions_share_one_column_per_tab` pins the alignment itself
   (mutation-checked — freezing the gap to one space turns it red);
   `the_dialog_follows_the_terminal_between_its_bounds` pins floor/middle/ceiling
-  of `help_size`; `group_separators_render_as_blank_rows` pins the sentinel
-  contract; `the_components_block_centers_in_the_dialog` pins the shared indent,
+  of `help_size`; `group_openers_open_real_rows` pins the opener contract;
+  `the_components_block_centers_in_the_dialog` pins the shared indent,
   the ±1-column balance, and the `HELP_PAD` floor. The commands-tab dump tests
   moved to a 90×50 backend: with the group separators the tab is 23 rows, and
   the last row (`/exit · /quit`) fell below the fold of the old 90×40 — the
   assertion caught it, which is the "assert the symptom" family working as
-  intended.
+  intended. The short-terminal scroll-clamp bound grew by the opener count for
+  the same reason.
 - **A restore trap worth naming**: after un-mutating the file via
   `os.replace(backup, file)`, `cargo test` **reused the mutated binary** — the
   backup's mtime predates the build, so cargo saw nothing to rebuild and the
