@@ -529,6 +529,15 @@ the user picked. Two smaller ones: a Pascal `{ }` comment containing an app cons
 selection per AppId, so a clean retest needs a clean registry state.
 — *the Windows installer can provision the Python sandbox*.
 
+**Driving a GUI wizard from a script: accelerators are localized, window rects are
+not scaled.** `Alt+A` for "I accept" is a *different letter* in the `ru` wizard, so an
+accelerator-driven run stays on the page it meant to leave and screenshots the wrong
+one — `Tab` into the control group plus an arrow key is locale-independent. And
+`GetWindowRect` reports physical pixels while a DPI-unaware PowerShell process draws in
+scaled ones, so a per-window `CopyFromScreen` comes out clipped; capture the whole
+screen and crop. Neither failure announces itself — both produce a plausible image.
+— *license and disclaimer pages in the Windows installer*.
+
 **The newest Zola broke Windows twice over; reproduce on a pristine site before
 doubting your own config.** 0.23.0–0.23.2 do not discover `templates/` on Windows at
 all (upstream getzola/zola#3229 — "Template not found" for every custom template), and
