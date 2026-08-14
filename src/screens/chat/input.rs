@@ -71,6 +71,9 @@ impl ChatScreen {
             self.handle_emoji_key(key);
             return Some(None);
         }
+        if self.chat_links.is_some() {
+            return Some(self.handle_chat_link_key(key));
+        }
         if self.profile_overlay.is_some() {
             return Some(self.handle_profile_overlay_key(key));
         }
@@ -196,6 +199,14 @@ impl ChatScreen {
             // §11.5).
             'g' => {
                 self.open_suggestions();
+                Some(None)
+            }
+            // Following a `chat://` reference the assistant wrote (spec
+            // §11.3). A key rather than a click: mouse capture is `Ctrl+W` and
+            // off by default, so a click is unreachable for most users
+            // (docs/research/chat-uri-links.md fork F4).
+            'l' => {
+                self.open_chat_links();
                 Some(None)
             }
             // The emoji picker popup (spec §11.5). Restore the previous

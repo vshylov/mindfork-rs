@@ -229,6 +229,17 @@ pub struct MessageFeed {
     /// why the model no longer quotes the early text (spec §6.7,
     /// docs/research/history-compression.md §6.5, fork F8c).
     compaction: Option<(Uuid, String)>,
+    /// The conversations a `chat://` address in this feed may resolve to: the
+    /// current profile's non-hidden chats, the open one included (spec §9.5,
+    /// §11.3). Pushed by the screen from the chat-list snapshot it already
+    /// keeps.
+    ///
+    /// It is an **address book, not decoration**: a reference outside it is
+    /// drawn as ordinary text, so the user is never offered a door that opens
+    /// onto nothing (docs/lessons.md §4). That makes the styling depend on it,
+    /// which is why its fingerprint rides [`CacheKey`] — the same reason
+    /// `role_names` does.
+    known_chats: Vec<Uuid>,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -323,6 +334,12 @@ struct CacheKey {
     /// clearing the marker has to reset the cache. Only the **marker** belongs
     /// here; the scroll anchor is not a rendering input.
     marker: Option<usize>,
+    /// Fingerprint of the address book ([`MessageFeed::known_chats`]): which
+    /// `chat://` references resolve — and so which ones are drawn as links — is
+    /// baked into every cached block, so creating or deleting a conversation
+    /// has to rebuild them. A hash rather than the list itself: the comparison
+    /// runs every frame, and the list grows with the corpus.
+    chat_book: u64,
     /// The compaction boundary and its summary: both are drawn into the boundary
     /// message's cached block, so a fresh compaction (or a `/compact` that only
     /// rewrites the summary) has to reset the cache — otherwise the divider
@@ -343,6 +360,11 @@ struct CacheKey {
 struct CachedBlock {
     fingerprint: u64,
     lines: Vec<Line<'static>>,
+    /// The conversations this block links to, in the order they are drawn —
+    /// what the reference picker offers (spec §11.3). Recorded while the block
+    /// is built, because that is where the addresses are recognised and where
+    /// they are still whole: after the wrap they may be split across rows.
+    links: Vec<Uuid>,
     /// How many of `lines` the role header occupies — the highlight pass skips
     /// them. Recorded here because the header's height is only known while the
     /// block is built: it is normally one line, but a long custom role name can
@@ -369,6 +391,7 @@ impl MessageFeed {
             render_mermaid: true,
             role_names: CharacterNames::default(),
             compaction: None,
+            known_chats: Vec::new(),
             cache: Vec::new(),
             cache_key: None,
             pending_focus: None,
@@ -414,6 +437,43 @@ impl MessageFeed {
     /// *where* verbatim history resumes.
     pub fn set_compaction(&mut self, compaction: Option<(Uuid, String)>) {
         self.compaction = compaction;
+    }
+
+    /// Sets the address book a `chat://` reference resolves against — the
+    /// current profile's non-hidden chats, the open one included (spec §11.3).
+    /// Changing it invalidates the render cache via [`CacheKey`], because which
+    /// references are drawn as links is baked into every block.
+    pub fn set_known_chats(&mut self, ids: Vec<Uuid>) {
+        self.known_chats = ids;
+    }
+
+    /// Fingerprint of the address book for [`CacheKey`]. Order-sensitive on
+    /// purpose: the screen builds the list from one snapshot in one order, so a
+    /// reordering means the snapshot changed.
+    fn chat_book(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.known_chats.hash(&mut h);
+        h.finish()
+    }
+
+    /// Every conversation this feed links to, newest block first and each one
+    /// only once — what the reference picker offers (spec §11.3).
+    ///
+    /// Read from the block cache, so it is exactly what is drawn: a reference
+    /// the feed did not style is not on this list, and one hidden inside a
+    /// collapsed block is not either. The cache is built by `render`, so an
+    /// unrendered feed answers with nothing rather than guessing.
+    pub fn chat_links(&self) -> Vec<Uuid> {
+        let mut seen: Vec<Uuid> = Vec::new();
+        for block in self.cache.iter().rev() {
+            for id in &block.links {
+                if !seen.contains(id) {
+                    seen.push(*id);
+                }
+            }
+        }
+        seen
     }
 
     /// The feed block the compaction boundary falls on (`None` — nothing folded,
@@ -788,6 +848,7 @@ impl MessageFeed {
             lang: loc.lang(),
             role_names: self.role_names.clone(),
             marker: self.marker,
+            chat_book: self.chat_book(),
             compaction: self.compaction.clone(),
         };
         if self.cache_key.as_ref() != Some(&key) {
@@ -866,7 +927,7 @@ impl MessageFeed {
                 .then(|| self.compaction.as_ref().map(|(_, s)| s.as_str()))
                 .flatten();
             // A streaming/changed message — recompute only its block.
-            let (block, content_from) = build_message_block(
+            let built = build_message_block(
                 item,
                 palette,
                 width,
@@ -876,11 +937,13 @@ impl MessageFeed {
                 &self.role_names,
                 self.marker == Some(idx),
                 summary,
+                &self.known_chats,
             );
             let cb = CachedBlock {
                 fingerprint: fp,
-                lines: block,
-                content_from,
+                lines: built.lines,
+                links: built.links,
+                content_from: built.content_from,
             };
             if idx < self.cache.len() {
                 self.cache[idx] = cb;
@@ -933,7 +996,8 @@ fn highlight_block_tail(
 /// query recolored inside it (fork S3(b), see [`highlight_line`]); `None` for
 /// every message but the marked one. `compaction` — the rolling summary, when
 /// this block is where verbatim history resumes: the divider is drawn **above**
-/// the block (see [`push_compaction_boundary`]).
+/// the block (see [`push_compaction_boundary`]). `known_chats` — the address
+/// book a `chat://` reference is resolved against ([`style_chat_links`]).
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -945,7 +1009,8 @@ fn build_message_block(
     names: &CharacterNames,
     marked: bool,
     compaction: Option<&str>,
-) -> (Vec<Line<'static>>, usize) {
+    known_chats: &[Uuid],
+) -> BuiltBlock {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = if marked {
@@ -1014,10 +1079,15 @@ fn build_message_block(
         push_compaction_boundary(&mut out, summary, view.thoughts, width, palette, loc);
     }
     let mut content_row = None;
-    for (i, line) in body.into_iter().enumerate() {
+    let mut links: Vec<Uuid> = Vec::new();
+    for (i, mut line) in body.into_iter().enumerate() {
         if i == content_from {
             content_row = Some(out.len());
         }
+        // **Before** the wrap, deliberately: an address is 15 columns
+        // (`chat://` + 8 hex) and a narrow panel splits it across two rows,
+        // where a per-row scan would no longer see it whole.
+        links.extend(style_chat_links(&mut line, known_chats, palette));
         for wrapped in wrap::wrap_line(&line, inner) {
             out.push(prepend_rail(wrapped, rail));
         }
@@ -1028,7 +1098,47 @@ fn build_message_block(
     if !body_ends_blank {
         out.push(Line::from(""));
     }
-    (out, content_from)
+    links.dedup();
+    BuiltBlock {
+        lines: out,
+        content_from,
+        links,
+    }
+}
+
+/// One freshly built block, before it enters the cache.
+struct BuiltBlock {
+    lines: Vec<Line<'static>>,
+    /// See [`CachedBlock::content_from`].
+    content_from: usize,
+    /// See [`CachedBlock::links`].
+    links: Vec<Uuid>,
+}
+
+/// Draws every **resolvable** `chat://` address in one unwrapped line in the
+/// link style, and returns the conversations it points at, in order
+/// (spec §11.3, docs/research/chat-uri-links.md §4.3).
+///
+/// Like the search highlight below, this matches **rendered** text rather than
+/// the message source — the renderer destroys that correspondence (see
+/// [`highlight_line`]). Unlike it, this runs *before* the wrap and therefore
+/// before the cache, because whether a reference is a link is a property of the
+/// content and the address book, not of a query the user is still typing.
+///
+/// Two consequences worth stating rather than discovering: an address inside a
+/// code block is styled too (it is on screen and it does resolve), and an
+/// address for a conversation that does not exist here is left as plain text.
+fn style_chat_links(line: &mut Line<'static>, known: &[Uuid], palette: &Palette) -> Vec<Uuid> {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let found = crate::features::chat_links::find_refs(&text, known);
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let ranges: Vec<std::ops::Range<usize>> = found.iter().map(|l| l.range.clone()).collect();
+    restyle_ranges(line, &text, &ranges, |style| {
+        style.fg(palette.accent).add_modifier(Modifier::UNDERLINED)
+    });
+    found.into_iter().map(|l| l.chat).collect()
 }
 
 /// Recolors every occurrence of `query` in one **rendered** line to `color`,
@@ -1062,7 +1172,25 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize 
     if ranges.is_empty() {
         return 0;
     }
-    let found = ranges.len();
+    restyle_ranges(line, &text, &ranges, |style| style.fg(color));
+    ranges.len()
+}
+
+/// Re-splits a line's spans at `ranges`' boundaries and applies `patch` to the
+/// pieces that fall inside one. `text` must be the line's spans concatenated —
+/// the offsets are into it.
+///
+/// Shared by the two passes that recolor parts of an already-rendered line: the
+/// search highlight ([`highlight_line`]) and the chat-link styling
+/// ([`style_chat_links`]). Only the *patch* differs, and it is applied on top of
+/// the span's own style so markdown formatting survives — recoloring a word
+/// inside a heading must not flatten the heading.
+fn restyle_ranges(
+    line: &mut Line<'static>,
+    text: &str,
+    ranges: &[std::ops::Range<usize>],
+    patch: impl Fn(Style) -> Style,
+) {
     let spans = std::mem::take(&mut line.spans);
     let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len() + ranges.len() * 2);
     // Byte offset of the current span within `text`.
@@ -1070,12 +1198,12 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize 
     for span in spans {
         let (start, end) = (at, at + span.content.len());
         at = end;
-        let cuts = span_cut_points(start, end, &ranges);
+        let cuts = span_cut_points(start, end, ranges);
         for w in cuts.windows(2) {
             let (s, e) = (w[0], w[1]);
             let inside = ranges.iter().any(|r| r.start <= s && e <= r.end);
             let style = if inside {
-                span.style.fg(color)
+                patch(span.style)
             } else {
                 span.style
             };
@@ -1087,7 +1215,6 @@ fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize 
         }
     }
     line.spans = out;
-    found
 }
 
 /// Cut points inside one span (`start..end`, byte offsets into the line's
@@ -2021,6 +2148,144 @@ mod tests {
         });
         let after = flatten(&feed.build_lines(&msgs, &Palette::default(), 80, ru()));
         assert!(after.contains("ГАЙЯ"), "{after}");
+    }
+
+    /// Every span carrying the link style, as text (spec §11.3).
+    fn linked_spans(lines: &[Line<'static>], palette: &Palette) -> Vec<String> {
+        lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter(|s| {
+                s.style.fg == Some(palette.accent)
+                    && s.style.add_modifier.contains(Modifier::UNDERLINED)
+            })
+            .map(|s| s.content.to_string())
+            .collect()
+    }
+
+    fn chat_uuid(n: u128) -> Uuid {
+        Uuid::from_u128(0x1a2b_3c4d_0000_4000_8000_0000_0000_0000 + n)
+    }
+
+    /// The address is drawn as a link, and the conversation it points at is
+    /// offered to the picker.
+    #[test]
+    fn a_resolvable_chat_address_becomes_a_link() {
+        let palette = Palette::default();
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let text = format!("см. {}", crate::features::chat_links::uri(id));
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+        let lines = feed.build_lines(&msgs, &palette, 80, ru());
+
+        assert_eq!(linked_spans(&lines, &palette), vec!["chat://1a2b3c4d"]);
+        assert_eq!(feed.chat_links(), vec![id]);
+    }
+
+    /// The rule the whole design rests on: an address that goes nowhere is not
+    /// offered as a door (docs/lessons.md §4).
+    #[test]
+    fn an_unknown_address_stays_plain_text() {
+        let palette = Palette::default();
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![chat_uuid(1)]);
+        let msgs = vec![msg(FeedRole::Assistant, "см. chat://deadbeef", "")];
+        let lines = feed.build_lines(&msgs, &palette, 80, ru());
+
+        assert!(linked_spans(&lines, &palette).is_empty());
+        assert!(feed.chat_links().is_empty());
+        // Still readable — nothing is swallowed.
+        assert!(flatten(&lines).contains("chat://deadbeef"));
+    }
+
+    /// Styling before the wrap is the whole reason detection lives in the
+    /// builder: at this width the address would be split across two rows, and a
+    /// per-row scan would no longer see it (fork F3).
+    #[test]
+    fn an_address_survives_a_narrow_panel() {
+        let palette = Palette::default();
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let text = format!(
+            "подробности лежат в {}",
+            crate::features::chat_links::uri(id)
+        );
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+        let lines = feed.build_lines(&msgs, &palette, 18, ru());
+
+        let linked: String = linked_spans(&lines, &palette).concat();
+        assert_eq!(linked, "chat://1a2b3c4d", "{:?}", flatten(&lines));
+        assert_eq!(feed.chat_links(), vec![id]);
+    }
+
+    /// The markdown link form the model is taught to write: the URL suffix the
+    /// renderer appends is the address, and the closing paren is not part of it.
+    #[test]
+    fn the_markdown_link_form_is_recognized() {
+        let palette = Palette::default();
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let text = format!("[Бюджет]({})", crate::features::chat_links::uri(id));
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+        let lines = feed.build_lines(&msgs, &palette, 80, ru());
+
+        assert_eq!(linked_spans(&lines, &palette), vec!["chat://1a2b3c4d"]);
+        assert!(flatten(&lines).contains("Бюджет"));
+    }
+
+    /// The picker's order is "the conversation you just read about first", and
+    /// one conversation is offered once however often it is cited.
+    #[test]
+    fn links_are_deduped_and_newest_block_first() {
+        let palette = Palette::default();
+        // Distinct in their first eight hex characters — that prefix *is* the
+        // address, and a shared one resolves to nothing by design.
+        let (a, b) = (
+            chat_uuid(1),
+            Uuid::from_u128(0x9f8e_7d6c_0000_4000_8000_0000_0000_0002),
+        );
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![a, b]);
+        let msgs = vec![
+            msg(
+                FeedRole::Assistant,
+                &format!(
+                    "{} и снова {}",
+                    crate::features::chat_links::uri(a),
+                    crate::features::chat_links::uri(a)
+                ),
+                "",
+            ),
+            msg(
+                FeedRole::Assistant,
+                &crate::features::chat_links::uri(b),
+                "",
+            ),
+        ];
+        feed.build_lines(&msgs, &palette, 80, ru());
+
+        assert_eq!(feed.chat_links(), vec![b, a]);
+    }
+
+    /// The address book is a rendering input, so changing it has to rebuild the
+    /// blocks — the `role_names` precedent (fork F3).
+    #[test]
+    fn changing_the_address_book_invalidates_cache() {
+        let palette = Palette::default();
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        let text = format!("см. {}", crate::features::chat_links::uri(id));
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+
+        feed.build_lines(&msgs, &palette, 80, ru());
+        assert!(feed.chat_links().is_empty(), "nothing known yet");
+
+        feed.set_known_chats(vec![id]);
+        feed.build_lines(&msgs, &palette, 80, ru());
+        assert_eq!(feed.chat_links(), vec![id], "the book must reach the cache");
     }
 
     /// Concatenates the rendered lines' text (a helper for header assertions).

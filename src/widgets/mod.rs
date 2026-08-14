@@ -3,6 +3,7 @@
 //!
 //! Filled in starting M3.
 
+pub mod chat_link_picker;
 pub mod chat_list;
 pub mod emoji_picker;
 pub mod impersonation_preview;

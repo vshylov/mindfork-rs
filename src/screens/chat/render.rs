@@ -198,6 +198,7 @@ impl ChatScreen {
             let focused = self.profile_overlay.is_none()
                 && self.suggest.is_none()
                 && self.emoji.is_none()
+                && self.chat_links.is_none()
                 && self.confirm.is_none();
             let command = self.input_is_command();
             self.input.render(
@@ -226,6 +227,10 @@ impl ChatScreen {
             render_suggest(frame, popup, &self.palette, self.loc);
         }
         if let Some(picker) = &self.emoji {
+            dim_background(frame, &self.palette);
+            picker.render(frame, frame.area(), &self.palette, self.loc);
+        }
+        if let Some(picker) = &self.chat_links {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
         }

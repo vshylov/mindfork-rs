@@ -35,6 +35,7 @@ use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
+use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
@@ -159,6 +160,11 @@ pub enum ChatIntent {
     OpenSettings,
     /// Open the chat-list screen (`Esc`). `app` builds it from the list snapshot.
     OpenChatList,
+    /// Follow a `chat://` reference drawn in the feed (`Ctrl+L`, then `Enter`
+    /// on the picked conversation). A plain activation — an address names a
+    /// conversation, not a message — so `app` answers it with
+    /// `AppCommand::SwitchChat`. See spec §11.3.
+    OpenChatLink(Uuid),
     /// Open the "self-model" viewer screen (`F3`). `app` requests a snapshot from
     /// the orchestrator (`RequestSelfModel`) and builds the screen from the
     /// `SelfModelView` event.
@@ -401,6 +407,8 @@ pub struct ChatScreen {
     suggest: Option<SuggestPopup>,
     /// The open emoji-picker popup (`Ctrl+B`). See spec §11.5.
     emoji: Option<EmojiPickerState>,
+    /// The open `chat://` reference picker (`Ctrl+L`). See spec §11.3.
+    chat_links: Option<ChatLinkPickerState>,
     /// The open modal confirmation popup for an irreversible operation
     /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
@@ -536,6 +544,7 @@ impl ChatScreen {
             suggest: None,
             emoji: None,
             emoji_last: 0,
+            chat_links: None,
             feed_has_risky: false,
             full_redraw: false,
             confirm: None,
@@ -707,6 +716,35 @@ impl ChatScreen {
 
     pub fn set_chat_list(&mut self, chats: Vec<ChatSummary>) {
         self.chats = chats;
+        self.refresh_known_chats();
+    }
+
+    /// Refreshes the feed's `chat://` address book: this profile's
+    /// conversations, the open one included (spec §11.3).
+    ///
+    /// Derived from the chat-list snapshot the screen already keeps rather than
+    /// from an event of its own — the active chat's own entry names its
+    /// profile, so the profile boundary (spec §9.5) cannot drift from the list
+    /// the user is looking at. The snapshot holds only non-hidden chats, which
+    /// is the other half of the scope.
+    ///
+    /// Called from both sides of the race: the list can arrive before the chat
+    /// is activated or after it.
+    pub(super) fn refresh_known_chats(&mut self) {
+        let profile = self
+            .active_chat
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .map(|c| c.profile_id);
+        let ids = profile
+            .map(|p| {
+                self.chats
+                    .iter()
+                    .filter(|c| c.profile_id == p)
+                    .map(|c| c.id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.feed_view.set_known_chats(ids);
     }
 
     pub fn set_profile_list(&mut self, profiles: Vec<ProfileSummary>) {

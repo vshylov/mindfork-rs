@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub mod chat_export;
+pub mod chat_links;
 pub mod chat_search;
 pub mod chat_search_sort;
 pub mod cli;

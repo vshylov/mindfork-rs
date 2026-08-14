@@ -82,6 +82,12 @@ impl ChatScreen {
         // the compaction boundary — both are per-chat rendering inputs.
         self.feed_view.set_view(feed_view);
         self.feed_view.set_compaction(compaction);
+        // Which `chat://` references resolve depends on the profile, which the
+        // new chat may have changed — a third per-chat rendering input, applied
+        // before the feed is built for the same reason (spec §11.3).
+        self.refresh_known_chats();
+        // The reference picker lists the *previous* chat's links.
+        self.chat_links = None;
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
         // The feed was replaced wholesale — recompute "is there a risk" from scratch (from

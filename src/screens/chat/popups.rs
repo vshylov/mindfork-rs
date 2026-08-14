@@ -150,6 +150,52 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
+    /// Opens the `chat://` reference picker (`Ctrl+L`, spec §11.3).
+    ///
+    /// The references come from the feed's block cache — what is actually
+    /// drawn — and are turned into cards by the chat-list snapshot the screen
+    /// already keeps. A conversation the snapshot no longer holds is dropped
+    /// rather than listed without a title: the two come from the same source of
+    /// truth a frame apart, so this is a race, not a state.
+    ///
+    /// With nothing to follow the popup does not open at all; it leaves a note
+    /// saying what a reference looks like, because an empty list would answer
+    /// "no" without saying to what (docs/lessons.md §4).
+    pub(super) fn open_chat_links(&mut self) {
+        let linked = self.feed_view.chat_links();
+        let cards: Vec<ChatSummary> = linked
+            .iter()
+            .filter_map(|id| self.chats.iter().find(|c| c.id == *id).cloned())
+            .collect();
+        if cards.is_empty() {
+            self.push_note(self.loc.t("ui.chat.links_none"));
+            return;
+        }
+        self.chat_links = Some(ChatLinkPickerState::new(cards, self.active_chat));
+    }
+
+    /// Handles a key in the reference picker: `Enter` follows the selected
+    /// conversation, `Esc` closes. A reference back to the **open** chat is not
+    /// a switch — it says so instead of quietly doing nothing.
+    pub(super) fn handle_chat_link_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        let picker = self.chat_links.as_mut()?;
+        match picker.on_key(key) {
+            ChatLinkAction::None => None,
+            ChatLinkAction::Cancel => {
+                self.chat_links = None;
+                None
+            }
+            ChatLinkAction::Open(id) => {
+                self.chat_links = None;
+                if self.active_chat == Some(id) {
+                    self.push_note(self.loc.t("ui.chat.links_here"));
+                    return None;
+                }
+                Some(ChatIntent::OpenChatLink(id))
+            }
+        }
+    }
+
     /// Handles a key in the emoji-picker popup: `Enter` inserts the selected
     /// emoji into the input box at the cursor and closes the popup, `Esc` closes
     /// it without inserting. See spec §11.5.
@@ -234,6 +280,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+O", "ui.help.tool_calls"),
     ("Ctrl+G", "ui.help.spell"),
     ("Ctrl+B", "ui.help.emoji"),
+    ("Ctrl+L", "ui.help.chat_links"),
     ("Ctrl+W", "ui.help.mouse_toggle"),
     ("ui.help.k.mouse", "ui.help.mouse_action"),
     ("PageUp/PageDown", "ui.help.scroll"),

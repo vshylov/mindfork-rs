@@ -202,6 +202,7 @@ mod tests {
     fn chat(title: &str) -> ChatSummary {
         ChatSummary {
             id: Uuid::new_v4(),
+            profile_id: Uuid::nil(),
             title: title.to_string(),
             created_at: Utc::now(),
             modified_at: Utc::now(),

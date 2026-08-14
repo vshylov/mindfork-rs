@@ -262,6 +262,7 @@ impl Chat {
     pub fn summary(&self) -> ChatSummary {
         ChatSummary {
             id: self.id,
+            profile_id: self.profile_id,
             title: self.title.clone(),
             created_at: self.created_at,
             modified_at: self.modified_at,
@@ -276,6 +277,12 @@ impl Chat {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatSummary {
     pub id: Uuid,
+    /// Which companion this conversation belongs to. The list itself is
+    /// deliberately cross-profile (spec §11.2), but the profile boundary
+    /// (spec §9.5) has to be drawable from a snapshot — a `chat://` reference
+    /// only resolves inside the current profile (spec §11.3).
+    #[serde(default)]
+    pub profile_id: Uuid,
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
