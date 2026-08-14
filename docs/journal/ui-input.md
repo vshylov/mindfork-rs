@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -34,6 +34,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: pasting an image from the clipboard (done)
 - Post-M9: `/exit` and `/quit` — a typed route out (done)
 - Post-M9: command-only control — stage 1 (typed routes for the chords) (done)
+- Post-M9: command-only control — stage 2 (`/profile`, `/self clear`) (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1048,7 +1049,7 @@ and the box should be empty.
   unreachable there**. In a browser tab (JupyterLab) the loss is different and
   worse: `Ctrl+N`/`Ctrl+T` never arrive, and `Ctrl+W` **closes the tab the
   session runs in**. The design doc is
-  [docs/research/command-only-control.md](../research/command-only-control.md);
+  [docs/history/command-only-control.md](../history/command-only-control.md);
   all seven forks were decided by the user on 2026-08-14 (the recommendations).
 - **The invariant that made the scope small.** "No hotkeys" cannot mean "no
   keys" — typing is keys. What every host forwards is the printable characters,
@@ -1145,3 +1146,83 @@ reach is the claim that motivated the track, since it is about *hosts*: the
 acceptance pass is manual, in a real VS Code integrated terminal and a real
 JupyterLab terminal, exercising each tier-1 command and operating every modal
 screen with safe keys only.
+
+### Post-M9: command-only control — stage 2 (`/profile`, `/self clear`) (done)
+
+- **What was left.** Stage 1 covered the chat screen; two actions still existed
+  only as chords *inside* another screen — profile CRUD (`Ctrl+N`/`Ctrl+D` in
+  the settings screen's "Profiles" section) and clearing the self-model
+  (`Ctrl+K` twice). Fork F5 chose commands over in-screen alternates because a
+  physical-key alternate such as `Insert` is missing from a Mac client keyboard,
+  and a browser terminal is reached from whatever machine the user is sitting
+  at. Stage 1 verified live in VS Code's integrated terminal by the user before
+  this stage started.
+- **Where the design doc was wrong, found by reading the code.** It said
+  deletion cascades were "already confirmed today". They are not: `Ctrl+D` in
+  the settings screen issues `DeleteProfile` outright. So the confirmation is
+  **new**, and it is a deliberate break from "a command is its key" — the one in
+  the whole track. The justification is asymmetry of information, not caution
+  for its own sake: the screen shows the row it is about to delete, while
+  a shortened `/profile delete <name>` resolves a *prefix* and can land on a
+  profile the user did not picture. The popup names the profile and how many conversations go
+  with it, which is exactly what the screen's selection was doing.
+  (lessons §3 — "treat a recorded rationale as a claim with a date on it".)
+- **Where the confirmation lives, and a dead method that proved it.** I first
+  routed the new actions through `trigger_destructive` and gave `ConfirmAction`
+  an `always_confirms()` predicate. Then the commands turned out to set
+  `self.confirm` directly — the predicate was never called. Rather than reroute,
+  the *difference* was the answer: these two differ from the destructive keys in
+  **both** respects (they always ask, and generation does not gate them, since
+  the keys they mirror are not gated either), so two call sites are honest where
+  one funnel with two booleans would not be. The method came out; the type's doc
+  comment carries the distinction.
+- **`/profile` earns a module, `/self` does not.** The registry's own rule from
+  stage 1 is that a command with real syntax gets a parser file. `/profile` has
+  a subcommand *plus* a free-text name — the first typed route to cross that
+  line — so `features/profile_command.rs`. `/self clear` is a single word from a
+  closed set, which became `Arity::Subcommand(&["clear"])` in the registry: the
+  parser normalizes the word and reports an unknown one *itself*, because a
+  command with two places to explain itself grows two wordings.
+- **The outcome is reported by the owner, not by the command.** `/profile new`
+  in a chat has no profile list on screen to serve as the answer, and a command
+  that appears to do nothing reads as a refusal (lessons §4). The first draft
+  pushed a local note — which would have lied on the two paths where
+  `handle_create_profile` fails (an empty name, a storage error). Emitting
+  `AppEvent::Notice` from the orchestrator instead means the claim is only made
+  when the write succeeded, and it fixes the *key* route too: `Ctrl+N` in the
+  settings screen now also says what happened.
+- **Refusals that come before the question.** `/profile delete` checks the
+  last-profile rule itself instead of asking a question whose "yes" the
+  orchestrator would then decline; `/self clear` refuses with no chat open,
+  since the model belongs to the active profile and the orchestrator would
+  silently drop the edit (the same `?`-shaped silence stage 1's lesson is about,
+  avoided here by looking for it).
+- **One resolver for two commands.** `/new <profile>` and `/profile delete
+  <name>` both name a profile, so the exact-then-unambiguous-prefix rule and its
+  candidate-listing note are now a single `resolve_profile`, parameterized only
+  by the *route* it suggests (a whole bundle key, never a built one — lessons
+  §7). Budgeting for that seam at design time is the duplication lesson applied
+  before the gate rather than after it.
+- **`tf` caught the wording split.** Moving the route into a `{route}`
+  placeholder while the templates still spelled `/new` into the sentence failed
+  immediately — `tf` asserts on arguments the template does not use. The
+  assertion is what made a two-locale edit safe.
+
+**Tests** (+13, 2245 → 2258 green). The parser: every subcommand in any case and
+padding; a name keeping its spaces and losing its quotes; missing and unknown
+subcommands reported with the offender quoted; near-words falling through; the
+per-locale gate. The screen: `/profile list` naming the profiles and marking the
+open chat's; `/profile new` matching the settings screen's default name; delete
+always confirming with the profile and chat count in the question, and `Esc`
+answering no; the last profile refused before the question; the shared resolver
+used by both callers with each keeping its own suggested route; `/self clear`
+confirming and reaching the same edit, bare `/self` still opening the screen, an
+unknown word reported, and no chat open refused; highlighting for the whole
+family. Mutation-tested in two places — deleting without asking, and dropping
+the active-chat guard — both caught.
+
+**A live model run is not required** (AGENTS.md §3): UI routing and two
+orchestrator commands that already existed, with no engine, memory or tool path
+touched. The acceptance pass is the same manual one as stage 1, plus: create a
+profile from a chat and see the notice, delete it and see the question naming
+its conversations.

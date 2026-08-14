@@ -419,6 +419,17 @@ pub(super) fn dispatch(
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
+        // Profile CRUD and the self-model wipe reach the same orchestrator
+        // commands the settings and self-model screens send — the typed routes
+        // into those screens' territory (spec §11.7, stage 2).
+        ChatIntent::CreateProfile { name } => AppCommand::CreateProfile {
+            name,
+            system_message: String::new(),
+        },
+        ChatIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
+        ChatIntent::ClearSelfModel => {
+            AppCommand::UpdateSelfModel(crate::entities::self_model::SelfModelEdit::Clear)
+        }
         // The results screen opens on the reply (`MessageSearchResults`), like
         // the chat list's `Ctrl+G` — the orchestrator owns the index. The chat
         // screen has no list in front of it to inherit a sort order from, so the

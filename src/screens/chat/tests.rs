@@ -3260,7 +3260,7 @@ fn a_click_is_ignored_while_the_picker_is_open() {
     );
 }
 
-// ---------- typed routes for the chords (docs/research/command-only-control.md) ----------
+// ---------- typed routes for the chords (docs/history/command-only-control.md) ----------
 
 use crate::features::ui_command::{self, Arity, UiCommand};
 
@@ -3721,4 +3721,231 @@ fn every_ui_command_variant_has_exactly_one_row() {
         seen.push(spec.command);
     }
     assert_eq!(seen.len(), ui_command::COMMANDS.len());
+}
+
+// ---------- stage 2: the screens' own leftovers (/profile, /self clear) ----------
+
+/// `/profile list` answers from the snapshot the screen already holds, and marks
+/// the open chat's own profile — the question behind it is usually "which one am
+/// I talking to?".
+#[test]
+fn profile_list_names_them_and_marks_the_active_one() {
+    let mut c = Cmd::new();
+    // The open chat belongs to the first profile.
+    c.s.set_chat_list(vec![ChatSummary {
+        id: c.chat,
+        profile_id: Uuid::from_u128(2),
+        title: "Про космос".into(),
+        created_at: chrono::Utc::now(),
+        modified_at: chrono::Utc::now(),
+        message_count: 1,
+    }]);
+    assert_eq!(c.run("/profile list"), None);
+    let note = c.last_note();
+    assert!(note.contains("Гайя") && note.contains("Гелиос"), "{note}");
+    let marker = c.s.palette.glyphs().title_marker;
+    assert!(
+        note.contains(&format!("{marker} Гайя")),
+        "the open chat's profile is not marked: {note}"
+    );
+    assert!(
+        !note.contains(&format!("{marker} Гелиос")),
+        "only one profile is the active one: {note}"
+    );
+}
+
+/// `/profile new` creates through the same command the settings screen's
+/// `Ctrl+N` sends, with the same default name; a given name is used verbatim.
+/// The persona stays empty either way — that is the settings screen's job, and
+/// the orchestrator's notice is what says so.
+#[test]
+fn profile_new_matches_the_settings_screen_default() {
+    let mut c = Cmd::new();
+    let default_name = c.s.loc.t("ui.settings.new_profile_name").to_string();
+    assert_eq!(
+        c.run("/profile new"),
+        Some(ChatIntent::CreateProfile { name: default_name })
+    );
+
+    let mut c = Cmd::new();
+    assert_eq!(
+        c.run("/profile new Дневной помощник"),
+        Some(ChatIntent::CreateProfile {
+            name: "Дневной помощник".into()
+        })
+    );
+}
+
+/// Deleting a profile **always** asks, unlike the key it mirrors: a typed name
+/// can resolve to a profile the user did not picture, where the settings screen
+/// shows the row it is about to delete. The question names the profile and how
+/// many conversations go with it.
+#[test]
+fn profile_delete_always_confirms_and_names_what_goes() {
+    let mut c = Cmd::new();
+    c.s.set_chat_list(vec![
+        ChatSummary {
+            id: c.chat,
+            profile_id: Uuid::from_u128(2),
+            title: "Про космос".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 1,
+        },
+        ChatSummary {
+            id: Uuid::from_u128(9),
+            profile_id: Uuid::from_u128(2),
+            title: "Второй".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 1,
+        },
+    ]);
+    // The setting that gates the two chat-level keys is OFF here — this popup
+    // is not governed by it.
+    assert!(!c.s.confirm_destructive);
+    assert_eq!(c.run("/profile delete Гайя"), None, "it must ask first");
+    let text = confirm_popup_text(&mut c.s);
+    assert!(text.contains("Гайя"), "the profile is named: {text}");
+    assert!(text.contains('2'), "the chat count is stated: {text}");
+    // Answering yes sends the same command `Ctrl+D` sends.
+    assert_eq!(
+        c.key(KeyCode::Enter),
+        Some(ChatIntent::DeleteProfile(Uuid::from_u128(2)))
+    );
+
+    // …and `Esc` answers no: nothing is sent and the popup closes.
+    let mut c = Cmd::new();
+    c.run("/profile delete Гайя");
+    assert_eq!(c.key(KeyCode::Esc), None);
+    assert!(c.s.confirm.is_none(), "the popup stayed open");
+}
+
+/// The last profile cannot go — there would be nothing to create chats from. The
+/// orchestrator refuses too, but asking a question whose "yes" is then declined
+/// is a worse way to say it.
+#[test]
+fn deleting_the_only_profile_is_refused_before_it_asks() {
+    let mut c = Cmd::new();
+    c.s.set_profile_list(vec![ProfileSummary {
+        id: Uuid::from_u128(2),
+        name: "Гайя".into(),
+    }]);
+    assert_eq!(c.run("/profile delete Гайя"), None);
+    assert!(c.s.confirm.is_none(), "it must not ask");
+    assert!(!c.last_note().is_empty(), "it said nothing");
+    assert!(
+        c.last_note().contains("/profile new"),
+        "the note must name the way out: {}",
+        c.last_note()
+    );
+}
+
+/// A name that matches nothing or several profiles is answered by the **shared**
+/// resolver, so `/profile delete` and `/new` agree on the prefix rule — but each
+/// names the route that fits the command that was typed.
+#[test]
+fn profile_delete_uses_the_shared_name_resolver() {
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/profile delete гел"), None, "an unambiguous prefix");
+    assert!(
+        matches!(&c.s.confirm, Some(ConfirmAction::DeleteProfile { name, .. }) if name == "Гелиос"),
+        "the prefix must resolve like /new does"
+    );
+
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/profile delete г"), None);
+    assert!(c.s.confirm.is_none(), "an ambiguous name must not ask");
+    let note = c.last_note();
+    assert!(note.contains("Гайя") && note.contains("Гелиос"), "{note}");
+    assert!(
+        note.contains("/profile list"),
+        "the route fits the typed command: {note}"
+    );
+
+    // The other caller keeps its own route.
+    let mut c = Cmd::new();
+    c.run("/new г");
+    assert!(
+        c.last_note().contains("/new"),
+        "/new keeps the picker route: {}",
+        c.last_note()
+    );
+}
+
+/// `/self clear` mirrors `Ctrl+K` twice in the self-model screen — a
+/// confirmation there, a confirmation here — and reaches the same edit.
+#[test]
+fn self_clear_confirms_and_sends_the_same_edit() {
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/self clear"), None, "it must ask first");
+    assert!(c.s.confirm.is_some());
+    assert_eq!(c.key(KeyCode::Enter), Some(ChatIntent::ClearSelfModel));
+
+    // Bare `/self` still opens the screen — the subcommand did not shadow it.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/self"), Some(ChatIntent::OpenSelfModel));
+
+    // An unknown word is reported by the parser, with the usage line.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/self wipe"), None);
+    assert!(
+        c.last_note().contains("/self"),
+        "the usage line: {}",
+        c.last_note()
+    );
+
+    // The model belongs to the active profile: with no chat open the
+    // orchestrator would drop the edit, so the command says so instead.
+    let mut c = Cmd::bare();
+    assert_eq!(c.run("/self clear"), None);
+    assert!(c.s.confirm.is_none(), "nothing to clear, nothing to ask");
+    assert!(!c.last_note().is_empty(), "/self clear said nothing");
+}
+
+/// The stage-2 commands are highlighted while typed and never leak to the model,
+/// exactly like the registry's.
+#[test]
+fn profile_commands_are_highlighted_and_never_sent() {
+    for text in [
+        "/profile",
+        "/profile list",
+        "/profile new Гайя",
+        "/profile delete Гайя",
+        "/profile renam x",
+    ] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(c.s.input_is_command(), "{text} is not highlighted");
+        let mut c = Cmd::new();
+        assert!(
+            !matches!(c.run(text), Some(ChatIntent::Send(_))),
+            "{text} must not go out as a message"
+        );
+    }
+    // Near-words stay prose.
+    for text in ["/profiles", "/profile-new"] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(!c.s.input_is_command(), "{text} must stay plain text");
+    }
+}
+
+/// The confirmation popup, rendered to text — the question has to be readable,
+/// not merely present (the popup wraps at 56 columns).
+fn confirm_popup_text(s: &mut ChatScreen) -> String {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let mut out = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            out.push_str(buf[(x, y)].symbol());
+        }
+        out.push('\n');
+    }
+    out
 }

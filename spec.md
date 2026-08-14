@@ -2069,7 +2069,10 @@ section and subsection), `Esc` — cancel.
   (auto-consolidation, "about self" observations in `note_recall`), *Self-model*
   (insight storage/injection, description target size, auto-reflection, the maintenance
   protocol).
-- **Profiles** (a tab strip Assistant/Impersonation): CRUD; profile picker, name,
+- **Profiles** (a tab strip Assistant/Impersonation): CRUD (`Ctrl+N`/`Ctrl+D`;
+  from the chat, **`/profile new|delete`** reaches the same two commands for a
+  host that claims those keys, and always confirms a deletion — §11.7);
+  profile picker, name,
   the *Persona* group (system message, greeting) and **tool toggles grouped by
   meaning** (`features/tools/meta.rs`: Introspection / Memory and Knowledge /
   Outside World / Files / Utilities / Sub-agent / Conversation Control /
@@ -2321,7 +2324,7 @@ quitting, and the loop flushes that final draft, so the box does not come back n
 launch holding the command used to leave it.
 
 **Every action has a typed route as well as a chord** (`features/ui_command.rs`,
-`screens/chat/commands.rs`; [docs/research/command-only-control.md](docs/research/command-only-control.md)).
+`screens/chat/commands.rs`; [docs/history/command-only-control.md](docs/history/command-only-control.md)).
 `/exit` generalized: a terminal embedded in a host loses whole chords before
 crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 `Ctrl+F`, `Ctrl+K`, `F1`, `F3`, `F5` and both quit keys through its default
@@ -2356,8 +2359,38 @@ host, so the interface is fully operable by commands plus the safe key subset
   rows are derived from the registry**, so a command cannot exist undiscoverable.
 - **Not commands: text editing.** A command is typed *in* the box, so it cannot
   operate on the box's contents; the safe keys cover editing in every host, and
-  `Ctrl+Z`/`Ctrl+K`/`Ctrl+C` stay conveniences. Profile CRUD and clearing the
-  self-model remain chord-only inside their screens (stage 2).
+  `Ctrl+Z`/`Ctrl+K`/`Ctrl+C` stay conveniences.
+
+**Stage 2 — the two actions inside other screens.** Profile CRUD lived only
+behind `Ctrl+N`/`Ctrl+D` in the settings screen's "Profiles" section
+([§11.6](#116-the-settings-screen)) and clearing the self-model only behind
+`Ctrl+K` twice in its screen ([§17.7](#177-ui--the-self-model-screen-f3)) —
+both unreachable from a host that claims those keys, and a physical-key
+alternate (`Insert`) fails on a Mac client keyboard, which is what a browser
+terminal is often driven from. Hence `/profile list · /profile new [name] ·
+/profile delete <name>` and `/self clear`:
+
+- `/profile` keeps a **parser of its own** (`features/profile_command.rs`),
+  being the one typed route with a subcommand *and* an argument — the line the
+  registry draws. `/self` instead gained a closed-set argument
+  (`Arity::Subcommand`), so an unknown word is reported by the parser rather
+  than by whoever runs the command.
+- **Both destructive routes always confirm**, where the keys they mirror do not
+  (`Ctrl+D` deletes the selected row outright). Deliberate: the screen shows you
+  the profile you are deleting, while a typed prefix can resolve to one you did
+  not picture, so the popup is what puts the target — and the number of
+  conversations hidden with it — back in front of you. This is independent of
+  `interface.confirm_destructive_keys`, which is about the two chat-level keys,
+  and the commands therefore set the popup directly instead of going through
+  `trigger_destructive`.
+- **The outcome is reported by the orchestrator**, not by the command: from the
+  settings screen the new (or vanished) row is the answer, but a chat has no
+  profile list on screen, and a command that appears to do nothing reads as a
+  refusal. Emitting it where the write happens means the claim is only made on
+  success — and both routes answer alike.
+- `/profile delete` refuses the **last** profile before asking, rather than
+  posing a question the orchestrator would then decline; `/self clear` refuses
+  with no chat open, the model belonging to the active profile.
 
 **Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
 click places the cursor in the chat input box, and a drag grows the selection (the cursor
@@ -2810,7 +2843,8 @@ for viewing and **manual editing**:
 - the self-description (a multiline editor), goals (add / rename / `Space`
   to change the status / `Del` to delete), the model of the companion (traits/interests as a comma-
   separated list, the relationship dynamic), deleting insights (`Del`), clearing the whole model
-  (`Ctrl+K` twice — with confirmation);
+  (`Ctrl+K` twice — with confirmation; **`/self clear`** from the chat is the
+  same wipe behind the same confirmation, §11.7);
 - navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
 
 The list is drawn manually by visual rows (not with the `List` widget): a long

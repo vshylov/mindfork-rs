@@ -137,7 +137,7 @@ impl ChatScreen {
     /// (e.g. `Ctrl+A`/`Ctrl+Z` belong to the input box).
     /// `pub(super)` because the typed routes reach their action through this
     /// very function (`super::commands`): a command and its chord must not grow
-    /// two behaviours. See docs/research/command-only-control.md §4.3.
+    /// two behaviours. See docs/history/command-only-control.md §4.3.
     pub(super) fn handle_ctrl_shortcut(&mut self, physical: char) -> Option<Option<ChatIntent>> {
         match physical {
             // Quit moved to Ctrl+Q/F10 (F10 — in `handle_plain_key`);
@@ -349,6 +349,11 @@ impl ChatScreen {
         // its own arms are the ones that answer during a turn (`/stop`), and the
         // rest report why they cannot.
         if let Some(intent) = self.try_ui_command(&text) {
+            return intent;
+        }
+        // `/profile …` has a subcommand plus a name, so it keeps a parser of its
+        // own rather than a registry row (stage 2, fork F5).
+        if let Some(intent) = self.try_profile_command(&text) {
             return intent;
         }
         if let Some(intent) = self.try_exit_command(&text) {
@@ -805,6 +810,7 @@ impl ChatScreen {
             || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
             || crate::features::ui_command::parse(&text, self.loc).is_some()
+            || crate::features::profile_command::parse(&text, self.loc).is_some()
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 

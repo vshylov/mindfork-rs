@@ -364,6 +364,12 @@ confirmations included:
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
+| `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
+| `/self clear` | `Ctrl+K` twice in the self-model screen | wipe what the assistant thinks about itself and about you |
+
+Deleting a profile and clearing the self-model always ask first, even though the
+keys they mirror do not: a command names its target by word, and a shortened
+name could match a profile you did not have in mind.
 
 Only text editing has no command — a command is typed *in* the input box, so it
 cannot act on the box's own contents. Everything editing needs (typing,

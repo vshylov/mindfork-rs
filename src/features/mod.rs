@@ -22,6 +22,7 @@ pub mod image_fetch;
 pub mod image_prepare;
 pub mod import;
 pub mod mcp_import;
+pub mod profile_command;
 pub mod profiles;
 pub mod rag_command;
 pub mod rag_ingest;

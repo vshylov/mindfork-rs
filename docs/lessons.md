@@ -375,8 +375,13 @@ premises the project *itself* wrote down: a deferred note said attaching an imag
 would inherit "the SSRF care `fetch_url` already had to take", and `fetch_url` validates the
 scheme and nothing else — the guard to be reused did not exist, so the question had to be
 answered rather than inherited. Treat a recorded rationale as a claim with a date on it.
+**Recorded twice**: an accepted design doc likewise stated that deleting a profile was
+"already confirmed today" — it is not, `Ctrl+D` deletes the selected row outright — which
+turned a parenthetical into that track's one deliberate parity break, needing a
+justification of its own. The claim was a day old and written by the same author.
 — *confirmation before dangerous tool calls*, *MCP servers in the settings window*,
-*history compression — stage 3*, *images in a message — attach by URL*.
+*history compression — stage 3*, *images in a message — attach by URL*,
+*command-only control — stage 2*.
 
 **A headless Chromium screenshot narrower than ~500px fabricates overflow on
 Windows.** `--window-size=375` (old and new headless alike) still lays the page
@@ -791,9 +796,16 @@ S1871 in the screenshots SVG writer after 2026-08-10) — while the security-cla
 S8707, which does move a rating, blocked its PR on the spot. For a new or reshaped
 `tools/*.py`, or any function a change grew, run the file through the Sonar MCP
 snippet analyzer before the PR: one tool call, the server's own rules, and the
-backlog stays at zero.
+backlog stays at zero. **That pre-check is unavailable for Rust** — the analyzer
+takes no such language — so on this side of the codebase the shape has to be
+watched by eye, and the PR analysis is the first real measurement. The shape that
+caught one out: a **dispatch `match` with nineteen arms** scored S3776 complexity
+16 against a bar of 15 on the strength of five short `if`s inside it, no single
+arm looking remotely complex. Delegating each precondition-carrying arm to a
+named method fixed it and read better — a table of one-liners.
 — *SonarQube follow-up — the doc gate's regexes and one test's complexity*,
-*SonarQube follow-up — the screenshots SVG writer*.
+*SonarQube follow-up — the screenshots SVG writer*, *command-only control —
+stage 2*.
 
 **On CI, distrust a single run.** Identical code produced Windows test phases of
 359 / 469 / 376 / 386 / 927 s; a controlled local measurement is the trustworthy one. The

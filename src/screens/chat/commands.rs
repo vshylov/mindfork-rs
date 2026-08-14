@@ -9,7 +9,7 @@
 //! that blocks a command says so and names the route that works
 //! (docs/lessons.md §4).
 //!
-//! See [docs/research/command-only-control.md](../../../docs/research/command-only-control.md)
+//! See [docs/history/command-only-control.md](../../../docs/history/command-only-control.md)
 //! §4.3 and spec §11.7.
 
 use super::*;
@@ -39,6 +39,12 @@ impl ChatScreen {
 
     /// Dispatches a parsed command. Exhaustive on [`UiCommand`], so a new
     /// registry row cannot ship without an answer here.
+    ///
+    /// One line per command: an arm that needs a precondition checked delegates
+    /// to a named method below rather than spelling the check out here. That
+    /// keeps this readable as the dispatch *table* it is — and keeps its
+    /// cognitive complexity off the analyzer's bar, which a table of nineteen
+    /// arms reaches on the strength of a few `if`s alone.
     fn run_ui_command(
         &mut self,
         command: UiCommand,
@@ -46,14 +52,11 @@ impl ChatScreen {
         alias: &'static str,
     ) -> Option<ChatIntent> {
         match command {
-            // The screens. `Ctrl+P` silently does nothing until the first
-            // `Settings` event has arrived; the command says why instead.
-            UiCommand::Settings => {
-                if self.settings_snapshot.is_none() {
-                    return self.note("ui.cmd.settings_pending");
-                }
-                self.handle_ctrl_shortcut('p').flatten()
-            }
+            // The screens.
+            UiCommand::Settings => self.open_settings_screen(),
+            // Bare — the screen; `clear` — the wipe it offers behind `Ctrl+K`
+            // twice, behind a confirmation here for the same reason.
+            UiCommand::SelfModel if argument == "clear" => self.ask_clear_self_model(),
             UiCommand::SelfModel => Some(ChatIntent::OpenSelfModel),
             // Deliberately not `Esc`'s behaviour: `Esc` cancels a running
             // generation first, and this command is the half that always means
@@ -75,45 +78,11 @@ impl ChatScreen {
                 || self.note("ui.cmd.no_chat"),
                 |id| Some(ChatIntent::CopyChat(id)),
             ),
-            // Both are ignored during generation by `trigger_destructive`, and
-            // both honour `interface.confirm_destructive_keys` — the popup is
-            // the key's, reached through the key's own path.
-            UiCommand::Regen | UiCommand::Takeback => {
-                if self.generating {
-                    return self.busy_note(alias);
-                }
-                self.handle_ctrl_shortcut(match command {
-                    UiCommand::Regen => 'r',
-                    _ => 'e',
-                })
-                .flatten()
-            }
-            UiCommand::Impersonate => {
-                if self.generating {
-                    return self.busy_note(alias);
-                }
-                // The seed is the rest of the line, where the key takes whatever
-                // was already in the box — the command consumed the box itself.
-                Some(ChatIntent::Impersonate { seed: argument })
-            }
-            UiCommand::Stop => {
-                if self.generating {
-                    Some(ChatIntent::Cancel)
-                } else {
-                    self.note("ui.cmd.not_generating")
-                }
-            }
+            UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
+            UiCommand::Impersonate => self.typed_impersonate(argument, alias),
+            UiCommand::Stop => self.typed_stop(),
             // Finding things.
-            UiCommand::Find => {
-                if !argument.is_empty() {
-                    // `open_feed_search` resumes the chat's last query; seeding
-                    // it here is what makes `/find <text>` land on a match
-                    // without a second keystroke.
-                    self.search_last = argument;
-                }
-                self.open_feed_search();
-                None
-            }
+            UiCommand::Find => self.typed_find(argument),
             UiCommand::Search => Some(ChatIntent::SearchMessages { query: argument }),
             UiCommand::Links => {
                 // Says what a reference looks like when the chat holds none.
@@ -126,6 +95,70 @@ impl ChatScreen {
             UiCommand::Mouse => self.handle_ctrl_shortcut('w').flatten(),
             UiCommand::Emoji => self.handle_ctrl_shortcut('b').flatten(),
         }
+    }
+
+    /// `/settings` — `Ctrl+P` silently does nothing until the first `Settings`
+    /// event has arrived; the command says why instead.
+    fn open_settings_screen(&mut self) -> Option<ChatIntent> {
+        if self.settings_snapshot.is_none() {
+            return self.note("ui.cmd.settings_pending");
+        }
+        self.handle_ctrl_shortcut('p').flatten()
+    }
+
+    /// `/self clear` — the model belongs to the *active profile*, so with no
+    /// chat open the orchestrator would silently drop the edit: say so instead.
+    fn ask_clear_self_model(&mut self) -> Option<ChatIntent> {
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        self.confirm = Some(ConfirmAction::ClearSelfModel);
+        None
+    }
+
+    /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by
+    /// `trigger_destructive`, and both honour `confirm_destructive_keys` — the
+    /// popup is the key's, reached through the key's own path. The only thing
+    /// added here is the answer the key does not owe.
+    fn typed_destructive(&mut self, command: UiCommand, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        let chord = if command == UiCommand::Regen {
+            'r'
+        } else {
+            'e'
+        };
+        self.handle_ctrl_shortcut(chord).flatten()
+    }
+
+    /// `/impersonate [text]` — the seed is the rest of the line, where the key
+    /// takes whatever was already in the box (the command consumed the box).
+    fn typed_impersonate(&mut self, seed: String, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        Some(ChatIntent::Impersonate { seed })
+    }
+
+    /// `/stop` — the explicit half of `Esc`, and the half that has something to
+    /// say when there is nothing to cancel.
+    fn typed_stop(&mut self) -> Option<ChatIntent> {
+        if self.generating {
+            return Some(ChatIntent::Cancel);
+        }
+        self.note("ui.cmd.not_generating")
+    }
+
+    /// `/find [text]` — `open_feed_search` resumes the chat's last query, so
+    /// seeding it here is what makes `/find <text>` land on a match without a
+    /// second keystroke.
+    fn typed_find(&mut self, query: String) -> Option<ChatIntent> {
+        if !query.is_empty() {
+            self.search_last = query;
+        }
+        self.open_feed_search();
+        None
     }
 
     /// Renames the open chat. With a title — straight through, as `F2` in the
@@ -150,10 +183,26 @@ impl ChatScreen {
         Some(ChatIntent::RenameChat { id, title })
     }
 
-    /// `/new <profile>`: an exact name first, then an unambiguous prefix
-    /// (fork F3). A miss and an ambiguity both answer by naming the candidates
-    /// **and** the bare-`/new` route, so neither is a dead end.
+    /// `/new <profile>`: the shared name resolver, then the same intent
+    /// `Ctrl+N` produces once a profile is chosen.
     fn new_chat_by_name(&mut self, wanted: &str) -> Option<ChatIntent> {
+        let (id, _) = self.resolve_profile(wanted, "ui.cmd.route_new")?;
+        Some(ChatIntent::NewChat {
+            profile_id: Some(id),
+        })
+    }
+
+    /// Resolves a profile by name: an exact match first (case-insensitively),
+    /// then an unambiguous prefix (fork F3). On a miss or an ambiguity it leaves
+    /// a note naming the candidates and the `route` that shows them, and returns
+    /// `None`.
+    ///
+    /// One resolver for both commands that name a profile (`/new <profile>` and
+    /// `/profile delete <name>`) — the pair's *contract* is shared, so its
+    /// wording and its prefix rule are shared too, rather than being written
+    /// twice and drifting (docs/lessons.md §2). `route` is a whole bundle key,
+    /// never a built one: the two callers want different next steps.
+    fn resolve_profile(&mut self, wanted: &str, route: &'static str) -> Option<(Uuid, String)> {
         let wanted = wanted.to_lowercase();
         let matching = |exact: bool| -> Vec<(Uuid, String)> {
             self.profiles
@@ -173,10 +222,8 @@ impl ChatScreen {
         if hits.is_empty() {
             hits = matching(false);
         }
-        if let [(id, _)] = hits.as_slice() {
-            return Some(ChatIntent::NewChat {
-                profile_id: Some(*id),
-            });
+        if let [hit] = hits.as_slice() {
+            return Some(hit.clone());
         }
         // Nothing matched → list what there is; several matched → list those.
         let (key, names) = if hits.is_empty() {
@@ -190,8 +237,98 @@ impl ChatScreen {
                     .join(", "),
             )
         };
-        let msg = self.loc.tf(key, &[("name", &wanted), ("names", &names)]);
+        let msg = self.loc.tf(
+            key,
+            &[
+                ("name", &wanted),
+                ("names", &names),
+                ("route", self.loc.t(route)),
+            ],
+        );
         self.push_note(&msg);
+        None
+    }
+
+    /// The profile commands (`/profile list|new|delete`) — the settings screen's
+    /// `Ctrl+N`/`Ctrl+D`, reachable from a host that keeps those keys. Stage 2 of
+    /// docs/history/command-only-control.md (fork F5). Returns `None` when the
+    /// text is not a `/profile` command.
+    pub(super) fn try_profile_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::profile_command::{self, ProfileCommand};
+        let parsed = profile_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(ProfileCommand::List) => {
+                self.list_profiles();
+                None
+            }
+            // The same default name the settings screen's `Ctrl+N` uses, so the
+            // two routes create the same thing. The persona stays empty either
+            // way — it is written in the settings screen afterwards, which is
+            // what the orchestrator's notice says.
+            Ok(ProfileCommand::New { name }) => Some(ChatIntent::CreateProfile {
+                name: name
+                    .unwrap_or_else(|| self.loc.t("ui.settings.new_profile_name").to_string()),
+            }),
+            Ok(ProfileCommand::Delete { name }) => self.confirm_delete_profile(&name),
+            Err(msg) => {
+                self.push_note(&msg);
+                None
+            }
+        })
+    }
+
+    /// `/profile list` — the names, with the open chat's own profile marked.
+    /// The screen already holds this snapshot, so it answers locally.
+    fn list_profiles(&mut self) {
+        if self.profiles.is_empty() {
+            self.note("ui.profile.none");
+            return;
+        }
+        let active = self
+            .active_chat
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .map(|c| c.profile_id);
+        // The same marker the screens use for "this is the selected one"; it is
+        // one column wide in both glyph sets, so the names stay aligned.
+        let marker = self.palette.glyphs().title_marker;
+        let names: Vec<String> = self
+            .profiles
+            .iter()
+            .map(|p| {
+                if Some(p.id) == active {
+                    format!("{marker} {}", p.name)
+                } else {
+                    format!("  {}", p.name)
+                }
+            })
+            .collect();
+        let msg = self
+            .loc
+            .tf("ui.profile.list", &[("names", &names.join("\n"))]);
+        self.push_note(&msg);
+    }
+
+    /// `/profile delete <name>` — resolve the name, then **always** ask.
+    ///
+    /// The key does not ask (`Ctrl+D` in the settings screen deletes the
+    /// selected row outright), and this is the one place stage 2 departs from
+    /// "a command is its key" — deliberately. The screen shows you the profile
+    /// you are about to delete, and a typed prefix can resolve to one you did
+    /// not picture; the popup is what puts the target, and the conversations
+    /// going with it, back in front of you. Independent of
+    /// `confirm_destructive_keys`, which is about the two chat-level keys.
+    fn confirm_delete_profile(&mut self, wanted: &str) -> Option<ChatIntent> {
+        let (id, name) = self.resolve_profile(wanted, "ui.cmd.route_profile_list")?;
+        // The orchestrator refuses to delete the last profile (there would be
+        // nothing to create chats from), so say so here instead of asking a
+        // question whose "yes" is then declined.
+        if self.profiles.len() <= 1 {
+            return self.note("ui.profile.last");
+        }
+        let chats = self.chats.iter().filter(|c| c.profile_id == id).count();
+        self.confirm = Some(ConfirmAction::DeleteProfile { id, name, chats });
         None
     }
 

@@ -165,10 +165,10 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-14, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2245 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2258 unit tests
 green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **command-only control — stage 1 of 2**
+most recent tracks: **command-only control — track complete**
 (the app is operable without a single chord, for terminals embedded in a host
 that claims them: measured, VS Code's default `commandsToSkipShell` takes
 `Ctrl+P`/`Ctrl+E`/`Ctrl+F`/`Ctrl+K`, `F1`/`F3`/`F5`/`F10` and `Ctrl+Q` — six
@@ -182,9 +182,14 @@ vanishes reads as a refusal, so every blocked precondition names a route that
 works. The scope stayed small because typing survives every host and every `Esc`
 chain already ends at the chat screen: safe keys navigate, commands act. One
 declarative registry rather than nineteen sibling parsers, with the help tab's
-rows derived from it; stage 2 is the two chord-only leftovers inside the
-settings and self-model screens;
-[docs/research/command-only-control.md](docs/research/command-only-control.md),
+rows derived from it. Stage 2 took the two actions that lived inside *other*
+screens — `/profile list|new|delete` and `/self clear` — and is the one place
+the track breaks parity on purpose: both **always** confirm, because a typed
+prefix can name a profile the user did not picture where the screen would have
+shown it selected, and the outcome of profile CRUD is now announced by the
+orchestrator so both routes answer alike. Verified live in VS Code's integrated
+terminal;
+[docs/history/command-only-control.md](docs/history/command-only-control.md),
 spec §11.7), **navigable `chat://` references — track complete**
 (`chat://<short-id>` is now the one address a conversation has: the cross-chat
 tools print it, their descriptions teach the model to **cite it when it mentions
