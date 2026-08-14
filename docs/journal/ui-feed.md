@@ -1673,6 +1673,23 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   flows, the profile boundary, the picker closing on a chat switch), 2 on the
   tools (round-tripping the scheme, every printed address carrying it). Suite
   **2181 → 2209**.
+- **Stage 2 — the click** (same branch, at the user's call). `MessageFeed`
+  still stores no `Rect`: the click map is **derived in `render`, from the rows
+  about to be drawn, for the viewport only**, in absolute terminal cells. That
+  is the one point where the second wrap, the scroll and the panel's origin have
+  all been applied, so nothing stored can go stale — and it sidesteps the
+  `InputBox::last_area` shape the design had pencilled in, which would have had
+  to re-derive all three at click time. Cost is bounded by the screen (tens of
+  rows), not the conversation; a test pins the map at absolute column 3 (border
+  + rail), which is exactly the off-by-two that would otherwise ship unnoticed.
+  `handle_mouse` now returns an `Option<ChatIntent>` — it had returned `()`
+  since the mouse existed, because nothing in the feed had ever been actionable
+  — and the reference is tried before the input box, which cannot compete: they
+  own disjoint areas and `mouse_press` already answers `false` outside its own.
+  One degradation is stated rather than hidden: an address the wrap split
+  across two rows is styled but not clickable, and `Ctrl+L` stays the route that
+  always works. **No live run** (AGENTS.md §3): pure UI, no engine, memory or
+  tool path touched. +7 tests, suite **2209 → 2216**.
 - **Smoke — GO** (gemma-4-31B q4_0 + bge-m3 via llama-server, the user's live
   stack). "The model uses the format" is a behavioural claim no unit test can
   settle, so the §9.11 go/no-go was extended: the answer must now also carry a

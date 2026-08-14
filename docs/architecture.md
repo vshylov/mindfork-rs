@@ -255,7 +255,8 @@ src/
 │  │                        next/prev to the matched line — see the invariant in §4,
 │  │                        `chat://` links (known_chats → CacheKey, styled in the
 │  │                        block builder before the wrap; `chat_links()` feeds the
-│  │                        Ctrl+L picker)
+│  │                        Ctrl+L picker, `chat_link_at` answers a click from a
+│  │                        viewport-sized map rebuilt by each render)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
 │  │                        ChatLinkAction out

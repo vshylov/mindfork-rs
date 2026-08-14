@@ -3172,3 +3172,90 @@ fn switching_chats_closes_the_picker() {
     );
     assert!(s.chat_links.is_none());
 }
+
+/// Stage 2 (spec §11.3): a left click on a drawn `chat://` address follows it,
+/// and a click a column past it is ordinary feed again.
+#[test]
+fn a_click_on_a_chat_reference_opens_that_conversation() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        Some(ChatIntent::OpenChatLink(other))
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.2,
+            at.1
+        )),
+        None,
+        "the cell past the address is not the address"
+    );
+}
+
+/// Clicking a reference back to the open conversation says so rather than
+/// switching — the same rule (and wording) the picker follows.
+#[test]
+fn clicking_a_reference_to_the_open_chat_says_so() {
+    use ratatui::crossterm::event::MouseButton;
+    let here = gen_id();
+    let mut s = screen_citing(here, &[], &[here]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        None
+    );
+    assert!(
+        s.feed
+            .iter()
+            .rev()
+            .any(|m| m.role == FeedRole::Note && !m.text.is_empty()),
+        "a note instead of a silent no-op"
+    );
+}
+
+/// The click must not reach the feed while an overlay owns the screen — and the
+/// reference picker is now one of them.
+#[test]
+fn a_click_is_ignored_while_the_picker_is_open() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+    s.handle_key(ctrl('l'));
+    assert!(s.chat_links.is_some());
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        None
+    );
+}

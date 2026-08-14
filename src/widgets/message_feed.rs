@@ -240,6 +240,11 @@ pub struct MessageFeed {
     /// which is why its fingerprint rides [`CacheKey`] — the same reason
     /// `role_names` does.
     known_chats: Vec<Uuid>,
+    /// Where the `chat://` references of the **last drawn frame** sit on screen
+    /// (spec §11.3). Rebuilt by every [`MessageFeed::render`] and read by
+    /// [`MessageFeed::chat_link_at`], so a click is answered against the frame
+    /// the user actually clicked on.
+    link_hits: Vec<LinkHit>,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -392,6 +397,7 @@ impl MessageFeed {
             role_names: CharacterNames::default(),
             compaction: None,
             known_chats: Vec::new(),
+            link_hits: Vec::new(),
             cache: Vec::new(),
             cache_key: None,
             pending_focus: None,
@@ -474,6 +480,21 @@ impl MessageFeed {
             }
         }
         seen
+    }
+
+    /// The conversation a `chat://` reference at this terminal cell points at
+    /// (spec §11.3) — `None` anywhere else, which is every cell of an ordinary
+    /// feed.
+    ///
+    /// Answered against the **last drawn frame**: the map is rebuilt by
+    /// `render`, so a click can never land on a stale layout. A feed that has
+    /// not been drawn yet has no map and therefore no links, which is the
+    /// honest answer rather than a guess.
+    pub fn chat_link_at(&self, col: u16, row: u16) -> Option<Uuid> {
+        self.link_hits
+            .iter()
+            .find(|h| h.row == row && (h.start..h.end).contains(&col))
+            .map(|h| h.chat)
     }
 
     /// The feed block the compaction boundary falls on (`None` — nothing folded,
@@ -699,6 +720,13 @@ impl MessageFeed {
         self.marker
     }
 
+    /// Test accessor: the n-th drawn `chat://` reference as
+    /// `(first column, row, the column just past it)`.
+    #[cfg(test)]
+    pub(crate) fn link_hit_for_test(&self, n: usize) -> Option<(u16, u16, u16)> {
+        self.link_hits.get(n).map(|h| (h.start, h.row, h.end))
+    }
+
     /// Test accessor: the query highlighted inside the marked message.
     #[cfg(test)]
     pub(crate) fn highlight(&self) -> Option<&str> {
@@ -802,6 +830,11 @@ impl MessageFeed {
             self.scroll = max_scroll;
             self.follow = true;
         }
+
+        // The click map is built here, from the rows about to be drawn: this is
+        // the only point where the wrap, the scroll and the panel's origin have
+        // all been applied (see [`visible_link_hits`]).
+        self.link_hits = visible_link_hits(&lines, inner, self.scroll, &self.known_chats);
 
         let paragraph = Paragraph::new(Text::from(lines)).scroll((self.scroll as u16, 0));
         frame.render_widget(paragraph, inner);
@@ -1129,8 +1162,7 @@ struct BuiltBlock {
 /// code block is styled too (it is on screen and it does resolve), and an
 /// address for a conversation that does not exist here is left as plain text.
 fn style_chat_links(line: &mut Line<'static>, known: &[Uuid], palette: &Palette) -> Vec<Uuid> {
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    let found = crate::features::chat_links::find_refs(&text, known);
+    let (text, found) = chat_links_in(line, known);
     if found.is_empty() {
         return Vec::new();
     }
@@ -1139,6 +1171,76 @@ fn style_chat_links(line: &mut Line<'static>, known: &[Uuid], palette: &Palette)
         style.fg(palette.accent).add_modifier(Modifier::UNDERLINED)
     });
     found.into_iter().map(|l| l.chat).collect()
+}
+
+/// One line's text (its spans concatenated) together with the resolvable
+/// `chat://` addresses inside it. The single place a rendered line is asked the
+/// question, so the styling pass and the click map cannot disagree about what
+/// counts as a reference.
+fn chat_links_in(
+    line: &Line<'static>,
+    known: &[Uuid],
+) -> (String, Vec<crate::features::chat_links::ChatLink>) {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let found = crate::features::chat_links::find_refs(&text, known);
+    (text, found)
+}
+
+/// Where a `chat://` reference sits **on screen**, and where it goes.
+/// Coordinates are absolute terminal cells, so a click is answered by a
+/// comparison and nothing else (spec §11.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LinkHit {
+    row: u16,
+    /// Half-open column range, `[start, end)`.
+    start: u16,
+    end: u16,
+    chat: Uuid,
+}
+
+/// Builds the click map for the rows **actually on screen**, in absolute
+/// terminal coordinates.
+///
+/// Derived from the drawn lines each frame rather than stored per block: it is
+/// the one place where the second wrap, the scroll and the panel's origin have
+/// all already been applied, so no assumption about them can go stale. The cost
+/// is bounded by the viewport (tens of rows), not by the conversation.
+///
+/// A reference the wrap split across two rows yields **no** hit — it is styled
+/// (that pass runs before the wrap) but not clickable, and `Ctrl+L` remains the
+/// route that always works. Deliberate: half an address is not an address, and
+/// guessing which half the user meant is worse than the keyboard.
+fn visible_link_hits(
+    lines: &[Line<'static>],
+    inner: Rect,
+    scroll: usize,
+    known: &[Uuid],
+) -> Vec<LinkHit> {
+    if known.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for (i, line) in lines
+        .iter()
+        .skip(scroll)
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let (text, found) = chat_links_in(line, known);
+        for link in found {
+            let chars: Vec<char> = text[..link.range.start].chars().collect();
+            let before = wrap::display_width(&chars) as u16;
+            let width = wrap::display_width(&text[link.range.clone()].chars().collect::<Vec<_>>());
+            let start = inner.x.saturating_add(before);
+            hits.push(LinkHit {
+                row: inner.y.saturating_add(i as u16),
+                start,
+                end: start.saturating_add(width as u16),
+                chat: link.chat,
+            });
+        }
+    }
+    hits
 }
 
 /// Recolors every occurrence of `query` in one **rendered** line to `color`,
@@ -2286,6 +2388,117 @@ mod tests {
         feed.set_known_chats(vec![id]);
         feed.build_lines(&msgs, &palette, 80, ru());
         assert_eq!(feed.chat_links(), vec![id], "the book must reach the cache");
+    }
+
+    /// Draws the feed into a test terminal so the click map exists, and returns
+    /// the cell coordinates the address occupies on screen.
+    fn render_and_find_link(feed: &mut MessageFeed, msgs: &[FeedMessage], w: u16, h: u16) -> Rect {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            feed.render(f, f.area(), "Чат", "", msgs, &Palette::default(), ru());
+        })
+        .unwrap();
+        let hit = feed.link_hits.first().copied().expect("a drawn reference");
+        Rect::new(hit.start, hit.row, hit.end - hit.start, 1)
+    }
+
+    /// A click on the address follows it; the cells on either side of it do not.
+    #[test]
+    fn a_click_on_the_address_resolves_and_its_neighbours_do_not() {
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let msgs = vec![msg(
+            FeedRole::Assistant,
+            &format!("см. {} дальше", crate::features::chat_links::uri(id)),
+            "",
+        )];
+        let at = render_and_find_link(&mut feed, &msgs, 60, 12);
+
+        assert_eq!(feed.chat_link_at(at.x, at.y), Some(id), "first cell");
+        assert_eq!(
+            feed.chat_link_at(at.x + at.width - 1, at.y),
+            Some(id),
+            "last cell"
+        );
+        // Half-open range: the cell past the end is prose again.
+        assert_eq!(feed.chat_link_at(at.x + at.width, at.y), None);
+        assert_eq!(feed.chat_link_at(at.x.saturating_sub(1), at.y), None);
+        assert_eq!(feed.chat_link_at(at.x, at.y + 1), None, "another row");
+    }
+
+    /// The map is in absolute terminal cells, so the panel's border and the
+    /// rail must already be accounted for — an off-by-two here would make every
+    /// click land two columns to the left of what the user sees.
+    #[test]
+    fn the_click_map_is_in_absolute_screen_cells() {
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let uri = crate::features::chat_links::uri(id);
+        let msgs = vec![msg(FeedRole::Assistant, &uri, "")];
+        let at = render_and_find_link(&mut feed, &msgs, 60, 12);
+
+        // Panel border (1) + rail ("▌ ", 2 columns) — the address starts there.
+        assert_eq!(at.x, 3, "border + rail");
+        assert_eq!(at.width as usize, uri.chars().count());
+    }
+
+    /// An unrendered feed has no map, and answering "no link" is the honest
+    /// answer rather than a guess against a layout that does not exist.
+    #[test]
+    fn an_undrawn_feed_has_no_clickable_links() {
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        feed.build_lines(
+            &[msg(
+                FeedRole::Assistant,
+                &crate::features::chat_links::uri(id),
+                "",
+            )],
+            &Palette::default(),
+            80,
+            ru(),
+        );
+        assert_eq!(feed.chat_link_at(3, 1), None);
+    }
+
+    /// Scrolling moves the map with the content: the click map is rebuilt from
+    /// the rows actually drawn, so a reference scrolled out of view stops being
+    /// clickable and one scrolled into view starts.
+    #[test]
+    fn the_map_follows_the_scroll() {
+        let id = chat_uuid(1);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        let mut msgs = vec![msg(
+            FeedRole::Assistant,
+            &crate::features::chat_links::uri(id),
+            "",
+        )];
+        msgs.extend((0..30).map(|i| msg(FeedRole::User, &format!("реплика-{i}"), "")));
+
+        // The tail is what a fresh feed shows, and the address is far above it.
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            feed.render(f, f.area(), "Чат", "", &msgs, &Palette::default(), ru());
+        })
+        .unwrap();
+        assert!(
+            feed.link_hits.is_empty(),
+            "a reference off-screen is not clickable"
+        );
+
+        feed.scroll_up(usize::MAX);
+        term.draw(|f| {
+            feed.render(f, f.area(), "Чат", "", &msgs, &Palette::default(), ru());
+        })
+        .unwrap();
+        let hit = feed.link_hits.first().copied().expect("scrolled into view");
+        assert_eq!(feed.chat_link_at(hit.start, hit.row), Some(id));
     }
 
     /// Concatenates the rendered lines' text (a helper for header assertions).

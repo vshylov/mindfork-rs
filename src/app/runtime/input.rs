@@ -179,9 +179,16 @@ pub(super) fn process_input_batch(
                     quit = true;
                 }
             }
-            // The mouse wheel scrolls the chat feed. On the list/settings (which have their own
-            // navigation) scrolling is ignored.
-            Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => screen.handle_mouse(mouse),
+            // The mouse wheel scrolls the chat feed, and a left click can land on a
+            // `chat://` reference (spec §11.3). On the list/settings (which have their
+            // own navigation) mouse events are ignored.
+            Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => {
+                if let Some(intent) = screen.handle_mouse(mouse)
+                    && dispatch(intent, cmd_tx, screen, active, back)
+                {
+                    quit = true;
+                }
+            }
             Chunk::Event(_) => {}
         }
     }

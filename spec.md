@@ -1771,11 +1771,13 @@ this?"*; this screen answers *"where exactly, and take me there."*
   style wherever it appears in the feed — an assistant's answer, a user's
   message, a tool card, "thoughts" — and **`Ctrl+L`** opens a picker of the
   ones this chat holds (newest first, deduplicated, title + date), `Enter`
-  follows the chosen one. A key rather than a click, because mouse capture is
-  `Ctrl+W` and **off by default**: turning it on costs native terminal
-  selection, so a click would be unreachable for most users; the mouse is a
-  second stage. Following an address is an ordinary chat switch — an address
-  names a conversation, not a message — and `Esc` keeps its usual meaning.
+  follows the chosen one. **With mouse capture on (`Ctrl+W`), a left click on
+  the address follows it too** — the first thing in the feed that is clickable
+  at all. The key is the route, the click is the convenience: capture is **off
+  by default** because turning it on costs native terminal selection, so a
+  click-only design would be unreachable for most users. Following an address
+  is an ordinary chat switch — an address names a conversation, not a message —
+  and `Esc` keeps its usual meaning.
   Three properties are decided rather than incidental:
   - **Only a reference that resolves is drawn as one.** The address book is
     the current profile's non-hidden chats (the open one included), derived
@@ -1793,7 +1795,16 @@ this?"*; this screen answers *"where exactly, and take me there."*
   - **The two degenerate cases are told apart** — a chat with no references at
     all says what a reference looks like instead of opening an empty list, and
     a reference back to the open conversation says so instead of quietly doing
-    nothing.
+    nothing. Clicking one behaves the same way, with the same words.
+  - **The click map is rebuilt from the rows actually drawn**, each frame, in
+    absolute terminal cells, and covers only the viewport: that is the one
+    point where the wrap, the scroll and the panel's origin have all been
+    applied, so no stored assumption about them can go stale, and the cost is
+    bounded by the screen rather than by the conversation. A feed that has not
+    been drawn has no map and reports no links. One consequence is stated
+    rather than hidden: an address the wrap **split across two rows** is styled
+    but not clickable — half an address is not an address — and `Ctrl+L`
+    remains the route that always works.
 - **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
 - **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
@@ -2180,6 +2191,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+O` | collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3) |
 | `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
 | click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
+| click on a `chat://` reference in the feed | follow it (with `Ctrl+W` capture on; `Ctrl+L` is the route that needs no mouse) |
 | `Ctrl+B` | the emoji picker popup (inserted into the input box at the cursor; remembers the last choice) |
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote: a picker of the conversations this chat links to, `Enter` opens (§11.3) |
 | `PageUp`/`PageDown` / mouse wheel | scroll the feed |

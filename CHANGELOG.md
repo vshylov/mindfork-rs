@@ -30,7 +30,8 @@ split by subsystem.
 - **Links to conversations.** When the assistant mentions another of your
   conversations it now writes its address as `chat://<id>`, and the feed draws
   that as a link. **`Ctrl+L`** lists the conversations the open chat links to
-  and opens the one you pick. Only addresses that really lead somewhere — a
+  and opens the one you pick — and with mouse capture on (`Ctrl+W`) you can
+  simply click a link, the first thing in the feed that is clickable at all. Only addresses that really lead somewhere — a
   conversation of the current companion — are drawn as links, so a link is
   never a dead end; the rest stays ordinary text. (Requires the cross-chat
   tools below to be enabled — they are what hands the assistant the addresses.)

@@ -597,21 +597,27 @@ impl ChatScreen {
     }
 
     /// Handles a mouse event (only arrives when mouse capture `Ctrl+W` is
-    /// on): the wheel scrolls the chat feed; a left-button click/drag in the
-    /// input box places the cursor / grows the selection (stage D of the
+    /// on): the wheel scrolls the chat feed; a left click on a `chat://`
+    /// reference in the feed follows it (spec §11.3); a left-button click/drag
+    /// in the input box places the cursor / grows the selection (stage D of the
     /// plan). Works only in the main view — with an overlay/popup/help open
     /// this is a no-op (scrolling/cursor edits under them would be
-    /// unexpected). A click/drag outside the field's area (into the feed) —
-    /// a no-op (feed selection is a separate track). See spec §11.3, §11.5.
-    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+    /// unexpected). A click elsewhere in the feed is still a no-op (feed
+    /// selection is a separate track). See spec §11.3, §11.5.
+    ///
+    /// The reference is tried **before** the input box, and the two cannot
+    /// compete: they own disjoint areas of the screen, and `mouse_press`
+    /// already answers `false` outside its own.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ChatIntent> {
         if self.search.is_some()
             || self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
+            || self.chat_links.is_some()
             || self.profile_overlay.is_some()
             || self.confirm.is_some()
         {
-            return;
+            return None;
         }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
@@ -620,6 +626,15 @@ impl ChatScreen {
             // (during impersonation a preview sits in its place, and the
             // field's `last_area` is stale).
             MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
+                if let Some(chat) = self.feed_view.chat_link_at(mouse.column, mouse.row) {
+                    // Clicking the conversation you are already in is not a
+                    // switch — the picker's rule, and the same wording.
+                    if self.active_chat == Some(chat) {
+                        self.push_note(self.loc.t("ui.chat.links_here"));
+                        return None;
+                    }
+                    return Some(ChatIntent::OpenChatLink(chat));
+                }
                 self.input.mouse_press(mouse.column, mouse.row);
             }
             MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
@@ -627,6 +642,7 @@ impl ChatScreen {
             }
             _ => {}
         }
+        None
     }
 
     /// Takes the "the feed was just scrolled" flag and tells the loop
