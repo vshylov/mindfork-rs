@@ -41,6 +41,14 @@ split by subsystem.
   will work. `/search` also goes straight to the message search that used to
   take three keys to reach. The keys are unchanged.
 
+  The two actions that lived inside other screens followed: **`/profile list`**,
+  **`/profile new [name]`** and **`/profile delete <name>`** (the settings
+  screen's `Ctrl+N`/`Ctrl+D`), and **`/self clear`** (`Ctrl+K` twice in the
+  self-model screen). Both destructive ones always ask first — a command names
+  its target by word, and a shortened name could match a profile you did not
+  have in mind — and creating or deleting a profile now leaves a note saying
+  what happened, whichever route you took.
+
 - **Links to conversations.** When the assistant mentions another of your
   conversations it now writes its address as `chat://<id>`, and the feed draws
   that as a link. **`Ctrl+L`** lists the conversations the open chat links to

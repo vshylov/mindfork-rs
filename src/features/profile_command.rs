@@ -12,7 +12,7 @@
 //! **Why it exists at all**: profile CRUD lives only behind `Ctrl+N`/`Ctrl+D`
 //! inside the settings screen's "Profiles" section, and both keys are claimed by
 //! a browser tab (`Ctrl+N` opens a window) — stage 2 of
-//! [docs/research/command-only-control.md](../../docs/research/command-only-control.md),
+//! [docs/history/command-only-control.md](../../docs/history/command-only-control.md),
 //! fork F5. A physical-key alternate (`Insert`) was rejected there: a Mac client
 //! keyboard has no such key, and a browser terminal is reached from whatever
 //! machine the user is sitting at.

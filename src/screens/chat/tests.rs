@@ -3260,7 +3260,7 @@ fn a_click_is_ignored_while_the_picker_is_open() {
     );
 }
 
-// ---------- typed routes for the chords (docs/research/command-only-control.md) ----------
+// ---------- typed routes for the chords (docs/history/command-only-control.md) ----------
 
 use crate::features::ui_command::{self, Arity, UiCommand};
 

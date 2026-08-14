@@ -9,7 +9,7 @@
 //! that blocks a command says so and names the route that works
 //! (docs/lessons.md §4).
 //!
-//! See [docs/research/command-only-control.md](../../../docs/research/command-only-control.md)
+//! See [docs/history/command-only-control.md](../../../docs/history/command-only-control.md)
 //! §4.3 and spec §11.7.
 
 use super::*;
@@ -229,7 +229,7 @@ impl ChatScreen {
 
     /// The profile commands (`/profile list|new|delete`) — the settings screen's
     /// `Ctrl+N`/`Ctrl+D`, reachable from a host that keeps those keys. Stage 2 of
-    /// docs/research/command-only-control.md (fork F5). Returns `None` when the
+    /// docs/history/command-only-control.md (fork F5). Returns `None` when the
     /// text is not a `/profile` command.
     pub(super) fn try_profile_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
         use crate::features::profile_command::{self, ProfileCommand};

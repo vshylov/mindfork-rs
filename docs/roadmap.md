@@ -387,13 +387,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   application isn't done. Note that it is no longer the *answer* to a host
   stealing keys — the typed routes are (see "Recently closed") — so this is
   now a convenience for power users rather than an accessibility gap.
-- **Command-only control, stage 2** — the leftovers the typed routes do not
-  cover, both chord-only inside their screens: profile CRUD in the settings
-  screen (`Ctrl+N`/`Ctrl+D`) and clearing the self-model (`Ctrl+K` twice).
-  Fork F5 decided the shape — `/profile new [name]`, `/profile delete <name>`,
-  `/self clear`, each behind the confirmation its key already uses — since a
-  Mac client keyboard has no `Insert` to offer as an in-screen alternate. See
-  [docs/research/command-only-control.md](research/command-only-control.md) §4.5.
 - **OSC 52 for the clipboard** — `F5`/`/copy` and `Ctrl+C` write through
   `arboard`, i.e. the clipboard of the machine the *process* runs on. Under a
   browser terminal (JupyterLab) the pty is server-side, so a copy lands
@@ -423,7 +416,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
-- **Command-only control** (stage 1 of 2, complete): the app is now operable
+- **Command-only control** (stages 1–2, complete): the app is now operable
   without a single chord, for terminals embedded in a host that claims them.
   The item did not exist on this list — it came from the question "could the app
   be driven by commands alone?", and the survey answered it with a measurement:
@@ -437,8 +430,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   parsers would have been the duplication seam again) and the help tab derives
   its rows from it. What made the scope small was noticing that typing itself
   survives every host, and that every `Esc` chain already ends at the chat
-  screen: safe keys navigate, commands act. See
-  [command-only-control.md](research/command-only-control.md), spec §11.7.
+  screen: safe keys navigate, commands act. Stage 2 then took the two actions
+  that lived inside *other* screens — `/profile list|new|delete` and
+  `/self clear` — and is the one place the track breaks parity on purpose: both
+  always confirm, because a typed prefix can name a profile the user did not
+  picture where the screen would have shown it selected. Verified live in VS
+  Code's integrated terminal. See
+  [command-only-control.md](history/command-only-control.md), spec §11.7.
 - **Navigable `chat://` references** (stages 1–2, complete): a conversation now
   has **one address**, and the assistant knows it. The item asked only for the
   second half — recognize a reference and resolve it — and the survey moved its

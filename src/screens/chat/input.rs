@@ -137,7 +137,7 @@ impl ChatScreen {
     /// (e.g. `Ctrl+A`/`Ctrl+Z` belong to the input box).
     /// `pub(super)` because the typed routes reach their action through this
     /// very function (`super::commands`): a command and its chord must not grow
-    /// two behaviours. See docs/research/command-only-control.md §4.3.
+    /// two behaviours. See docs/history/command-only-control.md §4.3.
     pub(super) fn handle_ctrl_shortcut(&mut self, physical: char) -> Option<Option<ChatIntent>> {
         match physical {
             // Quit moved to Ctrl+Q/F10 (F10 — in `handle_plain_key`);

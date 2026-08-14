@@ -2141,6 +2141,18 @@ The help dialog's "Commands" tab is **composed** (`popups::command_rows`) from
 the parser-owning commands, then the registry, then the way out — deriving the
 middle section is what makes a command discoverable by construction.
 
+Stage 2 added the two actions that live in *other* screens:
+`features/profile_command.rs` (`/profile list|new|delete` — a subcommand plus an
+argument, hence a module) and `/self clear` (a closed-set `Arity::Subcommand` in
+the registry). Both destructive ones set `ChatScreen::confirm` **directly**
+rather than through `trigger_destructive`: they always ask (where the keys they
+mirror do not) and generation does not gate them (nor does it gate those keys),
+so `ConfirmAction` gained two data-carrying variants and stopped being `Copy`.
+The commands reach `AppCommand::CreateProfile`/`DeleteProfile`/`UpdateSelfModel`
+— the same three the settings and self-model screens send — and the *outcome* of
+profile CRUD is now announced by the orchestrator (`AppEvent::Notice`), so the
+claim is made where the write happens and both routes answer alike.
+
 **"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
 sends `AppCommand::RequestSelfModel`; the screen is created on the reply

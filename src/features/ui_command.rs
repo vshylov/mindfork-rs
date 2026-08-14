@@ -9,7 +9,7 @@
 //! which closes the tab the session runs in. Typed text is the one input no
 //! host can take away, which is the argument that already put `/image paste`
 //! next to `Ctrl+V` (spec §9.10) and `/exit` next to `Ctrl+Q`/`F10`
-//! (spec §11.7). See [docs/research/command-only-control.md](../../docs/research/command-only-control.md).
+//! (spec §11.7). See [docs/history/command-only-control.md](../../docs/history/command-only-control.md).
 //!
 //! **Why a registry and not nineteen parser modules.** Every command here is a
 //! sibling of the last: an exact word, optionally one free-text argument. Copied

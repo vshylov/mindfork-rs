@@ -229,7 +229,7 @@ pub enum ChatIntent {
 /// [`ChatScreen::trigger_destructive`] and asked about only when
 /// `interface.confirm_destructive_keys` is on — and never while a turn runs.
 /// The other two are typed routes into another screen's territory (stage 2 of
-/// docs/research/command-only-control.md); their commands set this state
+/// docs/history/command-only-control.md); their commands set this state
 /// **directly**, because they differ from the keys in both respects: they always
 /// ask (a command names its target by word where the screen would have shown it
 /// selected, so the popup is what puts the target back in front of the user),
