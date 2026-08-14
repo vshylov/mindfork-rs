@@ -106,32 +106,60 @@ impl ActiveScreen {
     }
 }
 
-/// A one-deep back-stack for the message-level search results: where `Esc` in the
-/// chat goes when that chat was reached by opening a hit
-/// ([`SearchIntent::OpenHit`]). Without it the user drilled down from the results
-/// and `Esc` threw them away, dropping into the chat list.
+/// A one-deep back-stack: where `Esc` in the chat goes when that chat was
+/// reached by drilling **down** rather than by picking it. Without it the step
+/// the user just took is thrown away and they land in the chat list.
 ///
-/// The **screen itself** is stashed, not the query: re-running the search would
-/// lose the selection and the scroll position, and working through a list of hits
-/// one by one is exactly what going back is for. It is deliberately session state
-/// — a local of [`run_loop`], never persisted.
+/// Two ways down exist, and they differ only in what "back" *is*:
+///
+/// - a **message-level search hit** ([`SearchIntent::OpenHit`]) — back is the
+///   results screen;
+/// - a **`chat://` reference** followed in the feed (spec §11.3) — back is the
+///   conversation it was followed from.
+///
+/// **One deep, and consumed on use**, for both: the next `Esc` goes on to the
+/// chat list as it always did. So a chain of followed references (A → B → C)
+/// steps back to B and no further — deliberate, and the same shape the search
+/// half has always had. A true stack would have to answer what an ordinary chat
+/// switch does to the *middle* of it, which is a question nothing has asked yet
+/// (docs/roadmap.md).
+///
+/// It is deliberately session state — a local of [`run_loop`], never persisted.
 ///
 /// The chat screen knows nothing about any of this (FSD: `screens` may not depend
 /// on `app`). [`ChatIntent::OpenChatList`] already means "go back" from its point
-/// of view; which screen that is gets resolved in [`dispatch`].
-struct SearchReturn {
-    /// The live results screen, with its selection and scroll intact. Boxed as it
-    /// is inside [`ActiveScreen`] — the screen is large
-    /// (clippy::large_enum_variant).
-    screen: Box<SearchScreen>,
-    /// The chat the jump opened. Activating a **different** chat means the user
-    /// left by an ordinary route (picking one in the list, `Ctrl+N`, a clone…),
-    /// at which point the results are no longer where they came from — see the
-    /// `ChatActivated` arm of [`apply_event`], the single funnel every one of
-    /// those routes ends in. Re-activating the *same* chat (regeneration,
-    /// deleting an exchange, a repeat jump) is not leaving it, so it keeps the
-    /// way back.
-    chat: Uuid,
+/// of view; what that resolves to is decided in [`dispatch`].
+enum Back {
+    /// Back to the hits the chat was opened from. The **screen itself** is
+    /// stashed, not the query: re-running the search would lose the selection
+    /// and the scroll position, and working through a list of hits one by one is
+    /// exactly what going back is for.
+    Search {
+        /// Boxed as it is inside [`ActiveScreen`] — the screen is large
+        /// (clippy::large_enum_variant).
+        screen: Box<SearchScreen>,
+        chat: Uuid,
+    },
+    /// Back to the conversation a `chat://` reference was followed from. Only
+    /// the id is kept: a chat is reopened from storage in full, so there is no
+    /// screen state a re-activation would lose.
+    Link { origin: Uuid, chat: Uuid },
+}
+
+impl Back {
+    /// The chat this way back leads *out of* — the one the jump opened.
+    ///
+    /// Activating a **different** chat means the user left by an ordinary route
+    /// (picking one in the list, `Ctrl+N`, a clone…), at which point the stash
+    /// is no longer where they came from — see the `ChatActivated` arm of
+    /// [`apply_event`], the single funnel every one of those routes ends in.
+    /// Re-activating the *same* chat (regeneration, deleting an exchange, a
+    /// repeat jump) is not leaving it, so it keeps the way back.
+    fn chat(&self) -> Uuid {
+        match self {
+            Back::Search { chat, .. } | Back::Link { chat, .. } => *chat,
+        }
+    }
 }
 
 /// Where `Esc` currently goes, for the status bar's hint — **derived** from the
@@ -142,9 +170,10 @@ struct SearchReturn {
 /// funnel), which is exactly how a hint drifts away from the key it describes.
 /// Deriving it in the draw path instead makes "the bar says where `Esc` goes"
 /// true of every frame by construction.
-fn esc_target(back: &Option<SearchReturn>) -> EscTarget {
+fn esc_target(back: &Option<Back>) -> EscTarget {
     match back {
-        Some(_) => EscTarget::SearchResults,
+        Some(Back::Search { .. }) => EscTarget::SearchResults,
+        Some(Back::Link { .. }) => EscTarget::PreviousChat,
         None => EscTarget::ChatList,
     }
 }
@@ -343,7 +372,7 @@ fn run_loop(
     // One step back from a chat opened out of the search results (see
     // `SearchReturn`). Lives beside `active` rather than inside it: it has to
     // survive while another screen is in front.
-    let mut back: Option<SearchReturn> = None;
+    let mut back: Option<Back> = None;
     // The clipboard is created lazily on the first copy (on headless Linux without
     // X11/Wayland the constructor may fail — then we show an error, not panic).
     let mut clipboard: Option<arboard::Clipboard> = None;
@@ -465,7 +494,7 @@ fn draw_frame(
     terminal: &mut DefaultTerminal,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &Option<SearchReturn>,
+    back: &Option<Back>,
     last_screen: &mut std::mem::Discriminant<ActiveScreen>,
 ) -> Result<()> {
     // The status bar's `Esc` hint, derived from the back-stack for this
@@ -549,7 +578,7 @@ fn draw_frame(
 fn handle_input_tick(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
     dirty: &mut bool,

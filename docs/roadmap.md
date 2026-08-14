@@ -160,11 +160,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     and `OpenChatAt` takes a message uuid — so a hit could open exactly where it
     matched. Left out until the address format has proved itself without a path
     component.
-  - **a back-stack for a followed link** (fork F6): today `Esc` keeps its usual
-    meaning (the chat list), where the origin chat is one selection away.
-    Extending `SearchReturn` with a chat-origin variant costs the `esc_target`
-    hint, the `clear_search_return_if_left` funnel and a second stash kind — to
-    be revisited if losing the way back reads as a trap in real use.
+  - **a back-stack deeper than one step**: `Esc` after following a reference now
+    returns to the conversation it was followed from (fork F6, reopened by use
+    and shipped), but a chain A → B → C steps back to B and no further — the
+    shape the search half has always had. A true stack would have to answer what
+    an ordinary chat switch does to its *middle*, which nothing has asked for.
   - **an address split across two rendered rows is styled but not clickable**
     (`Ctrl+L` still follows it). Fixing it means carrying link identity through
     the wrap, which is a span-metadata problem ratatui gives no room for.
@@ -425,7 +425,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   splits it where the post-render matching used by in-feed search would miss it.
   `Ctrl+L` follows a reference and — stage 2 — so does a click, the first
   clickable thing in the feed, from a map derived at render time for the viewport
-  only. See [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3.
+  only; `Esc` retraces the step, through the same one-deep back-stack the search
+  screen uses (fork F6, reopened by use once following a link and losing the way
+  back read as a trap). See [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3.
 - **Images in a message** (stages 1–2, complete): `/image attach|remove|list`
   shows a picture to a local `llama-server --mmproj` and to all four clouds. The
   decision that shaped everything else was **not** copying `/file`: an image is

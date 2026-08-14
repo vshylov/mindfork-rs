@@ -424,6 +424,7 @@
   "ui.status.hotkey.help": "help",
   "ui.status.hotkey.chats": "chats",
   "ui.status.hotkey.results": "to search",
+  "ui.status.hotkey.back_chat": "to chat",
   "ui.status.hotkey.new": "new",
   "ui.status.hotkey.settings": "settings",
   "ui.status.hotkey.quit": "quit",

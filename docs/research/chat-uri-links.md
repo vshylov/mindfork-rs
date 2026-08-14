@@ -5,7 +5,8 @@ user (F1, F3, F4, F7, all as recommended); F2, F5 and F6 carry their
 recommendation and were not put separately, so they stay open to revision
 during implementation. **Both stages implemented** in `feat/chat-uri-links`
 (stage 1: the address, the teaching, the styling, the `Ctrl+L` picker; stage 2:
-the click). Stage 2 departed from §4.5's sketch — the click map is derived in
+the click), and F6 revisited and reversed after use (`Esc` now retraces a
+followed reference). Stage 2 departed from §4.5's sketch — the click map is derived in
 `render` for the viewport instead of mirroring `InputBox::last_area`; see the
 journal entry.
 Date: 2026-08-14.
@@ -288,9 +289,13 @@ spec, not worth a gate.
   [runtime/mod.rs:122-135](../../src/app/runtime/mod.rs)) with a chat-origin
   variant so `Esc` retraces the link. Real complexity: the `esc_target` hint,
   the `clear_search_return_if_left` funnel and a second stash kind.
-  Not put to the user separately; **(a) carries by recommendation**, and a live
-  run is the honest judge — if following a link and losing the way back reads
-  as a trap in real use, (b) is stage 2's neighbour.
+  Not put to the user separately; **(a) carried by recommendation** into stages
+  1–2, with a live run named as the honest judge — and it judged: after using
+  the feature the user asked for the way back, so **(b) shipped** (2026-08-14,
+  `feat/chat-link-back-stack`). `SearchReturn` became a two-variant `Back`
+  rather than gaining a second parallel stash; the clearing funnel, the
+  `esc_target` derivation and the `Esc` arm all stayed single. See
+  [journal/ui-feed.md](../journal/ui-feed.md).
 
 - **F7. Whether the tool output changes its printed address.**
   (a) **Yes — print `chat://a1b2c3d4` instead of `[a1b2c3d4]`** *(recommended)*:

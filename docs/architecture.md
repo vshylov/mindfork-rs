@@ -2095,13 +2095,18 @@ the results with a self-model snapshot, and the `Settings` broadcast would have
 left the new screen's theme and UI language frozen — so both are now exhaustive by
 variant, which forces the next screen to decide too.
 
-**Going back from a jump — a one-deep back-stack** (`SearchReturn`, a local of
+**Going back from a jump — a one-deep back-stack** (`Back`, a local of
 `run_loop` beside `active` rather than a variant of it: it has to survive while
-another screen is in front). Opening a hit stashes the **live `SearchScreen`**, not
-the query — re-running the search would lose the selection and scroll, which is
-exactly what coming back is for — and `ChatIntent::OpenChatList` consumes it:
-`Esc` in that chat restores the results whole, the next `Esc` goes on to the list
-as before. The chat screen learns nothing about searching (FSD: `screens` may not
+another screen is in front). Two ways down write it, and they differ only in what
+"back" is. `Back::Search` — opening a hit stashes the **live `SearchScreen`**, not
+the query, since re-running the search would lose the selection and scroll, which
+is exactly what coming back is for. `Back::Link` — following a `chat://`
+reference (spec §11.3) stashes only the **origin chat's id**, because a chat is
+reopened from storage in full and has no screen state to lose. Either way
+`ChatIntent::OpenChatList` consumes it: `Esc` in that chat restores the results
+whole (or switches back to the origin), the next `Esc` goes on to the list
+as before; a chain of followed references therefore steps back one conversation
+and no further. The chat screen learns nothing about searching (FSD: `screens` may not
 depend on `app`) — `OpenChatList` already means "go back" from its point of view,
 and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared
 in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is

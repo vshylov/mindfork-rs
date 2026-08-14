@@ -154,7 +154,7 @@ pub(super) fn process_input_batch(
     batch: Vec<Event>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
@@ -202,7 +202,7 @@ fn handle_key_event(
     key: KeyEvent,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
