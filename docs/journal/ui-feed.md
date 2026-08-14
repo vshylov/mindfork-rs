@@ -1776,3 +1776,15 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   keep it, and the search half obeying the same rule), plus the two existing
   back-stack tests updated to the enum. Suite **2216 → 2222**. **No live run**
   (AGENTS.md §3): pure UI, no engine, memory or tool path touched.
+- **Sonar round — the duplication gate's fifth recurrence, and the first caused
+  by fixtures rather than code**: **19.8%** new-code duplication against the 3%
+  bar, the worst score yet, entirely inside `runtime/tests.rs`. Six tests of one
+  back-stack, each spelling out the five locals `dispatch`/`apply_event` take and
+  the same three-step "arrive here" prologue; nothing was copied from older code,
+  the copies were of each other, written minutes apart. Fixed with a seam rather
+  than suppression, as every previous recurrence was: a `Harness` struct owning
+  the loop's state with one method per step (`apply`, `dispatch`,
+  `follow_a_reference`, `arrive_from_a_search_hit`), which collapses each
+  prologue to two lines and costs no test a word of what it asserts. Test count
+  unchanged at 2222. The generalization is now in lessons §2: **if the third test
+  starts the same way as the first two, that opening is a fixture, not a test.**

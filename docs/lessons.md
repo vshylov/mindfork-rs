@@ -299,9 +299,19 @@ the paste-PR seam three times over: one SQL body with an optional `IN`, one
 paged-reader schema helper next to `search_parameters`, one narrow-profile smoke
 helper. When a new thing is a sibling of an existing thing, budget for the seam at
 design time — the pair's *contract* was shared from the start, its boilerplate was not.
+The fifth came from **test fixtures written in the same PR**, and scored the worst yet
+at **19.8%**: six tests of one back-stack, each spelling out the five locals `dispatch`
+and `apply_event` take plus the same three-step "arrive here" prologue. Nothing was
+copied from older code — the copies were of each other, written minutes apart, which is
+exactly the shape that reads as thorough while being sliding self-duplication. A test
+harness (one struct owning the loop's state, one method per step) collapsed each
+prologue to two lines with no test losing a word of what it asserts. **The rule
+generalizes past production code: if the third test starts the same way as the first
+two, that opening is a fixture, not a test.**
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
-its tables align*, *cross-chat search for the assistant*.
+its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a followed
+`chat://` reference*.
 
 ---
 
