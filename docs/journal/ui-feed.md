@@ -1742,8 +1742,37 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   `ui.status.hotkey.back_chat`), still **derived** in the draw path rather than
   mirrored into a flag — so "the bar says where `Esc` goes" stays true by
   construction with three targets exactly as it was with two.
-- **Tests**: 3 new (the round trip and its status hint, the ordinary switch
+- **Two corrections straight from use**, the same evening:
+  - **"to chat" was a bad hint.** The status bar says where `Esc` goes, and for
+    this target it said *to the conversation* — which distinguishes nothing for
+    someone already sitting in one. Now `back` (and its Russian equivalent). The
+    search target keeps `to search`, and the asymmetry is the point: results are
+    a place you can name, the previous chat is only a direction.
+  - **Leaving was not the only way to stop needing a way back — arriving is the
+    other.** The stack was dropped when the user opened a *different* chat, so
+    it survived sending a message, regenerating, taking back an exchange: an
+    `Esc` several minutes and several turns later would silently teleport them
+    out of the conversation they had settled into. Now
+    `AppCommand::works_on_the_open_chat` drops it in `dispatch`, before the
+    command is sent. The predicate is an **exhaustive match on `AppCommand`**,
+    not a list of the interesting variants — a new command cannot join the enum
+    unclassified, because the compiler asks. That is the honest version of the
+    "enumerating routes by hand rots silently" warning the leaving funnel
+    already carries.
+  - The line drawn: *starts a turn or changes what the conversation stores*
+    (send, regenerate, impersonate, `Ctrl+E`, `/compact`, `/file attach|remove`)
+    ends the way back; reading, folding blocks and staging an image for the
+    **next** message — turn-scoped, never stored — do not. The draft needed no
+    thought: it never reaches `dispatch` at all, since the loop polls
+    `take_dirty_draft` and sends `SetDraft` itself.
+  - **Applied to the search half too**, deliberately: one back-stack, one
+    meaning of "you have arrived". It changes behaviour that shipped in the
+    chat-search track, and it is the better behaviour — the results screen has
+    no business reappearing under someone who has been working in the chat for
+    ten turns.
+- **Tests**: 6 new (the round trip and its status hint, the ordinary switch
   dropping the way back while a re-activation keeps it, a reference replacing a
-  stashed result screen), plus the two existing back-stack tests updated to the
-  enum. Suite **2216 → 2219**. **No live run** (AGENTS.md §3): pure UI, no
-  engine, memory or tool path touched.
+  stashed result screen, the seven arriving commands, the boundary cases that
+  keep it, and the search half obeying the same rule), plus the two existing
+  back-stack tests updated to the enum. Suite **2216 → 2222**. **No live run**
+  (AGENTS.md §3): pure UI, no engine, memory or tool path touched.

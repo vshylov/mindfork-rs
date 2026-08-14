@@ -229,6 +229,80 @@ pub enum AppCommand {
     Quit,
 }
 
+impl AppCommand {
+    /// Does this command **work on the open conversation** — change what it
+    /// stores, or start a turn in it?
+    ///
+    /// The one consumer is the `Esc` back-stack (`app::runtime::Back`): a way
+    /// back exists for someone who is *looking* at the chat they drilled into,
+    /// and stops making sense the moment they start working in it. See the
+    /// clearing funnel in `app::runtime::dispatch`.
+    ///
+    /// Deliberately an **exhaustive match** rather than a list of the few
+    /// interesting variants: a new command then cannot join the enum without
+    /// someone deciding which side it falls on — the compiler asks. The rule is
+    /// narrow on purpose. Reading (`FileList`, `CopyChat`, `Tts*`), looking
+    /// (`SetFeedView`), typing without sending (`SetDraft`) and staging for the
+    /// *next* message (`Image*` — turn-scoped, never stored) all leave the way
+    /// back alone; a chat switch is not here at all, because activation already
+    /// has its own funnel.
+    pub fn works_on_the_open_chat(&self) -> bool {
+        match self {
+            // Starts a turn in this conversation.
+            AppCommand::SendMessage(_)
+            | AppCommand::RegenerateLast
+            | AppCommand::Impersonate { .. }
+            // Changes what the conversation stores.
+            | AppCommand::DeleteLastExchange
+            | AppCommand::Compact
+            | AppCommand::FileAttach { .. }
+            | AppCommand::FileRemove { .. } => true,
+
+            AppCommand::ConfirmTool { .. }
+            | AppCommand::SetDraft(_)
+            | AppCommand::SetFeedView(_)
+            | AppCommand::Cancel
+            | AppCommand::CancelImpersonation
+            | AppCommand::NewChat { .. }
+            | AppCommand::SwitchChat(_)
+            | AppCommand::OpenChatAt { .. }
+            | AppCommand::OpenChatAtFirstMatch { .. }
+            | AppCommand::RenameChat { .. }
+            | AppCommand::AutoRenameChat(_)
+            | AppCommand::CloneChat(_)
+            | AppCommand::CopyChat(_)
+            | AppCommand::DeleteChat(_)
+            | AppCommand::SearchChats(_)
+            | AppCommand::SearchMessages { .. }
+            | AppCommand::CreateProfile { .. }
+            | AppCommand::DeleteProfile(_)
+            | AppCommand::UpdateConfig(_)
+            | AppCommand::UpdateProfile { .. }
+            | AppCommand::RagAdd { .. }
+            | AppCommand::RagDelete { .. }
+            | AppCommand::RagList
+            | AppCommand::RagRebuild
+            | AppCommand::Reindex
+            | AppCommand::FileList
+            | AppCommand::ImageAttach { .. }
+            | AppCommand::ImageRemove { .. }
+            | AppCommand::ImageList
+            | AppCommand::ImagePaste(_)
+            | AppCommand::Tts(_)
+            | AppCommand::TtsStop
+            | AppCommand::TtsPause
+            | AppCommand::TtsResume
+            | AppCommand::RequestSelfModel
+            | AppCommand::UpdateSelfModel(_)
+            | AppCommand::ConfirmMcpCatalog(_)
+            | AppCommand::SetSecret { .. }
+            | AppCommand::ReconnectMcpServer(_)
+            | AppCommand::ImportMcpServers(_)
+            | AppCommand::Quit => false,
+        }
+    }
+}
+
 /// Event from the orchestrator to UI. This is the only way UI updates its read-only
 /// projection.
 #[derive(Debug, Clone)]

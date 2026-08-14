@@ -538,6 +538,17 @@ pub(super) fn dispatch(
         // holding the `arboard` client. It never reaches here.
         ChatIntent::PasteImage { .. } => return false,
     };
+    // A way back is for someone *looking* at the chat they drilled into. Once
+    // they work in it — send, regenerate, take back an exchange, compact, attach
+    // a file — they have arrived, and an `Esc` that silently teleported them out
+    // would be a trap of its own. The other clearing rule (leaving for a
+    // different chat) is the `ChatActivated` funnel; this one is about staying.
+    //
+    // Which commands count is `AppCommand`'s own answer, as an exhaustive match,
+    // so a new command cannot slip past this unclassified.
+    if command.works_on_the_open_chat() {
+        *back = None;
+    }
     let _ = cmd_tx.send(command);
     false
 }

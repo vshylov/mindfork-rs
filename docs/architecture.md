@@ -2108,13 +2108,19 @@ whole (or switches back to the origin), the next `Esc` goes on to the list
 as before; a chain of followed references therefore steps back one conversation
 and no further. The chat screen learns nothing about searching (FSD: `screens` may not
 depend on `app`) — `OpenChatList` already means "go back" from its point of view,
-and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared
-in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
+and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared by two rules, one for **leaving** and one for **arriving**. Leaving
+runs in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
 where every chat-opening route ends (the list, `Ctrl+N`, a clone, a jump, restoring
 the last chat at startup); enumerating those routes by hand is what would rot
 silently as routes are added. The test is a **different** chat: `activate()` also
 re-emits for the same chat after a regeneration or `Ctrl+E`, and clearing there
-would drop the way back for no reason. It is session state, never persisted.
+would drop the way back for no reason. Arriving is `AppCommand::works_on_the_open_chat`,
+checked in `dispatch` just before the command is sent: a way back is for someone
+*looking* at the chat they drilled into, and once they send, regenerate, take back an
+exchange, compact or attach a file they have arrived. That predicate is an
+**exhaustive match** on `AppCommand` rather than a list of the interesting variants,
+so a new command cannot join the enum unclassified — the compiler asks. It is session
+state, never persisted.
 The status bar's `Esc` hint (`status_bar::EscTarget`) is **derived** from this
 stack by a pure function called once per frame in the draw path, not mirrored into
 a flag — mirroring would mean writing the same rule at each set/clear site to keep

@@ -1180,3 +1180,159 @@ fn following_a_reference_replaces_a_stashed_result_screen() {
         _ => panic!("the reference owns the way back now"),
     }
 }
+
+/// A way back is for someone *looking* at the chat they drilled into. Working
+/// in it — sending, regenerating, taking back an exchange, compacting,
+/// attaching a file — means they have arrived, and `Esc` goes back to meaning
+/// "the chat list".
+#[test]
+fn working_in_the_chat_you_arrived_at_drops_the_way_back() {
+    let modifying = [
+        ChatIntent::Send("привет".into()),
+        ChatIntent::RegenerateLast,
+        ChatIntent::DeleteLastExchange,
+        ChatIntent::Impersonate {
+            seed: String::new(),
+        },
+        ChatIntent::Compact,
+        ChatIntent::FileAttach {
+            path: "заметки.txt".into(),
+        },
+        ChatIntent::FileRemove {
+            target: "#1".into(),
+        },
+    ];
+    for intent in modifying {
+        let mut screen = ChatScreen::new();
+        let mut clip = None;
+        let mut back = None;
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut active = ActiveScreen::Chat;
+        let (origin, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut back,
+            &mut clip,
+            &cmd_tx,
+            chat_activated(origin),
+        );
+        dispatch(
+            ChatIntent::OpenChatLink(target),
+            &cmd_tx,
+            &screen,
+            &mut active,
+            &mut back,
+        );
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut back,
+            &mut clip,
+            &cmd_tx,
+            chat_activated(target),
+        );
+        assert!(back.is_some(), "{intent:?}: still just looking");
+
+        dispatch(intent.clone(), &cmd_tx, &screen, &mut active, &mut back);
+        assert!(back.is_none(), "{intent:?} must drop the way back");
+        assert_eq!(esc_target(&back), EscTarget::ChatList);
+    }
+}
+
+/// …and the boundary: reading, looking and typing without sending are not
+/// arriving. Staging an image is turn-scoped and never stored, so it is on this
+/// side too.
+#[test]
+fn reading_and_looking_keep_the_way_back() {
+    // The draft is not here because it never reaches `dispatch` at all: the
+    // loop polls `take_dirty_draft` and sends `SetDraft` itself. Typing without
+    // sending therefore cannot drop the way back by construction.
+    let harmless = [
+        ChatIntent::SetFeedView(FeedView::default()),
+        ChatIntent::FileList,
+        ChatIntent::ImageAttach {
+            path: "снимок.png".into(),
+        },
+        ChatIntent::ImageList,
+        ChatIntent::Cancel,
+    ];
+    for intent in harmless {
+        let mut screen = ChatScreen::new();
+        let mut clip = None;
+        let mut back = None;
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut active = ActiveScreen::Chat;
+        let (origin, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut back,
+            &mut clip,
+            &cmd_tx,
+            chat_activated(origin),
+        );
+        dispatch(
+            ChatIntent::OpenChatLink(target),
+            &cmd_tx,
+            &screen,
+            &mut active,
+            &mut back,
+        );
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut back,
+            &mut clip,
+            &cmd_tx,
+            chat_activated(target),
+        );
+
+        dispatch(intent.clone(), &cmd_tx, &screen, &mut active, &mut back);
+        assert!(back.is_some(), "{intent:?} must keep the way back");
+    }
+}
+
+/// The same rule holds for the search half — one back-stack, one meaning of
+/// "you have arrived", so the results are not restored under someone who has
+/// started working in the chat a hit opened.
+#[test]
+fn working_after_a_search_jump_drops_the_results_too() {
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+
+    let chat = jump_to_second_hit(&mut screen, &mut active, &mut back, &mut clip, &cmd_tx);
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(chat),
+    );
+    assert!(matches!(back, Some(Back::Search { .. })));
+
+    dispatch(
+        ChatIntent::Send("продолжим здесь".into()),
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(back.is_none());
+
+    // `Esc` now opens the chat list, as it does from any ordinary chat.
+    dispatch(
+        ChatIntent::OpenChatList,
+        &cmd_tx,
+        &screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(matches!(active, ActiveScreen::ChatList(_)));
+}
