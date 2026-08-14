@@ -1885,8 +1885,10 @@ same trap in this project (lessons §2, §9).
   hex-shaped title still resolves as a title. Pinned by a test that hands
   `chat_read` all four forms of the same reference (scheme, upper-case scheme,
   bare short id, full uuid).
-- **Live smoke — pending**: the §9.11 go/no-go gained the citation assertion
-  (the answer must carry a `chat://` address resolving to the seeded chat), and
+- **Live smoke — GO** (gemma-4-31B q4_0 + bge-m3, the user's stack): the §9.11
+  go/no-go gained the citation assertion — the answer must carry a `chat://`
+  address resolving to the seeded chat — and passed on the first run, the model
+  naming the conversation as `chat://cd1d3e13` off the tool descriptions alone.
   `narrow_profile_to` now returns the bootstrap chat id so the assertion is
-  exact rather than "not the current one". To be run against the user's stack
-  before the PR.
+  exact rather than "not the current one". Details and the full-set regression
+  (34/34, 827 s) in [ui-feed.md](ui-feed.md).

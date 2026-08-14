@@ -1673,9 +1673,17 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   flows, the profile boundary, the picker closing on a chat switch), 2 on the
   tools (round-tripping the scheme, every printed address carrying it). Suite
   **2181 → 2209**.
-- **Smoke — pending.** The live assertion is behavioural and cannot be faked by
-  a unit test: the extended §9.11 go/no-go now also requires the answer to carry
-  a `chat://` address that `find_refs` resolves to the seeded conversation.
-  `narrow_profile_to` returns the bootstrap chat id so the assertion can be
-  exact. To be run against the user's stack (gemma-4-31B + bge-m3) before the
-  PR — the local stack was down while this was written.
+- **Smoke — GO** (gemma-4-31B q4_0 + bge-m3 via llama-server, the user's live
+  stack). "The model uses the format" is a behavioural claim no unit test can
+  settle, so the §9.11 go/no-go was extended: the answer must now also carry a
+  `chat://` address that `find_refs` resolves to the seeded conversation
+  (`narrow_profile_to` returns the bootstrap chat id, so the assertion is exact
+  rather than "not the current one"), and the prompt asks *which* conversation
+  the fact came from instead of "answer with the code alone", which suppressed
+  the citation by construction. The model called `chat_search` once and answered
+  with the seeded code plus the conversation named as `chat://cd1d3e13` — the
+  address form, unprompted beyond the tool descriptions, on a **local** model
+  rather than the one that invented the scheme. That is the evidence the first half needed: the habit was
+  transferable, and teaching it is what makes it so. Full orchestrator e2e
+  regression (the change touches every turn's tool descriptions and the feed's
+  build path) — **34/34 in 827 s**, no repeats needed.
