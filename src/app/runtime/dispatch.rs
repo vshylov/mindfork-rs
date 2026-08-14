@@ -6,6 +6,7 @@ use super::*;
 use crate::entities::profile::Profile;
 use crate::entities::self_model::SelfModel;
 use crate::features::chat_search::SearchGroup;
+use crate::features::chat_search_sort::SortMode;
 use crate::features::tools::mcp::McpSnapshot;
 use crate::shared::config::AppConfig;
 use crate::shared::secrets::SecretKey;
@@ -416,6 +417,16 @@ pub(super) fn dispatch(
         ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
+        ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
+        ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
+        // The results screen opens on the reply (`MessageSearchResults`), like
+        // the chat list's `Ctrl+G` — the orchestrator owns the index. The chat
+        // screen has no list in front of it to inherit a sort order from, so the
+        // command asks for the default one the list itself starts on.
+        ChatIntent::SearchMessages { query } => AppCommand::SearchMessages {
+            query,
+            sort: SortMode::default(),
+        },
         // Following a `chat://` reference is an ordinary activation: an address
         // names a conversation, not a message, so there is nothing to focus on
         // (spec §11.3). It **stashes the way back**, though — the user drilled

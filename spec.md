@@ -1633,7 +1633,11 @@ A direct requirement from the task:
 #### 11.2.1. The message-level search screen
 
 A separate full screen (`screens/search.rs`, `ActiveScreen::Search`), opened from the
-chat list's content mode with **`Ctrl+G`**. Stage 1 answers *"which chats mention
+chat list's content mode with **`Ctrl+G`** — or straight from the chat by typing
+**`/search <text>`** (§11.7), which collapses the three-key journey (`Esc`,
+`Ctrl+F`, `Ctrl+G`) into one line and is the only route in a host that keeps
+those keys; the sort order is then the chat list's default, there being no open
+list to inherit one from. Stage 1 answers *"which chats mention
 this?"*; this screen answers *"where exactly, and take me there."*
 
 - **Grouped by chat**, not ranked: a chat header (title + its number of hits), then
@@ -1828,11 +1832,16 @@ Search inside the **open chat** — the browser's "find on this page", as oppose
 `Ctrl+G`'s cross-chat search ([§11.2.1](#1121-the-message-level-search-screen)).
 Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
 
-- Opened with **`Ctrl+F`**. Deliberately **not `/`**: the chat's input box is
+- Opened with **`Ctrl+F`**, or by typing **`/find [text]`** — the route for hosts
+  that keep `Ctrl+F` (VS Code binds it to the terminal's own find, §11.7). With
+  text, the query is seeded before the field opens, so one line both opens the
+  search and lands on the first match.
+- The **key** is deliberately not `/`: the chat's input box is
   always focused, and `/` in an empty box is exactly how a command starts
   (`/rag`, `/file`, `/tts`, `/reindex`), so a `/` trigger would make command entry
   impossible — and gating it on an empty box does not help, because that *is* the
-  command-entry gesture.
+  command-entry gesture. `/find` is that same reasoning arriving at the other
+  end: the whole word is a command, where the bare `/` could not be.
 - The query field **stands in for the input box** while open, rather than taking a
   layout row of its own: a fifth constraint would shrink the feed, change the wrap
   width, and rewrap the whole chat on open *and* close. The message being written
@@ -2311,6 +2320,45 @@ quit must not read as a refusal to quit. The command clears the input box before
 quitting, and the loop flushes that final draft, so the box does not come back next
 launch holding the command used to leave it.
 
+**Every action has a typed route as well as a chord** (`features/ui_command.rs`,
+`screens/chat/commands.rs`; [docs/research/command-only-control.md](docs/research/command-only-control.md)).
+`/exit` generalized: a terminal embedded in a host loses whole chords before
+crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
+`Ctrl+F`, `Ctrl+K`, `F1`, `F3`, `F5` and both quit keys through its default
+`commandsToSkipShell`, and a browser tab reserves `Ctrl+N`/`Ctrl+T`/`Ctrl+W`,
+the last of which **closes the tab the session runs in**. Typing survives every
+host, so the interface is fully operable by commands plus the safe key subset
+(printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Nineteen commands:
+`/settings` `/self` `/chats` `/help` · `/new [profile]` `/rename [title]`
+`/clone` `/copy` `/regen`·`/retry` `/takeback` `/impersonate [text]` `/stop` ·
+`/find [text]` `/search <text>` `/links` · `/thoughts` `/toolcalls` `/mouse`
+`/emoji`. Load-bearing properties:
+
+- **A command is its key.** Each one reaches the action through the *same*
+  handler the chord uses (`handle_ctrl_shortcut`, or the chord's own intent), so
+  the two cannot grow two semantics — the `confirm_destructive_keys` popup
+  applies to a typed `/regen` exactly as to `Ctrl+R`.
+- **A command answers where a key may stay silent.** A chord that does nothing
+  costs a keypress; a typed command that vanishes reads as a refusal, so every
+  precondition (nothing generating for `/stop`, a turn running for `/regen`, no
+  chat open for `/copy`, the settings snapshot not yet arrived) leaves a
+  localized note naming a route that works (§4 of docs/lessons.md).
+- **`Esc`'s three meanings split in two**: `/stop` always cancels the turn,
+  `/chats` always opens the list.
+- **Bare `/rename` hands the current title back as an editable command line**
+  rather than opening a popup: the box is where a command is typed and is empty
+  by definition at that moment, and it teaches the syntax by example.
+- **One registry, not nineteen parser modules** — each command is an exact word
+  plus at most one free-text argument, so copied parsers would be the sliding
+  self-duplication the gate keeps catching; commands with real syntax
+  (`/file`, `/image`, `/rag`, `/tts`) keep their own modules. The **help tab's
+  rows are derived from the registry**, so a command cannot exist undiscoverable.
+- **Not commands: text editing.** A command is typed *in* the box, so it cannot
+  operate on the box's contents; the safe keys cover editing in every host, and
+  `Ctrl+Z`/`Ctrl+K`/`Ctrl+C` stay conveniences. Profile CRUD and clearing the
+  self-model remain chord-only inside their screens (stage 2).
+
 **Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
 click places the cursor in the chat input box, and a drag grows the selection (the cursor
 snaps to a grapheme-cluster boundary, so it doesn't land in the middle of an emoji). The widget
@@ -2755,7 +2803,8 @@ the tools, a reflection isn't already running (one at a time), the server is `Re
 
 ### 17.7. UI — the self-model screen (`F3`)
 
-A full-screen screen (`screens/self_model.rs`), opened from the chat with **`F3`** —
+A full-screen screen (`screens/self_model.rs`), opened from the chat with **`F3`**
+or by typing **`/self`** (§11.7 — VS Code binds `F3` to its terminal's find-next) —
 for viewing and **manual editing**:
 
 - the self-description (a multiline editor), goals (add / rename / `Space`

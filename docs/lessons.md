@@ -440,6 +440,16 @@ that would refuse is the same bug in politer clothing.
 answer has to close the door*, *page fidelity for `fetch_url`*, *MCP servers in the
 settings window*, *history compression — stage 2*.
 
+**`let x = thing?` inside a handler that owes the user an answer turns a refusal
+into silence.** `/rename` began `let id = self.active_chat?` — with no chat open
+the `?` returned `None` from the whole command, so the app did nothing and said
+nothing. The bug shipped *inside the very track built to remove that silence*, and
+a test caught it, not review: `?` reads as "nothing to do here" while the
+surrounding function's contract is "always answer". Wherever a function's job
+includes explaining itself, spell the early exit out (`let Some(x) = … else`) so
+the explanation has somewhere to live.
+— *command-only control — stage 1*.
+
 **A promise with nothing behind it is the same lie in miniature**: a collapsed tool card
 with no arguments and no result gets no "expand me" pill.
 — *collapsible tool calls, and the collapse state per chat*.

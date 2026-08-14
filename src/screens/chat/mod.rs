@@ -26,6 +26,7 @@ use crate::entities::message::Message;
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
+use crate::features::rename_chat;
 use crate::features::spellcheck::SpellChecker;
 use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::FinishReason;
@@ -90,6 +91,23 @@ pub enum ChatIntent {
     },
     /// Copy the active chat's whole conversation to the clipboard (`F5`).
     CopyChat(Uuid),
+    /// Rename the open chat (command `/rename <title>`; the chat list's own
+    /// `F2` renames the *selected* chat through
+    /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).
+    RenameChat {
+        id: Uuid,
+        title: String,
+    },
+    /// Clone the open chat (command `/clone`; `Ctrl+D` in the chat list).
+    CloneChat(Uuid),
+    /// Search every chat's messages and open the results screen (command
+    /// `/search <text>`; `Ctrl+G` in the chat list's content mode). The screen
+    /// opens on the reply `AppEvent::MessageSearchResults` — the orchestrator
+    /// owns the index — and the sort order is the chat list's default, since the
+    /// chat screen has no list to inherit one from.
+    SearchMessages {
+        query: String,
+    },
     /// Index a file/directory into RAG (command `/rag add <path> [-r]`).
     RagAdd {
         path: String,
@@ -779,6 +797,7 @@ impl ChatScreen {
 // ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 2) ----------
 
 mod attachments;
+mod commands;
 mod feed;
 mod images;
 mod impersonation;

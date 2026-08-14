@@ -346,6 +346,30 @@ Slash commands, typed straight into the input box:
 | `/tts stop` · `pause` · `resume` | control playback |
 | `/exit` · `/quit` | leave the app. `Ctrl+Q` and `F10` do the same where the terminal forwards them — VS Code's integrated terminal binds both to the editor, so a typed command is the route that always works |
 
+**Every action above also has a typed route**, for terminals embedded in a host
+that keeps the keys for itself — VS Code's integrated terminal claims `Ctrl+P`,
+`Ctrl+E`, `Ctrl+F`, `F1`, `F3` and `F5` by default, and in a browser tab
+(JupyterLab) `Ctrl+N` and `Ctrl+T` never arrive at all while `Ctrl+W` closes the
+tab your session runs in. The commands do exactly what their key does,
+confirmations included:
+
+| Command | Same as | What it does |
+|---|---|---|
+| `/settings` · `/self` · `/help` · `/chats` | `Ctrl+P` · `F3` · `F1` · `Esc` | the screens |
+| `/new [profile]` | `Ctrl+N` | new chat; a name picks the profile (a prefix is enough) |
+| `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename (bare — edit the current title), clone, copy the conversation |
+| `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
+| `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
+| `/stop` | `Esc` | cancel the running generation (`/chats` is the other half of `Esc`, and always means the list) |
+| `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
+| `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
+| `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
+
+Only text editing has no command — a command is typed *in* the input box, so it
+cannot act on the box's own contents. Everything editing needs (typing,
+`Backspace`, `Delete`, the arrows, `Shift`+arrows, `Home`/`End`) reaches the app
+in every host anyway.
+
 ---
 
 ## How it's built
