@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -33,6 +33,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Home`/`End` as a ladder of stops (done)
 - Post-M9: pasting an image from the clipboard (done)
 - Post-M9: `/exit` and `/quit` — a typed route out (done)
+- Post-M9: command-only control — stage 1 (typed routes for the chords) (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1034,3 +1035,109 @@ cannot reach is the flush itself, which lives in `run_loop` (no TTY under test):
 the screen-level test asserts the empty draft is handed back, and that it *reaches*
 the orchestrator wants a real terminal — type `/exit` with text in the box, relaunch,
 and the box should be empty.
+
+### Post-M9: command-only control — stage 1 (typed routes for the chords) (done)
+
+- **Why.** `/exit` existed because VS Code's integrated terminal claims *both*
+  advertised quit keys. That argument was never specific to quitting: measured
+  against VS Code's own `DEFAULT_COMMANDS_TO_SKIP_SHELL` (read from
+  `src/vs/workbench/contrib/terminal/common/terminal.ts`, `main` as of
+  2026-08-14) the host also takes `Ctrl+P`, `Ctrl+E`, `Ctrl+F`, `Ctrl+K`, `F1`,
+  `F3`, `F5` and `F10`, so the settings screen, in-feed search, take-back,
+  copy-conversation, the self-model screen and the help dialog were **all
+  unreachable there**. In a browser tab (JupyterLab) the loss is different and
+  worse: `Ctrl+N`/`Ctrl+T` never arrive, and `Ctrl+W` **closes the tab the
+  session runs in**. The design doc is
+  [docs/research/command-only-control.md](../research/command-only-control.md);
+  all seven forks were decided by the user on 2026-08-14 (the recommendations).
+- **The invariant that made the scope small.** "No hotkeys" cannot mean "no
+  keys" — typing is keys. What every host forwards is the printable characters,
+  `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows, `Home`/`End`,
+  `PageUp`/`PageDown` and `Shift`+arrows; what dies is the chord class. Since
+  every `Esc` chain already terminates at the chat screen, and the chat screen is
+  where the input box lives, "safe keys navigate, commands act" covers the whole
+  application with no third mechanism — which is why fork F1 rejected a
+  leader-key command mode on every screen as redundant.
+- **A command is its key, by construction.** Every arm of `run_ui_command` calls
+  the *same* handler the chord uses (`handle_ctrl_shortcut`, promoted to
+  `pub(super)` for this, or the chord's own intent) rather than re-deriving the
+  action. That is what makes the confirmation popup, the `generating` gate and
+  the per-chat feed-collapse state apply identically to `/regen` and `Ctrl+R`
+  without a second code path to keep in step. The test asserts it the same way:
+  two identical screens, one typed and one pressed, must return the same intent.
+- **What a command adds is a voice.** A chord that does nothing costs a
+  keypress; a typed command that vanishes reads as the app refusing (lessons §4).
+  So each precondition answers: nothing to cancel for `/stop`, a turn in flight
+  for `/regen`·`/takeback`·`/impersonate`, no chat for `/copy`·`/clone`·`/rename`,
+  no settings snapshot yet for `/settings` — each naming a route that works.
+  **A test found the one place I had written the silence anyway**: `/rename`
+  began `let id = self.active_chat?`, and `?` on a `None` swallowed the refusal.
+  The defect class this track exists to remove, reintroduced inside it.
+- **`Esc`'s overload split in two.** `Esc` means cancel-the-turn *or* go-back
+  depending on state; `/stop` is always the first and `/chats` always the second
+  (fork F6). Cheap — two registry rows — and it removes the one place where the
+  safe-key route was ambiguous rather than absent.
+- **One registry, not nineteen sibling modules.** Each command is an exact word
+  plus at most one free-text argument, so nineteen copies of `exit_command.rs`
+  would have been precisely the sliding self-duplication the gate keeps catching
+  (lessons §2, five recurrences). Commands with real syntax — subcommands, flags,
+  `#N` targets — keep their own modules; **the design doc had promised separate
+  parsers for the five argument-taking commands and that was wrong**: measured
+  against `file_command`, none of them has any syntax to explain.
+- **The table itself is a duplication hazard, and was measured against the
+  lesson rather than hoped about.** Nineteen five-line `Spec { … }` literals is
+  ~95 identically shaped lines — the shape that scored 16.1% on 50 rows. A
+  `const fn row(…)` collapses each to one line; `rustfmt` then exploded them
+  back to seven lines each, so the table carries `#[rustfmt::skip]` (the
+  precedent is `widgets/logo.rs`). ~19 lines instead of ~95, and it reads as a
+  table. The Sonar snippet analyzer could not pre-check this: it has no Rust
+  language, so the real gate is the PR analysis.
+- **Bare `/rename` prefills instead of opening a popup** — a deviation from the
+  design doc, recorded here. The box is where a command is typed and holds
+  nothing else at that moment, so handing back `/rename <current title>` for
+  editing needs no new modal, no new key routing and no new render path, and it
+  teaches the syntax by example. It is also the one command whose *answer* is
+  text in the box, which its test carves out of the "every command clears the
+  box" rule.
+- **The help tab is derived, not restated.** `popups::command_rows()` composes
+  the parser-owning commands, then the registry's rows, then the way out — so a
+  command cannot exist without a help row. `/exit` moved into a one-row tail
+  const so the registry can be inserted in front of it without the quit row
+  moving off the end. Consequence worth noting: the tab is now taller than the
+  dialog, so `commands_tab_text()` reads it in **two passes** (unscrolled, then
+  scrolled past the end) — a one-pass helper would have silently stopped
+  asserting about everything below the fold.
+- **Not commands, deliberately: text editing.** A command is typed *in* the box,
+  so it cannot act on the box's contents — `/undo` would destroy the object it
+  operates on. The safe keys cover editing in every host. Profile CRUD
+  (`Ctrl+N`/`Ctrl+D` in the settings screen) and clearing the self-model
+  (`Ctrl+K` twice) stay chord-only; fork F5 put them in stage 2 as
+  `/profile new|delete` and `/self clear`, since a Mac client keyboard has no
+  `Insert` to offer as an in-screen alternate.
+
+**Tests** (+23, 2222 → 2245 green). The parser, driven off the registry: every
+alias bare, padded and upper-cased; the registry's own hygiene (no word claimed
+twice, every label shows every spelling it accepts, the label's brackets agree
+with the arity); a bare word rejecting arguments and naming the typed spelling
+only; a required argument asked for with the help label as its usage line; the
+argument being the whole remainder, spaces included; neighbouring commands,
+near-words and prose falling through; the per-locale error gate. The screen: the
+command-versus-chord agreement table (fixed ids in the harness, or every intent
+carrying one would differ); every command clearing the box and handing back an
+empty draft; highlighting for every alias and malformed variant; each blocked
+command naming itself and `/stop`; `/stop` versus `/chats` mid-turn with `Esc` as
+the control; the confirmation popup for both destructive commands; `/search` and
+bare `/search`; `/find` seeding the query; `/rename` both ways and its length
+ceiling; `/new` exact, prefix, ambiguous and missing; text that only resembles a
+command still being sent; no command being a silent no-op; commands not firing
+through a modal. Mutation-tested in three places — a delegation replaced by
+`None`, the box not cleared, the required-argument check disabled — each caught
+(the third by three tests).
+
+**A live model run is not required** (AGENTS.md §3): this is input parsing and
+UI routing, with nothing on the engine, memory or tool paths — every new intent
+maps onto an `AppCommand` the chat list already sent. What unit tests cannot
+reach is the claim that motivated the track, since it is about *hosts*: the
+acceptance pass is manual, in a real VS Code integrated terminal and a real
+JupyterLab terminal, exercising each tier-1 command and operating every modal
+screen with safe keys only.

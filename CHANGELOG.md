@@ -27,6 +27,20 @@ split by subsystem.
 
 ### Added
 
+- **Every action now has a typed command, not just a key.** In a terminal
+  embedded in something else — VS Code's integrated terminal, a JupyterLab
+  terminal in a browser tab — the host takes many key combinations for itself
+  before the app ever sees them, and some of the app's features were simply
+  unreachable there. Nineteen new commands cover the rest of the interface the
+  way `/exit` already covered quitting: `/settings`, `/self`, `/chats`,
+  `/help`, `/new [profile]`, `/rename [title]`, `/clone`, `/copy`, `/regen`
+  (`/retry`), `/takeback`, `/impersonate [text]`, `/stop`, `/find [text]`,
+  `/search <text>`, `/links`, `/thoughts`, `/toolcalls`, `/mouse` and `/emoji`.
+  Each does exactly what its key does, confirmation prompts included — and,
+  unlike a key, a command that cannot run right now says why and tells you what
+  will work. `/search` also goes straight to the message search that used to
+  take three keys to reach. The keys are unchanged.
+
 - **Links to conversations.** When the assistant mentions another of your
   conversations it now writes its address as `chat://<id>`, and the feed draws
   that as a link. **`Ctrl+L`** lists the conversations the open chat links to

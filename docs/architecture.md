@@ -2126,6 +2126,21 @@ stack by a pure function called once per frame in the draw path, not mirrored in
 a flag — mirroring would mean writing the same rule at each set/clear site to keep
 one word honest, which is how a hint drifts from the key it describes.
 
+**Typed routes for the chords** (`features/ui_command.rs` +
+`screens/chat/commands.rs`, spec §11.7). One declarative registry (`COMMANDS`:
+aliases, `UiCommand`, arity, help label, description key) parsed by one function;
+`ChatScreen::try_ui_command` sits in `handle_enter`'s chain **before** the
+`generating` gate, and `run_ui_command` is an exhaustive match on `UiCommand`, so
+a new row cannot ship undecided. Each arm reaches its action through the
+**same** handler the chord uses — `handle_ctrl_shortcut` (made `pub(super)` for
+exactly this) or the chord's own intent — which is what keeps one behaviour
+behind two routes; what the command adds is a localized note wherever a
+precondition blocks it. Three intents are new (`RenameChat`, `CloneChat`,
+`SearchMessages`), all mapping onto `AppCommand`s the chat list already used.
+The help dialog's "Commands" tab is **composed** (`popups::command_rows`) from
+the parser-owning commands, then the registry, then the way out — deriving the
+middle section is what makes a command discoverable by construction.
+
 **"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
 sends `AppCommand::RequestSelfModel`; the screen is created on the reply

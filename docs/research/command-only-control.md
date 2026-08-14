@@ -1,7 +1,11 @@
 # Command-only control — hosted terminals (JupyterLab, VS Code)
 
 Status: **accepted 2026-08-14** — every fork decided (the recommendations,
-confirmed by the user); implementation not started (stage 1 next).
+confirmed by the user). **Stage 1 shipped** in `feat/command-only-control`
+(journal ui-input.md); stage 2 (§4.5) is open. Two things shipped differently
+from the design below, both marked *"shipped instead"* where they are described:
+the argument-taking commands joined the registry rather than getting parser
+modules, and bare `/rename` prefills the input box rather than opening a popup.
 Date: 2026-08-14.
 
 ## 1. What and why
@@ -170,6 +174,11 @@ tier-2 row two lines plus two locale strings.
 | `/chats` | open the chat list | `Esc` | 2 (`Esc` is safe but overloaded: during generation it cancels) |
 | `/stop` | cancel the current generation | `Esc` | 2 (explicit; resolves the same overload from the other side) |
 | `/rename <title>` | rename the open chat; bare — the rename popup, prefilled | `F2` | 2 |
+
+> **Shipped instead** for bare `/rename`: it hands `/rename <current title>` back
+> in the **input box** for editing rather than opening a popup. The box is where
+> a command is typed and holds nothing else at that moment, so this needs no new
+> modal, key routing or render path, and it teaches the syntax by example.
 | `/clone` | clone the open chat | list `Ctrl+D` | 2 |
 | `/toolcalls` | fold/unfold tool calls | `Ctrl+O` | 2 |
 | `/impersonate [seed]` | write a message as the user; the rest of the line seeds it | `Ctrl+U` | 2 |
@@ -204,6 +213,14 @@ that failure. The seam:
 - **Argument-taking commands** (`/new`, `/find`, `/search`, `/rename`,
   `/impersonate`) get real parsers on the `file_command`/`image_command`
   precedent — they have syntax to explain, so they earn files.
+  > **Shipped instead**: they joined the registry, which grew an `Arity`
+  > column (`None`/`Optional`/`Required`) and returns the rest of the line as
+  > one free-text argument. Checked against `file_command` while implementing,
+  > the premise was wrong: that module earns its file from `attach|remove|list`
+  > plus path and `#N` parsing, and none of these five has a subcommand, a flag
+  > or a target format — a title, a query and a seed are all "the rest of the
+  > line". Five more modules would have been the boilerplate §4.2 exists to
+  > avoid.
 - **The help tab derives its rows from the registry** (the
   `supported_sampling_fields` single-source pattern): a command cannot exist
   without its help row, and the existing per-locale width gates extend to
