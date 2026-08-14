@@ -163,6 +163,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   way `chat_read` resolves its `chat` argument — id prefix, then title, over
   non-hidden chats — plus deciding what a reference to another *profile's*
   chat should do (nothing, presumably, mirroring the tools' scope).
+  **Designed, forks decided 2026-08-14**, two stages, not yet implemented:
+  [chat-uri-links.md](research/chat-uri-links.md). The survey moved the item's
+  centre of gravity. The scheme has to be *taught* — nothing in the code mints
+  or mentions it, so today the feature rests on one model's habit; a **bare**
+  `chat://` is not even styled (GFM autolinks are off, so only the markdown
+  form gets colour, and only on its URL suffix); and a click in the feed is a
+  no-op with mouse capture off by default, so the keyboard is the route that
+  works everywhere. It also turned up a latent defect worth fixing either way:
+  `chat_read("chat://a1b2c3d4")` fails its own scheme, because `resolve` strips
+  only `-` before the hex test.
 
 ## Chat and profile management
 - **Folders/tags for chats** — grouping in the list (`Esc`).
