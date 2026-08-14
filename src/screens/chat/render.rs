@@ -238,7 +238,7 @@ impl ChatScreen {
             dim_background(frame, &self.palette);
             render_tool_confirm(frame, pending, &self.palette, self.loc);
         }
-        if let Some(action) = self.confirm {
+        if let Some(action) = &self.confirm {
             dim_background(frame, &self.palette);
             render_confirm(frame, action, &self.palette, self.loc);
         }

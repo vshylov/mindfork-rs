@@ -77,7 +77,7 @@ impl ChatScreen {
     }
 
     pub(super) fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
-        let action = self.confirm?;
+        let action = self.confirm.clone()?;
         // Ctrl+Q/F10 punch through the popup to quit (layout-independent). See spec §11.7.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
@@ -322,6 +322,13 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
+    // The profile family closes this table because the registry's rows follow
+    // it, and "the screens" (`/settings`, `/self`) is where profiles belong —
+    // the two groups end up adjacent. `/profile` keeps a parser of its own: it
+    // is the one typed route with a subcommand *and* an argument (stage 2).
+    ("/profile list", "ui.help.cmd_profile_list"),
+    ("ui.help.k.profile_new", "ui.help.cmd_profile_new"),
+    ("ui.help.k.profile_delete", "ui.help.cmd_profile_delete"),
 ];
 
 /// The way out closes the tab, whatever stands in front of it: this is the typed
@@ -378,6 +385,7 @@ const COMMAND_GROUP_OPENERS: &[&str] = &[
     "ui.help.k.rag_add",
     "/reindex",
     "ui.help.k.tts",
+    "/profile list",
     "/settings",
     "ui.help.k.new",
     "ui.help.k.find",
@@ -949,7 +957,7 @@ pub(super) fn render_suggest(
 /// (`Ctrl+R`/`Ctrl+E`) centered on screen. See spec §11.7.
 pub(super) fn render_confirm(
     frame: &mut Frame,
-    action: ConfirmAction,
+    action: &ConfirmAction,
     palette: &Palette,
     loc: &'static Locale,
 ) {

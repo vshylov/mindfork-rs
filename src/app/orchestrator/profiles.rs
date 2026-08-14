@@ -75,6 +75,16 @@ impl Orchestrator {
             ));
             return;
         }
+        // Report the outcome: from the settings screen the new row is the
+        // answer, but `/profile new` is typed in a chat where the profile list
+        // is not on screen at all, and a command that appears to do nothing
+        // reads as a refusal (docs/lessons.md §4). Emitted by the owner of the
+        // data rather than by the command, so the claim is only made when the
+        // write actually succeeded — and so both routes answer alike.
+        let _ = self.evt_tx.send(AppEvent::Notice(
+            self.ui_locale()
+                .tf("ui.profile.created", &[("name", &name)]),
+        ));
         self.profiles.push(profile);
         self.emit_profile_list();
         // The settings screen keeps its own copy of the profile list (from the
@@ -94,6 +104,13 @@ impl Orchestrator {
             ));
             return;
         }
+        // Read the name before the row goes, for the notice below.
+        let name = self
+            .profiles
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         match self.storage.hide_profile_cascade(id) {
             Ok(false) => return,
             Err(err) => {
@@ -105,6 +122,13 @@ impl Orchestrator {
             }
             Ok(true) => {}
         }
+        // Same reasoning as in `handle_create_profile`: the owner reports it, so
+        // the typed route (`/profile delete`) is answered and the key route says
+        // the same thing.
+        let _ = self.evt_tx.send(AppEvent::Notice(
+            self.ui_locale()
+                .tf("ui.profile.deleted", &[("name", &name)]),
+        ));
         self.profiles.retain(|p| p.id != id);
         // Remove the deleted profile's chats from memory.
         let removed: Vec<Uuid> = self

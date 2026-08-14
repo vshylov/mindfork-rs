@@ -351,6 +351,11 @@ impl ChatScreen {
         if let Some(intent) = self.try_ui_command(&text) {
             return intent;
         }
+        // `/profile …` has a subcommand plus a name, so it keeps a parser of its
+        // own rather than a registry row (stage 2, fork F5).
+        if let Some(intent) = self.try_profile_command(&text) {
+            return intent;
+        }
         if let Some(intent) = self.try_exit_command(&text) {
             return intent;
         }
@@ -805,6 +810,7 @@ impl ChatScreen {
             || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
             || crate::features::ui_command::parse(&text, self.loc).is_some()
+            || crate::features::profile_command::parse(&text, self.loc).is_some()
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 

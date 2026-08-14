@@ -31,7 +31,8 @@ use crate::shared::i18n::Locale;
 pub enum UiCommand {
     /// The settings screen (`Ctrl+P`).
     Settings,
-    /// The self-model screen (`F3`).
+    /// The self-model screen (`F3`); `clear` wipes the model (`Ctrl+K` twice
+    /// inside that screen), behind the same confirmation.
     SelfModel,
     /// The chat list (`Esc`).
     Chats,
@@ -80,6 +81,12 @@ pub enum Arity {
     Optional,
     /// The argument is the point of the command; bare is reported.
     Required,
+    /// The argument is optional and drawn from a **closed set** of words rather
+    /// than being free text (`/self clear`). Anything else is reported here, in
+    /// the parser, rather than by whoever runs the command — a command with two
+    /// places to explain itself grows two wordings. A command whose subcommands
+    /// take arguments of their own belongs in a module instead (`/profile`).
+    Subcommand(&'static [&'static str]),
 }
 
 /// One row of the registry.
@@ -109,10 +116,6 @@ pub struct Parsed {
     pub alias: &'static str,
 }
 
-/// Every typed route, in the order the help tab lists them: the screens, the
-/// conversation, finding things, the feed. The order is also the display order
-/// of the "Commands" tab's last four groups (`COMMAND_GROUP_OPENERS` in
-/// `screens::chat::popups` names the row that opens each).
 /// One row of [`COMMANDS`], as a function so the table reads as a table: five
 /// columns per line rather than a five-line struct literal each. Ninety-five
 /// lines of identically shaped rows is the sliding self-duplication the gate
@@ -134,16 +137,21 @@ const fn row(
     }
 }
 
-// The table is hand-aligned: `rustfmt` would explode each row into a
-// five-line call, and 19 identically shaped blocks is the duplication
-// density the gate measures (docs/lessons.md §2). A table reads as a table.
+/// Every typed route, in the order the help tab lists them: the screens, the
+/// conversation, finding things, the feed. The order is also the display order
+/// of the "Commands" tab's last four groups (`COMMAND_GROUP_OPENERS` in
+/// `screens::chat::popups` names the row that opens each).
+///
+/// The table is hand-aligned: `rustfmt` would explode each row into a five-line
+/// call, and 19 identically shaped blocks is the duplication density the gate
+/// measures (docs/lessons.md §2). A table reads as a table.
 #[rustfmt::skip]
 pub const COMMANDS: &[Spec] = &[
     // The screens. `/settings` and `/self` are unreachable in VS Code without
     // this route; `/chats` and `/help` have safe keys (`Esc`, `?`) and are here
     // for symmetry — and because `Esc` means three different things.
     row(&["/settings"], UiCommand::Settings, Arity::None, "/settings", "ui.help.cmd_settings"),
-    row(&["/self"], UiCommand::SelfModel, Arity::None, "/self", "ui.help.cmd_self"),
+    row(&["/self"], UiCommand::SelfModel, Arity::Subcommand(&["clear"]), "ui.help.k.self", "ui.help.cmd_self"),
     row(&["/chats"], UiCommand::Chats, Arity::None, "/chats", "ui.help.cmd_chats"),
     row(&["/help"], UiCommand::Help, Arity::None, "/help", "ui.help.cmd_help"),
     // The conversation.
@@ -194,6 +202,25 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<Parsed, String>> {
         }
         Arity::Required if argument.is_empty() => {
             Err(loc.tf("ui.cmd.needs_arg", &[("usage", loc.t(spec.label))]))
+        }
+        // A closed set: the word is normalized to the registry's own spelling,
+        // so the runner matches on a known string rather than on user casing.
+        Arity::Subcommand(words) if !argument.is_empty() => {
+            match words.iter().find(|w| argument.eq_ignore_ascii_case(w)) {
+                Some(word) => Ok(Parsed {
+                    command: spec.command,
+                    argument: (*word).to_string(),
+                    alias,
+                }),
+                None => Err(loc.tf(
+                    "ui.cmd.bad_subcommand",
+                    &[
+                        ("cmd", alias),
+                        ("arg", argument),
+                        ("usage", loc.t(spec.label)),
+                    ],
+                )),
+            }
         }
         _ => Ok(Parsed {
             command: spec.command,
@@ -332,6 +359,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A closed-set argument: the word is accepted in any case and handed back
+    /// in the registry's spelling, anything else is reported by the parser (with
+    /// the usage line), and omitting it keeps the bare meaning.
+    #[test]
+    fn a_subcommand_word_is_normalized_and_anything_else_reported() {
+        assert_eq!(
+            parse("/self CLEAR", ru())
+                .expect("recognized")
+                .expect("parsed"),
+            Parsed {
+                command: UiCommand::SelfModel,
+                argument: "clear".into(),
+                alias: "/self",
+            }
+        );
+        assert!(
+            parse("/self", ru())
+                .expect("recognized")
+                .is_ok_and(|p| p.argument.is_empty()),
+            "bare /self keeps its own meaning"
+        );
+        let Some(Err(msg)) = parse("/self wipe", ru()) else {
+            panic!("expected a report");
+        };
+        assert!(msg.contains("wipe"), "the word is quoted back: {msg}");
+        assert!(
+            msg.contains(ru().t("ui.help.k.self")),
+            "the usage line is missing: {msg}"
+        );
     }
 
     /// The argument is the rest of the line, spaces and all — a chat title and a

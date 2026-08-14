@@ -187,6 +187,19 @@ pub enum ChatIntent {
     /// the orchestrator (`RequestSelfModel`) and builds the screen from the
     /// `SelfModelView` event.
     OpenSelfModel,
+    /// Wipe the active profile's self-model (command `/self clear`, confirmed) —
+    /// the same edit the self-model screen sends on `Ctrl+K` twice. See spec §17.7.
+    ClearSelfModel,
+    /// Create a companion profile (command `/profile new [name]`; `Ctrl+N` in the
+    /// settings screen's "Profiles" section). The persona is empty — it is
+    /// written in the settings screen afterwards. See spec §11.6.
+    CreateProfile {
+        name: String,
+    },
+    /// Delete a companion profile, hiding its chats with it (command
+    /// `/profile delete <name>`, confirmed; `Ctrl+D` in the settings screen).
+    /// The orchestrator refuses to delete the last one.
+    DeleteProfile(Uuid),
     /// Toggle terminal mouse capture for wheel scrolling (`Ctrl+W`). `true` —
     /// the wheel scrolls the feed (text selection — with Shift); `false` —
     /// native mouse selection. See spec §11.3.
@@ -210,31 +223,59 @@ pub enum ChatIntent {
     },
 }
 
-/// An irreversible operation that requires confirmation in a modal popup
-/// (`Ctrl+R`/`Ctrl+E`, when the setting `interface.confirm_destructive_keys` is
-/// on). See spec §11.7.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// An irreversible operation that requires confirmation in a modal popup.
+///
+/// Two of these are the destructive **keys** (`Ctrl+R`/`Ctrl+E`), raised through
+/// [`ChatScreen::trigger_destructive`] and asked about only when
+/// `interface.confirm_destructive_keys` is on — and never while a turn runs.
+/// The other two are typed routes into another screen's territory (stage 2 of
+/// docs/research/command-only-control.md); their commands set this state
+/// **directly**, because they differ from the keys in both respects: they always
+/// ask (a command names its target by word where the screen would have shown it
+/// selected, so the popup is what puts the target back in front of the user),
+/// and generation does not gate them, the keys they mirror not being gated
+/// either. See spec §11.7.
+#[derive(Debug, Clone, PartialEq)]
 enum ConfirmAction {
     /// Regenerate the last reply (`Ctrl+R`).
     Regenerate,
     /// Delete the last exchange (`Ctrl+E`).
     DeleteExchange,
+    /// Delete a companion profile and hide its conversations with it
+    /// (`/profile delete <name>`; `Ctrl+D` in the settings screen's "Profiles").
+    /// Carries the resolved name and chat count so the question can state what
+    /// goes: a prefix may have matched a profile the user did not picture.
+    DeleteProfile {
+        id: Uuid,
+        name: String,
+        chats: usize,
+    },
+    /// Wipe the active profile's self-model (`/self clear`; `Ctrl+K` twice in
+    /// the self-model screen, which is itself a confirmation).
+    ClearSelfModel,
 }
 
 impl ConfirmAction {
     /// The intent this operation confirms.
-    fn intent(self) -> ChatIntent {
+    fn intent(&self) -> ChatIntent {
         match self {
             ConfirmAction::Regenerate => ChatIntent::RegenerateLast,
             ConfirmAction::DeleteExchange => ChatIntent::DeleteLastExchange,
+            ConfirmAction::DeleteProfile { id, .. } => ChatIntent::DeleteProfile(*id),
+            ConfirmAction::ClearSelfModel => ChatIntent::ClearSelfModel,
         }
     }
 
     /// The confirmation popup's question text (localized).
-    fn prompt(self, loc: &'static Locale) -> &'static str {
+    fn prompt(&self, loc: &'static Locale) -> String {
         match self {
-            ConfirmAction::Regenerate => loc.t("ui.confirm.regenerate"),
-            ConfirmAction::DeleteExchange => loc.t("ui.confirm.delete_exchange"),
+            ConfirmAction::Regenerate => loc.t("ui.confirm.regenerate").to_string(),
+            ConfirmAction::DeleteExchange => loc.t("ui.confirm.delete_exchange").to_string(),
+            ConfirmAction::DeleteProfile { name, chats, .. } => loc.tf(
+                "ui.confirm.delete_profile",
+                &[("name", name), ("chats", &chats.to_string())],
+            ),
+            ConfirmAction::ClearSelfModel => loc.t("ui.confirm.clear_self_model").to_string(),
         }
     }
 }
