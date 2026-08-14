@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: vendored syntax grammars for 19 languages (done)
 - Post-M9: collapsible tool calls, and the collapse state per chat (done)
 - Post-M9: navigable `chat://` references in the feed (done)
+- Post-M9: `Esc` retraces a followed `chat://` reference (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1704,3 +1705,86 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   transferable, and teaching it is what makes it so. Full orchestrator e2e
   regression (the change touches every turn's tool descriptions and the feed's
   build path) — **34/34 in 827 s**, no repeats needed.
+
+### Post-M9: `Esc` retraces a followed `chat://` reference (done)
+- **Fork F6 of the reference track, reopened by use.** It shipped as (a) — no
+  back-stack, `Esc` keeps meaning "the chat list" — with the note that a live
+  run was the honest judge and that losing the way back might read as a trap.
+  It did, so (b) is now in: `Esc` after following a reference goes back to the
+  conversation it was followed from
+  ([chat-uri-links.md](../research/chat-uri-links.md) F6, spec §11.3).
+- **One back-stack, not two.** The obvious cheap route was a second
+  `Option<Uuid>` beside `SearchReturn`, and it would have created the question
+  "which one wins" at every site that reads or clears either. Instead
+  `SearchReturn` became `Back`, an enum of the two ways *down* — `Search`
+  stashes the live results screen (there is selection and scroll to lose),
+  `Link` stashes only the origin chat's id (a chat reopens from storage in
+  full) — with one `chat()` accessor naming what both lead out of. Everything
+  above it then stayed as it was: one clearing funnel, one `esc_target`, one
+  `Esc` arm.
+- **The clearing rule needed no change, and that is the point.**
+  `clear_back_if_left` tests "a *different* chat was activated", and a followed
+  reference is stashed in `dispatch` **before** the switch command is sent, so
+  the activation that follows names the chat the stash points out of and leaves
+  it alone. Order is what makes that true — which is exactly why the push
+  cannot move into `apply_event`, and the comment says so.
+- **Replacing beats keeping both.** Following a reference out of a chat that
+  was itself opened from a search hit overwrites the stash. That is not a loss:
+  before this change the switch discarded the hits outright
+  (`clear_back_if_left` fires on any different chat), so `Esc` there went to the
+  chat list either way — now it goes back one conversation. Pinned by a test,
+  because the reasoning is easy to re-derive wrongly.
+- **One deep, deliberately.** A → B → C steps back to B and no further, the
+  same shape the search half has always had. A true stack has to answer what an
+  ordinary chat switch does to its *middle*, and nothing has asked for that yet
+  — recorded in the roadmap rather than guessed at.
+- **The status bar gained a third `EscTarget`** (`PreviousChat`,
+  `ui.status.hotkey.back_chat`), still **derived** in the draw path rather than
+  mirrored into a flag — so "the bar says where `Esc` goes" stays true by
+  construction with three targets exactly as it was with two.
+- **Two corrections straight from use**, the same evening:
+  - **"to chat" was a bad hint.** The status bar says where `Esc` goes, and for
+    this target it said *to the conversation* — which distinguishes nothing for
+    someone already sitting in one. Now `back` (and its Russian equivalent). The
+    search target keeps `to search`, and the asymmetry is the point: results are
+    a place you can name, the previous chat is only a direction.
+  - **Leaving was not the only way to stop needing a way back — arriving is the
+    other.** The stack was dropped when the user opened a *different* chat, so
+    it survived sending a message, regenerating, taking back an exchange: an
+    `Esc` several minutes and several turns later would silently teleport them
+    out of the conversation they had settled into. Now
+    `AppCommand::works_on_the_open_chat` drops it in `dispatch`, before the
+    command is sent. The predicate is an **exhaustive match on `AppCommand`**,
+    not a list of the interesting variants — a new command cannot join the enum
+    unclassified, because the compiler asks. That is the honest version of the
+    "enumerating routes by hand rots silently" warning the leaving funnel
+    already carries.
+  - The line drawn: *starts a turn or changes what the conversation stores*
+    (send, regenerate, impersonate, `Ctrl+E`, `/compact`, `/file attach|remove`)
+    ends the way back; reading, folding blocks and staging an image for the
+    **next** message — turn-scoped, never stored — do not. The draft needed no
+    thought: it never reaches `dispatch` at all, since the loop polls
+    `take_dirty_draft` and sends `SetDraft` itself.
+  - **Applied to the search half too**, deliberately: one back-stack, one
+    meaning of "you have arrived". It changes behaviour that shipped in the
+    chat-search track, and it is the better behaviour — the results screen has
+    no business reappearing under someone who has been working in the chat for
+    ten turns.
+- **Tests**: 6 new (the round trip and its status hint, the ordinary switch
+  dropping the way back while a re-activation keeps it, a reference replacing a
+  stashed result screen, the seven arriving commands, the boundary cases that
+  keep it, and the search half obeying the same rule), plus the two existing
+  back-stack tests updated to the enum. Suite **2216 → 2222**. **No live run**
+  (AGENTS.md §3): pure UI, no engine, memory or tool path touched.
+- **Sonar round — the duplication gate's fifth recurrence, and the first caused
+  by fixtures rather than code**: **19.8%** new-code duplication against the 3%
+  bar, the worst score yet, entirely inside `runtime/tests.rs`. Six tests of one
+  back-stack, each spelling out the five locals `dispatch`/`apply_event` take and
+  the same three-step "arrive here" prologue; nothing was copied from older code,
+  the copies were of each other, written minutes apart. Fixed with a seam rather
+  than suppression, as every previous recurrence was: a `Harness` struct owning
+  the loop's state with one method per step (`apply`, `dispatch`,
+  `follow_a_reference`, `arrive_from_a_search_hit`), which collapses each
+  prologue to two lines and costs no test a word of what it asserts. Test count
+  unchanged at 2222. The generalization is now in lessons §2: **if the third test
+  starts the same way as the first two, that opening is a fixture, not a test.**

@@ -1664,7 +1664,9 @@ this?"*; this screen answers *"where exactly, and take me there."*
   there isn't thrown away; `Ctrl+Q`/`F10` quit.
 - **`Esc` in a chat opened from a hit comes back to these results**, not to the chat
   list — you drilled down from them and are most likely working through the hits, so
-  going back retraces the step you took. The results come back **whole** (the same
+  going back retraces the step you took. It is dropped once you *work* in that
+  chat rather than read it (§11.3) — the same rule a followed `chat://`
+  reference obeys, because it is the same back-stack. The results come back **whole** (the same
   selection and scroll position), because the screen itself is stashed rather than the
   query: re-running the search would lose exactly what you want back. It is one step
   deep and consumed on use — the next `Esc`, now from the results, goes on to the chat
@@ -1672,7 +1674,9 @@ this?"*; this screen answers *"where exactly, and take me there."*
   by any ordinary route (picking one in the list, `Ctrl+N`, a clone, restoring the last
   chat at startup). Re-activating the *same* chat (a regeneration, `Ctrl+E`, a repeat
   jump) is not leaving it and keeps the way back. The status bar's `Esc` hint says
-  which of the two it currently means ([§11.7](#117-keybindings-preliminary)).
+  which of the three it currently means ([§11.7](#117-keybindings-preliminary)) —
+  the third being the conversation a `chat://` reference was followed from
+  ([§11.3](#113-the-message-feed)).
 - **The query is highlighted inside the message you land on** (`chat_search::match_ranges`),
   so the feed and the results list agree on what matched — they share one matcher, hence
   one notion of a match. The highlight is applied **post-render**, by matching the text
@@ -1777,7 +1781,17 @@ this?"*; this screen answers *"where exactly, and take me there."*
   by default** because turning it on costs native terminal selection, so a
   click-only design would be unreachable for most users. Following an address
   is an ordinary chat switch — an address names a conversation, not a message —
-  and `Esc` keeps its usual meaning.
+  and **`Esc` retraces it**, back to the conversation the reference was followed
+  from. That is the same one-deep, consumed-on-use back-stack the search screen
+  uses (§11.2.1), and it is dropped by either of two things: **leaving** for a
+  different chat by an ordinary route (picking one in the list, `Ctrl+N`, a
+  clone), or **arriving** — working in the chat you drilled into. Sending a
+  message, regenerating, taking back an exchange, `/compact` and attaching or
+  removing a file all mean you are no longer just looking, and an `Esc` that
+  then teleported you out would be a trap of its own; reading, folding blocks,
+  typing without sending and staging an image for the next message do not. A
+  chain of followed references steps back one conversation and no further, and
+  the status bar says where `Esc` currently goes.
   Three properties are decided rather than incidental:
   - **Only a reference that resolves is drawn as one.** The address book is
     the current profile's non-hidden chats (the open one included), derived
@@ -2168,7 +2182,7 @@ remains. See `shared::secrets`, docs/research/api-key-storage.md.
 | `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
-| `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1); the status bar's hint says which · cancel generation |
+| `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1), or **the conversation a `chat://` reference was followed from** (§11.3); the status bar's hint says which · cancel generation |
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `/exit` / `/quit` | quit the application by typed command — the route no terminal can intercept (see below) |
 | `Ctrl+N` | new chat (profile picker) |

@@ -31,7 +31,14 @@ split by subsystem.
   conversations it now writes its address as `chat://<id>`, and the feed draws
   that as a link. **`Ctrl+L`** lists the conversations the open chat links to
   and opens the one you pick — and with mouse capture on (`Ctrl+W`) you can
-  simply click a link, the first thing in the feed that is clickable at all. Only addresses that really lead somewhere — a
+  simply click a link, the first thing in the feed that is clickable at all.
+  **`Esc` takes you back** to the conversation you came from, the way it already
+  does after opening a search hit — the status bar says where it currently goes.
+  The way back lasts as long as you are *reading*: start working in the chat you
+  arrived at (send, regenerate, take back an exchange, `/compact`, attach a
+  file) and `Esc` goes back to meaning "the chat list", so it can never
+  teleport you out of a conversation you have settled into. The same now applies
+  after opening a search hit. Only addresses that really lead somewhere — a
   conversation of the current companion — are drawn as links, so a link is
   never a dead end; the rest stays ordinary text. (Requires the cross-chat
   tools below to be enabled — they are what hands the assistant the addresses.)

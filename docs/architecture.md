@@ -2095,21 +2095,32 @@ the results with a self-model snapshot, and the `Settings` broadcast would have
 left the new screen's theme and UI language frozen — so both are now exhaustive by
 variant, which forces the next screen to decide too.
 
-**Going back from a jump — a one-deep back-stack** (`SearchReturn`, a local of
+**Going back from a jump — a one-deep back-stack** (`Back`, a local of
 `run_loop` beside `active` rather than a variant of it: it has to survive while
-another screen is in front). Opening a hit stashes the **live `SearchScreen`**, not
-the query — re-running the search would lose the selection and scroll, which is
-exactly what coming back is for — and `ChatIntent::OpenChatList` consumes it:
-`Esc` in that chat restores the results whole, the next `Esc` goes on to the list
-as before. The chat screen learns nothing about searching (FSD: `screens` may not
+another screen is in front). Two ways down write it, and they differ only in what
+"back" is. `Back::Search` — opening a hit stashes the **live `SearchScreen`**, not
+the query, since re-running the search would lose the selection and scroll, which
+is exactly what coming back is for. `Back::Link` — following a `chat://`
+reference (spec §11.3) stashes only the **origin chat's id**, because a chat is
+reopened from storage in full and has no screen state to lose. Either way
+`ChatIntent::OpenChatList` consumes it: `Esc` in that chat restores the results
+whole (or switches back to the origin), the next `Esc` goes on to the list
+as before; a chain of followed references therefore steps back one conversation
+and no further. The chat screen learns nothing about searching (FSD: `screens` may not
 depend on `app`) — `OpenChatList` already means "go back" from its point of view,
-and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared
-in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
+and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared by two rules, one for **leaving** and one for **arriving**. Leaving
+runs in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
 where every chat-opening route ends (the list, `Ctrl+N`, a clone, a jump, restoring
 the last chat at startup); enumerating those routes by hand is what would rot
 silently as routes are added. The test is a **different** chat: `activate()` also
 re-emits for the same chat after a regeneration or `Ctrl+E`, and clearing there
-would drop the way back for no reason. It is session state, never persisted.
+would drop the way back for no reason. Arriving is `AppCommand::works_on_the_open_chat`,
+checked in `dispatch` just before the command is sent: a way back is for someone
+*looking* at the chat they drilled into, and once they send, regenerate, take back an
+exchange, compact or attach a file they have arrived. That predicate is an
+**exhaustive match** on `AppCommand` rather than a list of the interesting variants,
+so a new command cannot join the enum unclassified — the compiler asks. It is session
+state, never persisted.
 The status bar's `Esc` hint (`status_bar::EscTarget`) is **derived** from this
 stack by a pure function called once per frame in the draw path, not mirrored into
 a flag — mirroring would mean writing the same rule at each set/clear site to keep

@@ -14,13 +14,13 @@ use crate::shared::secrets::SecretKey;
 /// A settings snapshot, when the settings screen is open, additionally
 /// refreshes its working copy (reflects profile creation/deletion).
 ///
-/// `back` is the search-results back-stack ([`SearchReturn`]): the
+/// `back` is the search-results back-stack ([`Back`]): the
 /// `ChatActivated` arm is where it gets dropped, because that event is the one
 /// funnel every chat-opening route ends in.
 pub(super) fn apply_event(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
     clipboard: &mut Option<arboard::Clipboard>,
     cmd_tx: &UnboundedSender<AppCommand>,
     event: AppEvent,
@@ -97,7 +97,7 @@ pub(super) fn apply_event(
             focus,
             compaction,
         } => {
-            clear_search_return_if_left(back, id);
+            clear_back_if_left(back, id);
             close_or_mark_chat_list(active, id);
             screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
         }
@@ -267,20 +267,27 @@ fn refresh_settings_screens(
     }
 }
 
-/// Drops the search back-stack when a chat activation means the user left the
-/// chat the results led to (see [`SearchReturn`]).
-fn clear_search_return_if_left(back: &mut Option<SearchReturn>, id: Uuid) {
-    // THE clearing funnel for the search back-stack. Every route that
+/// Drops the back-stack when a chat activation means the user left the chat it
+/// leads out of (see [`Back`]).
+fn clear_back_if_left(back: &mut Option<Back>, id: Uuid) {
+    // THE clearing funnel for the back-stack, both kinds. Every route that
     // opens a chat — picking one in the list, `Ctrl+N`, a clone, a jump
-    // from a hit, restoring the last chat at startup — ends here, so
-    // this is the one place that can honestly say the results are no
-    // longer where the user came from. Enumerating the routes by hand
-    // instead would rot silently the moment a new one is added.
+    // from a hit, following a `chat://` reference, restoring the last chat
+    // at startup — ends here, so this is the one place that can honestly
+    // say the stash is no longer where the user came from. Enumerating the
+    // routes by hand instead would rot silently the moment a new one is
+    // added.
     //
     // The test is "a *different* chat": a re-activation of the same one
     // (regeneration, deleting an exchange, a repeat jump) rebuilds the
     // feed without leaving the chat, and must keep the way back.
-    if back.as_ref().is_some_and(|ret| ret.chat != id) {
+    //
+    // Following a reference is the one route that **writes** the stash on
+    // its way through: it is set in `dispatch` before the command is sent,
+    // and the activation that follows names the chat it points out of, so
+    // this leaves it alone. Order is what makes that true, and it is the
+    // reason the push cannot move into `apply_event`.
+    if back.as_ref().is_some_and(|ret| ret.chat() != id) {
         *back = None;
     }
 }
@@ -379,7 +386,7 @@ pub(super) fn dispatch_any(
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
 ) -> bool {
     match intent {
         AnyIntent::Chat(i) => dispatch(i, cmd_tx, screen, active, back),
@@ -397,7 +404,7 @@ pub(super) fn dispatch(
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
 ) -> bool {
     let command = match intent {
         ChatIntent::Quit => return true,
@@ -411,9 +418,21 @@ pub(super) fn dispatch(
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         // Following a `chat://` reference is an ordinary activation: an address
         // names a conversation, not a message, so there is nothing to focus on
-        // (spec §11.3). The search back-stack is left alone — it is cleared by
-        // `clear_search_return_if_left` like any other switch.
-        ChatIntent::OpenChatLink(id) => AppCommand::SwitchChat(id),
+        // (spec §11.3). It **stashes the way back**, though — the user drilled
+        // down from the conversation they were reading, exactly as they do from
+        // a search hit, and `Esc` should retrace that step rather than drop them
+        // into the chat list (docs/research/chat-uri-links.md fork F6).
+        //
+        // Whatever was stashed before is replaced: the most recent step down is
+        // the one `Esc` undoes. That is also strictly better than the old
+        // behaviour, where following a reference out of a chat opened from a
+        // search hit simply discarded the hits.
+        ChatIntent::OpenChatLink(id) => {
+            if let Some(origin) = screen.active_chat().filter(|from| *from != id) {
+                *back = Some(Back::Link { origin, chat: id });
+            }
+            AppCommand::SwitchChat(id)
+        }
         ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RagList => AppCommand::RagList,
@@ -456,8 +475,16 @@ pub(super) fn dispatch(
         // consumed: the next `Esc`, now from the results, goes on to the list as
         // it always did.
         ChatIntent::OpenChatList if back.is_some() => {
-            if let Some(ret) = back.take() {
-                *active = ActiveScreen::Search(ret.screen);
+            match back.take() {
+                Some(Back::Search { screen, .. }) => *active = ActiveScreen::Search(screen),
+                // Back to the conversation the reference was followed from — an
+                // ordinary switch, so it goes through the orchestrator like any
+                // other. The stash is already taken, so the activation that
+                // follows finds nothing to clear.
+                Some(Back::Link { origin, .. }) => {
+                    let _ = cmd_tx.send(AppCommand::SwitchChat(origin));
+                }
+                None => {}
             }
             return false;
         }
@@ -511,6 +538,17 @@ pub(super) fn dispatch(
         // holding the `arboard` client. It never reaches here.
         ChatIntent::PasteImage { .. } => return false,
     };
+    // A way back is for someone *looking* at the chat they drilled into. Once
+    // they work in it — send, regenerate, take back an exchange, compact, attach
+    // a file — they have arrived, and an `Esc` that silently teleported them out
+    // would be a trap of its own. The other clearing rule (leaving for a
+    // different chat) is the `ChatActivated` funnel; this one is about staying.
+    //
+    // Which commands count is `AppCommand`'s own answer, as an exhaustive match,
+    // so a new command cannot slip past this unclassified.
+    if command.works_on_the_open_chat() {
+        *back = None;
+    }
     let _ = cmd_tx.send(command);
     false
 }
@@ -630,7 +668,7 @@ pub(super) fn dispatch_search(
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
 ) -> bool {
     match intent {
         SearchIntent::Quit => true,
@@ -659,14 +697,14 @@ pub(super) fn dispatch_search(
         // The jump itself is stage 2a's; here it only leaves the results, the
         // way `ChatListIntent::Switch` leaves the chat list — except that the
         // screen is **stashed** rather than dropped, so `Esc` in the chat can
-        // come back to these exact hits (see [`SearchReturn`]).
+        // come back to these exact hits (see [`Back`]).
         SearchIntent::OpenHit {
             chat,
             message,
             query,
         } => {
             if let ActiveScreen::Search(results) = std::mem::replace(active, ActiveScreen::Chat) {
-                *back = Some(SearchReturn {
+                *back = Some(Back::Search {
                     screen: results,
                     chat,
                 });

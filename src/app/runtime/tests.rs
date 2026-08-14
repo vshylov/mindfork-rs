@@ -692,7 +692,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
 fn jump_to_second_hit(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
-    back: &mut Option<SearchReturn>,
+    back: &mut Option<Back>,
     clip: &mut Option<arboard::Clipboard>,
     cmd_tx: &UnboundedSender<AppCommand>,
 ) -> uuid::Uuid {
@@ -742,8 +742,17 @@ fn opening_a_hit_stashes_the_live_results_for_the_way_back() {
 
     assert!(matches!(active, ActiveScreen::Chat), "the results give way");
     let ret = back.as_ref().expect("the results must be stashed");
-    assert_eq!(ret.chat, chat, "the stash remembers where the jump landed");
-    assert_eq!(ret.screen.selected(), 1, "with the selection intact");
+    assert_eq!(
+        ret.chat(),
+        chat,
+        "the stash remembers where the jump landed"
+    );
+    match ret {
+        Back::Search { screen, .. } => {
+            assert_eq!(screen.selected(), 1, "with the selection intact")
+        }
+        Back::Link { .. } => panic!("a hit stashes the results, not a chat"),
+    }
 }
 
 /// The defect this fixes: `Esc` in a chat reached from a hit goes **one step
@@ -811,7 +820,7 @@ fn esc_honours_a_stashed_result_screen() {
     let screen = ChatScreen::new();
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::Chat;
-    let mut back = Some(SearchReturn {
+    let mut back = Some(Back::Search {
         screen: Box::new(SearchScreen::new(
             "маркер".into(),
             Vec::new(),
@@ -968,7 +977,7 @@ fn the_status_bar_esc_hint_follows_the_stashed_results() {
     let mut active = ActiveScreen::Chat;
 
     // What the loop does before every frame.
-    let bar = |screen: &mut ChatScreen, back: &Option<SearchReturn>| {
+    let bar = |screen: &mut ChatScreen, back: &Option<Back>| {
         screen.set_esc_target(esc_target(back));
         let mut term = Terminal::new(TestBackend::new(100, 20)).unwrap();
         term.draw(|f| screen.render(f)).unwrap();
@@ -996,4 +1005,238 @@ fn the_status_bar_esc_hint_follows_the_stashed_results() {
         !dump.contains(results),
         "a stale hint would point at results that are gone"
     );
+}
+
+// ---------- following a `chat://` reference (spec §11.3, fork F6) ----------
+
+/// The runtime loop's state, owned in one place: `dispatch` and `apply_event`
+/// each take four or five of these, and spelling them out per test is what made
+/// the reference tests near-copies of one another (docs/lessons.md §2 — the
+/// duplication gate's fifth recurrence, this time in fixtures written here).
+struct Harness {
+    screen: ChatScreen,
+    active: ActiveScreen,
+    back: Option<Back>,
+    clip: Option<arboard::Clipboard>,
+    cmd_tx: UnboundedSender<AppCommand>,
+    cmd_rx: tokio::sync::mpsc::UnboundedReceiver<AppCommand>,
+}
+
+impl Harness {
+    fn new() -> Self {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        Self {
+            screen: ChatScreen::new(),
+            active: ActiveScreen::Chat,
+            back: None,
+            clip: None,
+            cmd_tx,
+            cmd_rx,
+        }
+    }
+
+    fn apply(&mut self, event: AppEvent) {
+        apply_event(
+            &mut self.screen,
+            &mut self.active,
+            &mut self.back,
+            &mut self.clip,
+            &self.cmd_tx,
+            event,
+        );
+    }
+
+    fn dispatch(&mut self, intent: ChatIntent) {
+        dispatch(
+            intent,
+            &self.cmd_tx,
+            &self.screen,
+            &mut self.active,
+            &mut self.back,
+        );
+    }
+
+    /// The next command the loop sent, if any (the queue is drained as read).
+    fn next_command(&mut self) -> Option<AppCommand> {
+        self.cmd_rx.try_recv().ok()
+    }
+
+    fn drain_commands(&mut self) {
+        while self.cmd_rx.try_recv().is_ok() {}
+    }
+
+    /// Opens the results and jumps into the second hit, then applies the
+    /// activation that jump asks for. Returns the chat it landed in.
+    fn arrive_from_a_search_hit(&mut self) -> uuid::Uuid {
+        let chat = jump_to_second_hit(
+            &mut self.screen,
+            &mut self.active,
+            &mut self.back,
+            &mut self.clip,
+            &self.cmd_tx,
+        );
+        self.apply(chat_activated(chat));
+        chat
+    }
+
+    /// Reads `origin`, follows a `chat://` reference to `target`, and applies
+    /// the activation the switch asks for — the state every test below starts
+    /// from. Returns `(origin, target)`.
+    fn follow_a_reference(&mut self) -> (uuid::Uuid, uuid::Uuid) {
+        let (origin, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        self.apply(chat_activated(origin));
+        self.dispatch(ChatIntent::OpenChatLink(target));
+        self.apply(chat_activated(target));
+        (origin, target)
+    }
+}
+
+/// `Esc` after following a reference goes back to the conversation it was
+/// followed **from**, not to the chat list — the user drilled down exactly as
+/// they do from a search hit. The next `Esc` goes on to the list, as it always
+/// did.
+#[test]
+fn esc_after_following_a_reference_returns_to_the_previous_chat() {
+    let mut h = Harness::new();
+    let (origin, target) = h.follow_a_reference();
+
+    assert!(
+        matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == target),
+        "the reference is followed by an ordinary switch"
+    );
+    assert!(
+        h.back.is_some(),
+        "the switch's own activation is not leaving"
+    );
+    assert_eq!(
+        esc_target(&h.back),
+        EscTarget::PreviousChat,
+        "and the bar says so"
+    );
+
+    h.dispatch(ChatIntent::OpenChatList);
+    assert!(
+        matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == origin),
+        "back to where the reference was followed from"
+    );
+    assert!(
+        matches!(h.active, ActiveScreen::Chat),
+        "we stay in the chat"
+    );
+    assert!(h.back.is_none(), "one step deep, and consumed");
+    assert_eq!(esc_target(&h.back), EscTarget::ChatList);
+
+    // The next `Esc` opens the chat list, exactly as it always did.
+    h.dispatch(ChatIntent::OpenChatList);
+    assert!(matches!(h.active, ActiveScreen::ChatList(_)));
+}
+
+/// Leaving by an ordinary route drops the way back — the same funnel and the
+/// same rule the search half obeys.
+#[test]
+fn an_ordinary_chat_switch_drops_the_reference_way_back() {
+    let mut h = Harness::new();
+    let (_, target) = h.follow_a_reference();
+
+    // Re-activating the *same* chat (a regeneration, `Ctrl+E`) is not leaving.
+    h.apply(chat_activated(target));
+    assert!(h.back.is_some());
+
+    // Picking a third chat in the list is.
+    h.apply(chat_activated(uuid::Uuid::new_v4()));
+    assert!(h.back.is_none(), "no longer where we came from");
+}
+
+/// Following a reference out of a chat opened from a search hit replaces the
+/// stash rather than keeping both: the most recent step down is the one `Esc`
+/// undoes. Before this the hits were simply discarded by the switch, so this is
+/// strictly more than was there.
+#[test]
+fn following_a_reference_replaces_a_stashed_result_screen() {
+    let mut h = Harness::new();
+    let from_hit = h.arrive_from_a_search_hit();
+    assert!(matches!(h.back, Some(Back::Search { .. })));
+    h.drain_commands();
+
+    let target = uuid::Uuid::new_v4();
+    h.dispatch(ChatIntent::OpenChatLink(target));
+    match &h.back {
+        Some(Back::Link { origin, chat }) => {
+            assert_eq!(*origin, from_hit, "back to the chat the hit opened");
+            assert_eq!(*chat, target);
+        }
+        _ => panic!("the reference owns the way back now"),
+    }
+}
+
+/// A way back is for someone *looking* at the chat they drilled into. Working
+/// in it — sending, regenerating, taking back an exchange, compacting,
+/// attaching a file — means they have arrived, and `Esc` goes back to meaning
+/// "the chat list".
+#[test]
+fn working_in_the_chat_you_arrived_at_drops_the_way_back() {
+    for intent in [
+        ChatIntent::Send("привет".into()),
+        ChatIntent::RegenerateLast,
+        ChatIntent::DeleteLastExchange,
+        ChatIntent::Impersonate {
+            seed: String::new(),
+        },
+        ChatIntent::Compact,
+        ChatIntent::FileAttach {
+            path: "заметки.txt".into(),
+        },
+        ChatIntent::FileRemove {
+            target: "#1".into(),
+        },
+    ] {
+        let mut h = Harness::new();
+        h.follow_a_reference();
+        assert!(h.back.is_some(), "{intent:?}: still just looking");
+
+        h.dispatch(intent.clone());
+        assert!(h.back.is_none(), "{intent:?} must drop the way back");
+        assert_eq!(esc_target(&h.back), EscTarget::ChatList);
+    }
+}
+
+/// …and the boundary: reading and looking are not arriving. Staging an image is
+/// turn-scoped and never stored, so it is on this side too. The draft is absent
+/// because it never reaches `dispatch` at all — the loop polls
+/// `take_dirty_draft` and sends `SetDraft` itself, so typing without sending
+/// cannot drop the way back by construction.
+#[test]
+fn reading_and_looking_keep_the_way_back() {
+    for intent in [
+        ChatIntent::SetFeedView(FeedView::default()),
+        ChatIntent::FileList,
+        ChatIntent::ImageAttach {
+            path: "снимок.png".into(),
+        },
+        ChatIntent::ImageList,
+        ChatIntent::Cancel,
+    ] {
+        let mut h = Harness::new();
+        h.follow_a_reference();
+
+        h.dispatch(intent.clone());
+        assert!(h.back.is_some(), "{intent:?} must keep the way back");
+    }
+}
+
+/// The same rule holds for the search half — one back-stack, one meaning of
+/// "you have arrived", so the results are not restored under someone who has
+/// started working in the chat a hit opened.
+#[test]
+fn working_after_a_search_jump_drops_the_results_too() {
+    let mut h = Harness::new();
+    h.arrive_from_a_search_hit();
+    assert!(matches!(h.back, Some(Back::Search { .. })));
+
+    h.dispatch(ChatIntent::Send("продолжим здесь".into()));
+    assert!(h.back.is_none());
+
+    // `Esc` now opens the chat list, as it does from any ordinary chat.
+    h.dispatch(ChatIntent::OpenChatList);
+    assert!(matches!(h.active, ActiveScreen::ChatList(_)));
 }

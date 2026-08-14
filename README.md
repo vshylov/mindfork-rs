@@ -302,7 +302,7 @@ highlights:
 | Key | Action |
 |---|---|
 | `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol) |
-| `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results you came from |
+| `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results or the conversation you came from (the status bar says which) |
 | `Ctrl+Q` / `F10` | quit (or type `/exit` — see the commands below, for terminals that keep both keys for themselves) |
 | `F1` / `?` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
 | `Ctrl+P` | settings |

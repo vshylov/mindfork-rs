@@ -46,6 +46,8 @@ pub enum EscTarget {
     ChatList,
     /// The results the chat was opened from.
     SearchResults,
+    /// The conversation a `chat://` reference was followed from (spec §11.3).
+    PreviousChat,
 }
 
 impl EscTarget {
@@ -55,6 +57,7 @@ impl EscTarget {
         match self {
             EscTarget::ChatList => "ui.status.hotkey.chats",
             EscTarget::SearchResults => "ui.status.hotkey.results",
+            EscTarget::PreviousChat => "ui.status.hotkey.back_chat",
         }
     }
 }
