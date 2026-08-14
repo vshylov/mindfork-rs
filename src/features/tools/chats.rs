@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::Chat;
 use crate::entities::profile::ToolId;
+use crate::features::chat_links;
 use crate::features::chat_search::{HIT_CAP, SNIPPET_BUDGET_CHARS, build_snippet, to_fts_query};
 use crate::features::compaction::HistoryView;
 use crate::shared::i18n::Locale;
@@ -57,10 +58,6 @@ const SNIPPET_CHARS: usize = SNIPPET_BUDGET_CHARS * 3;
 /// SQL-level cap on scanned hits, mirroring the UI's [`HIT_CAP`] reasoning: a
 /// safety valve, with the honest total counted when it bites.
 const SCAN_CAP: usize = HIT_CAP;
-
-/// How many characters of a chat id serve as its address in results (a prefix
-/// of the 32-hex `simple()` form — unambiguous at any realistic chat count).
-const SHORT_ID_CHARS: usize = 8;
 
 /// How many candidates an ambiguous `chat_read` reference lists at most.
 const AMBIGUOUS_CAP: usize = 6;
@@ -93,10 +90,12 @@ pub fn snapshot_other_chats(chats: &[Chat], profile_id: Uuid, current: Uuid) -> 
         .collect()
 }
 
-/// The address shown in brackets next to a conversation.
-fn short_id(id: Uuid) -> String {
-    let hex = id.simple().to_string();
-    hex[..SHORT_ID_CHARS.min(hex.len())].to_string()
+/// The address shown next to a conversation — `chat://` plus a prefix of the
+/// uuid. The same string the model cites back to the user and the feed turns
+/// into a link (spec §11.3), so it has a single producer in
+/// [`chat_links`](crate::features::chat_links).
+fn address(id: Uuid) -> String {
+    chat_links::uri(id)
 }
 
 /// The date half of an RFC 3339 timestamp the index stores (locale-neutral —
@@ -119,25 +118,22 @@ enum Resolved<'a> {
     None,
 }
 
-/// Resolves a `chat_read` reference: short-id prefix first (the address
+/// Resolves a `chat_read` reference: id prefix first (the address
 /// `chat_search` prints — robust under duplicate titles), then exact title,
 /// then title substring, case-folded. Several matches at any rung stop there
 /// and report the ambiguity (the `attachment_read` rule: reading a *different*
 /// conversation than the one asked for and saying nothing would be worse than
 /// asking again).
+///
+/// The id rung reads **both** forms of the address — `chat://a1b2c3d4` and the
+/// bare `a1b2c3d4` — because a model taught to cite the scheme hands the
+/// scheme back ([`chat_links::hex_needle`]).
 fn resolve<'a>(refs: &'a [ChatRef], needle: &str) -> Resolved<'a> {
     let needle = needle.trim();
     if needle.is_empty() {
         return Resolved::None;
     }
-    let hex: String = needle
-        .to_lowercase()
-        .chars()
-        .filter(|c| *c != '-')
-        .collect();
-    // Half a short id is the floor: below that a hex-looking word ("cafe")
-    // would routinely shadow titles.
-    if hex.len() >= SHORT_ID_CHARS / 2 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+    if let Some(hex) = chat_links::hex_needle(needle) {
         let hits: Vec<&ChatRef> = refs
             .iter()
             .filter(|r| r.id.simple().to_string().starts_with(&hex))
@@ -274,7 +270,7 @@ impl Tool for ChatSearch {
                 "tool.chat_search.chat",
                 &[
                     ("title", chat_ref.title.as_str()),
-                    ("id", &short_id(chat_ref.id)),
+                    ("id", &address(chat_ref.id)),
                     ("date", &chat_ref.modified_at.format("%Y-%m-%d").to_string()),
                 ],
             ));
@@ -371,7 +367,7 @@ impl Tool for ChatRead {
                 let listed: Vec<String> = candidates
                     .iter()
                     .take(AMBIGUOUS_CAP)
-                    .map(|r| format!("\"{}\" [{}]", r.title, short_id(r.id)))
+                    .map(|r| format!("\"{}\" {}", r.title, address(r.id)))
                     .collect();
                 return Ok(ToolOutcome::text(ctx.loc.tf(
                     "tool.chat_read.ambiguous",
@@ -427,7 +423,7 @@ impl Tool for ChatRead {
             "tool.chat_read.header",
             &[
                 ("title", chat_ref.title.as_str()),
-                ("id", &short_id(chat_ref.id)),
+                ("id", &address(chat_ref.id)),
                 ("page", &page.to_string()),
                 ("total", &total.to_string()),
             ],
@@ -441,6 +437,7 @@ mod tests {
     use super::*;
     use crate::entities::message::Message;
     use crate::entities::profile::Profile;
+    use crate::features::chat_links::short_id;
     use crate::shared::i18n::{Lang, locale};
     use crate::shared::storage::Storage;
     use crate::shared::storage::cache::IndexedMessage;
@@ -725,6 +722,71 @@ mod tests {
                 .invoke(&ctx, serde_json::json!({ "chat": "  " }))
                 .await
                 .is_err()
+        );
+    }
+
+    /// The scheme the model is taught to cite must survive the round trip: a
+    /// `chat://` address handed back to `chat_read` is the same address it was
+    /// given. Without the scheme strip this falls through the id rung into
+    /// title matching and answers "unknown" (docs/research/chat-uri-links.md
+    /// §3, gap 4).
+    #[tokio::test]
+    async fn read_accepts_its_own_chat_uri() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let profile = ctx.profile_id;
+        let (a, _) = seed_chat(&storage, profile, "рыбалка", &["щука клюёт на живца"]);
+        ctx.other_chats = Arc::from(vec![a.clone()]);
+
+        for reference in [
+            chat_links::uri(a.id),
+            chat_links::uri(a.id).to_uppercase(),
+            short_id(a.id),
+            a.id.to_string(),
+        ] {
+            let out = ChatRead
+                .invoke(&ctx, serde_json::json!({ "chat": reference }))
+                .await
+                .unwrap()
+                .result;
+            assert!(out.contains("щука"), "{reference}: {out}");
+        }
+    }
+
+    /// Every address the pair prints carries the scheme — one form of an
+    /// address everywhere, so the model never translates between what it was
+    /// given and what it should cite (fork F7).
+    #[tokio::test]
+    async fn printed_addresses_carry_the_scheme() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let profile = ctx.profile_id;
+        let (a, _) = seed_chat(&storage, profile, "рыбалка", &["щука клюёт на живца"]);
+        let (b, _) = seed_chat(&storage, profile, "рыбалка зимой", &["окунь подо льдом"]);
+        ctx.other_chats = Arc::from(vec![a.clone(), b.clone()]);
+        let expected = chat_links::uri(a.id);
+
+        let search = ChatSearch
+            .invoke(&ctx, serde_json::json!({ "query": "щука" }))
+            .await
+            .unwrap()
+            .result;
+        assert!(search.contains(&expected), "search header: {search}");
+
+        let read = ChatRead
+            .invoke(&ctx, serde_json::json!({ "chat": expected.clone() }))
+            .await
+            .unwrap()
+            .result;
+        assert!(read.contains(&expected), "read header: {read}");
+
+        // The ambiguity ladder addresses its candidates the same way.
+        let ambiguous = ChatRead
+            .invoke(&ctx, serde_json::json!({ "chat": "рыбал" }))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            ambiguous.contains(&expected) && ambiguous.contains(&chat_links::uri(b.id)),
+            "candidates: {ambiguous}"
         );
     }
 

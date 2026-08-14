@@ -50,6 +50,7 @@ mod tests {
     fn summary(title: &str, created_min: i64, modified_min: i64) -> ChatSummary {
         ChatSummary {
             id: Uuid::new_v4(),
+            profile_id: Uuid::nil(),
             title: title.to_string(),
             created_at: Utc.timestamp_opt(created_min * 60, 0).unwrap(),
             modified_at: Utc.timestamp_opt(modified_min * 60, 0).unwrap(),

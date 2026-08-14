@@ -144,7 +144,11 @@ build the moment they drift from what the app actually renders
   results grouped by conversation, each hit naming the transcript page a
   follow-up read returns. Until you flip the toggles the pair is not even
   advertised to the model, and either way the current conversation, hidden
-  chats and other profiles stay out of reach.
+  chats and other profiles stay out of reach. When the assistant mentions one
+  of those conversations it writes its address as `chat://<id>`, and the feed
+  turns that into a link — `Ctrl+L` lists the ones this chat holds and opens
+  the one you pick, and with mouse capture on you can click it directly. An address for a conversation that isn't yours to open
+  stays plain text, so a link is never a dead end.
 - **Change your embedding model freely**: the switch is detected
   automatically, and `/reindex` re-embeds notes, attachments and every
   profile's knowledge base in one resumable background pass — even the
@@ -316,6 +320,7 @@ highlights:
 | `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo in the input box |
 | `Ctrl+B` | emoji picker |
+| `Ctrl+L` | follow a `chat://` reference the assistant wrote (a picker of the conversations this chat links to; with `Ctrl+W` on you can also just click one) |
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
 | `Ctrl+W` | toggle mouse capture: wheel scrolling ↔ native text selection |
 | `PageUp` / `PageDown` / wheel | scroll the feed |

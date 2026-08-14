@@ -269,6 +269,7 @@ fn list_dump(list: &mut crate::screens::chat_list::ChatListScreen) -> String {
 fn summary(title: &str) -> crate::entities::chat::ChatSummary {
     crate::entities::chat::ChatSummary {
         id: uuid::Uuid::new_v4(),
+        profile_id: uuid::Uuid::nil(),
         title: title.to_string(),
         created_at: chrono::Utc::now(),
         modified_at: chrono::Utc::now(),

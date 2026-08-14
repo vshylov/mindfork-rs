@@ -27,6 +27,15 @@ split by subsystem.
 
 ### Added
 
+- **Links to conversations.** When the assistant mentions another of your
+  conversations it now writes its address as `chat://<id>`, and the feed draws
+  that as a link. **`Ctrl+L`** lists the conversations the open chat links to
+  and opens the one you pick — and with mouse capture on (`Ctrl+W`) you can
+  simply click a link, the first thing in the feed that is clickable at all. Only addresses that really lead somewhere — a
+  conversation of the current companion — are drawn as links, so a link is
+  never a dead end; the rest stays ordinary text. (Requires the cross-chat
+  tools below to be enabled — they are what hands the assistant the addresses.)
+
 - **The assistant can search your other chats — if you let it.** Two new
   tools, `chat_search` and `chat_read`, let the model find and read what other
   conversations of the same profile said (message text only), for questions

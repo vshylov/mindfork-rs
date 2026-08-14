@@ -344,6 +344,7 @@ fn bodies() -> impl Iterator<Item = (&'static str, &'static str)> {
 pub fn chat_summaries() -> Vec<ChatSummary> {
     let mut chats = vec![ChatSummary {
         id: chat_id(),
+        profile_id: profile_id(),
         title: CHAT_TITLE.into(),
         created_at: date(8, 1, 10, 0),
         modified_at: date(8, 1, 10, 3),
@@ -356,6 +357,7 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
                 ChatSummary {
                     // Slots continue the stage-2 numbering (1-based after the hero).
                     id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6c69_7374_0000_0000 + i as u128 + 1),
+                    profile_id: profile_id(),
                     title: title.into(),
                     created_at: created,
                     modified_at: modified,

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Zig code blocks are highlighted (done)
 - Post-M9: vendored syntax grammars for 19 languages (done)
 - Post-M9: collapsible tool calls, and the collapse state per chat (done)
+- Post-M9: navigable `chat://` references in the feed (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1593,3 +1594,113 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
     for "the row after the last argument" by name, but the listing is
     **alphabetical**, so the name it picked was the *first* argument. Anchored on
     the result row instead.
+
+### Post-M9: navigable `chat://` references in the feed (done)
+- **The idea arrived from a live run, not from a design.** With the cross-chat
+  pair enabled (spec §9.11), grok-4.6 started citing conversations as
+  `chat://<short-id>` — a scheme nothing in the repository mints or mentions,
+  invented out of the bracketed address `chat_search` printed. The roadmap item
+  that followed asked only for the second half ("recognize the reference and
+  resolve it"); the code survey moved its centre of gravity, and the design
+  ([chat-uri-links.md](../research/chat-uri-links.md)) is in two halves because
+  of it. Forks F1/F3/F4/F7 decided by the user 2026-08-14, F2/F5/F6 carried
+  their recommendation.
+- **What the survey found, and why the first half exists.** Three gaps, none of
+  them where the roadmap looked:
+  - Nothing taught the scheme, so the feature rested on one model's habit. A
+    different model writes `[a1b2c3d4]`, "chat 3", or the title — and the
+    renderer would light up nothing at all.
+  - A **bare** `chat://…` is not even styled: the parser runs without GFM
+    autolinks (`ENABLE_STRIKETHROUGH|TASKLISTS|MATH|TABLES`), so only the
+    markdown form `[Title](chat://id)` got colour, and only on the URL suffix
+    `end_link` appends. There is no `Link` span kind and no source→screen offset
+    map — the latter structurally unobtainable, as the feed's own doc comment
+    records.
+  - A click in the feed is a no-op, and mouse capture (`Ctrl+W`) is **off by
+    default** because turning it on costs native terminal selection. So the
+    "clicking it goes nowhere" in the roadmap was understating it: clicking
+    anything in the feed goes nowhere, and a click could not be the way in.
+  - Plus a latent defect the first half had to fix on its way past:
+    `chat_read("chat://a1b2c3d4")` failed **its own scheme** — `resolve` stripped
+    only `-` before the hex test, so the address fell through the id rung into
+    title matching and answered "unknown". Teaching the model to write `chat://`
+    without this would have made every round trip fail.
+- **One address, one producer.** `features/chat_links.rs` holds the scheme:
+  `uri`/`short_id` mint it, `hex_needle` reads it back (scheme stripped,
+  dashes dropped, 4–32 hex — the floor is half a short id, below which
+  "cafe"-shaped words shadow titles), `resolve_prefix` resolves it, `find_refs`
+  scans rendered text. `chat_search`/`chat_read` now print `chat://a1b2c3d4`
+  instead of `[a1b2c3d4]` (fork F7) and their descriptions ask the model to cite
+  that form **when it mentions a conversation to the user** — "as needed", not
+  as decoration. Teaching costs nothing while the pair is off: a disabled tool
+  is not advertised at all.
+- **Detection runs in the block builder, before the wrap** (fork F3). The
+  obvious home was the post-render pass the in-feed search highlight uses, and
+  it has a hole this feature would fall into: an address is 15 columns
+  (`chat://` + 8 hex), a narrow panel splits it across rows, and that pass
+  matches per line. Building it earlier also puts the result in the cache, which
+  is correct here and wrong for search: whether a reference is a link is a
+  property of the content and the address book, not of a query being typed. So
+  the address book's fingerprint joins `CacheKey` — the `role_names` precedent —
+  while the search query stays deliberately out of it.
+- **Only what resolves is drawn as a link.** The address book is the current
+  profile's non-hidden chats, the open one included, derived from the chat-list
+  snapshot the screen already keeps (`ChatSummary` gained `profile_id`, fork
+  F5) rather than from an event of its own — so the profile boundary cannot
+  drift from the list the user is looking at. An unknown id, or another
+  profile's, stays plain text. That single rule answers the roadmap's open
+  question ("what should a reference to another profile's chat do") and keeps
+  the UI from ever offering a door onto nothing (lessons §4).
+- **`Ctrl+L`, not a click** (fork F4). The picker lists the conversations the
+  chat links to — read from the block cache, so it is exactly what is drawn —
+  newest block first, deduplicated, title + date, modelled on the profile
+  picker. The mouse is stage 2. The two degenerate cases are told apart: no
+  references at all says what a reference *looks like* rather than opening an
+  empty list, and a reference back to the open conversation says so rather than
+  doing nothing. Following one is `AppCommand::SwitchChat` — an address names a
+  conversation, not a message — so the search back-stack needs no new variant
+  (fork F6 recorded the alternative if a live run says otherwise).
+- **A shared seam rather than a second copy**: `highlight_line`'s span
+  re-splitting became `restyle_ranges(line, text, ranges, patch)`, and the link
+  pass supplies its own patch (accent + `UNDERLINED`). One mechanism, two
+  callers — the shape the Sonar duplication gate has punished three times in
+  this repo when it was not done up front (lessons §2).
+- **Tests**: 11 on the scheme (both forms, case, trailing punctuation and the
+  markdown form's closing paren, a full uuid, non-ASCII neighbours, another
+  scheme left alone, unresolvable → nothing), 6 on the feed (styling, the
+  narrow-panel case that motivates F3, dedup/order, cache invalidation, plain
+  text for an unknown id), 4 on the picker, 5 on the screen (the `Ctrl+L`
+  flows, the profile boundary, the picker closing on a chat switch), 2 on the
+  tools (round-tripping the scheme, every printed address carrying it). Suite
+  **2181 → 2209**.
+- **Stage 2 — the click** (same branch, at the user's call). `MessageFeed`
+  still stores no `Rect`: the click map is **derived in `render`, from the rows
+  about to be drawn, for the viewport only**, in absolute terminal cells. That
+  is the one point where the second wrap, the scroll and the panel's origin have
+  all been applied, so nothing stored can go stale — and it sidesteps the
+  `InputBox::last_area` shape the design had pencilled in, which would have had
+  to re-derive all three at click time. Cost is bounded by the screen (tens of
+  rows), not the conversation; a test pins the map at absolute column 3 (border
+  + rail), which is exactly the off-by-two that would otherwise ship unnoticed.
+  `handle_mouse` now returns an `Option<ChatIntent>` — it had returned `()`
+  since the mouse existed, because nothing in the feed had ever been actionable
+  — and the reference is tried before the input box, which cannot compete: they
+  own disjoint areas and `mouse_press` already answers `false` outside its own.
+  One degradation is stated rather than hidden: an address the wrap split
+  across two rows is styled but not clickable, and `Ctrl+L` stays the route that
+  always works. **No live run** (AGENTS.md §3): pure UI, no engine, memory or
+  tool path touched. +7 tests, suite **2209 → 2216**.
+- **Smoke — GO** (gemma-4-31B q4_0 + bge-m3 via llama-server, the user's live
+  stack). "The model uses the format" is a behavioural claim no unit test can
+  settle, so the §9.11 go/no-go was extended: the answer must now also carry a
+  `chat://` address that `find_refs` resolves to the seeded conversation
+  (`narrow_profile_to` returns the bootstrap chat id, so the assertion is exact
+  rather than "not the current one"), and the prompt asks *which* conversation
+  the fact came from instead of "answer with the code alone", which suppressed
+  the citation by construction. The model called `chat_search` once and answered
+  with the seeded code plus the conversation named as `chat://cd1d3e13` — the
+  address form, unprompted beyond the tool descriptions, on a **local** model
+  rather than the one that invented the scheme. That is the evidence the first half needed: the habit was
+  transferable, and teaching it is what makes it so. Full orchestrator e2e
+  regression (the change touches every turn's tool descriptions and the feed's
+  build path) — **34/34 in 827 s**, no repeats needed.

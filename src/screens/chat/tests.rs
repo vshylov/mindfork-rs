@@ -3004,3 +3004,258 @@ fn text_that_only_resembles_a_quit_command_is_sent() {
         );
     }
 }
+
+// ---------- `chat://` references (spec §11.3) ----------
+
+/// A chat card for the address book the screen keeps.
+fn card(id: Uuid, profile: Uuid, title: &str) -> ChatSummary {
+    ChatSummary {
+        id,
+        profile_id: profile,
+        title: title.into(),
+        created_at: chrono::Utc::now(),
+        modified_at: chrono::Utc::now(),
+        message_count: 1,
+    }
+}
+
+/// Puts `s` on `here` with `others` also in the list, all of one profile, and
+/// an assistant reply citing every id in `cited`.
+fn screen_citing(here: Uuid, others: &[Uuid], cited: &[Uuid]) -> ChatScreen {
+    let profile = Uuid::new_v4();
+    let mut s = ChatScreen::new();
+    let mut list = vec![card(here, profile, "Текущий")];
+    list.extend(
+        others
+            .iter()
+            .enumerate()
+            .map(|(i, id)| card(*id, profile, &format!("Прошлый {i}"))),
+    );
+    let text = cited
+        .iter()
+        .map(|id| crate::features::chat_links::uri(*id))
+        .collect::<Vec<_>>()
+        .join(" и ");
+    s.activate_chat(
+        here,
+        "Текущий".into(),
+        &[Message::assistant(format!("см. {text}"))],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    // After activation, as it arrives in practice: the orchestrator emits the
+    // list on its own schedule.
+    s.set_chat_list(list);
+    s
+}
+
+/// The cache the picker reads is only built by a render, so every test that
+/// asks for references draws a frame first — the same constraint the jump obeys.
+fn draw(s: &mut ChatScreen) {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+}
+
+fn ctrl(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+}
+
+/// `Ctrl+L` opens the picker on the cited conversation, and `Enter` follows it.
+#[test]
+fn ctrl_l_follows_a_cited_conversation() {
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+
+    assert_eq!(s.handle_key(ctrl('l')), None, "the picker opens in place");
+    assert!(s.chat_links.is_some());
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::OpenChatLink(other))
+    );
+    assert!(s.chat_links.is_none(), "the picker closes on a pick");
+}
+
+/// Nothing to follow is not an empty list — it says what a reference looks
+/// like (docs/lessons.md §4).
+#[test]
+fn ctrl_l_with_no_references_explains_instead_of_opening() {
+    let mut s = screen_citing(gen_id(), &[], &[]);
+    draw(&mut s);
+
+    assert_eq!(s.handle_key(ctrl('l')), None);
+    assert!(s.chat_links.is_none(), "an empty popup is not opened");
+    let note = s
+        .feed
+        .iter()
+        .rev()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note about references");
+    assert!(note.text.contains("chat://"), "{}", note.text);
+}
+
+/// A reference back to the open conversation is listed (the model wrote it)
+/// but following it says where you already are instead of switching.
+#[test]
+fn a_reference_to_the_open_chat_says_so() {
+    let here = gen_id();
+    let mut s = screen_citing(here, &[], &[here]);
+    draw(&mut s);
+
+    s.handle_key(ctrl('l'));
+    assert!(s.chat_links.is_some(), "the open chat is still offered");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        None,
+        "no switch to the chat we are on"
+    );
+    let note = s
+        .feed
+        .iter()
+        .rev()
+        .find(|m| m.role == FeedRole::Note)
+        .expect("a note saying we are already here");
+    assert!(!note.text.is_empty());
+}
+
+/// The profile boundary (spec §9.5) holds in the feed too: an address for
+/// another companion's conversation resolves to nothing, so it is neither
+/// drawn as a link nor offered.
+#[test]
+fn another_profiles_conversation_is_not_a_reference() {
+    let (here, foreign) = (gen_id(), gen_id());
+    let mut s = ChatScreen::new();
+    s.activate_chat(
+        here,
+        "Текущий".into(),
+        &[Message::assistant(format!(
+            "см. {}",
+            crate::features::chat_links::uri(foreign)
+        ))],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.set_chat_list(vec![
+        card(here, Uuid::new_v4(), "Текущий"),
+        card(foreign, Uuid::new_v4(), "Чужой профиль"),
+    ]);
+    draw(&mut s);
+
+    assert!(s.feed_view.chat_links().is_empty());
+    assert_eq!(s.handle_key(ctrl('l')), None);
+    assert!(s.chat_links.is_none());
+}
+
+/// Switching chats must not leave the previous conversation's picker open.
+#[test]
+fn switching_chats_closes_the_picker() {
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    s.handle_key(ctrl('l'));
+    assert!(s.chat_links.is_some());
+
+    s.activate_chat(
+        other,
+        "Прошлый".into(),
+        &[Message::user("привет")],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    assert!(s.chat_links.is_none());
+}
+
+/// Stage 2 (spec §11.3): a left click on a drawn `chat://` address follows it,
+/// and a click a column past it is ordinary feed again.
+#[test]
+fn a_click_on_a_chat_reference_opens_that_conversation() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        Some(ChatIntent::OpenChatLink(other))
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.2,
+            at.1
+        )),
+        None,
+        "the cell past the address is not the address"
+    );
+}
+
+/// Clicking a reference back to the open conversation says so rather than
+/// switching — the same rule (and wording) the picker follows.
+#[test]
+fn clicking_a_reference_to_the_open_chat_says_so() {
+    use ratatui::crossterm::event::MouseButton;
+    let here = gen_id();
+    let mut s = screen_citing(here, &[], &[here]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        None
+    );
+    assert!(
+        s.feed
+            .iter()
+            .rev()
+            .any(|m| m.role == FeedRole::Note && !m.text.is_empty()),
+        "a note instead of a silent no-op"
+    );
+}
+
+/// The click must not reach the feed while an overlay owns the screen — and the
+/// reference picker is now one of them.
+#[test]
+fn a_click_is_ignored_while_the_picker_is_open() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+    s.handle_key(ctrl('l'));
+    assert!(s.chat_links.is_some());
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            at.0,
+            at.1
+        )),
+        None
+    );
+}

@@ -252,7 +252,14 @@ src/
 │  │                        per chat (`FeedView`, spec §11.3), scroll, wrap,
 │  │                        jump to a message (pending_focus/anchor/marker, §4),
 │  │                        in-feed search (Ctrl+F): highlight scope, match list and
-│  │                        next/prev to the matched line — see the invariant in §4
+│  │                        next/prev to the matched line — see the invariant in §4,
+│  │                        `chat://` links (known_chats → CacheKey, styled in the
+│  │                        block builder before the wrap; `chat_links()` feeds the
+│  │                        Ctrl+L picker, `chat_link_at` answers a click from a
+│  │                        viewport-sized map rebuilt by each render)
+│  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
+│  │                        (spec §11.3) — the profile-picker shape: snapshot in,
+│  │                        ChatLinkAction out
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
 │  │                        single-line mode (settings fields), visual navigation
 │  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
@@ -337,6 +344,11 @@ src/
 │  ├─ chat_search.rs        to_fts_query: raw input → a *literal* FTS5 MATCH (every
 │  │                        token quoted, inner quotes doubled; tokens under the
 │  │                        trigram 3-char floor dropped). Pure, tested without a DB
+│  ├─ chat_links.rs         the `chat://<id>` address scheme (spec §9.11, §11.3):
+│  │                        the single producer (`uri`/`short_id`) and reader
+│  │                        (`hex_needle`, `resolve_prefix`, `find_refs`) shared by
+│  │                        the tools that mint addresses and the feed that draws
+│  │                        them. `find_refs` returns only addresses that resolve
 │  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser

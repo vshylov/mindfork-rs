@@ -409,6 +409,11 @@ pub(super) fn dispatch(
         ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
+        // Following a `chat://` reference is an ordinary activation: an address
+        // names a conversation, not a message, so there is nothing to focus on
+        // (spec §11.3). The search back-stack is left alone — it is cleared by
+        // `clear_search_return_if_left` like any other switch.
+        ChatIntent::OpenChatLink(id) => AppCommand::SwitchChat(id),
         ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RagList => AppCommand::RagList,

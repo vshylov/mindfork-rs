@@ -152,18 +152,25 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
-- **Navigable chat references in the feed.** With the cross-chat pair enabled
-  (spec §9.11), a model naturally cites conversations as `chat://<short-id>`,
-  reusing the 8-hex address `chat_search` prints; the renderer draws it as a
-  link, but clicking it goes nowhere. Observed in real use (grok-4.6,
-  2026-08-14) rather than designed — the model invented the scheme from the
-  addresses the tools handed it. The jump infrastructure already exists (the
-  search screen's `OpenChatAt` path: anchor, focus, one-deep back-stack), so
-  the work is recognizing the reference in rendered text and resolving it the
-  way `chat_read` resolves its `chat` argument — id prefix, then title, over
-  non-hidden chats — plus deciding what a reference to another *profile's*
-  chat should do (nothing, presumably, mirroring the tools' scope).
-
+- **`chat://` addresses — groundwork** (the track itself is **done**, both
+  stages, see "Recently closed";
+  [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3):
+  - **message- and page-level addresses** (`chat://<id>/p3`): `chat_search`
+    already names the page, `HistoryView::locate` maps a page back to a message
+    and `OpenChatAt` takes a message uuid — so a hit could open exactly where it
+    matched. Left out until the address format has proved itself without a path
+    component.
+  - **a back-stack for a followed link** (fork F6): today `Esc` keeps its usual
+    meaning (the chat list), where the origin chat is one selection away.
+    Extending `SearchReturn` with a chat-origin variant costs the `esc_target`
+    hint, the `clear_search_return_if_left` funnel and a second stash kind — to
+    be revisited if losing the way back reads as a trap in real use.
+  - **an address split across two rendered rows is styled but not clickable**
+    (`Ctrl+L` still follows it). Fixing it means carrying link identity through
+    the wrap, which is a span-metadata problem ratatui gives no room for.
+  - **other organs' schemes** (`note://`, `attachment://`): the same mechanism
+    would serve them, deferred until there is a second live consumer — a URI
+    vocabulary invented ahead of one is a vocabulary nobody speaks.
 ## Chat and profile management
 - **Folders/tags for chats** — grouping in the list (`Esc`).
 - **Export chat to a file** (Markdown/JSON) — currently there's only
@@ -400,6 +407,25 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Navigable `chat://` references** (stages 1–2, complete): a conversation now
+  has **one address**, and the assistant knows it. The item asked only for the
+  second half — recognize a reference and resolve it — and the survey moved its
+  centre of gravity: nothing in the repository minted or mentioned the scheme, so
+  the feature rested on one model's habit (grok-4.6 invented `chat://` out of the
+  bracketed address the tools printed). So the tools now print `chat://<id>`,
+  their descriptions ask the model to cite it **when it mentions a conversation
+  to the user**, and `chat_read` reads it back — which fixed a latent defect on
+  the way past: it used to fail its own scheme, because `resolve` stripped only
+  `-` before the hex test. Live: a **local** gemma-4-31B cited the conversation
+  it had read, unprompted beyond the descriptions — the habit is transferable
+  once the format is actually taught. The feed styles only addresses that
+  **resolve**, against the current profile's chats, so a link is never a dead end
+  and the profile boundary needs no separate check; recognition runs in the block
+  builder *before* the wrap, because an address is 15 columns and a narrow panel
+  splits it where the post-render matching used by in-feed search would miss it.
+  `Ctrl+L` follows a reference and — stage 2 — so does a click, the first
+  clickable thing in the feed, from a map derived at render time for the viewport
+  only. See [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3.
 - **Images in a message** (stages 1–2, complete): `/image attach|remove|list`
   shows a picture to a local `llama-server --mmproj` and to all four clouds. The
   decision that shaped everything else was **not** copying `/file`: an image is
