@@ -165,10 +165,24 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-14, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2181 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2209 unit tests
 green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **cross-chat search for the assistant — track complete**
+most recent tracks: **navigable `chat://` references — stage 1 complete**
+(`chat://<short-id>` is now the one address a conversation has: the cross-chat
+tools print it, their descriptions teach the model to **cite it when it mentions
+a conversation to the user**, and the feed draws a resolvable one as a link that
+`Ctrl+L` follows. The scheme was **observed before it was designed** — a model
+invented it out of the bracketed address the tools used to print — so the load-
+bearing half turned out to be the teaching, not the rendering. Only an address
+that resolves is styled, against the current profile's chats, so a link is never
+a dead end and the profile boundary needs no separate check; recognition runs in
+the block builder *before* the wrap, because an address is 15 columns and a
+narrow panel splits it where the post-render matching used by in-feed search
+would miss it. A key rather than a click: feed clicks are a no-op and mouse
+capture is off by default — the mouse is stage 2;
+[docs/research/chat-uri-links.md](docs/research/chat-uri-links.md), spec §11.3),
+**cross-chat search for the assistant — track complete**
 (`chat_search`/`chat_read`, **off by default** per profile: the model can
 search and read the profile's *other* chats over the full-text index the app
 already keeps — results grouped by conversation and page-addressed through the

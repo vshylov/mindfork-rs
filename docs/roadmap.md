@@ -152,7 +152,23 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
-- **Navigable chat references in the feed.** With the cross-chat pair enabled
+- **Navigable chat references in the feed — stage 1 done, the mouse is left.**
+  `chat://<id>` is now the one address a conversation has: the tools print it,
+  their descriptions teach the model to cite it, the feed draws a resolvable one
+  as a link and **`Ctrl+L`** follows it
+  ([chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3). What
+  stage 2 adds is the **click**: `MessageFeed` stores no rendered `Rect` and the
+  feed has no cell→position mapping (the `InputBox::last_area` +
+  `place_cursor_at` pair is the shape to mirror), and it only ever helps users
+  who run with `Ctrl+W` capture on. Also left open by the design: **message- and
+  page-level addresses** (`chat://<id>/p3` — `chat_search` already names the
+  page, `HistoryView::locate` maps a page back to a message and `OpenChatAt`
+  takes a message uuid), a **back-stack** so `Esc` retraces a followed link
+  (fork F6 — recorded, to be revisited if a live run says losing the way back
+  reads as a trap), and **other organs' schemes** (`note://`, `attachment://`),
+  deferred until the chat one has proven itself.
+  <details><summary>How it got here</summary>
+  With the cross-chat pair enabled
   (spec §9.11), a model naturally cites conversations as `chat://<short-id>`,
   reusing the 8-hex address `chat_search` prints; the renderer draws it as a
   link, but clicking it goes nowhere. Observed in real use (grok-4.6,
@@ -173,6 +189,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   works everywhere. It also turned up a latent defect worth fixing either way:
   `chat_read("chat://a1b2c3d4")` fails its own scheme, because `resolve` strips
   only `-` before the hex test.
+  </details>
 
 ## Chat and profile management
 - **Folders/tags for chats** — grouping in the list (`Esc`).

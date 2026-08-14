@@ -3,7 +3,9 @@
 Status: **accepted 2026-08-14** — the four load-bearing forks decided by the
 user (F1, F3, F4, F7, all as recommended); F2, F5 and F6 carry their
 recommendation and were not put separately, so they stay open to revision
-during implementation. Not implemented yet.
+during implementation. **Stage 1 implemented** in `feat/chat-uri-links`
+(the address, the teaching, the styling, the `Ctrl+L` picker); stage 2 (the
+mouse) is not started.
 Date: 2026-08-14.
 
 Roadmap item: "Navigable chat references in the feed"

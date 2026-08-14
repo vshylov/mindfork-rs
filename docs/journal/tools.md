@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -35,6 +35,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: images returned by MCP tools (done)
 - Post-M9: an address policy for model-chosen URLs (done)
 - Post-M9: cross-chat search for the assistant (`chat_search`/`chat_read`) (done)
+- Post-M9: `chat://` as the one address of a conversation (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1855,3 +1856,37 @@ same trap in this project (lessons §2, §9).
   three drift-prone background build sites — the seam a future `TurnInfo`
   field will thank. Unit suite unchanged at 2181; the cross-chat smoke re-run
   green after the cache-path refactor.
+
+### Post-M9: `chat://` as the one address of a conversation (done)
+- **The tools' half of the reference track** — the feed half, the design and
+  every fork are in [ui-feed.md](ui-feed.md) and
+  [chat-uri-links.md](../research/chat-uri-links.md); recorded here because the
+  pair is where an address is minted and where the model is taught.
+- **The scheme replaced the brackets** (fork F7). `chat_search`'s conversation
+  header, `chat_read`'s page header and the ambiguity candidate list now print
+  `chat://a1b2c3d4` instead of `[a1b2c3d4]`, and `short_id` moved into the
+  shared `features/chat_links.rs` so the string has one producer. One form
+  everywhere means the model never has to translate between what a result
+  handed it and what it should write back.
+- **Teaching is where the address already lives.** Both `desc` strings and
+  `tool.chat_search.hint` ask the model to cite `chat://<id>` **when it mentions
+  a conversation to the user**, and say why (the interface turns it into a link
+  they can open). Deliberately not a new prompt block next to
+  `inject_compaction`: while the pair is off — the default — a disabled tool is
+  not advertised at all, so this teaching costs exactly zero tokens for every
+  profile that never enabled it, and cannot exist without the addresses it talks
+  about.
+- **The defect the teaching would otherwise have created.** `resolve` stripped
+  only `-` before its hex test, so `chat_read("chat://a1b2c3d4")` — the address
+  the model had just been told to write — failed the id rung, fell through to
+  title matching and answered "unknown". It now reads the reference through
+  `chat_links::hex_needle`, which strips the scheme case-insensitively and
+  bounds the hex at 4–32 characters; the ladder above it is unchanged, so a
+  hex-shaped title still resolves as a title. Pinned by a test that hands
+  `chat_read` all four forms of the same reference (scheme, upper-case scheme,
+  bare short id, full uuid).
+- **Live smoke — pending**: the §9.11 go/no-go gained the citation assertion
+  (the answer must carry a `chat://` address resolving to the seeded chat), and
+  `narrow_profile_to` now returns the bootstrap chat id so the assertion is
+  exact rather than "not the current one". To be run against the user's stack
+  before the PR.

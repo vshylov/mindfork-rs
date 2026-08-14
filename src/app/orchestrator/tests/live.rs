@@ -45,12 +45,12 @@ async fn fill_then_compact(
 /// Waits out the bootstrap (profile list + first chat activation) and narrows
 /// the default profile to exactly `tools` — the "remove the alternative" rule
 /// the tool smokes share: a smoke must not depend on the model's mood not to
-/// take a shortcut. Returns the profile id.
+/// take a shortcut. Returns `(profile id, the bootstrap chat's id)`.
 async fn narrow_profile_to(
     cmd_tx: &UnboundedSender<AppCommand>,
     evt_rx: &mut UnboundedReceiver<AppEvent>,
     tools: Vec<crate::entities::profile::ToolId>,
-) -> Uuid {
+) -> (Uuid, Uuid) {
     let profile = wait_for(evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
         .await
         .and_then(|e| match e {
@@ -58,9 +58,13 @@ async fn narrow_profile_to(
             _ => None,
         })
         .expect("the bootstrap profile");
-    wait_for(evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+    let chat = wait_for(evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
-        .unwrap();
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .expect("the bootstrap chat");
     cmd_tx
         .send(AppCommand::UpdateProfile {
             id: profile,
@@ -70,7 +74,7 @@ async fn narrow_profile_to(
             }),
         })
         .unwrap();
-    profile
+    (profile, chat)
 }
 
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
@@ -2358,7 +2362,7 @@ async fn history_read_back_answers_what_the_summary_dropped_live() {
     // history — and the note's *result* then travelled into the digest, which
     // put the whole list into the summary verbatim. Removing the alternative is
     // the same move `spawn_orch_live_no_embed` makes for attachments.
-    narrow_profile_to(
+    let _ = narrow_profile_to(
         &cmd_tx,
         &mut evt_rx,
         vec![
@@ -2544,7 +2548,7 @@ async fn cross_chat_search_answers_from_another_chat_live() {
     };
     // Only the pair under test, and *before* the seed turn — see the doc
     // comment for why the alternative routes must not exist.
-    let profile = narrow_profile_to(
+    let (profile, chat_a) = narrow_profile_to(
         &cmd_tx,
         &mut evt_rx,
         vec![
@@ -2586,7 +2590,8 @@ async fn cross_chat_search_answers_from_another_chat_live() {
         &cmd_tx,
         &mut evt_rx,
         "В другом разговоре этого профиля мы записали код поставки компрессора. \
-         Найди его по другим разговорам и ответь только этим кодом.",
+         Найди его по другим разговорам, назови код и укажи, в каком разговоре \
+         он записан.",
     )
     .await;
     eprintln!("answer: {answer}");
@@ -2609,6 +2614,18 @@ async fn cross_chat_search_answers_from_another_chat_live() {
     assert!(
         answer.contains(CODE),
         "the fact lives only in the other chat and must come back: {answer}"
+    );
+    // Spec §11.3: the model is *taught* the address form by the pair's
+    // descriptions, so naming the conversation it read must produce a
+    // `chat://` reference — resolved here through the same `find_refs` the
+    // feed uses, against the one conversation the answer can legitimately
+    // name. This is the half that makes the reference navigable; without it
+    // the feature rests on one model's habit.
+    let cited = crate::features::chat_links::find_refs(&answer, &[chat_a]);
+    assert!(
+        !cited.is_empty(),
+        "the answer must cite the conversation as {}<id>: {answer}",
+        crate::features::chat_links::SCHEME
     );
 }
 
