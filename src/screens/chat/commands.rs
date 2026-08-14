@@ -39,6 +39,12 @@ impl ChatScreen {
 
     /// Dispatches a parsed command. Exhaustive on [`UiCommand`], so a new
     /// registry row cannot ship without an answer here.
+    ///
+    /// One line per command: an arm that needs a precondition checked delegates
+    /// to a named method below rather than spelling the check out here. That
+    /// keeps this readable as the dispatch *table* it is — and keeps its
+    /// cognitive complexity off the analyzer's bar, which a table of nineteen
+    /// arms reaches on the strength of a few `if`s alone.
     fn run_ui_command(
         &mut self,
         command: UiCommand,
@@ -46,25 +52,11 @@ impl ChatScreen {
         alias: &'static str,
     ) -> Option<ChatIntent> {
         match command {
-            // The screens. `Ctrl+P` silently does nothing until the first
-            // `Settings` event has arrived; the command says why instead.
-            UiCommand::Settings => {
-                if self.settings_snapshot.is_none() {
-                    return self.note("ui.cmd.settings_pending");
-                }
-                self.handle_ctrl_shortcut('p').flatten()
-            }
-            // Bare — the screen; `clear` — the wipe that screen offers behind
-            // `Ctrl+K` twice, behind a confirmation here for the same reason.
-            // The model belongs to the *active profile*, so with no chat open
-            // the orchestrator would silently drop the edit: say so instead.
-            UiCommand::SelfModel if argument == "clear" => {
-                if self.active_chat.is_none() {
-                    return self.note("ui.cmd.no_chat");
-                }
-                self.confirm = Some(ConfirmAction::ClearSelfModel);
-                None
-            }
+            // The screens.
+            UiCommand::Settings => self.open_settings_screen(),
+            // Bare — the screen; `clear` — the wipe it offers behind `Ctrl+K`
+            // twice, behind a confirmation here for the same reason.
+            UiCommand::SelfModel if argument == "clear" => self.ask_clear_self_model(),
             UiCommand::SelfModel => Some(ChatIntent::OpenSelfModel),
             // Deliberately not `Esc`'s behaviour: `Esc` cancels a running
             // generation first, and this command is the half that always means
@@ -86,45 +78,11 @@ impl ChatScreen {
                 || self.note("ui.cmd.no_chat"),
                 |id| Some(ChatIntent::CopyChat(id)),
             ),
-            // Both are ignored during generation by `trigger_destructive`, and
-            // both honour `interface.confirm_destructive_keys` — the popup is
-            // the key's, reached through the key's own path.
-            UiCommand::Regen | UiCommand::Takeback => {
-                if self.generating {
-                    return self.busy_note(alias);
-                }
-                self.handle_ctrl_shortcut(match command {
-                    UiCommand::Regen => 'r',
-                    _ => 'e',
-                })
-                .flatten()
-            }
-            UiCommand::Impersonate => {
-                if self.generating {
-                    return self.busy_note(alias);
-                }
-                // The seed is the rest of the line, where the key takes whatever
-                // was already in the box — the command consumed the box itself.
-                Some(ChatIntent::Impersonate { seed: argument })
-            }
-            UiCommand::Stop => {
-                if self.generating {
-                    Some(ChatIntent::Cancel)
-                } else {
-                    self.note("ui.cmd.not_generating")
-                }
-            }
+            UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
+            UiCommand::Impersonate => self.typed_impersonate(argument, alias),
+            UiCommand::Stop => self.typed_stop(),
             // Finding things.
-            UiCommand::Find => {
-                if !argument.is_empty() {
-                    // `open_feed_search` resumes the chat's last query; seeding
-                    // it here is what makes `/find <text>` land on a match
-                    // without a second keystroke.
-                    self.search_last = argument;
-                }
-                self.open_feed_search();
-                None
-            }
+            UiCommand::Find => self.typed_find(argument),
             UiCommand::Search => Some(ChatIntent::SearchMessages { query: argument }),
             UiCommand::Links => {
                 // Says what a reference looks like when the chat holds none.
@@ -137,6 +95,70 @@ impl ChatScreen {
             UiCommand::Mouse => self.handle_ctrl_shortcut('w').flatten(),
             UiCommand::Emoji => self.handle_ctrl_shortcut('b').flatten(),
         }
+    }
+
+    /// `/settings` — `Ctrl+P` silently does nothing until the first `Settings`
+    /// event has arrived; the command says why instead.
+    fn open_settings_screen(&mut self) -> Option<ChatIntent> {
+        if self.settings_snapshot.is_none() {
+            return self.note("ui.cmd.settings_pending");
+        }
+        self.handle_ctrl_shortcut('p').flatten()
+    }
+
+    /// `/self clear` — the model belongs to the *active profile*, so with no
+    /// chat open the orchestrator would silently drop the edit: say so instead.
+    fn ask_clear_self_model(&mut self) -> Option<ChatIntent> {
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        self.confirm = Some(ConfirmAction::ClearSelfModel);
+        None
+    }
+
+    /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by
+    /// `trigger_destructive`, and both honour `confirm_destructive_keys` — the
+    /// popup is the key's, reached through the key's own path. The only thing
+    /// added here is the answer the key does not owe.
+    fn typed_destructive(&mut self, command: UiCommand, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        let chord = if command == UiCommand::Regen {
+            'r'
+        } else {
+            'e'
+        };
+        self.handle_ctrl_shortcut(chord).flatten()
+    }
+
+    /// `/impersonate [text]` — the seed is the rest of the line, where the key
+    /// takes whatever was already in the box (the command consumed the box).
+    fn typed_impersonate(&mut self, seed: String, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        Some(ChatIntent::Impersonate { seed })
+    }
+
+    /// `/stop` — the explicit half of `Esc`, and the half that has something to
+    /// say when there is nothing to cancel.
+    fn typed_stop(&mut self) -> Option<ChatIntent> {
+        if self.generating {
+            return Some(ChatIntent::Cancel);
+        }
+        self.note("ui.cmd.not_generating")
+    }
+
+    /// `/find [text]` — `open_feed_search` resumes the chat's last query, so
+    /// seeding it here is what makes `/find <text>` land on a match without a
+    /// second keystroke.
+    fn typed_find(&mut self, query: String) -> Option<ChatIntent> {
+        if !query.is_empty() {
+            self.search_last = query;
+        }
+        self.open_feed_search();
+        None
     }
 
     /// Renames the open chat. With a title — straight through, as `F2` in the
