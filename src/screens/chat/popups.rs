@@ -322,11 +322,36 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
-    // Last, as quitting is in the hotkeys tab: this is the typed route out, for
-    // terminals that keep `Ctrl+Q` and `F10` for themselves (VS Code's integrated
-    // one binds both). Same reasoning as `/image paste` above.
-    ("/exit · /quit", "ui.help.exit"),
 ];
+
+/// The way out closes the tab, whatever stands in front of it: this is the typed
+/// route out, for terminals that keep `Ctrl+Q` and `F10` for themselves (VS
+/// Code's integrated one binds both). Same reasoning as `/image paste` above.
+/// Kept apart from [`HELP_COMMANDS`] so the registry's rows
+/// ([`command_rows`]) can be inserted between the two without this one moving.
+const HELP_COMMANDS_TAIL: &[(&str, &str)] = &[("/exit · /quit", "ui.help.exit")];
+
+/// The "Commands" tab's rows: the commands with parsers of their own
+/// ([`HELP_COMMANDS`]), then every typed route in the registry, then the way out
+/// ([`HELP_COMMANDS_TAIL`]).
+///
+/// The middle section is **derived** rather than written out again, so a command
+/// cannot exist without a help row — a table repeating the registry would be one
+/// more place to forget (the `supported_sampling_fields` single-source pattern).
+/// The registry's own order carries its four display groups; the openers below
+/// name each group's first row.
+pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
+    HELP_COMMANDS
+        .iter()
+        .copied()
+        .chain(
+            crate::features::ui_command::COMMANDS
+                .iter()
+                .map(|s| (s.label, s.description)),
+        )
+        .chain(HELP_COMMANDS_TAIL.iter().copied())
+        .collect()
+}
 
 /// The labels that **open a display group** of [`HELP_KEYS`]: [`key_lines`]
 /// draws one blank line before each of these rows, so related keys read as
@@ -344,12 +369,19 @@ pub(super) const KEY_GROUP_OPENERS: &[&str] =
     &["Shift+←/→/↑/↓", "Esc", "F3", "Ctrl+K", "Ctrl+P", "F1 / ?"];
 
 /// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
-/// files · images · the knowledge base · housekeeping · speech · the way out.
+/// files · images · the knowledge base · housekeeping · speech · the screens ·
+/// the conversation · finding things · the feed · the way out. The last four
+/// groups before the exit row are the typed routes ([`command_rows`]), grouped
+/// the way the registry orders them.
 const COMMAND_GROUP_OPENERS: &[&str] = &[
     "ui.help.k.image_attach",
     "ui.help.k.rag_add",
     "/reindex",
     "ui.help.k.tts",
+    "/settings",
+    "ui.help.k.new",
+    "ui.help.k.find",
+    "/thoughts",
     "/exit · /quit",
 ];
 
@@ -454,7 +486,13 @@ pub(super) fn render_help(
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc),
         HelpTab::Hotkeys => key_lines(HELP_KEYS, KEY_GROUP_OPENERS, palette, loc, inner_w),
-        HelpTab::Commands => key_lines(HELP_COMMANDS, COMMAND_GROUP_OPENERS, palette, loc, inner_w),
+        HelpTab::Commands => key_lines(
+            &command_rows(),
+            COMMAND_GROUP_OPENERS,
+            palette,
+            loc,
+            inner_w,
+        ),
         HelpTab::License => license_lines(palette, inner_w),
         HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
         HelpTab::Components => component_lines(palette, loc, inner_w),
@@ -1024,12 +1062,13 @@ mod tests {
         let palette = Palette::default();
         // Both ends of the adaptive range: the floor is where the columns are
         // tightest, the ceiling is where a bound mistake would hide.
+        let commands = command_rows();
         for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             for &lang in crate::shared::i18n::Lang::ALL {
                 let loc = crate::shared::i18n::locale(lang);
                 for (name, entries, openers) in [
                     ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-                    ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+                    ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
                 ] {
                     for line in key_lines(entries, openers, &palette, loc, w) {
                         let width = line_width(&line);
@@ -1054,11 +1093,12 @@ mod tests {
     #[test]
     fn descriptions_share_one_column_per_tab() {
         let palette = Palette::default();
+        let commands = command_rows();
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             for (name, entries, openers) in [
                 ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-                ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+                ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
             ] {
                 let lines = key_lines(entries, openers, &palette, loc, HELP_MAX_WIDTH as usize);
                 // The description is always the last span; everything before it
@@ -1134,24 +1174,32 @@ mod tests {
     }
 
     /// The "Commands" tab of the help dialog, rendered to text.
+    ///
+    /// Read in **two passes** — unscrolled, then scrolled past the end (the
+    /// renderer clamps) — and concatenated: since the typed routes joined it the
+    /// tab is taller than the dialog, and a one-pass read would silently stop
+    /// asserting about everything below the fold. What each test wants is "this
+    /// row renders somewhere in the tab", not "on the first screen of it".
     fn commands_tab_text() -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let mut s = ChatScreen::new();
-        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        s.help.as_mut().unwrap().tab = HelpTab::Commands;
-        // Tall enough for the whole tab, group separators included — these
-        // tests assert on unscrolled content.
-        let mut term = Terminal::new(TestBackend::new(90, 50)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
-        let buf = term.backend().buffer();
         let mut out = String::new();
-        for y in buf.area.top()..buf.area.bottom() {
-            for x in buf.area.left()..buf.area.right() {
-                out.push_str(buf[(x, y)].symbol());
+        for scroll in [0usize, usize::MAX] {
+            let mut s = ChatScreen::new();
+            s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+            let help = s.help.as_mut().unwrap();
+            help.tab = HelpTab::Commands;
+            help.scroll = scroll;
+            let mut term = Terminal::new(TestBackend::new(90, 50)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            for y in buf.area.top()..buf.area.bottom() {
+                for x in buf.area.left()..buf.area.right() {
+                    out.push_str(buf[(x, y)].symbol());
+                }
+                out.push('\n');
             }
-            out.push('\n');
         }
         out
     }
@@ -1167,9 +1215,10 @@ mod tests {
     fn group_openers_open_real_rows() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let commands = command_rows();
         for (name, entries, openers) in [
             ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-            ("HELP_COMMANDS", HELP_COMMANDS, COMMAND_GROUP_OPENERS),
+            ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
         ] {
             assert!(!openers.is_empty(), "{name} lost its group breaks");
             for opener in openers {
@@ -1371,13 +1420,13 @@ mod tests {
         // more than most: a user reaches for it precisely when the documented
         // keys did not work.
         let label = "/exit · /quit";
+        let rows = command_rows();
         assert_eq!(
-            HELP_COMMANDS
-                .iter()
+            rows.iter()
                 .position(|(k, _)| *k == label)
-                .expect("the quit commands are missing from HELP_COMMANDS"),
-            HELP_COMMANDS.len() - 1,
-            "the quit commands close the list"
+                .expect("the quit commands are missing from the commands tab"),
+            rows.len() - 1,
+            "the quit commands close the list, whatever is inserted in front of them"
         );
         // Both spellings the parser accepts are shown — the label is the only
         // place a user learns that `/quit` works too.

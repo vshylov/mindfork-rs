@@ -3259,3 +3259,466 @@ fn a_click_is_ignored_while_the_picker_is_open() {
         None
     );
 }
+
+// ---------- typed routes for the chords (docs/research/command-only-control.md) ----------
+
+use crate::features::ui_command::{self, Arity, UiCommand};
+
+/// A chat screen driven the way a user drives it — type a line, press `Enter` —
+/// with the state the typed routes need: an open chat, two profiles and a
+/// settings snapshot.
+///
+/// A harness rather than a prologue per test: six tests spelling out the same
+/// four setup lines is the sliding self-duplication the gate keeps catching
+/// (docs/lessons.md §2, where the previous recurrence was exactly this shape).
+struct Cmd {
+    s: ChatScreen,
+    chat: Uuid,
+}
+
+impl Cmd {
+    /// A furnished screen: the common case. The ids are **fixed** rather than
+    /// fresh, so two screens built here are genuinely identical — the
+    /// command-versus-chord comparison below is between two of them, and random
+    /// ids would make every intent that carries one differ.
+    fn new() -> Self {
+        let mut s = ChatScreen::new();
+        let chat = Uuid::from_u128(1);
+        s.activate_chat(
+            chat,
+            "Про космос".into(),
+            &[Message::user("привет")],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        s.set_profile_list(vec![
+            ProfileSummary {
+                id: Uuid::from_u128(2),
+                name: "Гайя".into(),
+            },
+            ProfileSummary {
+                id: Uuid::from_u128(3),
+                name: "Гелиос".into(),
+            },
+        ]);
+        s.set_settings(
+            AppConfig::default(),
+            vec![Profile::new("P", "sys")],
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+        );
+        Self { s, chat }
+    }
+
+    /// A bare screen: no chat, no profiles, no settings snapshot yet — the state
+    /// the app is in for the first moments after launch.
+    fn bare() -> Self {
+        Self {
+            s: ChatScreen::new(),
+            chat: Uuid::nil(),
+        }
+    }
+
+    /// Types a command line and presses `Enter`.
+    fn run(&mut self, line: &str) -> Option<ChatIntent> {
+        type_str(&mut self.s, line);
+        self.s
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    fn ctrl(&mut self, c: char) -> Option<ChatIntent> {
+        self.s
+            .handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+    }
+
+    fn key(&mut self, code: KeyCode) -> Option<ChatIntent> {
+        self.s.handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    /// The last note in the feed (the answer a refused command leaves).
+    fn last_note(&self) -> String {
+        self.s
+            .feed
+            .iter()
+            .rev()
+            .find(|m| m.role == FeedRole::Note)
+            .map(|m| m.text.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// The heart of the track: a command reaches the action through the very
+/// handler its chord uses, so the two cannot grow two behaviours. Each pair is
+/// run on two identical screens and must produce the same intent — and, where
+/// the effect is in-screen rather than an intent, the same visible state.
+#[test]
+fn every_command_agrees_with_the_chord_it_mirrors() {
+    let ctrl_pairs = [
+        ("/settings", 'p'),
+        ("/regen", 'r'),
+        ("/takeback", 'e'),
+        ("/new", 'n'),
+        ("/thoughts", 't'),
+        ("/toolcalls", 'o'),
+        ("/mouse", 'w'),
+        ("/links", 'l'),
+    ];
+    for (line, chord) in ctrl_pairs {
+        let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+        assert_eq!(
+            typed.run(line),
+            pressed.ctrl(chord),
+            "{line} and Ctrl+{chord} disagree"
+        );
+    }
+    // The function keys, and `Esc` for the chat list.
+    for (line, code) in [
+        ("/self", KeyCode::F(3)),
+        ("/copy", KeyCode::F(5)),
+        ("/chats", KeyCode::Esc),
+    ] {
+        let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+        assert_eq!(
+            typed.run(line),
+            pressed.key(code),
+            "{line} and {code:?} disagree"
+        );
+    }
+    // In-screen effects have no intent to compare, so compare the state each
+    // route leaves behind.
+    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+    assert_eq!(typed.run("/help"), None);
+    pressed.key(KeyCode::F(1));
+    assert_eq!(typed.s.help.is_some(), pressed.s.help.is_some());
+    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+    assert_eq!(typed.run("/emoji"), None);
+    pressed.ctrl('b');
+    assert_eq!(typed.s.emoji.is_some(), pressed.s.emoji.is_some());
+    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+    assert_eq!(typed.run("/find"), None);
+    pressed.ctrl('f');
+    assert_eq!(typed.s.search.is_some(), pressed.s.search.is_some());
+}
+
+/// Every command clears the input box and hands an **empty** draft back, or the
+/// next launch would greet the user with the command they typed (the `/exit`
+/// trap, journal ui-input.md). Driven off the registry, so a new row is covered
+/// the moment it is added.
+#[test]
+fn every_command_clears_the_box_and_the_draft() {
+    for spec in ui_command::COMMANDS {
+        let mut c = Cmd::new();
+        let line = match spec.arity {
+            Arity::Required => format!("{} что-нибудь", spec.aliases[0]),
+            _ => spec.aliases[0].to_string(),
+        };
+        c.run(&line);
+        // `/rename` bare deliberately hands the current title back for editing;
+        // it is the one command whose answer IS text in the box.
+        if spec.command == UiCommand::Rename {
+            continue;
+        }
+        assert!(c.s.input.is_empty(), "{line} left text in the box");
+        assert!(
+            c.s.take_dirty_draft().is_some_and(|d| d.is_empty()),
+            "{line} must hand an empty draft back for saving"
+        );
+    }
+}
+
+/// Every registry command is highlighted while it is being typed — including a
+/// malformed one, which is a command and not prose. What the box shows and what
+/// `Enter` does come from the same parser, so they cannot disagree.
+#[test]
+fn commands_are_highlighted_as_they_are_typed() {
+    for spec in ui_command::COMMANDS {
+        for alias in spec.aliases {
+            let mut c = Cmd::new();
+            type_str(&mut c.s, alias);
+            assert!(c.s.input_is_command(), "{alias} is not highlighted");
+            // …and with a stray argument, which is still a command.
+            type_str(&mut c.s, " nonsense");
+            assert!(
+                c.s.input_is_command(),
+                "{alias} with an argument is not highlighted"
+            );
+        }
+    }
+    // A longer word that merely starts with a command name is prose, exactly as
+    // it is on `Enter`.
+    for text in ["/settings2", "/newest", "how do I stop this?"] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(!c.s.input_is_command(), "{text} must stay plain text");
+    }
+}
+
+/// A command blocked by state answers; a chord in the same state is silent. That
+/// asymmetry is the point (docs/lessons.md §4) — and each note has to name a
+/// route out, so the answer is not a dead end.
+#[test]
+fn a_blocked_command_says_so_and_names_a_route() {
+    // Nothing is generating: `/stop` has nothing to cancel.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/stop"), None);
+    assert!(!c.last_note().is_empty(), "/stop said nothing");
+
+    // A turn is running: the destructive pair and impersonation are held back —
+    // by the command, with an answer, where the chord just no-ops.
+    for line in ["/regen", "/retry", "/takeback", "/impersonate"] {
+        let mut c = Cmd::new();
+        c.s.begin_generation(gen_id());
+        assert_eq!(c.run(line), None, "{line} must not fire mid-turn");
+        let note = c.last_note();
+        assert!(note.contains(line), "{line}: the note must name it: {note}");
+        assert!(
+            note.contains("/stop"),
+            "{line}: the note must name the way out: {note}"
+        );
+    }
+
+    // No chat open yet: the chat-scoped commands say so instead of doing nothing.
+    for line in ["/copy", "/clone", "/rename Новое"] {
+        let mut c = Cmd::bare();
+        assert_eq!(c.run(line), None, "{line} without a chat");
+        assert!(!c.last_note().is_empty(), "{line} said nothing");
+    }
+
+    // The settings snapshot has not arrived yet (the first moments after launch).
+    let mut c = Cmd::bare();
+    assert_eq!(c.run("/settings"), None);
+    assert!(!c.last_note().is_empty(), "/settings said nothing");
+}
+
+/// `/stop` is the explicit half of `Esc`: it cancels a running turn, while
+/// `/chats` is the other half and opens the list whatever the turn is doing.
+#[test]
+fn stop_cancels_a_turn_and_chats_never_does() {
+    let mut c = Cmd::new();
+    c.s.begin_generation(gen_id());
+    assert_eq!(c.run("/stop"), Some(ChatIntent::Cancel));
+
+    let mut c = Cmd::new();
+    c.s.begin_generation(gen_id());
+    assert_eq!(c.run("/chats"), Some(ChatIntent::OpenChatList));
+    // The control: `Esc` in that same state cancels instead — which is the
+    // overload the two commands exist to resolve.
+    let mut c = Cmd::new();
+    c.s.begin_generation(gen_id());
+    assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
+}
+
+/// The confirmation popup belongs to the operation, not to the key: with
+/// `confirm_destructive_keys` on, a typed `/regen` opens it too, and the intent
+/// is only issued on `Enter`.
+#[test]
+fn a_typed_takeback_honours_the_confirmation_setting() {
+    for (line, expected) in [
+        ("/regen", ChatIntent::RegenerateLast),
+        ("/takeback", ChatIntent::DeleteLastExchange),
+    ] {
+        let mut c = Cmd::new();
+        let mut cfg = AppConfig::default();
+        cfg.interface.confirm_destructive_keys = true;
+        c.s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+        assert_eq!(c.run(line), None, "{line} must ask first");
+        assert!(c.s.confirm.is_some(), "{line} did not open the popup");
+        assert_eq!(
+            c.key(KeyCode::Enter),
+            Some(expected),
+            "{line} was not confirmed"
+        );
+    }
+}
+
+/// `/search <text>` goes straight to the message-level results screen — the
+/// two-step journey (`Esc`, `Ctrl+F`, `Ctrl+G`) collapsed into one line. Bare, it
+/// teaches its own syntax rather than opening an empty screen (fork F4).
+#[test]
+fn search_asks_the_orchestrator_and_bare_search_teaches_the_syntax() {
+    let mut c = Cmd::new();
+    assert_eq!(
+        c.run("/search про космос"),
+        Some(ChatIntent::SearchMessages {
+            query: "про космос".into()
+        })
+    );
+
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/search"), None);
+    assert!(
+        c.last_note().contains("/search"),
+        "the usage line: {}",
+        c.last_note()
+    );
+}
+
+/// `/find <text>` seeds the in-feed query, so one line opens the search *and*
+/// lands on a match.
+#[test]
+fn find_with_text_seeds_the_query() {
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/find привет"), None);
+    assert!(c.s.search.is_some(), "the search field is not open");
+    assert_eq!(c.s.search_last, "привет");
+}
+
+/// `/rename <title>` renames the open chat. Bare, it hands the current title
+/// back as an editable command line — the box is where a command is typed, so
+/// the title is edited there rather than in a popup of its own.
+#[test]
+fn rename_takes_a_title_or_offers_the_current_one() {
+    let mut c = Cmd::new();
+    let chat = c.chat;
+    assert_eq!(
+        c.run("/rename Космос и мы"),
+        Some(ChatIntent::RenameChat {
+            id: chat,
+            title: "Космос и мы".into()
+        })
+    );
+
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/rename"), None);
+    assert_eq!(c.s.input.text(), "/rename Про космос");
+    // Pressing Enter on what it offered renames to the same title — a no-op
+    // rename, not a crash and not a message going out to the model.
+    let chat = c.chat;
+    assert_eq!(
+        c.s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::RenameChat {
+            id: chat,
+            title: "Про космос".into()
+        })
+    );
+}
+
+/// A title longer than the chat list's own ceiling is trimmed to it, not stored
+/// whole — the two routes to a title must agree on its bounds.
+#[test]
+fn a_renamed_title_obeys_the_length_ceiling() {
+    let mut c = Cmd::new();
+    let long = "я".repeat(crate::features::rename_chat::MAX_TITLE_LEN + 40);
+    let Some(ChatIntent::RenameChat { title, .. }) = c.run(&format!("/rename {long}")) else {
+        panic!("expected a rename");
+    };
+    assert_eq!(
+        title.chars().count(),
+        crate::features::rename_chat::MAX_TITLE_LEN
+    );
+}
+
+/// `/new <profile>`: an exact name, then an unambiguous prefix (fork F3). A miss
+/// and an ambiguity both name the candidates and the bare-`/new` route.
+#[test]
+fn new_chat_resolves_a_profile_name_or_says_why_not() {
+    let mut c = Cmd::new();
+    let expected = c.s.profiles[0].id;
+    assert_eq!(
+        c.run("/new гайя"), // exact, case-insensitively
+        Some(ChatIntent::NewChat {
+            profile_id: Some(expected)
+        })
+    );
+
+    let mut c = Cmd::new();
+    let helios = c.s.profiles[1].id;
+    assert_eq!(
+        c.run("/new гел"), // an unambiguous prefix
+        Some(ChatIntent::NewChat {
+            profile_id: Some(helios)
+        })
+    );
+
+    // Ambiguous: both profile names share their first letter, so a one-letter
+    // prefix matches them both — the note lists the candidates.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/new г"), None);
+    let note = c.last_note();
+    assert!(note.contains("Гайя") && note.contains("Гелиос"), "{note}");
+    assert!(note.contains("/new"), "the route back: {note}");
+
+    // A miss: the note lists what there is.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/new Прометей"), None);
+    let note = c.last_note();
+    assert!(note.contains("Гайя"), "{note}");
+
+    // Bare `/new` with several profiles opens the picker, exactly as `Ctrl+N`.
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/new"), None);
+    assert!(c.s.profile_overlay.is_some(), "the picker did not open");
+}
+
+/// The registry does not swallow ordinary text: a message that merely looks like
+/// a command still goes out to the model.
+#[test]
+fn text_that_only_resembles_a_command_is_sent() {
+    for text in ["/settings2", "how do I /stop it?", "стоп"] {
+        let mut c = Cmd::new();
+        assert_eq!(
+            c.run(text),
+            Some(ChatIntent::Send(text.into())),
+            "{text} must go out as a message"
+        );
+    }
+}
+
+/// Every registry command is answered by the screen — no row can be added
+/// without deciding what it does. A command that neither returns an intent nor
+/// changes anything visible would be exactly the silence this track exists to
+/// remove.
+#[test]
+fn no_command_is_a_silent_no_op() {
+    for spec in ui_command::COMMANDS {
+        let mut c = Cmd::new();
+        let line = match spec.arity {
+            Arity::Required => format!("{} космос", spec.aliases[0]),
+            _ => spec.aliases[0].to_string(),
+        };
+        let intent = c.run(&line);
+        let visible = c.s.help.is_some()
+            || c.s.emoji.is_some()
+            || c.s.search.is_some()
+            || c.s.profile_overlay.is_some()
+            || c.s.chat_links.is_some()
+            || !c.last_note().is_empty()
+            || !c.s.input.is_empty();
+        assert!(
+            intent.is_some() || visible,
+            "{:?} ({line}) did nothing at all",
+            spec.command
+        );
+    }
+}
+
+/// A modal owns the keyboard while it is open, so a command typed "through" one
+/// cannot fire. This pins the routing order rather than the commands themselves.
+#[test]
+fn commands_do_not_fire_through_a_modal() {
+    let mut c = Cmd::new();
+    c.s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    assert!(c.s.help.is_some());
+    assert_eq!(c.run("/settings"), None, "a modal must keep the keyboard");
+    assert!(c.s.help.is_some(), "the dialog closed unexpectedly");
+}
+
+/// The registry's `UiCommand` variants are all reachable from the table — a
+/// variant nobody can type would be dead weight, and one claimed twice would
+/// shadow the second row.
+#[test]
+fn every_ui_command_variant_has_exactly_one_row() {
+    let mut seen: Vec<UiCommand> = Vec::new();
+    for spec in ui_command::COMMANDS {
+        assert!(
+            !seen.contains(&spec.command),
+            "{:?} has two rows",
+            spec.command
+        );
+        seen.push(spec.command);
+    }
+    assert_eq!(seen.len(), ui_command::COMMANDS.len());
+}

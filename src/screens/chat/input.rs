@@ -135,7 +135,10 @@ impl ChatScreen {
     /// (the value is what [`Self::handle_key`] returns), `None` for an
     /// unclaimed key, which then falls through to the ordinary routing
     /// (e.g. `Ctrl+A`/`Ctrl+Z` belong to the input box).
-    fn handle_ctrl_shortcut(&mut self, physical: char) -> Option<Option<ChatIntent>> {
+    /// `pub(super)` because the typed routes reach their action through this
+    /// very function (`super::commands`): a command and its chord must not grow
+    /// two behaviours. See docs/research/command-only-control.md §4.3.
+    pub(super) fn handle_ctrl_shortcut(&mut self, physical: char) -> Option<Option<ChatIntent>> {
         match physical {
             // Quit moved to Ctrl+Q/F10 (F10 — in `handle_plain_key`);
             // Ctrl+C was freed up for copying. See
@@ -339,6 +342,13 @@ impl ChatScreen {
             return intent;
         }
         if let Some(intent) = self.try_tts_command(&text) {
+            return intent;
+        }
+        // The registry of typed routes (`/settings`, `/find`, `/regen`, …).
+        // Like the commands above it runs before the `generating` gate — some of
+        // its own arms are the ones that answer during a turn (`/stop`), and the
+        // rest report why they cannot.
+        if let Some(intent) = self.try_ui_command(&text) {
             return intent;
         }
         if let Some(intent) = self.try_exit_command(&text) {
@@ -776,7 +786,8 @@ impl ChatScreen {
     }
 
     /// Whether the current input is a command (`/rag …`, `/file …`, `/image …`,
-    /// `/tts …`, `/reindex`, `/compact`, `/exit`). Such text is highlighted yellow and isn't spellchecked. See
+    /// `/tts …`, `/reindex`, `/compact`, `/exit`, and everything in the typed-route
+    /// registry). Such text is highlighted yellow and isn't spellchecked. See
     /// spec §11.5.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
@@ -793,6 +804,7 @@ impl ChatScreen {
             || crate::features::file_command::parse(&text, self.loc).is_some()
             || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
+            || crate::features::ui_command::parse(&text, self.loc).is_some()
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 
