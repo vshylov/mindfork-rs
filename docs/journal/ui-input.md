@@ -1090,8 +1090,12 @@ and the box should be empty.
   `const fn row(…)` collapses each to one line; `rustfmt` then exploded them
   back to seven lines each, so the table carries `#[rustfmt::skip]` (the
   precedent is `widgets/logo.rs`). ~19 lines instead of ~95, and it reads as a
-  table. The Sonar snippet analyzer could not pre-check this: it has no Rust
-  language, so the real gate is the PR analysis.
+  table. The Sonar snippet analyzer could not pre-check this — it has no Rust
+  language — so the number came from the PR analysis: **0.0% duplication on new
+  code** against the 3% bar, with every new-code rating A and no new issues.
+  Worth recording as the counter-case to the lesson's four failures: the shape
+  that scored 16.1% at 50 struct-literal rows scores nothing at 19 one-line
+  ones, so collapsing the row is a sufficient fix on its own.
 - **Bare `/rename` prefills instead of opening a popup** — a deviation from the
   design doc, recorded here. The box is where a command is typed and holds
   nothing else at that moment, so handing back `/rename <current title>` for
