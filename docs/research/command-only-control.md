@@ -1,6 +1,7 @@
 # Command-only control — hosted terminals (JupyterLab, VS Code)
 
-Status: **research — forks pending the user's decision.**
+Status: **accepted 2026-08-14** — every fork decided (the recommendations,
+confirmed by the user); implementation not started (stage 1 next).
 Date: 2026-08-14.
 
 ## 1. What and why
@@ -265,9 +266,10 @@ leans toward commands.
 
 ### 4.5 Stage 2 (small)
 
-- The F5 fork's outcome: `/profile new [name]` · `/profile delete <name>`
-  (with a confirmation popup; deletion cascades are already confirmed
-  today), or in-screen safe-key alternates — whichever is chosen.
+- The F5 fork's outcome (decided: commands): `/profile new [name]` ·
+  `/profile delete <name>` (with a confirmation popup; deletion cascades
+  are already confirmed today) and `/self clear` (confirmed, as the
+  `Ctrl+K` ×2 route is today).
 - Optional polish (fork F7): host detection (`TERM_PROGRAM=vscode`,
   `JUPYTER_*` env) to prefer command spellings in the status-bar hints. The
   hint grid is width-budgeted, so this is not free; the help dialog and
@@ -288,7 +290,7 @@ leans toward commands.
   rejected as the primary answer — first-run users have the defaults, the
   help teaches the defaults, and the browser-reserved class (`Ctrl+W`)
   cannot be rebound around. Stays a complementary roadmap item.
-  User's decision: —
+  User's decision: **(a) — command parity + safe-key modals** (2026-08-14).
 - **F2. Names.** The table in §4.1 as proposed; the contested cells:
   `/takeback` (project prose: "take back an exchange") vs `/retract` vs
   `/undo` (collides with input undo) — recommended **`/takeback`**;
@@ -298,28 +300,30 @@ leans toward commands.
   `/search` split as proposed. Alias policy: a second spelling only where
   both words are pre-trained elsewhere (`/exit`·`/quit` precedent) —
   recommended pairs: **`/regen`·`/retry`** only.
-  User's decision: —
+  User's decision: **as recommended** — `/takeback`, `/self`, `/toolcalls`,
+  the `/find`/`/search` split, aliases only for `/regen`·`/retry`
+  (2026-08-14).
 - **F3. `/new <profile>` matching.** (a) **Case-insensitive exact, then
   unambiguous prefix; ambiguity/miss answers by naming the candidates and
   the bare-`/new` picker route** *(recommended)*; (b) exact-only.
-  User's decision: —
+  User's decision: **(a)** (2026-08-14).
 - **F4. Bare `/search`.** (a) **A localized note teaching
   `/search <text>`** *(recommended — the results screen without a query is
   meaningless)*; (b) open the chat list in content mode instead.
-  User's decision: —
+  User's decision: **(a)** (2026-08-14).
 - **F5. The profiles/self-model-clear leftover (stage 2).**
   (a) **Commands**: `/profile new [name]` · `/profile delete <name>`,
   `/self clear` — uniform with the track, no new in-screen surface, works on
   Mac-client browsers. *(recommended)*
   (b) In-screen safe-key alternates + contextual footer hints.
   (c) Defer entirely, documented as a known gap.
-  User's decision: —
+  User's decision: **(a) — commands, in stage 2** (2026-08-14).
 - **F6. `/stop` and `/chats`** (both have safe-key routes via `Esc`):
   include *(recommended — they resolve `Esc`'s double meaning during
   generation from both sides, and cost two registry rows)* / drop.
-  User's decision: —
+  User's decision: **include both** (2026-08-14).
 - **F7. Host-adaptive status-bar hints.** Defer *(recommended)* / stage 2.
-  User's decision: —
+  User's decision: **defer** (2026-08-14).
 - **Considered and rejected here:** localizing command words (existing
   protocol decision); auto-rebinding at-risk chords per host (fights the
   host, silently wrong after its next update, and unteachable); making the
