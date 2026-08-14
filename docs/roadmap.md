@@ -152,6 +152,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Regeneration with variations** — not just `Ctrl+R` with the same request,
   but with different sampling / picking from several response variants.
 - **Editing any (not just the last) message** with history branching.
+- **Navigable chat references in the feed.** With the cross-chat pair enabled
+  (spec §9.11), a model naturally cites conversations as `chat://<short-id>`,
+  reusing the 8-hex address `chat_search` prints; the renderer draws it as a
+  link, but clicking it goes nowhere. Observed in real use (grok-4.6,
+  2026-08-14) rather than designed — the model invented the scheme from the
+  addresses the tools handed it. The jump infrastructure already exists (the
+  search screen's `OpenChatAt` path: anchor, focus, one-deep back-stack), so
+  the work is recognizing the reference in rendered text and resolving it the
+  way `chat_read` resolves its `chat` argument — id prefix, then title, over
+  non-hidden chats — plus deciding what a reference to another *profile's*
+  chat should do (nothing, presumably, mirroring the tools' scope).
 
 ## Chat and profile management
 - **Folders/tags for chats** — grouping in the list (`Esc`).
