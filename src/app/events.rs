@@ -102,6 +102,15 @@ pub enum AppCommand {
     /// text (it owns `Chat`) and emits `CopyToClipboard`; writing to the clipboard is a
     /// UI-layer concern.
     CopyChat(Uuid),
+    /// Write the chat's conversation to a file (`/export`). Unlike
+    /// [`AppCommand::CopyChat`] the orchestrator finishes the job itself: it owns
+    /// `Chat` *and* the disk, and the answer is a path, not content. Reports
+    /// through `Notice`/`Error`. See docs/research/chat-export-file.md.
+    ExportChat {
+        id: Uuid,
+        format: crate::features::export_command::ExportFormat,
+        path: Option<String>,
+    },
     /// Soft-delete a chat.
     DeleteChat(Uuid),
     /// Full-text search over chat **content** (the chat list's content mode,
@@ -258,7 +267,10 @@ impl AppCommand {
             | AppCommand::FileAttach { .. }
             | AppCommand::FileRemove { .. } => true,
 
-            AppCommand::ConfirmTool { .. }
+            // Reading the conversation out to a file changes nothing in it —
+            // the same side as `CopyChat`.
+            AppCommand::ExportChat { .. }
+            | AppCommand::ConfirmTool { .. }
             | AppCommand::SetDraft(_)
             | AppCommand::SetFeedView(_)
             | AppCommand::Cancel
