@@ -355,17 +355,13 @@ pub(super) fn deliver_clipboard(
     clipboard: &mut Option<arboard::Clipboard>,
     text: &str,
 ) {
-    let result = write_clipboard(clipboard, text);
     let loc = screen.loc();
+    let (message, failed) = copy_text(clipboard, text, screen.clipboard_osc52()).message(loc);
     match active {
-        ActiveScreen::ChatList(list) => match result {
-            Ok(()) => list.set_notice(loc.t("ui.chat.copied").into()),
-            Err(err) => list.set_error(loc.tf("ui.err.copy_failed", &[("err", &err)])),
-        },
-        _ => match result {
-            Ok(()) => screen.push_note(loc.t("ui.chat.copied")),
-            Err(err) => screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &err)])),
-        },
+        ActiveScreen::ChatList(list) if failed => list.set_error(message),
+        ActiveScreen::ChatList(list) => list.set_notice(message),
+        _ if failed => screen.push_error(&message),
+        _ => screen.push_note(&message),
     }
 }
 

@@ -1067,6 +1067,12 @@ pub struct InterfaceSettings {
     /// with no field); on a fresh install — from `defaults.json` (`main.rs`). Reuses
     /// `i18n::Lang` (the UI language is "which bundle to read `ui.*` keys from").
     pub language: crate::shared::i18n::Lang,
+    /// Whether a copy is also handed to the **terminal's** clipboard over
+    /// OSC 52 — the clipboard of the machine the user is sitting at, which over
+    /// SSH is not the one `arboard` writes (and on a headless box there is none
+    /// to write). `Auto` by default: nothing changes for a local session. See
+    /// [`crate::shared::osc52`] and docs/research/osc52-clipboard.md.
+    pub clipboard_osc52: crate::shared::osc52::Osc52Mode,
 }
 
 impl Default for InterfaceSettings {
@@ -1080,6 +1086,7 @@ impl Default for InterfaceSettings {
             table_row_separators: false,
             render_mermaid: true,
             language: crate::shared::i18n::Lang::default(),
+            clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
         }
     }
 }
@@ -2046,6 +2053,7 @@ mod tests {
                 table_row_separators: true,
                 render_mermaid: false,
                 language: crate::shared::i18n::Lang::Ru,
+                clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
             },
             ..Default::default()
         };

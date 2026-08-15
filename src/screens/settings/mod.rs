@@ -31,6 +31,7 @@ use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::mcp::valid_server_id as valid_mcp_server_id;
+use crate::shared::osc52::Osc52Mode;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
@@ -642,6 +643,8 @@ enum FieldId {
     NotesRecallIncludesSelf,
     // Interface
     ITheme,
+    /// Hand a copy to the terminal's clipboard too (OSC 52).
+    IClipboardOsc52,
     /// The interface language (axis B, docs/i18n-ui.md) — independent of the agent language.
     ILanguage,
     /// Compatibility mode for old terminals (emoji → safe glyphs).

@@ -14,6 +14,7 @@ pub mod logging;
 pub mod markdown;
 pub mod mcp;
 pub mod net;
+pub mod osc52;
 pub mod paths;
 pub mod sandbox;
 pub mod secrets;

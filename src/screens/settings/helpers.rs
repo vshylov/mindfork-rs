@@ -1003,6 +1003,16 @@ pub(super) fn video_resolution_label(m: MediaResolution, loc: &'static Locale) -
     .to_string()
 }
 
+/// The OSC-52 mode's label (`interface.clipboard_osc52`).
+pub(super) fn osc52_label(m: Osc52Mode, loc: &'static Locale) -> String {
+    loc.t(match m {
+        Osc52Mode::Auto => "ui.settings.choice.osc52_auto",
+        Osc52Mode::Always => "ui.settings.choice.osc52_always",
+        Osc52Mode::Off => "ui.settings.choice.osc52_off",
+    })
+    .to_string()
+}
+
 pub(super) fn cycle_theme(t: Theme) -> Theme {
     match t {
         Theme::Auto => Theme::Dark,
@@ -1126,6 +1136,16 @@ pub(super) const IMP_MODES: [ImpersonationMode; 7] = [
     ImpersonationMode::Claude,
     ImpersonationMode::Grok,
 ];
+
+/// The order of OSC-52 modes (matches `cycle_osc52`).
+pub(super) const OSC52_MODES: [Osc52Mode; 3] = [Osc52Mode::Auto, Osc52Mode::Always, Osc52Mode::Off];
+
+/// Cyclically shifts the OSC-52 mode, direction-aware.
+pub(super) fn cycle_osc52(m: Osc52Mode, dir: i32) -> Osc52Mode {
+    let idx = OSC52_MODES.iter().position(|&x| x == m).unwrap_or(0) as i32;
+    let n = OSC52_MODES.len() as i32;
+    OSC52_MODES[(((idx + dir) % n + n) % n) as usize]
+}
 
 /// The order of themes (matches `cycle_theme`).
 pub(super) const THEMES: [Theme; 3] = [Theme::Auto, Theme::Dark, Theme::Light];
