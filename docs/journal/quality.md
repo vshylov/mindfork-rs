@@ -721,6 +721,37 @@ three findings are invisible from the workflow's own status):
   rationale (user decision 2026-08-15) rather than fixed: nine sibling modules
   of `screens/chat/` carry the same line, and spelling out one of them alone
   buys nothing but a divergence.
+- **And then stopped from recurring**, which is the part worth keeping. Marking
+  the issues Accepted one at a time is what 2026-08-06 did, and this entry is
+  the proof it does not scale: a standing decision that has to be re-applied by
+  hand every time a chapter is added is a decision the repository does not
+  actually hold. It holds it now — `sonar.issue.ignore.multicriteria` in
+  `sonar-project.properties` turns `rust:S2208` off in the **six directories
+  that are splits** (34 files: `app/runtime`, `screens/chat`,
+  `screens/settings`, `features/tools/notes`, `shared/markdown`,
+  `shared/storage/db`) and nowhere else, so a wildcard import elsewhere in
+  `src/` is still a finding. `*.rs`, not `**/*.rs`: none of the six has nested
+  modules today, and a future one should have to argue for itself. Test
+  modules need no entry — the rule text already exempts any module with `test`
+  in the name, which is what covers `app/orchestrator/tests/` (21 more files).
+- **The property is settable from the file, and the reason is the note already
+  at the top of it**: what cannot read `sonar.issue.ignore.*` is *Automatic
+  Analysis*, which this project keeps off because CI-based analysis refuses to
+  run beside it. Checked against the docs rather than assumed, together with
+  the two alternatives that were rejected for being undocumented for Rust —
+  `#[allow(clippy::wildcard_imports)]` and `// NOSONAR` appear nowhere in the
+  Rust analyzer's documentation, and a suppression nobody guarantees is worse
+  than none. Deactivating the rule in a custom quality profile was the other
+  option and was declined: it is invisible from the repository, and this
+  project's decisions live in files that show up in review.
+- **What is not yet verified, said plainly**: the exclusion cannot be proven by
+  this branch. The `commands.rs` issue is Accepted, so it is absent either way,
+  and a PR analysis reports only *new* issues. The proof is the first analysis
+  of `main` after the merge with that issue **reopened**: if the exclusion is
+  read, the issue closes as excluded and stays gone; if it is not, it comes
+  back OPEN. A control in both directions, in the shape the `link_check.py`
+  and `screenshots.py` entries used — until it runs, this is a configuration
+  believed correct from the documentation, not a measured one.
 - **Verification**: **2282 unit tests green** (0 failed, 97 `#[ignore]` — the
   exact pre-change baseline; a pure extraction adds no test), clippy
   `-D warnings`/fmt clean. **No live run required** (AGENTS.md §3) — the
