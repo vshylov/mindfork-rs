@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (7)
+## Entries (8)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -19,6 +19,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the maintenance IP allowlist (done)
 - Post-M9: website — the hero fetch panel (done)
 - Post-M9: website — what 0.9.6 changed on the landing page (done)
+- Post-M9: website — two articles: the self-model and vector search (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -263,3 +264,37 @@ prefix and its slug from the rest, so the URL is `/blog/mindfork-0-9-6/`.
 
 No live run: pure site content. The build was verified with the pinned Zola 0.22.1
 (0.23.x still cannot discover `templates/` on Windows — lessons §6).
+
+### Post-M9: website — two articles: the self-model and vector search (done)
+
+**What.** The "how mindfork is put together" series grew from two articles to
+four: `articles/self-model.md` (weight 3) and `articles/vector-search.md`
+(weight 4). Both are written for the person the site targets — someone able to
+install, configure and use the feature — so they explain the *why* of the
+design at user altitude and leave constants, file paths and thresholds to
+spec §17 / §9.5 and the journals they were sourced from
+([self-model.md](self-model.md), [rag.md](rag.md)).
+
+**What each article chose to carry.** The self-model piece is built around
+the snapshot-vs-biography split (summary/goals/user-model as the present
+tense, `@self` observations as the scars), the opt-in and `F3`/`/self`
+controls, and the bug history — the "mood swing" wholesale-replace bug and
+the write-once goals are told as the reason merge semantics and `#id`
+handles exist. The vector-search piece leads with the dedicated embedding
+server (ADR 0002) and the `-ub`/`-b` batch trap a user actually hits, walks
+the four consumers (knowledge base, large attachments, notes/self-model,
+web rerank), names the one deliberate non-consumer (cross-chat search is
+trigram FTS), and gives the canary/generation/`/reindex` story a section —
+it is the best "boring and reliable" material this area has. Both articles
+close every claim loop inside the series by cross-linking each other.
+
+**One Cyrillic exception, marked in place.** The vector article demonstrates
+cross-lingual retrieval with a Russian query beside its English chunk; the
+line carries a same-line `cyrillic-ok` HTML comment (invisible in rendered
+Markdown), which is exactly the narrow use the scanner's markers exist for.
+The site remains English-only; the `/ru/` mirror stays a deferred fork.
+
+No live run: pure site content, no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green; `zola` is not
+available in the working environment, so the build check rides on the
+`site.yml` PR gate (pinned 0.22.1), which these files exercise.
