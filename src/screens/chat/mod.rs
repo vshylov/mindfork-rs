@@ -100,6 +100,15 @@ pub enum ChatIntent {
     },
     /// Clone the open chat (command `/clone`; `Ctrl+D` in the chat list).
     CloneChat(Uuid),
+    /// Write the open chat to a file (command `/export [md|json] [path]`).
+    /// The orchestrator owns the conversation and the disk, so it formats and
+    /// writes; a relative path (or a generated name) resolves against the
+    /// **current working directory**. See docs/history/chat-export-file.md.
+    ExportChat {
+        id: Uuid,
+        format: crate::features::export_command::ExportFormat,
+        path: Option<String>,
+    },
     /// Search every chat's messages and open the results screen (command
     /// `/search <text>`; `Ctrl+G` in the chat list's content mode). The screen
     /// opens on the reply `AppEvent::MessageSearchResults` — the orchestrator

@@ -9,6 +9,12 @@ the app imports it with:
 mindfork-rs import <file.json>
 ```
 
+**The app also emits this format**: `/export json` writes one chat (plus the
+profile it belongs to) as a v1 document with explicit `id`s, so importing it
+back lands on the same entities rather than copies. What an export cannot carry
+is what the format has no place for — tool calls; `/export md` keeps those, as
+readable text. See [chat-export-file.md](history/chat-export-file.md).
+
 The "external converter → documented neutral file → import" pattern was
 chosen by research [docs/research/plugin-system.md §5](research/plugin-system.md)
 (precedents: beancount/beangulp, KeePass, Netscape bookmarks). Knowledge of

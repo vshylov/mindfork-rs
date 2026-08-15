@@ -1,10 +1,21 @@
-//! Exports a chat conversation as plain text for copying to the clipboard.
-//! Pure logic, testable without the UI (called by the orchestrator). See spec §11.2.
+//! Exports a chat conversation: as plain text for the clipboard (`F5`/`/copy`)
+//! and for a file (`/export`), and as a `mindfork-import` v1 document
+//! (`/export json`). Pure logic, testable without the UI — the orchestrator
+//! calls it and owns the disk I/O. See spec §11.2,
+//! [docs/history/chat-export-file.md](../../docs/history/chat-export-file.md).
 
+use chrono::{DateTime, Utc};
+
+use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole};
-use crate::entities::profile::CharacterNames;
+use crate::entities::profile::{CharacterNames, Profile};
 use crate::shared::config::CopySettings;
 use crate::shared::i18n::Locale;
+
+/// Longest slug taken from a chat title for a generated filename. Well under
+/// every filesystem's limit once the date prefix and extension are added, and
+/// long enough to tell two conversations apart.
+const SLUG_MAX: usize = 60;
 
 /// Formats a whole chat conversation into readable text for the clipboard: labels
 /// roles (`User`/`Assistant`), preserves multiline text, skips
@@ -120,10 +131,240 @@ fn format_assistant(
     ))
 }
 
+/// A filename for an export with no path given: `<date>-<slug>.<ext>`, e.g.
+/// `2026-08-15-about-space.md`.
+///
+/// The date comes first so a directory of exports sorts chronologically, and
+/// the slug is a *hint*, not the identity — a title of punctuation or of a
+/// script with no ASCII form yields `chat`, which is still a usable name.
+pub fn export_filename(title: &str, ext: &str, now: DateTime<Utc>) -> String {
+    let slug = slugify(title);
+    format!("{}-{slug}.{ext}", now.format("%Y-%m-%d"))
+}
+
+/// Turns a title into a filename-safe slug: lowercase, non-alphanumerics
+/// collapsed to single dashes, trimmed to [`SLUG_MAX`] **characters** (not
+/// bytes — a Cyrillic title must not be cut mid-character).
+///
+/// Non-ASCII letters are **kept**: every filesystem the app supports stores
+/// UTF-8 names, and transliterating a Russian title into Latin would produce
+/// something its owner cannot search for.
+fn slugify(title: &str) -> String {
+    let mut out = String::new();
+    let mut len = 0usize; // in characters, tracked rather than recounted
+    let mut pending_dash = false;
+    for ch in title.trim().chars() {
+        // Anything that is not a letter or a digit becomes a word break — which
+        // is also how path separators and the characters Windows forbids are
+        // kept out, without a list of them to maintain.
+        if !ch.is_alphanumeric() {
+            pending_dash = true;
+            continue;
+        }
+        // Lowercasing can yield more than one character, so the budget is
+        // checked **before** writing anything: a cut that overshoots by a
+        // character is how the first version of this ran past the limit.
+        let lower: String = ch.to_lowercase().collect();
+        let dash = usize::from(pending_dash && !out.is_empty());
+        let cost = dash + lower.chars().count();
+        if len + cost > SLUG_MAX {
+            break;
+        }
+        if dash == 1 {
+            out.push('-');
+        }
+        pending_dash = false;
+        out.push_str(&lower);
+        len += cost;
+    }
+    if out.is_empty() {
+        "chat".to_string()
+    } else {
+        out
+    }
+}
+
+/// Builds the `mindfork-import` v1 document for one chat (docs/import-format.md):
+/// the chat plus the profile it belongs to, since the format requires a chat's
+/// `profile_key` to name a profile in the same file.
+///
+/// Both entities carry an **explicit `id`**, so importing the file back lands on
+/// the same chat and profile rather than creating copies — export and import are
+/// a round trip, which is the whole reason for choosing this format over a
+/// private one (fork F2).
+///
+/// **Tool calls are not carried**: the format's messages are
+/// `{role, text, thoughts?, timestamp?}` and there is nowhere to put them. The
+/// caller says so rather than letting the omission be discovered later.
+pub fn to_import_json(chat: &Chat, profile: &Profile) -> serde_json::Value {
+    let messages: Vec<serde_json::Value> = chat
+        .messages
+        .iter()
+        .filter(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant))
+        .map(|m| {
+            let mut o = serde_json::json!({
+                "role": match m.role {
+                    MessageRole::User => "user",
+                    _ => "assistant",
+                },
+                "text": m.text,
+                "timestamp": m.timestamp.to_rfc3339(),
+            });
+            if let Some(thoughts) = m.thoughts.as_ref().filter(|t| !t.trim().is_empty()) {
+                o["thoughts"] = serde_json::Value::String(thoughts.clone());
+            }
+            o
+        })
+        .collect();
+    serde_json::json!({
+        "format": "mindfork-import",
+        "version": 1,
+        "profiles": [{
+            "key": profile.id.to_string(),
+            "id": profile.id.to_string(),
+            "name": profile.name,
+            "language": profile.language.code(),
+            "system_message": profile.default_system_message,
+        }],
+        "chats": [{
+            "key": chat.id.to_string(),
+            "id": chat.id.to_string(),
+            "profile_key": profile.id.to_string(),
+            "title": chat.title,
+            "created_at": chat.created_at.to_rfc3339(),
+            "modified_at": chat.modified_at.to_rfc3339(),
+            "system_message": chat.system_message,
+            "character_names": {
+                "user": chat.character_names.user,
+                "assistant": chat.character_names.assistant,
+                "system": chat.character_names.system,
+            },
+            "messages": messages,
+        }],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::entities::message::ToolCallRecord;
+
+    // ---------- export to a file (docs/history/chat-export-file.md) ----------
+
+    /// A generated name: the date first (so a directory of exports sorts
+    /// chronologically), then a slug of the title.
+    #[test]
+    fn a_generated_filename_leads_with_the_date() {
+        let when = chrono::DateTime::parse_from_rfc3339("2026-08-15T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            export_filename("About space", "md", when),
+            "2026-08-15-about-space.md"
+        );
+        assert_eq!(
+            export_filename("About space", "json", when),
+            "2026-08-15-about-space.json"
+        );
+    }
+
+    /// The slug is filename-safe and keeps non-Latin letters: every filesystem
+    /// here stores UTF-8, and transliterating a title would produce something
+    /// its owner cannot search for. A title with nothing usable still yields a
+    /// name.
+    #[test]
+    fn the_slug_is_safe_and_keeps_its_letters() {
+        for (title, expected) in [
+            ("About space", "about-space"),
+            ("  Trimmed  ", "trimmed"),
+            ("Punctuation! and, symbols?", "punctuation-and-symbols"),
+            ("slashes/and\\colons:", "slashes-and-colons"),
+            ("многоточие… и буквы", "многоточие-и-буквы"),
+            ("CamelCase", "camelcase"),
+            ("", "chat"),
+            ("!!!", "chat"),
+            ("...", "chat"),
+        ] {
+            assert_eq!(slugify(title), expected, "title {title:?}");
+        }
+        // No path separator can survive, whatever the title held — a slug is a
+        // file name, not a path.
+        for title in ["a/b", "a\\b", "../escape", "C:\\Windows"] {
+            let slug = slugify(title);
+            assert!(
+                !slug.contains('/') && !slug.contains('\\') && !slug.contains(':'),
+                "{title:?} produced {slug:?}"
+            );
+        }
+    }
+
+    /// A very long title is cut to a sane length, and cut on a **character**
+    /// boundary — a Cyrillic title cut mid-character would not be a valid name.
+    #[test]
+    fn a_long_title_is_trimmed_by_characters() {
+        let slug = slugify(&"я".repeat(500));
+        assert!(
+            slug.chars().count() <= SLUG_MAX,
+            "{} chars",
+            slug.chars().count()
+        );
+        assert!(!slug.is_empty());
+        let latin = slugify(&"word ".repeat(200));
+        assert!(latin.chars().count() <= SLUG_MAX);
+    }
+
+    /// The claim fork F2 rests on: a JSON export is a `mindfork-import` v1
+    /// document that the app's **own importer** accepts, and it comes back as
+    /// the same chat (the explicit `id`), with the same title and the same
+    /// user/assistant text.
+    #[test]
+    fn a_json_export_imports_back_as_the_same_chat() {
+        let profile = Profile::new("Гайя", "system");
+        let mut chat = Chat::from_profile(&profile, "Про космос");
+        chat.system_message = "будь краток".into();
+        chat.messages = vec![
+            Message::new(MessageRole::System, "не сюда"),
+            Message::user("привет"),
+            {
+                let mut m = Message::assistant("здравствуйте");
+                m.thoughts = Some("подумал".into());
+                m
+            },
+        ];
+        let doc = to_import_json(&chat, &profile);
+        let json = serde_json::to_string_pretty(&doc).unwrap();
+
+        let result = crate::features::import::parse_import(&json, ru())
+            .expect("our own importer accepts what we emit");
+        assert_eq!(result.profiles.len(), 1);
+        assert_eq!(result.chats.len(), 1);
+        let back = &result.chats[0];
+        assert_eq!(back.id, chat.id, "a re-import lands on the same chat");
+        assert_eq!(result.profiles[0].id, profile.id, "…and the same profile");
+        assert_eq!(back.title, "Про космос");
+        assert_eq!(back.system_message, "будь краток");
+        // The system message does not become a history entry (the format says
+        // so), so two messages come back, in order, with the CoT preserved.
+        let texts: Vec<&str> = back.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["привет", "здравствуйте"]);
+        assert_eq!(back.messages[1].thoughts.as_deref(), Some("подумал"));
+    }
+
+    /// The documented loss, pinned so nobody "fixes" the format silently: the
+    /// import document has nowhere to put tool calls, which is why every JSON
+    /// export says so in its note.
+    #[test]
+    fn a_json_export_drops_tool_calls() {
+        let profile = Profile::new("P", "sys");
+        let mut chat = Chat::from_profile(&profile, "T");
+        chat.messages = vec![assistant_with_tool()];
+        let json = serde_json::to_string(&to_import_json(&chat, &profile)).unwrap();
+        assert!(json.contains("ответ"), "the text survives: {json}");
+        assert!(
+            !json.contains("note_save"),
+            "the format carries no tool calls: {json}"
+        );
+    }
 
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)

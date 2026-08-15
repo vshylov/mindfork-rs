@@ -2126,6 +2126,16 @@ stack by a pure function called once per frame in the draw path, not mirrored in
 a flag — mirroring would mean writing the same rule at each set/clear site to keep
 one word honest, which is how a hint drifts from the key it describes.
 
+**Exporting a conversation** (`features/export_command.rs` +
+`chat_export::{export_filename, to_import_json}`, spec §11.7). `/export` parses
+to a `(format, path?)` pair; the orchestrator writes the file, because it owns
+`Chat` *and* the disk and the answer is a path rather than content — unlike
+`CopyChat`, which hands text back to the UI. Markdown reuses
+`format_conversation` unchanged (one formatter for the clipboard and the file);
+JSON is a `mindfork-import` v1 document with explicit ids, so `features::import`
+reads an export back onto the same chat — a round trip pinned by a test that
+parses the export with the app's own importer.
+
 **Copying has two halves** (`shared/osc52.rs` + `app/runtime/clipboard.rs`, spec
 §11.7). `copy_text` is the single funnel both routes already used — the
 selection (`handle_key_event`) and the whole conversation (`deliver_clipboard`) —

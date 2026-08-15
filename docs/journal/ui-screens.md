@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -40,6 +40,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a disclaimer for what the models say and do (done)
 - Post-M9: the help tabs stopped clipping their descriptions (done)
 - Post-M9: the help dialog sizes itself, and its tables align (done)
+- Post-M9: `/export` — a conversation to a file (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1442,3 +1443,74 @@ layout only — no engine, memory or tool path.
 **Tests**: 2167 green (+4), 96 `#[ignore]`, clippy `-D warnings`/fmt clean.
 **A live run isn't required** (AGENTS.md §3): help-dialog layout only — no
 engine, memory or tool path.
+
+### Post-M9: `/export` — a conversation to a file (done)
+
+- **Why now.** The roadmap has wanted this since the chat list was written, and
+  the OSC 52 track promoted it: JupyterLab drops the escape and its pty is
+  server-side, so a conversation there has **no** route to the user's machine —
+  a file on the server does, since the notebook interface can open it. Design
+  doc: [docs/history/chat-export-file.md](../history/chat-export-file.md), all
+  seven forks decided by the user on 2026-08-15.
+- **Two of the user's decisions went against the recommendation, and both were
+  right.** F6: no Markdown decoration — the file gets the clipboard's text
+  verbatim, because the *content* is already Markdown (that is how models write)
+  and the labels are just labels. That removed the `Style` parameter the design
+  had planned to thread through the formatter, and with it any chance of the two
+  routes drifting; the test asserts the file equals what `F5` copies. F3: the
+  current working directory rather than an `exports/` folder beside the data.
+  Checked before implementing that the app never calls `set_current_dir`, so
+  "current" means where the user launched it — which in the JupyterLab case is
+  the folder their file browser already shows.
+- **JSON is the format we already read.** `mindfork-import` v1 with explicit
+  `id`s, so `mindfork-rs import` puts an export back onto the *same* chat rather
+  than making a copy. The cost is stated where it cannot be missed: the format's
+  messages are `{role, text, thoughts?, timestamp?}`, so **tool calls are
+  dropped**, and every JSON export's note names `md` as the format that keeps
+  them. The round trip is a test, not a claim — the export is parsed by our own
+  `parse_import`.
+- **The orchestrator finishes the job.** Unlike `CopyChat`, which hands text
+  back for the UI to put on the clipboard, an export ends in a **path** — and
+  the orchestrator already owns both the conversation and the disk. It answers
+  with the absolute path (canonicalized, with Windows' `\\?\` prefix stripped:
+  the user is going to paste it somewhere).
+- **A test found a real off-by-one in the slug.** The length check sat *after*
+  the dash and the character were pushed, so a 60-character budget could produce
+  61 — and `to_lowercase` can yield more than one character, which would have
+  made it worse. The budget is now checked before anything is written. The
+  boundary case was in the test plan (§6: "a title longer than the filesystem
+  tolerates"), which is why it was caught at all.
+- **A surviving mutation, and the wrong first attempt at covering it.** Removing
+  the "refuse an existing file" check passed every test. The fix I reached for
+  first — an async orchestrator test that sends a message and waits for the
+  export event — **hung**: with no backend the loop sits in connect timeouts, and
+  the shared `wait_for` is unbounded (lessons §2: a test that waits on an event
+  must bound the wait). The sibling test for the sibling feature was already
+  the right shape and three lines away: `copy_chat_emits_clipboard_text_or_error`
+  drives a `bare_orch_rx` synchronously, no loop and no backend, because copying
+  neither starts a turn nor needs one — and neither does exporting. Rewritten
+  that way the four tests run in 30 ms and the mutation dies.
+- **One line is deliberately untested and says so in the code**: resolving a
+  generated name against the current directory. A test for it would have to
+  `chdir` the process, which is global state shared with every test running in
+  parallel; what the line does with the name (`export_filename`, `slugify`) is
+  unit-tested, and what is left is `PathBuf::from`.
+- **The i18n key scanner read `"notes.json"` as a bundle key** in a parser test's
+  fixture — the `notes.` prefix belongs to the notes tools (lessons §7). There is
+  already a whitelist entry for `notes.md` from an older test, but the lesson
+  says to rename the fixture rather than grow the exception list, so the test
+  files became `transcript.*` and the gate keeps its teeth.
+
+**Tests** (+13, 2269 → 2282 green). The command grammar as one table: bare, a
+format word, a path, a format inferred from the extension, the word winning over
+the extension, paths with spaces and quotes, absolute paths untouched, quotes
+around nothing reported, near-words falling through, the per-locale gate. The
+formatter: the date-led filename; the slug over punctuation, separators,
+Cyrillic, empty and all-punctuation titles; the character-boundary trim; the
+JSON round trip through `parse_import`; the documented tool-call loss. The
+orchestrator: the file written and its note, the refusal to overwrite with the
+first file left intact, the Markdown file equalling the clipboard byte-for-byte,
+the JSON note naming `md`, and an empty chat refused with nothing written.
+
+**A live model run is not required** (AGENTS.md §3) — no engine, memory or tool
+path. One machine is enough for acceptance: `/export`, then open the file.

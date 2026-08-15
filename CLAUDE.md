@@ -165,10 +165,21 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-14, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2268 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2282 unit tests
 green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **OSC 52 — copying to the client's clipboard**
+most recent tracks: **`/export` — a conversation to a file**
+(`/export [md|json] [path]`: Markdown is byte-for-byte what `F5` copies, so one
+formatter serves both and they cannot drift — the content is Markdown already,
+being how models write; JSON is the `mindfork-import` v1 document the app
+already reads, with explicit ids, so an export imports back onto the **same**
+chat, at the documented cost of carrying no tool calls, which every such export
+says. Paths and the generated `<date>-<slug>` name resolve against the current
+directory, an existing file is refused, and the note answers with the absolute
+path. It is also the only route out of JupyterLab's terminal, where the
+clipboard cannot reach the user's machine at all;
+[docs/history/chat-export-file.md](docs/history/chat-export-file.md), spec
+§11.7), **OSC 52 — copying to the client's clipboard**
 (over SSH `arboard` wrote the *server's* clipboard, and on a headless server it
 failed outright, so `/copy` there produced only an error; a copy now also goes to
 the terminal's own clipboard, automatically when the session looks remote —

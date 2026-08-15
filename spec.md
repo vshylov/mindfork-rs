@@ -2392,6 +2392,28 @@ terminal is often driven from. Hence `/profile list · /profile new [name] ·
   posing a question the orchestrator would then decline; `/self clear` refuses
   with no chat open, the model belonging to the active profile.
 
+**`/export [md|json] [path]` writes the conversation to a file**
+(`features/export_command.rs`, `chat_export::to_import_json`;
+[docs/history/chat-export-file.md](docs/history/chat-export-file.md)). The route
+out that needs no clipboard at all — which is the only route in JupyterLab's
+terminal, where the escape below is dropped and the pty is server-side anyway.
+
+- **Markdown is byte-for-byte what `F5` copies.** One formatter, so the file and
+  the clipboard cannot drift; the extension is honest because the *content* is
+  Markdown already — that is how models write, and what the feed renders. It
+  honours `config.copy`, so "what a copy includes" means one thing.
+- **JSON is a `mindfork-import` v1 document** ([import-format.md](docs/import-format.md))
+  carrying explicit ids, so `mindfork-rs import` puts it back onto the *same*
+  chat — export and import are a round trip. The format has nowhere to put tool
+  calls, and every JSON export's note says so rather than leaving it to be
+  discovered.
+- **Where it lands**: a path as given, or `<date>-<slug>.<ext>` generated from
+  the title — both relative to the **current working directory**, and the note
+  answers with the absolute path. An **existing file is refused**, never
+  overwritten. Empty conversations are refused too, as `F5` already does.
+- Attachments and images are not included; the chat list's own selection has no
+  export route yet (it has `F5`).
+
 **A copy has two halves: the local clipboard and the terminal's** (OSC 52,
 `shared/osc52.rs`; [docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md)).
 `arboard` writes the clipboard of the machine the *process* runs on — over SSH

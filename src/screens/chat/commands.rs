@@ -279,6 +279,31 @@ impl ChatScreen {
         })
     }
 
+    /// The export command (`/export [md|json] [path]`) — the conversation to a
+    /// file, for when the clipboard cannot reach the user's machine at all
+    /// (JupyterLab drops OSC 52, spec §11.7). The orchestrator writes it: it
+    /// owns the conversation and the disk. Returns `None` when the text is not
+    /// an `/export` command.
+    pub(super) fn try_export_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        let parsed = crate::features::export_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(cmd) => match self.active_chat {
+                Some(id) => Some(ChatIntent::ExportChat {
+                    id,
+                    format: cmd.format,
+                    path: cmd.path,
+                }),
+                None => self.note("ui.cmd.no_chat"),
+            },
+            Err(msg) => {
+                self.push_note(&msg);
+                None
+            }
+        })
+    }
+
     /// `/profile list` — the names, with the open chat's own profile marked.
     /// The screen already holds this snapshot, so it answers locally.
     fn list_profiles(&mut self) {

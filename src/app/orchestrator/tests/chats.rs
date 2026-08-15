@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::features::export_command::ExportFormat;
 
 #[test]
 fn new_chat_value_uses_chosen_profile_with_greeting() {
@@ -550,3 +551,144 @@ async fn delete_active_chat_creates_replacement() {
     drop(cmd_tx);
     handle.await.unwrap();
 }
+
+// ---------- /export: writing a conversation to a file ----------
+
+/// Seeds a bare orchestrator with one profile and a two-message chat, the way
+/// the copy tests above do — synchronous, no event loop and no backend, because
+/// exporting neither starts a turn nor needs one.
+fn orch_with_conversation() -> (
+    tempfile::TempDir,
+    Orchestrator,
+    UnboundedReceiver<AppEvent>,
+    Uuid,
+) {
+    let (dir, mut orch, rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "Про космос");
+    let id = chat.id;
+    chat.push_message(Message::user("привет"));
+    chat.push_message(Message::assistant("здравствуйте"));
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    (dir, orch, rx, id)
+}
+
+/// The happy path and the rule that guards it (fork F5): the file appears with
+/// the conversation in it and the note names its path — then a second export to
+/// the same name is refused, and the first file is left untouched.
+#[test]
+fn export_writes_the_file_and_refuses_to_overwrite_it() {
+    let (dir, mut orch, mut rx, id) = orch_with_conversation();
+    let target = dir.path().join("вывод.md");
+
+    orch.handle_export_chat(
+        id,
+        ExportFormat::Markdown,
+        Some(&target.display().to_string()),
+    );
+    match rx.try_recv().unwrap() {
+        AppEvent::Notice(text) => assert!(text.contains("вывод.md"), "the note names it: {text}"),
+        other => panic!("expected a Notice, got {other:?}"),
+    }
+    let written = std::fs::read_to_string(&target).expect("the file exists");
+    assert!(
+        written.contains("привет"),
+        "the conversation is in it: {written}"
+    );
+    assert!(written.contains("здравствуйте"), "{written}");
+
+    // Second time: refused, and what is on disk is still the first export.
+    orch.handle_export_chat(
+        id,
+        ExportFormat::Markdown,
+        Some(&target.display().to_string()),
+    );
+    match rx.try_recv().unwrap() {
+        AppEvent::Error(text) => assert!(text.contains("вывод.md"), "the refusal names it: {text}"),
+        other => panic!("expected an Error, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        written,
+        "the existing export must survive untouched"
+    );
+}
+
+/// The Markdown file is byte-for-byte what `F5` puts on the clipboard — the
+/// claim fork F6 rests on, and the reason there is one formatter rather than two.
+#[test]
+fn the_markdown_file_is_exactly_what_the_clipboard_gets() {
+    let (dir, mut orch, mut rx, id) = orch_with_conversation();
+    orch.handle_copy_chat(id);
+    let copied = match rx.try_recv().unwrap() {
+        AppEvent::CopyToClipboard(text) => text,
+        other => panic!("expected CopyToClipboard, got {other:?}"),
+    };
+
+    let target = dir.path().join("out.md");
+    orch.handle_export_chat(
+        id,
+        ExportFormat::Markdown,
+        Some(&target.display().to_string()),
+    );
+    assert!(matches!(rx.try_recv().unwrap(), AppEvent::Notice(_)));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), copied);
+}
+
+/// A JSON export is a document our **own importer** accepts, coming back as the
+/// same chat — and its note carries the warning about tool calls, said on every
+/// such export rather than left in the documentation to be discovered later.
+#[test]
+fn a_json_export_imports_back_and_says_what_it_drops() {
+    let (dir, mut orch, mut rx, id) = orch_with_conversation();
+    let target = dir.path().join("chat.json");
+
+    orch.handle_export_chat(id, ExportFormat::Json, Some(&target.display().to_string()));
+    match rx.try_recv().unwrap() {
+        AppEvent::Notice(text) => {
+            assert!(text.contains("chat.json"), "the note names it: {text}");
+            assert!(
+                text.contains("md"),
+                "the note must name the format that keeps tool calls: {text}"
+            );
+        }
+        other => panic!("expected a Notice, got {other:?}"),
+    }
+
+    let json = std::fs::read_to_string(&target).unwrap();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let result = crate::features::import::parse_import(&json, loc)
+        .expect("the export is a valid import document");
+    assert_eq!(result.chats.len(), 1);
+    assert_eq!(result.chats[0].id, id, "it comes back as the same chat");
+    assert_eq!(result.chats[0].title, "Про космос");
+}
+
+/// An empty conversation is refused rather than written: a file holding a title
+/// and nothing else is not what anyone meant by "export".
+#[test]
+fn exporting_an_empty_chat_is_refused() {
+    let (dir, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let empty = Chat::from_profile(&profile, "Пустой");
+    let id = empty.id;
+    orch.profiles.push(profile);
+    orch.chats.push(empty);
+
+    let target = dir.path().join("empty.md");
+    orch.handle_export_chat(
+        id,
+        ExportFormat::Markdown,
+        Some(&target.display().to_string()),
+    );
+    assert!(matches!(rx.try_recv().unwrap(), AppEvent::Error(_)));
+    assert!(!target.exists(), "nothing may be written");
+}
+
+// The bare form (`path: None`) is deliberately **not** tested here: it resolves
+// the generated name against the process's current directory, and a test that
+// chdir'd would be changing global state shared with every other test running in
+// parallel. What it does with the name — `export_filename`, and the slug inside
+// it — is covered in `features::chat_export`; what is left is `PathBuf::from` of
+// that name, which is the current directory by definition.

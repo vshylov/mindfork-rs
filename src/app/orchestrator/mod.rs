@@ -581,6 +581,9 @@ impl Orchestrator {
                 name,
                 system_message,
             } => self.handle_create_profile(name, system_message),
+            AppCommand::ExportChat { id, format, path } => {
+                self.handle_export_chat(id, format, path.as_deref())
+            }
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
             AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),

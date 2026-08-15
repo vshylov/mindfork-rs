@@ -326,6 +326,7 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // it, and "the screens" (`/settings`, `/self`) is where profiles belong —
     // the two groups end up adjacent. `/profile` keeps a parser of its own: it
     // is the one typed route with a subcommand *and* an argument (stage 2).
+    ("ui.help.k.export", "ui.help.cmd_export"),
     ("/profile list", "ui.help.cmd_profile_list"),
     ("ui.help.k.profile_new", "ui.help.cmd_profile_new"),
     ("ui.help.k.profile_delete", "ui.help.cmd_profile_delete"),
@@ -385,6 +386,7 @@ const COMMAND_GROUP_OPENERS: &[&str] = &[
     "ui.help.k.rag_add",
     "/reindex",
     "ui.help.k.tts",
+    "ui.help.k.export",
     "/profile list",
     "/settings",
     "ui.help.k.new",

@@ -356,6 +356,11 @@ impl ChatScreen {
         if let Some(intent) = self.try_profile_command(&text) {
             return intent;
         }
+        // `/export [md|json] [path]` — a format word and a path, so it too keeps
+        // a parser of its own rather than a registry row.
+        if let Some(intent) = self.try_export_command(&text) {
+            return intent;
+        }
         if let Some(intent) = self.try_exit_command(&text) {
             return intent;
         }
@@ -811,6 +816,7 @@ impl ChatScreen {
             || crate::features::tts_command::parse(&text).is_some()
             || crate::features::ui_command::parse(&text, self.loc).is_some()
             || crate::features::profile_command::parse(&text, self.loc).is_some()
+            || crate::features::export_command::parse(&text, self.loc).is_some()
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 

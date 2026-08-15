@@ -415,6 +415,7 @@ pub(super) fn dispatch(
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
+        ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
         // commands the settings and self-model screens send — the typed routes
         // into those screens' territory (spec §11.7, stage 2).

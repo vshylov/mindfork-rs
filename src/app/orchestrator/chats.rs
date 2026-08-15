@@ -1,12 +1,37 @@
 //! Managing the chat list: creation, switching, renaming, cloning,
-//! copying the conversation, deletion, and saving the draft.
+//! copying the conversation, exporting it to a file, deletion, and saving the
+//! draft.
 
+use std::path::{Path, PathBuf};
+
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::app::events::{AppEvent, FeedFocus};
 use crate::entities::chat::FeedView;
+use crate::features::export_command::ExportFormat;
 
 use super::Orchestrator;
+
+/// A path as the user should see it: absolute where that can be worked out, and
+/// the path as given when it cannot (`canonicalize` needs the file to exist, so
+/// this is called *after* the write — and on the failure paths it falls back
+/// rather than hiding the name).
+fn display_path(path: &Path) -> String {
+    std::fs::canonicalize(path)
+        .map(|p| {
+            // Windows' canonical form carries the `\\?\` verbatim prefix, which
+            // is correct and unreadable; the user is going to paste this
+            // somewhere.
+            let s = p.display().to_string();
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        })
+        .unwrap_or_else(|_| {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path).display().to_string())
+                .unwrap_or_else(|_| path.display().to_string())
+        })
+}
 
 impl Orchestrator {
     /// Saves the input-box draft on the active chat (unsaved text). The write to
@@ -172,6 +197,100 @@ impl Orchestrator {
                 ));
             }
         }
+    }
+
+    /// Writes a chat to a file (`/export`, docs/history/chat-export-file.md).
+    ///
+    /// The orchestrator finishes this one itself rather than handing content
+    /// back to the UI: it owns `Chat`, it already does disk I/O, and the answer
+    /// the user needs is a **path**. A relative path — or the generated name a
+    /// bare `/export` gets — resolves against the process's current working
+    /// directory (fork F3), which is where the user launched the app.
+    pub(super) fn handle_export_chat(
+        &mut self,
+        id: Uuid,
+        format: ExportFormat,
+        path: Option<&str>,
+    ) {
+        let ui = self.ui_locale();
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+            return;
+        };
+        let content = match format {
+            ExportFormat::Markdown => {
+                let names = self.active_character_names(chat);
+                match crate::features::chat_export::format_conversation(
+                    &chat.title,
+                    &chat.messages,
+                    &self.config.copy,
+                    &names,
+                    ui,
+                ) {
+                    Some(text) => text,
+                    // The same refusal the clipboard gives for an empty chat:
+                    // writing a file with nothing in it would be worse.
+                    None => {
+                        let _ = self
+                            .evt_tx
+                            .send(AppEvent::Error(ui.t("ui.err.nothing_to_copy").into()));
+                        return;
+                    }
+                }
+            }
+            ExportFormat::Json => {
+                // The format requires the chat's profile in the same file.
+                let Some(profile) = self.profiles.iter().find(|p| p.id == chat.profile_id) else {
+                    let _ = self
+                        .evt_tx
+                        .send(AppEvent::Error(ui.t("ui.export.err.no_profile").into()));
+                    return;
+                };
+                let doc = crate::features::chat_export::to_import_json(chat, profile);
+                match serde_json::to_string_pretty(&doc) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        let _ = self.evt_tx.send(AppEvent::Error(
+                            ui.tf("ui.export.err.failed", &[("err", &err.to_string())]),
+                        ));
+                        return;
+                    }
+                }
+            }
+        };
+
+        let target = match path {
+            Some(p) => PathBuf::from(p),
+            None => PathBuf::from(crate::features::chat_export::export_filename(
+                &chat.title,
+                format.extension(),
+                Utc::now(),
+            )),
+        };
+        // Refuse an existing file (fork F5): overwriting somebody's export
+        // silently is the kind of loss this project avoids everywhere else.
+        if target.exists() {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                ui.tf("ui.export.err.exists", &[("path", &display_path(&target))]),
+            ));
+            return;
+        }
+        if let Err(err) = std::fs::write(&target, content) {
+            let _ = self.evt_tx.send(AppEvent::Error(ui.tf(
+                "ui.export.err.write",
+                &[("path", &display_path(&target)), ("err", &err.to_string())],
+            )));
+            return;
+        }
+        // The absolute path, because a relative one answers "where?" with the
+        // question again — and finding the file is the whole point when the
+        // terminal is on another machine.
+        let note = match format {
+            ExportFormat::Markdown => ui.tf("ui.export.done", &[("path", &display_path(&target))]),
+            // Said on every JSON export, not buried in the docs: the format has
+            // nowhere to put tool calls, and noticing that later is worse.
+            ExportFormat::Json => ui.tf("ui.export.done_json", &[("path", &display_path(&target))]),
+        };
+        let _ = self.evt_tx.send(AppEvent::Notice(note));
     }
 
     pub(super) fn handle_delete(&mut self, id: Uuid) {

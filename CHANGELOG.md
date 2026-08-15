@@ -27,6 +27,15 @@ split by subsystem.
 
 ### Added
 
+- **`/export` saves a conversation to a file.** `/export` writes it next to
+  wherever you started the app, naming the file after the chat and the date;
+  `/export path/to/name.md` puts it where you say. Two formats: **md** — exactly
+  what `F5` copies — and **json**, which `mindfork-rs import` can read back onto
+  the same chat (it carries no tool calls, and the app says so when you use it).
+  An existing file is never overwritten. This is also the way out of a browser
+  terminal such as JupyterLab's, where the clipboard cannot reach your machine
+  at all.
+
 - **Copying works over SSH.** The clipboard the app writes belongs to the
   machine it runs on, so over SSH a copy went to the server — and on a headless
   server, where there is no clipboard at all, it simply failed. A copy is now
