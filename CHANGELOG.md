@@ -27,6 +27,17 @@ split by subsystem.
 
 ### Added
 
+- **Copying works over SSH.** The clipboard the app writes belongs to the
+  machine it runs on, so over SSH a copy went to the server — and on a headless
+  server, where there is no clipboard at all, it simply failed. A copy is now
+  also handed to the clipboard of the machine **your terminal** runs on (OSC 52),
+  automatically when the session looks remote; the new "Clipboard over the
+  terminal" setting under "Interface" makes that `always` or `off`. Terminals do
+  not confirm receiving it, so the app says the text was *sent* rather than
+  promising it arrived, and a conversation too large for the sequence (~75 KB)
+  is reported instead of being quietly cut in half. Not every terminal supports
+  it — GNOME Terminal, Terminal.app and JupyterLab's terminal do not.
+
 - **Every action now has a typed command, not just a key.** In a terminal
   embedded in something else — VS Code's integrated terminal, a JupyterLab
   terminal in a browser tab — the host takes many key combinations for itself

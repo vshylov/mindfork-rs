@@ -2392,6 +2392,39 @@ terminal is often driven from. Hence `/profile list · /profile new [name] ·
   posing a question the orchestrator would then decline; `/self clear` refuses
   with no chat open, the model belonging to the active profile.
 
+**A copy has two halves: the local clipboard and the terminal's** (OSC 52,
+`shared/osc52.rs`; [docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md)).
+`arboard` writes the clipboard of the machine the *process* runs on — over SSH
+the wrong one, and on a headless box none at all (its constructor fails, and the
+copy used to report only an error). OSC 52 hands the text to the terminal the
+user is sitting at, travelling the same pipe the drawing does. Both copy routes
+(`Ctrl+C`/`Ctrl+X` on a selection, `F5`/`/copy` on a conversation) funnel through
+one writer, so they cannot disagree. Governed by
+**`interface.clipboard_osc52`** ("Interface" section): `auto` (the default — only
+when the session looks remote, `SSH_TTY`/`SSH_CONNECTION`, or the local clipboard
+failed), `always` (for a remote session the environment does not advertise — a
+container, a web terminal), `off` (a terminal that renders an unknown OSC as
+text). What the protocol forces:
+
+- **Nothing comes back.** There is no acknowledgement and no way to ask whether
+  the terminal supports the sequence — the query form of OSC 52 *is* the
+  clipboard-read path terminals disable as a leak vector. So the note says the
+  text was **sent**, never that it arrived, and names the possibility that the
+  terminal ignored it.
+- **A ceiling of 74 994 bytes** (the 100 000-byte sequence limit, less the header
+  and base64). Past it nothing is sent and the note says so: a silently truncated
+  conversation looks complete, which is the worse failure. The local clipboard
+  still has the text when it worked, and the note says which.
+- **tmux** gets DCS passthrough with the inner escapes doubled; **screen** is
+  deliberately unsupported (a different wrapper plus 768-byte chunking, for a
+  shrinking audience — it degrades to the previous behaviour).
+- Support is uneven and undetectable: yes on alacritty, kitty, konsole, mintty,
+  Windows Terminal, wezterm, foot, iTerm2 and VS Code's terminal (1.93+); **no**
+  on GNOME Terminal, Terminal.app, URxvt, Termux; opt-in on xterm and st. Note
+  that **JupyterLab does not support it** — it embeds xterm.js without the
+  clipboard addon — so the browser-terminal case that first raised this is
+  exactly the one it cannot serve.
+
 **Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
 click places the cursor in the chat input box, and a drag grows the selection (the cursor
 snaps to a grapheme-cluster boundary, so it doesn't land in the middle of an emoji). The widget

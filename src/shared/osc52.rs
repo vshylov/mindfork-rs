@@ -5,7 +5,7 @@
 //! (the constructor fails, and the copy reports an error). OSC 52 travels the
 //! same pipe the drawing does, so the text reaches the terminal the user is
 //! actually sitting in front of. See
-//! [docs/research/osc52-clipboard.md](../../docs/research/osc52-clipboard.md).
+//! [docs/history/osc52-clipboard.md](../../docs/history/osc52-clipboard.md).
 //!
 //! Everything here is pure but for [`session_looks_remote`] and [`in_tmux`],
 //! which read the environment: the sequence is built and handed back, and the

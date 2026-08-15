@@ -1071,7 +1071,7 @@ pub struct InterfaceSettings {
     /// OSC 52 — the clipboard of the machine the user is sitting at, which over
     /// SSH is not the one `arboard` writes (and on a headless box there is none
     /// to write). `Auto` by default: nothing changes for a local session. See
-    /// [`crate::shared::osc52`] and docs/research/osc52-clipboard.md.
+    /// [`crate::shared::osc52`] and docs/history/osc52-clipboard.md.
     pub clipboard_osc52: crate::shared::osc52::Osc52Mode,
 }
 

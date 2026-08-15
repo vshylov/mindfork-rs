@@ -375,10 +375,15 @@ premises the project *itself* wrote down: a deferred note said attaching an imag
 would inherit "the SSRF care `fetch_url` already had to take", and `fetch_url` validates the
 scheme and nothing else — the guard to be reused did not exist, so the question had to be
 answered rather than inherited. Treat a recorded rationale as a claim with a date on it.
-**Recorded twice**: an accepted design doc likewise stated that deleting a profile was
-"already confirmed today" — it is not, `Ctrl+D` deletes the selected row outright — which
-turned a parenthetical into that track's one deliberate parity break, needing a
-justification of its own. The claim was a day old and written by the same author.
+**Recorded three times**: an accepted design doc likewise stated that deleting a profile
+was "already confirmed today" — it is not, `Ctrl+D` deletes the selected row outright —
+which turned a parenthetical into that track's one deliberate parity break, needing a
+justification of its own. The claim was a day old and written by the same author. The
+third time the item under attack was a *roadmap entry*: OSC 52 was filed with JupyterLab
+as its motivating case, and JupyterLab embeds xterm.js **without** the clipboard addon, so
+it drops the escape — the feature was still worth building, but for a different host, with
+a different failure to fix (over plain SSH the old behaviour was not "the wrong clipboard"
+but "no copy at all"). Check the *beneficiary* of a feature, not only its mechanism.
 — *confirmation before dangerous tool calls*, *MCP servers in the settings window*,
 *history compression — stage 3*, *images in a message — attach by URL*,
 *command-only control — stage 2*.

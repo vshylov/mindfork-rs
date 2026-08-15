@@ -311,7 +311,7 @@ highlights:
 | `Ctrl+R` | regenerate the last reply |
 | `Ctrl+E` | take back the last exchange (your text returns to the input box) |
 | `Ctrl+U` | impersonation: the model writes your next message |
-| `F5` | copy the conversation to the clipboard |
+| `F5` | copy the conversation to the clipboard (over SSH it also goes to your *own* machine's clipboard — see below) |
 | `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
 | `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
 | `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls |
@@ -324,6 +324,17 @@ highlights:
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
 | `Ctrl+W` | toggle mouse capture: wheel scrolling ↔ native text selection |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
+
+> **Copying over SSH.** The clipboard the app writes belongs to the machine it
+> runs on — over SSH that is the server, and a headless one has no clipboard at
+> all. So a copy is also handed to *your* terminal's clipboard using OSC 52,
+> automatically when the session looks remote (`interface.clipboard_osc52` in
+> settings: `auto`/`always`/`off`). The terminal never confirms it, so the app
+> says the text was sent rather than that it arrived, and not every terminal
+> supports the sequence — GNOME Terminal, Terminal.app and JupyterLab's terminal
+> do not; VS Code's, kitty, alacritty, Windows Terminal, iTerm2, wezterm and
+> tmux do. A conversation over ~75 KB is too large for it, and the app says so
+> instead of sending half of one.
 
 > The mouse wheel and text selection share one terminal mechanism, so capture
 > is a toggle (`Ctrl+W`): off (default) — select text natively; on — the wheel

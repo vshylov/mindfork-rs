@@ -3,7 +3,7 @@
 //!
 //! A copy has **two** halves: the local clipboard (`arboard`) and, when the
 //! terminal is somewhere else, the terminal's own over OSC 52
-//! ([`crate::shared::osc52`], docs/research/osc52-clipboard.md). Both copy
+//! ([`crate::shared::osc52`], docs/history/osc52-clipboard.md). Both copy
 //! routes — the selection (`Ctrl+C`/`Ctrl+X`) and the whole conversation
 //! (`F5`/`/copy`) — funnel through [`copy_text`], so they cannot disagree about
 //! either half.
