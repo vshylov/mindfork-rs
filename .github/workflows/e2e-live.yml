@@ -19,6 +19,16 @@ on:
         description: "cargo test name filter (empty = the whole suite)"
         required: false
         default: ""
+      # One dispatch, one model (docs/history/e2e-second-chat-model.md, fork
+      # F2): both families in one job would run the suite twice, ~50 min against the
+      # 45-minute timeout below — which cannot rise without crowding the
+      # sweeper's 90-minute threshold.
+      model:
+        description: "Chat model to rent for this run"
+        required: false
+        default: gemma-4-31b
+        type: choice
+        options: [gemma-4-31b, qwen-3.6-27b]
       chat_instance:
         description: "GPU for the chat endpoint"
         required: false
@@ -83,10 +93,12 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           FILTER: ${{ inputs.filter }}
           CHAT_INSTANCE: ${{ inputs.chat_instance }}
+          CHAT_MODEL: ${{ inputs.model }}
           NO_EMBED: ${{ inputs.no_embed }}
           NO_ALT_EMBED: ${{ inputs.no_alt_embed }}
         run: |
           args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --chat-instance "$CHAT_INSTANCE")
+          if [ -n "$CHAT_MODEL" ]; then args+=(--chat-model "$CHAT_MODEL"); fi
           if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
           if [ "$NO_EMBED" = "true" ]; then args+=(--no-embed); fi
           if [ "$NO_ALT_EMBED" = "true" ]; then args+=(--no-alt-embed); fi

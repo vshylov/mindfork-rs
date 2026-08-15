@@ -784,10 +784,18 @@ for the smokes that guard against an embedding-model change. All deliberately
 the same GGUFs and quantizations as the local stack, because the memory gates'
 similarity thresholds are calibrated against exactly those models.
 
+The chat endpoint runs **one model per run**, chosen with `--chat-model`:
+`gemma-4-31b` (the default, and what the thresholds were calibrated against) or
+`qwen-3.6-27b`. The name is one decision — it carries the repository, the
+weights and the vision projector together, so an impossible combination cannot
+be typed. The projector is deployed with the model: three smokes require one and
+**fail rather than skip** on a text-only server, by design.
+
 ```powershell
 $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
 python tools/e2e_hf.py run        # create, run the suite, delete
 python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
+python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
 python tools/e2e_hf.py run --filter e2e_live  # a subset
 python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
 python tools/e2e_hf.py list                   # what is running right now
@@ -809,8 +817,8 @@ killed outright, the endpoints scale to zero after their idle window (15 min, so
 ≈ $0.57 worst case) and the hourly sweeper removes them, which also reclaims
 endpoint quota. Use `--keep` only when debugging, and delete by hand afterwards.
 
-In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with a
-test-filter and GPU input; it needs the `HF_TOKEN` repository secret. **Live e2e
+In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
+test-filter, model and GPU inputs; it needs the `HF_TOKEN` repository secret. **Live e2e
 sweeper** runs hourly as the backstop. Design and decisions:
 [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),
 [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).

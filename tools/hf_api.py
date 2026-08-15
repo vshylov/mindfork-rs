@@ -40,8 +40,37 @@ PROVIDER_URLS = [
 ]
 WHOAMI = "https://huggingface.co/api/whoami-v2"
 
-CHAT_REPO = "google/gemma-4-31B-it-qat-q4_0-gguf"
-CHAT_GGUF = "gemma-4-31B_q4_0-it.gguf"  # the 17.65 GB one; the other is mmproj
+# The chat models the gate can run, each as **one** decision: a name resolves to
+# the repository, the weights and the projector together. Three independent flags
+# would let a caller compose a repo/file pair that does not exist and find out
+# twenty minutes into a deploy (docs/history/e2e-second-chat-model.md, fork F1).
+#
+# `tag` is what goes into the endpoint name, so it has to stay short: the API caps
+# a name at 32 characters and the CI run id already spends ~13 of them.
+#
+# `mmproj` is not optional decoration. Three `#[ignore]` smokes require a
+# projector and **fail loudly rather than skip** against a text-only server, by
+# design (docs/lessons.md §9) — so a gate deployed without one is a gate that is
+# red for a reason unrelated to the code under test (fork F4).
+CHAT_MODELS = {
+    "gemma-4-31b": {
+        "tag": "gemma",
+        "repo": "google/gemma-4-31B-it-qat-q4_0-gguf",
+        "gguf": "gemma-4-31B_q4_0-it.gguf",  # 17.65 GB
+        "mmproj": "gemma-4-31B-it-mmproj.gguf",  # 1.20 GB
+    },
+    "qwen-3.6-27b": {
+        "tag": "qwen",
+        "repo": "ggml-org/Qwen3.6-27B-GGUF",
+        "gguf": "Qwen3.6-27B-Q4_K_M.gguf",  # 19.10 GB
+        "mmproj": "mmproj-Qwen3.6-27B-Q8_0.gguf",  # 0.63 GB
+    },
+}
+# Gemma stays the default: the memory gates' similarity thresholds are calibrated
+# against that stack, and it is the model every earlier live run was measured on
+# (fork F3). A second family is a dimension, not a new baseline.
+DEFAULT_CHAT_MODEL = "gemma-4-31b"
+
 EMBED_REPO = "ggml-org/bge-m3-Q8_0-GGUF"  # the exact model the gates were calibrated on
 EMBED_GGUF = "bge-m3-q8_0.gguf"
 EMBED_DIM = 1024
@@ -194,6 +223,11 @@ def safe_name(name):
 # --------------------------------------------------------------------------
 # Create payloads
 # --------------------------------------------------------------------------
+def chat_model(args):
+    """The selected model's `(tag, repo, gguf, mmproj)`, as one record."""
+    return CHAT_MODELS[getattr(args, "chat_model", DEFAULT_CHAT_MODEL)]
+
+
 def chat_payload(name, args):
     """The v2 create payload for the managed llama.cpp engine (chat).
 
@@ -203,10 +237,17 @@ def chat_payload(name, args):
     so context is set directly rather than falling out of the Max Tokens x Max
     Concurrent Requests settings the docs describe. `nParallel` splits ctxSize
     between llama.cpp slots and the suite runs --test-threads=1, so 1 keeps the
-    whole context. `mmprojModelPath` is deliberately omitted: the repo's second
-    file is a vision projector we do not want.
+    whole context.
+
+    `mmprojModelPath` **is** sent, which reverses stage 0's "the repo's second
+    file is a vision projector we do not want". That was written before the app
+    could see an image at all; since then three smokes require one and fail loudly
+    on a blind model rather than skipping, so omitting it does not save a check —
+    it costs three (docs/history/e2e-second-chat-model.md §3).
     """
-    return {
+    model = chat_model(args)
+    mmproj = None if args.no_mmproj else (args.mmproj or model["mmproj"])
+    payload = {
         "name": name,
         "type": args.endpoint_type,
         "provider": {"vendor": args.vendor, "region": args.region},
@@ -224,11 +265,11 @@ def chat_payload(name, args):
             },
         },
         "model": {
-            "repository": CHAT_REPO,
+            "repository": model["repo"],
             "framework": "llamacpp",
             "image": {
                 "llamacpp": {
-                    "modelPath": args.gguf,
+                    "modelPath": args.gguf or model["gguf"],
                     "ctxSize": args.ctx,
                     "nParallel": args.parallel,
                     "threadsHttp": args.threads_http,
@@ -238,6 +279,11 @@ def chat_payload(name, args):
             "env": {"LLAMA_ARG_JINJA": "1"},
         },
     }
+    # Added rather than set to null: the field is optional, and an explicit null
+    # is a different thing to send than an absent key.
+    if mmproj:
+        payload["model"]["image"]["llamacpp"]["mmprojModelPath"] = mmproj
+    return payload
 
 
 def embed_payload(name, args, repo=None, gguf=None):
@@ -317,7 +363,19 @@ def add_endpoint_args(parser):
     parser.add_argument("--chat-instance", default="nvidia-l40s", help="48 GB; `hf_probe.py hardware` lists them")
     parser.add_argument("--embed-instance", default="nvidia-t4")
     parser.add_argument("--instance-size", default="x1")
-    parser.add_argument("--gguf", default=CHAT_GGUF)
+    parser.add_argument(
+        "--chat-model",
+        default=DEFAULT_CHAT_MODEL,
+        choices=sorted(CHAT_MODELS),
+        help="which chat model to deploy (repository + weights + projector as one choice)",
+    )
+    parser.add_argument("--gguf", default="", help="override the model's weights file")
+    parser.add_argument("--mmproj", default="", help="override the model's vision projector")
+    parser.add_argument(
+        "--no-mmproj",
+        action="store_true",
+        help="deploy without a projector (the 3 vision smokes then FAIL, not skip)",
+    )
     parser.add_argument("--ctx", type=int, default=16384, help="llama.cpp context (matches the local runs)")
     parser.add_argument("--parallel", type=int, default=1, help="llama.cpp slots; ctx is split between them")
     parser.add_argument("--threads-http", type=int, default=8)

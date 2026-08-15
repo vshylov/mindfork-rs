@@ -163,12 +163,34 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-14, version 0.9.6)
+## Status (2026-08-15, version 0.9.6)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **2282 unit tests
 green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **`/export` — a conversation to a file**
+most recent tracks: **a second chat model on the live e2e gate — track complete**
+(the gate ran on exactly one model, so everything it asserted about a model was
+asserted about *that* model; it now takes `--chat-model`
+`gemma-4-31b`/`qwen-3.6-27b`, one per dispatch, because both in one job would run
+the suite twice — ~50 min against a 45-minute timeout that cannot rise without
+crowding the sweeper's 90-minute threshold. A model is **one decision**, not
+three flags: a name carries repository, weights and projector together, so an
+impossible combination cannot be typed and then discovered twenty minutes into a
+deploy. The product needed no change at all — all 44 orchestrator smokes were
+green on Qwen at the first attempt — and what the second family exposed was three
+**Gemma-shaped assumptions in the tests**: token ceilings sized for how much
+Gemma thinks. Two options died on measurement and are written down so they are
+not re-tried: a bigger ceiling cannot fix an open-ended prompt for a reasoning
+model (1024: 0/3, 2048: 2/3, 4096: 3/4, one run burning 4096 tokens over 129 s),
+and temperature is not the lever for a repeated tool call — matching the
+orchestrator's 0.1 made it *worse* (5/20 vs 2/11) against 0/20 with thinking
+muted. Designing it also found the gate **blind**: three smokes require a vision
+projector and fail rather than skip, while the create payload omitted
+`mmprojModelPath` — a decision written before the images track existed, never
+reconciled since, so the gate would have gone red for a reason unrelated to the
+code. Both dispatches are green on that point;
+[docs/history/e2e-second-chat-model.md](docs/history/e2e-second-chat-model.md)),
+**`/export` — a conversation to a file**
 (`/export [md|json] [path]`: Markdown is byte-for-byte what `F5` copies, so one
 formatter serves both and they cannot drift — the content is Markdown already,
 being how models write; JSON is the `mindfork-import` v1 document the app

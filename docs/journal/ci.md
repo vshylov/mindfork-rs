@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -21,6 +21,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: cutting the Windows CI job from 19 minutes (done)
 - Post-M9: tool tests run against in-memory storage (done)
 - Post-M9: orchestrator fixtures — two convertible, the rest not (done)
+- Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -709,3 +710,91 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `cyrillic_scan`/`link_check` clean. **No live run required** (AGENTS.md §3):
   test fixtures only; `Storage::open_in_memory` is `#[cfg(test)]`. No CHANGELOG
   entry — internal tests (§4).
+
+### Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
+- **Trigger**: the live gate ran on exactly one chat model, `gemma-4-31B` q4_0,
+  so everything it asserted about a model was asserted about *that* model. Plan
+  and forks: [docs/history/e2e-second-chat-model.md](../history/e2e-second-chat-model.md).
+- **The product needed no change.** First local run against
+  `Qwen3.6-27B-Q4_K_M` + `mmproj-Qwen3.6-27B-Q8_0` (`ggml-org/Qwen3.6-27B-GGUF`,
+  `-c 16384 --jinja`) and `bge-m3-Q8_0`: **95 passed, 2 failed** of 97, and all
+  44 orchestrator smokes were green from the first attempt — memory, self-model,
+  notes, attachments, compaction, MCP, images, retry. The app runs on Qwen 3.6 as
+  it stands. Both failures were in the low-level client smoke set, and both were
+  one thing: a token ceiling sized for how much Gemma thinks.
+- **What the new model actually exposed** — three Gemma-shaped assumptions:
+  `simple_generation` spent all 64 tokens on `reasoning_content` (thinking on
+  "Reply with exactly: pong" costs 357–949 characters, so the ceiling went to
+  1024 with thinking left on); `control_tools_are_callable` does not converge on
+  *any* ceiling (1024: 0/3 runs called the tool, 2048: 2/3, 4096: 3/4, one run
+  burning the whole 4096 on thinking over 129 s), because its prompt is
+  open-ended; and `tool_call_is_emitted_and_parsed` was **already flaky before
+  any edit** — the model emits the correct call and then repeats it, up to 15
+  times, until `max_tokens` cuts it off and the finish reason arrives as `Length`.
+- **Two options died on measurement, which is why they are written down.** A
+  bigger ceiling does not fix an open-ended prompt for a reasoning model — it
+  buys a coin flip whose red side costs 2+ minutes of billed GPU. And temperature
+  is *not* the lever for the repetition: matching the orchestrator's 0.1 made it
+  **worse** (5/20 failures vs 2/11 at the server default), against 0/20 with
+  thinking muted. The repetition rides on the thinking loop.
+- **Muting costs no coverage**, which is the only reason it is acceptable: tool
+  calls *with* thinking on are exercised by the orchestrator smokes, on the real
+  app path with tool results fed back and `thinking` at the server's default —
+  the stronger test, green on both families. Each decision, with its numbers and
+  its rejected alternative, lives in the smoke's own doc comment.
+- **The gate was blind, and would have gone red for an unrelated reason.** Three
+  smokes require a projector and **fail loudly rather than skip** against a
+  text-only server, deliberately (lessons §9) — while `chat_payload` omitted
+  `mmprojModelPath`, just as deliberately, in a decision written *before* the
+  images track existed. Nothing had reconciled the two. `mmprojModelPath` is now
+  sent; both repositories ship the file (`gemma-4-31B-it-mmproj.gguf` 1.20 GB,
+  `mmproj-Qwen3.6-27B-Q8_0.gguf` 0.63 GB) and both fit an L40S at `ctxSize 16384`.
+- **A model is one decision, not three flags.** `CHAT_MODELS` holds each family
+  as a `(tag, repo, gguf, mmproj)` record and `--chat-model` picks one, so nobody
+  can compose a repository/file pair that does not exist and discover it twenty
+  minutes into a deploy; `--gguf`/`--mmproj` remain per-file overrides. The tag
+  goes into the endpoint name (`e2e-chat-qwen-<run-id>`) so a listing, the
+  sweeper's log and an orphan hunt all say which model is being held.
+- **One dispatch, one model** (workflow input `model`, default `gemma-4-31b`).
+  Both families in one job would run the suite twice — ~50 min against a
+  45-minute `timeout-minutes` that cannot rise without crowding the sweeper's
+  90-minute threshold, which is the gap that stops the sweeper deleting a live
+  run's endpoints. Gemma stays the default: the memory thresholds are calibrated
+  against that stack, and Qwen's repetition is currently *muted rather than
+  understood*.
+- **After the fix: 97 passed, 0 failed**, 1303 s (from 1460 s — the muted
+  thinking gave back ~2.5 minutes). **2282 unit tests green**, 97 `#[ignore]`;
+  clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check`/`doc_index_check` clean.
+  **Live run — GO** on **both** stands: `Qwen3.6-27B-Q4_K_M` + `bge-m3-Q8_0`
+  (full suite 97/97) and `gemma-4-31B_q4_0-it` with its projector (the client
+  smoke set, 5 runs, 8/8 each — the edits cost Gemma nothing, which is what
+  "model-agnostic" has to mean). The three vision smokes were checked rather than
+  assumed on both models, and the control arm earned its keep on Gemma: asked
+  about a fixture it could not see, the blind model answered "dark purple" with
+  confidence while the seeing one said green. No CHANGELOG entry — dev
+  infrastructure, no user-visible effect (AGENTS.md §4).
+- **One CI dispatch per model, both endpoints sets deleted and verified**: Gemma
+  ([31907378154](https://github.com/vshylov/mindfork-rs/actions/runs/31907378154))
+  93 passed / 1 failed, ready 473 s + suite 1362 s; Qwen
+  ([31909712156](https://github.com/vshylov/mindfork-rs/actions/runs/31909712156))
+  **94 passed / 0 failed**, ready 303 s + suite 1696 s. The three vision smokes
+  ran and were green on both — before this change they could not have passed at
+  all, the endpoint having no projector and those smokes failing rather than
+  skipping. Both runs fit `timeout-minutes: 45`, but at 31–33 minutes the
+  headroom is thinner than the July figures implied; worth knowing before
+  anything else joins the suite.
+- **The one red was not ours, and the diagnostics said so immediately.**
+  `rewrite_tool_e2e_live` (untouched by this branch) reported
+  `saw_rewrite=false, deleted=0` with the assistant text
+  `"2+2=5\n<call:rewrite_current_message/>\n2+2=4"` — the model *wrote the call
+  as prose*, in a syntax no protocol here defines, so no call happened and no
+  archive followed. Tool calling was fine elsewhere in the same run, which also
+  clears the rolling `server-cuda` image of drift. Measured afterwards on the
+  local Gemma stand, the test's historical home: **1 failure in 8**, identical in
+  shape; green on Qwen. Left unpatched deliberately — the two smokes this track
+  did change were changed because measurement said what to change them *to*, and
+  no such measurement exists here. The structural half is worth carrying forward
+  though: that test was written as a **manual** probe ("the model is unstable —
+  run manually"), while the gate sweeps up every `#[ignore]` without distinction,
+  and a $1-per-run gate cannot carry compliance probes that flake one run in
+  eight.

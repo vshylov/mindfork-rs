@@ -883,6 +883,18 @@ mod ignored_smoke {
         (text, thoughts, finish)
     }
 
+    /// The base engine smoke: a stream arrives, it carries text, and the finish
+    /// reason is sane.
+    ///
+    /// `max_tokens` is deliberately generous and thinking is left **on**, because
+    /// on a reasoning model the two share one budget and the reply is emitted
+    /// last. Measured on `Qwen3.6-27B` q4_K_M: this trivial prompt costs 357–949
+    /// characters of `reasoning_content` before the `pong` — so the original 64
+    /// were spent entirely on thinking (empty text, `finish=Length`), and even
+    /// 256 sits inside the worst case's noise. 1024 keeps ~4x margin over the
+    /// widest run observed while the smoke still exercises *both* streams, which
+    /// is what a base smoke is for; `emits_thoughts_for_reasoning_model` covers
+    /// the thoughts channel on its own.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn simple_generation() {
@@ -894,7 +906,7 @@ mod ignored_smoke {
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
-                max_tokens: Some(64),
+                max_tokens: Some(1024),
                 ..Default::default()
             },
             tools: vec![],
@@ -1008,7 +1020,21 @@ mod ignored_smoke {
 
     /// Tool-calling: the server gets the tool schema, the model calls it —
     /// `finish_reason="tool_calls"` and `delta.tool_calls` are assembled correctly.
-    /// `max_tokens` is generous: a reasoning model "thinks" before the call.
+    ///
+    /// **Thinking is off** (`reasoning_budget=0`). With it on, `Qwen3.6-27B` q4_K_M
+    /// emits the correct call and then does not stop — it repeats the identical
+    /// call (up to 15 times observed) until `max_tokens` cuts it off, so the finish
+    /// reason arrives as `Length` and this smoke goes red about one run in five:
+    /// measured 2/11 at the server's default temperature and **5/20** at the
+    /// orchestrator's 0.1, against **0/20** with thinking muted. Temperature is
+    /// therefore not the lever — the repetition rides on the thinking loop, and a
+    /// larger ceiling only buys more repeats.
+    ///
+    /// What this costs is nothing this set was carrying alone: tool calls *with*
+    /// thinking on are exercised live by the orchestrator smokes
+    /// (`app/orchestrator/tests/live.rs`), which run the real app path — tool
+    /// results fed back, `thinking` left at the server's default — and stay green
+    /// on both model families.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn tool_call_is_emitted_and_parsed() {
@@ -1032,6 +1058,7 @@ mod ignored_smoke {
             )],
             sampling: SamplingConfig {
                 max_tokens: Some(512),
+                reasoning_budget: Some(0),
                 ..Default::default()
             },
             tools: vec![tool],
@@ -1161,7 +1188,20 @@ mod ignored_smoke {
     /// must **call** `send_followup_message` per the instruction — `finish_reason=
     /// "tool_calls"` and the name is parsed. This is the feature's key unknown (will
     /// the model understand the schema/description). Schemas are taken straight from the `Tool`
-    /// implementations (real descriptions). `max_tokens` is generous — Gemma may "think" before the call.
+    /// implementations (real descriptions).
+    ///
+    /// **Thinking is off** (`reasoning_budget=0`, which the wire also signals as
+    /// `chat_template_kwargs.enable_thinking=false` for Jinja templates). Unlike
+    /// [`simple_generation`], a larger ceiling does not fix this one: the prompt is
+    /// open-ended ("tell me a space fact, *then* call the tool"), so a reasoning
+    /// model deliberates without bound. Measured on `Qwen3.6-27B` q4_K_M — 1024:
+    /// 0/3 runs called the tool, 2048: 2/3, 4096: 3/4, with a failing run burning
+    /// the whole 4096-token budget on `reasoning_content` over 129 s. With thinking
+    /// off: 3/3 in ~1.5 s. Nothing is lost by muting it, because what this smoke
+    /// asks is whether the model understands the *schema*; the tool-call path
+    /// *through* thinking belongs to the orchestrator smokes, which run it on the
+    /// real app path (see [`tool_call_is_emitted_and_parsed`], muted for a
+    /// separate reason and for the same reference).
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn control_tools_are_callable() {
@@ -1181,6 +1221,7 @@ mod ignored_smoke {
             messages: vec![ApiMessage::user("Расскажи интересный факт о космосе.")],
             sampling: SamplingConfig {
                 max_tokens: Some(512),
+                reasoning_budget: Some(0),
                 ..Default::default()
             },
             tools: {
