@@ -1,13 +1,14 @@
 # Design plan: a second chat model on the live e2e gate (Qwen 3.6 27B)
 
-**Status:** open — stages 1–2 implemented and green on both local stands; forks
-F1–F4 all resolved to the recommended option (*user's decision, 2026-08-15*).
-Outstanding: one live CI dispatch per model (§7).
+**Status:** **done**, 2026-08-15 — stages 1–2 shipped, one live CI dispatch per
+model, forks F1–F4 all resolved to the recommended option (*user's decision,
+2026-08-15*). One pre-existing flake surfaced and was measured rather than
+patched (§7.1); it is not this track's.
 **Date:** 2026-08-15.
-**Extends:** [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md) (the gate
+**Extends:** [docs/history/remote-e2e-hf.md](remote-e2e-hf.md) (the gate
 itself, stages 0–3) and its research
-[docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).
-**Journal:** [docs/journal/ci.md](journal/ci.md).
+[docs/research/remote-e2e-gpu.md](../research/remote-e2e-gpu.md).
+**Journal:** [docs/journal/ci.md](../journal/ci.md).
 
 ## 1. Goal
 
@@ -76,7 +77,7 @@ Three `#[ignore]` smokes require a projector — `tool_result_image_is_seen_live
 `image_attachment_e2e_live`, `image_url_attachment_e2e_live` — and against a
 text-only server they **fail loudly rather than skip**, deliberately: a vision
 smoke that quietly passes on a blind model is worse than none
-([docs/lessons.md](lessons.md) §9).
+([docs/lessons.md](../lessons.md) §9).
 
 `hf_api.chat_payload` omits `mmprojModelPath` just as deliberately — "the repo's
 second file is a vision projector we do not want". That was written in stage 0,
@@ -145,7 +146,7 @@ on demand, and as part of the release checklist.
 - (b) Leave the gate blind and mark the three smokes local-only. Cheaper, and it
   makes the gate report ok while three real smokes never ran — the exact failure
   the alternate-embedder decision refused to accept
-  ([remote-e2e-hf.md](history/remote-e2e-hf.md) §7).
+  ([remote-e2e-hf.md](remote-e2e-hf.md) §7).
 
 ## 5. Stages
 
@@ -177,14 +178,54 @@ make it ~$1.8 and needs the timeout question answered first.
   clean.
 - Stage 1 — **met, 2026-08-15**: the three edited smokes green on both stands —
   Qwen (full suite 97/97) and Gemma (client set 5 runs, 8/8 each).
-- Stage 2: a green dispatch on each model, with the three vision smokes actually
-  running (not skipping) on both.
-- Journal entry in [docs/journal/ci.md](journal/ci.md) naming the model, the
-  stack and the outcome; `docs/install.md` and the README env table updated if a
-  new flag or variable is user-facing. No CHANGELOG entry — dev infrastructure,
-  no user-visible effect (AGENTS.md §4).
-- On completion this plan moves to `docs/history/` with its relative links
-  re-pointed (`python tools/link_check.py`).
+- Stage 2 — **met, 2026-08-15**, one dispatch per model, endpoints deleted and
+  verified on both:
+
+  | | Gemma ([31907378154](https://github.com/vshylov/mindfork-rs/actions/runs/31907378154)) | Qwen ([31909712156](https://github.com/vshylov/mindfork-rs/actions/runs/31909712156)) |
+  |---|---|---|
+  | suite | 93 passed, **1 failed** (§7.1) | **94 passed, 0 failed** |
+  | the three vision smokes | ran, green | ran, green |
+  | ready / suite / total | 473 / 1362 / 1835 s | 303 / 1696 / 1999 s |
+
+  The vision smokes are the point of the row: before this branch they could not
+  have passed — the endpoint had no projector, and they fail rather than skip.
+  Both runs finish inside `timeout-minutes: 45`, though with less headroom than
+  the July figures implied (33 min at the widest), which is worth remembering
+  before anything else is added to the suite.
+- Journal entry in [docs/journal/ci.md](../journal/ci.md) naming the model, the
+  stack and the outcome; `docs/install.md` updated (§7.2 there). No CHANGELOG
+  entry — dev infrastructure, no user-visible effect (AGENTS.md §4). **Done.**
+- The plan moved to `docs/history/` with its own relative links re-pointed, and
+  the roadmap gained the item §7.1 leaves behind. **Done.**
+
+### 7.1. The one failure, and why it is not this track's
+
+Gemma's dispatch went red on `rewrite_tool_e2e_live`, which this branch never
+touched. The test's own diagnostics answer the question that matters:
+
+```
+rewrite e2e: saw_rewrite=false, deleted=0, messages=2
+  msg[1] Assistant text="2+2=5\n<call:rewrite_current_message/>\n2+2=4"
+```
+
+The model did not call the tool — it **wrote the call as prose**, in a
+`<call:.../>` syntax that exists in no protocol here. So there was no call and
+therefore no archive; the mechanism never ran. Tool calling was demonstrably fine
+in that same run (`note_cite_source`, `rag_add`/`rag_search`, `note_recall`,
+`control_tools_are_callable`, `tool_call_is_emitted_and_parsed` all green), which
+also rules out drift in the rolling `server-cuda` image.
+
+Measured on the local Gemma stand — the test's historical home — **1 failure in
+8**, identical in shape. It passed on Qwen. So this is a pre-existing ~12%
+model-compliance flake, unrelated to the second model, to HF, and to this branch.
+
+It is left as it is *on purpose*: the two smokes this track did change were fixed
+because measurement showed what to change them to, and there is no such
+measurement here yet. What the failure does expose is structural, and belongs in
+whatever picks it up: this test was written as a **manual** probe of model
+behaviour ("the model is unstable — run manually"), while the gate sweeps up
+everything `#[ignore]` without distinction. A gate that costs $1 and 30 minutes
+per run cannot carry compliance probes that fail one run in eight.
 
 ## 8. Risks
 

@@ -19,8 +19,8 @@ on:
         description: "cargo test name filter (empty = the whole suite)"
         required: false
         default: ""
-      # One dispatch, one model (docs/e2e-second-chat-model.md fork F2): running
-      # both families in one job would run the suite twice, ~50 min against the
+      # One dispatch, one model (docs/history/e2e-second-chat-model.md, fork
+      # F2): both families in one job would run the suite twice, ~50 min against the
       # 45-minute timeout below — which cannot rise without crowding the
       # sweeper's 90-minute threshold.
       model:

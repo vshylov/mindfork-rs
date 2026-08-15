@@ -43,7 +43,7 @@ WHOAMI = "https://huggingface.co/api/whoami-v2"
 # The chat models the gate can run, each as **one** decision: a name resolves to
 # the repository, the weights and the projector together. Three independent flags
 # would let a caller compose a repo/file pair that does not exist and find out
-# twenty minutes into a deploy (docs/e2e-second-chat-model.md, fork F1).
+# twenty minutes into a deploy (docs/history/e2e-second-chat-model.md, fork F1).
 #
 # `tag` is what goes into the endpoint name, so it has to stay short: the API caps
 # a name at 32 characters and the CI run id already spends ~13 of them.
@@ -243,7 +243,7 @@ def chat_payload(name, args):
     file is a vision projector we do not want". That was written before the app
     could see an image at all; since then three smokes require one and fail loudly
     on a blind model rather than skipping, so omitting it does not save a check —
-    it costs three (docs/e2e-second-chat-model.md §3).
+    it costs three (docs/history/e2e-second-chat-model.md §3).
     """
     model = chat_model(args)
     mmproj = None if args.no_mmproj else (args.mmproj or model["mmproj"])

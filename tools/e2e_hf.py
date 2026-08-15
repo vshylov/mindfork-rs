@@ -14,9 +14,10 @@ embedding-model-change track — waits for all of them, runs the `#[ignore]`
 suite against them, and deletes them, verifying the deletion.
 
 The chat model is **one dispatch, one model** (`--chat-model`, default
-gemma-4-31b; docs/e2e-second-chat-model.md fork F2). Running both families in
-one go would run the suite twice, at ~50 minutes against a 45-minute workflow
-timeout that cannot rise without crowding the sweeper's 90-minute threshold.
+gemma-4-31b; docs/history/e2e-second-chat-model.md fork F2). Running both
+families in one go would run the suite twice, at ~50 minutes against a 45-minute
+workflow timeout that cannot rise without crowding the sweeper's 90-minute
+threshold.
 
 The alternate embedder is on by default and costs ~$0.13 of the ~$1 run. That
 is the point: without it four memory-critical smokes skip *while reporting ok*,

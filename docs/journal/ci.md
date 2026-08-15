@@ -714,7 +714,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 ### Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
 - **Trigger**: the live gate ran on exactly one chat model, `gemma-4-31B` q4_0,
   so everything it asserted about a model was asserted about *that* model. Plan
-  and forks: [docs/e2e-second-chat-model.md](../e2e-second-chat-model.md).
+  and forks: [docs/history/e2e-second-chat-model.md](../history/e2e-second-chat-model.md).
 - **The product needed no change.** First local run against
   `Qwen3.6-27B-Q4_K_M` + `mmproj-Qwen3.6-27B-Q8_0` (`ggml-org/Qwen3.6-27B-GGUF`,
   `-c 16384 --jinja`) and `bge-m3-Q8_0`: **95 passed, 2 failed** of 97, and all
@@ -771,6 +771,30 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   "model-agnostic" has to mean). The three vision smokes were checked rather than
   assumed on both models, and the control arm earned its keep on Gemma: asked
   about a fixture it could not see, the blind model answered "dark purple" with
-  confidence while the seeing one said green. Still owed before the track closes:
-  one CI dispatch per model. No CHANGELOG entry — dev infrastructure, no
-  user-visible effect (AGENTS.md §4).
+  confidence while the seeing one said green. No CHANGELOG entry — dev
+  infrastructure, no user-visible effect (AGENTS.md §4).
+- **One CI dispatch per model, both endpoints sets deleted and verified**: Gemma
+  ([31907378154](https://github.com/vshylov/mindfork-rs/actions/runs/31907378154))
+  93 passed / 1 failed, ready 473 s + suite 1362 s; Qwen
+  ([31909712156](https://github.com/vshylov/mindfork-rs/actions/runs/31909712156))
+  **94 passed / 0 failed**, ready 303 s + suite 1696 s. The three vision smokes
+  ran and were green on both — before this change they could not have passed at
+  all, the endpoint having no projector and those smokes failing rather than
+  skipping. Both runs fit `timeout-minutes: 45`, but at 31–33 minutes the
+  headroom is thinner than the July figures implied; worth knowing before
+  anything else joins the suite.
+- **The one red was not ours, and the diagnostics said so immediately.**
+  `rewrite_tool_e2e_live` (untouched by this branch) reported
+  `saw_rewrite=false, deleted=0` with the assistant text
+  `"2+2=5\n<call:rewrite_current_message/>\n2+2=4"` — the model *wrote the call
+  as prose*, in a syntax no protocol here defines, so no call happened and no
+  archive followed. Tool calling was fine elsewhere in the same run, which also
+  clears the rolling `server-cuda` image of drift. Measured afterwards on the
+  local Gemma stand, the test's historical home: **1 failure in 8**, identical in
+  shape; green on Qwen. Left unpatched deliberately — the two smokes this track
+  did change were changed because measurement said what to change them *to*, and
+  no such measurement exists here. The structural half is worth carrying forward
+  though: that test was written as a **manual** probe ("the model is unstable —
+  run manually"), while the gate sweeps up every `#[ignore]` without distinction,
+  and a $1-per-run gate cannot carry compliance probes that flake one run in
+  eight.
