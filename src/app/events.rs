@@ -105,7 +105,7 @@ pub enum AppCommand {
     /// Write the chat's conversation to a file (`/export`). Unlike
     /// [`AppCommand::CopyChat`] the orchestrator finishes the job itself: it owns
     /// `Chat` *and* the disk, and the answer is a path, not content. Reports
-    /// through `Notice`/`Error`. See docs/research/chat-export-file.md.
+    /// through `Notice`/`Error`. See docs/history/chat-export-file.md.
     ExportChat {
         id: Uuid,
         format: crate::features::export_command::ExportFormat,

@@ -2,7 +2,7 @@
 //! and for a file (`/export`), and as a `mindfork-import` v1 document
 //! (`/export json`). Pure logic, testable without the UI — the orchestrator
 //! calls it and owns the disk I/O. See spec §11.2,
-//! [docs/research/chat-export-file.md](../../docs/research/chat-export-file.md).
+//! [docs/history/chat-export-file.md](../../docs/history/chat-export-file.md).
 
 use chrono::{DateTime, Utc};
 
@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use crate::entities::message::ToolCallRecord;
 
-    // ---------- export to a file (docs/research/chat-export-file.md) ----------
+    // ---------- export to a file (docs/history/chat-export-file.md) ----------
 
     /// A generated name: the date first (so a directory of exports sorts
     /// chronologically), then a slug of the title.

@@ -173,8 +173,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     vocabulary invented ahead of one is a vocabulary nobody speaks.
 ## Chat and profile management
 - **Folders/tags for chats** — grouping in the list (`Esc`).
-- **Export chat to a file** (Markdown/JSON) — currently there's only
-  clipboard copy (`F5`); add saving to disk.
 - **Pin important chats** at the top of the list.
 - **Prompt templates / snippets** — quick inserts of frequently used system
   messages or seeds.
@@ -415,6 +413,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Export a conversation to a file** (complete): `/export [md|json] [path]`.
+  Markdown is byte-for-byte what `F5` copies — the user's call, and a good one:
+  the content is Markdown already because that is how models write, so there is
+  one formatter and no way for the file and the clipboard to drift. JSON is the
+  `mindfork-import` v1 document the app already reads, with explicit ids, so an
+  export imports back onto the same chat; it carries no tool calls and every
+  such export says so. Paths (and the generated `<date>-<slug>` name) resolve
+  against the current directory, and an existing file is refused. This is also
+  the route out of JupyterLab's terminal, which the entry below could not serve.
+  See [chat-export-file.md](history/chat-export-file.md), spec §11.7.
 - **OSC 52 — copying to the client's clipboard** (complete): over SSH `arboard`
   wrote the server's clipboard, and on a headless server it failed outright, so
   `/copy` there produced only an error. A copy now also goes to the terminal's

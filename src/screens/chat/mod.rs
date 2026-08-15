@@ -103,7 +103,7 @@ pub enum ChatIntent {
     /// Write the open chat to a file (command `/export [md|json] [path]`).
     /// The orchestrator owns the conversation and the disk, so it formats and
     /// writes; a relative path (or a generated name) resolves against the
-    /// **current working directory**. See docs/research/chat-export-file.md.
+    /// **current working directory**. See docs/history/chat-export-file.md.
     ExportChat {
         id: Uuid,
         format: crate::features::export_command::ExportFormat,

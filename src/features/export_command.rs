@@ -3,7 +3,7 @@
 //! and the orchestrator — which owns the conversation and does the disk I/O —
 //! writes the file. Error text is localized in the interface language (axis B).
 //!
-//! See [docs/research/chat-export-file.md](../../docs/research/chat-export-file.md).
+//! See [docs/history/chat-export-file.md](../../docs/history/chat-export-file.md).
 
 use crate::shared::i18n::Locale;
 

@@ -199,7 +199,7 @@ impl Orchestrator {
         }
     }
 
-    /// Writes a chat to a file (`/export`, docs/research/chat-export-file.md).
+    /// Writes a chat to a file (`/export`, docs/history/chat-export-file.md).
     ///
     /// The orchestrator finishes this one itself rather than handing content
     /// back to the UI: it owns `Chat`, it already does disk I/O, and the answer

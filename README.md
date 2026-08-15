@@ -377,6 +377,7 @@ confirmations included:
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
 | `/self clear` | `Ctrl+K` twice in the self-model screen | wipe what the assistant thinks about itself and about you |
+| `/export [md\|json] [path]` | — | save this conversation to a file: `md` is what `F5` copies, `json` can be imported back. Without a path it names the file itself, in the current directory |
 
 Deleting a profile and clearing the self-model always ask first, even though the
 keys they mirror do not: a command names its target by word, and a shortened
