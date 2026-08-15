@@ -234,78 +234,7 @@ impl Tool for ChatSearch {
             hits.len()
         };
 
-        // Group by conversation, conversations by recency, hits inside one by
-        // timestamp (the index's insertion order is only approximate).
-        let mut by_chat: std::collections::HashMap<Uuid, Vec<MessageHit>> =
-            std::collections::HashMap::new();
-        for hit in hits {
-            by_chat.entry(hit.chat_id).or_default().push(hit);
-        }
-        let mut refs: Vec<&ChatRef> = ctx.other_chats.iter().collect();
-        refs.sort_by_key(|r| std::cmp::Reverse(r.modified_at));
-
-        let mut body = String::new();
-        let mut shown = 0usize;
-        for chat_ref in refs {
-            if shown >= k {
-                break;
-            }
-            let Some(mut chat_hits) = by_chat.remove(&chat_ref.id) else {
-                continue;
-            };
-            chat_hits.sort_by(|a, b| a.ts.cmp(&b.ts));
-            // One load + render per shown conversation gives every hit its page
-            // address — what makes the pair compose the way the history pair
-            // does. Best-effort: a chat that fails to load still yields its
-            // snippets, just without page numbers.
-            let view = ctx
-                .storage
-                .json()
-                .load_chat(chat_ref.id)
-                .ok()
-                .flatten()
-                .and_then(|c| HistoryView::render(&c.messages, ctx.loc));
-            body.push_str("\n\n");
-            body.push_str(&ctx.loc.tf(
-                "tool.chat_search.chat",
-                &[
-                    ("title", chat_ref.title.as_str()),
-                    ("id", &address(chat_ref.id)),
-                    ("date", &chat_ref.modified_at.format("%Y-%m-%d").to_string()),
-                ],
-            ));
-            for hit in chat_hits {
-                if shown >= k {
-                    break;
-                }
-                shown += 1;
-                let snippet = build_snippet(&hit.text, query, SNIPPET_CHARS);
-                let page = view
-                    .as_ref()
-                    .and_then(|v| v.locate(ctx.history_page_tokens, hit.message_id))
-                    .map(|(page, _)| page);
-                body.push_str("\n\n");
-                let n = shown.to_string();
-                let date = date_of(&hit.ts);
-                body.push_str(&match page {
-                    Some(page) => ctx.loc.tf(
-                        "tool.chat_search.hit",
-                        &[
-                            ("n", n.as_str()),
-                            ("role", &hit.role),
-                            ("date", date),
-                            ("page", &page.to_string()),
-                        ],
-                    ),
-                    None => ctx.loc.tf(
-                        "tool.chat_search.hit_unpaged",
-                        &[("n", n.as_str()), ("role", &hit.role), ("date", date)],
-                    ),
-                });
-                body.push('\n');
-                body.push_str(&snippet.text);
-            }
-        }
+        let (body, shown) = render_grouped_hits(ctx, hits, query, k);
 
         let mut out = ctx.loc.tf(
             "tool.chat_search.header",
@@ -316,6 +245,109 @@ impl Tool for ChatSearch {
         out.push_str(ctx.loc.t("tool.chat_search.hint"));
         Ok(ToolOutcome::text(out))
     }
+}
+
+/// Renders `chat_search`'s body: the raw hits grouped by conversation,
+/// conversations by recency, hits inside one by timestamp (the index's
+/// insertion order is only approximate). Returns the body and how many hits it
+/// actually shows — `k` bounds the *hits*, not the conversations, so the count
+/// is what the loop reached rather than anything computable up front.
+///
+/// Split out of [`ChatSearch::invoke`] because it is the whole of that
+/// function's nesting: what remains there is the linear pipeline
+/// scope → query → search → count, and the analyzer's complexity bar
+/// (`rust:S3776`) is met by both halves rather than waived.
+fn render_grouped_hits(
+    ctx: &ToolContext,
+    hits: Vec<MessageHit>,
+    query: &str,
+    k: usize,
+) -> (String, usize) {
+    let mut by_chat: std::collections::HashMap<Uuid, Vec<MessageHit>> =
+        std::collections::HashMap::new();
+    for hit in hits {
+        by_chat.entry(hit.chat_id).or_default().push(hit);
+    }
+    let mut refs: Vec<&ChatRef> = ctx.other_chats.iter().collect();
+    refs.sort_by_key(|r| std::cmp::Reverse(r.modified_at));
+
+    let mut body = String::new();
+    let mut shown = 0usize;
+    for chat_ref in refs {
+        if shown >= k {
+            break;
+        }
+        let Some(mut chat_hits) = by_chat.remove(&chat_ref.id) else {
+            continue;
+        };
+        chat_hits.sort_by(|a, b| a.ts.cmp(&b.ts));
+        // One load + render per shown conversation gives every hit its page
+        // address — what makes the pair compose the way the history pair
+        // does. Best-effort: a chat that fails to load still yields its
+        // snippets, just without page numbers.
+        let view = ctx
+            .storage
+            .json()
+            .load_chat(chat_ref.id)
+            .ok()
+            .flatten()
+            .and_then(|c| HistoryView::render(&c.messages, ctx.loc));
+        body.push_str("\n\n");
+        body.push_str(&ctx.loc.tf(
+            "tool.chat_search.chat",
+            &[
+                ("title", chat_ref.title.as_str()),
+                ("id", &address(chat_ref.id)),
+                ("date", &chat_ref.modified_at.format("%Y-%m-%d").to_string()),
+            ],
+        ));
+        for hit in chat_hits {
+            if shown >= k {
+                break;
+            }
+            shown += 1;
+            body.push_str("\n\n");
+            body.push_str(&render_hit(ctx, &hit, query, shown, view.as_ref()));
+        }
+    }
+    (body, shown)
+}
+
+/// One hit: its numbered heading, then the snippet. The heading names the page
+/// of the conversation's transcript the hit lands on — the address
+/// `chat_read` takes — and falls back to the unpaged wording when the
+/// conversation could not be rendered (`view` is `None`, the best-effort case
+/// above).
+fn render_hit(
+    ctx: &ToolContext,
+    hit: &MessageHit,
+    query: &str,
+    n: usize,
+    view: Option<&HistoryView>,
+) -> String {
+    let page = view
+        .and_then(|v| v.locate(ctx.history_page_tokens, hit.message_id))
+        .map(|(page, _)| page);
+    let n = n.to_string();
+    let date = date_of(&hit.ts);
+    let mut out = match page {
+        Some(page) => ctx.loc.tf(
+            "tool.chat_search.hit",
+            &[
+                ("n", n.as_str()),
+                ("role", &hit.role),
+                ("date", date),
+                ("page", &page.to_string()),
+            ],
+        ),
+        None => ctx.loc.tf(
+            "tool.chat_search.hit_unpaged",
+            &[("n", n.as_str()), ("role", &hit.role), ("date", date)],
+        ),
+    };
+    out.push('\n');
+    out.push_str(&build_snippet(&hit.text, query, SNIPPET_CHARS).text);
+    out
 }
 
 /// `chat_read` — one page of another conversation's transcript.

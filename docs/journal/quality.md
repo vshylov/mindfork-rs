@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (11)
+## Entries (12)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -23,6 +23,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the documentation refactor — CLAUDE.md became a router (done)
 - Post-M9: SonarQube follow-up — the doc gate's regexes and one test's complexity (done)
 - Post-M9: SonarQube follow-up — the screenshots SVG writer (done)
+- Post-M9: SonarQube follow-up — `chat_search`'s renderer (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -687,3 +688,42 @@ three findings are invisible from the workflow's own status):
   script only — no engine, memory, tool or provider path. No CHANGELOG entry —
   internal tooling (§4). The gate-green-but-findings-ship gap is now a
   `docs/lessons.md` §10 line.
+
+### Post-M9: SonarQube follow-up — `chat_search`'s renderer (done)
+
+- **The two issues open on `main` after the `/export` merge**, both raised by
+  tracks that shipped since the last sweep. The quality gate stayed OK
+  throughout — it judges new-code *ratings*, which two maintainability smells
+  cannot flip (the §10 gap again: green gate, findings shipped). Branch
+  `fix/sonar-chat-search-complexity`.
+- **`rust:S3776` on `ChatSearch::invoke`** (`src/features/tools/chats.rs`),
+  cognitive complexity **17** against the 15 allowed. Arrived with the
+  cross-chat search track. Not a deliberate shape — a linear pipeline
+  (scope → query → search → count) with a two-level rendering nest bolted onto
+  its end, so the fix is the stage-2/4 recipe: the nest moved **verbatim** into
+  `render_grouped_hits(ctx, hits, query, k) -> (String, usize)`, and the
+  per-hit heading (the `Some(page)`/`None` pairing plus its snippet) into
+  `render_hit`. Both new functions and the remaining `invoke` are well under
+  the bar, so the threshold is *met* by every part rather than waived for the
+  whole. `shown` is returned rather than recomputed because `k` bounds the
+  hits, not the conversations — the header's count is what the loop reached.
+- **The one behavioural detail worth stating**: `build_snippet` used to run
+  before the page lookup and now runs after it. Both are pure and neither
+  reads the other's output — the emitted string is byte-identical, which the
+  existing `chat_search` tests pin (the paged, unpaged, grouping and `top_k`
+  cases all assert on rendered text).
+- **`rust:S2208` on `src/screens/chat/commands.rs:15`** — `use super::*`, the
+  god-object-split convention from
+  [refactoring-god-objects.md](../history/refactoring-god-objects.md) and
+  architecture.md §3. The file is stage 1 of the command-only-control track and
+  postdates the 2026-08-06 triage, so it re-raised a rule whose other 49
+  instances are already **Accepted**. Accepted in Sonar with the same
+  rationale (user decision 2026-08-15) rather than fixed: nine sibling modules
+  of `screens/chat/` carry the same line, and spelling out one of them alone
+  buys nothing but a divergence.
+- **Verification**: **2282 unit tests green** (0 failed, 97 `#[ignore]` — the
+  exact pre-change baseline; a pure extraction adds no test), clippy
+  `-D warnings`/fmt clean. **No live run required** (AGENTS.md §3) — the
+  change moves rendering code inside one tool module and touches no engine,
+  memory, storage or provider path; the tool's own behaviour is unchanged. No
+  CHANGELOG entry — internal refactor with no user-visible effect (§4).
