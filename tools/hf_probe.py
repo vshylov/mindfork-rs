@@ -262,8 +262,13 @@ def _check_streaming(url, checks):
     checks.record("U4", "SSE streaming", events > 5 and not err, detail + (f" err={err}" if err else ""))
 
 
-def probe_chat(url, checks):
-    """U1 (which file got loaded), U2 (context), U3 (jinja), U4 (SSE), U6 (auth)."""
+def probe_chat(url, checks, expected_gguf):
+    """U1 (which file got loaded), U2 (context), U3 (jinja), U4 (SSE), U6 (auth).
+
+    `expected_gguf` is the weights file the payload asked for — the whole point of
+    U1 is that `/props` reports the file llama.cpp *actually* loaded, so the name
+    has to be threaded in from the model that was selected rather than read from a
+    constant that no longer describes every run."""
     print(f"\n=== chat checks against {url} ===")
     hf.wait_healthy(url)
 
@@ -285,7 +290,7 @@ def probe_chat(url, checks):
         settings = body.get("default_generation_settings") or {}
         n_ctx = settings.get("n_ctx") or body.get("n_ctx")
         model = body.get("model_path") or settings.get("model") or "?"
-        checks.record("U1", "loaded model file", hf.CHAT_GGUF in str(model), str(model))
+        checks.record("U1", "loaded model file", expected_gguf in str(model), str(model))
         checks.record("U2", "effective context", bool(n_ctx), f"n_ctx={n_ctx}")
     else:
         checks.record("U1", "loaded model file", False, f"/props HTTP {status}")
@@ -389,7 +394,7 @@ def cmd_run(args):
 
     chat_url = hf.wait_running(chat_name, args.timeout)
     if chat_url:
-        probe_chat(chat_url, checks)
+        probe_chat(chat_url, checks, args.gguf or hf.chat_model(args)["gguf"])
     else:
         checks.record("U1", "endpoint reached running", False, "see the state/message above")
 

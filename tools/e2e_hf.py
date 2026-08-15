@@ -7,11 +7,16 @@ probe: tools/hf_api.py.
 
 One entry point, identical locally and in CI (the precedent is
 `packaging/linux/build-packages.sh`). It creates three endpoints — chat
-(llama.cpp, gemma-4-31B q4_0, L40S), embeddings (the same engine in
+(llama.cpp, `--chat-model`, L40S), embeddings (the same engine in
 `embeddings` mode, bge-m3 Q8_0, T4) and a *second, different* embedding model
 (multilingual-e5-large-instruct q8_0, T4) for the smokes that guard the
 embedding-model-change track — waits for all of them, runs the `#[ignore]`
 suite against them, and deletes them, verifying the deletion.
+
+The chat model is **one dispatch, one model** (`--chat-model`, default
+gemma-4-31b; docs/e2e-second-chat-model.md fork F2). Running both families in
+one go would run the suite twice, at ~50 minutes against a 45-minute workflow
+timeout that cannot rise without crowding the sweeper's 90-minute threshold.
 
 The alternate embedder is on by default and costs ~$0.13 of the ~$1 run. That
 is the point: without it four memory-critical smokes skip *while reporting ok*,
@@ -19,6 +24,7 @@ which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
 
     set HF_TOKEN=hf_...
     python tools/e2e_hf.py run                  # the full remote gate
+    python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
     python tools/e2e_hf.py run --dry-run        # payloads only, spends nothing
     python tools/e2e_hf.py run --filter e2e_live --no-prebuild
     python tools/e2e_hf.py run --reuse-chat e2e-chat-0728-2010   # iterate, no deploy
@@ -215,7 +221,11 @@ class Plan:
 
     def __init__(self, args):
         self.ident = args.run_id or run_id()
-        self.chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{self.ident}")
+        self.model = hf.chat_model(args)
+        # The model's tag goes into the name, so a listing, the sweeper's log and
+        # an orphan hunt all say *which* model the endpoint is holding. Kept short
+        # because `safe_name` truncates at 32 and the CI run id spends ~13.
+        self.chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{self.model['tag']}-{self.ident}")
         self.embed_name = args.reuse_embed or hf.safe_name(f"e2e-embed-{self.ident}")
         self.alt_name = args.reuse_alt_embed or hf.safe_name(f"e2e-alt-{self.ident}")
         self.want_embed = not args.no_embed
@@ -228,6 +238,13 @@ class Plan:
 def print_plan(plan, args):
     """Printed before anything is created: the trail an orphan is found by."""
     print(f"\nrun id: {plan.ident}")
+    print(f"  chat  model:    {args.chat_model}  ({plan.model['repo']})")
+    print(f"                  weights {args.gguf or plan.model['gguf']}")
+    # ASCII on purpose: a piped stdout on Windows is cp1252, and `init` only
+    # keeps a stray character from killing a run that is holding a GPU -- it does
+    # not make the log readable.
+    projector = "(none - the 3 vision smokes will FAIL)" if args.no_mmproj else (args.mmproj or plan.model["mmproj"])
+    print(f"                  mmproj  {projector}")
     print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if plan.want_embed:
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
