@@ -744,14 +744,24 @@ three findings are invisible from the workflow's own status):
   than none. Deactivating the rule in a custom quality profile was the other
   option and was declined: it is invisible from the repository, and this
   project's decisions live in files that show up in review.
-- **What is not yet verified, said plainly**: the exclusion cannot be proven by
-  this branch. The `commands.rs` issue is Accepted, so it is absent either way,
-  and a PR analysis reports only *new* issues. The proof is the first analysis
-  of `main` after the merge with that issue **reopened**: if the exclusion is
-  read, the issue closes as excluded and stays gone; if it is not, it comes
-  back OPEN. A control in both directions, in the shape the `link_check.py`
-  and `screenshots.py` entries used — until it runs, this is a configuration
-  believed correct from the documentation, not a measured one.
+- **The exclusion is measured, not assumed** — and the control turned out
+  cleaner than the one planned for it. The branch itself could not prove
+  anything (the `commands.rs` issue was Accepted, so absent either way, and a
+  PR analysis reports only *new* issues), so the plan was to reopen it and read
+  the next analysis of `main`. The post-merge analysis answered without that:
+  **all 50 `rust:S2208` issues went `CLOSED`**, the 49 accepted in 2026-08-06
+  included. The second direction came free from the same dump — the **7
+  deliberate-shape `rust:S3776`** acceptances (`settings/spec.rs`,
+  `calc.rs`, `latex.rs` ×4, `wrap.rs`) are still `RESOLVED`. So the server does
+  **not** close accepted issues on its own, which is exactly the alternative
+  explanation that had to die: the fifty closed because they stopped being
+  raised. Project-wide open issues: **0**.
+- **Worth keeping for the next time this rule comes up**: an issue exclusion
+  does not merely hide findings from a list, it removes the issues, Accepted
+  ones with them. That is the intended outcome here — the acceptances were
+  bookkeeping for a decision now stated in the properties file — but it means
+  an exclusion is not reversible into the old state: reverting the property
+  would re-raise all fifty as OPEN, not as Accepted.
 - **Verification**: **2282 unit tests green** (0 failed, 97 `#[ignore]` — the
   exact pre-change baseline; a pure extraction adds no test), clippy
   `-D warnings`/fmt clean. **No live run required** (AGENTS.md §3) — the
