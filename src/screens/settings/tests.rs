@@ -544,6 +544,36 @@ fn interface_has_terminal_compat_toggle() {
 }
 
 #[test]
+fn interface_has_the_osc52_choice() {
+    let mut s = screen();
+    // In the "Interface" section, with a hint — the field needs one more than
+    // most: whether it does anything depends on the terminal, not on the app.
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::IClipboardOsc52));
+    assert!(field_desc(&s, FieldId::IClipboardOsc52).is_some());
+
+    // Cycling forward walks auto -> always -> off and back, saving each step.
+    use crate::shared::osc52::Osc52Mode;
+    let mut seen = vec![s.config.interface.clipboard_osc52];
+    for _ in 0..3 {
+        match s.cycle_field(FieldId::IClipboardOsc52, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.clipboard_osc52),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            Osc52Mode::Auto,
+            Osc52Mode::Always,
+            Osc52Mode::Off,
+            Osc52Mode::Auto
+        ],
+        "the cycle must return to where it started"
+    );
+}
+
+#[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();
     // The field is in the "Interface" section (the "Appearance" group).

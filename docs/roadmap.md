@@ -387,13 +387,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   application isn't done. Note that it is no longer the *answer* to a host
   stealing keys — the typed routes are (see "Recently closed") — so this is
   now a convenience for power users rather than an accessibility gap.
-- **OSC 52 for the clipboard** — `F5`/`/copy` and `Ctrl+C` write through
-  `arboard`, i.e. the clipboard of the machine the *process* runs on. Under a
-  browser terminal (JupyterLab) the pty is server-side, so a copy lands
-  somewhere the user cannot paste from; the terminal escape that sets the
-  **client's** clipboard is the fix, and both xterm.js and VS Code support it.
-  Found while designing the typed routes, and deliberately left out of that
-  track: it is a transport question, not a keyboard one.
+- **A clipboard for JupyterLab's terminal** — the one host OSC 52 cannot serve
+  (see "Recently closed"): it embeds xterm.js *without* `@xterm/addon-clipboard`,
+  so the escape is dropped. Nothing the app can send fixes that; the routes left
+  are upstream (ask JupyterLab to load the addon) or sideways (write the
+  conversation to a file the user can open — which is the existing "Export chat
+  to a file" item, and would serve this case too).
 - **Layout-independent hotkeys on unix beyond Cyrillic** — **blocked on an
   upstream release.** The kitty keyboard protocol carries the answer (the *base
   layout key* of the "report alternate keys" enhancement), but crossterm 0.29
@@ -416,6 +415,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **OSC 52 — copying to the client's clipboard** (complete): over SSH `arboard`
+  wrote the server's clipboard, and on a headless server it failed outright, so
+  `/copy` there produced only an error. A copy now also goes to the terminal's
+  own clipboard, automatically when the session looks remote
+  (`interface.clipboard_osc52`: `auto`/`always`/`off`). The research corrected
+  the item's own premise: **JupyterLab drops OSC 52** (xterm.js without the
+  clipboard addon), while VS Code supports it but usually runs the pty locally —
+  so the beneficiary is plain SSH, which is also where the old behaviour was
+  worst. The protocol acknowledges nothing and its support cannot be queried, so
+  the note says the text was *sent*, and a conversation past the 74 994-byte
+  ceiling is refused with an explanation rather than silently halved. tmux gets
+  DCS passthrough; `screen` does not. See
+  [osc52-clipboard.md](history/osc52-clipboard.md), spec §11.7.
 - **Command-only control** (stages 1–2, complete): the app is now operable
   without a single chord, for terminals embedded in a host that claims them.
   The item did not exist on this list — it came from the question "could the app

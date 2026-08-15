@@ -165,10 +165,25 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-14, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2258 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2268 unit tests
 green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **command-only control — track complete**
+most recent tracks: **OSC 52 — copying to the client's clipboard**
+(over SSH `arboard` wrote the *server's* clipboard, and on a headless server it
+failed outright, so `/copy` there produced only an error; a copy now also goes to
+the terminal's own clipboard, automatically when the session looks remote —
+`interface.clipboard_osc52`: `auto`/`always`/`off`. The research overturned the
+roadmap item's own premise: **JupyterLab drops OSC 52** — it embeds xterm.js
+without the clipboard addon — while VS Code supports it but usually runs the pty
+locally, so the beneficiary is plain SSH, which is where the old behaviour was
+worst. The protocol acknowledges nothing and cannot be queried for support, so
+the note says the text was *sent* and names the possibility it was ignored; past
+the 74 994-byte ceiling nothing is sent and the note says where the text did go,
+a silently halved conversation being the worse failure. Both copy routes share
+one funnel, and the decision is split from the side effects because a mutation of
+the ceiling check survived while it lived inside them;
+[docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md), spec §11.7),
+**command-only control — track complete**
 (the app is operable without a single chord, for terminals embedded in a host
 that claims them: measured, VS Code's default `commandsToSkipShell` takes
 `Ctrl+P`/`Ctrl+E`/`Ctrl+F`/`Ctrl+K`, `F1`/`F3`/`F5`/`F10` and `Ctrl+Q` — six

@@ -222,9 +222,19 @@ fn handle_key_event(
         // The `arboard` slot is here (`dispatch` doesn't have it). Success is silent,
         // a failure (headless Linux with no X11) — a note in the feed.
         Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
-            if let Err(e) = write_clipboard(clipboard, &text) {
-                let loc = screen.loc();
-                screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &e)]));
+            let report = copy_text(clipboard, &text, screen.clipboard_osc52());
+            // Success stays silent here, as it always has: a note on every
+            // `Ctrl+C` would be noise. The exception is the terminal's half —
+            // an unacknowledged protocol is worth one line, since the user has
+            // no other way to learn it was even attempted.
+            let (message, failed) = report.message(screen.loc());
+            match report {
+                CopyReport {
+                    local: Ok(()),
+                    terminal: TerminalCopy::NotTried,
+                } => {}
+                _ if failed => screen.push_error(&message),
+                _ => screen.push_note(&message),
             }
             false
         }

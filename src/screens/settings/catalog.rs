@@ -1241,6 +1241,12 @@ impl SettingsScreen {
                     FieldKind::Toggle(i.render_mermaid),
                 )
                 .describe(loc.t("ui.settings.desc.mermaid")),
+                row(
+                    FieldId::IClipboardOsc52,
+                    loc.t("ui.settings.field.osc52"),
+                    FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.osc52")),
             ],
         );
         rows.extend(grouped(

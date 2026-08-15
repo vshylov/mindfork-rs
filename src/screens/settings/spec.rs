@@ -152,6 +152,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, _loc| spec_menu(c.impersonation_engine.managed.spec_type),
         ),
         // The theme cycles in one direction — `dir` is ignored (as in the previous cycle_field).
+        IClipboardOsc52 => choice(
+            |c, dir| c.interface.clipboard_osc52 = cycle_osc52(c.interface.clipboard_osc52, dir),
+            |c, loc| {
+                index_menu(&OSC52_MODES, c.interface.clipboard_osc52, |m| {
+                    osc52_label(m, loc)
+                })
+            },
+        ),
         ITheme => choice(
             |c, _dir| c.interface.theme = cycle_theme(c.interface.theme),
             |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),

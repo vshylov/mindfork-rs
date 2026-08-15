@@ -669,6 +669,17 @@ impl ChatScreen {
         self.settings_snapshot.clone()
     }
 
+    /// Whether a copy also goes to the terminal's clipboard over OSC 52
+    /// (`interface.clipboard_osc52`). Read from the last settings snapshot —
+    /// before the first `Settings` event arrives, the default applies, which is
+    /// the conservative `Auto`. See [`crate::shared::osc52`].
+    pub fn clipboard_osc52(&self) -> crate::shared::osc52::Osc52Mode {
+        self.settings_snapshot
+            .as_ref()
+            .map(|(config, ..)| config.interface.clipboard_osc52)
+            .unwrap_or_default()
+    }
+
     /// The current spellcheck settings `(enabled, selected dictionaries)` from
     /// the last settings snapshot — for (re)loading dictionaries in
     /// `app/runtime.rs`. See spec §11.6.

@@ -2126,6 +2126,18 @@ stack by a pure function called once per frame in the draw path, not mirrored in
 a flag — mirroring would mean writing the same rule at each set/clear site to keep
 one word honest, which is how a hint drifts from the key it describes.
 
+**Copying has two halves** (`shared/osc52.rs` + `app/runtime/clipboard.rs`, spec
+§11.7). `copy_text` is the single funnel both routes already used — the
+selection (`handle_key_event`) and the whole conversation (`deliver_clipboard`) —
+and it now writes the local clipboard (`arboard`) *and*, per
+`interface.clipboard_osc52` and the session, an OSC 52 sequence to stdout. The
+decision (`plan_terminal`: skip / too large / send) is split from the two side
+effects so the rule is testable without a clipboard or a terminal — a mutation of
+the ceiling check survived every test while it lived inside the executing
+function. `CopyReport { local, terminal }` carries both halves to one `message`,
+so the chat feed and the chat list's status area cannot word the same outcome
+differently, and the wording never claims an arrival the protocol cannot confirm.
+
 **Typed routes for the chords** (`features/ui_command.rs` +
 `screens/chat/commands.rs`, spec §11.7). One declarative registry (`COMMANDS`:
 aliases, `UiCommand`, arity, help label, description key) parsed by one function;

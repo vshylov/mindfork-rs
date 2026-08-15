@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -35,6 +35,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/exit` and `/quit` — a typed route out (done)
 - Post-M9: command-only control — stage 1 (typed routes for the chords) (done)
 - Post-M9: command-only control — stage 2 (`/profile`, `/self clear`) (done)
+- Post-M9: OSC 52 — copying to the client's clipboard (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1226,3 +1227,86 @@ orchestrator commands that already existed, with no engine, memory or tool path
 touched. The acceptance pass is the same manual one as stage 1, plus: create a
 profile from a chat and see the notice, delete it and see the question naming
 its conversations.
+
+### Post-M9: OSC 52 — copying to the client's clipboard (done)
+
+- **Why.** `arboard` writes the clipboard of the machine the *process* runs on.
+  Over SSH that is the wrong machine; on a headless box there is no clipboard at
+  all and the constructor fails, so `/copy` there produced nothing but an error.
+  OSC 52 hands the text to the terminal the user is actually sitting at, over the
+  same pipe the drawing takes. Design doc:
+  [docs/history/osc52-clipboard.md](../history/osc52-clipboard.md), all forks
+  decided by the user on 2026-08-15 (the recommendations).
+- **The roadmap item's premise was wrong, and the research is what found it.**
+  I had written that item myself, three days earlier, with **JupyterLab** as the
+  motivating case. Measured against the sources: JupyterLab's terminal package
+  depends on `addon-fit`, `addon-search`, `addon-web-links` and `addon-webgl`,
+  and its `widget.ts` registers OSC 8 and nothing else — xterm.js ignores OSC 52
+  unless the host loads `@xterm/addon-clipboard`, so **the escape is dropped**.
+  The mirror image: VS Code *does* load that addon (`xtermTerminal.ts`, both
+  directions wired to its clipboard service) but usually runs the pty locally,
+  where `arboard` was already right. The beneficiary list inverted — what
+  survives is plain SSH and VS Code's remote modes — and the feature is still
+  worth having, because on headless SSH the alternative is not "the wrong
+  clipboard" but "no copy at all". Recorded as a second recurrence of the
+  read-the-code-before-designing lesson.
+- **A fallback, not a replacement** (fork F1a). The local write happens first and
+  always: it costs nothing when it works, and its failure is one of the two
+  signals that the terminal's clipboard is the one that matters. The other signal
+  is `SSH_TTY`/`SSH_CONNECTION`. Terminal support itself is **not** detectable —
+  the only query is the OSC 52 *read* form, which is the leak vector terminals
+  disable and which we refuse to use — so `always` exists for the remote sessions
+  the environment does not advertise (containers, web terminals) and `off` for a
+  terminal that renders an unknown OSC as text.
+- **The protocol acknowledges nothing, so neither does the note.** Three outcomes
+  get three wordings (fork F4): the plain local copy keeps the old sentence; a
+  sent sequence says *sent*, and says the terminal does not confirm it, so a user
+  whose terminal silently ignored it knows what happened; over the ceiling
+  nothing is sent and the note says where the text did go. Getting this wrong in
+  the friendly direction — one cheerful "copied" — would be the project's
+  recurring defect in its purest form.
+- **The ceiling is 74 994 bytes and the copy is refused past it** (fork F3). The
+  100 000-byte sequence limit less the header and base64. Real terminals are
+  worse (kitty rejected over 6 138 bytes, tabby fails near 1 KB), but truncating
+  everyone to the worst of them would be worse than falling back to the local
+  clipboard — and a silently halved conversation *looks complete*, which is the
+  failure mode worth engineering against. The corpus makes this concrete: single
+  messages of 38 KB exist, so a whole conversation passes the ceiling routinely.
+- **tmux yes, screen no** (fork F5). tmux needs DCS passthrough with every inner
+  escape doubled — a wrapper that forgets the doubling ends the passthrough early
+  and sprays base64 across the screen, which is why the test asserts the exact
+  bytes. `screen` needs a different wrapper *and* 768-byte chunking; unsupported,
+  and it degrades to exactly today's behaviour.
+- **A surviving mutation that was right, and one that was my own fault.** The
+  first "mutation" I wrote was `if false { … } else if tmux { … }` — which changes
+  nothing, so its survival proved nothing (lessons §2: read a surviving mutation
+  twice). The real one, dropping the escape doubling, was caught. But a genuine
+  survivor followed: removing the ceiling check from `copy_text` changed real
+  behaviour — an oversize copy would report the cheerful wording — and **every
+  test passed**, because `copy_text` needs a real clipboard and a real stdout and
+  so had no test at all. Extracting the decision into a pure `plan_terminal`
+  (skip / too large / send) put the rule under a table test and killed the
+  mutation. The general shape: when a function mixes a decision with two side
+  effects, the decision is what the tests can reach.
+- **The settings screenshots had to be regenerated**, since the "Interface"
+  section grew a row. Per lessons §1 the font was verified first by re-rendering
+  an *unchanged* frame and checking it came back byte-identical — it did, so the
+  four settings images differ only by the new row. (Also learned: the script
+  refuses an `--out` outside the repository, which is the path-confinement rule
+  from the SonarQube lesson doing its job.)
+
+**Tests** (+10, 2258 → 2268 green). The sequence's exact bytes for ASCII,
+multi-byte UTF-8 and empty; the tmux wrapper with its doubled escapes; the
+ceiling at the boundary and counted in bytes rather than characters; `write_to`
+reporting what it did and writing *nothing* when it refuses; the emit-decision
+matrix over mode × remote × local-failure; the default being the quiet one; the
+plan matrix including "a skip never becomes a size report"; the three note
+wordings, each distinguishable, plus the per-locale gate; the settings field
+cycling auto → always → off and back. Mutation-tested in three places, one of
+which exposed the untested seam described above.
+
+**A live model run is not required** (AGENTS.md §3) — no engine, memory or tool
+path is touched. What unit tests cannot reach is the claim itself, since it is
+about terminals: the acceptance pass needs **two machines** — SSH from a laptop
+into a headless box, `/copy` there, paste locally — and is worth repeating under
+tmux and once in VS Code Remote-SSH.
