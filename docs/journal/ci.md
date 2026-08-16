@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -22,6 +22,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: tool tests run against in-memory storage (done)
 - Post-M9: orchestrator fixtures — two convertible, the rest not (done)
 - Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
+- Post-M9: the rewrite probe's flake — two models, two causes (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -798,3 +799,53 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   run manually"), while the gate sweeps up every `#[ignore]` without distinction,
   and a $1-per-run gate cannot carry compliance probes that flake one run in
   eight.
+
+### Post-M9: the rewrite probe's flake — two models, two causes (done)
+- **The item the previous entry left open**, and it closed in a shape neither the
+  roadmap item nor the plan expected. Both assumed a *split*: a deterministic
+  mechanism test for the gate, the model-compliance probe kept manual, plus
+  whatever machinery excluding it would need. Neither half was necessary.
+- **The mechanism already had strictly stronger coverage.**
+  `rewrite_tool_discards_partial_and_saves_it` drives the whole path against a
+  `MockBackend` and asserts the exact history, the discarded text *and* its tool
+  call, where the live probe asserted only "a rewrite happened and the archive is
+  non-empty". So the live probe was never the mechanism's guard — it answers the
+  one question a mock cannot: does a real model reach for the tool.
+- **The flake was in the test's own wording.** It asked the model to "demonstrate
+  `rewrite_current_message` strictly by steps, skipping none: step 1 write X,
+  step 2 (MANDATORY) call the tool, step 3 write Y" — an invitation to narrate
+  the sequence, which is exactly what it got back:
+  `"2+2=5
+<call:rewrite_current_message/>
+2+2=4"`, the call written as prose.
+  Reworded as a *situation the tool answers* ("your draft is no good — call the
+  tool and write it again"): **1 failure in 8 → 0 in 30** on Gemma.
+- **And the second family flaked for a different reason, which is the part worth
+  carrying forward.** With the prompt fixed, Qwen 3.6 still failed 1 in 20 — not
+  by narrating but by returning **nothing**: no tool call, empty text, the whole
+  turn spent in `reasoning_content`, the same shape that once broke
+  `simple_generation`. Muting thinking for that turn: **0 in 20**. Had the rate
+  alone been watched instead of the failure *mode*, "much better on Gemma" would
+  have shipped a probe still red one dispatch in twenty.
+- **One promising fix was measured and rejected.** Narrowing the profile to the
+  single tool under test looks like the "remove the alternative" rule this repo
+  already records — and measured **7 failures in 20** against 1 with every tool
+  enabled, all of them the empty turn. That rule is about a model satisfying the
+  request through a *different* tool; a one-tool list does nothing about a model
+  spending the turn thinking, and appears to invite it. The lesson gained the
+  caveat.
+- **Two smaller things fell out.** The probe now prints the tool names its
+  messages carry, as its sibling always did — without them "never called it" and
+  "called it and the effect did not land" are indistinguishable, which is half
+  the diagnosis. And `control_tools_are_callable` had been handing the model
+  *both* control schemas while only ever asserting `send_followup_message`, so
+  `rewrite_current_message`'s description was shown and never checked; it is now
+  table-driven over both, with both schemas offered each time, so the model also
+  has to pick the right one of two.
+- **Final measurements, both families**: `rewrite_tool_e2e_live` **0 in 20** on
+  `gemma-4-31B_q4_0-it` and **0 in 20** on `Qwen3.6-27B-Q4_K_M`;
+  `control_tools_are_callable` 0 in 10 and 0 in 15; the untouched sibling
+  `followup_tool_e2e_live` 0 in 12, confirming it was not disturbed. **2282 unit
+  tests green**, 97 `#[ignore]`; fmt/clippy/`cyrillic_scan`/`link_check`/
+  `doc_index_check` clean. No CHANGELOG entry — test-side only, no user-visible
+  effect (AGENTS.md §4).

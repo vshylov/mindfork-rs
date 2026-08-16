@@ -847,7 +847,42 @@ async fn followup_tool_e2e_live() {
 /// End-to-end against a live model: with `rewrite_current_message` enabled the assistant
 /// discards the reply it started and writes it anew; the discarded content goes into `Chat.deleted`.
 /// Checks the UI signal (`AssistantRewrite`) and a non-empty deleted archive.
-/// The model is unstable — the test is `#[ignore]`, run manually.
+///
+/// **The instruction is closed on purpose**, and the thinking is muted; the two
+/// together took this smoke from flaky to clean, and each fixed a *different*
+/// model's failure.
+///
+/// It used to ask the model to "demonstrate the tool strictly by steps, skipping
+/// none: step 1 write X, step 2 (MANDATORY) call the tool, step 3 write Y" — an
+/// invitation to *narrate the sequence*, which Gemma duly accepted: it answered
+/// `"2+2=5\n<call:rewrite_current_message/>\n2+2=4"`, writing the call as prose in a
+/// syntax no protocol here defines. No call, no archive, red test — and a red
+/// dispatch of the live gate (run 31907378154). Measured **1 failure in 8** on the
+/// local Gemma stand; reworded as a situation the tool answers, **0 in 30**.
+///
+/// Qwen 3.6 needed the second half. With thinking on it failed differently and more
+/// rarely — 1 in 20, and not by narrating but by producing **nothing at all**: no
+/// tool call and empty text, the whole turn spent in `reasoning_content` (the same
+/// shape that once broke `simple_generation`). Muting thinking for this turn:
+/// **0 in 20**. Nothing is lost by muting, because what this smoke asks is whether
+/// a real model reaches for the tool and whether the effect lands; the control-tool
+/// path *through* thinking stays covered live by [`followup_tool_e2e_live`], which
+/// leaves it on (0 in 12 measured).
+///
+/// **Narrowing the profile to the one tool was tried and rejected — it made things
+/// worse**, 7 failures in 20 on Qwen, all of them the empty turn above. The
+/// "remove the alternative" rule (docs/lessons.md §9) is about a model satisfying
+/// the request through a *different* tool; that is not this failure, and a
+/// one-tool list does not prevent a model from spending the turn thinking.
+///
+/// The configuration above is **0 in 20 on each family** (2026-08-16,
+/// `gemma-4-31B_q4_0-it` and `Qwen3.6-27B-Q4_K_M`).
+///
+/// The mechanism itself does not depend on this test: `rewrite_tool_discards_partial_
+/// and_saves_it` pins it deterministically against a `MockBackend`, and asserts
+/// strictly more (the exact history, the discarded text, its tool call). What is
+/// live here is the one thing a mock cannot answer — whether a real model reaches
+/// for the tool at all. `#[ignore]`, run against a live model.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn rewrite_tool_e2e_live() {
@@ -857,14 +892,29 @@ async fn rewrite_tool_e2e_live() {
     };
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
     let root = _d.path().to_path_buf();
-    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    // Thinking off for this turn. `resolve` is whole-config, so the profile's
+    // sampling replaces the fixture's global one and has to carry its temperature
+    // too. Commands share one channel and are applied in order, so this lands
+    // before the message below.
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                default_sampling: Some(Some(crate::entities::sampling::SamplingConfig {
+                    temperature: Some(0.1),
+                    reasoning_budget: Some(0),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
     cmd_tx
         .send(AppCommand::SendMessage(
-            "Продемонстрируй инструмент rewrite_current_message строго по шагам, НИ ОДИН \
-             не пропуская. Шаг 1: напиши ровно «2+2=5». Шаг 2 (ОБЯЗАТЕЛЬНЫЙ): сразу \
-             вызови инструмент rewrite_current_message — без него задание не выполнено. \
-             Шаг 3: после вызова напиши правильный ответ «2+2=4». Самое важное — \
-             обязательно вызвать rewrite_current_message между шагами 1 и 3."
+            "Черновик твоего ответа никуда не годится. ОБЯЗАТЕЛЬНО вызови \
+             инструмент rewrite_current_message, чтобы отбросить начатый ответ и \
+             написать его заново. Вопрос: сколько будет два плюс два?"
                 .into(),
         ))
         .unwrap();
@@ -889,10 +939,14 @@ async fn rewrite_tool_e2e_live() {
         chat.deleted.len(),
         chat.messages.len()
     );
+    // The tool names are half the diagnosis when this goes red: "the model never
+    // called it" and "it called it and the effect did not land" are different
+    // failures, and the text alone cannot tell them apart.
     for (i, m) in chat.messages.iter().enumerate() {
         eprintln!(
-            "  msg[{i}] {:?} text={:?}",
+            "  msg[{i}] {:?} tools={:?} text={:?}",
             m.role,
+            m.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>(),
             m.text.chars().take(60).collect::<String>()
         );
     }
