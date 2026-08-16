@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the help tabs stopped clipping their descriptions (done)
 - Post-M9: the help dialog sizes itself, and its tables align (done)
 - Post-M9: `/export` — a conversation to a file (done)
+- Post-M9: the "Components" leaders got a step quieter (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1514,3 +1515,30 @@ the JSON note naming `md`, and an empty chat refused with nothing written.
 
 **A live model run is not required** (AGENTS.md §3) — no engine, memory or tool
 path. One machine is enough for acceptance: `/export`, then open the file.
+
+### Post-M9: the "Components" leaders got a step quieter (done)
+
+- **Asked from a screenshot** of the help dialog's "Components" tab: the dotted
+  leaders read as content rather than as alignment. When the tables were built
+  the leader took `border_style(false)` on the reasoning that the border is "the
+  dimmest color the palette has" — which was true of the *named* roles, but not
+  of the palette as a whole. `keycap_bg` is a step quieter in every theme
+  (dark `#363a42` → `#21242a`, auto `DarkGray` → `#24272d`, light `#bec1c6` →
+  `#dee0e4`, i.e. quieter in the light theme's direction too), and it is the
+  backdrop the **active tab** already sits on two rows above, so the tab strip's
+  highlight and the leaders below it are now literally the same color — which is
+  what the user asked for by name.
+- **The dots are structure, not text**, which is why borrowing a background role
+  as a foreground is right here rather than a shortcut: the leader carries the
+  eye across the gap and should not compete with the crate name at either end.
+  Nothing else changed — the geometry, the column math and the degradation on a
+  clamped dialog are untouched.
+- **Tests**: no new test; `components_columns_anchor_right_with_leaders` already
+  pinned the leader's color, so the one-line change had to be made in the gate
+  too — the assertion now names `keycap_bg`. That is the gate doing its job: the
+  color is pinned, so it cannot drift silently, and changing it on purpose costs
+  one line.
+
+**Tests**: 2282 green (unchanged), 97 `#[ignore]`, clippy `-D warnings`/fmt clean.
+**A live run isn't required** (AGENTS.md §3): a color in the help dialog — no
+engine, memory or tool path.

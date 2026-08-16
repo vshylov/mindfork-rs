@@ -824,8 +824,8 @@ const LIST_HANG: usize = 2;
 /// The "Components" tab: two "table of contents"-style tables — the crates,
 /// then the vendored grammars. The name sits on the left margin; the other two
 /// columns are anchored against the right margin, version under version and
-/// license under license; the run between is a dotted leader in the dialog's
-/// dimmest color, so a row reads across the full width without the columns
+/// license under license; the run between is a dotted leader in the tab strip's
+/// highlight color, so a row reads across the full width without the columns
 /// drifting apart visually ([`leader_table`]). Left-aligned like every other
 /// tab — an earlier centered-block cut was rejected because nothing else in
 /// the app (or on the site) centers text (user's decision, 2026-08-13).
@@ -856,7 +856,9 @@ fn component_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec
 /// One table of the "Components" tab: `(name, mid, right)` rows with the name
 /// on the left margin, the `mid` and `right` columns aligned under each other
 /// against the right margin (which mirrors [`HELP_PAD`]), and the gap bridged
-/// by a dotted leader in the border color — the least visible the palette has.
+/// by a dotted leader in `keycap_bg` — the backdrop the active tab sits on
+/// ([`help_tab_strip`]), a step quieter than the border, so the leaders read as
+/// alignment rather than as content.
 /// Column math is in characters: every value here is ASCII (crate names,
 /// versions, SPDX expressions, repository pins).
 fn leader_table(
@@ -889,7 +891,7 @@ fn leader_table(
                 Span::styled((*name).to_string(), Style::new().fg(palette.text)),
                 Span::styled(
                     format!(" {} ", ".".repeat(dots)),
-                    palette.border_style(false),
+                    Style::new().fg(palette.keycap_bg),
                 ),
                 Span::styled(format!("{mid:<mid_w$}"), palette.muted_style()),
                 Span::raw("  "),
@@ -1275,13 +1277,14 @@ mod tests {
     /// nothing in the app or on the site centers text): names on the left
     /// margin, version/license (and repository/license) columns aligned under
     /// each other against the right margin, dotted leaders bridging the gap in
-    /// the border color. Pinned per table and at both bounds of the width
-    /// range.
+    /// `keycap_bg` — the same color the active tab's backdrop uses, a step
+    /// quieter than the border. Pinned per table and at both bounds of the
+    /// width range.
     #[test]
     fn components_columns_anchor_right_with_leaders() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let dim = palette.border_style(false).fg;
+        let dim = Some(palette.keycap_bg);
         for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             let lines = component_lines(&palette, loc, w);
             for line in &lines {
@@ -1319,7 +1322,7 @@ mod tests {
                     assert_eq!(span_width(&row.spans[0]), HELP_PAD.chars().count());
                     assert_eq!(col_of(row, 3), mid_col, "mid column drifts: {row:?}");
                     assert_eq!(col_of(row, 5), right_col, "right column drifts: {row:?}");
-                    // The leader is dots in the dim border color, spaces aside.
+                    // The leader is dots in the tab-highlight color, spaces aside.
                     let leader = &row.spans[2];
                     assert_eq!(leader.style.fg, dim, "leader color: {row:?}");
                     assert!(
