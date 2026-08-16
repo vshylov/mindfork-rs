@@ -744,6 +744,38 @@ pages entirely — one search call, correct answer — and the narrow "must call
 stay covered.
 — *chat file attachments — stage 3 (`attachment_search`)*.
 
+**Ask a model for the situation, not for the script — a step-by-step "demonstrate the
+tool" prompt invites it to narrate the call instead of making it.** A live probe asked
+the model to "demonstrate `rewrite_current_message` strictly by steps, skipping none:
+step 1 write X, step 2 (MANDATORY) call the tool, step 3 write Y". It complied — in
+prose: `"2+2=5\n<call:rewrite_current_message/>\n2+2=4"`, a call syntax no protocol here
+defines, so no call happened and no effect followed. Measured **1 failure in 8**; the
+same test phrased as a situation the tool answers ("your draft is no good — call the tool
+and write it again") is **0 in 30**, same model, same sampling, thinking still on. The
+sibling probe, which names its tool but asks in two clauses rather than three numbered
+steps, was 0 in 12 untouched — so the trigger is the script, not the naming. This is
+[§9's blind-vision trap](#9-live-runs-and-model-behaviour) in another costume: a test
+worded so that it can be satisfied without doing the thing it checks.
+— *the rewrite probe's flake, found by the live gate*.
+
+**Two models flake for two different reasons; fixing one does not fix the other.** The
+same probe, after the prompt above was fixed, still failed 1 in 20 on the other family —
+not by narrating but by producing **nothing**: no tool call, empty text, the whole turn
+spent in `reasoning_content`. Muting thinking for that turn took it to 0 in 20, while the
+prompt fix alone had been enough for the first model. Chase the failure *mode*, not the
+failure rate: had the rate alone been watched, "much better on Gemma" would have shipped
+a probe that was still red one dispatch in twenty.
+— *the rewrite probe's flake, found by the live gate*.
+
+**"Remove the alternative" is about competing tools, not about model silence — and
+applying it blindly can make a smoke worse.** Narrowing that same probe's profile to the
+single tool under test looked like the rule in §9 below, and measured **7 failures in
+20** against 1 with every tool enabled — all of them the empty turn above. A one-tool
+list stops a model from answering with the *wrong* tool; it does nothing to stop it
+spending the turn thinking, and appears to invite it. Check which failure the rule
+addresses before reaching for it.
+— *the rewrite probe's flake, found by the live gate*.
+
 **In a smoke, remove the alternative rather than hope the model does not take it.**
 Enabling only the tools under test is what makes a live assertion mean something. Some
 claims can *only* be settled live: that a real model reaches for a tool at all, that a

@@ -262,21 +262,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   cloud-key smokes need their own credentials; the Python-sandbox and
   managed-server ones need local assets and a child process of our own, so they
   cannot run remotely at all.
-- **Model-compliance probes vs the gate** — the gate runs every `#[ignore]`
-  smoke without distinction, including ones written as **manual** probes of model
-  behaviour whose own doc says "the model is unstable — run manually".
-  `rewrite_tool_e2e_live` is the measured example: it asks the model to follow an
-  elaborate three-step instruction, and when the model instead *writes* the call
-  as prose (`"2+2=5\n<call:rewrite_current_message/>\n2+2=4"` — a syntax no
-  protocol here defines) the smoke fails with `saw_rewrite=false, deleted=0`.
-  Measured 2026-08-15 on the local Gemma stand: **1 failure in 8**; it also took
-  down the Gemma CI dispatch, while Qwen passed. A gate costing ~$1 and ~30
-  minutes cannot carry a check that flakes one run in eight — but the mechanism
-  it guards (rewrite → the discarded reply lands in `Chat.deleted`) is real and
-  worth keeping. So the item is to *separate the two*: a deterministic mechanism
-  test for the gate, and the compliance probe kept manual — or the probe made
-  stable, if a measurement says what to change it to. See
-  [docs/history/e2e-second-chat-model.md](history/e2e-second-chat-model.md) §7.1.
 - **Remote gate: chat-free runs** — `run` always creates the L40S chat endpoint,
   even for a filter that only exercises the embedders (~$0.10 wasted per such
   iteration). The probe has `--embed-only`; the runner has no `--no-chat`.
@@ -428,6 +413,24 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Model-compliance probes vs the gate** (complete): opened when
+  `rewrite_tool_e2e_live` took down a Gemma dispatch of the live gate, and
+  expected to need a split — a deterministic mechanism test for the gate, the
+  compliance probe kept manual. Neither was needed. The mechanism already had
+  strictly stronger deterministic coverage (`rewrite_tool_discards_partial_and_
+  saves_it`, on a `MockBackend`), and the flake was in **the test's own wording**:
+  asking the model to demonstrate the tool "strictly by steps" invited it to
+  narrate the call as prose instead of making it. The two families then turned
+  out to flake for two *different* reasons — Gemma by narrating (fixed by a
+  closed instruction, 1 in 8 → 0 in 30), Qwen by producing nothing at all, the
+  whole turn spent thinking (fixed by muting thinking, 1 in 20 → 0 in 20).
+  Final configuration: **0 in 20 on each family**. Narrowing the profile to the
+  one tool under test was tried and *rejected* — it looked like the "remove the
+  alternative" rule and measured 7 failures in 20. No exclusion mechanism, no
+  "manual probe" convention, and the end-to-end path stays in the gate.
+  `control_tools_are_callable` also stopped showing the model
+  `rewrite_current_message`'s schema without ever checking it. See
+  [docs/lessons.md](lessons.md) §9.
 - **Export a conversation to a file** (complete): `/export [md|json] [path]`.
   Markdown is byte-for-byte what `F5` copies — the user's call, and a good one:
   the content is Markdown already because that is how models write, so there is

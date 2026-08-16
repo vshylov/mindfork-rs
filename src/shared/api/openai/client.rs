@@ -1185,10 +1185,18 @@ mod ignored_smoke {
     }
 
     /// Conversation control tools (followup/rewrite, spec §9.3.3): the live model
-    /// must **call** `send_followup_message` per the instruction — `finish_reason=
-    /// "tool_calls"` and the name is parsed. This is the feature's key unknown (will
-    /// the model understand the schema/description). Schemas are taken straight from the `Tool`
+    /// must **call** the one the instruction asks for — the name is parsed out of
+    /// `delta.tool_calls`. This is the feature's key unknown (will the model
+    /// understand the schema/description). Schemas are taken straight from the `Tool`
     /// implementations (real descriptions).
+    ///
+    /// **Both tools are asked for, in turn, and both schemas are offered every
+    /// time.** Until 2026-08-16 the pair was handed to the model and only
+    /// `send_followup_message` was ever asserted, so `rewrite_current_message`'s
+    /// description was shown and never checked — a refactor could have broken it
+    /// silently. Offering both in each case also makes the assertion stronger than
+    /// "a tool was called": the model has to pick the *right* one of two.
+    /// Measured on `gemma-4-31B_q4_0-it`: 0 failures in 10.
     ///
     /// **Thinking is off** (`reasoning_budget=0`, which the wire also signals as
     /// `chat_template_kwargs.enable_thinking=false` for Jinja templates). Unlike
@@ -1211,45 +1219,58 @@ mod ignored_smoke {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
-        let req = ChatRequest {
-            system: Some(
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        // Both schemas are offered every time, so each case also proves the model
+        // picks the *right* one out of the pair rather than the only one on offer.
+        let tools = vec![
+            SendFollowupMessage.schema(loc),
+            RewriteCurrentMessage.schema(loc),
+        ];
+        for (system, user, expected) in [
+            (
                 "Ты — дружелюбный ассистент. Ответь на сообщение пользователя \
                  короткой первой репликой, а затем ОБЯЗАТЕЛЬНО вызови инструмент \
-                 send_followup_message, чтобы добавить вторую реплику с подробностями."
-                    .into(),
+                 send_followup_message, чтобы добавить вторую реплику с подробностями.",
+                "Расскажи интересный факт о космосе.",
+                "send_followup_message",
             ),
-            messages: vec![ApiMessage::user("Расскажи интересный факт о космосе.")],
-            sampling: SamplingConfig {
-                max_tokens: Some(512),
-                reasoning_budget: Some(0),
-                ..Default::default()
-            },
-            tools: {
-                let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-                vec![
-                    SendFollowupMessage.schema(loc),
-                    RewriteCurrentMessage.schema(loc),
-                ]
-            },
-        };
-        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
-        let mut acc = ToolCallAccumulator::default();
-        let mut finish = None;
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                ChatChunk::ToolCall(delta) => acc.push(delta),
-                ChatChunk::Finished(reason) => {
-                    finish = Some(reason);
-                    break;
+            (
+                "Ты — ассистент. Черновик твоего ответа никуда не годится. \
+                 ОБЯЗАТЕЛЬНО вызови инструмент rewrite_current_message, чтобы \
+                 отбросить начатый ответ и написать его заново.",
+                "Сколько будет два плюс два?",
+                "rewrite_current_message",
+            ),
+        ] {
+            let req = ChatRequest {
+                system: Some(system.into()),
+                messages: vec![ApiMessage::user(user)],
+                sampling: SamplingConfig {
+                    max_tokens: Some(512),
+                    reasoning_budget: Some(0),
+                    ..Default::default()
+                },
+                tools: tools.clone(),
+            };
+            let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+            let mut acc = ToolCallAccumulator::default();
+            let mut finish = None;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::ToolCall(delta) => acc.push(delta),
+                    ChatChunk::Finished(reason) => {
+                        finish = Some(reason);
+                        break;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
+            let calls = acc.finish();
+            assert!(
+                calls.iter().any(|c| c.name == expected),
+                "the model did not call {expected}: finish={finish:?} calls={calls:?}"
+            );
         }
-        let calls = acc.finish();
-        assert!(
-            calls.iter().any(|c| c.name == "send_followup_message"),
-            "the model did not call send_followup_message: finish={finish:?} calls={calls:?}"
-        );
     }
 }
 
