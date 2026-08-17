@@ -537,11 +537,11 @@ leaves it when you use a cloud provider, is spelled out in
 ## Project status
 
 Actively developed; the current release is
-**[v0.9.6](https://github.com/vshylov/mindfork-rs/releases)** — see the
+**[v0.9.7](https://github.com/vshylov/mindfork-rs/releases)** — see the
 [changelog](CHANGELOG.md) for what's new and the [roadmap](docs/roadmap.md)
 for what may come next. The original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished; development
-continues in small, reviewed tracks. As of v0.9.5 the suite stands at
-**1962 unit tests** plus **84 live smoke tests** that get run against real
+continues in small, reviewed tracks. As of v0.9.7 the suite stands at
+**2304 unit tests** plus **99 live smoke tests** that get run against real
 stacks — a local `llama-server` (Gemma 4 + bge-m3) and the live cloud APIs —
 before provider-touching changes ship.

@@ -163,7 +163,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-17, version 0.9.6)
+## Status (2026-08-17, version 0.9.7)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **2304 unit tests
 green, 99 `#[ignore]`** (live smokes + a real-clipboard round trip + the

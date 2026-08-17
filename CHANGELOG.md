@@ -14,16 +14,7 @@ split by subsystem.
 
 ## [Unreleased]
 
-### Changed
-
-- **The `F1` help window looks after its own layout.** The window now grows with
-  the terminal (between its old 76×34 and a readable cap of 96×44) instead of
-  always taking the small fixed size; in the "Hotkeys" and "Commands" tabs every
-  description starts in the same column, wrapped lines hang under that column,
-  and related entries sit in small groups with a breathing line between them.
-  The "Components" tab lays its tables out like a table of contents — name on
-  the left, version and license aligned to the right edge, a faint dotted
-  leader between — instead of leaving the right half of the window empty.
+## [0.9.7] — 2026-08-17
 
 ### Added
 
@@ -122,6 +113,17 @@ split by subsystem.
   left no advertised way out at all. A typed command reaches the app whatever the
   host binds. Either spelling works, both quit mid-answer just like the keys, and
   the commands are listed in `F1` → "Commands".
+
+### Changed
+
+- **The `F1` help window looks after its own layout.** The window now grows with
+  the terminal (between its old 76×34 and a readable cap of 96×44) instead of
+  always taking the small fixed size; in the "Hotkeys" and "Commands" tabs every
+  description starts in the same column, wrapped lines hang under that column,
+  and related entries sit in small groups with a breathing line between them.
+  The "Components" tab lays its tables out like a table of contents — name on
+  the left, version and license aligned to the right edge, a faint dotted
+  leader between — instead of leaving the right half of the window empty.
 
 ### Fixed
 
@@ -1102,7 +1104,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...HEAD
+[0.9.7]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...v0.9.4
