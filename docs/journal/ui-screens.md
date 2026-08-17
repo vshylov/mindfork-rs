@@ -1611,4 +1611,5 @@ turn): against gemma-4-31B (`llama-server`, 192.168.1.20) —
 the topic — "Why the sky is blue", in the conversation's own Russian — with no
 command sent (GO), `i18n_en_profile_title_e2e_live` still green
 on the requested path, and the full `orchestrator::tests::live` set run as the
-turn-path regression scope (outcome recorded in the PR).
+turn-path regression scope — **35 passed / 0 failed** in one sweep (755 s),
+every first-exchange smoke now firing a real title request on the way.
