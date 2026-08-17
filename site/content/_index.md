@@ -16,7 +16,7 @@ desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends. Switch per p
 
 [[extra.features]]
 title = "Memory that persists"
-desc = "A self-model with goals and observations, notes with a link graph, and RAG over your documents — it remembers you between sessions."
+desc = "A self-model with goals and observations, notes with a link graph, and RAG over your documents — it remembers you between sessions, and can look back through your other conversations if you let it."
 
 [[extra.features]]
 title = "Real tools"

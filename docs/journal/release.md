@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -34,6 +34,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — a uniform gallery and a richer hero (done)
 - Post-M9: demo screenshots — the canvas padding measured in cells (done)
 - Post-M9: the Windows installer shows the license and the disclaimer (done)
+- Release 0.9.7 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1217,3 +1218,38 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Checks**: no Rust code → **2150 unit tests** green as before, 96 `#[ignore]`;
   `fmt`/`clippy -D warnings` clean, `cyrillic_scan`/`link_check`/`doc_index_check`
   /`wizard_rtf --check` clean.
+
+### Release 0.9.7 (prepared)
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.9.7`): bumped `Cargo.toml` `0.9.6 → 0.9.7` (+ `Cargo.lock`),
+  `CHANGELOG.md` — `[Unreleased]` → `[0.9.7] — 2026-08-17`, a fresh empty
+  `[Unreleased]` opened, comparison links updated. The `v0.9.7` tag is applied by
+  the user after the merge (the agent doesn't push tags/`main`).
+- **MINOR, not PATCH**: while at `0.x` a MINOR carries features (AGENTS.md §6),
+  and the section is seven additions against one fix — command-only control
+  (nineteen typed routes plus `/profile` and `/self clear`), OSC 52 copying for
+  remote sessions, `/export` to a file, the cross-chat `chat_search`/`chat_read`
+  pair with navigable `chat://` references, automatic chat titling, the external
+  server's API key in settings, and the model's name on the assistant's header.
+  The single fix (help descriptions clipped mid-word) and the single change (the
+  `F1` window's adaptive layout) are both inside the same help track.
+- **The `[Unreleased]` rubrics were reordered on the way in.** The section had
+  grown as `Changed` → `Added` → `Fixed`, because the help track landed last and
+  opened its rubric at the top; they were put back into the order the CHANGELOG
+  header declares (Added / Changed / Fixed / Removed / Data / Security). This is
+  not cosmetic — `release.yml` publishes the `## [0.9.7]` section **verbatim** as
+  the GitHub Release body, so the reader of the release page would otherwise meet
+  a layout tweak before the seven features. No merging was needed this time: one
+  rubric block each across 21 merged PRs — where `0.9.1` and `0.9.5` each had to
+  collapse a dozen duplicate rubrics, the per-PR discipline held on its own.
+- **No `Data` rubric**: the release adds config and entity fields
+  (`interface.show_model_name`, `interface.auto_title`,
+  `interface.clipboard_osc52`, `tools.chat_search`, `Chat.renamed_manually`, the
+  `External` secret slots) but every one is `#[serde(default)]`, so no stored
+  file changes shape and there is nothing for a user to be told about.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **2304 unit tests, 99 `#[ignore]`**; the documentation
+  gates (`cyrillic_scan`, `link_check`, `doc_index_check`, `wizard_rtf --check`)
+  green too. No live run needed (version + docs + site content, app code
+  untouched). CLAUDE.md's "## Status" header carries the new version; its test
+  count and date were already current.

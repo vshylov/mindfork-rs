@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -21,6 +21,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — what 0.9.6 changed on the landing page (done)
 - Post-M9: website — two articles: the self-model and vector search (done)
 - Post-M9: website — two more articles: local speed and the Python sandbox (done)
+- Post-M9: website — the 0.9.7 release post (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -342,3 +343,34 @@ No live run: pure site content, no Rust touched. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`) green; built locally with the
 pinned Zola 0.22.1 — both new pages render and `zola check` passes internal
 links.
+
+### Post-M9: website — the 0.9.7 release post (done)
+
+**What.** `blog/2026-08-17-mindfork-0-9-7.md`, published with the release, plus
+one line of the landing page. The post is organised around what the release
+actually is rather than the changelog's order: **reach** — running the app in a
+terminal that belongs to something else, and giving conversations an address.
+Four sections carry the four tracks that share that theme (command-only
+control, OSC 52, `/export`, the cross-chat pair with `chat://` links), and a
+short "also in this release" list carries automatic titling, the external
+server's key, the model name in the feed and the `F1` help layout.
+
+**The landing grid stayed at nine.** The `0.9.6` release had deliberately made
+it 3×3 (a seventh card left a row two-thirds empty), so a tenth card would
+reopen exactly that problem; the one 0.9.7 claim the landing did not make —
+that the assistant can look through your *other* conversations — was folded
+into the existing "Memory that persists" card instead, with the "if you let
+it" that the tools' off-by-default posture requires. The reach story is left
+to the post: it is a story about *where* you run the app, not a capability
+card.
+
+**What the post refuses to overclaim.** The OSC 52 section names the terminals
+that do not implement it (GNOME Terminal, Terminal.app, JupyterLab) and says
+the text was *sent*, not received — the same honesty the feature's own note
+carries, since the protocol acknowledges nothing. The VS Code key list is the
+measured one from the track's research, not an impression. The cross-chat
+tools are introduced as off by default in the same sentence that describes
+them, so no reader arrives at the settings screen expecting them to be on.
+
+No live run: site content plus a one-line landing edit, no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green.
