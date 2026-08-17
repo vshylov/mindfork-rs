@@ -1158,6 +1158,32 @@ pub(super) const IMP_MODES: [ImpersonationMode; 7] = [
 /// The order of OSC-52 modes (matches `cycle_osc52`).
 pub(super) const OSC52_MODES: [Osc52Mode; 3] = [Osc52Mode::Auto, Osc52Mode::Always, Osc52Mode::Off];
 
+/// The order of automatic-titling modes: "after the user's message" first
+/// (user's decision, docs/history/auto-chat-title.md §2), Off last like every
+/// tri-state here. The default (`AfterAssistantReply`) sits in the middle.
+pub(super) const AUTO_TITLE_MODES: [AutoTitleMode; 3] = [
+    AutoTitleMode::AfterUserMessage,
+    AutoTitleMode::AfterAssistantReply,
+    AutoTitleMode::Off,
+];
+
+/// Cyclically shifts the automatic-titling mode, direction-aware.
+pub(super) fn cycle_auto_title(m: AutoTitleMode, dir: i32) -> AutoTitleMode {
+    let idx = AUTO_TITLE_MODES.iter().position(|&x| x == m).unwrap_or(0) as i32;
+    let n = AUTO_TITLE_MODES.len() as i32;
+    AUTO_TITLE_MODES[(((idx + dir) % n + n) % n) as usize]
+}
+
+/// The automatic-titling mode's label (`interface.auto_title`).
+pub(super) fn auto_title_label(m: AutoTitleMode, loc: &'static Locale) -> String {
+    loc.t(match m {
+        AutoTitleMode::AfterUserMessage => "ui.settings.choice.auto_title_user",
+        AutoTitleMode::AfterAssistantReply => "ui.settings.choice.auto_title_assistant",
+        AutoTitleMode::Off => "ui.settings.choice.auto_title_off",
+    })
+    .to_string()
+}
+
 /// Cyclically shifts the OSC-52 mode, direction-aware.
 pub(super) fn cycle_osc52(m: Osc52Mode, dir: i32) -> Osc52Mode {
     let idx = OSC52_MODES.iter().position(|&x| x == m).unwrap_or(0) as i32;

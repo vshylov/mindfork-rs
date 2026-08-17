@@ -140,6 +140,10 @@ impl Orchestrator {
         }
         if let Some(chat) = self.chat_mut(id) {
             chat.title = title.clone();
+            // Both manual routes (the list's `F2` editor, `/rename <title>`)
+            // funnel here: from now on the automatic titling leaves this chat
+            // alone (spec §11.2). Model-written titles never set this.
+            chat.renamed_manually = true;
             self.mark_dirty(id);
             self.emit_chat_list();
             let _ = self.evt_tx.send(AppEvent::ChatRenamed { id, title });

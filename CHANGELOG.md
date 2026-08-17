@@ -27,6 +27,13 @@ split by subsystem.
 
 ### Added
 
+- **New chats name themselves.** After the first reply the model writes the
+  conversation a short title — no more lists full of "New chat". On by default;
+  a setting (Interface → Behavior) moves it to right after your first message
+  (the way cloud chat UIs do it) or turns it off. A chat you renamed yourself
+  is never touched, and `Ctrl+R` in the chat list still asks for a fresh title
+  whenever you want one.
+
 - **An external server's API key can be entered in settings.** Connecting to a
   server that requires authorization — a gateway such as LiteLLM or OpenRouter, or
   a `llama-server` started with `--api-key` — no longer means setting an

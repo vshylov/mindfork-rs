@@ -482,7 +482,10 @@ async fn image_attachment_e2e_live() {
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn i18n_en_profile_title_e2e_live() {
-    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+    // Automatic titling off: this smoke exercises the **requested** path
+    // (`AutoRenameChat`), and the trigger would race it with a second title
+    // task after the turn (the trigger has its own smoke below).
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(no_auto_cfg()) else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
@@ -549,6 +552,50 @@ async fn i18n_en_profile_title_e2e_live() {
     assert!(
         !has_cyr,
         "the English conversation's title contains Cyrillic: {title:?}"
+    );
+}
+
+/// Live smoke of the **automatic** titling trigger (spec §11.2), on the default
+/// config: the first real reply renames the chat with no command from anyone —
+/// the end-to-end path the track added, where the smoke above covers the
+/// requested task. See docs/history/auto-chat-title.md.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn auto_title_first_reply_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let act = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let (chat_id, default_title) = match act {
+        AppEvent::ChatActivated { id, title, .. } => (id, title),
+        _ => unreachable!(),
+    };
+    // One short exchange; no `AutoRenameChat` anywhere in this test.
+    let (reply, _) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Почему небо синее? Ответь одним предложением.",
+    )
+    .await;
+    eprintln!("reply: {:?}", reply.chars().take(80).collect::<String>());
+    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap();
+    let (id, title) = match renamed {
+        AppEvent::ChatRenamed { id, title } => (id, title),
+        _ => unreachable!(),
+    };
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("automatic title: {title:?} (was {default_title:?})");
+    assert_eq!(id, chat_id, "the rename must be about the active chat");
+    assert!(!title.trim().is_empty(), "empty automatic title");
+    assert_ne!(
+        title, default_title,
+        "the default title must actually be replaced"
     );
 }
 

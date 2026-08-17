@@ -83,15 +83,17 @@ impl EngineBackend for RecordingBackend {
 
 /// Compaction on, with a tiny verbatim tail so a couple of exchanges already
 /// qualify for a cut (the default 2048 tokens would need a long conversation).
+/// Automatic titling off: this suite scripts its engines as ordered reply
+/// lists, and the title request the first exchange would fire consumes an
+/// entry out of turn (the trigger has its own tests in `tests/title.rs`).
 fn compact_cfg(tail_tokens: usize) -> AppConfig {
-    AppConfig {
-        compaction: CompactionSettings {
-            enabled: true,
-            tail_tokens,
-            ..Default::default()
-        },
+    let mut cfg = no_auto_cfg();
+    cfg.compaction = CompactionSettings {
+        enabled: true,
+        tail_tokens,
         ..Default::default()
-    }
+    };
+    cfg
 }
 
 /// What [`orch_with_history`] hands back: the data directory, the orchestrator,

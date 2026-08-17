@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the help dialog sizes itself, and its tables align (done)
 - Post-M9: `/export` — a conversation to a file (done)
 - Post-M9: the "Components" leaders got a step quieter (done)
+- Post-M9: automatic chat titling on the first exchange (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1542,3 +1543,73 @@ path. One machine is enough for acceptance: `/export`, then open the file.
 **Tests**: 2282 green (unchanged), 97 `#[ignore]`, clippy `-D warnings`/fmt clean.
 **A live run isn't required** (AGENTS.md §3): a color in the help dialog — no
 engine, memory or tool path.
+
+### Post-M9: automatic chat titling on the first exchange (done)
+
+- **The model-written title stopped waiting to be asked** (design plan
+  [docs/history/auto-chat-title.md](../history/auto-chat-title.md), spec §11.2):
+  a new conversation names itself once, on its first exchange, per
+  `interface.auto_title` — a tri-state (after the user's message / after the
+  assistant's reply / off, default **after the reply**). The user's observation
+  set the default: cloud UIs title on the user's first message, and the names
+  are visibly worse than what the same model writes *after* the reply, because
+  the reply is what disambiguates a terse opening. The task itself is the one
+  `Ctrl+R` in the chat list has always run (`orchestrator/title.rs`) — the
+  track added a **trigger and an origin**, not a second mechanism.
+- **Reading first shrank it to plumbing** (lessons §3): `handle_done` already
+  runs four `maybe_auto_*` follow-ups after applying a turn, so "after the
+  reply" is a fifth sibling; "after the message" is a line in `handle_send`,
+  deliberately fired **after** `start_generation` so on a single-slot
+  `llama-server` the title request never queues ahead of the answer — the
+  mechanical reason the cloud-UI timing is not the default here.
+- **"First reply" means first substantive reply**, judged by a pure predicate
+  (`rename_chat::has_assistant_reply`, greeting-blind) read *before* the turn
+  is applied: a cancelled or failed first turn defers the title to whichever
+  turn actually answers; an existing conversation can never match, so nothing
+  mass-retitles on upgrade; and regenerating the first reply re-titles on
+  purpose (D2) — the truncation removed the only reply, so the next one is
+  again the first.
+- **A person's choice outranks a model's, at both ends** (D1):
+  `handle_rename` — both manual routes, the list's `F2` and `/rename <title>` —
+  sets the additive `Chat.renamed_manually`, checked when the trigger fires
+  *and again* when a result lands, so a rename made during the task's seconds
+  of flight wins. Model-written titles never set the flag: a requested
+  `Ctrl+R` after an automatic title still works, and re-asking is always legal.
+- **Origins differ in visibility, not mechanism** (D4): `TitleResult` carries
+  `Requested`/`Auto`; automatic failures go to the log — the spec §6.8 rule
+  for background turns — while the chat-list action keeps reporting into the
+  overlay the user is looking at. No new `AppCommand`/`AppEvent`: the trigger
+  is orchestrator-internal and the result rides `title_tx` → `ChatRenamed`.
+- **Settings**: one Choice row in Interface → Behavior (`FieldId::IAutoTitle`),
+  the `clipboard_osc52` shape — fork F1, user's decision 2026-08-17: a
+  tri-state over a toggle + trigger pair, because it leaves no dead
+  "off but a trigger picked" state and costs one row; "after the user's
+  message" is listed first (user's decision), Off last like every tri-state
+  here. The settings field counter moved by one, which is exactly the
+  one-character drift the demo-dump gate caught (`"2"` → `"3"` in four
+  settings dumps) — dumps and the four settings PNG/SVG pairs regenerated;
+  fonts converted from the site's woff2 per lessons §1, fidelity confirmed by
+  the untouched frames coming back byte-identical.
+- **Test-fixture interference was measured, not guessed** (lessons §3): with
+  the trigger on by default, 8 orchestrator tests broke — engines that are
+  finite scripts had an entry consumed out of turn, and `CapturingBackend`
+  tests had `last` overwritten by the title request. Fixed at the call sites
+  with a shared `no_auto_cfg()` and a one-line comment each, keeping
+  `spawn_orch` on the true production default so the trigger's own e2e tests
+  (`tests/title.rs`) prove **on-by-default** against it. A ninth failure was
+  the demo-dump drift above.
+- **Tests**: +9 unit (flag serde additive; predicate table; on-by-default e2e
+  with the second-exchange absence anchored to the first fire; AfterUser e2e;
+  regenerate-retitles; manual-outranks with the requested arm as positive
+  control; quiet-vs-loud failures both arms; settings row + cycle order;
+  config default) and +1 live smoke.
+
+**Tests**: 2299 green, 99 `#[ignore]`, clippy `-D warnings`/fmt clean.
+**Live run** (AGENTS.md §3, the trigger sits on the send/done path of every
+turn): against gemma-4-31B (`llama-server`, 192.168.1.20) —
+`auto_title_first_reply_e2e_live` replaced the default title with one naming
+the topic — "Why the sky is blue", in the conversation's own Russian — with no
+command sent (GO), `i18n_en_profile_title_e2e_live` still green
+on the requested path, and the full `orchestrator::tests::live` set run as the
+turn-path regression scope — **35 passed / 0 failed** in one sweep (755 s),
+every first-exchange smoke now firing a real title request on the way.

@@ -74,6 +74,14 @@ pub struct Chat {
     /// (ADR 0006 F12). See docs/research/history-compression.md, spec §6.7.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<Compaction>,
+    /// The title was chosen by the user (the list's `F2` editor or
+    /// `/rename <title>`). The automatic titling trigger (spec §11.2) never
+    /// touches such a chat — a person's choice outranks a model's. Model-written
+    /// titles, requested or automatic, do **not** set this. Additive field —
+    /// old chat files read without migration, and an untouched chat writes no
+    /// new key (ADR 0006 F12).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub renamed_manually: bool,
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
@@ -195,6 +203,7 @@ impl Chat {
             compaction: None,
             reflected_upto: None,
             reflected_at: None,
+            renamed_manually: false,
             is_hidden: false,
         }
     }
@@ -430,6 +439,37 @@ mod tests {
         assert_eq!(chat.deleted[0].messages.len(), 2);
         assert_eq!(chat.deleted[0].draft, "набранный, но не отправленный текст");
         assert_eq!(chat.deleted[0].cause, Some(DeletedCause::DeleteExchange));
+    }
+
+    #[test]
+    fn renamed_manually_is_additive_and_round_trips() {
+        // Additive field, no migration (ADR 0006 F12): an old chat file has no
+        // key and reads as `false`, an untouched chat writes none...
+        let old = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "profile_id": "00000000-0000-0000-0000-000000000002",
+            "title": "old chat",
+            "created_at": "2026-01-01T00:00:00Z",
+            "modified_at": "2026-01-01T00:00:00Z",
+            "system_message": "s",
+            "messages": []
+        }"#;
+        let loaded: Chat = serde_json::from_str(old).unwrap();
+        assert!(!loaded.renamed_manually);
+        let p = Profile::new("X", "s");
+        let chat = Chat::from_profile(&p, "t");
+        let json = serde_json::to_string(&chat).unwrap();
+        assert!(
+            !json.contains("renamed_manually"),
+            "an untouched chat must write no new key: {json}"
+        );
+
+        // ...and a renamed one round-trips.
+        let mut renamed = chat;
+        renamed.renamed_manually = true;
+        let json = serde_json::to_string(&renamed).unwrap();
+        let back: Chat = serde_json::from_str(&json).unwrap();
+        assert!(back.renamed_manually);
     }
 
     #[test]

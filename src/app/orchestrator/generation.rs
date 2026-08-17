@@ -112,6 +112,21 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::UserMessage(text));
 
         self.start_generation(active_id, backend);
+        // Automatic titling at the `AfterUserMessage` point (spec §11.2), fired
+        // for the conversation's first user message — **after** the reply's own
+        // request, so on a single-slot server the title never queues ahead of
+        // the answer (docs/history/auto-chat-title.md D3).
+        if self
+            .chats
+            .iter()
+            .find(|c| c.id == active_id)
+            .is_some_and(|c| crate::features::rename_chat::is_first_user_message(&c.messages))
+        {
+            self.maybe_auto_title(
+                active_id,
+                crate::shared::config::AutoTitleMode::AfterUserMessage,
+            );
+        }
     }
 
     /// Regenerates the last assistant reply (spec §11.7): deletes everything after
@@ -444,6 +459,23 @@ impl Orchestrator {
                 .iter()
                 .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
         });
+        // Did this turn deliver the conversation's **first** substantive reply?
+        // Read before the apply below — afterwards the reply is part of the
+        // history and the question can no longer be asked. Regenerating the
+        // first reply re-fires by construction: the truncation removed the only
+        // reply, so the next one is again the first (spec §11.2, D2).
+        let first_reply = res
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
+            && self
+                .chats
+                .iter()
+                .find(|c| c.id == res.chat_id)
+                .is_some_and(|c| {
+                    c.messages.iter().any(|m| m.role == MessageRole::User)
+                        && !crate::features::rename_chat::has_assistant_reply(&c.messages)
+                });
         // Attachments a tool produced this turn (spec §9.9) — applied below,
         // outside the `chat` borrow.
         let mut attached: Vec<crate::entities::attachment::Attachment> = Vec::new();
@@ -478,6 +510,16 @@ impl Orchestrator {
         }
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
+        }
+        // The conversation's first reply just landed — maybe give the chat its
+        // name (`interface.auto_title` at `AfterAssistantReply`, spec §11.2).
+        // Ahead of the four background follow-ups only because it is the one
+        // the user can see happen; none of the five depend on each other.
+        if first_reply {
+            self.maybe_auto_title(
+                res.chat_id,
+                crate::shared::config::AutoTitleMode::AfterAssistantReply,
+            );
         }
         // After a successful reply — maybe it's time for background auto-reflection
         // (Tier 3), notes auto-consolidation ("sleep", Tier 3), and/or self-model

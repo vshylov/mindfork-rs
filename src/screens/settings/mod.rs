@@ -23,9 +23,9 @@ use crate::entities::sampling::{ReasoningEffort, SamplingConfig, Verbosity};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
-    AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    McpServerConfig, MediaResolution, PythonMode, SecretSlot, ServerMode, SpecType, Theme,
-    TtsCloudSettings, TtsMode,
+    AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
+    ManagedSettings, McpServerConfig, MediaResolution, PythonMode, SecretSlot, ServerMode,
+    SpecType, Theme, TtsCloudSettings, TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -645,6 +645,8 @@ enum FieldId {
     ITheme,
     /// Hand a copy to the terminal's clipboard too (OSC 52).
     IClipboardOsc52,
+    /// Automatic chat titling: after the user's message / after the reply / off.
+    IAutoTitle,
     /// The interface language (axis B, docs/i18n-ui.md) — independent of the agent language.
     ILanguage,
     /// Compatibility mode for old terminals (emoji → safe glyphs).

@@ -1101,6 +1101,28 @@ pub enum Theme {
     Light,
 }
 
+/// When the automatic chat titling runs (`interface.auto_title`, spec §11.2):
+/// the model names a new conversation by itself, once, on its first exchange —
+/// unless the chat was renamed manually (`Chat::renamed_manually`). One
+/// tri-state rather than a switch plus a trigger (the `clipboard_osc52` shape):
+/// no dead "off but a trigger picked" state, one settings row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoTitleMode {
+    /// After the user's first message — the cloud-chat-UI timing: the title
+    /// appears while the reply streams, from the question alone. On a
+    /// single-slot local server the extra request contends with the reply
+    /// (which is why it is not the default).
+    AfterUserMessage,
+    /// After the assistant's first reply (default): the reply is what
+    /// disambiguates a terse opening, so the name is measurably better, and
+    /// the engine is idle by then.
+    #[default]
+    AfterAssistantReply,
+    /// Never automatically; the chat-list action still works.
+    Off,
+}
+
 /// Interface settings (theme, spellcheck, dictionaries). See spec §11.6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1146,6 +1168,10 @@ pub struct InterfaceSettings {
     /// to write). `Auto` by default: nothing changes for a local session. See
     /// [`crate::shared::osc52`] and docs/history/osc52-clipboard.md.
     pub clipboard_osc52: crate::shared::osc52::Osc52Mode,
+    /// Automatic chat titling: when the model names a new conversation by
+    /// itself (spec §11.2, docs/history/auto-chat-title.md). On by default,
+    /// firing after the first reply; `Off` leaves only the chat-list action.
+    pub auto_title: AutoTitleMode,
 }
 
 impl Default for InterfaceSettings {
@@ -1160,6 +1186,7 @@ impl Default for InterfaceSettings {
             render_mermaid: true,
             language: crate::shared::i18n::Lang::default(),
             clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
+            auto_title: AutoTitleMode::default(),
         }
     }
 }
@@ -1670,6 +1697,19 @@ mod tests {
     fn default_has_current_schema_version() {
         assert_eq!(AppConfig::default().schema_version, SCHEMA_VERSION);
         assert_eq!(AppConfig::default().max_tool_rounds, 8);
+    }
+
+    /// Automatic titling is on by default and fires after the first reply
+    /// (user's decision, docs/history/auto-chat-title.md §2); an old
+    /// `settings.json` without the key reads the same — additive, no migration.
+    #[test]
+    fn auto_title_defaults_to_after_assistant_reply() {
+        assert_eq!(
+            AppConfig::default().interface.auto_title,
+            AutoTitleMode::AfterAssistantReply
+        );
+        let old: InterfaceSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.auto_title, AutoTitleMode::AfterAssistantReply);
     }
 
     /// Which secret each slot's mode reads. The four slots share the cloud key of a
@@ -2197,6 +2237,7 @@ mod tests {
                 render_mermaid: false,
                 language: crate::shared::i18n::Lang::Ru,
                 clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
+                auto_title: AutoTitleMode::AfterUserMessage,
             },
             ..Default::default()
         };

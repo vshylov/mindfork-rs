@@ -87,7 +87,8 @@ async fn wait_refusal(rx: &mut UnboundedReceiver<AppEvent>) -> String {
 #[tokio::test]
 async fn a_staged_image_rides_the_next_message_and_persists_with_it() {
     let backend = CapturingBackend::new();
-    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend.clone()));
+    // Titling off: the automatic title request would overwrite `backend.last`.
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
     let path = write_png(&dir, "chart.png", 64, 32);
 
     cmd_tx
@@ -288,7 +289,8 @@ fn rgba(width: u32, height: u32) -> crate::app::events::ClipboardImage {
 #[tokio::test]
 async fn a_pasted_image_is_staged_and_travels_with_the_message() {
     let backend = CapturingBackend::new();
-    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
+    // Titling off: the automatic title request would overwrite `backend.last`.
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
 
     cmd_tx
         .send(AppCommand::ImagePaste(Box::new(rgba(48, 24))))
@@ -354,7 +356,8 @@ async fn a_malformed_clipboard_buffer_is_refused_and_nothing_is_staged() {
 #[tokio::test]
 async fn a_message_with_only_an_image_is_still_sent() {
     let backend = CapturingBackend::new();
-    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
+    // Titling off: the automatic title request would overwrite `backend.last`.
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
     let path = write_png(&dir, "wordless.png", 32, 32);
 
     cmd_tx.send(AppCommand::ImageAttach { path }).unwrap();
@@ -379,7 +382,8 @@ async fn an_image_attached_by_url_is_staged_and_named_after_its_path() {
     use crate::features::image_fetch::stub::{ok_response, png_bytes, serve};
 
     let backend = CapturingBackend::new();
-    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(Some(backend.clone()));
+    // Titling off: the automatic title request would overwrite `backend.last`.
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
     let png = png_bytes(48, 24);
     let (base, _h) = serve(vec![ok_response("image/png", &png, true)]);
 

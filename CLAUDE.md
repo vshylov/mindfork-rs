@@ -165,10 +165,29 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-17, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2290 unit tests
-green, 98 `#[ignore]`** (94 live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2299 unit tests
+green, 99 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **the external server's API key, entered in settings**
+most recent tracks: **automatic chat titling on the first exchange**
+(a new conversation names itself once — `interface.auto_title`, a tri-state
+defaulting to **after the assistant's first reply**, the user's call: cloud UIs
+title on the user's message and the names are visibly worse than what the same
+model writes once the reply exists to disambiguate a terse opening. The task is
+the one the chat list's `Ctrl+R` has always run — the track added a trigger and
+an **origin**, not a second mechanism: automatic runs are quiet (failures log,
+the spec §6.8 background-turn rule) where requested ones report to the overlay.
+"First reply" means first **substantive** reply, so a cancelled first turn
+defers rather than forfeits, pre-feature chats can never match, and
+regenerating the first reply re-titles deliberately; a chat renamed by hand
+(`F2`, `/rename`) sets `Chat.renamed_manually` and outranks the model at
+trigger *and* apply time, so a rename made during the task's flight wins. In
+`AfterUserMessage` mode the title request fires **after** the reply's own,
+because on a single-slot `llama-server` it would otherwise queue ahead of the
+answer — the mechanical reason the cloud timing is not the default. Verified
+live: the default title became a topic-naming one, in the conversation's own
+language, with no command sent;
+[docs/history/auto-chat-title.md](docs/history/auto-chat-title.md), spec
+§11.2), **the external server's API key, entered in settings**
 (`external` mode — any OpenAI-compatible server you run or rent — could only take
 its Bearer key from an environment variable *named* in settings, which is exactly
 the barrier [ADR 0008](docs/decisions/0008-api-key-storage.md) removed for the

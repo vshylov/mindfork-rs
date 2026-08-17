@@ -160,6 +160,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 })
             },
         ),
+        IAutoTitle => choice(
+            |c, dir| c.interface.auto_title = cycle_auto_title(c.interface.auto_title, dir),
+            |c, loc| {
+                index_menu(&AUTO_TITLE_MODES, c.interface.auto_title, |m| {
+                    auto_title_label(m, loc)
+                })
+            },
+        ),
         ITheme => choice(
             |c, _dir| c.interface.theme = cycle_theme(c.interface.theme),
             |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),

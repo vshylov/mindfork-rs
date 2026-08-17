@@ -83,9 +83,12 @@ build the moment they drift from what the app actually renders
   highlighted, `Enter` steps through them) — or across *all* chats, by title or
   by full message text, down to the individual message opened right at the
   match (`Ctrl+G` from the chat list).
-- A full-screen **chat list** (`Esc`): search, two sort orders, and
-  model-written **auto-titles**; `F2` rename · `Ctrl+N` new · `Ctrl+D` clone ·
-  `Del` delete · `F5` copy.
+- A full-screen **chat list** (`Esc`): search, two sort orders; `F2` rename ·
+  `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. New conversations
+  **title themselves** after the first reply (model-written — and by then the
+  model knows what the chat is actually about; configurable to fire on your
+  first message instead, or off), a chat you renamed yourself is never
+  touched, and `Ctrl+R` in the list asks for a fresh title any time.
 - **Regenerate** the last reply (`Ctrl+R`), **take back** the last exchange
   (`Ctrl+E` — your text returns to the input box), **copy** a whole
   conversation to the clipboard (`F5`).
