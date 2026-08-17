@@ -381,14 +381,6 @@ impl EngineSettings {
         )
     }
 
-    /// The stored secret this engine's active mode reads (see [`mode_secret_key`]).
-    pub fn secret_key(&self) -> Option<SecretKey> {
-        mode_secret_key(
-            self.mode.cloud_provider(),
-            (self.mode == ServerMode::External).then_some(ExternalSlot::Chat),
-        )
-    }
-
     /// Active model name for the current mode (for the `Message.metadata` snapshot
     /// and the feed caption). Managed — the GGUF's base name without the path/`.gguf`
     /// extension; external/cloud — the configured `model_name`. `None` if unset.
@@ -426,23 +418,70 @@ fn cloud_mut(
     all.into_iter().nth(idx)
 }
 
-/// Which stored secret an engine-shaped settings slot's **active mode** reads —
-/// the single source of truth behind every `secret_key()` below (the orchestrator
-/// resolves the key with it, the settings screen addresses its field with it).
-/// `None` — the mode needs no key at all (managed, or impersonation's `shared`).
-///
-/// A cloud provider and an external slot are mutually exclusive by construction:
-/// `cloud_provider()` is `Some` exactly for the cloud modes. Passing both would be
-/// a caller bug, and the provider wins so it cannot silently produce a key for a
-/// server that isn't running. See docs/history/external-api-key.md §5.2.
-fn mode_secret_key(
-    provider: Option<CloudProvider>,
-    external_slot: Option<ExternalSlot>,
-) -> Option<SecretKey> {
-    match (provider, external_slot) {
-        (Some(p), _) => Some(SecretKey::Provider(p)),
-        (None, Some(slot)) => Some(SecretKey::External(slot)),
-        (None, None) => None,
+/// Which stored secret a settings section's **active mode** reads: one contract
+/// instead of a "mode → secret" mapping re-derived at each call site — the
+/// orchestrator resolves the key with it, the settings screen addresses its field
+/// with it, so a row cannot speak for a different secret than the server uses.
+/// Implemented by the four sections that can point at either a cloud provider or an
+/// external server. See docs/history/external-api-key.md §5.2.
+pub trait SecretSlot {
+    /// The active mode's cloud provider (`None` — a local or `shared` mode).
+    fn provider(&self) -> Option<CloudProvider>;
+
+    /// This section's own external slot, when the active mode is `external`.
+    fn external_slot(&self) -> Option<ExternalSlot>;
+
+    /// The secret to read: in a cloud mode the provider's key, **shared** with that
+    /// provider's other sections (ADR 0008 §3); in `external` this section's own,
+    /// since its URL is a server of the user's choosing; `None` when the mode needs
+    /// no key at all — a managed server is a local process, and impersonation's
+    /// `shared` runs on the assistant's engine and therefore on its key.
+    ///
+    /// The two answers are mutually exclusive by construction ([`Self::provider`] is
+    /// `Some` exactly for the cloud modes); should an implementation ever return
+    /// both, the provider wins, so no key is produced for a server that isn't running.
+    fn secret_key(&self) -> Option<SecretKey> {
+        match (self.provider(), self.external_slot()) {
+            (Some(p), _) => Some(SecretKey::Provider(p)),
+            (None, Some(slot)) => Some(SecretKey::External(slot)),
+            (None, None) => None,
+        }
+    }
+}
+
+impl SecretSlot for EngineSettings {
+    fn provider(&self) -> Option<CloudProvider> {
+        self.mode.cloud_provider()
+    }
+    fn external_slot(&self) -> Option<ExternalSlot> {
+        (self.mode == ServerMode::External).then_some(ExternalSlot::Chat)
+    }
+}
+
+impl SecretSlot for ImpersonationEngineSettings {
+    fn provider(&self) -> Option<CloudProvider> {
+        self.mode.cloud_provider()
+    }
+    fn external_slot(&self) -> Option<ExternalSlot> {
+        (self.mode == ImpersonationMode::External).then_some(ExternalSlot::Impersonation)
+    }
+}
+
+impl SecretSlot for EmbedSettings {
+    fn provider(&self) -> Option<CloudProvider> {
+        self.mode.cloud_provider()
+    }
+    fn external_slot(&self) -> Option<ExternalSlot> {
+        (self.mode == ServerMode::External).then_some(ExternalSlot::Embed)
+    }
+}
+
+impl SecretSlot for TtsSettings {
+    fn provider(&self) -> Option<CloudProvider> {
+        self.mode.cloud_provider()
+    }
+    fn external_slot(&self) -> Option<ExternalSlot> {
+        (self.mode == TtsMode::External).then_some(ExternalSlot::Tts)
     }
 }
 
@@ -542,16 +581,6 @@ impl ImpersonationEngineSettings {
             ],
         )
     }
-
-    /// The stored secret this engine's active mode reads (see [`mode_secret_key`]).
-    /// `shared` mode reads none of its own — it runs on the assistant's engine, and
-    /// therefore on the assistant's key.
-    pub fn secret_key(&self) -> Option<SecretKey> {
-        mode_secret_key(
-            self.mode.cloud_provider(),
-            (self.mode == ImpersonationMode::External).then_some(ExternalSlot::Impersonation),
-        )
-    }
 }
 
 /// Default embedding-server port.
@@ -624,14 +653,6 @@ impl EmbedSettings {
                 &mut self.claude,
                 &mut self.grok,
             ],
-        )
-    }
-
-    /// The stored secret this embedder's active mode reads (see [`mode_secret_key`]).
-    pub fn secret_key(&self) -> Option<SecretKey> {
-        mode_secret_key(
-            self.mode.cloud_provider(),
-            (self.mode == ServerMode::External).then_some(ExternalSlot::Embed),
         )
     }
 
@@ -1495,16 +1516,6 @@ impl TtsSettings {
             // anyway — these arms exist only to keep the match exhaustive).
             CloudProvider::Claude | CloudProvider::Grok => None,
         }
-    }
-
-    /// The stored secret this speech mode reads (see [`mode_secret_key`]). A cloud
-    /// one shares the provider's key with chat (ADR 0008 §3); `external` has its
-    /// own slot, since its URL is a server of the user's choosing.
-    pub fn secret_key(&self) -> Option<SecretKey> {
-        mode_secret_key(
-            self.mode.cloud_provider(),
-            (self.mode == TtsMode::External).then_some(ExternalSlot::Tts),
-        )
     }
 }
 

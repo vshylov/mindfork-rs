@@ -24,8 +24,8 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    McpServerConfig, MediaResolution, PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings,
-    TtsMode,
+    McpServerConfig, MediaResolution, PythonMode, SecretSlot, ServerMode, SpecType, Theme,
+    TtsCloudSettings, TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;

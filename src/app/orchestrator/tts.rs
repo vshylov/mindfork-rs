@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageRole};
 use crate::features::tts_command::TtsScope;
+use crate::shared::config::SecretSlot;
 use crate::shared::i18n::Locale;
 use crate::shared::tts::{TtsEngine, TtsSetupError, engines_from_config, playback::Playback};
 

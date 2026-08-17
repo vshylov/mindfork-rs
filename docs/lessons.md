@@ -317,6 +317,16 @@ the paste-PR seam three times over: one SQL body with an optional `IN`, one
 paged-reader schema helper next to `search_parameters`, one narrow-profile smoke
 helper. When a new thing is a sibling of an existing thing, budget for the seam at
 design time — the pair's *contract* was shared from the start, its boilerplate was not.
+The **sixth** is the same mechanism as the third, in a place easier to walk into: a file
+whose *existing* code is triplicated (three sections with identical `cloud()`/`cloud_mut()`
+accessors) has no safe place to add a method — a six-line addition to each landed **inside
+the already-flagged ranges** and 18 lines counted as duplicated, at 3.8% against a 3% bar,
+though nothing was copied from anything. Before adding a sibling method to a family of
+same-shaped types, check whether that family is *already* flagged; if it is, the addition
+belongs outside it — here one trait holding the decision once, with each type contributing
+two one-liners. Adjacent small impls are safe when what differs between them is
+**identifiers** (type, enum, constant), which the detector does not normalize — the earlier
+cases were invisible precisely because only *literals* differed.
 The fifth came from **test fixtures written in the same PR**, and scored the worst yet
 at **19.8%**: six tests of one back-stack, each spelling out the five locals `dispatch`
 and `apply_event` take plus the same three-step "arrive here" prologue. Nothing was
@@ -329,7 +339,7 @@ two, that opening is a fixture, not a test.**
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
 its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a followed
-`chat://` reference*.
+`chat://` reference*, *the external server's API key, entered in settings*.
 
 ---
 

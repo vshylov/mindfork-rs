@@ -15,14 +15,14 @@ use crate::app::events::{ServerStatus, ServerStatuses};
 use crate::app::supervisor::ServerSupervisor;
 use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
-    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
+    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode, SecretSlot,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::secrets::{ApiKeyEntry, SecretKey};
 
 /// Decrypts the stored key of whichever secret the slot's active mode reads
 /// (`settings.secret_key()` — a cloud provider's key, or an external server's own;
-/// see `config::mode_secret_key`). `None` — the mode needs no key (managed), the key
+/// see `config::SecretSlot`). `None` — the mode needs no key (managed), the key
 /// isn't stored, or the entry is a foreign one → the supervisor falls back to env.
 /// The resolution lives here so the supervisor doesn't need to know the
 /// secret-storage format (`shared::secrets`). See docs/research/api-key-storage.md,

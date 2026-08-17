@@ -210,7 +210,7 @@ pub(crate) async fn error_body(what: &str, resp: reqwest::Response) -> anyhow::E
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::config::{TtsCloudSettings, TtsExternalSettings};
+    use crate::shared::config::{SecretSlot, TtsCloudSettings, TtsExternalSettings};
 
     #[test]
     fn cloud_requires_model_and_key() {

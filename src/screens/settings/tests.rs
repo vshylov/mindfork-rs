@@ -88,6 +88,25 @@ fn goto_field_again(s: &mut SettingsScreen, id: FieldId) {
     goto_field(s, id);
 }
 
+/// Types `value` into the **currently selected** secret field and returns the commit
+/// intent, asserting on the way that the editor opened *empty and masked* — a stored
+/// secret can never be shown back, whichever field it belongs to. Every such test
+/// needs the same three steps before it can assert anything about its own field, and
+/// the third copy of an opening is a fixture rather than a test (lessons.md §2).
+fn enter_secret(s: &mut SettingsScreen, value: &str) -> Option<SettingsIntent> {
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s
+        .editor
+        .as_ref()
+        .expect("the secret field's editor is open");
+    assert_eq!(editor.input.text(), "", "a stored secret can't be shown");
+    assert!(editor.input.is_masked(), "a secret field must be masked");
+    for c in value.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter))
+}
+
 #[test]
 fn esc_closes_from_the_sections() {
     let mut s = screen();
@@ -3063,15 +3082,8 @@ fn external_key_field_targets_its_own_slot() {
 
     // Editing commits as a secret intent for the slot — never into the config.
     goto_field(&mut s, FieldId::XApiKey);
-    s.handle_key(key(KeyCode::Enter));
-    let editor = s.editor.as_ref().expect("the key field's editor is open");
-    assert_eq!(editor.input.text(), "", "a stored key can't be shown");
-    assert!(editor.input.is_masked());
-    for c in "sk-gateway".chars() {
-        s.handle_key(key(KeyCode::Char(c)));
-    }
     assert_eq!(
-        s.handle_key(key(KeyCode::Enter)),
+        enter_secret(&mut s, "sk-gateway"),
         Some(SettingsIntent::SetSecret {
             key: SecretKey::External(ExternalSlot::Chat),
             value: "sk-gateway".into()

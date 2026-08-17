@@ -547,13 +547,15 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   resolve to.
 - **One source for "which secret does this slot read".** Both `engines.rs` and the
   settings screen's `secret_field_key` used to spell out "mode → provider"
-  independently; the mapping now lives on the settings structs themselves
-  (`EngineSettings`/`ImpersonationEngineSettings`/`EmbedSettings`/
-  `TtsSettings::secret_key()`, one shared `mode_secret_key` behind them), and both
-  ask. That is the load-bearing part rather than the line count: a row that
+  independently; the mapping is now one contract — `trait SecretSlot`, whose
+  `secret_key()` default method holds the whole decision while each of the four
+  sections answers only "which provider" and "which slot, if external" — and both
+  ask it. That is the load-bearing part rather than the line count: a row that
   addresses a different secret than the server resolves is invisible from outside —
   the supervisor would simply be handed the wrong string — which is why
-  `MockSupervisor` grew a `chat_keys()` recorder so a test can see it.
+  `MockSupervisor` grew a `chat_keys()` recorder so a test can see it. The trait
+  arrived by way of the duplication gate, below; the *first* shape was an inherent
+  `secret_key()` per struct, which is the same contract stated four times.
 - **Resolution is unchanged, and that is the point** (fork F2): `resolve_api_key(stored,
   env)` was already "stored wins, env is the fallback", so the external paths went from
   passing `None` as the stored key to passing the real one. The external row has the
@@ -599,6 +601,26 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
     over **both** key rows. The identical trap is on record from the cloud hint
     (docs/history/settings-undo.md era) — the panel grew to fit the longest hint
     *then*; what is new is that a cap exists and a hint can still exceed it.
+- **The duplication gate said no, and it was right** — 3.8% new-code duplication
+  against a bar of ≤3% (PR #331's first run), a **sixth** recorded instance of the
+  shape in [lessons.md](../lessons.md) §2 and the same *mechanism* as the help-table
+  one: not a copied block, but **new lines inserted inside a range that was already
+  flagged**. `config.rs` carries pre-existing triplicates — `cloud()`/`cloud_mut()`
+  across the three engine sections, `active_model_name()` across two — so an
+  inherent `secret_key()` added to those impl blocks landed *inside* them, and 18 of
+  its lines counted as duplicated however little they resembled anything. The fix is
+  the recorded one: structure it **from outside**. `trait SecretSlot` holds the
+  decision once, outside every flagged impl, and each section contributes two
+  one-liners; four adjacent 8-line impls cannot chain into a 10-line match because
+  what differs between them is *identifiers* (type, mode enum, slot), which the
+  detector does not normalize away — unlike the literals that made the earlier cases
+  invisible. A **macro** would have been the smaller single-source answer and was
+  rejected: there is not one `macro_rules!` in the codebase, and a first one for
+  eight lines of boilerplate is a style break, not a simplification. The test side
+  had the classic version of the same trap — the "type into a masked editor, expect a
+  `SetSecret`" opening, now on its fourth copy in the settings tests — and got the
+  recorded fix too: one `enter_secret` helper, which is where the "editor opens empty
+  and masked" assertion belongs anyway, since every secret field owes it.
 - **Live — GO, twice over.** The standard regression scope first: the orchestrator
   e2e set against the usual stack (gemma-4-31B + bge-m3 over
   `MINDFORK_ENGINE_URL`/`MINDFORK_EMBED_URL`) — **34 passed, 0 failed, 771 s**, one
