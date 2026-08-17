@@ -203,15 +203,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
-- **Provider bridges** — document in install.md the "any OpenAI-compatible
-  endpoint" pattern (external + LiteLLM/OpenRouter); optional
-  managed-custom-command (supervisor launches an arbitrary sidecar proxy) —
-  on demand. See [plugin research §6](research/plugin-system.md).
+- **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
+  (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
+  with the key such a gateway needs
+  ([external-api-key.md](history/external-api-key.md)); what remains is the
+  optional managed-custom-command (supervisor launches an arbitrary sidecar
+  proxy) — on demand. See [plugin research §6](research/plugin-system.md).
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
-  additional `scheme`; the same mechanism for the external proxy's key (the MCP
-  `env` map half is **done**, spec §9.6); UI management of other machines'
-  entries ("forget this computer") — also where an explicit cleanup of MCP
-  secrets orphaned by a rename or delete belongs.
+  additional `scheme`; UI management of other machines' entries ("forget this
+  computer") — also where an explicit cleanup of MCP secrets orphaned by a rename
+  or delete belongs. Two of this item's halves are **done**: the MCP `env` map
+  (spec §9.6) and the **external server's key**
+  ([external-api-key.md](history/external-api-key.md), spec §11.6 — addressed per
+  slot rather than per provider, which is what ADR 0008 could not do).
 - **Retry/backoff — groundwork** (the track itself is **done**, both stages, see
   "Recently closed"; [cloud-retry-backoff.md](research/cloud-retry-backoff.md)):
   - the same policy for the **other HTTP callers** (fork F9, recorded rather than
