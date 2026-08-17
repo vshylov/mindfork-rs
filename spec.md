@@ -1774,6 +1774,25 @@ this?"*; this screen answers *"where exactly, and take me there."*
   resolved from the profile and pushed to the screen by the orchestrator
   (`AppEvent::CharacterNames`) on chat activation and after a profile edit, so a rename
   applies to the open chat at once; they take part in the feed's render-cache key.
+- **The model's name next to the assistant's header** — off by default, the
+  `interface.show_model_name` toggle (§11.6). It is read from the **message's
+  own** metadata snapshot (`MessageMetadata.model`, §5.1), not from the current
+  settings: a conversation reopened after switching providers still says which
+  model wrote each answer, which is the only reason the line is worth a row at
+  all. A message stored without the snapshot — or in a mode that names no model
+  (a managed server with no GGUF path yet) — shows nothing, and its header is
+  byte-for-byte the one drawn before the setting existed. The name rides the
+  header rather than a line of its own (it is an attribute of the bubble, and a
+  second row would be spent on every assistant message) and is drawn **muted and
+  unbolded**, like the "thoughts" pill: it answers an occasional question and
+  must not compete with the role. A **stitched** bubble (§9.3 rounds merged into
+  one block) keeps the first round's answer — one bubble, one header, one name.
+  The **live** bubble carries it from the turn's start:
+  `AppEvent::GenerationStarted` names the model, resolved from the same single
+  read that the finished message's metadata gets, so the header cannot change
+  under the reader when the turn ends, and a follow-up bubble opened mid-turn
+  (§9.3) gets the same name. The flag is part of the feed's render-cache key —
+  the name is baked into the cached header line.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
@@ -2104,7 +2123,9 @@ section and subsection), `Esc` — cancel.
   enabled in the profile is marked in the warning color with a "disabled
   globally" hint — honestly showing that it's unavailable to the model.
 - **Interface**: the *Appearance* group (theme, **legacy-terminal compatibility** —
-  see below), *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
+  see below, table row separators, Mermaid diagrams, **the model's name next to the
+  assistant's header** — `show_model_name`, off by default, §11.3, OSC 52 clipboard),
+  *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
   (confirming `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
   message / after the assistant's reply (default) / off, §11.2), *Conversation
   copy (F5)* (what's included).

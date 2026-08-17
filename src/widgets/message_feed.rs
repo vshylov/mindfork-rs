@@ -80,6 +80,18 @@ pub struct FeedMessage {
     /// the live streaming bubble (the streaming path pushes literals and never
     /// goes through `from_messages` — the in-flight reply has no id yet).
     pub message_ids: Vec<Uuid>,
+    /// The model that wrote this bubble, from the message's metadata snapshot
+    /// (`MessageMetadata::model`) — drawn next to the role header when
+    /// `interface.show_model_name` is on (spec §11.3).
+    ///
+    /// `None` is the honest answer for everything with no model behind it:
+    /// user messages, service notes, and any assistant message stored before
+    /// the metadata snapshot existed. The live streaming bubble is the one item
+    /// that carries it *without* a domain message — the screen fills it from
+    /// `AppEvent::GenerationStarted`, which names the same model the finished
+    /// message will record, so the header does not change under the reader when
+    /// the turn ends.
+    pub model: Option<String>,
 }
 
 impl FeedMessage {
@@ -92,6 +104,7 @@ impl FeedMessage {
             tools: Vec::new(),
             streaming: false,
             message_ids: Vec::new(),
+            model: None,
         }
     }
 
@@ -129,6 +142,11 @@ impl FeedMessage {
             tools,
             streaming: false,
             message_ids: vec![msg.id],
+            model: msg
+                .metadata
+                .as_ref()
+                .and_then(|meta| meta.model.clone())
+                .filter(|m| !m.is_empty()),
         })
     }
 
@@ -185,6 +203,13 @@ impl FeedMessage {
         // where every folded-in id has to be recorded — a jump to any
         // round of the bubble must land on the bubble (§1.2).
         last.message_ids.append(&mut fm.message_ids);
+        // One bubble, one header, so one model name. The **first** round's
+        // answer wins: it is the one the header was already showing, and a
+        // round that stored no metadata (a pure tool-call round has no text and
+        // never becomes a message at all) must not blank it out.
+        if last.model.is_none() {
+            last.model = fm.model.take();
+        }
     }
 }
 
@@ -216,6 +241,11 @@ pub struct MessageFeed {
     /// threaded via [`MessageFeed::set_render_mermaid`]). On a render failure the
     /// block is printed as source (hard fallback, see `shared::markdown::mermaid`).
     render_mermaid: bool,
+    /// Draw the model name next to the assistant's role header (setting
+    /// `interface.show_model_name`, threaded via
+    /// [`MessageFeed::set_show_model_name`]). Off by default. A bubble whose
+    /// [`FeedMessage::model`] is `None` shows nothing either way. See spec §11.3.
+    show_model_name: bool,
     /// The active chat profile's custom role names (threaded via
     /// [`MessageFeed::set_role_names`]). An unset field falls back to the localized
     /// header (`YOU`/`ASSISTANT`). See spec §11.3.
@@ -328,6 +358,9 @@ struct CacheKey {
     view: FeedView,
     table_row_separators: bool,
     render_mermaid: bool,
+    /// The model name is baked into the assistant's cached header line, so
+    /// toggling the setting has to rebuild every block.
+    show_model_name: bool,
     /// Interface language (axis B): role headers/the "thoughts" pill/the placeholder
     /// depend on it — a language change clears the feed's block cache.
     lang: crate::shared::i18n::Lang,
@@ -394,6 +427,7 @@ impl MessageFeed {
             // first settings snapshot arrives, the feed renders as the default config.
             table_row_separators: false,
             render_mermaid: true,
+            show_model_name: false,
             role_names: CharacterNames::default(),
             compaction: None,
             known_chats: Vec::new(),
@@ -430,6 +464,13 @@ impl MessageFeed {
     /// `interface.render_mermaid`). Changing the value invalidates the cache via [`CacheKey`].
     pub fn set_render_mermaid(&mut self, on: bool) {
         self.render_mermaid = on;
+    }
+
+    /// Toggles the model name next to the assistant's role header (setting
+    /// `interface.show_model_name`, spec §11.3). Changing the value invalidates
+    /// the cache via [`CacheKey`].
+    pub fn set_show_model_name(&mut self, on: bool) {
+        self.show_model_name = on;
     }
 
     /// Sets (or clears) the history-compaction boundary: `(the id of the first
@@ -878,6 +919,7 @@ impl MessageFeed {
             view: self.view,
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
+            show_model_name: self.show_model_name,
             lang: loc.lang(),
             role_names: self.role_names.clone(),
             marker: self.marker,
@@ -971,6 +1013,7 @@ impl MessageFeed {
                 self.marker == Some(idx),
                 summary,
                 &self.known_chats,
+                self.show_model_name,
             );
             let cb = CachedBlock {
                 fingerprint: fp,
@@ -1031,6 +1074,8 @@ fn highlight_block_tail(
 /// this block is where verbatim history resumes: the divider is drawn **above**
 /// the block (see [`push_compaction_boundary`]). `known_chats` — the address
 /// book a `chat://` reference is resolved against ([`style_chat_links`]).
+/// `show_model` — whether the assistant's header carries the model name
+/// (`interface.show_model_name`, spec §11.3).
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -1043,6 +1088,7 @@ fn build_message_block(
     marked: bool,
     compaction: Option<&str>,
     known_chats: &[Uuid],
+    show_model: bool,
 ) -> BuiltBlock {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -1072,6 +1118,8 @@ fn build_message_block(
                     role_name(names.user_name(), "ui.feed.role.user", loc)
                 ),
                 palette.user_soft,
+                None,
+                palette,
             ));
             content_from = body.len();
             push_body(&mut body, item, palette, inner, opts);
@@ -1084,6 +1132,8 @@ fn build_message_block(
                     role_name(names.assistant_name(), "ui.feed.role.assistant", loc)
                 ),
                 palette.assistant_soft,
+                item.model.as_deref().filter(|_| show_model),
+                palette,
             ));
             content_from = body.len();
             push_thoughts(&mut body, &item.thoughts, view.thoughts, palette, loc);
@@ -1354,6 +1404,9 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
     item.text.hash(&mut h);
     item.thoughts.hash(&mut h);
     item.streaming.hash(&mut h);
+    // Drawn into the header line, so a bubble that learns its model name (the
+    // streaming one, on the next activation) has to be rebuilt.
+    item.model.hash(&mut h);
     item.tools.len().hash(&mut h);
     for tc in &item.tools {
         tc.name.hash(&mut h);
@@ -1374,12 +1427,23 @@ fn role_name(custom: Option<&str>, key: &str, loc: &'static Locale) -> String {
     }
 }
 
-/// A role-header line: icon + name in caps, colored with the role's "soft" variant.
-fn role_header(text: &str, color: Color) -> Line<'static> {
-    Line::from(Span::styled(
+/// A role-header line: icon + name in caps, colored with the role's "soft"
+/// variant, optionally followed by `model` — the model that wrote the message
+/// (`interface.show_model_name`, spec §11.3).
+///
+/// The name rides the header rather than a line of its own: it is an attribute
+/// of the bubble, and a second line would cost a row in every assistant message.
+/// Muted and unbolded, like the "thoughts" pill — it answers a question the
+/// reader asks occasionally, so it must not compete with the role itself.
+fn role_header(text: &str, color: Color, model: Option<&str>, palette: &Palette) -> Line<'static> {
+    let mut spans = vec![Span::styled(
         text.to_string(),
         Style::new().fg(color).add_modifier(Modifier::BOLD),
-    ))
+    )];
+    if let Some(model) = model.filter(|m| !m.is_empty()) {
+        spans.push(Span::styled(format!("  {model}"), palette.muted_style()));
+    }
+    Line::from(spans)
 }
 
 /// Prepends the colored gutter rail [`RAIL`] to a line, preserving the source line's
@@ -1903,6 +1967,7 @@ mod tests {
             tools: Vec::new(),
             streaming: false,
             message_ids: vec![Uuid::new_v4()],
+            model: None,
         }
     }
 
@@ -2992,6 +3057,112 @@ mod tests {
             joined(&off).contains("```mermaid"),
             "disabled — source (cache reset by key)"
         );
+    }
+
+    /// The model name rides the assistant's header only when the setting asks
+    /// for it, and toggling it rebuilds the blocks (it is baked into the cached
+    /// header line). Spec §11.3.
+    #[test]
+    fn model_name_follows_setting_and_invalidates_cache() {
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let mut item = msg(FeedRole::Assistant, "ответ", "");
+        item.model = Some("gemma-4-31b".into());
+        let joined = |lines: &[Line<'static>]| -> String {
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+                .collect()
+        };
+
+        let off = feed.build_lines(std::slice::from_ref(&item), &palette, 80, ru());
+        assert!(
+            !joined(&off).contains("gemma-4-31b"),
+            "off by default — the header names only the role"
+        );
+
+        feed.set_show_model_name(true);
+        let on = feed.build_lines(std::slice::from_ref(&item), &palette, 80, ru());
+        let header = on
+            .iter()
+            .find(|l| {
+                l.spans
+                    .iter()
+                    .any(|s| s.content.contains(ru().t("ui.feed.role.assistant")))
+            })
+            .expect("the assistant header row");
+        let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("gemma-4-31b"),
+            "enabled — the name sits on the header row itself (cache reset by key)"
+        );
+        // Muted and unbolded, like the "thoughts" pill: the role stays the
+        // prominent half of the row.
+        let name = header
+            .spans
+            .iter()
+            .find(|s| s.content.contains("gemma-4-31b"))
+            .unwrap();
+        assert_eq!(name.style.fg, Some(palette.muted));
+        assert!(!name.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// With the setting on, a message that carries no model name draws exactly
+    /// what it drew before the feature existed — which is every message stored
+    /// before the metadata snapshot, and every user message.
+    #[test]
+    fn a_message_without_a_model_name_is_unchanged_by_the_setting() {
+        let palette = Palette::default();
+        let item = msg(FeedRole::Assistant, "ответ", "");
+        let mut off = MessageFeed::new();
+        let mut on = MessageFeed::new();
+        on.set_show_model_name(true);
+        let rows = |feed: &mut MessageFeed| -> Vec<String> {
+            row_texts(&feed.build_lines(std::slice::from_ref(&item), &palette, 80, ru()))
+        };
+        assert_eq!(rows(&mut off), rows(&mut on));
+    }
+
+    /// The name comes from the message's own metadata, and a stitched bubble
+    /// keeps the first round's answer — one bubble, one header, one model.
+    #[test]
+    fn the_model_name_is_read_from_metadata_and_survives_round_stitching() {
+        use crate::entities::message::{MessageMetadata, ToolCallRecord};
+
+        let meta = |model: &str| MessageMetadata {
+            sampling: Default::default(),
+            mode: Default::default(),
+            model: Some(model.to_string()),
+        };
+        let mut r1 = Message::assistant("ищу");
+        r1.metadata = Some(meta("gemma-4-31b"));
+        r1.tool_calls = vec![ToolCallRecord {
+            id: "c1".into(),
+            name: "web_search".into(),
+            arguments: serde_json::json!({}),
+            result: Some("ок".into()),
+            thought_signature: None,
+            images: 0,
+        }];
+        let tool = {
+            let mut m = Message::new(MessageRole::Tool, "ок");
+            m.tool_call_id = Some("c1".into());
+            m
+        };
+        let mut r2 = Message::assistant("нашёл");
+        r2.metadata = Some(meta("gemma-4-31b"));
+
+        let feed = FeedMessage::from_messages(&[r1, tool, r2]);
+        assert_eq!(feed.len(), 1, "the rounds stitch into one bubble");
+        assert_eq!(feed[0].model.as_deref(), Some("gemma-4-31b"));
+
+        // A user message and a message stored before the snapshot existed carry
+        // no name at all.
+        let plain = FeedMessage::from_messages(&[
+            Message::user("привет"),
+            Message::assistant("здравствуйте"),
+        ]);
+        assert!(plain.iter().all(|m| m.model.is_none()));
     }
 
     #[test]

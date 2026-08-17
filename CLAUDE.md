@@ -165,10 +165,27 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-17, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2299 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2304 unit tests
 green, 99 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **automatic chat titling on the first exchange**
+most recent tracks: **the model's name on the assistant's header**
+(the feed said *who* answered but never *what*: every assistant message has
+stored a metadata snapshot of its turn since M9 — mode, sampling, `model` — and
+nothing read the last field. `interface.show_model_name` (off by default) draws
+it next to `✦ ASSISTANT`, muted like the "thoughts" pill. The load-bearing
+decision is **whose** answer it is: reading the *current* engine setting would
+have been one line and no new field, and it would be wrong for the only case
+that makes the row worth spending — reopen a chat after switching provider and
+every bubble would claim the model selected now. Reading the **message's** own
+snapshot also fixes the failure mode: a reply stored before the snapshot
+existed, or a mode that names no model, shows nothing and keeps a header
+byte-for-byte the one drawn before the setting existed. The live bubble needed
+its own answer — it is pushed from literals and has no domain message yet, so
+`AppEvent::GenerationStarted` now carries the model, from a **single** read of
+`active_model_name()` shared with the finished message's metadata, and the
+header cannot change under the reader when the turn ends;
+[docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3),
+**automatic chat titling on the first exchange**
 (a new conversation names itself once — `interface.auto_title`, a tri-state
 defaulting to **after the assistant's first reply**, the user's call: cloud UIs
 title on the user's message and the names are visibly worse than what the same

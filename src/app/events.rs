@@ -423,8 +423,16 @@ pub enum AppEvent {
     /// Restore text into the input box (after deleting the last exchange). A non-empty
     /// existing input isn't overwritten — the text is prepended to it (UI).
     RestoreInput(String),
-    /// The assistant's reply generation has started.
-    GenerationStarted { generation_id: Uuid },
+    /// The assistant's reply generation has started. `model` — the model the
+    /// turn is going to, so the live bubble's header can name it right away
+    /// (`interface.show_model_name`, spec §11.3); the very same value the
+    /// finished message records in its metadata snapshot, so the header does
+    /// not change when the turn ends. `None` — the mode names no model
+    /// (a managed server with no GGUF path yet).
+    GenerationStarted {
+        generation_id: Uuid,
+        model: Option<String>,
+    },
     /// A delta of the reply's main text.
     Chunk { generation_id: Uuid, text: String },
     /// A delta of "thoughts" (CoT).

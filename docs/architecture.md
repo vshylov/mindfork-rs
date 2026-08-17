@@ -260,7 +260,10 @@ src/
 │  │                        `chat://` links (known_chats → CacheKey, styled in the
 │  │                        block builder before the wrap; `chat_links()` feeds the
 │  │                        Ctrl+L picker, `chat_link_at` answers a click from a
-│  │                        viewport-sized map rebuilt by each render)
+│  │                        viewport-sized map rebuilt by each render),
+│  │                        the model name on the assistant's header
+│  │                        (`FeedMessage.model` ← `MessageMetadata.model`,
+│  │                        `set_show_model_name` → CacheKey, spec §11.3)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
 │  │                        ChatLinkAction out

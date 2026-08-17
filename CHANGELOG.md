@@ -27,6 +27,13 @@ split by subsystem.
 
 ### Added
 
+- **The model's name can be shown in the feed.** A new "Model name in the feed"
+  toggle in Settings → Interface prints the model that wrote each reply next to
+  the `✦ ASSISTANT` header, in the same muted grey as the "thoughts" block. The
+  name comes from the message itself, so a conversation reopened after switching
+  providers still says which model actually answered — and a reply saved before
+  the app recorded that shows nothing. Off by default.
+
 - **New chats name themselves.** After the first reply the model writes the
   conversation a short title — no more lists full of "New chat". On by default;
   a setting (Interface → Behavior) moves it to right after your first message

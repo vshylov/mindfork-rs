@@ -160,19 +160,25 @@ impl ChatScreen {
             // The echo carries no id — the domain message is the orchestrator's;
             // the feed picks the ids up on the next activation.
             message_ids: Vec::new(),
+            // A user message has no model behind it, in the feed or on disk.
+            model: None,
         });
         self.mark_feed_changed();
         // User-initiated: you sent it, you want to see it (§4).
         self.feed_view.scroll_to_bottom();
     }
 
-    pub fn begin_generation(&mut self, generation_id: Uuid) {
+    /// `model` — the model this turn goes to (`AppEvent::GenerationStarted`),
+    /// shown in the streaming bubble's header when `interface.show_model_name`
+    /// is on. See spec §11.3.
+    pub fn begin_generation(&mut self, generation_id: Uuid, model: Option<String>) {
         self.current_gen = Some(generation_id);
         self.generating = true;
         self.gen_tokens = 0;
         self.gen_context = None;
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
+        self.gen_model = model;
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
         self.feed.push(FeedMessage {
@@ -182,6 +188,7 @@ impl ChatScreen {
             tools: Vec::new(),
             streaming: true,
             message_ids: Vec::new(),
+            model: self.gen_model.clone(),
         });
         self.mark_feed_changed();
         // User-initiated (you pressed send/regenerate): show the new reply (§4).
@@ -240,6 +247,9 @@ impl ChatScreen {
             tools: Vec::new(),
             streaming: true,
             message_ids: Vec::new(),
+            // Same turn, same model — and the same answer the second message's
+            // own metadata will carry once it is stored.
+            model: self.gen_model.clone(),
         });
         self.mark_feed_changed();
         // Arrives on its own (the model chose to write another message) — §4.
@@ -284,6 +294,7 @@ impl ChatScreen {
                 tools: Vec::new(),
                 streaming: true,
                 message_ids: Vec::new(),
+                model: self.gen_model.clone(),
             });
         }
     }

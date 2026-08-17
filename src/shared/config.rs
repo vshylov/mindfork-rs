@@ -1155,6 +1155,13 @@ pub struct InterfaceSettings {
     /// case = prior behavior). See spec §11.4 and
     /// docs/research/mermaid-ascii-rendering.md.
     pub render_mermaid: bool,
+    /// Show the model's name next to the assistant's role header in the feed,
+    /// taken from the message's own metadata snapshot (`MessageMetadata::model`)
+    /// — so a reloaded conversation names the model that actually wrote each
+    /// answer, not the one currently selected. **Off** by default: most chats
+    /// run on one model, where the line would be the same noise on every bubble.
+    /// See spec §11.3, §11.6.
+    pub show_model_name: bool,
     /// **Interface** language (axis B, docs/i18n-ui.md) — text for the human
     /// (status bar, settings, help, feed role headers). **Independent** of the
     /// agent language (`Profile.language`, axis A): a Russian UI + English-speaking
@@ -1184,6 +1191,7 @@ impl Default for InterfaceSettings {
             terminal_compat: false,
             table_row_separators: false,
             render_mermaid: true,
+            show_model_name: false,
             language: crate::shared::i18n::Lang::default(),
             clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
             auto_title: AutoTitleMode::default(),
@@ -2235,6 +2243,7 @@ mod tests {
                 terminal_compat: true,
                 table_row_separators: true,
                 render_mermaid: false,
+                show_model_name: true,
                 language: crate::shared::i18n::Lang::Ru,
                 clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
                 auto_title: AutoTitleMode::AfterUserMessage,

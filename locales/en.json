@@ -1109,6 +1109,7 @@
   "ui.settings.field.compat": "Legacy terminal mode",
   "ui.settings.field.table_separators": "Table row separators",
   "ui.settings.field.mermaid": "Mermaid diagrams",
+  "ui.settings.field.model_name": "Model name in the feed",
   "ui.settings.field.spell": "Spell check",
   "ui.settings.field.dicts": "Dictionaries (comma-separated)",
   "ui.settings.field.confirm_keys": "Confirm Ctrl+R / Ctrl+E",
@@ -1181,6 +1182,13 @@
     "Render ```mermaid blocks as a text-graphics diagram instead of source.",
     "Flowchart and sequence only; on any failure (parse error, too wide, other",
     "kind) the block is printed as source, same as with the toggle off."
+  ],
+  "ui.settings.desc.model_name": [
+    "Show the name of the model that wrote the reply next to the assistant's",
+    "header in the feed. Taken from the message itself, so an old conversation",
+    "names the model that actually answered — not the one selected now. A",
+    "message stored without that information (or with no model named) shows",
+    "nothing. Off by default."
   ],
   "ui.settings.desc.confirm_keys": "Ask for confirmation before regeneration (Ctrl+R) and deleting the last exchange (Ctrl+E) — both operations are irreversible in the UI. Off — the shortcuts fire immediately.",
   "ui.settings.desc.copy_thoughts": "When copying the conversation (F5) include the assistant's «thoughts» block (CoT). By default only message text is copied.",

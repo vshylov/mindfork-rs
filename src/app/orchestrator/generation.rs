@@ -399,9 +399,15 @@ impl Orchestrator {
         }
 
         let id = Uuid::new_v4();
-        let _ = self
-            .evt_tx
-            .send(AppEvent::GenerationStarted { generation_id: id });
+        // Resolved once and used twice: the event below (the live bubble's
+        // header) and `GenSpawn.model_name` (the finished message's metadata).
+        // One read, so the header cannot name a different model than the one
+        // the stored message will claim.
+        let model_name = self.config.engine.active_model_name();
+        let _ = self.evt_tx.send(AppEvent::GenerationStarted {
+            generation_id: id,
+            model: model_name.clone(),
+        });
         self.gen_state.begin(id, cancel.clone());
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
@@ -428,7 +434,7 @@ impl Orchestrator {
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             last_user,
             engine_mode: self.config.engine.mode,
-            model_name: self.config.engine.active_model_name(),
+            model_name,
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
             evt_tx: self.evt_tx.clone(),

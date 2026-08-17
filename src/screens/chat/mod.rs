@@ -461,6 +461,12 @@ pub struct ChatScreen {
     /// `usage` (`0` — none / the provider doesn't separate them). The status bar
     /// shows them separately when `> 0`.
     gen_reasoning: u32,
+    /// The model of the current generation (`AppEvent::GenerationStarted`), for
+    /// the streaming bubble's header (spec §11.3). Kept on the screen rather
+    /// than only on the bubble because the turn can open **more** bubbles:
+    /// `send_followup_message` starts a second one mid-turn, and it is the same
+    /// model writing it.
+    gen_model: Option<String>,
     /// The spellchecker (loads in the background; `None` until ready / with no
     /// dictionaries).
     spell: Option<SpellChecker>,
@@ -605,6 +611,7 @@ impl ChatScreen {
             gen_context: None,
             gen_context_exact: false,
             gen_reasoning: 0,
+            gen_model: None,
             spell: None,
             spell_dirty: false,
             draft_dirty: false,
@@ -663,6 +670,8 @@ impl ChatScreen {
             .set_table_row_separators(config.interface.table_row_separators);
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
+        self.feed_view
+            .set_show_model_name(config.interface.show_model_name);
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
     }
 
