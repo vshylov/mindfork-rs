@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/export` — a conversation to a file (done)
 - Post-M9: the "Components" leaders got a step quieter (done)
 - Post-M9: automatic chat titling on the first exchange (done)
+- Post-M9: the settings hint panel — fixed height, scroll, its own focus stop (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1613,3 +1614,72 @@ command sent (GO), `i18n_en_profile_title_e2e_live` still green
 on the requested path, and the full `orchestrator::tests::live` set run as the
 turn-path regression scope — **35 passed / 0 failed** in one sweep (755 s),
 every first-exchange smoke now firing a real title request on the way.
+
+### Post-M9: the settings hint panel — fixed height, scroll, its own focus stop (done)
+
+- **Reported from use** (user, 2026-08-18, with screenshots): switching sections
+  resized the bottom hint panel abruptly — the per-field-set height from *"a
+  settings hint always fits its panel"* kept the panel still while stepping
+  **within** a section, but each section got its own height, so `Tab` jumped the
+  border by up to nine rows. Asked for: one height for every section, a
+  scrollbar when the text doesn't fit, and the panel focusable from the fields —
+  `↓` past the last field selects it (green `▌` rail like a field's), further
+  `↓`/`↑` scroll, `↑` at the top steps back out. Branch
+  `feat/settings-hint-scroll` (one screen, no cross-layer contract — no design
+  doc per AGENTS §1).
+- **The fix inverts the previous track's mechanism but keeps its guarantee.**
+  That track sized the panel to the longest hint *because* clipping was
+  permanent; once the panel scrolls, clipping is recoverable, so the height can
+  be a constant (`HINT_PANEL_ROWS = 5` content rows + border, a third of the
+  pane on small terminals — deliberately independent of the per-section header
+  height, or the "constant" would still wobble by one row around tab strips).
+  The guarantee "no hint is ever unreadable" survives via a different route —
+  which is why **PgUp/PgDn scroll the panel from the fields focus too**, beyond
+  what was asked: the panel's own focus stop sits past the *last* field, so from
+  a mid-list field (where the long hints actually live — the API-key rows) it is
+  unreachable going down without changing what the panel shows. Without that
+  addition the old fix's own test case (the external key hint at 70 columns)
+  would have regressed to clipped-and-unreachable.
+- **The panel shows the field the cursor left.** In `Focus::Hint` the hint is
+  `fields[field_idx]`'s and `field_idx` cannot move — so what you scroll is what
+  you were reading, and `↑`/`Esc` return to the same field. The list keeps its
+  selection (unhighlighted — the single green rail moves into the panel) so a
+  long section doesn't jump to its top the moment focus crosses the border.
+- **Order flip inside the panel: description first, value preview after.** The
+  old panel drew the preview first and truncated it to what the hint left; with
+  a fixed viewport that priority had to become an *order*, and the description
+  wins the first rows for the old reason — the value is also in the list row,
+  the description exists only here. The preview keeps its 400-char cap (the
+  panel is a peek; the full value is one `Enter` away) but now marks the cut
+  with `…`, so scrolling to the end doesn't read as the value's end.
+- **Scroll state is one offset plus three render caches** on the screen struct:
+  the key handler cannot re-wrap text without the frame width, so the ceiling
+  (`hint_scroll_max`), the page size (`hint_view_rows`) and the content owner
+  (`hint_for`) are written by `render_desc_panel`, and the offset resets when
+  the owner changes (fields *and* sections alike — every section's first field
+  id differs) and clamps when content shrinks under it. The gutter prepend
+  preserves each wrapped line's own style (`wrap_text` styles the `Line`, and a
+  `Line`'s style covers the whole row — lessons §5), with the rail span's green
+  fg winning over it.
+- **Mutation-tested, nine mutations, one survivor worth recording**: dropping
+  the offset reset survived its first fixture because the *next* section's hint
+  was short and the render clamp zeroed the offset by itself — the reset is only
+  observable on a long→long switch, so the Tab test narrowed to 46 columns where
+  the subsection selector's hint overflows too. The other eight (height
+  constant, enter/exit transitions, rail, scrollbar, order, kept selection,
+  write-back clamp) died on first run. Footer note: the fields footer gained
+  `PgUp/Dn`, which re-wrapped it at 92 columns and cut the `•`-marker test's row
+  off screen — the test's subject is the marker, so it got a taller window, and
+  the two panel-position tests pin their width wide enough that footer wrap
+  (whose height is the footer's behaviour, not the panel's) stays out of frame.
+- **Demo screenshots regenerated** (the drift gate went red as designed): the
+  two settings frames in both themes; every other frame came back byte-identical,
+  which is the pipeline's own faithfulness check (lessons §1).
+- **Tests**: 2311 green (+7: one height-rule test replaced, seven added —
+  constancy as a pure rule and as a rendered row, the enter/scroll/exit flow,
+  mid-list reachability by PgUp/PgDn, panel-scoped scrollbar, the Esc ladder,
+  Tab keeping focus while restarting the scroll, the kept list selection), 99
+  `#[ignore]`, clippy `-D warnings`/fmt/`cyrillic_scan`/`link_check` clean.
+- **A live run isn't required** (AGENTS.md §3): layout, key handling and
+  rendering on one screen — no engine, memory, tool or provider path is touched
+  (the precedent of the settings redesign and focus-model tracks).

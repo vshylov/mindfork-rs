@@ -78,27 +78,33 @@ impl SettingsScreen {
         // Enter goes in, and inside the pane the arrows only change a value while Esc
         // steps back out. Section-specific extras (Profiles: create/delete) are
         // appended in both states. See docs/history/settings-navigation.md §5.1.
-        let on_menu = self.focus == Focus::Menu;
-        let mut hints: Vec<(&'static str, &'static str)> = if on_menu {
-            vec![
+        let mut hints: Vec<(&'static str, &'static str)> = match self.focus {
+            Focus::Menu => vec![
                 ("Tab/↑↓", loc.t("ui.settings.hint.section")),
                 ("Enter", loc.t("ui.settings.hint.enter_fields")),
                 ("/", loc.t("ui.settings.hint.search")),
                 // The settings screen isn't listed in the `F1` help overlay, so the
                 // footer is the only place these are discoverable.
                 ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
-            ]
-        } else {
-            vec![
+            ],
+            Focus::Fields => vec![
                 ("↑↓", loc.t("ui.settings.hint.fields")),
                 ("←→", loc.t("ui.settings.hint.choose")),
                 ("Enter", loc.t("ui.settings.hint.edit")),
                 ("Space", loc.t("ui.settings.hint.toggle")),
                 ("Del", loc.t("ui.settings.hint.reset")),
+                ("PgUp/Dn", loc.t("ui.settings.hint.hint_scroll")),
                 ("Tab", loc.t("ui.settings.hint.section")),
                 ("/", loc.t("ui.settings.hint.search")),
                 ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
-            ]
+            ],
+            // The hint panel: only what acts there — the edit keys are inert, and
+            // an honest footer is the panel's whole discoverability.
+            Focus::Hint => vec![
+                ("↑↓/PgUp/Dn", loc.t("ui.settings.hint.scroll")),
+                ("Tab", loc.t("ui.settings.hint.section")),
+                ("/", loc.t("ui.settings.hint.search")),
+            ],
         };
         if matches!(self.section(), Section::Profiles | Section::Plugins) {
             hints.push(("Ctrl+N", loc.t("ui.settings.hint.new")));
@@ -106,10 +112,10 @@ impl SettingsScreen {
         }
         hints.push((
             "Esc",
-            if on_menu {
-                loc.t("ui.settings.hint.close")
-            } else {
-                loc.t("ui.settings.hint.to_sections")
+            match self.focus {
+                Focus::Menu => loc.t("ui.settings.hint.close"),
+                Focus::Fields => loc.t("ui.settings.hint.to_sections"),
+                Focus::Hint => loc.t("ui.settings.hint.to_fields"),
             },
         ));
         hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
@@ -423,10 +429,15 @@ impl SettingsScreen {
         }
     }
 
-    pub(super) fn render_fields(&self, frame: &mut Frame, area: Rect) {
+    pub(super) fn render_fields(&mut self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
-        let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
+        let on_hint = self.focus == Focus::Hint;
+        // The panel keeps showing the field the cursor stood on when focus moved
+        // into it (`field_idx` doesn't change while the panel is focused).
+        let shown_field = (focused || on_hint)
+            .then(|| fields.get(self.field_idx))
+            .flatten();
         let palette = self.palette();
 
         // The subsection selector (if present in the current field set) is drawn not as
@@ -448,7 +459,7 @@ impl SettingsScreen {
         self.render_fields_header(frame, head_area, focused, on_tabs, tabs, &palette);
 
         let inner_w = list_area.width as usize;
-        let (items, select) = self.build_field_items(&fields, focused, inner_w, &palette);
+        let (items, select) = self.build_field_items(&fields, focused, on_hint, inner_w, &palette);
         let total = items.len();
 
         // Selection — a soft backdrop (as in the section menu and the chat list), not
@@ -490,22 +501,21 @@ impl SettingsScreen {
             );
         }
 
-        self.render_desc_panel(frame, desc_area, desc_h, focused_field, &palette);
+        self.render_desc_panel(frame, desc_area, desc_h, shown_field, on_hint, &palette);
     }
 
     /// The bottom description panel's height for this field set (`0` — no fields).
-    fn desc_panel_height(&self, fields: &[FieldRow], area: Rect, head_h: u16) -> u16 {
-        // The bottom panel (value+description) is always reserved when there are fields,
-        // and is as tall as the longest hint of THIS field set needs — a hint clipped
-        // mid-sentence is unreadable, while a per-field height would shift the list on
-        // every step. The ceiling keeps the list from being squeezed out by a wall of
-        // text (an MCP tool's description is arbitrary server text).
+    pub(super) fn desc_panel_height(&self, fields: &[FieldRow], area: Rect, head_h: u16) -> u16 {
+        // The panel is one fixed height for every section ([`HINT_PANEL_ROWS`]
+        // content rows + the top border), so switching sections never resizes it;
+        // content that doesn't fit scrolls instead (see `render_desc_panel`). A
+        // small terminal concedes rows — a third of the pane, independent of the
+        // per-section header height, so the constancy holds — and the final clamp
+        // never takes the list's last row.
         if fields.is_empty() {
             0
         } else {
-            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(head_h as usize) / 3);
-            let rows = hint_panel_rows(fields, area.width as usize, cap, self.loc()) as u16;
-            // +1 for the top border; never take the last row away from the list.
+            let rows = HINT_PANEL_ROWS.min(area.height as usize / 3).max(1) as u16;
             (rows + 1).min(area.height.saturating_sub(head_h + 1))
         }
     }
@@ -558,6 +568,7 @@ impl SettingsScreen {
         &self,
         fields: &[FieldRow],
         focused: bool,
+        on_hint: bool,
         inner_w: usize,
         palette: &Palette,
     ) -> (Vec<ListItem<'static>>, Option<usize>) {
@@ -595,7 +606,11 @@ impl SettingsScreen {
                 items.push(ListItem::new(header_line(f.group, count, inner_w, palette)));
             }
             prev_group = Some(f.group);
-            if focused && i == self.field_idx {
+            // With the focus on the hint panel the selection is kept (so the list
+            // doesn't scroll away from the field the panel is describing) but drawn
+            // unhighlighted — `hl` and the rail below are gated on `focused` alone,
+            // and the single green rail moves into the panel.
+            if (focused || on_hint) && i == self.field_idx {
                 select = Some(items.len());
             }
             // User data (profiles and impersonation personas) has no "default value"
@@ -625,62 +640,121 @@ impl SettingsScreen {
         (items, select)
     }
 
-    /// The bottom panel: the full value of the selected text field (whole paths,
-    /// truncated with "…" in the list) + a description hint.
+    /// The bottom panel: the selected field's description hint (+ the expanded
+    /// gate note), then the full value of a long text field (truncated with "…"
+    /// in the list). The hint comes first — the panel's height is fixed, and the
+    /// value is also visible in the list row above while the description exists
+    /// only here. Content taller than the panel scrolls (`hint_scroll`); the
+    /// offset belongs to one field (`hint_for`) and resets when the panel
+    /// switches to another.
     fn render_desc_panel(
-        &self,
+        &mut self,
         frame: &mut Frame,
         desc_area: Rect,
         desc_h: u16,
-        focused_field: Option<&FieldRow>,
+        shown_field: Option<&FieldRow>,
+        on_hint: bool,
         palette: &Palette,
     ) {
-        if desc_h <= 1 {
+        if desc_h <= 1 || desc_area.width < 3 {
+            self.hint_scroll_max = 0;
+            self.hint_view_rows = 0;
             return;
         }
+        // The scroll offset belongs to one field's content: a switch (fields and
+        // sections alike — the id changes either way) starts the new text at the top.
+        if self.hint_for != shown_field.map(|f| f.id) {
+            self.hint_for = shown_field.map(|f| f.id);
+            self.hint_scroll = 0;
+        }
         let content_h = desc_h as usize - 1;
-        let w = desc_area.width as usize;
-        // The hint has first claim on the panel — the height was reserved for it.
-        let mut hint: Vec<Line<'static>> = Vec::new();
-        if let Some(f) = focused_field {
+        // A 2-cell gutter carries the focus rail `▌` (as on field rows and in the
+        // section menu) — always reserved, so the text never shifts with focus.
+        let w = desc_area.width as usize - 2;
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if let Some(f) = shown_field {
             if let Some(text) = f.description.as_deref() {
-                hint.extend(wrap_text(text, palette.muted_style(), w));
+                lines.extend(wrap_text(text, palette.muted_style(), w));
             }
             // An expanded explanation for a flagged row, when the row has one
             // (a globally-disabled tool) — so the honest gate is
             // understandable, not just "⊘". Driven by the note rather than by
             // `warn`: that flag is raised for several unrelated reasons.
             if let Some(note) = f.warn_note.as_deref() {
-                hint.extend(wrap_text(note, Style::new().fg(palette.warning), w));
+                lines.extend(wrap_text(note, Style::new().fg(palette.warning), w));
             }
-        }
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some(f) = focused_field
-            && let FieldKind::Text(v) = &f.kind
-        {
-            let shown = v.trim();
-            // Show the full value only for "long" fields (paths, URLs, the
+            // Show the full value only for "long" text fields (paths, URLs, the
             // system message) — in the list they're truncated with "…". Short
-            // values (numbers, host) are already fully visible in the list, no need to duplicate.
-            let long = crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
-            if !shown.is_empty() && shown != "—" && long {
-                // Cap the preview (a multiline system message can be huge):
-                // it fills what the hint leaves and never grows the panel —
-                // the value is also in the list row above, the hint is only here.
-                let preview: String = shown.chars().take(400).collect();
-                lines = wrap_text(&preview, Style::new().fg(palette.text), w);
-                lines.truncate(content_h.saturating_sub(hint.len()));
+            // values (numbers, host) are already fully visible in the list.
+            if let FieldKind::Text(v) = &f.kind {
+                let shown = v.trim();
+                let long =
+                    crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+                if !shown.is_empty() && shown != "—" && long {
+                    // Cap the preview (a multiline system message can be huge):
+                    // the panel is a peek, the full value is one Enter away in
+                    // the editor. "…" marks the cut, so scrolling to the end
+                    // doesn't read as the value's end.
+                    let mut preview: String = shown.chars().take(400).collect();
+                    if shown.chars().count() > 400 {
+                        preview.push('…');
+                    }
+                    lines.extend(wrap_text(&preview, Style::new().fg(palette.text), w));
+                }
             }
         }
-        lines.extend(hint);
+        self.hint_scroll_max = lines.len().saturating_sub(content_h);
+        self.hint_view_rows = content_h;
+        // Content can shrink under a kept offset (a value edit, a config
+        // re-emit) — clamp the stored offset, not just the drawn one, so ↑
+        // doesn't spend presses on invisible rows.
+        self.hint_scroll = self.hint_scroll.min(self.hint_scroll_max);
+        let gutter = if on_hint {
+            Span::styled("▌ ", Style::new().fg(palette.success))
+        } else {
+            Span::raw("  ")
+        };
         // Pre-wrapped above (`Wrap` can't be measured before layout), so every
-        // line already fits — no re-wrap here.
-        let para = Paragraph::new(lines).block(
+        // line already fits — no re-wrap here. The line style is preserved when
+        // prepending the gutter (the hint's color rides the `Line`, and the
+        // gutter span's own fg wins over it where set).
+        let visible: Vec<Line<'static>> = lines
+            .iter()
+            .skip(self.hint_scroll)
+            .take(content_h)
+            .map(|l| {
+                let mut spans = vec![gutter.clone()];
+                spans.extend(l.spans.iter().cloned());
+                let mut out = Line::from(spans);
+                out.style = l.style;
+                out
+            })
+            .collect();
+        let para = Paragraph::new(visible).block(
             Block::default()
                 .borders(Borders::TOP)
                 .border_style(palette.border_style(false)),
         );
         frame.render_widget(para, desc_area);
+        // A scrollbar over the screen's right border (the same column the field
+        // list uses), skipping the panel's border row. Drawn whenever the content
+        // overflows, focus or not — unfocused it is the signal that there is more
+        // text than shown.
+        let bar = Rect {
+            y: desc_area.y + 1,
+            height: desc_area.height.saturating_sub(1),
+            width: desc_area.width + 1,
+            ..desc_area
+        };
+        render_scrollbar(
+            frame,
+            bar,
+            lines.len(),
+            content_h,
+            self.hint_scroll,
+            true, // the settings screen's border is drawn in the focus color
+            palette,
+        );
     }
 }
 

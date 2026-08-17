@@ -1711,15 +1711,10 @@ fn norm(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The reported symptom: the API-key hint ran past the bottom panel's last row and was
-/// cut mid-sentence. The panel is now as tall as the longest hint of the field set
-/// needs, so the hint is shown whole — at a comfortable width and at a narrow one,
-/// where it wraps into many more rows.
-///
-/// Both key rows are checked, because the panel has a row cap (`HINT_MAX_ROWS`) and the
-/// **external** hint is the longer of the two: it has to name the two fields' priority
-/// as well, and a hint that closes the door only works if its last sentence is on
-/// screen.
+/// The reported symptom of the original fix: the API-key hint ran past the bottom
+/// panel's last row and was cut mid-sentence. At comfortable widths the fixed-height
+/// panel still shows both providers' key hints whole; what no longer fits at narrow
+/// widths is covered by [`a_clipped_hint_is_reachable_by_scrolling`].
 #[test]
 fn a_long_hint_is_shown_whole_in_the_bottom_panel() {
     for mode in [ServerMode::OpenAi, ServerMode::External] {
@@ -1727,7 +1722,7 @@ fn a_long_hint_is_shown_whole_in_the_bottom_panel() {
         s.config.engine.mode = mode;
         goto_field(&mut s, FieldId::XApiKey);
         let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("api key is described"));
-        for (w, h) in [(120u16, 40u16), (146, 46), (70, 40)] {
+        for (w, h) in [(120u16, 40u16), (146, 46)] {
             let shown = pane_text(&mut s, w, h);
             assert!(
                 shown.contains(&desc),
@@ -1737,48 +1732,318 @@ fn a_long_hint_is_shown_whole_in_the_bottom_panel() {
     }
 }
 
-/// The full-value preview shares the panel with the hint — and gives way to it: the
-/// height is reserved for the hint, so a long value can only take what the hint leaves.
+/// The hint has first claim on the panel's fixed viewport: the description is drawn
+/// **above** the full-value preview (the value is also in the list row; the hint
+/// exists only here), so a long value never pushes it out — the preview's tail
+/// scrolls instead.
 #[test]
 fn a_long_value_preview_does_not_push_the_hint_out() {
     let mut s = screen();
     s.config.engine.mode = ServerMode::OpenAi;
-    // Long enough that the preview alone would fill the panel and leave nothing.
+    // Long enough that the preview alone would overflow the whole panel.
     s.config.engine.openai.api_key_env = Some("VERY_LONG_ENVIRONMENT_VARIABLE_NAME_".repeat(12));
     goto_field(&mut s, FieldId::XApiKeyEnv);
     let desc = norm(&field_desc(&s, FieldId::XApiKeyEnv).expect("described"));
-    let shown = pane_text(&mut s, 120, 40);
-    assert!(
-        shown.contains("VERY_LONG_ENVIRONMENT_VARIABLE_NAME_VERY_LONG"),
-        "the preview is gone entirely: {shown}"
-    );
+    // Panel-scoped text: the list row above also starts with the value, so the
+    // whole-pane extraction would find it there instead of in the panel.
+    let shown = hint_panel_text(&mut s, 120, 40);
     assert!(
         shown.contains(&desc),
         "hint clipped by the preview: {shown}"
     );
+    assert!(
+        shown.contains("VERY_LONG_ENVIRONMENT_VARIABLE_NAME_VERY_LONG"),
+        "the preview is gone entirely: {shown}"
+    );
+    let hint_at = shown.find(&desc).unwrap();
+    let value_at = shown.find("VERY_LONG").unwrap();
+    assert!(hint_at < value_at, "the hint must come before the preview");
+    // The preview is capped (the full value is one Enter away in the editor);
+    // scrolled to the end it marks the cut, so it doesn't read as the value's end.
+    for _ in 0..10 {
+        s.handle_key(key(KeyCode::PageDown));
+        let _ = hint_panel_text(&mut s, 120, 40);
+        if s.hint_scroll == s.hint_scroll_max {
+            break;
+        }
+    }
+    assert!(
+        hint_panel_text(&mut s, 120, 40).contains('…'),
+        "the capped preview marks its cut"
+    );
+    // Content can shrink under a kept offset (here: the value edited shorter) —
+    // the stored offset is clamped at render, so the panel shows the new end
+    // rather than rows past it.
+    let deep = s.hint_scroll;
+    s.config.engine.openai.api_key_env = Some("SHORT_NAME_BUT_OVER_32_COLUMNS_LONG_X".into());
+    let after = hint_panel_text(&mut s, 120, 40);
+    assert!(s.hint_scroll < deep, "the offset must clamp to the new max");
+    assert!(
+        !after.is_empty(),
+        "the panel must not scroll past the content"
+    );
 }
 
-/// The panel's height: the longest hint of the field set (constant while stepping
-/// between its fields — a per-field height would shift the list under the cursor),
-/// never below the floor it has always had, never above the cap (an MCP server's tool
-/// description is arbitrary text).
+/// The panel is one fixed height for every section — a per-set height made it (and
+/// the list above it) jump on section switches; a small terminal concedes rows by
+/// pane size, never by section.
 #[test]
-fn hint_panel_height_follows_the_longest_hint_within_bounds() {
+fn hint_panel_height_is_constant_across_sections() {
     let s = screen();
-    let loc = s.loc();
-    let rows = |fields: &[FieldRow], w: usize, cap: usize| hint_panel_rows(fields, w, cap, loc);
+    let area = Rect::new(0, 0, 94, 36);
+    let h = s.desc_panel_height(&s.data_fields(), area, 1);
+    assert_eq!(
+        h,
+        HINT_PANEL_ROWS as u16 + 1,
+        "content rows + the top border"
+    );
+    assert_eq!(s.desc_panel_height(&s.model_fields(), area, 2), h);
+    assert_eq!(s.desc_panel_height(&s.sampling_fields(), area, 2), h);
+    let small = Rect::new(0, 0, 94, 10);
+    assert_eq!(s.desc_panel_height(&s.data_fields(), small, 1), 4);
+    assert_eq!(s.desc_panel_height(&s.model_fields(), small, 2), 4);
+    assert_eq!(s.desc_panel_height(&[], area, 1), 0, "no fields — no panel");
+}
 
-    let short = vec![row(FieldId::XPort, "p", FieldKind::Text("1".into()))];
-    assert_eq!(rows(&short, 80, HINT_MAX_ROWS), HINT_MIN_ROWS, "floor");
+/// The y of the hint panel's top border: the only row that is the screen's left
+/// border (`│` at x 0 — the outer top/bottom borders carry corners there) while the
+/// fields pane is a solid `─` run (group headers carry text).
+fn hint_panel_border_y(term: &ratatui::Terminal<ratatui::backend::TestBackend>) -> u16 {
+    let buf = term.backend().buffer();
+    (0..buf.area.height)
+        .find(|&y| {
+            buf[(0, y)].symbol() == "│"
+                && (25..buf.area.width - 1).all(|x| buf[(x, y)].symbol() == "─")
+        })
+        .expect("hint panel border row not found")
+}
 
-    let long = vec![
-        row(FieldId::XPort, "p", FieldKind::Text("1".into())),
-        row(FieldId::XUrl, "u", FieldKind::Text(String::new())).describe("слово ".repeat(60)),
-    ];
-    let need = hint_rows(&long[1], 40, loc);
-    assert!(need > HINT_MIN_ROWS, "the fixture must overflow the floor");
-    assert_eq!(rows(&long, 40, HINT_MAX_ROWS), need, "grows to the longest");
-    assert_eq!(rows(&long, 40, 4), 4, "and stops at the cap");
+/// The hint panel's visible text (its content rows only), the gutter column
+/// skipped, whitespace-normalized — the counterpart of [`pane_text`] for the panel.
+fn hint_panel_text(s: &mut SettingsScreen, w: u16, h: u16) -> String {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let by = hint_panel_border_y(&term);
+    let text: String = (by + 1..buf.area.height)
+        .take_while(|&y| buf[(0, y)].symbol() == "│")
+        .map(|y| {
+            (27..buf.area.width.saturating_sub(1))
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The panel-scroll fixture: the Data section's only field — the backup
+/// password — is both the **last** field and a long-described one, so at a
+/// narrow width its hint overflows the fixed panel. The shared opening of every
+/// panel-focus test (the third such start is a fixture, lessons §2).
+fn screen_on_backup_password() -> SettingsScreen {
+    let mut s = screen();
+    goto_section(&mut s, Section::Data);
+    goto_field(&mut s, FieldId::BackupPassword);
+    s
+}
+
+/// Whether the panel's own scrollbar thumb is on the screen border within the
+/// panel's rows (the field list's thumb lives above the panel border).
+fn panel_has_thumb(term: &ratatui::Terminal<ratatui::backend::TestBackend>) -> bool {
+    let buf = term.backend().buffer();
+    let by = hint_panel_border_y(term);
+    let x = buf.area.right() - 1;
+    (by + 1..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
+}
+
+/// Render-level counterpart of the height rule: switching sections never moves the
+/// panel's top border. Wide enough that the footer never wraps (a taller footer
+/// would shift the whole pane — that is the footer's behaviour, not the panel's).
+#[test]
+fn hint_panel_keeps_its_row_across_section_switches() {
+    let mut s = screen();
+    let mut ys = Vec::new();
+    for _ in 0..SECTIONS.len() {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(180, 32)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        ys.push(hint_panel_border_y(&term));
+        s.handle_key(key(KeyCode::Tab));
+    }
+    ys.dedup();
+    assert_eq!(
+        ys.len(),
+        1,
+        "the panel border moved between sections: {ys:?}"
+    );
+}
+
+/// The user's flow (spec §11.6): ↓ walks the fields, one more ↓ past the last field
+/// selects the hint panel (green rail on its gutter), further ↓ scrolls the text,
+/// ↑ scrolls back and steps out to the fields at the top. The panel keeps showing
+/// the field the cursor left — `field_idx` never moves.
+#[test]
+fn down_from_the_last_field_enters_the_hint_panel_and_scrolls_it() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = screen();
+    goto_section(&mut s, Section::Data);
+    // The backup password is the section's only (= last) field, and at 70 columns
+    // its description overflows the fixed panel.
+    goto_field(&mut s, FieldId::BackupPassword);
+    let first = hint_panel_text(&mut s, 70, 30);
+    let mut term = Terminal::new(TestBackend::new(70, 30)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let by = hint_panel_border_y(&term);
+    assert_eq!(
+        term.backend().buffer()[(25, by + 1)].symbol(),
+        " ",
+        "no rail while the fields hold the focus"
+    );
+    assert!(s.hint_scroll_max > 0, "fixture must overflow the panel");
+
+    s.handle_key(key(KeyCode::Down));
+    assert!(
+        s.focus == Focus::Hint,
+        "↓ on the last field enters the panel"
+    );
+    assert_eq!(s.fields()[s.field_idx].id, FieldId::BackupPassword);
+    let mut term = Terminal::new(TestBackend::new(70, 30)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    // The panel's row is re-found: the hint-focus footer is shorter, so the
+    // whole pane can sit lower than in the fields-focus frame above.
+    let by = hint_panel_border_y(&term);
+    assert_eq!(
+        term.backend().buffer()[(25, by + 1)].symbol(),
+        "▌",
+        "the focused panel carries the green rail"
+    );
+
+    s.handle_key(key(KeyCode::Down));
+    assert_eq!(s.hint_scroll, 1, "further ↓ scrolls");
+    let scrolled = hint_panel_text(&mut s, 70, 30);
+    assert_ne!(first, scrolled, "the visible text moved");
+
+    s.handle_key(key(KeyCode::Up));
+    assert_eq!(s.hint_scroll, 0);
+    assert!(s.focus == Focus::Hint, "↑ scrolls back first");
+    s.handle_key(key(KeyCode::Up));
+    assert!(s.focus == Focus::Fields, "↑ at the top steps out");
+    assert_eq!(s.fields()[s.field_idx].id, FieldId::BackupPassword);
+}
+
+/// A hint that overflows the fixed panel is reachable from the field itself:
+/// PgUp/PgDn scroll the panel without moving the focus — the panel's own focus
+/// stop sits past the *last* field, out of a mid-list field's reach going down.
+#[test]
+fn a_clipped_hint_is_reachable_by_scrolling() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    goto_field(&mut s, FieldId::XApiKey);
+    let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("described"));
+    let head: String = desc.chars().take(30).collect();
+    let tail: String = {
+        let n = desc.chars().count();
+        desc.chars().skip(n - 30).collect()
+    };
+    let first = hint_panel_text(&mut s, 70, 40);
+    assert!(
+        first.contains(&head),
+        "the hint's start shows untouched: {first}"
+    );
+    assert!(
+        !first.contains(&tail),
+        "fixture: the tail must overflow at 70 columns"
+    );
+    for _ in 0..10 {
+        s.handle_key(key(KeyCode::PageDown));
+        let _ = hint_panel_text(&mut s, 70, 40); // the real loop redraws after every key
+        if s.hint_scroll == s.hint_scroll_max {
+            break;
+        }
+    }
+    let last = hint_panel_text(&mut s, 70, 40);
+    assert!(last.contains(&tail), "the hint's tail is reachable: {last}");
+    for _ in 0..10 {
+        s.handle_key(key(KeyCode::PageUp));
+    }
+    assert!(hint_panel_text(&mut s, 70, 40).contains(&head));
+    assert!(s.focus == Focus::Fields, "PgUp/PgDn never move the focus");
+}
+
+/// The panel's scrollbar is the unfocused signal that there is more text than
+/// shown: a thumb on the screen border within the panel's rows on overflow, none
+/// when the text fits.
+#[test]
+fn hint_scrollbar_appears_only_when_the_text_overflows() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = screen_on_backup_password();
+    let mut term = Terminal::new(TestBackend::new(70, 30)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(panel_has_thumb(&term), "overflowing hint — a thumb");
+    let mut term = Terminal::new(TestBackend::new(150, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(!panel_has_thumb(&term), "the hint fits — no thumb");
+}
+
+/// Esc completes the ladder from the panel: hint → fields → sections → close.
+#[test]
+fn esc_from_the_hint_panel_returns_to_the_fields() {
+    let mut s = screen_on_backup_password();
+    s.handle_key(key(KeyCode::Down));
+    assert!(s.focus == Focus::Hint);
+    s.handle_key(key(KeyCode::Esc));
+    assert!(s.focus == Focus::Fields);
+    s.handle_key(key(KeyCode::Esc));
+    assert!(s.focus == Focus::Menu);
+}
+
+/// With the focus on the panel the list keeps its selection (unhighlighted): a
+/// long section stays scrolled to the field the panel is describing, instead of
+/// jumping back to its top the moment the focus crosses the border.
+#[test]
+fn the_list_stays_scrolled_to_the_field_while_the_panel_is_focused() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Sampling);
+    goto_field(&mut s, FieldId::S(SamplingParam::Verbosity)); // the last field
+    s.handle_key(key(KeyCode::Down));
+    assert!(s.focus == Focus::Hint);
+    // A window short enough that the sampling list scrolls: the last field is
+    // only on screen if the selection survived the focus change.
+    let shown = pane_text(&mut s, 100, 24);
+    assert!(
+        shown.contains("verbosity"),
+        "the list scrolled away from the described field: {shown}"
+    );
+}
+
+/// Tab preserves the focus (settings-navigation R4) — from the panel too; the new
+/// section's text starts at the top, because a kept offset would open it at a
+/// random middle.
+#[test]
+fn tab_from_the_hint_panel_switches_section_and_restarts_the_scroll() {
+    let mut s = screen_on_backup_password();
+    // 46 columns: narrow enough that the *next* section's first hint overflows
+    // too — against a short new hint the render clamp would zero the offset by
+    // itself, and the reset under test would be indistinguishable from it.
+    let _ = hint_panel_text(&mut s, 46, 30); // populate the scroll caches
+    s.handle_key(key(KeyCode::Down)); // into the panel
+    s.handle_key(key(KeyCode::Down)); // scroll by a row
+    assert_eq!(s.hint_scroll, 1);
+    s.handle_key(key(KeyCode::Tab));
+    assert!(
+        s.focus == Focus::Hint,
+        "Tab switches the section, not the focus"
+    );
+    let _ = hint_panel_text(&mut s, 46, 30);
+    assert!(
+        s.hint_scroll_max > 0,
+        "fixture: the new hint must overflow too"
+    );
+    assert_eq!(s.hint_scroll, 0, "the new section's text starts at the top");
 }
 
 #[test]
@@ -2262,8 +2527,10 @@ fn del_on_default_field_is_noop() {
 fn modified_field_shows_marker() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    // Tall enough that the marked row stays on screen whatever the footer wraps
+    // to — the test's subject is the marker, not the pane geometry.
     let render_text = |s: &mut SettingsScreen| -> String {
-        let mut term = Terminal::new(TestBackend::new(92, 24)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let buf = term.backend().buffer();
         (0..buf.area.height)
@@ -2962,9 +3229,7 @@ fn api_key_field_shows_status_in_cloud_modes_only() {
 /// it. Spec §12.3.
 #[test]
 fn backup_password_field_is_a_masked_secret_with_its_own_intent() {
-    let mut s = screen();
-    goto_section(&mut s, Section::Data);
-    goto_field(&mut s, FieldId::BackupPassword);
+    let mut s = screen_on_backup_password();
 
     let value = |s: &SettingsScreen| {
         s.fields()

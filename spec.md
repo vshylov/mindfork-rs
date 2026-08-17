@@ -2070,12 +2070,19 @@ longest label, with a floor and a cap: every group's values sit on one vertical 
 and an overly long label doesn't drag the column away (its value sits right after the
 label; current labels stay shorter than the cap — extra context moves into the group
 header). Below the list — a **hint panel**:
-the selected field's full value (paths/URLs, truncated with `…` in the list) + a description hint.
-Its height is that of the **longest hint in the section** (bounded above — an MCP tool's
-description is arbitrary server text — and below by the three rows it has always had):
-a hint clipped mid-sentence is unreadable, while a height following the *selected* field
-would shift the list on every step. The full value shares the panel and gives way to the
-hint (it is also visible in the list row; the hint is only here).
+the selected field's description hint, then its full value (paths/URLs, truncated
+with `…` in the list; capped at 400 characters with `…` — the whole value is one
+Enter away in the editor). The hint comes first because the value is also visible
+in the list row while the description exists only here. The panel is **one fixed
+height for every section** (5 content rows + the top border; a small terminal
+concedes rows — a third of the pane) — a height that followed the field set made
+the panel and the list jump on every section switch. What doesn't fit **scrolls**:
+a scrollbar on the screen's right border signals the overflow, `PgUp`/`PgDn` scroll
+the panel directly from the fields, and `↓` past the **last** field moves the focus
+into the panel itself (a green `▌` rail on its gutter, like the selected field's) —
+there `↑`/`↓` scroll by a row, and `↑` at the top (or `Esc`) steps back out to the
+fields. While the panel holds the focus it keeps showing the field the cursor left,
+and a field/section switch restarts the scroll from the top.
 Sections with **subsections** (Model/Sampling/Profiles) show them as a **tab strip** above the
 fields (a pinned row `Assistant │ Impersonation │ …`, `←/→` switches the active
 tab) — not as a row-field in the list. The hotkey footer is **contextual** (in "Profiles"

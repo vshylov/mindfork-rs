@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The settings hint panel keeps one height and scrolls.** The description
+  panel under the field list is now the same height in every section, so
+  switching sections no longer jerks the layout around. A hint (or a long value
+  preview) that doesn't fit shows a scrollbar and can be scrolled: `PgUp`/`PgDn`
+  right from the fields, or step onto the panel itself — `↓` past the last field
+  selects it (green `▌` marker, like a field's), `↓`/`↑` scroll the text, and
+  `↑` at the top (or `Esc`) steps back out. The description now comes before the
+  value preview, and a preview cut at its cap ends with `…`.
+
 ## [0.9.7] — 2026-08-17
 
 ### Added

@@ -753,11 +753,14 @@ struct Editor {
     error: Option<&'static str>,
 }
 
-/// Focus: the left section menu or the field list on the right.
+/// Focus: the left section menu, the field list on the right, or the hint panel
+/// under it. `Hint` is the stop past the last field: ↓ walks off the list into
+/// the panel, further ↓/↑ scroll its text, and ↑ at the top steps back out.
 #[derive(PartialEq)]
 enum Focus {
     Menu,
     Fields,
+    Hint,
 }
 
 /// The value of one store as it was **before** a single edit — the mirror of the
@@ -885,6 +888,19 @@ pub struct SettingsScreen {
     undo: Vec<EditStep>,
     /// Undone edits available for `Ctrl+Y`; cleared by any fresh edit.
     redo: Vec<EditStep>,
+    /// The hint panel's scroll offset, in wrapped rows (`0` — top). Belongs to
+    /// the field the panel is showing ([`Self::hint_for`]).
+    hint_scroll: usize,
+    /// Render cache: the largest useful scroll offset (content rows minus the
+    /// viewport). The key handler cannot re-wrap the text without the frame
+    /// width, so scrolling clamps against the last drawn frame.
+    hint_scroll_max: usize,
+    /// Render cache: the panel viewport's content rows — the PgUp/PgDn step.
+    hint_view_rows: usize,
+    /// The field whose hint/value the panel is showing (render cache). When it
+    /// changes the scroll offset resets: an offset kept across a field switch
+    /// would open the new field's text at a random middle.
+    hint_for: Option<FieldId>,
 }
 
 // ---------- submodules (a breakup of a god object: docs/history/refactoring-god-objects.md) ----------

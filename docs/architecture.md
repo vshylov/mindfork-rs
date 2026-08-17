@@ -239,6 +239,10 @@ src/
 │     │                     Assistant/Impersonation subsections
 │     │                     ("Profiles": the two subsections edit different lists — assistant
 │     │                     profiles vs. impersonation personas, spec §11.8).
+│     │                     The bottom hint panel is one fixed height for every section
+│     │                     and scrolls (Focus::Hint past the last field, or PgUp/PgDn
+│     │                     from the fields; offset/ceiling/page are render caches on
+│     │                     the screen — the key handler can't re-wrap text), spec §11.6.
 │     │                     God object broken up (docs/history/refactoring-god-objects.md, stage 1):
 │     ├─ mod.rs             SettingsIntent, section/subsection enums, field types
 │     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen

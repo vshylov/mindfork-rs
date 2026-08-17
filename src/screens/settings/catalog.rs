@@ -40,6 +40,10 @@ impl SettingsScreen {
             mcp_import_result: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            hint_scroll: 0,
+            hint_scroll_max: 0,
+            hint_view_rows: 0,
+            hint_for: None,
         }
     }
 

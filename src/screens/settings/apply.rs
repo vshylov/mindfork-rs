@@ -284,11 +284,16 @@ impl SettingsScreen {
     /// `Esc`/`Tab` navigation and the focus-routed key fallback (the dispatcher's tail).
     fn navigation_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         match (key.code, key.modifiers) {
-            // Esc — one level up. From the field pane it returns to the sections; from
-            // the sections it closes the screen. The editor/Choice/search popups
-            // handled above already close *into* the pane, so this completes a ladder
-            // that was previously only half built. See docs/history/settings-navigation.md §2.
+            // Esc — one level up. From the hint panel it returns to the fields; from
+            // the field pane — to the sections; from the sections it closes the
+            // screen. The editor/Choice/search popups handled above already close
+            // *into* the pane, so this completes a ladder that was previously only
+            // half built. See docs/history/settings-navigation.md §2.
             (KeyCode::Esc, _) => match self.focus {
+                Focus::Hint => {
+                    self.focus = Focus::Fields;
+                    None
+                }
                 Focus::Fields => {
                     self.focus = Focus::Menu;
                     None
@@ -306,6 +311,7 @@ impl SettingsScreen {
             _ => match self.focus {
                 Focus::Menu => self.handle_menu_key(key),
                 Focus::Fields => self.handle_fields_key(key),
+                Focus::Hint => self.handle_hint_key(key),
             },
         }
     }
@@ -365,7 +371,24 @@ impl SettingsScreen {
             KeyCode::Down => {
                 if self.field_idx + 1 < fields.len() {
                     self.field_idx += 1;
+                } else {
+                    // Past the last field ↓ moves into the hint panel: further ↓/↑
+                    // scroll its text, ↑ at the top steps back out. The panel keeps
+                    // showing this field's hint (`field_idx` stays). See spec §11.6.
+                    self.focus = Focus::Hint;
                 }
+                None
+            }
+            // Scroll the hint panel from the fields, without moving focus — the
+            // direct route to a clipped hint text: the panel's own focus stop sits
+            // past the *last* field, so from a mid-list field it is out of reach
+            // going down without changing what the panel shows.
+            KeyCode::PageUp => {
+                self.hint_scroll_page(-1);
+                None
+            }
+            KeyCode::PageDown => {
+                self.hint_scroll_page(1);
                 None
             }
             KeyCode::Char(' ') => {
@@ -387,6 +410,42 @@ impl SettingsScreen {
             }
             _ => None,
         }
+    }
+
+    /// Keys while the hint panel holds the focus: ↑/↓ scroll its text by a row —
+    /// ↑ at the top steps back out to the fields — and PgUp/PgDn by a page.
+    /// Esc/Tab/`/` and the section extras are handled by the dispatcher above;
+    /// the edit keys are inert here (there is no field under the cursor).
+    pub(super) fn handle_hint_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        match key.code {
+            KeyCode::Up => {
+                if self.hint_scroll == 0 {
+                    self.focus = Focus::Fields;
+                } else {
+                    self.hint_scroll -= 1;
+                }
+            }
+            KeyCode::Down => {
+                self.hint_scroll = (self.hint_scroll + 1).min(self.hint_scroll_max);
+            }
+            KeyCode::PageUp => self.hint_scroll_page(-1),
+            KeyCode::PageDown => self.hint_scroll_page(1),
+            _ => {}
+        }
+        None
+    }
+
+    /// Scrolls the hint panel by one viewport page. The page size and the offset
+    /// ceiling are render caches (`hint_view_rows`/`hint_scroll_max`): the key
+    /// handler cannot re-wrap the panel's text without the frame width, so it
+    /// scrolls against the last drawn frame.
+    fn hint_scroll_page(&mut self, dir: i32) {
+        let step = self.hint_view_rows.max(1);
+        self.hint_scroll = if dir < 0 {
+            self.hint_scroll.saturating_sub(step)
+        } else {
+            (self.hint_scroll + step).min(self.hint_scroll_max)
+        };
     }
 
     /// `Enter` on a field row: the row-specific action (the MCP status row), a toggle
