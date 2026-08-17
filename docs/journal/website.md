@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (8)
+## Entries (9)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -20,6 +20,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the hero fetch panel (done)
 - Post-M9: website — what 0.9.6 changed on the landing page (done)
 - Post-M9: website — two articles: the self-model and vector search (done)
+- Post-M9: website — two more articles: local speed and the Python sandbox (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -298,3 +299,46 @@ No live run: pure site content, no Rust touched. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`) green; `zola` is not
 available in the working environment, so the build check rides on the
 `site.yml` PR gate (pinned 0.22.1), which these files exercise.
+
+### Post-M9: website — two more articles: local speed and the Python sandbox (done)
+
+**What.** The "how mindfork is put together" series grew from four articles to
+six: `articles/local-speed.md` (weight 5 — FlashAttention and speculative
+decoding in managed mode) and `articles/python-sandbox.md` (weight 6 — the
+Wasmer/WASIX sandbox against Docker and the system interpreter). Same altitude
+as the previous pair: the *why* of the design for a reader able to install and
+use the feature, with constants and file paths left to the sources (the engine
+journal's FlashAttention/spec-decoding entry;
+[ADR 0005](../decisions/0005-python-sandbox-wasmer.md) and the sandbox
+research log).
+
+**What each article chose to carry.** The speed piece is built around one rule
+stated before any mechanism — neither lever is a quality dial — and explains
+both at user altitude: FlashAttention as the same attention computed in a
+better order (why it pays with context length, why `auto` passes no flag and
+defers to llama.cpp), speculative decoding as draft-and-verify (the draft
+never decides; acceptance rate makes it a lever to *measure*, and the honest
+caveat that low acceptance can cost more than it saves). The drafter menu maps
+the `SpecType` families — sibling GGUF, EAGLE-3, MTP companions, the
+zero-setup ngram group — and the managed-mode section carries the project's
+own guarantees: defaults pass no flags (byte-for-byte launch line), the draft
+path is preflight-checked before spawn, the embedder is excluded (generates no
+tokens), external/cloud untouched. The sandbox piece frames the three roads
+(system Python / Docker / wasm) and lets the capability argument carry the
+Docker comparison — files and sockets *absent*, not forbidden — with the
+sidecar choice told as the third occurrence of the separate-process-behind-a-
+contract pattern (engine, embedder, sandbox) and the `TCP_NODELAY` shim
+closing as the proven-live war story. Both articles keep the series habit of
+closing every claim loop by cross-linking earlier pieces.
+
+**Facts sourced, not invented.** Package set and versions (numpy/pandas as
+native WASIX wheels, the requests stack, beautifulsoup4, CPython 3.13) from
+the `sandbox_setup` lock list; the ~⅓ s interruption, the V8-only-on-Windows
+embedding argument and the security posture from ADR 0005; the flag set,
+`auto`-passes-nothing semantics and the `-md` preflight from
+`shared/api/managed.rs`, `shared/config.rs` and the engine journal entry.
+
+No live run: pure site content, no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green; built locally with the
+pinned Zola 0.22.1 — both new pages render and `zola check` passes internal
+links.
