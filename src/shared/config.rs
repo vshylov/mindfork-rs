@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::embed_prefix::EmbedConvention;
+use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -320,6 +321,11 @@ pub struct ExternalSettings {
     /// Env-variable name carrying a Bearer key (optional) — for an OpenAI-compatible
     /// proxy/gateway that requires authorization. Stores the **name**, not the secret
     /// (ADR 0004). `None`/empty — no authorization (a local `llama-server` doesn't need it).
+    ///
+    /// A **fallback**, since docs/history/external-api-key.md: the key can also be entered
+    /// in settings and kept machine-encrypted under this slot's
+    /// [`crate::shared::secrets::ExternalSlot`], and a stored key wins over the
+    /// variable named here (ADR 0008 §3, F2).
     pub api_key_env: Option<String>,
 }
 
@@ -375,6 +381,14 @@ impl EngineSettings {
         )
     }
 
+    /// The stored secret this engine's active mode reads (see [`mode_secret_key`]).
+    pub fn secret_key(&self) -> Option<SecretKey> {
+        mode_secret_key(
+            self.mode.cloud_provider(),
+            (self.mode == ServerMode::External).then_some(ExternalSlot::Chat),
+        )
+    }
+
     /// Active model name for the current mode (for the `Message.metadata` snapshot
     /// and the feed caption). Managed — the GGUF's base name without the path/`.gguf`
     /// extension; external/cloud — the configured `model_name`. `None` if unset.
@@ -410,6 +424,26 @@ fn cloud_mut(
 ) -> Option<&mut CloudSettings> {
     let idx = provider?.index();
     all.into_iter().nth(idx)
+}
+
+/// Which stored secret an engine-shaped settings slot's **active mode** reads —
+/// the single source of truth behind every `secret_key()` below (the orchestrator
+/// resolves the key with it, the settings screen addresses its field with it).
+/// `None` — the mode needs no key at all (managed, or impersonation's `shared`).
+///
+/// A cloud provider and an external slot are mutually exclusive by construction:
+/// `cloud_provider()` is `Some` exactly for the cloud modes. Passing both would be
+/// a caller bug, and the provider wins so it cannot silently produce a key for a
+/// server that isn't running. See docs/history/external-api-key.md §5.2.
+fn mode_secret_key(
+    provider: Option<CloudProvider>,
+    external_slot: Option<ExternalSlot>,
+) -> Option<SecretKey> {
+    match (provider, external_slot) {
+        (Some(p), _) => Some(SecretKey::Provider(p)),
+        (None, Some(slot)) => Some(SecretKey::External(slot)),
+        (None, None) => None,
+    }
 }
 
 /// Impersonation-server mode (writing a message on the user's behalf).
@@ -508,6 +542,16 @@ impl ImpersonationEngineSettings {
             ],
         )
     }
+
+    /// The stored secret this engine's active mode reads (see [`mode_secret_key`]).
+    /// `shared` mode reads none of its own — it runs on the assistant's engine, and
+    /// therefore on the assistant's key.
+    pub fn secret_key(&self) -> Option<SecretKey> {
+        mode_secret_key(
+            self.mode.cloud_provider(),
+            (self.mode == ImpersonationMode::External).then_some(ExternalSlot::Impersonation),
+        )
+    }
 }
 
 /// Default embedding-server port.
@@ -580,6 +624,14 @@ impl EmbedSettings {
                 &mut self.claude,
                 &mut self.grok,
             ],
+        )
+    }
+
+    /// The stored secret this embedder's active mode reads (see [`mode_secret_key`]).
+    pub fn secret_key(&self) -> Option<SecretKey> {
+        mode_secret_key(
+            self.mode.cloud_provider(),
+            (self.mode == ServerMode::External).then_some(ExternalSlot::Embed),
         )
     }
 
@@ -1444,6 +1496,16 @@ impl TtsSettings {
             CloudProvider::Claude | CloudProvider::Grok => None,
         }
     }
+
+    /// The stored secret this speech mode reads (see [`mode_secret_key`]). A cloud
+    /// one shares the provider's key with chat (ADR 0008 §3); `external` has its
+    /// own slot, since its URL is a server of the user's choosing.
+    pub fn secret_key(&self) -> Option<SecretKey> {
+        mode_secret_key(
+            self.mode.cloud_provider(),
+            (self.mode == TtsMode::External).then_some(ExternalSlot::Tts),
+        )
+    }
 }
 
 /// What to include when copying the whole chat conversation to the clipboard (`F5`,
@@ -1597,6 +1659,76 @@ mod tests {
     fn default_has_current_schema_version() {
         assert_eq!(AppConfig::default().schema_version, SCHEMA_VERSION);
         assert_eq!(AppConfig::default().max_tool_rounds, 8);
+    }
+
+    /// Which secret each slot's mode reads. The four slots share the cloud key of a
+    /// provider (ADR 0008 §3) but have **their own** external key, because their four
+    /// `external` URLs are four independent servers — the whole point of
+    /// docs/history/external-api-key.md F1. Managed needs no key, and impersonation's `shared`
+    /// mode has none of its own: it runs on the assistant's engine.
+    #[test]
+    fn secret_key_follows_the_mode_of_each_slot() {
+        let openai = Some(SecretKey::Provider(CloudProvider::OpenAi));
+        let mut engine = EngineSettings::default();
+        for (mode, want) in [
+            (ServerMode::Managed, None),
+            (
+                ServerMode::External,
+                Some(SecretKey::External(ExternalSlot::Chat)),
+            ),
+            (ServerMode::OpenAi, openai.clone()),
+            (
+                ServerMode::Claude,
+                Some(SecretKey::Provider(CloudProvider::Claude)),
+            ),
+        ] {
+            engine.mode = mode;
+            assert_eq!(engine.secret_key(), want, "chat mode {mode:?}");
+        }
+
+        let mut imp = ImpersonationEngineSettings::default();
+        for (mode, want) in [
+            (ImpersonationMode::Shared, None),
+            (ImpersonationMode::Managed, None),
+            (
+                ImpersonationMode::External,
+                Some(SecretKey::External(ExternalSlot::Impersonation)),
+            ),
+            (ImpersonationMode::OpenAi, openai.clone()),
+        ] {
+            imp.mode = mode;
+            assert_eq!(imp.secret_key(), want, "impersonation mode {mode:?}");
+        }
+
+        let mut embed = EmbedSettings {
+            mode: ServerMode::External,
+            ..Default::default()
+        };
+        assert_eq!(
+            embed.secret_key(),
+            Some(SecretKey::External(ExternalSlot::Embed))
+        );
+        embed.mode = ServerMode::OpenAi;
+        assert_eq!(embed.secret_key(), openai.clone());
+
+        let mut tts = TtsSettings {
+            mode: TtsMode::External,
+            ..Default::default()
+        };
+        assert_eq!(
+            tts.secret_key(),
+            Some(SecretKey::External(ExternalSlot::Tts))
+        );
+        tts.mode = TtsMode::OpenAi;
+        assert_eq!(tts.secret_key(), openai);
+
+        // No two slots address the same external key: a shared one would send a
+        // gateway's Bearer token to whatever the other slots point at.
+        let names: std::collections::BTreeSet<String> = ExternalSlot::ALL
+            .into_iter()
+            .map(|s| SecretKey::External(s).storage_name())
+            .collect();
+        assert_eq!(names.len(), ExternalSlot::ALL.len());
     }
 
     #[test]

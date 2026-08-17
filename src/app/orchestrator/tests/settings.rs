@@ -5,7 +5,7 @@ use super::*;
 
 use crate::app::orchestrator::engines::{RESTART_BUDGET, Server};
 use crate::shared::config::{CloudProvider, ServerMode};
-use crate::shared::secrets::SecretKey;
+use crate::shared::secrets::{ExternalSlot, SecretKey};
 use crate::shared::server::ServerStatus;
 
 #[tokio::test]
@@ -303,6 +303,92 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
         crate::shared::secrets::stored_key(&cfg.api_keys, CloudProvider::OpenAi.key()).as_deref(),
         Some("sk-super-secret-42")
     );
+}
+
+/// An external server's key takes the same path as a provider's, but is addressed by
+/// **slot**: entering it re-raises that one server, and the key the orchestrator hands
+/// the supervisor is the external one — not a provider's, and not nothing. Both halves
+/// matter: before docs/history/external-api-key.md the external mode resolved no stored key at
+/// all, so a mode reading the wrong slot would look exactly like the old behaviour.
+#[tokio::test(start_paused = true)]
+async fn set_external_key_reraises_that_server_with_the_key() {
+    if !crate::shared::secrets::scheme_available() {
+        return; // non-systemd Linux without machine-id: saving keys isn't supported
+    }
+    let config = AppConfig {
+        engine: crate::shared::config::EngineSettings {
+            mode: ServerMode::External,
+            external: crate::shared::config::ExternalSettings {
+                url: Some("http://127.0.0.1:9/v1".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (_d, sup, cmd_tx, mut evt_rx, handle) = spawn_orch_sup(config);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    assert_eq!(sup.chat_call_count(), 1, "bootstrap raised it once");
+    assert_eq!(
+        sup.chat_keys(),
+        vec![None],
+        "nothing is stored yet, so the supervisor falls back to env"
+    );
+
+    cmd_tx
+        .send(AppCommand::SetSecret {
+            key: SecretKey::External(ExternalSlot::Chat),
+            value: "sk-gateway-1".into(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { secrets_present, .. }
+            if secrets_present.contains(&SecretKey::External(ExternalSlot::Chat)))
+    })
+    .await
+    .unwrap();
+    // The restart is deferred like an engine edit — wait for the flush's status snapshot.
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ServerStatus(_)))
+        .await
+        .unwrap();
+    assert_eq!(
+        sup.chat_keys(),
+        vec![None, Some("sk-gateway-1".into())],
+        "the chat server came back up with the external slot's key"
+    );
+
+    // A *different* slot's key leaves this server alone: the mark is per slot, not
+    // "some secret changed". Proving a restart *didn't* happen can't wait on an absent
+    // event, so the speech key is followed by a slot that **does** restart something
+    // (embeddings) and the count is read against *its* flush — if the speech key had
+    // marked chat, that same flush would have raised the chat server too.
+    for slot in [ExternalSlot::Tts, ExternalSlot::Embed] {
+        cmd_tx
+            .send(AppCommand::SetSecret {
+                key: SecretKey::External(slot),
+                value: format!("sk-{slot:?}-2"),
+            })
+            .unwrap();
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::Settings { secrets_present, .. }
+                if secrets_present.contains(&SecretKey::External(slot)))
+        })
+        .await
+        .unwrap();
+    }
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ServerStatus(_)))
+        .await
+        .unwrap();
+    assert_eq!(
+        sup.chat_call_count(),
+        2,
+        "neither the speech nor the embedding key may restart the chat server"
+    );
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
 }
 
 /// The backup password takes the same path as an API key: ciphertext on disk, a

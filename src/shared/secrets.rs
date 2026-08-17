@@ -55,6 +55,38 @@ pub const SCHEME_MACHINE_KEY_V1: &str = "machine-key-v1";
 /// gate over `*.*` literals — a hyphen is just as unambiguous here.
 pub const BACKUP_PASSWORD_KEY: &str = "backup-password";
 
+/// One of the settings slots that can point at an **external**
+/// OpenAI-compatible server. Each has a URL of its own, so each has a key of its
+/// own: the common configuration is a cloud gateway for chat beside a local
+/// `llama-server` for embeddings, and one shared key would send the gateway's
+/// Bearer token to localhost. See docs/history/external-api-key.md §3, F1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalSlot {
+    /// `engine.external` — the assistant's chat server.
+    Chat,
+    /// `impersonation_engine.external` — the impersonation server (spec §11.8).
+    Impersonation,
+    /// `embed.external` — the embedding server (ADR 0002).
+    Embed,
+    /// `tts.external` — the speech server (ADR 0009).
+    Tts,
+}
+
+impl ExternalSlot {
+    /// Every slot, for enumerating the presence list.
+    pub const ALL: [ExternalSlot; 4] = [Self::Chat, Self::Impersonation, Self::Embed, Self::Tts];
+
+    /// The slot's part of the storage name (see [`SecretKey::storage_name`]).
+    fn key(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Impersonation => "impersonation",
+            Self::Embed => "embed",
+            Self::Tts => "tts",
+        }
+    }
+}
+
 /// Which secret a storage slot holds. One typed key instead of raw strings: the
 /// side effects of storing differ per kind (a provider key re-raises the servers
 /// that use it, an MCP one re-spawns that server, a backup password needs
@@ -66,6 +98,13 @@ pub enum SecretKey {
     /// A cloud provider's API key — shared by chat/impersonation/embeddings of
     /// that provider (ADR 0008 §3).
     Provider(crate::shared::config::CloudProvider),
+    /// The Bearer key of one external OpenAI-compatible server (a proxy or a
+    /// gateway — LiteLLM, OpenRouter, vLLM…). Addressed by **slot** rather than
+    /// by provider, which is what ADR 0008 could not do and is why the external
+    /// mode stayed env-only until now: an arbitrary URL cannot be pinned to a
+    /// provider, but the sub-section the user is typing the URL into is a
+    /// perfectly good address. See docs/history/external-api-key.md.
+    External(ExternalSlot),
     /// The backup password (spec §12.3).
     BackupPassword,
     /// The value of one environment variable handed to an MCP server
@@ -76,14 +115,16 @@ pub enum SecretKey {
 }
 
 impl SecretKey {
-    /// The key this secret is stored under in the machine entry. `mcp-` cannot
-    /// collide with a provider key (`openai`/`gemini`/`claude`) or with
-    /// [`BACKUP_PASSWORD_KEY`], and since a variable name is restricted to
-    /// `[A-Za-z0-9_]` (only the server id may contain `-`) the composed name is
-    /// unambiguous from the right.
+    /// The key this secret is stored under in the machine entry. Neither `mcp-`
+    /// nor `external-` can collide with a provider key
+    /// (`openai`/`gemini`/`claude`/`grok`) or with [`BACKUP_PASSWORD_KEY`], and
+    /// since a variable name is restricted to `[A-Za-z0-9_]` (only the server id
+    /// may contain `-`) the composed MCP name is unambiguous from the right. The
+    /// external slots are a closed set, so theirs cannot be ambiguous at all.
     pub fn storage_name(&self) -> String {
         match self {
             Self::Provider(p) => p.key().to_string(),
+            Self::External(slot) => format!("external-{}", slot.key()),
             Self::BackupPassword => BACKUP_PASSWORD_KEY.to_string(),
             Self::McpEnv { server, var } => format!("mcp-{server}-{var}"),
         }
@@ -428,6 +469,48 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every kind of secret has to occupy its own slot in the one per-machine
+    /// `keys` map: a collision would make two unrelated fields overwrite each
+    /// other's value. The external names are also pinned literally — they are on
+    /// disk now, so renaming one silently orphans a stored key.
+    #[test]
+    fn storage_names_are_distinct_across_kinds() {
+        use crate::shared::config::CloudProvider;
+        let mut names: Vec<String> = CloudProvider::ALL
+            .into_iter()
+            .map(SecretKey::Provider)
+            .chain(ExternalSlot::ALL.into_iter().map(SecretKey::External))
+            .chain([
+                SecretKey::BackupPassword,
+                SecretKey::McpEnv {
+                    server: "chat".into(), // a server named after an external slot
+                    var: "TOKEN".into(),
+                },
+            ])
+            .map(|k| k.storage_name())
+            .collect();
+        let total = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), total, "storage names collide: {names:?}");
+        assert_eq!(
+            SecretKey::External(ExternalSlot::Chat).storage_name(),
+            "external-chat"
+        );
+        assert_eq!(
+            SecretKey::External(ExternalSlot::Impersonation).storage_name(),
+            "external-impersonation"
+        );
+        assert_eq!(
+            SecretKey::External(ExternalSlot::Embed).storage_name(),
+            "external-embed"
+        );
+        assert_eq!(
+            SecretKey::External(ExternalSlot::Tts).storage_name(),
+            "external-tts"
+        );
+    }
 
     #[test]
     fn hex_round_trip_and_rejects_malformed() {

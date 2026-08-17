@@ -85,8 +85,10 @@ pub enum TtsSetupError {
 pub type TtsEnginePair = (Box<dyn TtsEngine>, Option<Box<dyn TtsEngine>>);
 
 /// Engines for multi-voice speech: `(assistant, opt. user)`. `stored_key` — the
-/// provider's stored key (ADR 0008): already decrypted by the caller; if
-/// absent, the key is read from an env variable. The second engine is built
+/// stored key of whatever the active mode reads (a cloud provider's, shared with
+/// chat, or the `external` slot's own — ADR 0008, docs/history/external-api-key.md):
+/// already decrypted by the caller; if absent, the key is read from an env
+/// variable. The second engine is built
 /// **only** if the active mode has a separate "user voice" set and it differs
 /// from the assistant's voice — then `/tts all`/`/tts N` read the user's turns
 /// with it (spec §11.9). Otherwise `None` → everything in one voice.
@@ -150,7 +152,13 @@ fn build_engine(
             let url = non_empty(tts.external.url.clone()).ok_or(TtsSetupError::Url)?;
             Ok(Box::new(openai::OpenAiTts::external(
                 url,
-                env_key(tts.external.api_key_env.as_deref()),
+                // The same order as the cloud arm above — a key stored for this slot
+                // wins over the variable named in settings (docs/history/external-api-key.md
+                // F2) — but here having no key at all is legitimate: a local speech
+                // server needs none, so this is an `Option`, not a `?`.
+                stored_key
+                    .filter(|k| !k.is_empty())
+                    .or_else(|| env_key(tts.external.api_key_env.as_deref())),
                 non_empty(tts.external.model_name.clone()),
                 voice_override.or_else(|| non_empty(tts.external.voice.clone())),
                 speed,

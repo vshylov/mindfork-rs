@@ -27,6 +27,16 @@ split by subsystem.
 
 ### Added
 
+- **An external server's API key can be entered in settings.** Connecting to a
+  server that requires authorization — a gateway such as LiteLLM or OpenRouter, or
+  a `llama-server` started with `--api-key` — no longer means setting an
+  environment variable first: the `external` mode now has the same "API key"
+  field the cloud modes have, stored encrypted and bound to this computer, never
+  shown back. It is optional (a local server needs none, and then nothing is
+  sent), the "API key (env)" field stays as the fallback for CI and scripts, and
+  each `external` tab — Assistant, Impersonation, Embeddings, Speech — keeps its
+  own key, because those are four independent servers.
+
 - **`/export` saves a conversation to a file.** `/export` writes it next to
   wherever you started the app, naming the file after the chat and the date;
   `/export path/to/name.md` puts it where you say. Two formats: **md** — exactly

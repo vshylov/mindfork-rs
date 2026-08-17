@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (8)
+## Entries (9)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -20,6 +20,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: database compaction on backup and restore (done)
 - Post-M9: password-protected backups (done)
 - Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
+- Post-M9: the external server's API key, entered in settings (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -505,3 +506,95 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   here** — it needs a real console, and `IsTerminal` is false in a piped
   harness — so it is left for the user's interactive check, the same boundary
   the MCP command resolver's wiring sits behind.
+
+
+### Post-M9: the external server's API key, entered in settings (done)
+- **What.** The `external` mode — connect to any already-running
+  OpenAI-compatible server — could only take its Bearer key from an **environment
+  variable named in settings**. It now takes the key itself, in the same field the
+  cloud modes have, with the same machine-bound encryption
+  (`AppConfig::api_keys`), for all four slots that have an `external` sub-section:
+  assistant chat, impersonation, embeddings, speech. Plan:
+  [docs/external-api-key.md](../history/external-api-key.md); this closes the groundwork
+  item [ADR 0008](../decisions/0008-api-key-storage.md) wrote for itself.
+- **Why the original decision no longer holds.** ADR 0008 left external env-only on
+  one argument (research §F4, R4): *an arbitrary URL cannot be pinned to a
+  provider*, plus "external is a power-user feature env already covers". The first
+  half is about **addressing**, not about the user — and the MCP reuse
+  ([mcp-server-editor.md](../history/mcp-server-editor.md) §9) had already answered
+  it by addressing a secret as `(server, variable)`. The second half stopped being
+  true: `external` is the mode for OpenRouter, LiteLLM, vLLM and every self-hosted
+  gateway, and those require a key. So the settings screen was offering exactly the
+  env barrier ADR 0008 existed to remove, in the one mode whose URL is typed by
+  hand. A recorded rationale is a claim with a date on it (lessons.md §3).
+- **The address is the slot, not the provider** — `SecretKey::External(ExternalSlot)`
+  → `external-chat` / `external-impersonation` / `external-embed` / `external-tts`.
+  This deliberately inverts ADR 0008 §3's provider-centric rule, and the reason is
+  the shape of the data: one provider is one account, whereas the four `external`
+  sub-sections hold four **independent URLs**. The ordinary configuration is a cloud
+  gateway for chat beside a local `llama-server` for embeddings, so one shared
+  "external key" would send the gateway's Bearer token to localhost and back. Fork
+  F1, user's decision 2026-08-17. A hyphen, not a dot, in the storage name — a
+  dotted literal reads as an i18n bundle key to the `cyrillic_scan.py` sibling gate
+  (lessons.md §7), the same trap `backup-password` hit.
+- **Reading the code shrank the task to plumbing** (lessons.md §3, again). Nothing
+  new was needed in `shared/secrets.rs` (`put_key`/`stored_key` take a name),
+  nothing in the `ServerSupervisor` trait (every method already takes one
+  already-decrypted `stored_key: Option<&str>` — the orchestrator decides *which*
+  secret that is), and **no new `FieldId`**: `XApiKey`/`IxApiKey`/`EApiKey`/
+  `TtsApiKey` already exist with the masked editor, the empty seed, `Del`-deletes
+  and the `SetSecret` intent behind them. What changed is which secret those ids
+  resolve to.
+- **One source for "which secret does this slot read".** Both `engines.rs` and the
+  settings screen's `secret_field_key` used to spell out "mode → provider"
+  independently; the mapping now lives on the settings structs themselves
+  (`EngineSettings`/`ImpersonationEngineSettings`/`EmbedSettings`/
+  `TtsSettings::secret_key()`, one shared `mode_secret_key` behind them), and both
+  ask. That is the load-bearing part rather than the line count: a row that
+  addresses a different secret than the server resolves is invisible from outside —
+  the supervisor would simply be handed the wrong string — which is why
+  `MockSupervisor` grew a `chat_keys()` recorder so a test can see it.
+- **Resolution is unchanged, and that is the point** (fork F2): `resolve_api_key(stored,
+  env)` was already "stored wins, env is the fallback", so the external paths went from
+  passing `None` as the stored key to passing the real one. The external row has the
+  cloud row's shape — a key plus an optional variable *name* — unlike MCP's `env` row,
+  where the variable is *declared* and naming a source is an explicit instruction a
+  stored value must not override. Choosing MCP's rule here would only have made the two
+  engine paths disagree with each other.
+- **No key stays legitimate** (fork F3). The cloud paths report `Disconnected` when a
+  key cannot be resolved; the external paths keep `.ok()`, because a local
+  `llama-server` needs none and a request with no key must stay byte-for-byte what
+  the app sent before this feature. The unit test asserts that on the wire — **no
+  `Authorization` header at all**, not merely an empty one.
+- **Side effects are per slot** (`handle_set_secret`): `Chat`/`Impersonation`/`Embed`
+  mark exactly their own server for the debounced re-raise, `Tts` marks nothing (the
+  speech engine is built per utterance, like the backup password). No mode check is
+  needed, unlike a provider key, which several slots may or may not be pointing at.
+- **UI**: the `external` field list gains the key row above the existing env-name
+  row, which stays (fork F4 — CI, scripts, and a machine where key storage is
+  unavailable). Two bundle keys in both locales; the description has to close the
+  door (lessons.md §4) — two adjacent fields that look like alternatives must say
+  which one decides, so it states that a stored key is used *instead of* the
+  variable named below, that the key is optional, and that each external server has
+  its own.
+- **Tests**: **2288 unit green** (+6), 98 `#[ignore]` (+1), clippy `-D warnings`/
+  fmt/`cyrillic_scan` clean. The wire-level trio (stored key sent, env fallback
+  read, neither → no header) runs against a one-request TCP stub reading **to the
+  end of the headers** rather than a fixed buffer — with a 2 KiB buffer the `PATH`
+  value under comparison came back truncated, which looked like a resolution bug.
+  **Mutation-found**: the "a speech key must not restart the chat server" assertion
+  first passed with `Tts => mark_chat()` applied, because `Quit` was handled before
+  the debounce expired — it only bites once the speech key is followed by a slot
+  that *does* restart something and the count is read against **that** flush, which
+  is the same device `an_edit_and_its_undo_cost_no_restart` uses.
+- **Live — GO.** A local `llama-server --api-key sk-live-probe-42`
+  (`gemma-3-4b-it-q8_0`, CPU) verified the whole chain through `LlamaSupervisor`:
+  with the key stored the turn answered `"OK."`, and the **control arm** with no key
+  anywhere got a real `401 Invalid API Key`. The control is what makes it mean
+  anything — against a server that does not enforce a key, the first arm would pass
+  regardless. Kept as `external_authenticated_server_takes_the_stored_key_live`
+  (`MINDFORK_ENGINE_URL` + `MINDFORK_ENGINE_KEY`), and it *fails* rather than
+  silently passes if the server turns out not to enforce the key. Note what this
+  smoke could not have been: the orchestrator's live e2e set builds its backend
+  through `MockSupervisor` (lessons.md §9), so it never runs `external_chat_setup`
+  at all — the supervisor had to be driven directly.

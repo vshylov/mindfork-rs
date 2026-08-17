@@ -45,6 +45,9 @@ pub(super) const DESC_VIDEO_API_KEY: &str = "ui.settings.desc.video_api_key";
 pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
 /// Key: the env-variable name holding the external-server key (optional).
 pub(super) const DESC_EXT_API_KEY_ENV: &str = "ui.settings.desc.ext_api_key_env";
+/// Key: the external server's own stored key (X/Ix/E/Tts) — optional, and it wins
+/// over the variable named in the row below it. See docs/history/external-api-key.md.
+pub(super) const DESC_EXT_API_KEY: &str = "ui.settings.desc.ext_api_key";
 /// Key: the subsection selector (Model/Sampling/Profiles tab strip).
 pub(super) const DESC_SUBSECTION: &str = "ui.settings.desc.subsection";
 /// Key: the profile's scaffold language (axis A).
@@ -318,6 +321,21 @@ pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> F
         present,
         loc.t("ui.settings.field.api_key"),
         DESC_API_KEY,
+        loc,
+    )
+}
+
+/// The same row for an **external** server's key — the storage and every behaviour
+/// are identical (see [`api_key_row`]), only the wording differs: here the key is
+/// optional (a local `llama-server` needs none) and it sits directly above the
+/// env-name row, so the description has to say which of the two decides.
+/// See docs/history/external-api-key.md §5.5.
+pub(super) fn ext_api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> FieldRow {
+    secret_row(
+        id,
+        present,
+        loc.t("ui.settings.field.api_key_opt"),
+        DESC_EXT_API_KEY,
         loc,
     )
 }

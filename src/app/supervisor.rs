@@ -62,11 +62,13 @@ pub struct EmbedSetup {
 /// (Re)connect/launch servers per settings. Behind a trait — for a mock test of the
 /// restart on model change.
 ///
-/// `stored_key` on every method is the already-decrypted saved API key of the active
-/// cloud provider (`AppConfig::api_keys`, see `shared::secrets`); the resolution is
-/// owned by [`super::orchestrator`], the supervisor knows nothing about the storage
-/// format. `None` — the key isn't saved on this machine, then the env fallback
-/// (`api_key_env`) applies. See docs/research/api-key-storage.md.
+/// `stored_key` on every method is the already-decrypted saved API key of whatever
+/// the slot's **active mode** reads — the cloud provider's key, or, for `external`,
+/// that slot's own (`AppConfig::api_keys`, see `shared::secrets::SecretKey`). Which
+/// one it is was decided by [`super::orchestrator`]; the supervisor knows neither the
+/// storage format nor the addressing. `None` — the key isn't saved on this machine,
+/// then the env fallback (`api_key_env`) applies. See
+/// docs/research/api-key-storage.md, docs/history/external-api-key.md.
 pub trait ServerSupervisor: Send + Sync {
     /// (Re)connects to the chat server. Returns the engine and status immediately
     /// (`Connecting`/`NotConfigured`/`Disconnected`), while managed/external readiness
@@ -132,6 +134,7 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             ServerMode::External => external_chat_setup(
                 settings.external.url.as_deref(),
+                stored_key,
                 settings.external.api_key_env.as_deref(),
                 cancel,
                 status_tx,
@@ -167,6 +170,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::Shared => not_configured(),
             ImpersonationMode::External => external_chat_setup(
                 settings.external.url.as_deref(),
+                stored_key,
                 settings.external.api_key_env.as_deref(),
                 cancel,
                 status_tx,
@@ -203,15 +207,9 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             ServerMode::External => match settings.external.url.as_deref() {
                 Some(url) if !url.is_empty() => {
-                    let client = Arc::new(
-                        OpenAiClient::new(url).with_api_key(
-                            settings
-                                .external
-                                .api_key_env
-                                .as_deref()
-                                .and_then(|e| resolve_api_key(None, Some(e)).ok()),
-                        ),
-                    );
+                    let client = Arc::new(OpenAiClient::new(url).with_api_key(
+                        resolve_api_key(stored_key, settings.external.api_key_env.as_deref()).ok(),
+                    ));
                     spawn_probe(
                         client.clone(),
                         EXTERNAL_READY_TIMEOUT,
@@ -315,14 +313,20 @@ impl ServerSupervisor for LlamaSupervisor {
 }
 
 /// External chat setup: connect by URL (any OpenAI-compatible server), a background
-/// probe. Optional `api_key_env` — the name of an env variable holding a Bearer key
-/// (for an OpenAI-compatible authenticated proxy/gateway); a missing/unresolvable key
-/// is not an error (a local `llama-server` needs no key). Saved keys
-/// (`shared::secrets`) apply only to cloud providers: external has an arbitrary
-/// URL that can't be bound to a provider, so the env path stays here
-/// (docs/research/api-key-storage.md, decision point R4).
+/// probe. The Bearer key (for an authenticated proxy/gateway) is resolved by the same
+/// [`resolve_api_key`] chain as a cloud one — `stored_key` first, then the variable
+/// named by `api_key_env` — and having **no** key is not an error, unlike in a cloud
+/// mode: a local `llama-server` needs none, and then no `Authorization` header is sent
+/// (docs/history/external-api-key.md F2/F3).
+///
+/// Until that document, saved keys applied to cloud providers only, on the argument
+/// that an arbitrary URL can't be bound to a provider
+/// (docs/research/api-key-storage.md, decision point R4). It is bound to its **slot**
+/// instead — `secrets::ExternalSlot` — and the orchestrator has already resolved
+/// which one by the time it calls here.
 fn external_chat_setup(
     url: Option<&str>,
+    stored_key: Option<&str>,
     api_key_env: Option<&str>,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
@@ -330,7 +334,7 @@ fn external_chat_setup(
 ) -> ChatSetup {
     match url {
         Some(url) if !url.is_empty() => {
-            let key = api_key_env.and_then(|e| resolve_api_key(None, Some(e)).ok());
+            let key = resolve_api_key(stored_key, api_key_env).ok();
             let client = Arc::new(OpenAiClient::new(url).with_api_key(key));
             spawn_probe(
                 client.clone(),
@@ -769,6 +773,11 @@ impl ServerSupervisor for DemoSupervisor {
 pub struct MockSupervisor {
     backend: Option<Arc<dyn EngineBackend>>,
     chat_calls: std::sync::atomic::AtomicUsize,
+    /// The `stored_key` of every `apply_chat`, in order — what the **orchestrator**
+    /// resolved for the active mode. A mode addressing the wrong secret (a provider's
+    /// key for an external server, or the other way round) is otherwise invisible from
+    /// outside: the supervisor would simply be handed the wrong string.
+    chat_keys: std::sync::Mutex<Vec<Option<String>>>,
     embed_dim: usize,
     /// An optional **real** embedder (live smokes — bge-m3 from MINDFORK_EMBED_URL
     /// and so on); `None` → a deterministic `MockEmbedder`.
@@ -787,6 +796,7 @@ impl MockSupervisor {
         Self {
             backend,
             chat_calls: std::sync::atomic::AtomicUsize::new(0),
+            chat_keys: std::sync::Mutex::new(Vec::new()),
             embed_dim: 16,
             embedder: None,
             embed_unavailable: false,
@@ -802,6 +812,7 @@ impl MockSupervisor {
         Self {
             backend,
             chat_calls: std::sync::atomic::AtomicUsize::new(0),
+            chat_keys: std::sync::Mutex::new(Vec::new()),
             embed_dim: 16,
             embedder,
             embed_unavailable: false,
@@ -825,6 +836,11 @@ impl MockSupervisor {
     pub fn chat_call_count(&self) -> usize {
         self.chat_calls.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// The keys `apply_chat` was called with, in order (see [`Self::chat_keys`]).
+    pub fn chat_keys(&self) -> Vec<Option<String>> {
+        self.chat_keys.lock().unwrap().clone()
+    }
 }
 
 #[cfg(test)]
@@ -832,13 +848,17 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_chat(
         &self,
         _settings: &EngineSettings,
-        _stored_key: Option<&str>,
+        stored_key: Option<&str>,
         _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
         _loc: &'static Locale,
     ) -> ChatSetup {
         self.chat_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.chat_keys
+            .lock()
+            .unwrap()
+            .push(stored_key.map(str::to_string));
         let backend = self.backend.clone();
         // The mock engine is ready instantly: we hand back `Ready` as the immediate
         // status (rather than `Connecting` + an async probe), otherwise the
@@ -997,6 +1017,111 @@ mod tests {
         assert_eq!(setup.status, ServerStatus::Connecting);
     }
 
+    /// A one-request stub: returns its URL and a handle yielding the `Authorization`
+    /// header the request carried (lowercased; empty when there was none). What makes
+    /// the request is the readiness probe the external setup spawns, so these tests
+    /// observe the key **on the wire** rather than the resolution in isolation.
+    fn auth_probe_stub() -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            // Read to the end of the headers rather than one bounded chunk: a key can
+            // come from a variable of any length (`PATH` alone is past 2 KiB here), and
+            // a truncated buffer would silently cut the value under comparison.
+            let mut req = Vec::new();
+            let mut buf = [0u8; 512];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&buf[..n]),
+                }
+            }
+            // Answer only after draining: writing first turns the close into an RST
+            // that discards the response (lessons.md §2).
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            String::from_utf8_lossy(&req)
+                .to_ascii_lowercase()
+                .lines()
+                .find(|l| l.starts_with("authorization:"))
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        });
+        (format!("http://{addr}/v1"), seen)
+    }
+
+    /// Waits for the stub off the runtime thread: a bare `join()` would block the
+    /// executor, and then the probe task that has to make the request never runs.
+    async fn header(seen: std::thread::JoinHandle<String>) -> String {
+        tokio::task::spawn_blocking(move || seen.join().unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// The chat key for one external server, resolved and sent.
+    async fn external_chat_header(stored: Option<&str>, api_key_env: Option<&str>) -> String {
+        let (url, seen) = auth_probe_stub();
+        let mut settings = external(Some(&url));
+        settings.external.api_key_env = api_key_env.map(String::from);
+        let (tx, _rx) = unbounded_channel();
+        let setup =
+            LlamaSupervisor.apply_chat(&settings, stored, CancellationToken::new(), tx, ru());
+        assert!(setup.backend.is_some(), "external mode yields a backend");
+        header(seen).await
+    }
+
+    /// The external server's key follows the same chain as a cloud one — a key stored
+    /// for this slot first, then the variable named in settings — and having neither
+    /// stays legitimate rather than an error: that is the local `llama-server` path,
+    /// and it must keep sending no `Authorization` at all
+    /// (docs/history/external-api-key.md F2/F3).
+    #[tokio::test]
+    async fn external_sends_the_stored_key_and_falls_back_to_env() {
+        // `PATH` is read rather than set: `set_var` is `unsafe` in edition 2024 and
+        // races every other test in the binary (the trick the sibling tests use).
+        let from_env = std::env::var("PATH").unwrap().to_ascii_lowercase();
+        assert_eq!(
+            external_chat_header(Some("sk-stored"), Some("PATH")).await,
+            "authorization: bearer sk-stored",
+            "a stored key wins over the named variable"
+        );
+        assert_eq!(
+            external_chat_header(None, Some("PATH")).await,
+            format!("authorization: bearer {from_env}"),
+            "with nothing stored, the named variable is read"
+        );
+        assert_eq!(
+            external_chat_header(None, None).await,
+            "",
+            "no key anywhere — no header, as before this feature existed"
+        );
+    }
+
+    /// The embedding slot resolves its own key the same way. A second slot rather than
+    /// a second mechanism: the point is that `apply_embed` now reads the key it is
+    /// handed instead of only the variable named in settings.
+    #[tokio::test]
+    async fn external_embeddings_send_the_stored_key() {
+        let (url, seen) = auth_probe_stub();
+        let (tx, _rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_embed(
+            &embed_external(&url),
+            Some("sk-embed"),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(setup.status, ServerStatus::Connecting);
+        assert_eq!(
+            header(seen).await,
+            "authorization: bearer sk-embed",
+            "the embedding probe must carry the slot's stored key"
+        );
+    }
+
     #[tokio::test]
     async fn superseded_probe_sends_no_status() {
         // A probe marked stale (mode switch managed→external→openai) shouldn't send a
@@ -1006,7 +1131,8 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         cancel.cancel(); // the probe is already stale before the background task starts
-        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), None, cancel, tx, ru());
+        let setup =
+            external_chat_setup(Some("http://127.0.0.1:9/v1"), None, None, cancel, tx, ru());
         assert_eq!(setup.status, ServerStatus::Connecting); // the immediate status as usual
         // Give the background task a chance to run; a stale probe sends nothing.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1147,6 +1273,78 @@ mod tests {
             resolve_api_key(Some(""), None),
             Err(ApiKeyError::NoName)
         ));
+    }
+
+    /// Live: an external server that **requires** a key is reachable on a key entered
+    /// in settings alone, with nothing in the environment — the whole point of
+    /// docs/history/external-api-key.md. The control arm is what makes it mean anything: the
+    /// same settings with no key must *fail*, or the smoke would pass against a server
+    /// that never checked (`llama-server` without `--api-key`, a stray env variable).
+    ///
+    /// Stack: `MINDFORK_ENGINE_URL` pointed at a server started with
+    /// `--api-key <MINDFORK_ENGINE_KEY>`.
+    #[tokio::test]
+    #[ignore = "requires an authenticated external server (MINDFORK_ENGINE_URL started with --api-key MINDFORK_ENGINE_KEY)"]
+    async fn external_authenticated_server_takes_the_stored_key_live() {
+        use crate::shared::api::ChatChunk;
+        use futures_util::StreamExt;
+        let (Ok(url), Ok(key)) = (
+            std::env::var("MINDFORK_ENGINE_URL"),
+            std::env::var("MINDFORK_ENGINE_KEY"),
+        ) else {
+            eprintln!("skip: MINDFORK_ENGINE_URL/MINDFORK_ENGINE_KEY not set");
+            return;
+        };
+        // `api_key_env` deliberately unset: only a key stored for this slot can make
+        // the turn work, so the env path cannot be what is being measured.
+        let settings = external(Some(&url));
+        assert_eq!(settings.external.api_key_env, None);
+
+        let turn = |stored: Option<&str>| {
+            let (tx, _rx) = unbounded_channel();
+            let setup =
+                LlamaSupervisor.apply_chat(&settings, stored, CancellationToken::new(), tx, ru());
+            let backend = setup.backend.expect("external mode yields a backend");
+            async move {
+                let req = crate::shared::api::ChatRequest {
+                    system: None,
+                    messages: vec![crate::shared::api::ApiMessage::user("Say OK.".to_string())],
+                    sampling: crate::entities::sampling::SamplingConfig {
+                        max_tokens: Some(16),
+                        ..Default::default()
+                    },
+                    tools: Vec::new(),
+                };
+                let mut stream = backend.chat_stream(req, CancellationToken::new()).await?;
+                let mut text = String::new();
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        ChatChunk::Text(t) => text.push_str(&t),
+                        ChatChunk::Error { message, .. } => anyhow::bail!("stream: {message}"),
+                        _ => {}
+                    }
+                }
+                Ok::<String, anyhow::Error>(text)
+            }
+        };
+
+        let with_key = turn(Some(&key)).await;
+        eprintln!("live: stored key -> {with_key:?}");
+        let answer = with_key.expect("the stored key must authenticate the turn");
+        assert!(
+            !answer.trim().is_empty(),
+            "authenticated turn produced no text"
+        );
+
+        // Control: no key anywhere → the server refuses. If this *succeeds*, the
+        // server is not enforcing a key and the arm above proved nothing.
+        let without = turn(None).await;
+        eprintln!("live: no key -> {without:?}");
+        assert!(
+            without.is_err(),
+            "the server accepted an unauthenticated turn — it is not enforcing \
+             --api-key, so this smoke measured nothing"
+        );
     }
 
     /// A cloud mode comes up on a single saved key — without `api_key_env`

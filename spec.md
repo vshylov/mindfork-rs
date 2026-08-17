@@ -2166,22 +2166,31 @@ message**: it's multiline by nature, so it's edited in a **large multiline popup
 with long-line wrapping, where `Shift+Enter` inserts a line break and `Enter`
 commits (like in the chat input box, see [11.5](#115-input-and-editing-spellcheck)).
 
-**The "API Key" field** (the cloud Model/Impersonation/Embeddings subsections) — a
-special case of a text field: its **value is a status** ("configured (this
-computer)" / "not set"), not a secret. `Enter` opens an **empty** editor in
-**masked mode** `InputBox` (`set_mask`: characters are drawn as `•`, selection isn't
-sent to the clipboard, the field is single-line) — a saved key can't be shown, and
-editing enters a new one; `Del` removes it. Committing sends a `SetApiKey` intent
-(not into the working config copy): the orchestrator encrypts the key with a
-machine-bound key and stores it in `AppConfig::api_keys` as a record for **this**
-machine, so the settings file stays portable — on another machine the key is
-entered again, and it's read back when returning here. The key is **shared** across
-chat, impersonation, and embeddings for one provider; the adjacent "API key (env)"
-field remains a fallback (an environment variable name; used if no key is entered).
-Keys never appear in the `Settings` snapshot — only "configured" flags
-(`api_keys_present`). If the machine doesn't support encryption (Linux with no
+**The "API Key" field** (the Model/Impersonation/Embeddings/Speech subsections, in
+every mode that can need a key — the clouds and `external`; a managed server is a
+local process and shows none) — a special case of a text field: its **value is a
+status** ("configured (this computer)" / "not set"), not a secret. `Enter` opens an
+**empty** editor in **masked mode** `InputBox` (`set_mask`: characters are drawn as
+`•`, selection isn't sent to the clipboard, the field is single-line) — a saved key
+can't be shown, and editing enters a new one; `Del` removes it. Committing sends a
+`SetSecret` intent (not into the working config copy): the orchestrator encrypts the
+key with a machine-bound key and stores it in `AppConfig::api_keys` as a record for
+**this** machine, so the settings file stays portable — on another machine the key is
+entered again, and it's read back when returning here.
+
+Which key a row addresses follows the subsection's **mode**. A **cloud** key is
+**shared** across chat, impersonation, embeddings and speech for one provider — enter
+it once. An **external** key belongs to that **one slot**: the four `external`
+subsections hold four independent URLs (the common setup is a cloud gateway for chat
+beside a local `llama-server` for embeddings), so one shared key would send a
+gateway's token to localhost. In external mode the key is also **optional** — a local
+server needs none, and then no authorization is sent at all. Either way the adjacent
+"API key (env)" field remains a fallback (an environment variable name; used if no key
+is entered). Keys never appear in the `Settings` snapshot — only "configured" flags
+(`secrets_present`). If the machine doesn't support encryption (Linux with no
 `machine-id`), the field shows "unavailable on this system" and the env path
-remains. See `shared::secrets`, docs/research/api-key-storage.md.
+remains. See `shared::secrets`, docs/research/api-key-storage.md,
+docs/history/external-api-key.md.
 
 ### 11.7. Keybindings (preliminary)
 

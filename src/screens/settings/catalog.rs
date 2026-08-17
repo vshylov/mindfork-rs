@@ -130,23 +130,29 @@ impl SettingsScreen {
         key.is_some_and(|k| self.secrets_present.contains(k))
     }
 
-    /// Whether the provider's key is stored on this machine (for the "API key" field's status).
-    pub(super) fn api_key_present(&self, provider: Option<CloudProvider>) -> bool {
-        self.secret_present(provider.map(SecretKey::Provider).as_ref())
+    /// Whether the secret a given field addresses is stored on this machine (that
+    /// field's status). Goes through [`Self::secret_field_key`], so the row a user
+    /// reads and the value an edit replaces are the same secret by construction —
+    /// in a cloud mode the provider's key, in `external` mode that slot's own.
+    pub(super) fn secret_field_present(&self, id: FieldId) -> bool {
+        self.secret_present(self.secret_field_key(id).as_ref())
     }
 
     /// Which stored secret an input field addresses, or `None` — not a secret
-    /// field. A provider key is shared across chat/impersonation/embeddings of one
-    /// provider, so it is the provider that matters, not the slot; an MCP value is
-    /// addressed by (server, variable). See docs/research/api-key-storage.md,
+    /// field. A **cloud** key is shared across chat/impersonation/embeddings of one
+    /// provider, so it is the provider that matters, not the slot; an **external**
+    /// server's key is the slot's own, since its URL is whatever the user typed; an
+    /// MCP value is addressed by (server, variable). The first two distinctions are
+    /// the settings struct's own answer (`secret_key()`) rather than this screen's,
+    /// so a row cannot address a different secret than the orchestrator resolves.
+    /// See docs/research/api-key-storage.md, docs/history/external-api-key.md §5.2,
     /// docs/history/mcp-server-editor.md §9.
     pub(super) fn secret_field_key(&self, id: FieldId) -> Option<SecretKey> {
-        let provider = |p: Option<CloudProvider>| p.map(SecretKey::Provider);
         match id {
-            FieldId::XApiKey => provider(self.config.engine.mode.cloud_provider()),
-            FieldId::IxApiKey => provider(self.config.impersonation_engine.mode.cloud_provider()),
-            FieldId::EApiKey => provider(self.config.embed.mode.cloud_provider()),
-            FieldId::TtsApiKey => provider(self.config.tts.mode.cloud_provider()),
+            FieldId::XApiKey => self.config.engine.secret_key(),
+            FieldId::IxApiKey => self.config.impersonation_engine.secret_key(),
+            FieldId::EApiKey => self.config.embed.secret_key(),
+            FieldId::TtsApiKey => self.config.tts.secret_key(),
             // The video slot has no mode of its own — only Gemini takes video
             // (spec §9.9), so this row always addresses the Gemini key.
             FieldId::VideoApiKey => Some(SecretKey::Provider(CloudProvider::Gemini)),
@@ -221,6 +227,11 @@ impl SettingsScreen {
                                 &x.external.model_name,
                             )
                             .describe(loc.t(DESC_MODEL_NAME)),
+                            ext_api_key_row(
+                                FieldId::XApiKey,
+                                self.secret_field_present(FieldId::XApiKey),
+                                loc,
+                            ),
                             text_row(
                                 FieldId::XApiKeyEnv,
                                 loc.t("ui.settings.field.api_key_env_opt"),
@@ -240,7 +251,7 @@ impl SettingsScreen {
                             FieldId::XApiKey,
                             FieldId::XApiKeyEnv,
                             FieldId::XUrl,
-                            self.api_key_present(x.mode.cloud_provider()),
+                            self.secret_field_present(FieldId::XApiKey),
                             loc,
                         ),
                     )),
@@ -274,6 +285,11 @@ impl SettingsScreen {
                                 &x.external.model_name,
                             )
                             .describe(loc.t(DESC_MODEL_NAME)),
+                            ext_api_key_row(
+                                FieldId::IxApiKey,
+                                self.secret_field_present(FieldId::IxApiKey),
+                                loc,
+                            ),
                             text_row(
                                 FieldId::IxApiKeyEnv,
                                 loc.t("ui.settings.field.api_key_env_opt"),
@@ -293,7 +309,7 @@ impl SettingsScreen {
                             FieldId::IxApiKey,
                             FieldId::IxApiKeyEnv,
                             FieldId::IxUrl,
-                            self.api_key_present(x.mode.cloud_provider()),
+                            self.secret_field_present(FieldId::IxApiKey),
                             loc,
                         ),
                     )),
@@ -344,6 +360,11 @@ impl SettingsScreen {
                                 &e.external.model_name,
                             )
                             .describe(loc.t(DESC_MODEL_NAME)),
+                            ext_api_key_row(
+                                FieldId::EApiKey,
+                                self.secret_field_present(FieldId::EApiKey),
+                                loc,
+                            ),
                             text_row(
                                 FieldId::EApiKeyEnv,
                                 loc.t("ui.settings.field.api_key_env_opt"),
@@ -372,7 +393,7 @@ impl SettingsScreen {
                                 .describe(loc.t(DESC_MODEL_NAME)),
                                 api_key_row(
                                     FieldId::EApiKey,
-                                    self.api_key_present(e.mode.cloud_provider()),
+                                    self.secret_field_present(FieldId::EApiKey),
                                     loc,
                                 ),
                                 text_row(
@@ -441,6 +462,11 @@ impl SettingsScreen {
                             &t.external.user_voice,
                         )
                         .describe(loc.t("ui.settings.desc.tts_user_voice")),
+                        ext_api_key_row(
+                            FieldId::TtsApiKey,
+                            self.secret_field_present(FieldId::TtsApiKey),
+                            loc,
+                        ),
                         text_row(
                             FieldId::TtsApiKeyEnv,
                             loc.t("ui.settings.field.api_key_env_opt"),
@@ -478,7 +504,7 @@ impl SettingsScreen {
                             .describe(loc.t("ui.settings.desc.tts_instructions")),
                             api_key_row(
                                 FieldId::TtsApiKey,
-                                self.api_key_present(t.mode.cloud_provider()),
+                                self.secret_field_present(FieldId::TtsApiKey),
                                 loc,
                             ),
                             text_row(
@@ -702,7 +728,7 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.video_max_minutes")),
                 secret_row(
                     FieldId::VideoApiKey,
-                    self.api_key_present(Some(CloudProvider::Gemini)),
+                    self.secret_field_present(FieldId::VideoApiKey),
                     loc.t("ui.settings.field.api_key"),
                     DESC_VIDEO_API_KEY,
                     loc,

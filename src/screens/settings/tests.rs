@@ -5,6 +5,7 @@ use super::*;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::{FlashAttn, MediaResolution, PythonMode, SpecType};
 use crate::shared::embed_prefix::EmbedConvention;
+use crate::shared::secrets::ExternalSlot;
 
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -670,14 +671,18 @@ fn model_subsection_fourth_tab_is_tts_with_mode_driven_fields() {
     assert!(ids.contains(&FieldId::TtsStopOnSwitch));
     assert!(ids.contains(&FieldId::TtsStopOnGeneration));
 
-    // Switch the mode to external: a URL appears, the key and instructions disappear
-    // (only the OpenAI cloud supports them).
+    // Switch the mode to external: a URL appears and the instructions disappear (only
+    // the OpenAI cloud supports them). The key row stays — an external speech server
+    // can require one too, and since docs/history/external-api-key.md it can be entered here
+    // rather than only named as an env variable — but it now addresses that slot's own
+    // key rather than a provider's.
     s.config.tts.mode = crate::shared::config::TtsMode::External;
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::TtsUrl));
-    assert!(
-        !ids.contains(&FieldId::TtsApiKey),
-        "external has no status key"
+    assert!(ids.contains(&FieldId::TtsApiKey));
+    assert_eq!(
+        s.secret_field_key(FieldId::TtsApiKey),
+        Some(SecretKey::External(ExternalSlot::Tts))
     );
     assert!(
         !ids.contains(&FieldId::TtsInstructions),
@@ -2839,14 +2844,16 @@ fn sampling_extensions_have_descriptions() {
     }
 }
 
-/// The "API key" field exists only in cloud modes and shows a **status**, not a
-/// secret; a stored key is reflected as the value "configured".
+/// The "API key" field shows a **status**, not a secret; a stored key is reflected as
+/// the value "configured". It exists for every mode that can need a key — the clouds
+/// and `external` (see [`external_key_field_targets_its_own_slot`]) — but not for a
+/// managed server, which is a local process with no authorization at all.
 #[test]
 fn api_key_field_shows_status_in_cloud_modes_only() {
     let mut s = screen();
     goto_section(&mut s, Section::Model);
     let has_key_field = |s: &SettingsScreen| s.fields().iter().any(|f| f.id == FieldId::XApiKey);
-    // A local managed engine — no key field (no cloud provider exists).
+    // A local managed engine — no key field (nothing to authenticate to).
     assert!(!has_key_field(&s));
 
     s.config.engine.mode = ServerMode::OpenAi;
@@ -3004,6 +3011,73 @@ fn api_key_field_targets_provider_of_its_slot() {
         Some(SecretKey::Provider(CloudProvider::Gemini))
     );
     assert_eq!(s.secret_field_key(FieldId::XUrl), None);
+}
+
+/// In `external` mode every slot shows the key row too — the barrier ADR 0008 removed
+/// for the clouds stood in the one mode whose URL is typed by hand — and each addresses
+/// **its own** slot rather than sharing one key: the four `external` URLs are four
+/// independent servers (docs/history/external-api-key.md F1). The row's behaviour is the cloud
+/// row's (status, masked empty editor, `SetSecret`, `Del`), which is why it reuses the
+/// same field ids; what is new is which secret those ids resolve to.
+#[test]
+fn external_key_field_targets_its_own_slot() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    s.config.impersonation_engine.mode = ImpersonationMode::External;
+    s.config.embed.mode = ServerMode::External;
+    s.config.tts.mode = crate::shared::config::TtsMode::External;
+    for (field, slot) in [
+        (FieldId::XApiKey, ExternalSlot::Chat),
+        (FieldId::IxApiKey, ExternalSlot::Impersonation),
+        (FieldId::EApiKey, ExternalSlot::Embed),
+        (FieldId::TtsApiKey, ExternalSlot::Tts),
+    ] {
+        assert_eq!(
+            s.secret_field_key(field),
+            Some(SecretKey::External(slot)),
+            "{field:?} must address its own external slot"
+        );
+    }
+
+    // The row is built, and its status follows this slot's key — not another slot's.
+    goto_section(&mut s, Section::Model);
+    let value = |s: &SettingsScreen| {
+        s.fields()
+            .into_iter()
+            .find(|f| f.id == FieldId::XApiKey)
+            .map(|f| value_text(&f.kind, s.loc()))
+            .expect("external mode shows the key row")
+    };
+    let unset = value(&s);
+    s.set_secrets_present(vec![SecretKey::External(ExternalSlot::Embed)]);
+    assert_eq!(value(&s), unset, "another slot's key is not this slot's");
+    s.set_secrets_present(vec![SecretKey::External(ExternalSlot::Chat)]);
+    assert_ne!(value(&s), unset, "the status must follow this slot's key");
+
+    // Editing commits as a secret intent for the slot — never into the config.
+    goto_field(&mut s, FieldId::XApiKey);
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s.editor.as_ref().expect("the key field's editor is open");
+    assert_eq!(editor.input.text(), "", "a stored key can't be shown");
+    assert!(editor.input.is_masked());
+    for c in "sk-gateway".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::External(ExternalSlot::Chat),
+            value: "sk-gateway".into()
+        })
+    );
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(
+        !json.contains("sk-gateway"),
+        "the key leaked into the screen's config: {json}"
+    );
+    // The env-name row stays beside it: it is still the route for CI and for a machine
+    // where key storage is unavailable (docs/history/external-api-key.md F4).
+    assert!(s.fields().iter().any(|f| f.id == FieldId::XApiKeyEnv));
 }
 
 /// The video slot's key row stores the **Gemini** key whatever the engines are set
