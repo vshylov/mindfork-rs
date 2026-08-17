@@ -1675,6 +1675,11 @@ every first-exchange smoke now firing a real title request on the way.
 - **Demo screenshots regenerated** (the drift gate went red as designed): the
   two settings frames in both themes; every other frame came back byte-identical,
   which is the pipeline's own faithfulness check (lessons §1).
+- **The PR analysis was read before calling it done** (lessons §10), and it had
+  one finding the green gate didn't block on: `render_desc_panel` at cognitive
+  complexity 20/15 (S3776) — the content build moved out into
+  `hint_panel_lines`/`value_preview_lines` beside `wrap_text`, leaving the
+  render method the scroll state and the viewport.
 - **Tests**: 2311 green (+7: one height-rule test replaced, seven added —
   constancy as a pure rule and as a rendered row, the enter/scroll/exit flow,
   mid-list reachability by PgUp/PgDn, panel-scoped scrollbar, the Esc ladder,

@@ -563,6 +563,49 @@ pub(super) fn wrap_text(text: &str, style: Style, width: usize) -> Vec<Line<'sta
         .collect()
 }
 
+/// The hint panel's full content for one field, pre-wrapped to `width`: the
+/// description hint, the expanded gate note when the row carries one (driven by
+/// the note rather than by `warn` — that flag is raised for several unrelated
+/// reasons), then the long-value preview. The hint comes first: the panel's
+/// height is fixed, and the value is also visible in the list row above while
+/// the description exists only here.
+pub(super) fn hint_panel_lines(
+    f: &FieldRow,
+    width: usize,
+    palette: &Palette,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some(text) = f.description.as_deref() {
+        lines.extend(wrap_text(text, palette.muted_style(), width));
+    }
+    if let Some(note) = f.warn_note.as_deref() {
+        lines.extend(wrap_text(note, Style::new().fg(palette.warning), width));
+    }
+    lines.extend(value_preview_lines(f, width, palette));
+    lines
+}
+
+/// The full-value preview of a "long" text field (paths, URLs, the system
+/// message) — in the list it is truncated with "…". Short values are already
+/// fully visible in the list row, an empty/"—" one has nothing to show. Capped:
+/// the panel is a peek, the full value is one Enter away in the editor; "…"
+/// marks the cut, so scrolling to the end doesn't read as the value's end.
+fn value_preview_lines(f: &FieldRow, width: usize, palette: &Palette) -> Vec<Line<'static>> {
+    let FieldKind::Text(v) = &f.kind else {
+        return Vec::new();
+    };
+    let shown = v.trim();
+    let long = crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+    if shown.is_empty() || shown == "—" || !long {
+        return Vec::new();
+    }
+    let mut preview: String = shown.chars().take(400).collect();
+    if shown.chars().count() > 400 {
+        preview.push('…');
+    }
+    wrap_text(&preview, Style::new().fg(palette.text), width)
+}
+
 /// An inline hint for a tool disabled by a global gate ("disabled globally:
 /// <switch>"). Shown in warning color.
 pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {

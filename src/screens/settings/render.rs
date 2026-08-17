@@ -671,38 +671,9 @@ impl SettingsScreen {
         // A 2-cell gutter carries the focus rail `▌` (as on field rows and in the
         // section menu) — always reserved, so the text never shifts with focus.
         let w = desc_area.width as usize - 2;
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some(f) = shown_field {
-            if let Some(text) = f.description.as_deref() {
-                lines.extend(wrap_text(text, palette.muted_style(), w));
-            }
-            // An expanded explanation for a flagged row, when the row has one
-            // (a globally-disabled tool) — so the honest gate is
-            // understandable, not just "⊘". Driven by the note rather than by
-            // `warn`: that flag is raised for several unrelated reasons.
-            if let Some(note) = f.warn_note.as_deref() {
-                lines.extend(wrap_text(note, Style::new().fg(palette.warning), w));
-            }
-            // Show the full value only for "long" text fields (paths, URLs, the
-            // system message) — in the list they're truncated with "…". Short
-            // values (numbers, host) are already fully visible in the list.
-            if let FieldKind::Text(v) = &f.kind {
-                let shown = v.trim();
-                let long =
-                    crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
-                if !shown.is_empty() && shown != "—" && long {
-                    // Cap the preview (a multiline system message can be huge):
-                    // the panel is a peek, the full value is one Enter away in
-                    // the editor. "…" marks the cut, so scrolling to the end
-                    // doesn't read as the value's end.
-                    let mut preview: String = shown.chars().take(400).collect();
-                    if shown.chars().count() > 400 {
-                        preview.push('…');
-                    }
-                    lines.extend(wrap_text(&preview, Style::new().fg(palette.text), w));
-                }
-            }
-        }
+        let lines = shown_field
+            .map(|f| hint_panel_lines(f, w, palette))
+            .unwrap_or_default();
         self.hint_scroll_max = lines.len().saturating_sub(content_h);
         self.hint_view_rows = content_h;
         // Content can shrink under a kept offset (a value edit, a config
