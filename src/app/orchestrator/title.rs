@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
+use crate::shared::config::AutoTitleMode;
 
 use super::Orchestrator;
 
@@ -25,19 +26,70 @@ const TITLE_MAX_TOKENS: usize = 2048;
 /// The time limit for generating a chat's auto-title (with margin for "thinking" models).
 const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Who asked for the title — decides error visibility and the apply-time guard.
+///
+/// A **requested** run (the chat-list action) reports its failures to the list
+/// overlay and applies last-write-wins: the user asked for this title moments
+/// ago. An **automatic** run (the trigger of spec §11.2) is a background
+/// nicety: failures go to the log (the spec §6.8 rule for background turns),
+/// and a result loses to a manual rename made while the task ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TitleOrigin {
+    Requested,
+    Auto,
+}
+
 /// The result of the chat auto-title background task (an internal channel).
 pub(super) struct TitleResult {
     pub(super) chat_id: Uuid,
     /// The model's raw reply text (or an error message to show in the UI).
     pub(super) text: Result<String, String>,
+    pub(super) origin: TitleOrigin,
 }
 
 impl Orchestrator {
+    /// The chat-list auto-title action (spec §11.2): the user asked, so
+    /// failures are shown in the list overlay.
+    pub(super) fn handle_auto_rename(&mut self, id: Uuid) {
+        self.start_title_task(id, TitleOrigin::Requested);
+    }
+
+    /// The automatic titling trigger (spec §11.2): fires when the conversation
+    /// reaches the configured point (`interface.auto_title`) — the call site
+    /// says which point it stands at — and never for a chat the user renamed.
+    /// Quiet by construction: every skip and failure is a log line, not a
+    /// popup, because nobody asked for this run.
+    pub(super) fn maybe_auto_title(&mut self, id: Uuid, point: AutoTitleMode) {
+        if self.config.interface.auto_title != point {
+            return;
+        }
+        if self
+            .chats
+            .iter()
+            .find(|c| c.id == id)
+            .is_none_or(|c| c.renamed_manually)
+        {
+            return;
+        }
+        self.start_title_task(id, TitleOrigin::Auto);
+    }
+
+    /// Reports a titling failure where its origin belongs: the chat-list
+    /// overlay for a requested run, the log for an automatic one.
+    fn report_title_error(&self, origin: TitleOrigin, msg: String) {
+        match origin {
+            TitleOrigin::Requested => {
+                let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
+            }
+            TitleOrigin::Auto => tracing::warn!(error = %msg, "automatic chat titling skipped"),
+        }
+    }
+
     /// A chat's auto-title (spec §11.2): the model reads the conversation (or its start
     /// and end, if it's long) and comes up with a short title. The request runs as a
     /// background task; the result arrives at [`Orchestrator::handle_title_result`].
     /// The chat server must be ready (`Ready`) — otherwise a clear error.
-    pub(super) fn handle_auto_rename(&mut self, id: Uuid) {
+    fn start_title_task(&mut self, id: Uuid, origin: TitleOrigin) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
@@ -49,18 +101,16 @@ impl Orchestrator {
         let Some(digest) =
             crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
         else {
-            let _ = self.evt_tx.send(AppEvent::ChatListError(
-                self.ui_locale().t("ui.err.title_not_enough").into(),
-            ));
+            self.report_title_error(origin, self.ui_locale().t("ui.err.title_not_enough").into());
             return;
         };
         let backend = match self.engines.backend_if_ready(self.ui_locale()) {
             Ok(backend) => backend,
             Err(msg) => {
-                // Auto-title is a chat-list operation: we show the server-readiness
-                // error in the list overlay, not in the chat feed (where a full-screen overlay
-                // would hide it).
-                let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
+                // A requested title is a chat-list operation: the server-readiness
+                // error goes into the list overlay, not the chat feed (where a
+                // full-screen overlay would hide it). An automatic one logs.
+                self.report_title_error(origin, msg);
                 return;
             }
         };
@@ -89,23 +139,34 @@ impl Orchestrator {
             backend,
             request,
             id,
+            origin,
             self.ui_locale(),
             self.title_tx.clone(),
         );
     }
 
     /// Applies the result of background auto-title generation: cleans up/normalizes
-    /// the title and renames the chat (or shows an error).
+    /// the title and renames the chat (or reports the failure per its origin).
     pub(super) fn handle_title_result(&mut self, res: TitleResult) {
         match res.text {
             Ok(raw) => {
                 let Some(title) = crate::features::rename_chat::clean_generated_title(&raw) else {
-                    let _ = self.evt_tx.send(AppEvent::ChatListError(
+                    self.report_title_error(
+                        res.origin,
                         self.ui_locale().t("ui.err.title_empty").into(),
-                    ));
+                    );
                     return;
                 };
                 if let Some(chat) = self.chat_mut(res.chat_id) {
+                    // The user renamed while the automatic task ran: their
+                    // choice wins (docs/history/auto-chat-title.md D1). A
+                    // requested result keeps last-write-wins — the user asked
+                    // for this title moments ago.
+                    if res.origin == TitleOrigin::Auto && chat.renamed_manually {
+                        tracing::debug!(chat = %res.chat_id,
+                            "automatic title dropped: the chat was renamed manually meanwhile");
+                        return;
+                    }
                     chat.title = title.clone();
                     self.mark_dirty(res.chat_id);
                     self.emit_chat_list();
@@ -115,9 +176,7 @@ impl Orchestrator {
                     });
                 }
             }
-            Err(msg) => {
-                let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
-            }
+            Err(msg) => self.report_title_error(res.origin, msg),
         }
     }
 }
@@ -129,6 +188,7 @@ fn spawn_title(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
     chat_id: Uuid,
+    origin: TitleOrigin,
     loc: &'static crate::shared::i18n::Locale,
     title_tx: UnboundedSender<TitleResult>,
 ) {
@@ -176,7 +236,11 @@ fn spawn_title(
                 Err(loc.t("ui.err.title_timeout").to_string())
             }
         };
-        let _ = title_tx.send(TitleResult { chat_id, text });
+        let _ = title_tx.send(TitleResult {
+            chat_id,
+            text,
+            origin,
+        });
     });
 }
 

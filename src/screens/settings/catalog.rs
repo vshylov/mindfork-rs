@@ -1303,6 +1303,12 @@ impl SettingsScreen {
                     FieldKind::Toggle(i.confirm_destructive_keys),
                 )
                 .describe(loc.t("ui.settings.desc.confirm_keys")),
+                row(
+                    FieldId::IAutoTitle,
+                    loc.t("ui.settings.field.auto_title"),
+                    FieldKind::Choice(auto_title_label(i.auto_title, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.auto_title")),
             ],
         ));
         // Labels read as a continuation of the group header ("Copy conversation … —

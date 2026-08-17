@@ -6,7 +6,7 @@ use super::impersonation::{build_impersonation_request, swap_role_message};
 use super::request::{PromptContext, build_request};
 use super::restart_queue::RestartQueue;
 use super::save_queue::SaveQueue;
-use super::title::salvage_title_source;
+use super::title::{TitleOrigin, TitleResult, salvage_title_source};
 use super::*;
 
 use crate::app::events::RagProgress;
@@ -21,6 +21,18 @@ use crate::shared::paths::Paths;
 
 fn test_embedder() -> Arc<dyn Embedder> {
     Arc::new(MockEmbedder::new(16))
+}
+
+/// The default config with the **automatic chat titling off** (spec §11.2).
+///
+/// For tests whose engine is a finite script or a last-request capture: the
+/// title request the first exchange fires (on by default) would consume a
+/// scripted entry out of turn or overwrite the captured request. The trigger
+/// itself is covered in `tests/title.rs`, on the real default config.
+fn no_auto_cfg() -> AppConfig {
+    let mut cfg = AppConfig::default();
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    cfg
 }
 
 /// An engine that remembers the last request it was given and replies with a fixed

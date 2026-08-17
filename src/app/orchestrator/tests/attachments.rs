@@ -36,7 +36,8 @@ async fn wait_attached(
 #[tokio::test]
 async fn attached_file_reaches_the_model_and_persists_in_the_chat() {
     let backend = CapturingBackend::new();
-    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend.clone()));
+    // Titling off: the automatic title request would overwrite `backend.last`.
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
     let path = write_file(&dir, "notes.md", "секретное число 4242");
 
     cmd_tx

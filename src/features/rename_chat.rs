@@ -57,6 +57,33 @@ fn truncate_middle(text: &str, budget: usize) -> String {
     format!("{head_str}\n…\n{tail_str}")
 }
 
+/// Whether the conversation already holds a substantive assistant reply — an
+/// assistant message with non-empty text **after** the first user message. A
+/// profile greeting (an assistant message before any user one) does not count.
+///
+/// The automatic titling trigger (spec §11.2) reads this *before* a turn's
+/// messages are applied: `false` there means whatever reply the turn delivered
+/// is the chat's first, however many earlier turns were cancelled or failed
+/// before producing text — and an existing pre-feature chat can never match.
+pub fn has_assistant_reply(messages: &[Message]) -> bool {
+    let Some(first_user) = messages.iter().position(|m| m.role == MessageRole::User) else {
+        return false;
+    };
+    messages[first_user..]
+        .iter()
+        .any(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
+}
+
+/// Whether the last-appended user message is the conversation's **first** one —
+/// the `AfterUserMessage` trigger point of automatic titling (spec §11.2).
+pub fn is_first_user_message(messages: &[Message]) -> bool {
+    messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User)
+        .count()
+        == 1
+}
+
 /// Cleans a model-generated title: takes the first non-empty line, strips
 /// surrounding quotes/asterisks/backticks, and normalizes via [`sanitize_title`].
 /// Returns `None` if the string is empty after cleaning.
@@ -173,6 +200,39 @@ mod tests {
         assert!(digest.chars().count() <= TITLE_CONTEXT_BUDGET + 16);
         assert!(digest.contains('…'), "the middle-truncation marker");
         assert!(digest.starts_with("Пользователь:"));
+    }
+
+    /// The trigger predicates (spec §11.2): a greeting is not a reply, an
+    /// empty-text assistant turn is not a reply, tool/system messages are
+    /// invisible to both.
+    #[test]
+    fn trigger_predicates_see_through_greetings_and_empty_turns() {
+        // Greeting only: no user message yet — neither predicate holds.
+        let greeting = vec![Message::assistant("привет!")];
+        assert!(!has_assistant_reply(&greeting));
+        assert!(!is_first_user_message(&greeting));
+
+        // Greeting + the first user message: the reply is still owed.
+        let mut msgs = greeting.clone();
+        msgs.push(Message::user("вопрос"));
+        assert!(!has_assistant_reply(&msgs));
+        assert!(is_first_user_message(&msgs));
+
+        // A cancelled/failed turn left an empty assistant message — still owed.
+        msgs.push(Message::assistant("   "));
+        assert!(!has_assistant_reply(&msgs));
+
+        // System/tool noise doesn't count as a reply either.
+        msgs.push(Message::new(MessageRole::System, "sys"));
+        msgs.push(Message::new(MessageRole::Tool, "tool output"));
+        assert!(!has_assistant_reply(&msgs));
+
+        // A substantive reply lands: the chat is answered, and a second user
+        // message means the first-message point is past.
+        msgs.push(Message::assistant("ответ"));
+        assert!(has_assistant_reply(&msgs));
+        msgs.push(Message::user("ещё"));
+        assert!(!is_first_user_message(&msgs));
     }
 
     #[test]

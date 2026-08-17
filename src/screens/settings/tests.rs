@@ -594,6 +594,43 @@ fn interface_has_the_osc52_choice() {
 }
 
 #[test]
+fn interface_has_the_auto_title_choice() {
+    let mut s = screen();
+    // In the "Interface" section (the "Behavior" group), with a hint: what the
+    // three values mean is not guessable from their labels alone.
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::IAutoTitle));
+    assert!(field_desc(&s, FieldId::IAutoTitle).is_some());
+
+    // On by default, firing after the reply (the user's decision,
+    // docs/history/auto-chat-title.md §2)...
+    use crate::shared::config::AutoTitleMode;
+    assert_eq!(
+        s.config.interface.auto_title,
+        AutoTitleMode::AfterAssistantReply
+    );
+    // ...and cycling forward from there walks off -> after-user -> back, which
+    // also pins the menu order: "after the user's message" first, off last.
+    let mut seen = vec![s.config.interface.auto_title];
+    for _ in 0..3 {
+        match s.cycle_field(FieldId::IAutoTitle, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.auto_title),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            AutoTitleMode::AfterAssistantReply,
+            AutoTitleMode::Off,
+            AutoTitleMode::AfterUserMessage,
+            AutoTitleMode::AfterAssistantReply,
+        ],
+        "the cycle must return to where it started"
+    );
+}
+
+#[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();
     // The field is in the "Interface" section (the "Appearance" group).
