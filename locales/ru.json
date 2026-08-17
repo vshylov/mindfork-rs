@@ -1020,6 +1020,12 @@
     "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro,",
     "claude-opus-4-8, grok-4.5, text-embedding-3-small). Для облака обязательно."
   ],
+  "ui.settings.desc.ext_api_key": [
+    "Bearer-ключ этого external-сервера: вводится здесь, хранится зашифрованным и",
+    "привязан к этому компьютеру; показать сохранённый ключ нельзя. Не обязателен —",
+    "локальный llama-server его не требует, и без ключа авторизация не отправляется.",
+    "Сохранённый здесь ключ используется вместо переменной из поля ниже."
+  ],
   "ui.settings.desc.ext_api_key_env": [
     "Имя переменной окружения с Bearer-ключом для",
     "external-сервера (например прокси/шлюз, требующий авторизацию). Пусто — без ключа",
@@ -1184,6 +1190,7 @@
   "ui.settings.field.mode": "Режим",
   "ui.settings.field.model_opt": "Модель (опц.)",
   "ui.settings.field.api_key_env_opt": "API-ключ (env, опц.)",
+  "ui.settings.field.api_key_opt": "API-ключ (опц.)",
   "ui.settings.field.max_tool_rounds": "Лимит раундов инструментов",
   "ui.settings.field.confirm_dangerous": "Подтверждать опасные вызовы",
   "ui.settings.field.sub_max_tokens": "Субагент: лимит токенов",

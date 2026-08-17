@@ -63,6 +63,15 @@ Decryption lives in `EngineManager` (`app/orchestrator/engines.rs`); the supervi
 receives an already-decrypted `stored_key: Option<&str>` — the server-launch layer knows
 nothing about the secret-storage format, and its tests don't need encryption.
 
+*Amended 2026-08-17* ([docs/external-api-key.md](../history/external-api-key.md)): the external
+proxy no longer stays env-only. The objection above was about **addressing**, not about
+the user, and the MCP reuse below answered it — a secret need not be pinned to a
+provider. An external key is pinned to its **slot** (`SecretKey::External(ExternalSlot)`
+— chat / impersonation / embeddings / speech), which is the sub-section the user typed
+the URL into. Which secret a slot reads is now the settings struct's own answer
+(`secret_key()`), consulted by both the orchestrator and the settings screen, so a row
+cannot address a different secret than the server resolves.
+
 ### 4. The secret never leaves its own path
 
 Plaintext lives only on the entry path (`SettingsIntent::SetApiKey` →
@@ -123,7 +132,19 @@ decision is no weaker than the status quo on any dimension and is strictly stron
   HTTP client, and where a *rename* can orphan a stored value — deliberately not
   collected automatically, because the config snapshot undo restores cannot restore
   a secret.
-- **Groundwork:** an OS keychain as an additional `scheme`; the same mechanism for
-  external-proxy keys; UI management of other machines' entries ("forget this
-  computer"), which is also where an explicit cleanup of orphaned MCP secrets
-  belongs.
+- **Reused a third time, closing this ADR's own groundwork item:** the **external
+  server's** Bearer key (spec §11.6, [external-api-key.md](../history/external-api-key.md)),
+  under `external-<slot>` in the same per-machine entry. Resolution follows §3 exactly
+  — stored wins, env is the fallback — because the external row has the cloud row's
+  shape (a key plus an optional variable *name*), unlike the MCP row above, where the
+  variable is *declared* and naming a source is an instruction. Two things are new.
+  The key is addressed **per slot**, not per provider, which inverts §3's
+  "provider-centric" rule for a good reason: one provider is one account, whereas four
+  `external` URLs are four independent servers, and the ordinary setup — a cloud
+  gateway for chat beside a local `llama-server` for embeddings — would otherwise send
+  the gateway's token to localhost. And having **no** key stays legitimate rather than
+  a misconfiguration, since a local server needs none; that is why the external paths
+  keep `resolve_api_key(...).ok()` where the cloud paths report `Disconnected`.
+- **Groundwork:** an OS keychain as an additional `scheme`; UI management of other
+  machines' entries ("forget this computer"), which is also where an explicit cleanup
+  of orphaned MCP secrets belongs.

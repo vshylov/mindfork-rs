@@ -3,7 +3,7 @@
 
 use crate::app::events::AppEvent;
 use crate::shared::config::{AppConfig, CloudProvider, ImpersonationMode, ServerMode};
-use crate::shared::secrets::SecretKey;
+use crate::shared::secrets::{ExternalSlot, SecretKey};
 use crate::shared::server::ServerStatus;
 
 use super::Orchestrator;
@@ -114,6 +114,17 @@ impl Orchestrator {
                     self.rebuild_registry();
                 }
             }
+            // An external slot addresses exactly one server, so exactly one is
+            // re-raised — no mode check is needed (unlike a provider key, which
+            // several slots may or may not be pointing at). Speech is built per
+            // utterance from a settings snapshot, so like the backup password it has
+            // nothing to restart. See docs/history/external-api-key.md §5.4.
+            SecretKey::External(slot) => match slot {
+                ExternalSlot::Chat => self.restarts.mark_chat(),
+                ExternalSlot::Impersonation => self.restarts.mark_impersonation(),
+                ExternalSlot::Embed => self.restarts.mark_embed(),
+                ExternalSlot::Tts => {}
+            },
             // The value is handed to a child process at spawn time, so it only
             // takes effect on a re-apply — deferred like an engine edit. The
             // config itself is unchanged, so `McpManager::is_current` has to

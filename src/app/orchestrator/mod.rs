@@ -741,6 +741,11 @@ impl Orchestrator {
         let secrets_present: Vec<SecretKey> = CloudProvider::ALL
             .into_iter()
             .map(SecretKey::Provider)
+            .chain(
+                crate::shared::secrets::ExternalSlot::ALL
+                    .into_iter()
+                    .map(SecretKey::External),
+            )
             .chain(std::iter::once(SecretKey::BackupPassword))
             .chain(self.config.mcp.servers.iter().flat_map(|s| {
                 s.env.keys().map(|var| SecretKey::McpEnv {

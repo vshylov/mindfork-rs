@@ -163,12 +163,34 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-16, version 0.9.6)
+## Status (2026-08-17, version 0.9.6)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2282 unit tests
-green, 97 `#[ignore]`** (93 live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2290 unit tests
+green, 98 `#[ignore]`** (94 live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **a second chat model on the live e2e gate — track complete**
+most recent tracks: **the external server's API key, entered in settings**
+(`external` mode — any OpenAI-compatible server you run or rent — could only take
+its Bearer key from an environment variable *named* in settings, which is exactly
+the barrier [ADR 0008](docs/decisions/0008-api-key-storage.md) removed for the
+clouds, left standing in the one mode whose URL is typed by hand. ADR 0008 had
+deferred it on an argument about **addressing** — an arbitrary URL cannot be pinned
+to a provider — and the MCP reuse had since answered that: a secret can be addressed
+by whatever the user is looking at. Here that is the **slot**
+(`SecretKey::External(ExternalSlot)`), which deliberately inverts the ADR's
+provider-centric rule, because one provider is one account while the four `external`
+sub-sections are four independent URLs — a cloud gateway for chat beside a local
+`llama-server` for embeddings is the normal setup, and one shared key would send the
+gateway's token to localhost. Reading the code first shrank it to plumbing: no new
+mechanism in `secrets.rs`, no change to the `ServerSupervisor` signature, and **no new
+field id** — the masked row already existed, what changed is which secret it resolves
+to, now the settings struct's own answer (`secret_key()`) consulted by both the
+orchestrator and the screen, since a row addressing a different secret than the server
+resolves is invisible from outside. Having **no** key stays legitimate, unlike a cloud
+mode: a local server needs none, and a keyless request is byte-for-byte what the app
+sent before. Verified live against a `llama-server --api-key`, with the control arm —
+no key anywhere — getting a real `401`, which is what makes the first arm mean
+anything; [docs/history/external-api-key.md](docs/history/external-api-key.md),
+spec §11.6), **a second chat model on the live e2e gate — track complete**
 (the gate ran on exactly one model, so everything it asserted about a model was
 asserted about *that* model; it now takes `--chat-model`
 `gemma-4-31b`/`qwen-3.6-27b`, one per dispatch, because both in one job would run

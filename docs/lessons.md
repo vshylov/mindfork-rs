@@ -155,8 +155,13 @@ in-memory storage failed six tests loudly — and two more *kept passing*, becau
 assert an absence and an always-empty store satisfies them either way. The hazard is
 not the six that shout, it is the two that do not. Elsewhere, two specified checks
 turned out structurally incapable of failing at all.
+A third shape: an assertion that a *debounced* side effect did **not** fire passed with
+the defect applied, because the test's `Quit` was handled before the debounce expired —
+the wrong restart was queued and simply never flushed. Absence has to be read against a
+later event that proves the flush ran (follow it with a change that *does* fire, and count
+against **that**).
 — *orchestrator fixtures — two convertible, the rest not*, *full-text search over chat
-content — stage 1*.
+content — stage 1*, *the external server's API key, entered in settings*.
 
 **When a test and the code disagree, work out which is wrong.** Several times the
 *test* was fixed: an assertion that HTML-block lines fit the panel width invented a
@@ -234,6 +239,19 @@ startup because "forget" dropped the bookkeeping too — 43 of 171 chats, 27 ms 
 launch. A single-pass test cannot see it.
 — *full-text search over chat content — stage 1*.
 
+**A blocking `join()` on a stub thread deadlocks a `#[tokio::test]` whose work is a
+spawned task.** A test paired an OS-thread TCP stub with the readiness probe the code
+spawns, then called `JoinHandle::join()` — that blocks the current-thread runtime, so the
+probe never gets polled, never connects, and the stub waits on an `accept` that will not
+come; the run sat past five minutes instead of failing. `tokio::task::spawn_blocking(move
+|| h.join())` awaits it instead and yields, so both sides progress. The neighbouring test
+that looked identical was fine because it `await`s the request itself rather than letting
+the code spawn it — which is exactly the difference to check before copying such a
+fixture. Related: **read a stub's request to the end of the headers, not into a fixed
+buffer**, whenever the value under assertion can be any length — a 2 KiB read truncated a
+`PATH`-sourced key and the comparison failed on the tail, which reads as a resolution bug.
+— *the external server's API key, entered in settings*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while
@@ -299,6 +317,16 @@ the paste-PR seam three times over: one SQL body with an optional `IN`, one
 paged-reader schema helper next to `search_parameters`, one narrow-profile smoke
 helper. When a new thing is a sibling of an existing thing, budget for the seam at
 design time — the pair's *contract* was shared from the start, its boilerplate was not.
+The **sixth** is the same mechanism as the third, in a place easier to walk into: a file
+whose *existing* code is triplicated (three sections with identical `cloud()`/`cloud_mut()`
+accessors) has no safe place to add a method — a six-line addition to each landed **inside
+the already-flagged ranges** and 18 lines counted as duplicated, at 3.8% against a 3% bar,
+though nothing was copied from anything. Before adding a sibling method to a family of
+same-shaped types, check whether that family is *already* flagged; if it is, the addition
+belongs outside it — here one trait holding the decision once, with each type contributing
+two one-liners. Adjacent small impls are safe when what differs between them is
+**identifiers** (type, enum, constant), which the detector does not normalize — the earlier
+cases were invisible precisely because only *literals* differed.
 The fifth came from **test fixtures written in the same PR**, and scored the worst yet
 at **19.8%**: six tests of one back-stack, each spelling out the five locals `dispatch`
 and `apply_event` take plus the same three-step "arrive here" prologue. Nothing was
@@ -311,7 +339,7 @@ two, that opening is a fixture, not a test.**
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
 its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a followed
-`chat://` reference*.
+`chat://` reference*, *the external server's API key, entered in settings*.
 
 ---
 

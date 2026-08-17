@@ -360,7 +360,7 @@ computer** (Windows — the system DPAPI; Linux — a key derived from
   moving back to the original computer the original key reads again;
 - a saved key **cannot be viewed or copied** from the app — editing means re-entering
   it; the field only shows "configured (this computer)";
-- one key serves **chat, impersonation, and embeddings** for that provider.
+- one key serves **chat, impersonation, embeddings and speech** for that provider.
 
 The key is protected against moving/copying the file, but not against programs
 running under your own user account on the same computer (this is how browser
@@ -370,6 +370,20 @@ password managers work too).
 `machine-id`): the "API key (env)" field stores the **name** of the variable, e.g.
 `OPENAI_API_KEY`, and the key itself is read from the environment. A key entered in
 settings takes priority; the env one is used if no key was entered.
+
+**An external server's key works the same way.** In `external` mode — connecting to
+an OpenAI-compatible server you run or rent (a local `llama-server`, vLLM, LM Studio,
+or a gateway like LiteLLM or OpenRouter) — the same "API key (opt.)" field appears
+above "API key (env, opt.)", with the same behaviour and the same encrypted storage.
+Two differences from a cloud key:
+
+- it is **optional**: a local `llama-server` requires no authorization, and with no
+  key stored and no variable named, none is sent — start such a server with
+  `--api-key <key>` if you do want it to require one;
+- it belongs to **that one server**, not to a provider: the "Assistant",
+  "Impersonation", "Embeddings" and "Speech" tabs each hold their own external URL, so
+  each holds its own key. A cloud gateway for chat beside a local embedding server is
+  the normal case, and sharing one key would send the gateway's token to localhost.
 
 ### Quick start via environment variables (dev)
 

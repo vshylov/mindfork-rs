@@ -968,8 +968,13 @@ thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
 `400` there and `top_k`/`min_p` are dropped silently. See
 docs/research/grok-xai-provider.md. Anthropic, xAI and Responses have no
 embeddings — only `OpenAiClient` implements `Embedder` (RAG uses a separate one,
-ADR 0002). External gained an optional `api_key_env` (a Bearer key for an
-OpenAI-compatible proxy/gateway).
+ADR 0002). **External** authenticates like a cloud: its Bearer key (for an
+OpenAI-compatible proxy or gateway) is either entered in settings — stored per
+**slot**, `secrets::ExternalSlot`, since each slot's `external` URL is a server of
+its own — or named by `api_key_env`, resolved through the same
+`resolve_api_key(stored, env)` chain, and **absent** stays legitimate there: a local
+`llama-server` needs none and then no `Authorization` header is sent
+(docs/history/external-api-key.md).
 
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, including
   `tool_calls` and tool results) + `sampling` + `tools`. History is append-only →
@@ -2407,7 +2412,8 @@ Principles:
     fields (`spec_type: SpecType` + `draft_model`/`draft_gpu_layers`/
     `draft_n_max`/`draft_n_min`); draft fields are only shown in the UI for
     `draft-*` types — for MTP models (`mtp-gemma-…`) that's `draft-mtp`.
-- **Cloud API keys** (`shared/secrets.rs`, docs/research/api-key-storage.md):
+- **API keys** (`shared/secrets.rs`, docs/research/api-key-storage.md,
+  docs/history/external-api-key.md):
   a key can be **entered in settings** — it's encrypted with a **machine
   key** and stored in `settings.json` (`AppConfig::api_keys`) as ciphertext.
   Records are **per-machine**: the config is portable, on another machine
@@ -2419,8 +2425,15 @@ Principles:
   (we never store the machine id itself in the file). Resolution happens in
   `EngineManager` (`stored_key`); the supervisor gets an already-decrypted
   `stored_key: Option<&str>`; the order is **stored → env fallback**
-  (`api_key_env` remains for CI/power users and an external proxy). Only
-  the orchestrator writes keys (`AppCommand::SetApiKey`); they never land
+  (`api_key_env` remains for CI and power users). Which secret a slot reads is
+  the settings struct's own answer — `EngineSettings`/`ImpersonationEngineSettings`/
+  `EmbedSettings`/`TtsSettings::secret_key()` → `SecretKey::Provider(p)` in a cloud
+  mode, `SecretKey::External(slot)` in `external`, `None` for managed — one source
+  consulted by both the orchestrator and the settings screen, so a row cannot
+  address a different secret than the server resolves. A cloud key is shared by
+  chat/impersonation/embeddings/speech of that provider; the four **external**
+  slots each have their own, because their four URLs are four independent servers.
+  Only the orchestrator writes keys (`AppCommand::SetSecret`); they never land
   in the config snapshot sent to the UI. This protects the **file**
   (transfer/backup/sync), not the machine: local code running as the same
   user can derive the same key — as with Chrome/Git Credential Manager.

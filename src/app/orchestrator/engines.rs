@@ -15,17 +15,20 @@ use crate::app::events::{ServerStatus, ServerStatuses};
 use crate::app::supervisor::ServerSupervisor;
 use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
-    CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
+    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode, SecretSlot,
 };
 use crate::shared::i18n::Locale;
-use crate::shared::secrets::ApiKeyEntry;
+use crate::shared::secrets::{ApiKeyEntry, SecretKey};
 
-/// Decrypts the provider's stored key (**this** machine's entry). `None` —
-/// local mode (no provider), the key isn't stored, or the entry is a foreign one → the
-/// supervisor falls back to env. The resolution lives here so the supervisor doesn't need
-/// to know the secret-storage format (`shared::secrets`). See docs/research/api-key-storage.md.
-fn stored_key(api_keys: &[ApiKeyEntry], provider: Option<CloudProvider>) -> Option<String> {
-    crate::shared::secrets::stored_key(api_keys, provider?.key())
+/// Decrypts the stored key of whichever secret the slot's active mode reads
+/// (`settings.secret_key()` — a cloud provider's key, or an external server's own;
+/// see `config::SecretSlot`). `None` — the mode needs no key (managed), the key
+/// isn't stored, or the entry is a foreign one → the supervisor falls back to env.
+/// The resolution lives here so the supervisor doesn't need to know the
+/// secret-storage format (`shared::secrets`). See docs/research/api-key-storage.md,
+/// docs/history/external-api-key.md §5.3.
+fn stored_key(api_keys: &[ApiKeyEntry], key: Option<SecretKey>) -> Option<String> {
+    crate::shared::secrets::stored_key(api_keys, &key?.storage_name())
 }
 
 /// Max relaunches of one managed server within [`RESTART_WINDOW`]; beyond that it
@@ -188,7 +191,7 @@ impl EngineManager {
         }
         let cancel = CancellationToken::new();
         self.chat_probe_cancel = Some(cancel.clone());
-        let key = stored_key(api_keys, settings.mode.cloud_provider());
+        let key = stored_key(api_keys, settings.secret_key());
         let setup = self.supervisor.apply_chat(
             settings,
             key.as_deref(),
@@ -217,7 +220,7 @@ impl EngineManager {
         }
         let cancel = CancellationToken::new();
         self.embed_probe_cancel = Some(cancel.clone());
-        let key = stored_key(api_keys, settings.mode.cloud_provider());
+        let key = stored_key(api_keys, settings.secret_key());
         let setup = self.supervisor.apply_embed(
             settings,
             key.as_deref(),
@@ -252,7 +255,7 @@ impl EngineManager {
             _ => {
                 let cancel = CancellationToken::new();
                 self.imp_probe_cancel = Some(cancel.clone());
-                let key = stored_key(api_keys, settings.mode.cloud_provider());
+                let key = stored_key(api_keys, settings.secret_key());
                 let setup = self.supervisor.apply_impersonation(
                     settings,
                     key.as_deref(),

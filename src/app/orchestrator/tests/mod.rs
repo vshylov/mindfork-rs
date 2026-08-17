@@ -64,6 +64,34 @@ impl EngineBackend for CapturingBackend {
     }
 }
 
+/// Like [`spawn_orch_cfg`], but hands the [`MockSupervisor`] back too — for tests that
+/// inspect what the orchestrator *asked of* it: how often a server was raised, and with
+/// which resolved key (`MockSupervisor::chat_keys`).
+fn spawn_orch_sup(
+    config: AppConfig,
+) -> (
+    tempfile::TempDir,
+    Arc<MockSupervisor>,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Arc::new(MockSupervisor::with_backend(None));
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, evt_rx) = unbounded_channel();
+    let handle = tokio::spawn(run(OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config,
+        supervisor: sup.clone(),
+        default_language: crate::shared::i18n::Lang::default(),
+    }));
+    (dir, sup, cmd_tx, evt_rx, handle)
+}
+
 /// Spins up the orchestrator on a temp storage. Returns the channels and a handle.
 fn spawn_orch(
     backend: Option<Arc<dyn EngineBackend>>,

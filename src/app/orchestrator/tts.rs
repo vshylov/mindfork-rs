@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageRole};
 use crate::features::tts_command::TtsScope;
+use crate::shared::config::SecretSlot;
 use crate::shared::i18n::Locale;
 use crate::shared::tts::{TtsEngine, TtsSetupError, engines_from_config, playback::Playback};
 
@@ -72,14 +73,13 @@ impl Orchestrator {
             }
         };
 
-        // Build the client from a settings snapshot: the stored provider key is
-        // shared with chat (ADR 0008) — no need to enter it again.
-        let stored = self
-            .config
-            .tts
-            .mode
-            .cloud_provider()
-            .and_then(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()));
+        // Build the client from a settings snapshot: in a cloud mode the stored
+        // provider key is shared with chat (ADR 0008) — no need to enter it again;
+        // in `external` mode it is the speech slot's own key
+        // (docs/history/external-api-key.md §3).
+        let stored = self.config.tts.secret_key().and_then(|k| {
+            crate::shared::secrets::stored_key(&self.config.api_keys, &k.storage_name())
+        });
         // Two engines: the assistant's and (opt.) the user's — when a separate
         // "User voice" is set (spec §11.9). Both use the same provider → a shared
         // limit.

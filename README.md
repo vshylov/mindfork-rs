@@ -213,8 +213,9 @@ build the moment they drift from what the app actually renders
   password does not travel to other machines — write it down.
 - **API keys stay yours**: entered right in settings, stored encrypted and
   bound to this machine (DPAPI on Windows, a `machine-id`-derived key on
-  Linux), never displayed back; one key serves chat, impersonation and
-  embeddings. CI and advanced setups can name an environment variable instead.
+  Linux), never displayed back; one cloud key serves chat, impersonation,
+  embeddings and speech, and a gateway or proxy you run yourself gets its own.
+  CI and advanced setups can name an environment variable instead.
 - **Import** from other applications through a documented, neutral JSON
   format ([docs/import-format.md](docs/import-format.md)); importing twice
   creates no duplicates.
@@ -261,7 +262,10 @@ llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
 ```
 
 Then set the URL in settings (mode `external`), or via the environment — note
-the `/v1`:
+the `/v1`. If the server requires authorization — a gateway such as LiteLLM or
+OpenRouter, or a `llama-server` started with `--api-key` — paste its key into the
+"API key (opt.)" field right below the URL; it is stored exactly like a cloud key,
+and each `external` tab keeps its own:
 
 ```powershell
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
