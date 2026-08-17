@@ -207,11 +207,18 @@ the settings screen resolving `XApiKey` to `External(Chat)` in external mode and
 to `Provider(p)` in a cloud mode, and the row appearing in the external field
 list; `secrets_present` reporting a stored external key.
 
-Live: **required** — this is an engine path (lessons.md §9). The stack is an
-external `llama-server` reached over `MINDFORK_ENGINE_URL`, which needs no key,
-so the smoke to run is the ordinary orchestrator set proving the external path
-still connects with no key stored (F3), plus a probe with a stored key against a
-server that requires one.
+Live: **required** — this is an engine path (lessons.md §9).
+
+*Corrected during implementation:* this section first said the ordinary
+orchestrator e2e set would cover "the external path still connects with no key".
+It cannot — that harness builds its backend through `MockSupervisor`
+(lessons.md §9: "a decorator is only covered live if the test harness wraps too"),
+so it never runs `external_chat_setup` at all, and the *set* is a regression check
+on the turn path rather than evidence about this change. The evidence has to drive
+`LlamaSupervisor` directly: a `llama-server --api-key <key>`, one turn with the key
+stored (and `api_key_env` deliberately unset, so only the stored key can make it
+work) plus a **control arm** with no key anywhere, which must come back `401`.
+Without the control the first arm passes against a server that never checked.
 
 ## 7. Documentation
 

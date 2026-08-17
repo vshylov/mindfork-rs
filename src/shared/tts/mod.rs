@@ -120,9 +120,7 @@ fn build_engine(
         TtsMode::OpenAi | TtsMode::Gemini => {
             let cloud = tts.cloud().ok_or(TtsSetupError::Model)?;
             let model = non_empty(cloud.model_name.clone()).ok_or(TtsSetupError::Model)?;
-            let key = stored_key
-                .filter(|k| !k.is_empty())
-                .or_else(|| env_key(cloud.api_key_env.as_deref()))
+            let key = resolve_key(stored_key, cloud.api_key_env.as_deref())
                 .ok_or(TtsSetupError::ApiKey)?;
             let provider = tts.mode.cloud_provider().ok_or(TtsSetupError::Model)?;
             let base = non_empty(cloud.url.clone())
@@ -152,13 +150,10 @@ fn build_engine(
             let url = non_empty(tts.external.url.clone()).ok_or(TtsSetupError::Url)?;
             Ok(Box::new(openai::OpenAiTts::external(
                 url,
-                // The same order as the cloud arm above — a key stored for this slot
-                // wins over the variable named in settings (docs/history/external-api-key.md
-                // F2) — but here having no key at all is legitimate: a local speech
-                // server needs none, so this is an `Option`, not a `?`.
-                stored_key
-                    .filter(|k| !k.is_empty())
-                    .or_else(|| env_key(tts.external.api_key_env.as_deref())),
+                // The same resolution as the cloud arm above, but **without** the
+                // `ok_or`: here having no key at all is legitimate, since a local speech
+                // server needs none (docs/history/external-api-key.md F3).
+                resolve_key(stored_key, tts.external.api_key_env.as_deref()),
                 non_empty(tts.external.model_name.clone()),
                 voice_override.or_else(|| non_empty(tts.external.voice.clone())),
                 speed,
@@ -167,7 +162,20 @@ fn build_engine(
     }
 }
 
-/// An env variable's value by name (falls back to the settings key, ADR 0008).
+/// The speech server's key: a key **stored for this slot** wins over the variable
+/// named in settings, and a blank stored key counts as absent (ADR 0008 §3,
+/// docs/history/external-api-key.md F2). `None` — neither is available; what that
+/// means is the caller's to decide, and the two modes decide differently: a cloud
+/// refuses ([`TtsSetupError::ApiKey`]), an external server simply sends no
+/// authorization. The mirror of `app::supervisor::resolve_api_key`, kept separate
+/// because that one lives above this layer and returns a *localizable* error.
+fn resolve_key(stored: Option<String>, api_key_env: Option<&str>) -> Option<String> {
+    stored
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| env_key(api_key_env))
+}
+
+/// An env variable's value by name (the fallback under a stored key, ADR 0008).
 fn env_key(var: Option<&str>) -> Option<String> {
     let var = var?.trim();
     if var.is_empty() {
@@ -247,6 +255,54 @@ mod tests {
             ..Default::default()
         };
         // A local server needs neither a key nor a model.
+        assert!(engines_from_config(&tts, None).is_ok());
+    }
+
+    /// The speech key follows the same chain as the engine's: a key stored for this
+    /// slot first, then the variable named in settings, and a blank stored key counts
+    /// as absent rather than as an empty `Authorization`. `PATH` is read rather than
+    /// set — `set_var` is `unsafe` in edition 2024 and races the whole test binary.
+    #[test]
+    fn stored_key_wins_over_the_named_variable() {
+        let from_env = std::env::var("PATH").unwrap();
+        assert_eq!(
+            resolve_key(Some("sk-slot".into()), Some("PATH")).as_deref(),
+            Some("sk-slot")
+        );
+        assert_eq!(resolve_key(None, Some("PATH")), Some(from_env));
+        assert!(
+            resolve_key(Some("  ".into()), Some("PATH")).is_some(),
+            "a blank stored key falls through to the variable, not to nothing"
+        );
+        assert_eq!(resolve_key(Some("   ".into()), None), None);
+        assert_eq!(resolve_key(None, None), None);
+        assert_eq!(
+            resolve_key(None, Some("MINDFORK_DEFINITELY_UNSET_VAR_42")),
+            None
+        );
+    }
+
+    /// An external speech server takes its **own** stored key (`ExternalSlot::Tts`),
+    /// and having none stays legitimate — the two halves of
+    /// docs/history/external-api-key.md for this slot.
+    #[test]
+    fn external_takes_a_stored_key_but_does_not_require_one() {
+        let tts = TtsSettings {
+            mode: TtsMode::External,
+            external: TtsExternalSettings {
+                url: Some("http://127.0.0.1:8880/v1".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            tts.secret_key(),
+            Some(crate::shared::secrets::SecretKey::External(
+                crate::shared::secrets::ExternalSlot::Tts
+            )),
+            "the speech slot must not read a provider's key in external mode"
+        );
+        assert!(engines_from_config(&tts, Some("sk-voice".into())).is_ok());
         assert!(engines_from_config(&tts, None).is_ok());
     }
 

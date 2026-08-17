@@ -1645,18 +1645,25 @@ fn norm(s: &str) -> String {
 /// cut mid-sentence. The panel is now as tall as the longest hint of the field set
 /// needs, so the hint is shown whole — at a comfortable width and at a narrow one,
 /// where it wraps into many more rows.
+///
+/// Both key rows are checked, because the panel has a row cap (`HINT_MAX_ROWS`) and the
+/// **external** hint is the longer of the two: it has to name the two fields' priority
+/// as well, and a hint that closes the door only works if its last sentence is on
+/// screen.
 #[test]
 fn a_long_hint_is_shown_whole_in_the_bottom_panel() {
-    let mut s = screen();
-    s.config.engine.mode = ServerMode::OpenAi;
-    goto_field(&mut s, FieldId::XApiKey);
-    let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("api key is described"));
-    for (w, h) in [(120u16, 40u16), (146, 46), (70, 40)] {
-        let shown = pane_text(&mut s, w, h);
-        assert!(
-            shown.contains(&desc),
-            "hint clipped at {w}x{h}:\n  want: {desc}\n  got:  {shown}"
-        );
+    for mode in [ServerMode::OpenAi, ServerMode::External] {
+        let mut s = screen();
+        s.config.engine.mode = mode;
+        goto_field(&mut s, FieldId::XApiKey);
+        let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("api key is described"));
+        for (w, h) in [(120u16, 40u16), (146, 46), (70, 40)] {
+            let shown = pane_text(&mut s, w, h);
+            assert!(
+                shown.contains(&desc),
+                "hint clipped at {w}x{h} in {mode:?}:\n  want: {desc}\n  got:  {shown}"
+            );
+        }
     }
 }
 

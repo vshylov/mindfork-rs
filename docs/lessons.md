@@ -155,8 +155,13 @@ in-memory storage failed six tests loudly — and two more *kept passing*, becau
 assert an absence and an always-empty store satisfies them either way. The hazard is
 not the six that shout, it is the two that do not. Elsewhere, two specified checks
 turned out structurally incapable of failing at all.
+A third shape: an assertion that a *debounced* side effect did **not** fire passed with
+the defect applied, because the test's `Quit` was handled before the debounce expired —
+the wrong restart was queued and simply never flushed. Absence has to be read against a
+later event that proves the flush ran (follow it with a change that *does* fire, and count
+against **that**).
 — *orchestrator fixtures — two convertible, the rest not*, *full-text search over chat
-content — stage 1*.
+content — stage 1*, *the external server's API key, entered in settings*.
 
 **When a test and the code disagree, work out which is wrong.** Several times the
 *test* was fixed: an assertion that HTML-block lines fit the panel width invented a
@@ -233,6 +238,19 @@ the door*, *emoji popup — a "hanging" selection ghost after closing*.
 startup because "forget" dropped the bookkeeping too — 43 of 171 chats, 27 ms per
 launch. A single-pass test cannot see it.
 — *full-text search over chat content — stage 1*.
+
+**A blocking `join()` on a stub thread deadlocks a `#[tokio::test]` whose work is a
+spawned task.** A test paired an OS-thread TCP stub with the readiness probe the code
+spawns, then called `JoinHandle::join()` — that blocks the current-thread runtime, so the
+probe never gets polled, never connects, and the stub waits on an `accept` that will not
+come; the run sat past five minutes instead of failing. `tokio::task::spawn_blocking(move
+|| h.join())` awaits it instead and yields, so both sides progress. The neighbouring test
+that looked identical was fine because it `await`s the request itself rather than letting
+the code spawn it — which is exactly the difference to check before copying such a
+fixture. Related: **read a stub's request to the end of the headers, not into a fixed
+buffer**, whenever the value under assertion can be any length — a 2 KiB read truncated a
+`PATH`-sourced key and the comparison failed on the tail, which reads as a resolution bug.
+— *the external server's API key, entered in settings*.
 
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against

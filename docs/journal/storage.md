@@ -577,17 +577,33 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   which one decides, so it states that a stored key is used *instead of* the
   variable named below, that the key is optional, and that each external server has
   its own.
-- **Tests**: **2288 unit green** (+6), 98 `#[ignore]` (+1), clippy `-D warnings`/
-  fmt/`cyrillic_scan` clean. The wire-level trio (stored key sent, env fallback
-  read, neither → no header) runs against a one-request TCP stub reading **to the
-  end of the headers** rather than a fixed buffer — with a 2 KiB buffer the `PATH`
-  value under comparison came back truncated, which looked like a resolution bug.
-  **Mutation-found**: the "a speech key must not restart the chat server" assertion
-  first passed with `Tts => mark_chat()` applied, because `Quit` was handled before
-  the debounce expired — it only bites once the speech key is followed by a slot
-  that *does* restart something and the count is read against **that** flush, which
-  is the same device `an_edit_and_its_undo_cost_no_restart` uses.
-- **Live — GO.** A local `llama-server --api-key sk-live-probe-42`
+- **Tests**: **2290 unit green** (+8), 98 `#[ignore]` (+1), clippy `-D warnings`/
+  fmt/`cyrillic_scan`/`link_check`/`doc_index_check` clean. The wire-level trio
+  (stored key sent, env fallback read, neither → no header) runs against a
+  one-request TCP stub reading **to the end of the headers** rather than a fixed
+  buffer — with a 2 KiB buffer the `PATH` value under comparison came back
+  truncated, which looked like a resolution bug. Two things were **found by a test
+  rather than by review**, both now in [lessons.md](../lessons.md):
+  - the "a speech key must not restart the chat server" assertion first passed
+    *with* `Tts => mark_chat()` applied, because `Quit` was handled before the
+    debounce expired — the wrong restart was queued and simply never flushed. It
+    only bites once the speech key is followed by a slot that *does* restart
+    something and the count is read against **that** flush, the device
+    `an_edit_and_its_undo_cost_no_restart` already used;
+  - the `ru` hint was **clipped mid-sentence at 70 columns** — the panel caps at
+    `HINT_MAX_ROWS`, and the external hint is the longer of the two key hints
+    because it has to name the two fields' priority as well. A hint that closes the
+    door only works if its last sentence is on screen, so both locales were trimmed
+    to the load-bearing three claims (optional / nothing sent without a key /
+    stored beats the variable below) and the existing "shown whole" gate now runs
+    over **both** key rows. The identical trap is on record from the cloud hint
+    (docs/history/settings-undo.md era) — the panel grew to fit the longest hint
+    *then*; what is new is that a cap exists and a hint can still exceed it.
+- **Live — GO, twice over.** The standard regression scope first: the orchestrator
+  e2e set against the usual stack (gemma-4-31B + bge-m3 over
+  `MINDFORK_ENGINE_URL`/`MINDFORK_EMBED_URL`) — **34 passed, 0 failed, 771 s**, one
+  deliberate skip (`tts_speaks_chat_e2e_live`, no cloud TTS key set). Then the
+  feature itself, which that set **cannot** reach: a local `llama-server --api-key sk-live-probe-42`
   (`gemma-3-4b-it-q8_0`, CPU) verified the whole chain through `LlamaSupervisor`:
   with the key stored the turn answered `"OK."`, and the **control arm** with no key
   anywhere got a real `401 Invalid API Key`. The control is what makes it mean
