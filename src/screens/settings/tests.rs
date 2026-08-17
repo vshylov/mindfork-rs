@@ -659,6 +659,20 @@ fn interface_has_mermaid_toggle() {
 }
 
 #[test]
+fn interface_has_model_name_toggle() {
+    let mut s = screen();
+    // The field is in the "Interface" section (the "Appearance" group).
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::IModelName));
+    // Off by default; toggling it saves the config with the flag raised.
+    match s.toggle_field(FieldId::IModelName) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.show_model_name),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(field_desc(&s, FieldId::IModelName).is_some());
+}
+
+#[test]
 fn cycle_mode_changes_server_mode() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // focus on the fields (ModelSub)

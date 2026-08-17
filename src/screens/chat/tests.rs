@@ -35,7 +35,7 @@ fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.push_user_message("собери отзывы".into());
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     // The assistant called a tool (the assistant bubble is text-empty)...
     s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into(), 0);
     // ...the limit is reached — a note goes into the feed.
@@ -64,7 +64,7 @@ fn streaming_sequence_builds_feed() {
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.push_user_message("hi".into());
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.push_thoughts(id, "hmm");
     s.push_chunk(id, "Hel");
     s.push_chunk(id, "lo");
@@ -86,7 +86,7 @@ fn live_stream_with_tool_matches_reload() {
     // Live: round-1 text → a tool call → round-2 text (final).
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.push_chunk(id, "Ищу погоду.");
     s.push_tool_call(
         id,
@@ -136,7 +136,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     // Live: text 1 → followup → text 2.
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.push_chunk(id, "Первое сообщение.");
     s.continue_assistant(id);
     s.push_chunk(id, "Второе сообщение.");
@@ -176,12 +176,44 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     assert_eq!(reload[1].text, bubbles[1].text);
 }
 
+/// The live bubble names the model from the moment the turn starts — the same
+/// name the stored message will carry — so the header does not change under the
+/// reader when generation ends. Every bubble the turn opens gets it, including
+/// the one `send_followup_message` starts mid-turn. See spec §11.3.
+#[test]
+fn the_streaming_bubbles_of_a_turn_carry_its_model() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, Some("gemma-4-31b".into()));
+    s.push_chunk(id, "Первое сообщение.");
+    s.continue_assistant(id);
+    s.push_chunk(id, "Второе сообщение.");
+
+    let bubbles: Vec<&FeedMessage> = s
+        .feed
+        .iter()
+        .filter(|m| m.role == FeedRole::Assistant)
+        .collect();
+    assert_eq!(bubbles.len(), 2);
+    assert!(
+        bubbles
+            .iter()
+            .all(|b| b.model.as_deref() == Some("gemma-4-31b"))
+    );
+
+    // A mode that names no model leaves the header exactly as it was before the
+    // feature existed.
+    let next = gen_id();
+    s.begin_generation(next, None);
+    assert!(s.feed.last().unwrap().model.is_none());
+}
+
 #[test]
 fn live_rewrite_discards_partial_text() {
     // Live: partial incorrect text → rewrite → the rewritten reply.
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.push_chunk(id, "Непра");
     s.push_chunk(id, "вильный ответ.");
     s.rewrite_assistant(id);
@@ -203,7 +235,7 @@ fn ignores_chunks_from_stale_generation() {
     let mut s = ChatScreen::new();
     let current = gen_id();
     let stale = gen_id();
-    s.begin_generation(current);
+    s.begin_generation(current, None);
     s.push_chunk(stale, "ghost");
     s.push_chunk(current, "real");
     assert_eq!(s.feed[0].text, "real");
@@ -213,7 +245,7 @@ fn ignores_chunks_from_stale_generation() {
 fn cancelled_finish_adds_note() {
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.finish_generation(id, FinishReason::Cancelled);
     assert!(s.feed.iter().any(|i| i.role == FeedRole::Note));
     assert!(!s.generating);
@@ -223,7 +255,7 @@ fn cancelled_finish_adds_note() {
 fn activate_chat_rebuilds_feed_and_resets_gen() {
     let mut s = ChatScreen::new();
     let prev = gen_id();
-    s.begin_generation(prev); // as if a generation was running
+    s.begin_generation(prev, None); // as if a generation was running
     s.set_token_usage(prev, 42, Some(123), true, Some(7)); // the previous chat's token counter
     let id = gen_id();
     let messages = vec![
@@ -400,7 +432,7 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
     let id = gen_id();
     let mut s = ChatScreen::new();
     s.push_user_message("вопрос".into());
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.feed_view.scroll_up(5); // the user scrolled up to read
     assert!(!s.feed_view.is_following());
 
@@ -420,7 +452,7 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
 
     // While already following, all of them keep following.
     let id2 = gen_id();
-    s.begin_generation(id2);
+    s.begin_generation(id2, None);
     assert!(s.feed_view.is_following());
     s.push_tool_call(id2, "web_search".into(), "{}".into(), "ок".into(), 0);
     s.push_note("ещё заметка");
@@ -602,7 +634,7 @@ fn ctrl_u_emits_impersonate_with_input_seed() {
         })
     );
     // Suppressed during generation.
-    s.begin_generation(gen_id());
+    s.begin_generation(gen_id(), None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
         None
@@ -703,7 +735,7 @@ fn ctrl_r_and_e_emit_intents_when_idle() {
 #[test]
 fn ctrl_r_and_e_suppressed_while_generating() {
     let mut s = ChatScreen::new();
-    s.begin_generation(gen_id());
+    s.begin_generation(gen_id(), None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
         None
@@ -862,7 +894,7 @@ fn tool_confirm_a_works_under_a_cyrillic_layout() {
 #[test]
 fn tool_confirm_esc_declines_without_cancelling_the_turn() {
     let (mut s, id) = with_tool_confirm();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         confirmed(id, ToolDecision::Deny)
@@ -912,7 +944,7 @@ fn ctrl_q_and_f10_break_through_the_tool_confirm_popup() {
 #[test]
 fn tool_confirm_is_answerable_while_generating() {
     let (mut s, id) = with_tool_confirm();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     assert!(s.generating);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -931,7 +963,7 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
 
     let mut s = ChatScreen::new();
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.request_tool_confirm(
         id,
         TOOL_CALL_ID.into(),
@@ -987,7 +1019,7 @@ fn esc_opens_chat_list_else_cancels_generation() {
         Some(ChatIntent::OpenChatList)
     );
     // During generation, Esc first cancels it.
-    s.begin_generation(gen_id());
+    s.begin_generation(gen_id(), None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         Some(ChatIntent::Cancel)
@@ -1658,7 +1690,7 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
     let mut plain = ChatScreen::new();
     let mut term = Terminal::new(TestBackend::new(60, 16)).unwrap();
     let id = gen_id();
-    plain.begin_generation(id);
+    plain.begin_generation(id, None);
     plain.push_chunk(id, "обычный текст");
     draw(&mut plain, &mut term);
     assert!(
@@ -1669,7 +1701,7 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
     // Emoji in the feed: streaming requires it.
     let mut emoji = ChatScreen::new();
     let id = gen_id();
-    emoji.begin_generation(id);
+    emoji.begin_generation(id, None);
     emoji.push_chunk(id, "смотри: 😀");
     assert!(
         emoji.take_full_redraw(),
@@ -1713,7 +1745,7 @@ fn every_feed_mutator_marks_content_change() {
     s.push_user_message("вопрос".into());
     assert!(s.take_full_redraw(), "push_user_message");
 
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     assert!(s.take_full_redraw(), "begin_generation");
 
     s.push_chunk(id, "ответ");
@@ -2317,7 +2349,7 @@ fn render_does_not_panic() {
     let mut s = ChatScreen::new();
     s.push_user_message("привет".into());
     let id = gen_id();
-    s.begin_generation(id);
+    s.begin_generation(id, None);
     s.push_chunk(id, "# Ответ\n\nтекст");
     let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
@@ -2867,7 +2899,7 @@ fn compaction_shows_a_quiet_background_indicator() {
 fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
     let mut s = ChatScreen::new();
     let gen_id = Uuid::new_v4();
-    s.begin_generation(gen_id);
+    s.begin_generation(gen_id, None);
     assert_eq!(s.background_hint(), None);
 
     s.set_retrying(gen_id, 2, 3, 4);
@@ -2910,7 +2942,7 @@ fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
 fn a_retry_chip_from_a_stale_generation_is_dropped() {
     let mut s = ChatScreen::new();
     let current = Uuid::new_v4();
-    s.begin_generation(current);
+    s.begin_generation(current, None);
 
     s.set_retrying(Uuid::new_v4(), 2, 3, 9);
     assert_eq!(
@@ -2949,7 +2981,7 @@ fn exit_commands_quit_from_the_input_box() {
 #[test]
 fn exit_command_quits_while_generating() {
     let mut s = ChatScreen::new();
-    s.begin_generation(gen_id());
+    s.begin_generation(gen_id(), None);
     type_str(&mut s, "/exit");
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -2959,7 +2991,7 @@ fn exit_command_quits_while_generating() {
     // The control: an ordinary message IS held back while generating, so the
     // assertion above is about the command and not about a missing gate.
     let mut s = ChatScreen::new();
-    s.begin_generation(gen_id());
+    s.begin_generation(gen_id(), None);
     type_str(&mut s, "/exit please");
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -3470,7 +3502,7 @@ fn a_blocked_command_says_so_and_names_a_route() {
     // by the command, with an answer, where the chord just no-ops.
     for line in ["/regen", "/retry", "/takeback", "/impersonate"] {
         let mut c = Cmd::new();
-        c.s.begin_generation(gen_id());
+        c.s.begin_generation(gen_id(), None);
         assert_eq!(c.run(line), None, "{line} must not fire mid-turn");
         let note = c.last_note();
         assert!(note.contains(line), "{line}: the note must name it: {note}");
@@ -3498,16 +3530,16 @@ fn a_blocked_command_says_so_and_names_a_route() {
 #[test]
 fn stop_cancels_a_turn_and_chats_never_does() {
     let mut c = Cmd::new();
-    c.s.begin_generation(gen_id());
+    c.s.begin_generation(gen_id(), None);
     assert_eq!(c.run("/stop"), Some(ChatIntent::Cancel));
 
     let mut c = Cmd::new();
-    c.s.begin_generation(gen_id());
+    c.s.begin_generation(gen_id(), None);
     assert_eq!(c.run("/chats"), Some(ChatIntent::OpenChatList));
     // The control: `Esc` in that same state cancels instead — which is the
     // overload the two commands exist to resolve.
     let mut c = Cmd::new();
-    c.s.begin_generation(gen_id());
+    c.s.begin_generation(gen_id(), None);
     assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
 }
 

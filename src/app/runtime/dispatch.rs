@@ -104,7 +104,10 @@ pub(super) fn apply_event(
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
-        AppEvent::GenerationStarted { generation_id } => screen.begin_generation(generation_id),
+        AppEvent::GenerationStarted {
+            generation_id,
+            model,
+        } => screen.begin_generation(generation_id, model),
         AppEvent::Chunk {
             generation_id,
             text,

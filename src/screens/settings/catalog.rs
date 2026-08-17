@@ -1268,6 +1268,12 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.mermaid")),
                 row(
+                    FieldId::IModelName,
+                    loc.t("ui.settings.field.model_name"),
+                    FieldKind::Toggle(i.show_model_name),
+                )
+                .describe(loc.t("ui.settings.desc.model_name")),
+                row(
                     FieldId::IClipboardOsc52,
                     loc.t("ui.settings.field.osc52"),
                     FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),

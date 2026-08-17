@@ -655,6 +655,8 @@ enum FieldId {
     ITableSeparators,
     /// Render ```mermaid blocks in the feed as a diagram (fallback — the source).
     IMermaid,
+    /// Show the model's name next to the assistant's header in the feed.
+    IModelName,
     ISpell,
     IDicts,
     /// Confirmation before `Ctrl+R`/`Ctrl+E` (irreversible operations).

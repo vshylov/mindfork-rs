@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: collapsible tool calls, and the collapse state per chat (done)
 - Post-M9: navigable `chat://` references in the feed (done)
 - Post-M9: `Esc` retraces a followed `chat://` reference (done)
+- Post-M9: the model's name on the assistant's header (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1788,3 +1789,52 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   prologue to two lines and costs no test a word of what it asserts. Test count
   unchanged at 2222. The generalization is now in lessons §2: **if the third test
   starts the same way as the first two, that opening is a fixture, not a test.**
+
+### Post-M9: the model's name on the assistant's header (done)
+- **What and why.** The feed said *who* answered (`✦ ASSISTANT`, or the
+  profile's custom name) but never *what* answered. The information was already
+  on disk and had been since M9: every assistant message stores a metadata
+  snapshot of the turn — engine mode, sampling, and `model` — and nothing read
+  the last field. A new `interface.show_model_name` toggle (Settings →
+  Interface → Appearance, **off** by default) draws it next to the header, muted
+  and unbolded like the "thoughts" pill.
+- **The source is the message, not the settings** — the decision the whole
+  feature turns on. Reading the *current* `engine.active_model_name()` would
+  have been one line and no new field on `FeedMessage`, and it would have been
+  wrong for the only case that makes the line worth a row: reopen a conversation
+  after switching provider, and every bubble would claim the model selected now.
+  Reading `MessageMetadata.model` costs a field and pays for itself the first
+  time someone compares two models in one chat. It also decides the failure
+  mode: a message stored before the snapshot existed, or written in a mode that
+  names no model (a managed server with no GGUF path yet), shows **nothing** —
+  and its header is byte-for-byte the one drawn before the setting existed,
+  which is what makes turning the toggle on safe on an old corpus.
+- **The live bubble had to be answered separately, and is the reason an event
+  changed.** The streaming bubble is pushed by the screen from literals and
+  never goes through `FeedMessage::from_messages` — the in-flight reply has no
+  domain message yet, so it would have carried no name until the next chat
+  activation, and the header would have *changed under the reader* the moment
+  the turn ended. `AppEvent::GenerationStarted` now carries the model, resolved
+  by a **single** read of `active_model_name()` that also feeds
+  `GenSpawn.model_name` — so the header cannot name a different model than the
+  one the stored message will claim. The screen keeps it in `gen_model` rather
+  than only on the bubble, because a turn can open more bubbles than one:
+  `send_followup_message` starts a second mid-turn, written by the same model.
+- **Stitching keeps the first round's answer.** An agentic-loop round that
+  produced only tool calls never becomes a message at all, so a merged bubble
+  can legitimately fold in a round with no metadata; taking the last non-empty
+  answer would let a late round blank out the name already on screen. One
+  bubble, one header, one name.
+- **Cache discipline** (the trap this widget has bitten on before): the name is
+  baked into the cached header line, so the flag joins `CacheKey` and the name
+  joins `message_fingerprint`. Without the second, the streaming bubble's block
+  would survive into the next activation and keep the name it was drawn with.
+- **Tests**: 5 new (the setting gating the name and resetting the cache; a
+  message without a name rendering identically with the setting on and off; the
+  name read from metadata and surviving round stitching; the turn's streaming
+  bubbles carrying it, including the follow-up; the settings toggle). Suite
+  **2299 → 2304**. The four committed settings-screen frame dumps were
+  regenerated — the Interface section's field count moved 3 → 4. **No live run**
+  (AGENTS.md §3): pure UI, no engine, memory or tool path touched — the one
+  non-UI edit adds a field to an event the orchestrator already had the value
+  for.
