@@ -239,6 +239,16 @@ startup because "forget" dropped the bookkeeping too — 43 of 171 chats, 27 ms 
 launch. A single-pass test cannot see it.
 — *full-text search over chat content — stage 1*.
 
+**A default-on background engine call eats scripted test engines out of turn.** The
+automatic chat title — one extra request after the first exchange — broke 8 orchestrator
+tests at once: a finite `sequence` script had an entry consumed by the title task, and
+`CapturingBackend::last` held the *title* request where the assertion expected the
+turn's. The failures are loud but read as unrelated. Fixture-driven tests opt out via
+`no_auto_cfg()` (one line, at the fixture), while the trigger's own tests run the true
+default; any future automatic background call (auto-summary, auto-anything) re-creates
+the same interference and should budget for the same opt-out at design time.
+— *automatic chat titling on the first exchange*.
+
 **A blocking `join()` on a stub thread deadlocks a `#[tokio::test]` whose work is a
 spawned task.** A test paired an OS-thread TCP stub with the readiness probe the code
 spawns, then called `JoinHandle::join()` — that blocks the current-thread runtime, so the
