@@ -1618,6 +1618,29 @@ A direct requirement from the task:
   (`Ctrl+←/→`, `Ctrl+Backspace/Delete`), `Ctrl+Home/End`, clear/restore (`Ctrl+K`),
   clipboard paste, and horizontal scrolling of a long title. The spellchecker lives in
   the chat screen; `app` lends it to the list screen for highlighting.
+- **A model-written title** (`Ctrl+R` in the list): the model reads a digest of the
+  conversation (roles tagged, start+end when long — `features/rename_chat.rs`) and
+  answers with a short title in the conversation's language: one single-turn background
+  request with no history/tools and reasoning muted (`orchestrator/title.rs`), cleaned
+  (`clean_generated_title`) and applied via `ChatRenamed`; failures report into the
+  list overlay. **The same task also runs by itself** — `interface.auto_title`
+  (the "Interface" section's Behavior group, a tri-state) fires it once per
+  conversation: *after the assistant's first reply* (the **default** — the reply is
+  what disambiguates a terse opening, so the name is measurably better, and the
+  engine is idle by then), *after the user's first message* (the cloud-chat-UI
+  timing — the title appears while the reply streams; its request is deliberately
+  fired after the reply's own, since on a single-slot `llama-server` it would
+  otherwise queue ahead of the answer), or *off*. "First reply" means the first
+  **substantive** one: a cancelled or failed first turn defers the title to
+  whichever turn actually answers, an existing conversation (which already has
+  replies) is never retitled on upgrade, and regenerating the first reply
+  re-titles — the name follows what the exchange became. A chat the user renamed
+  (`F2` or `/rename <title>`) sets `Chat.renamed_manually` and is never touched;
+  the flag is checked again when a result lands, so a rename made while the task
+  runs wins. Automatic runs are **quiet** — failures go to the log, the rule for
+  background turns — where the requested action reports into the overlay the user is looking
+  at ([§6.8](#68-transient-engine-failures-and-what-the-user-is-told)). See
+  [docs/history/auto-chat-title.md](docs/history/auto-chat-title.md).
 - Contextual actions: create (with a profile picker), clone, delete (soft).
 - **Copying the entire conversation** of the selected chat to the system clipboard (`F5`):
   the overlay only sees a summary, so the text is built by the orchestrator (the owner of `Chat`),
@@ -2082,7 +2105,9 @@ section and subsection), `Esc` — cancel.
   globally" hint — honestly showing that it's unavailable to the model.
 - **Interface**: the *Appearance* group (theme, **legacy-terminal compatibility** —
   see below), *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
-  (confirming `Ctrl+R`/`Ctrl+E`), *Conversation copy (F5)* (what's included).
+  (confirming `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
+  message / after the assistant's reply (default) / off, §11.2), *Conversation
+  copy (F5)* (what's included).
 
 **Navigation** (a two-level focus: the section menu ↔ the field pane). In one
 sentence: *the arrows change, `Enter` goes in, `Esc` goes out, `Tab` switches section.*
@@ -2212,7 +2237,7 @@ docs/history/external-api-key.md.
 | `Ctrl+G` | in the chat list (content mode): the message-level search screen — `Enter` opens the chat at the message (§11.2.1). In the input box — spellcheck suggestions |
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
-| `Ctrl+R` | regenerate the last response |
+| `Ctrl+R` | in a chat: regenerate the last response; in the chat list: ask the model to title the selected chat (§11.2) |
 | `Ctrl+U` | write a message as the user (impersonation, §11.8) |
 | `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
 | `/tts [N\|all\|stop\|pause\|resume]` | speak the chat's messages / stop / pause / resume (§11.9) |

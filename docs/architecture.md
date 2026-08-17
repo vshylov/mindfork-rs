@@ -173,7 +173,11 @@ src/
 │  │  │                     request carries, spec §6.7
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor
-│  │  ├─ title.rs           chat auto-title (background task)
+│  │  ├─ title.rs           chat auto-title (background task) + the automatic
+│  │  │                     trigger (`interface.auto_title`, spec §11.2): fires
+│  │  │                     once per conversation from handle_send/handle_done,
+│  │  │                     never for a manually renamed chat; automatic runs
+│  │  │                     log failures where requested ones report to the list
 │  │  ├─ impersonation.rs   "on behalf of the user" reply (background task)
 │  │  ├─ rag.rs             indexing/removing files in the knowledge base
 │  │  ├─ attachments.rs     chat file attachments (`/file attach`): background
@@ -349,7 +353,7 @@ src/
 │  │                        (`hex_needle`, `resolve_prefix`, `find_refs`) shared by
 │  │                        the tools that mint addresses and the feed that draws
 │  │                        them. `find_refs` returns only addresses that resolve
-│  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
+│  ├─ rename_chat.rs        auto-title (digest, cleanup, trigger predicates), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
 │  ├─ compaction.rs        history compression, pure part: one renderer of a
