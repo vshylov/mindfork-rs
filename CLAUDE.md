@@ -166,7 +166,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 ## Status (2026-08-17, version 0.9.6)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **2299 unit tests
-green, 98 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+green, 99 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
 most recent tracks: **automatic chat titling on the first exchange**
 (a new conversation names itself once — `interface.auto_title`, a tri-state

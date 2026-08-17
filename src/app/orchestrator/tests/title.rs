@@ -3,20 +3,34 @@
 
 use super::*;
 
-#[tokio::test]
-async fn auto_rename_sets_title_from_model() {
-    // The first request (send) → a "reply"; the second (auto-title) → a title.
-    let backend = Arc::new(MockBackend::sequence(vec![
-        vec![
-            ChatChunk::Text("ответ".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-        vec![
-            ChatChunk::Text("«Тема разговора»".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-    ])) as Arc<dyn EngineBackend>;
-    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), no_auto_cfg());
+/// One scripted engine reply: stream `text`, then finish. Every e2e test here
+/// scripts a few of these, and the four-line `vec![Text, Finished]` blocks
+/// were sliding duplicates of each other and of the impersonation suite's —
+/// hoisting the plumbing keeps each script to one line (docs/lessons.md §2).
+fn script(text: &str) -> Vec<ChatChunk> {
+    vec![
+        ChatChunk::Text(text.into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ]
+}
+
+/// Spawns the orchestrator over a `MockBackend::sequence` of `scripts` and
+/// waits out the initial activation — the shared opening of every e2e test in
+/// this file: a fixture, not a test (docs/lessons.md §2). `sequence` repeats
+/// its **last** entry once the rest are consumed, so a one-entry list serves
+/// every request the same script.
+async fn orch_with_scripts(
+    scripts: Vec<Vec<ChatChunk>>,
+    cfg: AppConfig,
+) -> (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    Uuid,
+) {
+    let backend = Arc::new(MockBackend::sequence(scripts)) as Arc<dyn EngineBackend>;
+    let (d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
     let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
         .unwrap();
@@ -24,6 +38,59 @@ async fn auto_rename_sets_title_from_model() {
         AppEvent::ChatActivated { id, .. } => id,
         _ => unreachable!(),
     };
+    (d, cmd_tx, evt_rx, handle, chat_id)
+}
+
+/// The next `ChatRenamed` event's payload.
+async fn wait_renamed(evt_rx: &mut UnboundedReceiver<AppEvent>) -> (Uuid, String) {
+    match wait_for(evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap()
+    {
+        AppEvent::ChatRenamed { id, title } => (id, title),
+        _ => unreachable!(),
+    }
+}
+
+/// A bare orchestrator holding one chat with `messages` — the shared opening
+/// of the non-async tests here, under the same fixture rule.
+fn bare_with_chat(
+    messages: Vec<Message>,
+) -> (
+    tempfile::TempDir,
+    Orchestrator,
+    UnboundedReceiver<AppEvent>,
+    Uuid,
+) {
+    let (d, mut orch, rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "Новый чат");
+    for m in messages {
+        chat.push_message(m);
+    }
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    (d, orch, rx, chat_id)
+}
+
+/// A [`TitleResult`] as the background task would deliver it.
+fn title_result(chat_id: Uuid, text: Result<&str, &str>, origin: TitleOrigin) -> TitleResult {
+    TitleResult {
+        chat_id,
+        text: text.map(str::to_string).map_err(str::to_string),
+        origin,
+    }
+}
+
+#[tokio::test]
+async fn auto_rename_sets_title_from_model() {
+    // The first script answers the send; the second — the requested title.
+    let (_d, cmd_tx, mut evt_rx, handle, chat_id) = orch_with_scripts(
+        vec![script("ответ"), script("«Тема разговора»")],
+        no_auto_cfg(),
+    )
+    .await;
 
     // Need at least one reply, otherwise there's nothing to title.
     cmd_tx
@@ -37,16 +104,9 @@ async fn auto_rename_sets_title_from_model() {
         .unwrap();
 
     cmd_tx.send(AppCommand::AutoRenameChat(chat_id)).unwrap();
-    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
-        .await
-        .unwrap();
-    match renamed {
-        AppEvent::ChatRenamed { id, title } => {
-            assert_eq!(id, chat_id);
-            assert_eq!(title, "Тема разговора", "the model's quotes are stripped");
-        }
-        _ => unreachable!(),
-    }
+    let (id, title) = wait_renamed(&mut evt_rx).await;
+    assert_eq!(id, chat_id);
+    assert_eq!(title, "Тема разговора", "the model's quotes are stripped");
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -70,12 +130,7 @@ fn salvage_prefers_text_else_last_thought_line() {
 
 #[test]
 fn auto_rename_without_messages_emits_error() {
-    let (_d, mut orch, mut rx) = bare_orch_rx();
-    let profile = Profile::new("P", "sys");
-    let chat = Chat::from_profile(&profile, "Новый чат"); // no messages
-    let chat_id = chat.id;
-    orch.profiles.push(profile);
-    orch.chats.push(chat);
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![]);
 
     orch.handle_auto_rename(chat_id);
     // An empty chat → an error into the chat-list area, the background task doesn't start.
@@ -89,22 +144,13 @@ fn auto_rename_without_messages_emits_error() {
 /// makes the absence assertion meaningful (docs/lessons.md §2).
 #[tokio::test]
 async fn first_reply_titles_the_chat_automatically() {
-    let backend = Arc::new(MockBackend::sequence(vec![
-        vec![
-            ChatChunk::Text("ответ".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-        // Serves the automatic title task — and, being the last script, every
-        // later request too (`sequence` repeats its final entry).
-        vec![
-            ChatChunk::Text("«Планы на дачу»".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-    ])) as Arc<dyn EngineBackend>;
-    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
+    // The second script serves the automatic title task — and every later
+    // request too, being the sequence's last entry.
+    let (_d, cmd_tx, mut evt_rx, handle, chat_id) = orch_with_scripts(
+        vec![script("ответ"), script("«Планы на дачу»")],
+        AppConfig::default(),
+    )
+    .await;
 
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
@@ -113,13 +159,9 @@ async fn first_reply_titles_the_chat_automatically() {
         .await
         .unwrap();
     // No AutoRenameChat was sent — the rename arrives on its own.
-    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
-        .await
-        .unwrap();
-    match renamed {
-        AppEvent::ChatRenamed { title, .. } => assert_eq!(title, "Планы на дачу"),
-        _ => unreachable!(),
-    }
+    let (id, title) = wait_renamed(&mut evt_rx).await;
+    assert_eq!(id, chat_id);
+    assert_eq!(title, "Планы на дачу");
 
     // The second exchange must not re-title: the conversation already has its
     // first reply. Drain to the channel's end (after Quit) so a late rename
@@ -145,30 +187,20 @@ async fn first_reply_titles_the_chat_automatically() {
 /// waiting for the reply.
 #[tokio::test]
 async fn after_user_mode_titles_on_send() {
-    // One script served to every request (`scripted` repeats): both the reply
-    // and the racing title task read the same text, so the assertion does not
-    // depend on which of the two concurrent requests lands first.
-    let backend = Arc::new(MockBackend::scripted(vec![
-        ChatChunk::Text("Дачный сезон".into()),
-        ChatChunk::Finished(FinishReason::Stop),
-    ])) as Arc<dyn EngineBackend>;
+    // One script served to every request: both the reply and the racing title
+    // task read the same text, so the assertion does not depend on which of
+    // the two concurrent requests lands first.
     let mut cfg = AppConfig::default();
     cfg.interface.auto_title = crate::shared::config::AutoTitleMode::AfterUserMessage;
-    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
+    let (_d, cmd_tx, mut evt_rx, handle, chat_id) =
+        orch_with_scripts(vec![script("Дачный сезон")], cfg).await;
 
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
-    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
-        .await
-        .unwrap();
-    match renamed {
-        AppEvent::ChatRenamed { title, .. } => assert_eq!(title, "Дачный сезон"),
-        _ => unreachable!(),
-    }
+    let (id, title) = wait_renamed(&mut evt_rx).await;
+    assert_eq!(id, chat_id);
+    assert_eq!(title, "Дачный сезон");
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
@@ -178,50 +210,28 @@ async fn after_user_mode_titles_on_send() {
 /// the first — and the title follows what the exchange actually became.
 #[tokio::test]
 async fn regenerating_the_first_reply_retitles() {
-    let backend = Arc::new(MockBackend::sequence(vec![
+    let (_d, cmd_tx, mut evt_rx, handle, _chat) = orch_with_scripts(
         vec![
-            ChatChunk::Text("ответ №1".into()),
-            ChatChunk::Finished(FinishReason::Stop),
+            script("ответ №1"),
+            script("«Первое имя»"),
+            script("ответ №2"),
+            script("«Второе имя»"),
         ],
-        vec![
-            ChatChunk::Text("«Первое имя»".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-        vec![
-            ChatChunk::Text("ответ №2".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-        vec![
-            ChatChunk::Text("«Второе имя»".into()),
-            ChatChunk::Finished(FinishReason::Stop),
-        ],
-    ])) as Arc<dyn EngineBackend>;
-    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
+        AppConfig::default(),
+    )
+    .await;
 
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
     // Wait the first title out before regenerating, so the two title tasks
     // cannot race each other for scripts.
-    let first = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
-        .await
-        .unwrap();
-    match first {
-        AppEvent::ChatRenamed { title, .. } => assert_eq!(title, "Первое имя"),
-        _ => unreachable!(),
-    }
+    let (_, first) = wait_renamed(&mut evt_rx).await;
+    assert_eq!(first, "Первое имя");
 
     cmd_tx.send(AppCommand::RegenerateLast).unwrap();
-    let second = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
-        .await
-        .unwrap();
-    match second {
-        AppEvent::ChatRenamed { title, .. } => assert_eq!(title, "Второе имя"),
-        _ => unreachable!(),
-    }
+    let (_, second) = wait_renamed(&mut evt_rx).await;
+    assert_eq!(second, "Второе имя");
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
@@ -232,14 +242,10 @@ async fn regenerating_the_first_reply_retitles() {
 /// is the positive control for both absences.
 #[test]
 fn manual_rename_outranks_the_automatic_title() {
-    let (_d, mut orch, mut rx) = bare_orch_rx();
-    let profile = Profile::new("P", "sys");
-    let mut chat = Chat::from_profile(&profile, "Новый чат");
-    chat.push_message(Message::user("привет"));
-    chat.push_message(Message::assistant("здравствуйте"));
-    let chat_id = chat.id;
-    orch.profiles.push(profile);
-    orch.chats.push(chat);
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![
+        Message::user("привет"),
+        Message::assistant("здравствуйте"),
+    ]);
 
     orch.handle_rename(chat_id, "Моё имя".into());
     assert!(
@@ -249,21 +255,21 @@ fn manual_rename_outranks_the_automatic_title() {
     while rx.try_recv().is_ok() {} // drop the rename's own events
 
     // An automatic result that lost the race to the rename: dropped silently.
-    orch.handle_title_result(TitleResult {
+    orch.handle_title_result(title_result(
         chat_id,
-        text: Ok("«Модельное имя»".into()),
-        origin: TitleOrigin::Auto,
-    });
+        Ok("«Модельное имя»"),
+        TitleOrigin::Auto,
+    ));
     assert_eq!(orch.chats[0].title, "Моё имя");
     assert!(rx.try_recv().is_err(), "an automatic result must be silent");
 
     // The requested path (the chat-list action) still applies: the user asked
     // for this title moments ago, so last write wins.
-    orch.handle_title_result(TitleResult {
+    orch.handle_title_result(title_result(
         chat_id,
-        text: Ok("«Модельное имя»".into()),
-        origin: TitleOrigin::Requested,
-    });
+        Ok("«Модельное имя»"),
+        TitleOrigin::Requested,
+    ));
     assert_eq!(orch.chats[0].title, "Модельное имя");
     assert!(matches!(
         rx.try_recv().unwrap(),
@@ -276,12 +282,7 @@ fn manual_rename_outranks_the_automatic_title() {
 /// overlay — the loud arm proving the quiet arm's silence is deliberate.
 #[test]
 fn automatic_title_failures_are_quiet_requested_ones_are_loud() {
-    let (_d, mut orch, mut rx) = bare_orch_rx();
-    let profile = Profile::new("P", "sys");
-    let chat = Chat::from_profile(&profile, "Новый чат"); // empty: no digest
-    let chat_id = chat.id;
-    orch.profiles.push(profile);
-    orch.chats.push(chat);
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![]); // empty: no digest
 
     // Trigger-side: an empty digest on the automatic path says nothing.
     orch.maybe_auto_title(
@@ -293,11 +294,11 @@ fn automatic_title_failures_are_quiet_requested_ones_are_loud() {
         "the automatic path must not emit UI events"
     );
     // Result-side: an error outcome on the automatic path says nothing either.
-    orch.handle_title_result(TitleResult {
+    orch.handle_title_result(title_result(
         chat_id,
-        text: Err("engine exploded".into()),
-        origin: TitleOrigin::Auto,
-    });
+        Err("engine exploded"),
+        TitleOrigin::Auto,
+    ));
     assert!(
         rx.try_recv().is_err(),
         "an automatic failure must be silent"
@@ -306,11 +307,11 @@ fn automatic_title_failures_are_quiet_requested_ones_are_loud() {
     // The requested path reports both the same conditions.
     orch.handle_auto_rename(chat_id);
     assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
-    orch.handle_title_result(TitleResult {
+    orch.handle_title_result(title_result(
         chat_id,
-        text: Err("engine exploded".into()),
-        origin: TitleOrigin::Requested,
-    });
+        Err("engine exploded"),
+        TitleOrigin::Requested,
+    ));
     assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
 }
 
@@ -319,15 +320,11 @@ fn auto_rename_when_server_not_ready_errors_into_chat_list() {
     // The server is still connecting: the readiness error must go into the chat-list
     // overlay (`ChatListError`), not the chat feed (`Error`) — otherwise the
     // full-screen list overlay would hide it.
-    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![
+        Message::user("привет"),
+        Message::assistant("здравствуйте"),
+    ]);
     orch.engines.server_status = ServerStatus::Connecting;
-    let profile = Profile::new("P", "sys");
-    let mut chat = Chat::from_profile(&profile, "Новый чат");
-    chat.push_message(Message::user("привет"));
-    chat.push_message(Message::assistant("здравствуйте"));
-    let chat_id = chat.id;
-    orch.profiles.push(profile);
-    orch.chats.push(chat);
 
     orch.handle_auto_rename(chat_id);
     let ev = rx.try_recv().unwrap();

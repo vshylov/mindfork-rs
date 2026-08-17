@@ -346,10 +346,18 @@ harness (one struct owning the loop's state, one method per step) collapsed each
 prologue to two lines with no test losing a word of what it asserts. **The rule
 generalizes past production code: if the third test starts the same way as the first
 two, that opening is a fixture, not a test.**
+The **seventh** was that rule ignored in the PR whose author had just re-read it: two
+e2e prologues in one new test file — a `MockBackend::sequence` of same-shape
+`vec![Text, Finished]` blocks plus spawn-and-activate, written minutes apart — scored
+6.0% against the 3% bar, and also matched the *impersonation* suite's prologue across
+files. Collapsed the same way: a one-line `script()` and one spawn fixture. The gate
+fired **after** the PR was opened, so check the Sonar analysis before calling a PR
+done, not after the reviewer does.
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
 its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a followed
-`chat://` reference*, *the external server's API key, entered in settings*.
+`chat://` reference*, *the external server's API key, entered in settings*, *automatic
+chat titling on the first exchange*.
 
 ---
 

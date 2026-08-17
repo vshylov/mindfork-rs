@@ -1604,7 +1604,7 @@ engine, memory or tool path.
   control; quiet-vs-loud failures both arms; settings row + cycle order;
   config default) and +1 live smoke.
 
-**Tests**: 2299 green, 98 `#[ignore]`, clippy `-D warnings`/fmt clean.
+**Tests**: 2299 green, 99 `#[ignore]`, clippy `-D warnings`/fmt clean.
 **Live run** (AGENTS.md §3, the trigger sits on the send/done path of every
 turn): against gemma-4-31B (`llama-server`, 192.168.1.20) —
 `auto_title_first_reply_e2e_live` replaced the default title with one naming
