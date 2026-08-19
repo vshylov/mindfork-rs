@@ -2,8 +2,6 @@
 //! of the [`super`] module; split out of the chat.rs monolith (see
 //! docs/history/refactoring-god-objects.md, stage 2).
 
-use ratatui::style::Color;
-
 use super::render::centered_rect;
 use super::*;
 use crate::shared::credits;
@@ -494,7 +492,7 @@ pub(super) fn render_help(
     // Content for the active tab (language-neutral data — license/components —
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
-        HelpTab::About => about_lines(palette, loc),
+        HelpTab::About => about_lines(palette, loc, inner_w),
         HelpTab::Hotkeys => key_lines(HELP_KEYS, KEY_GROUP_OPENERS, palette, loc, inner_w),
         HelpTab::Commands => key_lines(
             &command_rows(),
@@ -553,14 +551,31 @@ pub(super) fn help_tab_strip(
 /// Left indent of the tab content (the same column as the lockup).
 const HELP_PAD: &str = "  ";
 
-/// The "About" tab: name/description + author, version, and links
-/// (site/repository/crate). Links use the accent color (like "command keys"),
-/// labels are muted.
-fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
-    let rows: [(&str, String, Color); 5] = [
+/// The "About" tab: the name and tagline, then the facts — version, license
+/// and build target, the links (site/crate/repository) and the author — as a
+/// leader table, the geometry the "Components" tab already uses
+/// ([`leader_row`]): the label on the left margin, the values in one column
+/// anchored so the widest of them touches the mirrored right margin, and the
+/// run between bridged by a dotted leader. Values used to start one column
+/// past the widest label, which left the right ~30 columns of a wide dialog
+/// empty — the same complaint the "Components" tab was fixed for, and the same
+/// fix (user's decision, 2026-08-19). Links use the accent color (like
+/// "command keys"), the labels are muted.
+fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
+    let rows: Vec<(Span<'static>, Span<'static>)> = [
         (
             loc.t("ui.about.version"),
             env!("CARGO_PKG_VERSION").to_string(),
+            palette.text,
+        ),
+        (
+            loc.t("ui.about.license"),
+            credits::LICENSE_ID.to_string(),
+            palette.text,
+        ),
+        (
+            loc.t("ui.about.platform"),
+            credits::platform(),
             palette.text,
         ),
         (
@@ -583,13 +598,20 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
             credits::AUTHOR.to_string(),
             palette.text,
         ),
-    ];
-    // Label column width (with the colon), so values line up.
-    let label_w = rows
-        .iter()
-        .map(|(l, _, _)| l.chars().count() + 1)
-        .max()
-        .unwrap_or(0);
+    ]
+    .into_iter()
+    .map(|(label, value, color)| {
+        (
+            Span::styled(format!("{label}:"), palette.muted_style()),
+            Span::styled(value, Style::new().fg(color)),
+        )
+    })
+    .collect();
+    // The one column every value starts in — measured in display columns, since
+    // a label carries Cyrillic in `ru` and a value could carry anything.
+    let value_col = width.saturating_sub(
+        HELP_PAD.chars().count() + rows.iter().map(|(_, v)| span_width(v)).max().unwrap_or(0),
+    );
     let mut lines = vec![
         Line::raw(""),
         Line::from(Span::styled(
@@ -603,17 +625,11 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
         Line::raw(""),
     ];
     // Items separated by a blank line — the list "breathes" (requested: spacing
-    // between items).
-    for (label, value, color) in rows {
+    // between items). The leader carries the eye across the gap the spacing
+    // opens up, which is what makes the anchored column readable.
+    for (label, value) in rows {
         lines.push(Line::raw(""));
-        let field = format!("{label}:");
-        let pad = " ".repeat((label_w + 1).saturating_sub(field.chars().count()));
-        lines.push(Line::from(vec![
-            Span::raw(HELP_PAD),
-            Span::styled(field, palette.muted_style()),
-            Span::raw(pad),
-            Span::styled(value, Style::new().fg(color)),
-        ]));
+        lines.push(leader_row(label, vec![value], value_col, palette));
     }
     lines
 }
@@ -856,9 +872,7 @@ fn component_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec
 /// One table of the "Components" tab: `(name, mid, right)` rows with the name
 /// on the left margin, the `mid` and `right` columns aligned under each other
 /// against the right margin (which mirrors [`HELP_PAD`]), and the gap bridged
-/// by a dotted leader in `keycap_bg` — the backdrop the active tab sits on
-/// ([`help_tab_strip`]), a step quieter than the border, so the leaders read as
-/// alignment rather than as content.
+/// by the dotted leader [`leader_row`] draws.
 /// Column math is in characters: every value here is ASCII (crate names,
 /// versions, SPDX expressions, repository pins).
 fn leader_table(
@@ -882,23 +896,47 @@ fn leader_table(
     let mid_col = right_col.saturating_sub(2 + mid_w);
     rows.iter()
         .map(|(name, mid, right)| {
-            // A space on each side of the dots. On a dialog clamped below the
-            // minimum width the dots run out and the row just clips on the
-            // right — the same hard degradation as every other tab's rows.
-            let dots = mid_col.saturating_sub(pad + name.chars().count() + 2);
-            Line::from(vec![
-                Span::raw(HELP_PAD),
+            leader_row(
                 Span::styled((*name).to_string(), Style::new().fg(palette.text)),
-                Span::styled(
-                    format!(" {} ", ".".repeat(dots)),
-                    Style::new().fg(palette.keycap_bg),
-                ),
-                Span::styled(format!("{mid:<mid_w$}"), palette.muted_style()),
-                Span::raw("  "),
-                Span::styled((*right).to_string(), palette.muted_style()),
-            ])
+                vec![
+                    Span::styled(format!("{mid:<mid_w$}"), palette.muted_style()),
+                    Span::raw("  "),
+                    Span::styled((*right).to_string(), palette.muted_style()),
+                ],
+                mid_col,
+                palette,
+            )
         })
         .collect()
+}
+
+/// One row of a "table of contents"-style table: `left` on the left margin,
+/// `tail` starting at column `tail_col`, and the run between bridged by a
+/// dotted leader in `keycap_bg` — the backdrop the active tab sits on
+/// ([`help_tab_strip`]), a step quieter than the border, so the leaders read as
+/// alignment rather than as content. Shared by the "About" and "Components"
+/// tabs: one geometry, one leader color, and neither can drift from the other.
+///
+/// A space sits on each side of the dots. On a dialog clamped below the minimum
+/// width the dots run out and the row just clips on the right — the same hard
+/// degradation as every other tab's rows.
+fn leader_row(
+    left: Span<'static>,
+    tail: Vec<Span<'static>>,
+    tail_col: usize,
+    palette: &Palette,
+) -> Line<'static> {
+    let dots = tail_col.saturating_sub(HELP_PAD.chars().count() + span_width(&left) + 2);
+    let mut spans = vec![
+        Span::raw(HELP_PAD),
+        left,
+        Span::styled(
+            format!(" {} ", ".".repeat(dots)),
+            Style::new().fg(palette.keycap_bg),
+        ),
+    ];
+    spans.extend(tail);
+    Line::from(spans)
 }
 
 /// Draws the spellcheck-suggestion popup centered on screen.
@@ -1270,6 +1308,82 @@ mod tests {
                     "{name}: no blank line before opener {opener:?}"
                 );
             }
+        }
+    }
+
+    /// The "About" tab is a leader table too (user's decision 2026-08-19 — the
+    /// left-aligned value column left the right ~30 columns of a wide dialog
+    /// empty, the same complaint the "Components" tab was fixed for): labels on
+    /// the left margin, every value in ONE column, the widest of them touching
+    /// the mirrored right margin, dotted leaders in `keycap_bg` bridging the
+    /// gap. Pinned at both bounds of the width range, and in `ru` — the locale
+    /// with the long labels, where a value column can be squeezed out of
+    /// existence without anyone noticing in `en`.
+    #[test]
+    fn about_rows_anchor_right_with_leaders() {
+        let palette = Palette::default();
+        for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
+            let loc = crate::shared::i18n::locale(lang);
+            for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+                let lines = about_lines(&palette, loc, w);
+                for line in &lines {
+                    assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
+                }
+                // A table row is [pad][label][leader][value]; the name/tagline
+                // rows above are single-span.
+                let rows: Vec<&Line<'static>> =
+                    lines.iter().filter(|l| l.spans.len() == 4).collect();
+                assert_eq!(rows.len(), 7, "expected every fact row: {rows:?}");
+                let col_of = |line: &Line<'static>| -> usize {
+                    line.spans[..3].iter().map(span_width).sum()
+                };
+                let value_col = col_of(rows[0]);
+                let mut value_end = 0;
+                for row in &rows {
+                    assert_eq!(span_width(&row.spans[0]), HELP_PAD.chars().count());
+                    assert_eq!(col_of(row), value_col, "the value column drifts: {row:?}");
+                    let leader = &row.spans[2];
+                    assert_eq!(
+                        leader.style.fg,
+                        Some(palette.keycap_bg),
+                        "leader color: {row:?}"
+                    );
+                    assert!(
+                        leader.content.trim().chars().all(|c| c == '.'),
+                        "leader is not dots: {row:?}"
+                    );
+                    value_end = value_end.max(value_col + span_width(&row.spans[3]));
+                }
+                assert_eq!(
+                    value_end,
+                    w - HELP_PAD.chars().count(),
+                    "the values are not anchored to the right margin at {w} ({lang:?})"
+                );
+                // …and the leaders are real runs of dots, not stubs — the whole
+                // point of anchoring right.
+                assert!(
+                    rows.iter()
+                        .any(|r| r.spans[2].content.matches('.').count() >= 3),
+                    "no visible leaders at {w} ({lang:?})"
+                );
+            }
+        }
+        // The facts the tab exists to show, including the two the leaders made
+        // room for (`LICENSE_ID` is read from the manifest, so a manifest change
+        // shows up here rather than silently).
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let text: String = about_lines(&palette, loc, HELP_MAX_WIDTH as usize)
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        for fact in [
+            credits::LICENSE_ID,
+            &credits::platform(),
+            credits::SITE_URL,
+            credits::AUTHOR,
+            env!("CARGO_PKG_VERSION"),
+        ] {
+            assert!(text.contains(fact), "the About tab lost {fact:?}");
         }
     }
 

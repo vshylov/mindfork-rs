@@ -2287,8 +2287,14 @@ docs/history/external-api-key.md.
 
 **The help/"about" dialog (`F1`/`?`)** — a modal popup in the KDE/Qt style:
 a logo lockup in the header, a tab strip, and scrollable content for the active
-tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name,
-description, author, version, links — the website `mindfork.io`, the repository, the crate),
+tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name and
+description, then the facts — version, license (the SPDX id from `Cargo.toml`; the full
+text is its own tab), build target (`std::env::consts` — the OS and architecture the
+binary was built for, so a report names the actual build), the links — the website
+`mindfork.io`, the crate, the repository — and the author; laid out as the same
+**leader table** the "Components" tab uses, one value column anchored against the
+mirrored right margin, because a value column left-aligned one step past the widest
+label left the right ~30 columns of a wide dialog empty),
 **"Hotkeys"** (this table), **"Commands"** (input-box commands `/rag …`/
 `/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
 **"Disclaimer"** (`DISCLAIMER.md` — what the author does not answer for when the model that
@@ -2296,7 +2302,7 @@ writes every word on screen was chosen and downloaded by the user: generated out
 third-party models and providers, the tools a model can invoke, cloud egress),
 **"Components"** (third-party dependencies — **name, version, license**; the list is checked
 against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests;
-the tab is laid out as **leader tables**: the name on the left margin, the version and
+the tab is laid out as **leader tables** (the geometry shared with "About"): the name on the left margin, the version and
 license columns aligned under each other against the mirrored right margin, and the run
 between bridged by a dotted leader in the dialog's dimmest color — the tab's natural width
 is well under the dialog's, and a left-hugging table left the right half empty, while

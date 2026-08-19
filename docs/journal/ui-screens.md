@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the "Components" leaders got a step quieter (done)
 - Post-M9: automatic chat titling on the first exchange (done)
 - Post-M9: the settings hint panel — one height for every section (done)
+- Post-M9: the "About" tab became a leader table (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1681,3 +1682,59 @@ every first-exchange smoke now firing a real title request on the way.
 **Tests**: 2310 green, 99 `#[ignore]`, clippy `-D warnings`/fmt clean, all four
 repo gates clean. **Live run not required** (AGENTS.md §3): pure settings-UI
 rendering and locale data — no engine, memory or tool path touched.
+
+### Post-M9: the "About" tab became a leader table (done)
+
+- **Asked from a screenshot** of the help dialog's "About" tab: on a wide
+  terminal the right side is empty — "maybe the same trick as the 'Components'
+  tab". It was the same complaint, and it had the same cause: the labels sat in
+  a column sized to the widest of them (the `ru` label for the repository, 12
+  columns) and every value
+  started one step past it, so at 84 columns of content the rows ended around
+  column 50 and the right ~30 sat blank, while the dialog's width is earned by
+  the "Hotkeys" tab and cannot shrink for this one.
+- **The shipped fix is the geometry the "Components" tab already had**: labels
+  on the left margin, the values in **one** column anchored so the widest of
+  them (`REPO_URL`, 38 columns) touches the mirrored right margin, and the run
+  between bridged by a dotted leader in `keycap_bg`. The three links keep a
+  shared left edge, which is why the values form one column rather than each
+  row being flushed right on its own — the per-row variant fills the width
+  completely and was drawn for the user, who chose the shared column (decision
+  2026-08-19). The shared column is also what "Components" needs (two columns
+  must line up under each other), so the two tabs share one helper instead of
+  owning two geometries.
+- **`leader_row` is that helper**, extracted from `leader_table` rather than
+  written beside it: it takes the left span, the tail spans and the column the
+  tail starts in, and owns the dot run, its color and the space on each side.
+  `leader_table` now computes its two columns and calls it; `about_lines`
+  computes one column and calls it. The dot color and the below-minimum-width
+  degradation (the dots run out, the row clips) are therefore defined once.
+  The per-item blank line stays — it was asked for when the tab was built, and
+  the leader is what makes an anchored column readable across that spacing.
+- **Two rows were added while the table was open** (the user's choice from the
+  same question): **license** — `credits::LICENSE_ID`, read from `Cargo.toml`'s
+  `license` field via `env!("CARGO_PKG_LICENSE")` so the row and the manifest
+  cannot drift, the full text staying its own tab — and **build target**,
+  `credits::platform()` over `std::env::consts::OS`/`ARCH`, which is what the
+  binary was *built* for and so answers "it does X on my machine" with the
+  actual build rather than with what the user believes they downloaded. A third
+  candidate, the portable **data directory**, was offered and **not taken**: it
+  needs `Paths::resolve()` cached in `HelpState` (calling it in `render_help`
+  would be file I/O every frame), and it would put a real user path on a tab
+  that may yet be screenshotted for the site. With the two rows the tab fills
+  26 of its ~33 content rows, so the vertical emptiness went with the
+  horizontal one.
+- **Tests** (+1): `about_rows_anchor_right_with_leaders` mirrors
+  `components_columns_anchor_right_with_leaders` — every row fits, labels on the
+  margin, one shared value column, the widest value touching the mirrored right
+  margin, leaders that are dots in `keycap_bg` — at **both** width bounds and in
+  **both** locales (`ru` is the one with the long labels; a squeezed-out value
+  column would never show in `en`), plus the facts themselves, `LICENSE_ID` and
+  `platform()` included. Mutation-checked: freezing `value_col` to a constant
+  turns it red. The restore trap from the "Components" entry applies and was
+  paid again — `touch` after putting the backup back, or cargo reuses the
+  mutated binary.
+
+**Tests**: 2311 green (+1), 99 `#[ignore]`, clippy `-D warnings`/fmt clean.
+**A live run isn't required** (AGENTS.md §3): layout in the help dialog — no
+engine, memory or tool path is touched.
