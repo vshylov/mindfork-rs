@@ -22,6 +22,21 @@ pub const REPO_URL: &str = "https://github.com/vshylov/mindfork-rs";
 /// Crate page (the name `mindfork` is free on crates.io).
 pub const CRATE_URL: &str = "https://crates.io/crates/mindfork";
 
+/// SPDX identifier of the app's own license, for the one-line "License" row on
+/// the help dialog's "About" tab (the full text is a tab of its own,
+/// [`LICENSE_TEXT`]). Read from `Cargo.toml`'s `license` field rather than
+/// spelled out here, so the row and the manifest cannot drift apart.
+pub const LICENSE_ID: &str = env!("CARGO_PKG_LICENSE");
+
+/// Build target of the running binary as the "About" tab shows it —
+/// `"windows x86_64"`. Language-neutral, like the version and the links: OS and
+/// CPU architecture come from `std::env::consts`, which is what the binary was
+/// **built** for, so a report ("it does X on my machine") names the actual
+/// build rather than what the user believes they downloaded.
+pub fn platform() -> String {
+    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
 /// App license text (MIT) — from the `LICENSE` file at the repository root.
 /// Legal text in English, language-neutral — not localized.
 ///

@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The "About" tab of the help dialog (`F1`) reads across the full width.**
+  Its values now line up in one column against the right edge, with dotted
+  leaders bridging the gap — the layout the "Components" tab already uses —
+  instead of hugging the left half of the window. Two rows joined them: the
+  app's license and the build target (operating system and CPU architecture).
+
 ### Fixed
 
 - **The settings hint panel keeps one height everywhere.** The description
