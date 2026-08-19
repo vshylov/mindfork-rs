@@ -661,6 +661,15 @@ import*.
 orphan, so remove the bundle entry in the same change.
 — *settings-screen focus model*.
 
+**A bundle key added twice is invisible to every key gate and silently rewrites the
+first text.** JSON map parsing keeps the last duplicate without an error, and the
+dead/unknown-key scanners cannot object — the key exists and is used. Both texts of a
+duplicated `ui.settings.desc.model_name` were real fields' descriptions, so the cloud
+"Model" row spent a release showing the show-model-name toggle's text. Before reusing
+a plausible-sounding key name, grep the bundle for it; the i18n gate
+`builtin_bundles_have_no_duplicate_keys` now bans the class.
+— *the settings hint panel — one height for every section*.
+
 **A fixed-width strip of localized labels has a budget, and only one locale finds
 out.** Adding a sixth tab to the 76-column help dialog fitted comfortably in `en` and
 overflowed `ru` by six columns — and what silently truncates is the *rightmost* tab, so

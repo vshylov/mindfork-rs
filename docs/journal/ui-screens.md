@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/export` — a conversation to a file (done)
 - Post-M9: the "Components" leaders got a step quieter (done)
 - Post-M9: automatic chat titling on the first exchange (done)
+- Post-M9: the settings hint panel — one height for every section (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1613,3 +1614,70 @@ command sent (GO), `i18n_en_profile_title_e2e_live` still green
 on the requested path, and the full `orchestrator::tests::live` set run as the
 turn-path regression scope — **35 passed / 0 failed** in one sweep (755 s),
 every first-exchange smoke now firing a real title request on the way.
+
+### Post-M9: the settings hint panel — one height for every section (done)
+
+- **Reported from screenshots** (three at once, all the same panel): switching
+  sections resized the bottom hint panel by several rows — 3 in Sampling, ~5 in
+  Profiles, more in Tools — jerking the field list with it; a long system
+  message's preview stopped mid-word (the cap fell inside the last word on
+  screen) with no sign that text follows; and the cloud "Model" field showed the *show-model-name
+  toggle's* description instead of its own. Branch `fix/settings-hint-panel`
+  (a simple task by AGENTS.md §1 — one screen, no new contract, no design doc).
+- **The height rule moved one level up, and that is the whole design.** The
+  panel was sized to the longest hint of the *current field set* ("a settings
+  hint always fits its panel", above) — correct against per-field jitter, but
+  every `Tab` replaced the field set and re-derived the height. The panel is
+  now the longest hint of **every** field set — all sections, all subsections —
+  so one terminal size and locale give one height, and switching sections
+  moves nothing. The measure reuses the same per-set rule (`hint_panel_rows`,
+  floor/cap intact) over the concatenated catalog; at the gallery width the
+  driver turns out to be the backup-password warning (569 chars ≈ 7 rows),
+  which is a real hint a user can land on, not an artifact. Two mechanical
+  consequences: the cap now subtracts a **constant** header allowance
+  (`HEAD_MAX_ROWS`), because deriving it from the current section's real header
+  would give tabbed and untabbed sections different caps in a small terminal —
+  the very jump being removed; and the enumeration behind the search index was
+  extracted into `visit_field_sets` and shared (search, the height, and the
+  tests' `field_desc` all walk one list — a sibling copy of the walk would have
+  been the duplication-gate shape lessons §2 warns about).
+- **Truncation now says it truncated.** The value preview used to be capped at
+  a flat 400 characters — on a wide panel that is *less* than the visible rows
+  hold, so the text stopped mid-word with empty rows below it, reading as the
+  message's actual end. The cap is now derived from the rows the hint leaves
+  (`value_preview`: rows × width plus one row's slack — never the whole value,
+  a system message can be huge), and anything cut — by rows, by characters, or
+  a hint clipped by the cap in a tiny window — gets a visible `…` on its last
+  line (`ellipsize_last`, riding `truncate_to_width`'s own marker so it
+  survives both the fits and doesn't-fit paths).
+- **The wrong hint was a duplicated bundle key, not a wrong lookup.** The
+  show-model-name track reused `ui.settings.desc.model_name` for its toggle —
+  the key the cloud model-name field had owned since the API-key track — by
+  *adding a second entry* to both bundles. JSON map parsing keeps the later
+  duplicate with no error anywhere, and no key gate could object: the key
+  exists and is used. The toggle's text now lives under
+  `ui.settings.desc.show_model_name`, the original text is back on the model
+  field, and a new i18n gate (`builtin_bundles_have_no_duplicate_keys`, with a
+  planted-duplicate self-check per lessons §2) bans the class; the scan found
+  exactly this one duplicate across both bundles. Recorded in lessons §7.
+- **Tests**: +6 — panel height equal across all eight sections (measured from
+  the screen's bottom border, not absolute y: the contextual footer
+  legitimately grows a row in Profiles/Plugins); preview ellipsis with a
+  fits-whole control arm; a cap-clipped hint ends with `…` (with an
+  it-really-doesn't-fit guard); the model field describes a provider model id
+  and differs from the toggle's text; `value_preview` marks only what it cuts;
+  the duplicate-key gate. Two existing tests raised their windows (the taller
+  panel left a 24-row frame short of the `-ngl` row, a 50-row one short of the
+  Sampling list). Extraction traps hit and fixed in-test: the screen's own
+  bottom border row matches an all-`─` scan (filter on the corner glyph), and
+  "the last two rows" is not a bottom anchor when the footer wraps.
+- **Demo dumps**: the four settings captures changed (the panel grew to the
+  catalog height — border one row lower, both sections now byte-identical in
+  panel height; every showcase needle stayed in frame) — dumps and the four
+  settings PNG/SVG pairs regenerated; fonts recovered from the site's woff2 per
+  lessons §1, fidelity confirmed by a pre-change render coming back
+  byte-identical across all ten images.
+
+**Tests**: 2310 green, 99 `#[ignore]`, clippy `-D warnings`/fmt clean, all four
+repo gates clean. **Live run not required** (AGENTS.md §3): pure settings-UI
+rendering and locale data — no engine, memory or tool path touched.

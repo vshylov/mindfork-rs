@@ -39,32 +39,23 @@ fn goto_section(s: &mut SettingsScreen, sec: Section) {
     assert_eq!(s.section(), sec, "section {sec:?} not found");
 }
 
-/// A field's description by id: builds the fields of all sections/subsections of the
-/// screen and looks up the row. The description lives on `FieldRow` (attached at build
-/// time — see stage 3.1), not in a separate match; so it exists only on **visible**
-/// rows (draft fields need to be made visible by setting spec_type=draft-*).
+/// A field's description by id, looked up across the fields of all
+/// sections/subsections ([`SettingsScreen::visit_field_sets`] — the same
+/// enumeration search and the hint panel use). The description lives on
+/// `FieldRow` (attached at build time — see stage 3.1), not in a separate
+/// match; so it exists only on **visible** rows (draft fields need to be made
+/// visible by setting spec_type=draft-*).
 fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
-    let mut rows = Vec::new();
-    for mt in [
-        ModelTab::Assistant,
-        ModelTab::Impersonation,
-        ModelTab::Embeddings,
-        ModelTab::Tts,
-    ] {
-        rows.extend(s.model_fields_for(mt));
-    }
-    for sub in [Subsection::Assistant, Subsection::Impersonation] {
-        rows.extend(s.sampling_fields_for(sub));
-        rows.extend(s.profile_fields_for(sub));
-    }
-    rows.extend(s.tool_fields());
-    rows.extend(s.plugin_fields());
-    rows.extend(s.memory_fields());
-    rows.extend(s.data_fields());
-    rows.extend(s.interface_fields());
-    rows.into_iter()
-        .find(|r| r.id == id)
-        .and_then(|r| r.description)
+    let mut found = None;
+    s.visit_field_sets(&mut |_, _, _, _, fields| {
+        if found.is_none() {
+            found = fields
+                .into_iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.description);
+        }
+    });
+    found
 }
 
 /// Focuses the fields and steps down to field `id` (robust to groups/order).
@@ -1711,10 +1702,204 @@ fn norm(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The y of the hint panel's top border: the last full-width `─` run across the
+/// fields pane on a row whose first column is still the screen's side border
+/// `│`. Group headers carry a text label, and the screen's own bottom border
+/// row starts with a corner, so only this border matches.
+fn panel_border_y(buf: &ratatui::buffer::Buffer) -> u16 {
+    (0..buf.area.height)
+        .rev()
+        .find(|&y| {
+            buf[(0, y)].symbol() == "│"
+                && (25..buf.area.width - 1).all(|x| buf[(x, y)].symbol() == "─")
+        })
+        .expect("the hint panel's top border is on screen")
+}
+
+/// The y of the screen's bottom border (`╰…╯`) — the hotkey footer below it can
+/// be one row or two (it wraps, and Profiles/Plugins add hints), so "the last
+/// two rows" is not a usable bottom anchor.
+fn outer_bottom_y(buf: &ratatui::buffer::Buffer) -> u16 {
+    (0..buf.area.height)
+        .rev()
+        .find(|&y| buf[(0, y)].symbol() == "╰")
+        .expect("the screen's bottom border is on screen")
+}
+
+/// The hint panel's content rows (fields-pane columns, right-trimmed): everything
+/// strictly between the panel's top border and the screen's bottom border. Unlike
+/// [`pane_text`] this excludes the field list, whose rows truncate values with
+/// their own "…" — an ellipsis assertion against the whole pane would pass for
+/// the wrong reason.
+fn panel_rows(s: &mut SettingsScreen, w: u16, h: u16) -> Vec<String> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    (panel_border_y(buf) + 1..outer_bottom_y(buf))
+        .map(|y| {
+            (25..buf.area.width - 1)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
+/// Switching sections must not resize the bottom hint panel: its height is the
+/// catalog-wide longest hint, not the section's own, so the panel keeps one
+/// height for every section (it used to jump between the floor and the cap on
+/// every Tab, dragging the whole list with it). Measured from the screen's
+/// bottom border, not as an absolute y: the contextual hotkey footer legitimately
+/// grows by a row in Profiles/Plugins and shifts the whole panel up with it.
+#[test]
+fn hint_panel_height_is_uniform_across_sections() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let panel_h = |s: &mut SettingsScreen| -> u16 {
+        let mut term = Terminal::new(TestBackend::new(116, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        outer_bottom_y(buf) - panel_border_y(buf)
+    };
+    let mut s = screen();
+    let seen: Vec<(Section, u16)> = SECTIONS
+        .iter()
+        .map(|&sec| {
+            goto_section(&mut s, sec);
+            (sec, panel_h(&mut s))
+        })
+        .collect();
+    assert!(
+        seen.iter().all(|&(_, h)| h == seen[0].1),
+        "the panel height changed between sections: {seen:?}"
+    );
+}
+
+/// A value too long for the panel ends with a visible "…" on its last line — it
+/// used to stop at a fixed 400-character cap, mid-word, with rows to spare; a
+/// value that fits is shown whole, with no marker.
+#[test]
+fn long_value_preview_ends_with_an_ellipsis_only_when_cut() {
+    let long = "Ты — ассистент. ".repeat(200);
+    let mut p = Profile::new("Базовый", long.trim_end());
+    p.enabled_tools = default_tool_ids();
+    let mut s = SettingsScreen::new(AppConfig::default(), vec![p], vec![]);
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PSystem);
+    let rows = panel_rows(&mut s, 116, 30);
+    let last = rows
+        .iter()
+        .rfind(|r| !r.is_empty())
+        .expect("the preview is in the panel");
+    assert!(
+        last.ends_with('…'),
+        "no cut marker on the last line: {last:?}"
+    );
+
+    // The control arm: a value long enough to be previewed (> 32 columns) but
+    // fitting the panel whole must NOT be marked — otherwise the marker means
+    // nothing.
+    let mut p = Profile::new("Базовый", "Ты — ассистент, и этой строки хватает всем.");
+    p.enabled_tools = default_tool_ids();
+    let mut s = SettingsScreen::new(AppConfig::default(), vec![p], vec![]);
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PSystem);
+    let rows = panel_rows(&mut s, 116, 30);
+    assert!(
+        rows.iter().any(|r| r.contains("хватает всем")),
+        "the whole value is previewed: {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|r| !r.contains('…')),
+        "a value shown whole must not carry the cut marker: {rows:?}"
+    );
+}
+
+/// In a terminal too small for even the reserved hint rows, the clipped hint
+/// ends with "…" instead of stopping mid-sentence (the panel border and the cap
+/// still bound it — the marker is the only honest thing left to do).
+#[test]
+fn a_hint_clipped_by_the_cap_ends_with_an_ellipsis() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    goto_field(&mut s, FieldId::XApiKey);
+    let desc = norm(&field_desc(&s, FieldId::XApiKey).expect("api key is described"));
+    let rows = panel_rows(&mut s, 80, 16);
+    let shown = norm(&rows.join(" "));
+    assert!(
+        !shown.contains(&desc),
+        "the fixture must not fit whole, or the test measures nothing: {shown:?}"
+    );
+    let last = rows
+        .iter()
+        .rfind(|r| !r.is_empty())
+        .expect("the hint is in the panel");
+    assert!(
+        last.ends_with('…'),
+        "no cut marker on the last line: {last:?}"
+    );
+}
+
+/// The regression a duplicated bundle key caused: the cloud "Model" field showed
+/// the show-model-name toggle's description (JSON parsing silently keeps the
+/// later of two duplicate keys; the bundle gate now bans them). The model field
+/// must name what its value is — a provider model id — and the two fields must
+/// not share one text.
+#[test]
+fn cloud_model_field_describes_the_model_not_the_toggle() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Grok;
+    let model = field_desc(&s, FieldId::XModelName).expect("cloud model is described");
+    let toggle = field_desc(&s, FieldId::IModelName).expect("the toggle is described");
+    assert!(
+        model.contains("gpt-4o"),
+        "expected the provider-model examples: {model}"
+    );
+    assert_ne!(
+        model, toggle,
+        "two fields share one description — the duplicated-key defect"
+    );
+}
+
+/// [`value_preview`] marks exactly what it cuts: a fitting value is returned
+/// whole and unmarked, an overflowing one is cut at the row budget with "…" on
+/// the last line, and zero rows yield nothing rather than a lone marker.
+#[test]
+fn value_preview_marks_only_what_it_cuts() {
+    let text = |lines: &[Line<'static>]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    };
+    let st = Style::new();
+    let whole = value_preview("alpha beta", 2, 20, st);
+    assert_eq!(text(&whole), ["alpha beta"]);
+    let cut = value_preview(&"word ".repeat(30), 2, 10, st);
+    assert_eq!(cut.len(), 2, "cut at the row budget");
+    assert!(
+        text(&cut)[1].ends_with('…'),
+        "the cut is marked: {:?}",
+        text(&cut)
+    );
+    assert!(
+        value_preview("anything long enough", 0, 10, st).is_empty(),
+        "no rows — no lone marker"
+    );
+}
+
 /// The reported symptom: the API-key hint ran past the bottom panel's last row and was
-/// cut mid-sentence. The panel is now as tall as the longest hint of the field set
-/// needs, so the hint is shown whole — at a comfortable width and at a narrow one,
-/// where it wraps into many more rows.
+/// cut mid-sentence. The panel is now at least as tall as the longest hint of the whole
+/// catalog needs (one height for every section), so the hint is shown whole — at a
+/// comfortable width and at a narrow one, where it wraps into many more rows.
 ///
 /// Both key rows are checked, because the panel has a row cap (`HINT_MAX_ROWS`) and the
 /// **external** hint is the longer of the two: it has to name the two fields' priority
@@ -1796,8 +1981,11 @@ fn fields_scrollbar_appears_only_on_overflow() {
     let mut term = Terminal::new(TestBackend::new(80, 14)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     assert!(has_thumb(&term), "an overflowing section — has the thumb");
-    // In a tall window all fields are visible — no thumb.
-    let mut term = Terminal::new(TestBackend::new(80, 50)).unwrap();
+    // In a tall window all fields are visible — no thumb. 60 rather than 50:
+    // the hint panel now holds the height of the catalog's longest hint at this
+    // width (uniform across sections), which leaves a 50-row window one field
+    // short for the Sampling list.
+    let mut term = Terminal::new(TestBackend::new(80, 60)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     assert!(!has_thumb(&term), "all fields visible — no thumb");
 }
@@ -2263,7 +2451,9 @@ fn modified_field_shows_marker() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     let render_text = |s: &mut SettingsScreen| -> String {
-        let mut term = Terminal::new(TestBackend::new(92, 24)).unwrap();
+        // 34 rows, not 24: the hint panel's uniform (catalog-wide) height leaves
+        // a 24-row window too short for the `-ngl` row this test marks.
+        let mut term = Terminal::new(TestBackend::new(92, 34)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let buf = term.backend().buffer();
         (0..buf.area.height)

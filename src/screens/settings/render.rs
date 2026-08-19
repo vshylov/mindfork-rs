@@ -495,19 +495,35 @@ impl SettingsScreen {
 
     /// The bottom description panel's height for this field set (`0` — no fields).
     fn desc_panel_height(&self, fields: &[FieldRow], area: Rect, head_h: u16) -> u16 {
-        // The bottom panel (value+description) is always reserved when there are fields,
-        // and is as tall as the longest hint of THIS field set needs — a hint clipped
-        // mid-sentence is unreadable, while a per-field height would shift the list on
-        // every step. The ceiling keeps the list from being squeezed out by a wall of
-        // text (an MCP tool's description is arbitrary server text).
+        // The bottom panel (value+description) is always reserved when there are
+        // fields, and its height is the longest hint of EVERY field set the screen
+        // can show — not just this section's. A hint clipped mid-sentence is
+        // unreadable; a per-field height would shift the list on every step; and a
+        // per-section height (the previous rule) resized the panel on every Tab —
+        // measuring the whole catalog makes the height one constant for the
+        // terminal size and locale, so switching sections doesn't jerk the layout.
+        // The ceiling keeps the list from being squeezed out by a wall of text (an
+        // MCP tool's description is arbitrary server text).
         if fields.is_empty() {
             0
         } else {
-            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(head_h as usize) / 3);
-            let rows = hint_panel_rows(fields, area.width as usize, cap, self.loc()) as u16;
+            // The cap subtracts the tallest header (HEAD_MAX_ROWS), not this
+            // section's real one: a section-dependent cap would give tabbed and
+            // untabbed sections different heights in a small terminal — the very
+            // jump the catalog-wide measure exists to remove.
+            let cap = HINT_MAX_ROWS.min((area.height as usize).saturating_sub(HEAD_MAX_ROWS) / 3);
+            let rows = self.max_hint_rows(area.width as usize, cap) as u16;
             // +1 for the top border; never take the last row away from the list.
             (rows + 1).min(area.height.saturating_sub(head_h + 1))
         }
+    }
+
+    /// The hint panel's content rows at this width: the longest hint across all
+    /// sections and subsections, within the shared floor/cap ([`hint_panel_rows`]).
+    fn max_hint_rows(&self, width: usize, cap: usize) -> usize {
+        let mut all: Vec<FieldRow> = Vec::new();
+        self.visit_field_sets(&mut |_, _, _, _, mut fields| all.append(&mut fields));
+        hint_panel_rows(&all, width, cap, self.loc())
     }
 
     /// Draws the field pane's header: the section title with its focus marker, the
@@ -654,6 +670,12 @@ impl SettingsScreen {
                 hint.extend(wrap_text(note, Style::new().fg(palette.warning), w));
             }
         }
+        // The cap can still cut a hint (arbitrary MCP text, a tiny terminal):
+        // end the last visible line with "…" instead of stopping mid-sentence.
+        if hint.len() > content_h {
+            hint.truncate(content_h);
+            ellipsize_last(&mut hint, w);
+        }
         let mut lines: Vec<Line<'static>> = Vec::new();
         if let Some(f) = focused_field
             && let FieldKind::Text(v) = &f.kind
@@ -664,12 +686,15 @@ impl SettingsScreen {
             // values (numbers, host) are already fully visible in the list, no need to duplicate.
             let long = crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
             if !shown.is_empty() && shown != "—" && long {
-                // Cap the preview (a multiline system message can be huge):
-                // it fills what the hint leaves and never grows the panel —
-                // the value is also in the list row above, the hint is only here.
-                let preview: String = shown.chars().take(400).collect();
-                lines = wrap_text(&preview, Style::new().fg(palette.text), w);
-                lines.truncate(content_h.saturating_sub(hint.len()));
+                // The preview fills what the hint leaves and never grows the
+                // panel — the value is also in the list row above, the hint is
+                // only here. A value that doesn't fit ends with a visible "…".
+                lines = value_preview(
+                    shown,
+                    content_h.saturating_sub(hint.len()),
+                    w,
+                    Style::new().fg(palette.text),
+                );
             }
         }
         lines.extend(hint);

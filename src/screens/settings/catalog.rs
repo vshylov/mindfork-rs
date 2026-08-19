@@ -1272,7 +1272,12 @@ impl SettingsScreen {
                     loc.t("ui.settings.field.model_name"),
                     FieldKind::Toggle(i.show_model_name),
                 )
-                .describe(loc.t("ui.settings.desc.model_name")),
+                // NOT `desc.model_name` — that key describes the *cloud model
+                // name* field: reusing it here duplicated the key in the
+                // bundles, and JSON parsing silently keeps the later entry, so
+                // both fields showed this toggle's text. The bundle gate
+                // `builtin_bundles_have_no_duplicate_keys` guards the class.
+                .describe(loc.t("ui.settings.desc.show_model_name")),
                 row(
                     FieldId::IClipboardOsc52,
                     loc.t("ui.settings.field.osc52"),

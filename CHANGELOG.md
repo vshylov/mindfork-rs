@@ -14,6 +14,20 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The settings hint panel keeps one height everywhere.** The description
+  panel under the field list is now sized to the longest hint of the whole
+  settings catalog rather than the current section's, so switching sections no
+  longer resizes it by several rows on every Tab. Text the panel still cannot
+  show whole — the preview of a long system message, a hint in a very small
+  window — now ends with a visible `…` instead of stopping mid-word as if the
+  text simply ended there.
+- **The cloud "Model" field describes itself again.** Its hint had been
+  silently replaced by the "Model name in the feed" toggle's text (a duplicated
+  translation key — JSON keeps the later entry); the two fields have their own
+  keys now, and a new gate keeps duplicate keys out of the bundles.
+
 ## [0.9.7] — 2026-08-17
 
 ### Added

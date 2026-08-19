@@ -1183,7 +1183,7 @@
     "Flowchart and sequence only; on any failure (parse error, too wide, other",
     "kind) the block is printed as source, same as with the toggle off."
   ],
-  "ui.settings.desc.model_name": [
+  "ui.settings.desc.show_model_name": [
     "Show the name of the model that wrote the reply next to the assistant's",
     "header in the feed. Taken from the message itself, so an old conversation",
     "names the model that actually answered — not the one selected now. A",
