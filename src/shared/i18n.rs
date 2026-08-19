@@ -871,6 +871,54 @@ mod tests {
         assert!(json_to_map("{ битый").is_err());
     }
 
+    /// Top-level keys that appear more than once in a bundle's JSON source.
+    /// serde's map deserialization keeps the LAST duplicate with no error
+    /// anywhere, so a key accidentally added twice silently overrides the
+    /// earlier text — only the raw source still shows the collision.
+    fn duplicate_keys(src: &str) -> Vec<String> {
+        struct Dups;
+        impl<'de> serde::de::Visitor<'de> for Dups {
+            type Value = Vec<String>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut seen = HashSet::new();
+                let mut dups = Vec::new();
+                while let Some((k, _)) = map.next_entry::<String, serde::de::IgnoredAny>()? {
+                    if !seen.insert(k.clone()) {
+                        dups.push(k);
+                    }
+                }
+                Ok(dups)
+            }
+        }
+        let mut de = serde_json::Deserializer::from_str(src);
+        serde::de::Deserializer::deserialize_map(&mut de, Dups).expect("bundle JSON parses")
+    }
+
+    /// Gate: no built-in bundle declares the same key twice. Found live: both
+    /// occurrences of a duplicated `ui.settings.desc.model_name` were real
+    /// fields' texts, and the cloud "Model" row showed the show-model-name
+    /// toggle's description — no key gate could see it, because the key both
+    /// exists and is used; only the duplicate itself is the defect.
+    #[test]
+    fn builtin_bundles_have_no_duplicate_keys() {
+        // The detector must see a planted duplicate — a gate that cannot go
+        // red is indistinguishable from no gate.
+        assert_eq!(duplicate_keys(r#"{"a":"1","b":"2","a":"3"}"#), ["a"]);
+        for &lang in Lang::ALL.iter() {
+            let dups = duplicate_keys(lang.bundle_src());
+            assert!(
+                dups.is_empty(),
+                "{lang:?}: duplicate bundle keys — the later value silently wins: {dups:?}"
+            );
+        }
+    }
+
     #[test]
     fn overlay_external_overrides_builtin_per_key() {
         // A partial en.json overrides one existing key; the rest stays built-in.

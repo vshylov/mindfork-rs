@@ -550,6 +550,10 @@ pub(super) const HINT_MIN_ROWS: usize = 3;
 /// without a cap one field could push the list off the screen. Further bounded by
 /// the pane height at the call site.
 pub(super) const HINT_MAX_ROWS: usize = 12;
+/// The tallest fields-pane header: the section title plus a tab strip. The hint
+/// panel's cap subtracts this constant rather than the current section's real
+/// header, so tabbed and untabbed sections cannot end up with different caps.
+pub(super) const HEAD_MAX_ROWS: usize = 2;
 
 /// Rows a plain text occupies when wrapped to `width` (an embedded newline is a
 /// hard break). Counting only — the wrapped rows themselves aren't built.
@@ -572,6 +576,49 @@ pub(super) fn wrap_text(text: &str, style: Style, width: usize) -> Vec<Line<'sta
     text.split('\n')
         .flat_map(|l| crate::shared::wrap::wrap_line(&Line::styled(l.to_string(), style), width))
         .collect()
+}
+
+/// The full-value preview for the bottom panel: at most `rows` wrapped lines of
+/// the value's head. A value the panel cannot show whole ends with a visible
+/// `…` — the previous fixed character cap used to stop a wide panel mid-word
+/// with rows to spare, which read as the text simply ending there.
+pub(super) fn value_preview(
+    value: &str,
+    rows: usize,
+    width: usize,
+    style: Style,
+) -> Vec<Line<'static>> {
+    if rows == 0 || width == 0 {
+        return Vec::new();
+    }
+    // Enough characters to fill the rows plus one row's slack to detect
+    // overflow — never the whole value: a system message can be huge, and
+    // wrapping all of it on every frame would be paid for nothing.
+    let budget = rows * width + width;
+    let mut it = value.chars();
+    let head: String = it.by_ref().take(budget).collect();
+    let clipped_chars = it.next().is_some();
+    let mut lines = wrap_text(&head, style, width);
+    let clipped = clipped_chars || lines.len() > rows;
+    lines.truncate(rows);
+    if clipped {
+        ellipsize_last(&mut lines, width);
+    }
+    lines
+}
+
+/// Rewrites the last line to visibly end in `…` within `width` — the marker that
+/// more text exists than the panel shows. Keeps the line's own style.
+pub(super) fn ellipsize_last(lines: &mut [Line<'static>], width: usize) {
+    let Some(last) = lines.last_mut() else {
+        return;
+    };
+    let style = last.spans.first().map(|s| s.style).unwrap_or_default();
+    let text: String = last.spans.iter().map(|s| s.content.as_ref()).collect();
+    // `truncate_to_width` appends its own "…" when it has to cut, so the marker
+    // survives whether the padded text fits or not.
+    let (marked, _) = truncate_to_width(&format!("{} …", text.trim_end()), width);
+    *last = Line::styled(marked, style);
 }
 
 /// Rows one field's hint needs: its description plus, for a globally-gated tool,

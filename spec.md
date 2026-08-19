@@ -2071,11 +2071,16 @@ and an overly long label doesn't drag the column away (its value sits right afte
 label; current labels stay shorter than the cap — extra context moves into the group
 header). Below the list — a **hint panel**:
 the selected field's full value (paths/URLs, truncated with `…` in the list) + a description hint.
-Its height is that of the **longest hint in the section** (bounded above — an MCP tool's
-description is arbitrary server text — and below by the three rows it has always had):
-a hint clipped mid-sentence is unreadable, while a height following the *selected* field
-would shift the list on every step. The full value shares the panel and gives way to the
-hint (it is also visible in the list row; the hint is only here).
+Its height is that of the **longest hint across the whole catalog** — every section and
+subsection, not just the one on screen (bounded above — an MCP tool's description is
+arbitrary server text — and below by the three rows it has always had): a hint clipped
+mid-sentence is unreadable, a height following the *selected* field would shift the list
+on every step, and a per-section height resized the panel on every section switch — one
+terminal size and locale, one panel height. The full value shares the panel and gives way
+to the hint (it is also visible in the list row; the hint is only here); whatever the
+panel still cannot show whole — the preview of a huge value, a hint in a window smaller
+than even the reserved rows — ends with a visible `…` rather than stopping as if the
+text ended there.
 Sections with **subsections** (Model/Sampling/Profiles) show them as a **tab strip** above the
 fields (a pinned row `Assistant │ Impersonation │ …`, `←/→` switches the active
 tab) — not as a row-field in the list. The hotkey footer is **contextual** (in "Profiles"

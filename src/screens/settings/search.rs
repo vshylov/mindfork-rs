@@ -7,89 +7,70 @@ use super::*;
 impl SettingsScreen {
     // ---------- field search (`/`) ----------
 
-    /// Builds the full index of fields across all sections/subsections for search.
-    /// Mode-dependent-visibility fields are taken for the current mode (managed/cloud).
-    pub(super) fn build_search_index(&self) -> Vec<SearchHit> {
+    /// Visits every field set the screen can show — each section, and each
+    /// subsection where the section has a tab strip; mode-dependent-visibility
+    /// fields are taken for the current mode (managed/cloud). The single
+    /// enumeration behind the search index and the hint panel's shared height
+    /// ([`SettingsScreen::max_hint_rows`]), so the two cannot disagree about
+    /// which fields exist.
+    pub(super) fn visit_field_sets(
+        &self,
+        visit: &mut dyn FnMut(usize, Section, Option<usize>, Option<&'static str>, Vec<FieldRow>),
+    ) {
         let loc = self.loc();
         let model_tabs = model_tab_labels(loc);
         let sub_tabs = sub_tab_labels(loc);
-        let mut out = Vec::new();
         for (sec_idx, sec) in SECTIONS.iter().enumerate() {
             match sec {
                 Section::Model => {
                     for (si, sub) in ModelTab::ALL.iter().enumerate() {
-                        collect_hits(
-                            &mut out,
+                        visit(
                             sec_idx,
                             *sec,
                             Some(si),
                             Some(model_tabs[si]),
                             self.model_fields_for(*sub),
-                            loc,
                         );
                     }
                 }
                 Section::Sampling => {
                     for (si, sub) in Subsection::ALL.iter().enumerate() {
-                        collect_hits(
-                            &mut out,
+                        visit(
                             sec_idx,
                             *sec,
                             Some(si),
                             Some(sub_tabs[si]),
                             self.sampling_fields_for(*sub),
-                            loc,
                         );
                     }
                 }
                 Section::Profiles => {
                     for (si, sub) in Subsection::ALL.iter().enumerate() {
-                        collect_hits(
-                            &mut out,
+                        visit(
                             sec_idx,
                             *sec,
                             Some(si),
                             Some(sub_tabs[si]),
                             self.profile_fields_for(*sub),
-                            loc,
                         );
                     }
                 }
-                Section::Tools => {
-                    collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields(), loc)
-                }
-                Section::Plugins => collect_hits(
-                    &mut out,
-                    sec_idx,
-                    *sec,
-                    None,
-                    None,
-                    self.plugin_fields(),
-                    loc,
-                ),
-                Section::Memory => collect_hits(
-                    &mut out,
-                    sec_idx,
-                    *sec,
-                    None,
-                    None,
-                    self.memory_fields(),
-                    loc,
-                ),
-                Section::Data => {
-                    collect_hits(&mut out, sec_idx, *sec, None, None, self.data_fields(), loc)
-                }
-                Section::Interface => collect_hits(
-                    &mut out,
-                    sec_idx,
-                    *sec,
-                    None,
-                    None,
-                    self.interface_fields(),
-                    loc,
-                ),
+                Section::Tools => visit(sec_idx, *sec, None, None, self.tool_fields()),
+                Section::Plugins => visit(sec_idx, *sec, None, None, self.plugin_fields()),
+                Section::Memory => visit(sec_idx, *sec, None, None, self.memory_fields()),
+                Section::Data => visit(sec_idx, *sec, None, None, self.data_fields()),
+                Section::Interface => visit(sec_idx, *sec, None, None, self.interface_fields()),
             }
         }
+    }
+
+    /// Builds the full index of fields across all sections/subsections for search.
+    pub(super) fn build_search_index(&self) -> Vec<SearchHit> {
+        let loc = self.loc();
+        let mut out = Vec::new();
+        self.visit_field_sets(&mut |sec_idx, sec, sub, sub_label, fields| {
+            collect_hits(&mut out, sec_idx, sec, sub, sub_label, fields, loc);
+        });
         out
     }
 
