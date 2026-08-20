@@ -265,10 +265,24 @@ impl ChangesScreen {
             return;
         }
 
-        let file_w = FILE_PANE_WIDTH.min(inner.width.saturating_sub(10)).max(12);
-        let [files_area, diff_area] =
-            Layout::horizontal([Constraint::Length(file_w), Constraint::Min(10)]).areas(inner);
+        let file_w = FILE_PANE_WIDTH.min(inner.width.saturating_sub(12)).max(12);
+        // A rule between the panes, not just a gap: without it a file's counts
+        // and the first diff line sit shoulder to shoulder and read as one
+        // column of nonsense (`+12 −4@@ -940,7 +940,9 @@`).
+        let [files_area, rule_area, diff_area] = Layout::horizontal([
+            Constraint::Length(file_w),
+            Constraint::Length(1),
+            Constraint::Min(10),
+        ])
+        .areas(inner);
         self.render_files(frame, files_area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("│", palette.border_style(false));
+                rule_area.height as usize
+            ]),
+            rule_area,
+        );
         self.render_diff(frame, diff_area);
         frame.render_widget(Paragraph::new(hotkeys), status_area);
 
@@ -308,6 +322,13 @@ impl ChangesScreen {
         let view = area.height as usize;
         self.file_scroll = keep_visible(self.file_scroll, self.selected, view);
 
+        // One column width for every row's counts, so they line up: sizing each
+        // row to its own text puts `+12 −4` and `+1 −0` at different columns and
+        // the eye cannot scan down them.
+        let counts: Vec<String> = self.set.files.iter().map(|f| self.counts_of(f)).collect();
+        let counts_w = counts.iter().map(|c| c.chars().count()).max().unwrap_or(0);
+        let room = width.saturating_sub(1 + counts_w + 1).max(4);
+
         let mut lines = Vec::new();
         for (i, file) in self.set.files.iter().enumerate().skip(self.file_scroll) {
             if lines.len() >= view {
@@ -318,20 +339,22 @@ impl ChangesScreen {
             // The name is what identifies a row, so it is what survives a narrow
             // pane: the directory is trimmed from the left, not the file name
             // from the right.
-            let counts = self.counts_of(file);
-            let room = width.saturating_sub(1 + counts.chars().count() + 1);
-            let name = elide_left(&file.path, room.max(4));
+            let name = elide_left(&file.path, room);
+            let pad = room.saturating_sub(name.chars().count());
             lines.push(Line::from(vec![
                 Span::styled(marker.to_string(), p.accent_style()),
                 Span::styled(
-                    format!("{name:<room$} ", room = room.max(4)),
+                    format!("{name}{:pad$} ", "", pad = pad),
                     if selected {
                         Style::new().fg(p.text).add_modifier(Modifier::BOLD)
                     } else {
                         Style::new().fg(p.text)
                     },
                 ),
-                Span::styled(counts, self.counts_style(file)),
+                Span::styled(
+                    format!("{:>counts_w$}", counts[i], counts_w = counts_w),
+                    self.counts_style(file),
+                ),
             ]));
         }
         frame.render_widget(Paragraph::new(lines), area);
@@ -700,6 +723,58 @@ mod tests {
         );
         let shown = text(&mut with_project);
         assert!(shown.contains(loc().t("ui.changes.empty")), "{shown}");
+    }
+
+    /// The two panes have a rule between them.
+    ///
+    /// Found by looking at a render rather than by an assertion: with the panes
+    /// merely adjacent, a file's counts and the first diff line sit shoulder to
+    /// shoulder — `+12 −4@@ -940,7 +940,9 @@` — which reads as one column of
+    /// nonsense. The symptom is what this pins.
+    #[test]
+    fn the_panes_are_separated() {
+        let mut file = modified("src/a.rs");
+        file.lines = vec![line(DiffKind::Hunk, "@@ -940,7 +940,9 @@")];
+        let mut s = screen(vec![file]);
+        let shown = text(&mut s);
+        assert!(
+            !shown.contains("−1@@"),
+            "the file row runs straight into the diff: {shown}"
+        );
+        let row = shown
+            .lines()
+            .find(|l| l.contains("src/a.rs"))
+            .expect("the file row");
+        let bar = row.find('│').expect("the panel border");
+        assert!(
+            row[bar + '│'.len_utf8()..].contains('│'),
+            "no rule between the panes: {row}"
+        );
+    }
+
+    /// Every row's counts sit in one column. Sized per row, `+12 −4` and
+    /// `+1 −0` start at different offsets and the eye cannot scan down them.
+    #[test]
+    fn the_counts_line_up_across_rows() {
+        let mut wide = modified("src/a.rs");
+        wide.added = 12;
+        wide.removed = 4;
+        let narrow = modified("src/b.rs");
+        let mut s = screen(vec![wide, narrow]);
+        let shown = text(&mut s);
+        let end_of = |needle: &str| -> usize {
+            let row = shown
+                .lines()
+                .find(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("no row with {needle}: {shown}"));
+            let at = row.find(needle).unwrap();
+            row[..at + needle.len()].chars().count()
+        };
+        assert_eq!(
+            end_of("+12 −4"),
+            end_of("+1 −1"),
+            "the counts columns are ragged: {shown}"
+        );
     }
 
     /// A long path keeps its **file name**: cut from the right,
