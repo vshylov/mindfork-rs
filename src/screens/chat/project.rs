@@ -3,6 +3,7 @@
 //! See docs/code-workspace.md, spec §9.12.
 
 use super::*;
+use crate::entities::workspace::CommandSlot;
 use crate::features::project_command::ProjectProgress;
 
 impl ChatScreen {
@@ -22,9 +23,27 @@ impl ChatScreen {
                 let msg = self.loc.tf("ui.project.detached", &[("root", &root)]);
                 self.push_note(&msg);
             }
-            ProjectProgress::Status { root } => {
+            ProjectProgress::Status { root, commands } => {
                 let msg = match root {
-                    Some(root) => self.loc.tf("ui.project.status", &[("root", &root)]),
+                    Some(root) => {
+                        let mut msg = self.loc.tf("ui.project.status", &[("root", &root)]);
+                        // Every slot, including the empty ones: the question
+                        // being asked is "what can the assistant run here", and
+                        // an answer that lists only what is set cannot say "none
+                        // of them" (docs/lessons.md §4).
+                        for (slot, line) in commands {
+                            let value = match line {
+                                Some(line) => line,
+                                None => self.loc.t("ui.project.slot_unset").to_string(),
+                            };
+                            msg.push('\n');
+                            msg.push_str(&self.loc.tf(
+                                "ui.project.status_slot",
+                                &[("slot", slot.key()), ("line", &value)],
+                            ));
+                        }
+                        msg
+                    }
                     // "Nothing attached" has to say how to attach one, or the
                     // answer is a dead end.
                     None => self.loc.tf(
@@ -34,11 +53,57 @@ impl ChatScreen {
                 };
                 self.push_note(&msg);
             }
+            ProjectProgress::CommandSet { slot, line } => {
+                let msg = self.loc.tf(
+                    "ui.project.command_set",
+                    &[("slot", slot.key()), ("line", &line)],
+                );
+                self.push_note(&msg);
+            }
+            ProjectProgress::CommandShown { slot, line } => {
+                let msg = match line {
+                    Some(line) => self.loc.tf(
+                        "ui.project.command_shown",
+                        &[("slot", slot.key()), ("line", &line)],
+                    ),
+                    // "Nothing here" has to name the command that puts something
+                    // here, or the answer is a dead end (docs/lessons.md §4).
+                    None => self.loc.tf(
+                        "ui.project.command_none",
+                        &[("slot", slot.key()), ("cmd", &slash_command(slot))],
+                    ),
+                };
+                self.push_note(&msg);
+            }
+            ProjectProgress::CommandCleared { slot, had } => {
+                let key = if had {
+                    "ui.project.command_cleared"
+                } else {
+                    // Clearing an empty slot is not an error, and it must not be
+                    // silent either: saying so is what tells the user their
+                    // earlier `build-cmd` never landed.
+                    "ui.project.command_was_empty"
+                };
+                let msg = self.loc.tf(key, &[("slot", slot.key())]);
+                self.push_note(&msg);
+            }
+            ProjectProgress::CommandRefused { line, ch } => {
+                self.push_error(&self.loc.tf(
+                    "ui.project.command_shell",
+                    &[("line", &line), ("char", &ch.to_string())],
+                ));
+            }
             ProjectProgress::Failed(err) => {
                 self.push_error(&self.loc.tf("ui.project.failed", &[("err", &err)]));
             }
         }
     }
+}
+
+/// The `/project` subcommand that fills `slot` — what a "nothing here" note
+/// points at.
+fn slash_command(slot: CommandSlot) -> String {
+    format!("/project {}-cmd", slot.key())
 }
 
 #[cfg(test)]
@@ -60,8 +125,40 @@ mod tests {
             },
             ProjectProgress::Status {
                 root: Some("D:/proj".into()),
+                commands: vec![
+                    (CommandSlot::Build, Some("cargo build".into())),
+                    (CommandSlot::Run, None),
+                    (CommandSlot::Test, None),
+                ],
             },
-            ProjectProgress::Status { root: None },
+            ProjectProgress::Status {
+                root: None,
+                commands: Vec::new(),
+            },
+            ProjectProgress::CommandSet {
+                slot: CommandSlot::Build,
+                line: "cargo build".into(),
+            },
+            ProjectProgress::CommandShown {
+                slot: CommandSlot::Run,
+                line: Some("cargo run".into()),
+            },
+            ProjectProgress::CommandShown {
+                slot: CommandSlot::Test,
+                line: None,
+            },
+            ProjectProgress::CommandCleared {
+                slot: CommandSlot::Test,
+                had: true,
+            },
+            ProjectProgress::CommandCleared {
+                slot: CommandSlot::Test,
+                had: false,
+            },
+            ProjectProgress::CommandRefused {
+                line: "cargo build | tee log".into(),
+                ch: '|',
+            },
             ProjectProgress::Failed("boom".into()),
         ];
         for case in cases {
@@ -78,7 +175,10 @@ mod tests {
     #[test]
     fn the_notes_carry_what_the_user_needs_next() {
         let mut s = ChatScreen::new();
-        s.set_project_progress(ProjectProgress::Status { root: None });
+        s.set_project_progress(ProjectProgress::Status {
+            root: None,
+            commands: Vec::new(),
+        });
         let empty = s.feed.last().expect("a note").text.clone();
         assert!(empty.contains("/project"), "got: {empty}");
 

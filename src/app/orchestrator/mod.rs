@@ -599,6 +599,7 @@ impl Orchestrator {
             AppCommand::ProjectAttach { path } => self.handle_project_attach(path),
             AppCommand::ProjectDetach => self.handle_project_detach(),
             AppCommand::ProjectStatus => self.handle_project_status(),
+            AppCommand::ProjectSlot { slot, action } => self.handle_project_slot(slot, action),
             AppCommand::ImageAttach { path } => self.handle_image_attach(path),
             AppCommand::ImageRemove { target } => self.handle_image_remove(target),
             AppCommand::ImageList => self.handle_image_list(),

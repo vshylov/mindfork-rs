@@ -202,9 +202,13 @@ impl Tool for PythonExec {
 
 /// Formats the execution result (stdout/stderr/exit code) — a shared shape for
 /// both modes, so the feed's presenter (`present::parse_console`) recognizes the
-/// console by its labels. The `stdout:`/`stderr:` labels are universal (not translated);
-/// the exit-code label (`python.console.exit`) and service strings are localized via `loc`,
-/// and `parse_console` recognizes the code label across all locales.
+/// console by its labels.
+///
+/// The assembly itself lives in `present::format_console`, next to the parser
+/// that reads it back; what belongs here is the **truncation**, the one part
+/// that differs between the two producers of this shape: a script's output is
+/// cut at the tail, while a build keeps its head *and* its tail
+/// (docs/code-workspace.md, fork F12).
 fn format_output_parts(
     stdout: &str,
     stderr: &str,
@@ -212,31 +216,14 @@ fn format_output_parts(
     code: Option<i32>,
     loc: &crate::shared::i18n::Locale,
 ) -> String {
-    let mut parts = Vec::new();
-    if !stdout.trim().is_empty() {
-        parts.push(format!(
-            "stdout:\n{}",
-            truncate(stdout, MAX_OUTPUT_CHARS, loc)
-        ));
-    }
-    if !stderr.trim().is_empty() {
-        parts.push(format!(
-            "stderr:\n{}",
-            truncate(stderr, MAX_OUTPUT_CHARS, loc)
-        ));
-    }
-    if !success {
-        parts.push(format!(
-            "{} {}",
-            loc.t("python.console.exit"),
-            code.unwrap_or(-1)
-        ));
-    }
-    if parts.is_empty() {
-        loc.t("python.console.empty").to_string()
-    } else {
-        parts.join("\n\n")
-    }
+    super::present::format_console(
+        None,
+        &truncate(stdout, MAX_OUTPUT_CHARS, loc),
+        &truncate(stderr, MAX_OUTPUT_CHARS, loc),
+        success,
+        code,
+        loc,
+    )
 }
 
 /// Truncates a string to `max` characters with a truncation note (in the language `loc`).

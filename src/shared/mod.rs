@@ -2,6 +2,7 @@
 //! upper layers. See spec §4.2.
 
 pub mod api;
+pub mod cmdline;
 pub mod config;
 pub mod credits;
 pub mod embed_calibration;
@@ -16,6 +17,7 @@ pub mod mcp;
 pub mod net;
 pub mod osc52;
 pub mod paths;
+pub mod proc;
 pub mod sandbox;
 pub mod secrets;
 pub mod server;

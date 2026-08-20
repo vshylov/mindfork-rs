@@ -184,6 +184,12 @@ pub enum AppCommand {
     ProjectDetach,
     /// Report the active chat's code project (the `/project status` command).
     ProjectStatus,
+    /// Set, show or clear one of the project's build/run/test command slots
+    /// (spec §9.12). The result arrives as a `ProjectProgress` event.
+    ProjectSlot {
+        slot: crate::entities::workspace::CommandSlot,
+        action: crate::features::project_command::SlotAction,
+    },
     /// Stage an image for the next message (the `/image attach <path>` command).
     /// Reading, decoding and downscaling run as a background task; the result arrives as
     /// an `ImageProgress` event. See spec §9.10.
@@ -279,6 +285,13 @@ impl AppCommand {
             // can reach, and is stored in the chat file.
             | AppCommand::ProjectAttach { .. }
             | AppCommand::ProjectDetach => true,
+
+            // Setting or clearing a command slot writes to the chat file, and is
+            // work *in* this conversation; asking what a slot holds only reads.
+            AppCommand::ProjectSlot { action, .. } => !matches!(
+                action,
+                crate::features::project_command::SlotAction::Show
+            ),
 
             // Reading the conversation out to a file changes nothing in it —
             // the same side as `CopyChat`.

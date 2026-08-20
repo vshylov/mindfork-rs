@@ -48,12 +48,58 @@ pub enum ToolBlock {
     Markdown(String),
 }
 
-/// The parsed console output of `python_exec`.
+/// The parsed console output of a process — `python_exec` and the code
+/// workspace's `code_build`/`code_run`/`code_test` share the shape.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Console {
+    /// What was run and how it ended (the command line, the duration, or the
+    /// timeout note). Empty for `python_exec`, which runs code rather than a
+    /// command the user could read back.
+    pub command: String,
     pub stdout: String,
     pub stderr: String,
     pub exit: Option<i32>,
+}
+
+/// Assembles a process result into the shape [`parse_console`] reads back —
+/// the **one** place that decides it, so the two halves cannot drift.
+///
+/// The `command:`/`stdout:`/`stderr:` labels are universal (not translated) and
+/// the exit-code label is localized (axis A: the model reads this text, and
+/// `parse_console` recognizes the label across every locale). Streams arrive
+/// **already truncated** — the two callers cap them differently on purpose
+/// (`python_exec` drops the tail, a build keeps head and tail), and that choice
+/// is not this function's business.
+pub(crate) fn format_console(
+    command: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+    success: bool,
+    code: Option<i32>,
+    loc: &crate::shared::i18n::Locale,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(command) = command.map(str::trim).filter(|c| !c.is_empty()) {
+        parts.push(format!("command:\n{command}"));
+    }
+    if !stdout.trim().is_empty() {
+        parts.push(format!("stdout:\n{stdout}"));
+    }
+    if !stderr.trim().is_empty() {
+        parts.push(format!("stderr:\n{stderr}"));
+    }
+    if !success {
+        parts.push(format!(
+            "{} {}",
+            loc.t("python.console.exit"),
+            code.unwrap_or(-1)
+        ));
+    }
+    if parts.is_empty() {
+        loc.t("python.console.empty").to_string()
+    } else {
+        parts.join("\n\n")
+    }
 }
 
 /// How much of a call's **arguments** to show.
@@ -243,7 +289,10 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
         return Vec::new();
     }
     match name {
-        "python_exec" => match parse_console(result) {
+        "python_exec"
+        | crate::features::tools::code::CODE_BUILD_ID
+        | crate::features::tools::code::CODE_RUN_ID
+        | crate::features::tools::code::CODE_TEST_ID => match parse_console(result) {
             Some(c) => vec![ToolBlock::Console(c)],
             None => vec![ToolBlock::Plain(result.to_string())],
         },
@@ -305,16 +354,20 @@ fn parse_console(result: &str) -> Option<Console> {
     #[derive(PartialEq)]
     enum Sec {
         None,
+        Command,
         Stdout,
         Stderr,
     }
     let exit_labels = exit_labels();
     let mut c = Console::default();
     let mut sec = Sec::None;
+    let mut cmd: Vec<&str> = Vec::new();
     let mut out: Vec<&str> = Vec::new();
     let mut err: Vec<&str> = Vec::new();
     for line in result.lines() {
-        if line == "stdout:" {
+        if line == "command:" {
+            sec = Sec::Command;
+        } else if line == "stdout:" {
             sec = Sec::Stdout;
         } else if line == "stderr:" {
             sec = Sec::Stderr;
@@ -323,6 +376,7 @@ fn parse_console(result: &str) -> Option<Console> {
             sec = Sec::None;
         } else {
             match sec {
+                Sec::Command => cmd.push(line),
                 Sec::Stdout => out.push(line),
                 Sec::Stderr => err.push(line),
                 // A line outside a known section → this isn't our format.
@@ -330,10 +384,11 @@ fn parse_console(result: &str) -> Option<Console> {
             }
         }
     }
-    if out.is_empty() && err.is_empty() && c.exit.is_none() {
+    if cmd.is_empty() && out.is_empty() && err.is_empty() && c.exit.is_none() {
         return None;
     }
     // Sections are joined via join("\n\n") — strip the trailing empty separator lines.
+    c.command = join_trim(&cmd);
     c.stdout = join_trim(&out);
     c.stderr = join_trim(&err);
     Some(c)
@@ -566,6 +621,7 @@ mod tests {
         assert_eq!(
             p.result,
             vec![ToolBlock::Console(Console {
+                command: String::new(),
                 stdout: "hello\nworld".into(),
                 stderr: String::new(),
                 exit: None,

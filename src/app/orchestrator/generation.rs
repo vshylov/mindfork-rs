@@ -286,6 +286,12 @@ impl Orchestrator {
                 mcp: self.config.mcp.enabled,
                 history: history_upto.is_some(),
                 workspace: workspace.is_some(),
+                // Which slots carry a line, so a `code_test` with nothing to
+                // run is never advertised (spec §9.12).
+                workspace_commands: workspace
+                    .as_ref()
+                    .map(crate::features::tools::code::WorkspaceCommands::of)
+                    .unwrap_or_default(),
                 sampling_provider: self.config.engine.mode.cloud_provider(),
             },
         );
@@ -296,12 +302,6 @@ impl Orchestrator {
             t == crate::features::tools::history::HISTORY_READ_ID
                 || t == crate::features::tools::history::HISTORY_SEARCH_ID
         });
-        // A project can be attached while the profile has the tools switched off;
-        // then the block must not describe a capability this turn lacks (the
-        // same rule the summary block follows for `history_read`).
-        let workspace_tools = allowed
-            .iter()
-            .any(|t| crate::features::tools::code::is_workspace_tool(t));
         let profile_loc = crate::shared::i18n::locale(profile_lang);
         let schemas = self.registry.schemas_for(&allowed, profile_loc);
         // Copied out before the `chat_mut` borrow below (config can't be read
@@ -374,7 +374,10 @@ impl Orchestrator {
                     compaction: &compact_cfg,
                     indexed: &indexed,
                     history_tools,
-                    workspace_tools,
+                    // A project can be attached while the profile has some or
+                    // all of the tools switched off; the block describes what
+                    // this turn actually has, and nothing else.
+                    offered_tools: &allowed,
                     loc: profile_loc,
                 },
             );
@@ -453,6 +456,7 @@ impl Orchestrator {
             id,
             chat_id: active_id,
             max_rounds: self.config.max_tool_rounds,
+            workspace_max_rounds: self.config.workspace.max_rounds,
             allowed,
             self_model,
             self_model_params,
@@ -591,20 +595,17 @@ impl Orchestrator {
     }
 }
 
-/// How many rounds a turn may spend **entirely** inside the attached project
-/// before the loop ends it anyway (spec §9.12).
-///
-/// Not the tool-round limit in disguise: the workspace family is exempt from
-/// that by design, and this sits an order of magnitude above any real fix (the
-/// default budget is 8, and a user running a deep research turn raised theirs to
-/// 32). It exists because "exempt" and "unbounded" are not the same promise — a
-/// model that repeats one call forever would otherwise leave a turn that never
-/// ends, burning a cloud provider's tokens with only `Esc` to stop it, and a
-/// repeated tool call is a measured failure mode of local models rather than a
-/// hypothetical one (docs/journal/tools.md). Reaching it ends the turn the same
-/// way the ordinary limit does: one final round with no tools, so the user gets
-/// an answer rather than silence.
-const WORKSPACE_ROUND_CEILING: u32 = 200;
+/// Which limit ended a turn — the two are enforced together and the message has
+/// to name the right one, or it sends the user to a setting that was not the
+/// problem (docs/lessons.md §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoundLimit {
+    /// `max_tool_rounds` (spec §6.3) — the budget for *external* work.
+    Tools,
+    /// `workspace.max_rounds` (spec §9.12) — the budget for work inside the
+    /// attached project, which is exempt from the one above.
+    Workspace,
+}
 
 /// Parameters for launching the generation task (the agentic loop).
 struct GenSpawn {
@@ -616,6 +617,11 @@ struct GenSpawn {
     id: Uuid,
     chat_id: Uuid,
     max_rounds: u32,
+    /// How many rounds this turn may spend entirely inside the attached project
+    /// (`config.workspace.max_rounds`; 0 — no limit). Separate from
+    /// `max_rounds` because the `code_*` family is exempt from that one, and
+    /// "exempt" is not "unbounded" (spec §9.12).
+    workspace_max_rounds: u32,
     /// Effectively allowed tools (protection against calling a disabled one).
     allowed: Vec<ToolId>,
     /// The profile's "self-model" (a snapshot at the start of the turn) + injection
@@ -779,6 +785,7 @@ fn spawn_generation(spawn: GenSpawn) {
         id,
         chat_id,
         max_rounds,
+        workspace_max_rounds,
         allowed,
         self_model,
         self_model_params,
@@ -840,6 +847,7 @@ fn spawn_generation(spawn: GenSpawn) {
             confirm_rx,
             id,
             max_rounds,
+            workspace_max_rounds,
             allowed,
             engine_mode,
             model_name,
@@ -891,6 +899,7 @@ struct TurnLoop {
     confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
     id: Uuid,
     max_rounds: u32,
+    workspace_max_rounds: u32,
     allowed: Vec<ToolId>,
     engine_mode: ServerMode,
     model_name: Option<String>,
@@ -904,7 +913,7 @@ struct TurnLoop {
     deleted: Vec<Message>,
     round: u32,
     /// Rounds spent entirely on the attached project. Exempt from
-    /// `max_tool_rounds`, bounded by [`WORKSPACE_ROUND_CEILING`].
+    /// `max_tool_rounds`, bounded by `workspace.max_rounds`.
     workspace_rounds: u32,
     /// Tools the user approved "for the rest of this turn" (fork F4). The turn
     /// is the natural unit — it is the scope of one user request and it ends by
@@ -989,10 +998,21 @@ impl TurnLoop {
         }
     }
 
-    /// Whether the turn has run out of rounds — the ordinary budget, or the
-    /// workspace ceiling that keeps an exempt loop from running forever.
-    fn budget_exhausted(&self) -> bool {
-        self.round >= self.max_rounds || self.workspace_rounds >= WORKSPACE_ROUND_CEILING
+    /// Which budget, if either, the turn has run out of — the ordinary one, or
+    /// the workspace ceiling that keeps an exempt loop from running forever.
+    ///
+    /// `workspace.max_rounds == 0` means the user switched the second one off.
+    /// That is a supported choice rather than an oversight, and what remains
+    /// underneath it is `Esc`, the per-command timeout and the one-at-a-time
+    /// gate (spec §9.12).
+    fn budget_exhausted(&self) -> Option<RoundLimit> {
+        if self.round >= self.max_rounds {
+            return Some(RoundLimit::Tools);
+        }
+        if self.workspace_max_rounds > 0 && self.workspace_rounds >= self.workspace_max_rounds {
+            return Some(RoundLimit::Workspace);
+        }
+        None
     }
 
     /// Whether a call by this name spends a round of the `max_tool_rounds`
@@ -1011,7 +1031,7 @@ impl TurnLoop {
     /// round's domain messages. `Some(reason)` ends the turn; `None` — run the
     /// next round.
     async fn tool_round(&mut self, out: RoundOutput) -> Option<FinishReason> {
-        if self.budget_exhausted() {
+        if let Some(limit) = self.budget_exhausted() {
             // Limit reached: DON'T execute new calls, ask the model instead
             // to sum up what's already been gathered — a final round WITHOUT
             // tools. Otherwise (the previous behavior) `out` would only
@@ -1020,10 +1040,19 @@ impl TurnLoop {
             // at all, even though enough data had accumulated over the
             // previous rounds. Tools are removed from the request, so the
             // model must answer with text (the stream goes into the feed).
-            let _ = self.evt_tx.send(AppEvent::Error(self.ctx.loc.tf(
-                "loop.round_limit_reached",
-                &[("max_rounds", &self.max_rounds.to_string())],
-            )));
+            // Name the limit that actually fired: quoting `max_tool_rounds` at
+            // someone whose turn was ended by the *project* budget points them
+            // at the wrong setting (docs/lessons.md §4).
+            let (key, n) = match limit {
+                RoundLimit::Tools => ("loop.round_limit_reached", self.max_rounds),
+                RoundLimit::Workspace => (
+                    "loop.workspace_round_limit_reached",
+                    self.workspace_max_rounds,
+                ),
+            };
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ctx.loc.tf(key, &[("max_rounds", &n.to_string())]),
+            ));
             self.request.tools.clear();
             // The final round's token counter is emitted by `stream_round` itself
             // (from `base = total_*`); after that the turn ends, no need to accumulate.
@@ -1053,7 +1082,7 @@ impl TurnLoop {
         {
             self.round += 1;
         } else {
-            // Exempt, but still counted: see `WORKSPACE_ROUND_CEILING`.
+            // Exempt, but still counted: see `workspace.max_rounds`.
             self.workspace_rounds += 1;
         }
 

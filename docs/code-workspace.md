@@ -303,14 +303,53 @@ gate), locale keys in both bundles.
 | # | Fork | Options | Recommendation |
 |---|---|---|---|
 | F5 | Tool id family | `code_*` / `project_*` / `ws_*` | `code_*` — matches the `X_read`/`X_search` convention, short, no collisions (`fs_*`, `file_*` avoided per survey) |
-| F6 | Command execution | argv split + `resolve_command` / `sh -c`+`cmd /c` | argv split — predictable, reuses MCP machinery; pipelines are out of scope by design |
-| F7 | `workspace.max_rounds` default | 0 (off) / 200 | 0 — honors the requirement literally; the setting exists for those who want a ceiling |
+| F6 | Command execution | argv split + `resolve_command` / `sh -c`+`cmd /c` | **Decided (stage 3): argv split** — predictable, reuses MCP machinery; pipelines are out of scope by design, and the refusal says so (§4.1) |
+| F7 | `workspace.max_rounds` default | 0 (off) / 200 | **Superseded (stage 3): a setting of its own, default 500, `0` = no limit** (§4.1) |
 | F8 | `fs_*` relationship | untouched / hidden while a workspace is attached | untouched — orthogonal global capability, off by default anyway; revisit only if live runs show the model confusing the families |
 | F9 | Settings home | group in Tools / own section | group in Tools |
 | F10 | Hotkey | `F4` / `Ctrl+S` | `F4` (clean in VS Code and browsers; `Ctrl+S` collides with save reflexes) |
 | F11 | Index storage | `cache.db` / `data.db` | `cache.db` — derived data, disposable, out of backups |
 | F12 | Output truncation | head+tail / tail only | head+tail — first compiler errors live at the head, summaries at the tail |
 | F13 | Journal on re-attach | reset for a new root / keep per-root history | reset — the screen shows the current workspace; multi-root history is complexity nobody asked for |
+
+### 4.1. Decided before stage 3 (user, 2026-08-20)
+
+Four decisions the stage needed, taken after reading the code rather than from
+the plan's guesses. The first two were the user's call; the rest follow from what
+the survey found already built.
+
+- **The round ceiling becomes its own setting** (supersedes F7).
+  `workspace.max_rounds` — an editable field, **default 500**, and **`0` means no
+  limit**. Stage 2's `WORKSPACE_ROUND_CEILING = 200` was a constant written
+  because "exempt" and "unbounded" are different promises; the user's answer is
+  that both of the options built on it read badly — a number that cannot be
+  raised is a wall with no door, and a number that silently means "the built-in
+  default" is a field lying about its own value. So the constant becomes the
+  field's default and the field says what it does, including the way out. Turning
+  the limit off is a legitimate choice for a long refactor and it is the user's to
+  make; `Esc`, the per-command timeout and the one-at-a-time gate stay the safety
+  net underneath it. The exhaustion message names **which** of the two limits
+  ended the turn and the setting that raises it — until this stage it always
+  quoted `max_tool_rounds`, even when the workspace ceiling was what fired.
+- **Settings live in `WorkspaceSettings` on `AppConfig`** (keys `workspace.*`), as
+  §3.8 wrote, not flat in `ToolSettings` next to `python_*`/`fs_*`. That struct
+  already carries sixteen fields, stage 5 adds a fifth workspace one, and the key
+  names are the ones spec and this plan already quote.
+- **The live smoke builds with `cargo`, the unit tests with `rustc` and scripts.**
+  Stages 0 and 2 compiled their fixtures with bare `rustc` — no manifest, no
+  network — and that is still right for a fast unit test. But `rustc` has no
+  grandchildren, and the grandchild is the whole reason this stage exists: only
+  `cargo build --offline` (a dependency-free fixture crate) puts a real
+  `cargo → rustc` tree behind the kill, and only a real compiler's output is what
+  the model has to read to fix the break.
+- **Both halves of the runner already exist in the repository, in the wrong
+  place.** The Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is
+  `shared/mcp.rs::JobGuard`, written for `cmd /c npx → node`; the shell-style argv
+  splitter is `screens/settings/helpers.rs::parse_args`, and `features` cannot
+  import `screens` at all (FSD). Both are hoisted rather than copied — the stage-1
+  `FsRoot` precedent, and the duplication gate's own rule (docs/lessons.md §2).
+  What is genuinely new is the **unix** half, which MCP never needed:
+  `process_group(0)` at spawn plus `killpg` on timeout or `Esc`.
 
 ## 5. Deliberately not doing (and why)
 

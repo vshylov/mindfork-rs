@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 
 use crate::app::events::AppEvent;
-use crate::entities::workspace::Workspace;
-use crate::features::project_command::ProjectProgress;
+use crate::entities::workspace::{CommandSlot, Workspace};
+use crate::features::project_command::{ProjectProgress, SlotAction};
 
 use super::Orchestrator;
 
@@ -66,7 +66,7 @@ impl Orchestrator {
         // silent either: a note saying "nothing was attached" is what tells the
         // user their earlier attach never landed.
         let Some(previous) = chat.workspace.take() else {
-            self.emit_project(ProjectProgress::Status { root: None });
+            self.emit_project(Self::nothing_attached());
             return;
         };
         self.mark_dirty(chat_id);
@@ -87,14 +87,115 @@ impl Orchestrator {
         });
     }
 
-    /// Reports the active chat's project (`/project status`).
+    /// Reports the active chat's project and its command slots
+    /// (`/project status`).
     pub(super) fn handle_project_status(&mut self) {
-        let root = self
+        let ws = self
             .active_id
             .and_then(|id| self.chats.iter().find(|c| c.id == id))
-            .and_then(|c| c.workspace.as_ref())
-            .map(|w| w.root.clone());
-        self.emit_project(ProjectProgress::Status { root });
+            .and_then(|c| c.workspace.as_ref());
+        let progress = match ws {
+            Some(ws) => ProjectProgress::Status {
+                root: Some(ws.root.clone()),
+                commands: CommandSlot::ALL
+                    .into_iter()
+                    .map(|slot| (slot, ws.command(slot).map(str::to_string)))
+                    .collect(),
+            },
+            None => Self::nothing_attached(),
+        };
+        self.emit_project(progress);
+    }
+
+    /// The "no project here" answer, shared by every command that needs one.
+    fn nothing_attached() -> ProjectProgress {
+        ProjectProgress::Status {
+            root: None,
+            commands: Vec::new(),
+        }
+    }
+
+    /// Sets, shows or clears one of the project's command slots
+    /// (`/project build-cmd|run-cmd|test-cmd`, `/project clear <slot>`).
+    ///
+    /// One handler for the three slots and the three actions: they differ in
+    /// which field they touch and in nothing else, and a per-slot copy is the
+    /// shape a duplication gate reads as one block written three times
+    /// (docs/lessons.md §2).
+    pub(super) fn handle_project_slot(&mut self, slot: CommandSlot, action: SlotAction) {
+        let Some(chat_id) = self.active_id else {
+            self.fail_project(self.ui_locale().t("ui.err.project_no_active_chat"));
+            return;
+        };
+        // Every one of these needs a project: a command line belongs to a
+        // directory, and storing one for a chat with nothing attached would be
+        // configuring a thing that does not exist.
+        let attached = self
+            .chats
+            .iter()
+            .any(|c| c.id == chat_id && c.workspace.is_some());
+        if !attached {
+            self.emit_project(Self::nothing_attached());
+            return;
+        }
+        // The shell check runs **here**, when the line is set, rather than when
+        // a model first tries to run it three turns later: `cargo build | tee
+        // log.txt` cannot work in an application that spawns the program itself,
+        // and finding that out at set time is the difference between an answer
+        // and a mystery (docs/lessons.md §4). `code_build` checks again, because
+        // a chat file can be edited by hand.
+        if let SlotAction::Set(line) = &action
+            && let Some(ch) = crate::shared::cmdline::shell_syntax(line)
+        {
+            self.emit_project(ProjectProgress::CommandRefused {
+                line: line.clone(),
+                ch,
+            });
+            return;
+        }
+        let progress = match &action {
+            SlotAction::Show => {
+                let line = self
+                    .chats
+                    .iter()
+                    .find(|c| c.id == chat_id)
+                    .and_then(|c| c.workspace.as_ref())
+                    .and_then(|w| w.command(slot))
+                    .map(str::to_string);
+                return self.emit_project(ProjectProgress::CommandShown { slot, line });
+            }
+            SlotAction::Set(line) => ProjectProgress::CommandSet {
+                slot,
+                line: line.clone(),
+            },
+            SlotAction::Clear => ProjectProgress::CommandCleared { slot, had: false },
+        };
+        let Some(chat) = self.chat_mut(chat_id) else {
+            self.fail_project(self.ui_locale().t("ui.err.project_no_active_chat"));
+            return;
+        };
+        let Some(ws) = chat.workspace.as_mut() else {
+            self.fail_project(self.ui_locale().t("ui.err.project_no_active_chat"));
+            return;
+        };
+        let had = ws.command(slot).is_some();
+        ws.set_command(
+            slot,
+            match &action {
+                SlotAction::Set(line) => Some(line.clone()),
+                _ => None,
+            },
+        );
+        // Like attaching: the chat's setup changed, the conversation did not, so
+        // `modified_at` stays where it was and the chat keeps its place in the
+        // list (the `draft`/`feed_view` rule).
+        self.mark_dirty(chat_id);
+        self.emit_project(match progress {
+            ProjectProgress::CommandCleared { slot, .. } => {
+                ProjectProgress::CommandCleared { slot, had }
+            }
+            other => other,
+        });
     }
 
     fn emit_project(&self, progress: ProjectProgress) {

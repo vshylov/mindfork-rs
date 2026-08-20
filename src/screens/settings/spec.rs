@@ -422,6 +422,22 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         VideoApiKeyEnv => text(|c, t| c.video.api_key_env = opt(t)),
         TFsRoot => text(|c, t| c.tools.fs_root = opt(t)),
+        WsTimeout => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.workspace.command_timeout_secs = v;
+            }
+        }),
+        WsOutput => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.workspace.output_limit_chars = v;
+            }
+        }),
+        // 0 is a value here, not "unset": it means the project budget is off.
+        WsMaxRounds => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.workspace.max_rounds = v;
+            }
+        }),
         TSubMaxTokens => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.tools.subagent_max_tokens = v;

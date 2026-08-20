@@ -596,7 +596,7 @@ impl McpClient {
         // Object: the handle lives in the monitor task; closing it (a clean exit
         // or an app crash) kills the whole tree — orphans don't outlive exit.
         // Windows only.
-        let job = JobGuard::assign(&child);
+        let job = crate::shared::proc::TreeGuard::assign(&child);
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stdin = child.stdin.take().expect("stdin piped");
@@ -689,11 +689,11 @@ impl McpClient {
 /// The server process's monitor task: waits for it to exit (arms `exited`) or
 /// for the `kill` signal (a grace period for a self-initiated exit after
 /// closing stdin → `start_kill`). Owns [`Child`] and the Job handle
-/// ([`JobGuard`]) — `kill_on_drop` and kill-on-close finish off the
+/// ([`crate::shared::proc::TreeGuard`]) — `kill_on_drop` and kill-on-close finish off the
 /// process/tree even if the runtime drops the task.
 fn spawn_monitor(
     mut child: Child,
-    job: JobGuard,
+    job: crate::shared::proc::TreeGuard,
     kill: CancellationToken,
     exited: CancellationToken,
 ) {
@@ -722,77 +722,6 @@ fn spawn_monitor(
         }
         exited.cancel();
     });
-}
-
-/// The backing handle of the kill-on-close Job Object (Windows): while the
-/// handle is open, the tree lives; closing the handle (a clean exit in the
-/// monitor, or an app crash) kills the whole server process tree (including
-/// grandchildren, `cmd /c npx` → `node`). A no-op on other OSes.
-/// The field is held only for `Drop` (closing the handle) — never read.
-struct JobGuard(
-    #[cfg(windows)]
-    #[allow(dead_code)]
-    Option<JobHandle>,
-);
-
-#[cfg(windows)]
-struct JobHandle(windows_sys::Win32::Foundation::HANDLE);
-// SAFETY: a Job Object HANDLE is just a kernel handle; sending it across threads is safe.
-#[cfg(windows)]
-unsafe impl Send for JobHandle {}
-
-#[cfg(windows)]
-impl Drop for JobHandle {
-    fn drop(&mut self) {
-        // SAFETY: the handle was created by us in `assign` and hasn't been closed yet.
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
-    }
-}
-
-impl JobGuard {
-    /// Places the process into a Job Object with `KILL_ON_JOB_CLOSE`. "Best
-    /// effort": a failure is only logged (the server keeps working without a
-    /// job — as on unix).
-    #[cfg(windows)]
-    fn assign(child: &Child) -> Self {
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            SetInformationJobObject,
-        };
-        let Some(raw) = child.raw_handle() else {
-            tracing::warn!("MCP: no process handle — Job Object not assigned");
-            return Self(None);
-        };
-        // SAFETY: `raw` is a valid handle of the just-spawned process; the
-        // struct is zero-initialized; the job closes via JobHandle::drop.
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                tracing::warn!("MCP: CreateJobObjectW failed");
-                return Self(None);
-            }
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let ok = SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const core::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-            if ok == 0 || AssignProcessToJobObject(job, raw as _) == 0 {
-                tracing::warn!("MCP: failed to assign the kill-on-close Job Object");
-                windows_sys::Win32::Foundation::CloseHandle(job);
-                return Self(None);
-            }
-            Self(Some(JobHandle(job)))
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn assign(_child: &Child) -> Self {
-        Self()
-    }
 }
 
 #[cfg(test)]

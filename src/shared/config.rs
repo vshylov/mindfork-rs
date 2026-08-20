@@ -813,6 +813,58 @@ impl Default for ToolSettings {
     }
 }
 
+/// Default per-command timeout for the workspace command slots, in seconds.
+/// A cold `cargo build` of a real project is minutes, not seconds.
+pub const DEFAULT_WORKSPACE_TIMEOUT_SECS: u64 = 300;
+/// Default ceiling on characters kept **per stream** from one command.
+pub const DEFAULT_WORKSPACE_OUTPUT_CHARS: usize = 10_000;
+/// Default ceiling on rounds a turn may spend entirely inside the attached
+/// project. Far above any real fix; see [`WorkspaceSettings::max_rounds`].
+pub const DEFAULT_WORKSPACE_MAX_ROUNDS: u32 = 500;
+
+/// The code workspace (spec §9.12): how the build/run/test commands are run,
+/// and how long the model may work inside the project.
+///
+/// Its own group rather than four more fields on [`ToolSettings`]: that struct
+/// already carries sixteen, and these belong to a capability whose gate is a
+/// *project*, not a switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceSettings {
+    /// How long one `code_build`/`code_run`/`code_test` may run before the
+    /// process **tree** is killed. Whatever it printed up to that point is kept
+    /// and returned with the timeout note — the opposite of the Python sandbox,
+    /// which discards partial output: a build's first errors are the answer,
+    /// and throwing them away because the build was slow would waste the wait.
+    pub command_timeout_secs: u64,
+    /// Ceiling on characters kept from each of stdout and stderr. What is over
+    /// it is cut from the **middle**, keeping head and tail (design fork F12):
+    /// a compiler puts its first errors at the top and its summary at the
+    /// bottom, and a tail-only cut loses the errors.
+    pub output_limit_chars: usize,
+    /// How many rounds one turn may spend entirely inside the project before
+    /// the loop ends it anyway. **0 — no limit.**
+    ///
+    /// The `code_*` family is exempt from `max_tool_rounds` by design (the limit
+    /// exists to stop a model looping on *external* work), and "exempt" is not
+    /// "unbounded": a model repeating one call leaves a turn that never ends,
+    /// which is a measured failure mode of local models rather than a
+    /// hypothetical one. So there is a number, it is editable, and it can be
+    /// switched off by someone who wants that — `Esc`, the per-command timeout
+    /// and the one-at-a-time gate stay underneath either way.
+    pub max_rounds: u32,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        Self {
+            command_timeout_secs: DEFAULT_WORKSPACE_TIMEOUT_SECS,
+            output_limit_chars: DEFAULT_WORKSPACE_OUTPUT_CHARS,
+            max_rounds: DEFAULT_WORKSPACE_MAX_ROUNDS,
+        }
+    }
+}
+
 /// Default target ("soft") RAG chunk size in characters.
 pub const DEFAULT_CHUNK_TARGET_CHARS: usize = 800;
 /// Default overlap between adjacent RAG chunks in characters.
@@ -1622,6 +1674,10 @@ pub struct AppConfig {
     pub max_tool_rounds: u32,
     /// Global switches for external tools.
     pub tools: ToolSettings,
+    /// The code workspace attached to a chat (spec §9.12): command execution
+    /// and the project round budget.
+    #[serde(default)]
+    pub workspace: WorkspaceSettings,
     /// Knowledge-base (RAG) chunking settings.
     pub rag: RagSettings,
     /// Chat file-attachment budgets (`/file attach`).
@@ -1680,6 +1736,7 @@ impl Default for AppConfig {
             embed: EmbedSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
+            workspace: WorkspaceSettings::default(),
             rag: RagSettings::default(),
             attachments: AttachmentSettings::default(),
             images: ImageSettings::default(),

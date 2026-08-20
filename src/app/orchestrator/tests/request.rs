@@ -34,8 +34,8 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             indexed: NO_INDEX,
             history_tools,
             // The workspace block has its own tests below; this shared helper
-            // builds requests for chats with no project, where the flag is moot.
-            workspace_tools: true,
+            // builds requests for chats with no project, where the list is moot.
+            offered_tools: &[],
             loc: ru(),
         },
     )
@@ -333,23 +333,25 @@ fn a_vanished_boundary_falls_back_to_the_whole_history() {
     assert_eq!(req.messages.len(), 9);
 }
 
-/// The workspace block: present only with a project, naming the tools only when
-/// the turn actually offers them, and absent entirely otherwise — the property
-/// that keeps every existing conversation's request unchanged (spec §9.12).
+/// The workspace block: present only with a project, naming exactly the tools
+/// the turn offers, and absent entirely otherwise — the property that keeps
+/// every existing conversation's request unchanged (spec §9.12).
 #[test]
 fn the_workspace_block_appears_only_with_a_project() {
     use crate::app::orchestrator::request::inject_workspace;
     use crate::entities::workspace::Workspace;
+    use crate::features::tools::code;
 
+    let readers: Vec<String> = vec![code::CODE_READ_ID.into(), code::CODE_GREP_ID.into()];
     let ws = Workspace::new("D:/Projects/app");
-    let none = inject_workspace(Some("persona".into()), None, true, ru());
+    let none = inject_workspace(Some("persona".into()), None, &readers, ru());
     assert_eq!(
         none,
         Some("persona".into()),
         "no project must leave the system prompt untouched"
     );
 
-    let with = inject_workspace(Some("persona".into()), Some(&ws), true, ru()).unwrap();
+    let with = inject_workspace(Some("persona".into()), Some(&ws), &readers, ru()).unwrap();
     assert!(
         with.starts_with("persona"),
         "the persona stays first: {with}"
@@ -357,12 +359,18 @@ fn the_workspace_block_appears_only_with_a_project() {
     assert!(with.contains("D:/Projects/app"), "{with}");
     assert!(with.contains("app"), "the name is shown too: {with}");
     // It must name the tools that reach the project, or the model improvises
-    // with the wrong ones (docs/lessons.md §4).
+    // with the wrong ones (docs/lessons.md §4)…
     assert!(with.contains("code_read"), "{with}");
+    // …and only those. `code_edit` is not in this turn's set, and a block that
+    // offers editing to a profile without it costs a wasted round.
+    assert!(
+        !with.contains("code_edit"),
+        "a tool this turn does not have must not be named: {with}"
+    );
 
-    // Attached, but the profile has the tools off: the block must say the
+    // Attached, but the profile has every tool off: the block must say the
     // project is out of reach rather than advertise an absent capability.
-    let unreachable = inject_workspace(Some("persona".into()), Some(&ws), false, ru()).unwrap();
+    let unreachable = inject_workspace(Some("persona".into()), Some(&ws), &[], ru()).unwrap();
     assert!(unreachable.contains("D:/Projects/app"), "{unreachable}");
     assert!(
         !unreachable.contains("code_read"),
@@ -370,17 +378,34 @@ fn the_workspace_block_appears_only_with_a_project() {
     );
 }
 
-/// An empty persona must not leave a stray blank line, and the block must still
-/// be the whole system prompt.
+/// A command tool's line is quoted into the block verbatim, and a slot with no
+/// line contributes nothing.
+///
+/// Both halves matter: the model is *told* what `code_build` will run, because
+/// that text is the only thing it knows about a command it cannot change — and
+/// a slot the turn cannot run must not appear, or the model will call a tool
+/// that is not in its schema list.
 #[test]
-fn the_workspace_block_stands_alone_without_a_persona() {
+fn the_block_quotes_the_command_lines_it_can_run() {
     use crate::app::orchestrator::request::inject_workspace;
-    use crate::entities::workspace::Workspace;
+    use crate::entities::workspace::{CommandSlot, Workspace};
+    use crate::features::tools::code;
 
-    let ws = Workspace::new("/home/u/app");
-    let only = inject_workspace(None, Some(&ws), true, ru()).unwrap();
-    assert!(!only.starts_with('\n'), "leading blank line: {only:?}");
-    assert!(only.contains("/home/u/app"));
+    let mut ws = Workspace::new("/home/u/app");
+    ws.set_command(CommandSlot::Build, Some("cargo build --offline".into()));
+    ws.set_command(CommandSlot::Test, Some("cargo test --offline".into()));
+
+    let offered: Vec<String> = vec![code::CODE_BUILD_ID.into()];
+    let block = inject_workspace(None, Some(&ws), &offered, ru()).unwrap();
+    assert!(block.contains("cargo build --offline"), "{block}");
+    assert!(
+        !block.contains("cargo test"),
+        "a slot whose tool is not offered must not be described: {block}"
+    );
+    assert!(
+        !block.contains("code_test"),
+        "…and neither must its tool: {block}"
+    );
 }
 
 /// A request for a chat with no project is byte-identical to one built before

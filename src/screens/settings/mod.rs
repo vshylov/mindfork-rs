@@ -514,6 +514,16 @@ enum FieldId {
     VideoApiKeyEnv,
     TFs,
     TFsRoot,
+    /// The code workspace's command time limit (`workspace.command_timeout_secs`).
+    WsTimeout,
+    /// How much of a command's output reaches the model
+    /// (`workspace.output_limit_chars`).
+    WsOutput,
+    /// Rounds one turn may spend inside the attached project
+    /// (`workspace.max_rounds`; 0 — no limit). Its own number rather than a
+    /// share of `max_tool_rounds`, because the `code_*` family is exempt from
+    /// that one (spec §9.12).
+    WsMaxRounds,
     /// The MCP host's master switch (`config.mcp.enabled`). Lives in the
     /// "Plugins" section together with the server inventory.
     TMcpEnabled,

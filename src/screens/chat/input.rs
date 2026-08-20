@@ -465,6 +465,9 @@ impl ChatScreen {
             Ok(ProjectCommand::Attach { path }) => Some(ChatIntent::ProjectAttach { path }),
             Ok(ProjectCommand::Detach) => Some(ChatIntent::ProjectDetach),
             Ok(ProjectCommand::Status) => Some(ChatIntent::ProjectStatus),
+            Ok(ProjectCommand::Slot { slot, action }) => {
+                Some(ChatIntent::ProjectSlot { slot, action })
+            }
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.project.failed", &[("err", &msg)]));
                 None

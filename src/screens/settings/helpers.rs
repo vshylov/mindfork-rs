@@ -1370,97 +1370,17 @@ pub(super) fn join_list(v: Option<&[String]>, sep: char) -> String {
     }
 }
 
-/// An MCP server's `args` as a command line: joined with spaces, quoting an
-/// argument that could not be read back verbatim. Shell-style rather than a
-/// separator character (docs/history/mcp-server-editor.md F3): it is how a
-/// person types a command line, and unlike a separator it is total — any
-/// argument can be represented. Round-trips with [`parse_args`].
+/// An MCP server's `args` as a command line, and back. Both are
+/// [`crate::shared::cmdline`]'s job — the code workspace's command slots need
+/// the same shell-style splitting, and `features` cannot import `screens`, so
+/// the pair moved down a layer rather than being copied (docs/lessons.md §2).
 pub(super) fn join_args(args: &[String]) -> String {
-    args.iter()
-        .map(|a| {
-            // Quote on anything that would re-parse differently: whitespace
-            // (a separator), and either quote character (which would open a
-            // quoted run mid-token).
-            if a.is_empty()
-                || a.chars()
-                    .any(|c| c.is_whitespace() || c == '"' || c == '\'')
-            {
-                let escaped = a.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("\"{escaped}\"")
-            } else {
-                a.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::shared::cmdline::join(args)
 }
 
-/// A command line back into an MCP server's `args`. Whitespace separates;
-/// `"…"` quotes with `\\`/`\"` escapes; `'…'` quotes literally. An unterminated
-/// quote simply runs to the end of the line — the field is edited character by
-/// character, so refusing a half-typed value would be hostile.
+/// A command line back into an MCP server's `args`. See [`join_args`].
 pub(super) fn parse_args(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut started = false; // distinguishes an empty quoted arg from no arg
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            c if c.is_whitespace() => {
-                if started {
-                    out.push(std::mem::take(&mut cur));
-                    started = false;
-                }
-            }
-            '"' => {
-                started = true;
-                read_double_quoted(&mut chars, &mut cur);
-            }
-            '\'' => {
-                started = true;
-                read_single_quoted(&mut chars, &mut cur);
-            }
-            c => {
-                started = true;
-                cur.push(c);
-            }
-        }
-    }
-    if started {
-        out.push(cur);
-    }
-    out
-}
-
-/// Reads a `"…"` run (opening quote already consumed) into `cur`, undoing the
-/// `\\`/`\"` escapes [`join_args`] produces.
-fn read_double_quoted(chars: &mut impl Iterator<Item = char>, cur: &mut String) {
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => break,
-            '\\' => match chars.next() {
-                // Only the two characters `join_args` escapes; any
-                // other backslash stays literal (Windows paths).
-                Some(n @ ('\\' | '"')) => cur.push(n),
-                Some(n) => {
-                    cur.push('\\');
-                    cur.push(n);
-                }
-                None => cur.push('\\'),
-            },
-            c => cur.push(c),
-        }
-    }
-}
-
-/// Reads a `'…'` run (opening quote already consumed) into `cur`, literally.
-fn read_single_quoted(chars: &mut impl Iterator<Item = char>, cur: &mut String) {
-    for c in chars {
-        if c == '\'' {
-            break;
-        }
-        cur.push(c);
-    }
+    crate::shared::cmdline::split(s)
 }
 
 /// An MCP server's `env` map as text: `CHILD=SOURCE, CHILD2=SOURCE2`. Both
