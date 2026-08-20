@@ -33,15 +33,25 @@ RUNS = int(os.environ.get("PROBE_RUNS", "5"))
 THRESHOLD = 3 if RUNS >= 5 else (RUNS + 1) // 2
 
 
+# A Rust test path is module segments and an identifier; nothing else can name a
+# test, so nothing else is accepted from the command line.
+TEST_NAME = re.compile(r"\A[A-Za-z0-9_:]{1,120}\Z")
+
+
 def run_once(test_name):
     """One `cargo test` invocation.
 
     Returns `(passed, skipped, matched_nothing, evidence lines, seconds)`.
     """
     started = time.time()
+    # No shell, and an argv list rather than a composed command line: the test
+    # name comes from argv, and interpolating it into a string handed to a shell
+    # is a command-injection sink (SonarQube pythonsecurity:S8701 - the same
+    # agentic-workflows family as the path rule in docs/lessons.md section 1).
+    # With `shell=False` the name is one argument whatever it contains.
     proc = subprocess.run(
-        "cargo test %s -- --ignored --nocapture --test-threads=1" % test_name,
-        shell=True,
+        ["cargo", "test", test_name, "--", "--ignored", "--nocapture", "--test-threads=1"],
+        shell=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -77,6 +87,10 @@ def main():
             pass
 
     tests = sys.argv[1:] or DEFAULT_TESTS
+    bad = [t for t in tests if not TEST_NAME.match(t)]
+    if bad:
+        print("not test names: %s" % ", ".join(bad))
+        return 2
     if not os.environ.get("MINDFORK_ENGINE_URL"):
         print("MINDFORK_ENGINE_URL is not set - nothing to measure")
         return 2

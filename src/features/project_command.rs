@@ -8,7 +8,9 @@
 //! It has a module of its own rather than a row in `features/ui_command.rs`
 //! because it takes a free-form path: the registry there models closed
 //! vocabularies, and a directory may contain spaces (the `/file`, `/image` and
-//! `/export` precedent).
+//! `/export` precedent). The part every such parser shares — splitting the head,
+//! checking the first token, joining the tail — lives in [`super::slash`], so
+//! this file holds only what is actually specific to `/project`.
 //!
 //! [`ProjectProgress`] is the command-outcome type, defined here in `features`
 //! so both `app` (emits the events) and `screens` (renders the notes) can use it
@@ -50,46 +52,30 @@ pub enum ProjectProgress {
 /// - `Some(Err(msg))` — a `/project` command with a syntax error (a localized
 ///   hint in `msg`, naming the usage that works).
 pub fn parse(input: &str, loc: &Locale) -> Option<Result<ProjectCommand, String>> {
-    let mut tokens = input.split_whitespace();
-    let first = tokens.next()?;
-    if !first.eq_ignore_ascii_case("/project") {
-        return None;
-    }
-    let Some(sub) = tokens.next() else {
-        return Some(Err(loc.tf(
-            "ui.project.err.missing_subcommand",
-            &[("usage", loc.t("ui.project.usage"))],
-        )));
-    };
-    let rest: Vec<&str> = tokens.collect();
-
-    if sub.eq_ignore_ascii_case("attach") {
-        match argument(&rest) {
-            Some(path) => Some(Ok(ProjectCommand::Attach { path })),
-            None => Some(Err(loc.tf(
-                "ui.project.err.missing_path",
-                &[("usage", loc.t("ui.project.usage"))],
-            ))),
+    let usage = || loc.t("ui.project.usage");
+    let (sub, rest) = match crate::features::slash::head(input, "project")? {
+        crate::features::slash::Head::Bare => {
+            return Some(Err(
+                loc.tf("ui.project.err.missing_subcommand", &[("usage", usage())])
+            ));
         }
-    } else if sub.eq_ignore_ascii_case("detach") {
-        Some(Ok(ProjectCommand::Detach))
-    } else if sub.eq_ignore_ascii_case("status") {
-        Some(Ok(ProjectCommand::Status))
-    } else {
-        Some(Err(loc.tf(
+        crate::features::slash::Head::Sub { sub, rest } => (sub, rest),
+    };
+    // A path argument is required by `attach` alone; the other two take none, so
+    // a missing one is only ever that command's error.
+    let attach = || match crate::features::slash::argument(&rest) {
+        Some(path) => Ok(ProjectCommand::Attach { path }),
+        None => Err(loc.tf("ui.project.err.missing_path", &[("usage", usage())])),
+    };
+    Some(match sub.to_ascii_lowercase().as_str() {
+        "attach" => attach(),
+        "detach" => Ok(ProjectCommand::Detach),
+        "status" => Ok(ProjectCommand::Status),
+        _ => Err(loc.tf(
             "ui.project.err.unknown_subcommand",
-            &[("sub", sub), ("usage", loc.t("ui.project.usage"))],
-        )))
-    }
-}
-
-/// Joins the tokens after the subcommand into one argument: a path may contain
-/// spaces, and surrounding quotes are stripped (a shell habit, and what a user
-/// gets from "copy as path" on Windows).
-fn argument(tokens: &[&str]) -> Option<String> {
-    let joined = tokens.join(" ");
-    let arg = joined.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-    (!arg.is_empty()).then(|| arg.to_string())
+            &[("sub", sub), ("usage", usage())],
+        )),
+    })
 }
 
 #[cfg(test)]

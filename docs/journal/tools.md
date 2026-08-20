@@ -1968,7 +1968,22 @@ Branches `docs/code-workspace` → `spike/code-workspace-probe` →
   backstop, the semantic index) belong to stages that do not exist yet; a section
   with no field is not a deliverable, and adding one now would ship UI describing
   behaviour the binary does not have.
-- **Tests**: 2344 unit (+33), 101 `#[ignore]` (+2 stage-1 live smokes; the two
+- **Two findings from CI, both of the classes lessons.md already names.** The
+  Linux job went red where Windows was green: `Path::file_name()` knows only the
+  host's separators, so a root canonicalized on Windows and read back on Linux —
+  which the portable data directory makes a real case — returned the whole path
+  as the project's name (now split by hand on both separators, lessons §6). And
+  the duplication gate scored **4.3%** against a 3% bar on `project_command.rs`
+  alone: the parser is a sliding self-duplicate of `/file`, `/image` and `/rag`,
+  the same tokens with different literals — the fourth-recorded shape of that
+  trap, and the seam (`features/slash.rs`) is what the rule says to build. The
+  three older parsers are deliberately left on their own copies: a mechanical
+  refactor does not share a PR with a feature, and they are the seam's obvious
+  next callers. Sonar also flagged `tools/probe_runs.py` (`pythonsecurity:S8701`,
+  the agentic-workflows family): a test name from `argv` interpolated into a
+  `shell=True` command line is an injection sink — now an argv list with
+  `shell=False`, plus a name pattern checked before use.
+- **Tests**: 2347 unit (+36), 101 `#[ignore]` (+2 stage-1 live smokes; the two
   stage-0 probes stay on the spike branch, which is where the editing contract
   they measure lives until stage 2). New dependencies `ignore` (gitignore
   semantics) and `regex` (already in the graph transitively, pinned to the lock
