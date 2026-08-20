@@ -1,7 +1,8 @@
 //! Code-workspace tools (spec §9.12,
 //! [docs/code-workspace.md](../../../docs/code-workspace.md)): `code_list`,
-//! `code_read`, `code_grep` — listing, reading and searching the project the
-//! user attached to this chat with `/project attach`.
+//! `code_read`, `code_grep`, `code_edit`, `code_write` — listing, reading,
+//! searching and changing the project the user attached to this chat with
+//! `/project attach`.
 //!
 //! Three properties shape everything here:
 //!
@@ -30,10 +31,18 @@ use super::{Tool, ToolContext, ToolOutcome};
 pub const CODE_LIST_ID: &str = "code_list";
 pub const CODE_READ_ID: &str = "code_read";
 pub const CODE_GREP_ID: &str = "code_grep";
+pub const CODE_EDIT_ID: &str = "code_edit";
+pub const CODE_WRITE_ID: &str = "code_write";
 
 /// The workspace family, in one place, so the registry, the gate and the system
 /// block cannot drift apart.
-pub const WORKSPACE_TOOL_IDS: [&str; 3] = [CODE_LIST_ID, CODE_READ_ID, CODE_GREP_ID];
+pub const WORKSPACE_TOOL_IDS: [&str; 5] = [
+    CODE_LIST_ID,
+    CODE_READ_ID,
+    CODE_GREP_ID,
+    CODE_EDIT_ID,
+    CODE_WRITE_ID,
+];
 
 /// Whether `id` belongs to the workspace family (consulted by
 /// [`super::effective_tool_ids`], which offers them only with a project attached).
@@ -85,21 +94,37 @@ fn resolve(root: &Path, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<
     } else {
         root.join(&requested)
     };
-    // An existing path canonicalizes; one that does not exist yet is judged by
-    // its parent plus its name (the file `code_write` will create, stage 2).
+    // An existing path canonicalizes. One that does not exist yet is judged by
+    // its **deepest existing ancestor** plus the tail: `code_write` creates
+    // missing directories, so the whole chain can be absent, and canonicalizing
+    // only the immediate parent fails on the first new directory.
+    //
+    // The tail cannot smuggle an escape: a `..` component has no `file_name`,
+    // so it ends the walk with an error rather than being re-attached — and
+    // whatever comes out still has to pass the containment check below.
     let canonical = match candidate.canonicalize() {
         Ok(c) => strip_verbatim(&c),
         Err(_) => {
-            let parent = candidate
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string()))?;
-            let parent = parent
-                .canonicalize()
-                .map_err(|e| anyhow::anyhow!(format!("{}: {e}", parent.display())))?;
-            let name = candidate
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string()))?;
-            strip_verbatim(&parent).join(name)
+            let mut existing = candidate.as_path();
+            let mut tail: Vec<std::ffi::OsString> = Vec::new();
+            while !existing.exists() {
+                let name = existing.file_name().ok_or_else(|| {
+                    anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string())
+                })?;
+                tail.push(name.to_owned());
+                existing = existing.parent().ok_or_else(|| {
+                    anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string())
+                })?;
+            }
+            let mut resolved = strip_verbatim(
+                &existing
+                    .canonicalize()
+                    .map_err(|e| anyhow::anyhow!(format!("{}: {e}", existing.display())))?,
+            );
+            for part in tail.iter().rev() {
+                resolved.push(part);
+            }
+            resolved
         }
     };
     if !canonical.starts_with(root) {
@@ -163,8 +188,7 @@ impl TextFile {
         })
     }
 
-    /// Restores the file's original shape for writing back (stage 2's editor).
-    #[allow(dead_code)] // The writer lands with `code_edit`; stage 1 needs the detection above.
+    /// Restores the file's original shape for writing back.
     pub fn encode(&self, text: &str) -> Vec<u8> {
         let body = if self.crlf {
             text.replace('\n', "\r\n")
@@ -261,6 +285,9 @@ impl Tool for CodeList {
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Files
     }
+    fn counts_toward_round_limit(&self) -> bool {
+        false
+    }
     fn ui_label(&self) -> &'static str {
         "list project files"
     }
@@ -344,6 +371,9 @@ impl Tool for CodeRead {
     }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Files
+    }
+    fn counts_toward_round_limit(&self) -> bool {
+        false
     }
     fn ui_label(&self) -> &'static str {
         "read project file"
@@ -430,6 +460,9 @@ impl Tool for CodeGrep {
     }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Files
+    }
+    fn counts_toward_round_limit(&self) -> bool {
+        false
     }
     fn ui_label(&self) -> &'static str {
         "search project"
@@ -570,6 +603,231 @@ impl Tool for CodeGrep {
             ));
         }
         Ok(ToolOutcome::text(out))
+    }
+}
+
+/// Journals the pre-image of `path` before it is changed, or explains why the
+/// change must not happen.
+///
+/// The refusal is deliberate rather than best-effort: the user's control over
+/// what the assistant does to their code is the changes screen and its revert
+/// (design fork F1), and both rest on this file's bytes, which exist nowhere
+/// else once it is overwritten. An unjournaled edit would quietly remove that
+/// control.
+async fn journal_before_write(
+    ctx: &ToolContext,
+    root: &Path,
+    path: &Path,
+    existing: Option<&[u8]>,
+) -> Result<()> {
+    let Some(dir) = &ctx.workspace_journal else {
+        // No journal directory at all — a background turn, or a context built
+        // without one. The edit tools are not offered there, so this is a
+        // programming error rather than a user-facing state.
+        anyhow::bail!(ctx.loc.t("tool.code.err.no_journal").to_string());
+    };
+    let journal = crate::features::workspace_journal::Journal::new(dir.clone());
+    let rel = display_rel(path, root);
+    let root = root.display().to_string();
+    let bytes = existing.map(|b| b.to_vec());
+    // Off the async runtime: this is a handful of small synchronous file
+    // operations, and a blocking write inside the turn's task would stall it.
+    let dir = dir.clone();
+    tokio::task::spawn_blocking(move || {
+        let journal = crate::features::workspace_journal::Journal::new(dir);
+        journal.record(&root, &rel, bytes.as_deref())
+    })
+    .await?
+    .map_err(|err| {
+        anyhow::anyhow!(
+            ctx.loc
+                .tf("tool.code.err.journal_failed", &[("err", &err.to_string())])
+        )
+    })?;
+    drop(journal);
+    Ok(())
+}
+
+/// `code_edit` — exact-substring replacement. The contract stage 0 measured.
+pub struct CodeEdit;
+
+#[async_trait::async_trait]
+impl Tool for CodeEdit {
+    fn id(&self) -> ToolId {
+        CODE_EDIT_ID.into()
+    }
+    fn group(&self) -> super::meta::ToolGroup {
+        super::meta::ToolGroup::Files
+    }
+    /// Changes a file in the user's project. `tools.confirm_dangerous` (spec
+    /// §9.8) therefore parks it for confirmation when the user wants that; the
+    /// reading tools of this family stay unasked, as `fs_read` does.
+    fn danger(&self) -> bool {
+        true
+    }
+    fn counts_toward_round_limit(&self) -> bool {
+        false
+    }
+    fn ui_label(&self) -> &'static str {
+        "edit project file"
+    }
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.code_edit.desc").into()
+    }
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": loc.t("tool.code.param.path")},
+                "old_string": {"type": "string", "description": loc.t("tool.code.param.old_string")},
+                "new_string": {"type": "string", "description": loc.t("tool.code.param.new_string")},
+                "replace_all": {"type": "boolean", "description": loc.t("tool.code.param.replace_all")}
+            },
+            "required": ["path", "old_string", "new_string"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let root = workspace_root(ctx)?;
+        let raw = arg_str(&args, "path")
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
+        let path = resolve(&root, &raw, ctx.loc)?;
+        let old = arg_str(&args, "old_string")
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.edit_args").to_string()))?;
+        let new = arg_str(&args, "new_string")
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.edit_args").to_string()))?;
+        if old.is_empty() {
+            anyhow::bail!(ctx.loc.t("tool.code.err.edit_args").to_string());
+        }
+        let replace_all = args
+            .get("replace_all")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
+        let file = TextFile::load(&bytes)
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.binary").to_string()))?;
+        // The model writes `\n`; the file may be CRLF. Match on the normalized
+        // text and give the file's own shape back on write.
+        let old_n = old.replace("\r\n", "\n");
+        let new_n = new.replace("\r\n", "\n");
+        let count = file.text.matches(&old_n).count();
+        let rel = display_rel(&path, &root);
+        // The two refusals are the contract's working half: each says which of
+        // the two happened and what to do next, because a message that only says
+        // "no" costs the model its next round (docs/lessons.md §4). Nothing is
+        // written in either case.
+        if count == 0 {
+            return Ok(ToolOutcome::text(
+                ctx.loc.tf("tool.code.edit.not_found", &[("path", &rel)]),
+            ));
+        }
+        if count > 1 && !replace_all {
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.code.edit.ambiguous",
+                &[("n", &count.to_string()), ("path", &rel)],
+            )));
+        }
+
+        journal_before_write(ctx, &root, &path, Some(&bytes)).await?;
+        let updated = if replace_all {
+            file.text.replace(&old_n, &new_n)
+        } else {
+            file.text.replacen(&old_n, &new_n, 1)
+        };
+        tokio::fs::write(&path, file.encode(&updated))
+            .await
+            .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
+
+        // Echo the neighbourhood of the change, numbered, so the model can
+        // verify without spending a round on a second read.
+        let at = updated
+            .find(&new_n)
+            .map(|byte| updated[..byte].matches('\n').count())
+            .unwrap_or(0);
+        let lines: Vec<&str> = updated.lines().collect();
+        let from = at.saturating_sub(3);
+        let to = (at + new_n.lines().count() + 3).min(lines.len());
+        let applied = if replace_all { count } else { 1 };
+        let mut out = ctx.loc.tf(
+            "tool.code.edit.ok",
+            &[("path", &rel), ("n", &applied.to_string())],
+        );
+        out.push('\n');
+        out.push_str(&numbered(&lines, from, to));
+        Ok(ToolOutcome::text(out))
+    }
+}
+
+/// `code_write` — create a file, or replace one whole.
+pub struct CodeWrite;
+
+#[async_trait::async_trait]
+impl Tool for CodeWrite {
+    fn id(&self) -> ToolId {
+        CODE_WRITE_ID.into()
+    }
+    fn group(&self) -> super::meta::ToolGroup {
+        super::meta::ToolGroup::Files
+    }
+    fn danger(&self) -> bool {
+        true
+    }
+    fn counts_toward_round_limit(&self) -> bool {
+        false
+    }
+    fn ui_label(&self) -> &'static str {
+        "write project file"
+    }
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.code_write.desc").into()
+    }
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": loc.t("tool.code.param.path")},
+                "content": {"type": "string", "description": loc.t("tool.code.param.content")}
+            },
+            "required": ["path", "content"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let root = workspace_root(ctx)?;
+        let raw = arg_str(&args, "path")
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
+        let path = resolve(&root, &raw, ctx.loc)?;
+        let content = arg_str(&args, "content")
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.write_args").to_string()))?;
+
+        let existing = tokio::fs::read(&path).await.ok();
+        // An existing file keeps its own line endings and BOM: replacing a CRLF
+        // file with `\n` text would make one edit look like a whole-file rewrite
+        // in the diff, and in the user's own version control afterwards.
+        let shaped = match existing.as_deref().and_then(TextFile::load) {
+            Some(file) => file.encode(&content.replace("\r\n", "\n")),
+            None => content.replace("\r\n", "\n").into_bytes(),
+        };
+        journal_before_write(ctx, &root, &path, existing.as_deref()).await?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!(format!("{}: {e}", parent.display())))?;
+        }
+        tokio::fs::write(&path, &shaped)
+            .await
+            .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
+        let rel = display_rel(&path, &root);
+        let key = if existing.is_some() {
+            "tool.code.write.replaced"
+        } else {
+            "tool.code.write.created"
+        };
+        Ok(ToolOutcome::text(ctx.loc.tf(
+            key,
+            &[("path", &rel), ("n", &content.lines().count().to_string())],
+        )))
     }
 }
 
@@ -888,6 +1146,250 @@ mod tests {
         assert_eq!(file.text, "let x = 1;\nlet y = 2;\n");
         assert!(file.crlf && file.bom);
         assert_eq!(file.encode(&file.text), bytes);
+    }
+
+    /// Like [`fixture`], with a journal directory, which the editing tools
+    /// require — they refuse to change a file whose original they cannot record.
+    fn editable(files: &[(&str, &str)]) -> (Fixture, tempfile::TempDir) {
+        let mut f = fixture(files);
+        let journal = tempfile::tempdir().unwrap();
+        f.ctx.workspace_journal = Some(journal.path().join("chat"));
+        (f, journal)
+    }
+
+    #[tokio::test]
+    async fn edit_replaces_a_unique_fragment() {
+        let (f, _j) = editable(&[("a.rs", "let x = 1;\nlet y = 2;\n")]);
+        let out = CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "let y = 2;", "new_string": "let y = 3;"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap(),
+            "let x = 1;\nlet y = 3;\n"
+        );
+        // The result echoes the neighbourhood, so the model can check its own
+        // work without spending a round on a second read.
+        assert!(
+            out.result.contains("\u{2192}let y = 3;"),
+            "got: {}",
+            out.result
+        );
+    }
+
+    /// The two refusals are the working half of the contract: each says which of
+    /// the two happened, and **neither writes anything**.
+    #[tokio::test]
+    async fn edit_refuses_a_missing_or_ambiguous_fragment_without_writing() {
+        let (f, _j) = editable(&[("a.rs", "dup\ndup\n")]);
+        let miss = CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "absent", "new_string": "x"}),
+            )
+            .await
+            .unwrap();
+        let ambiguous = CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "dup", "new_string": "x"}),
+            )
+            .await
+            .unwrap();
+        assert_ne!(miss.result, ambiguous.result, "the two must be told apart");
+        assert!(
+            ambiguous.result.contains('2'),
+            "the count is what makes it actionable: {}",
+            ambiguous.result
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap(),
+            "dup\ndup\n",
+            "a refused edit must not touch the file"
+        );
+        // `replace_all` is the sanctioned way past the ambiguity.
+        CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "dup", "new_string": "x", "replace_all": true}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap(),
+            "x\nx\n"
+        );
+    }
+
+    /// A model emits `\n`; a Windows checkout is CRLF. Without normalization the
+    /// match misses; without re-encoding, one edit rewrites every line of the
+    /// file and the diff (and the user's own version control) says so.
+    #[tokio::test]
+    async fn edit_preserves_crlf_and_bom() {
+        let (f, _j) = editable(&[]);
+        let path = f.dir.path().join("a.rs");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"let x = 1;\r\nlet y = 2;\r\n");
+        std::fs::write(&path, &bytes).unwrap();
+        CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "let y = 2;", "new_string": "let y = 3;"}),
+            )
+            .await
+            .unwrap();
+        let mut want = vec![0xEF, 0xBB, 0xBF];
+        want.extend_from_slice(b"let x = 1;\r\nlet y = 3;\r\n");
+        assert_eq!(std::fs::read(&path).unwrap(), want);
+    }
+
+    /// The baseline is what the changes screen and its revert rest on, so it is
+    /// recorded **before** the write, and only on the first touch.
+    #[tokio::test]
+    async fn an_edit_journals_the_original_once() {
+        let (f, journal) = editable(&[("a.rs", "one\n")]);
+        let j = crate::features::workspace_journal::Journal::new(journal.path().join("chat"));
+        for (old, new) in [("one", "two"), ("two", "three")] {
+            CodeEdit
+                .invoke(
+                    &f.ctx,
+                    serde_json::json!({"path": "a.rs", "old_string": old, "new_string": new}),
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap(),
+            "three\n"
+        );
+        assert_eq!(
+            j.baseline_of("a.rs").as_deref(),
+            Some(&b"one\n"[..]),
+            "the baseline must be the file before the *first* edit"
+        );
+        assert_eq!(j.entries().len(), 1);
+    }
+
+    /// An unjournalable edit is refused rather than applied: the user's control
+    /// over what the assistant does is the changes screen, and it rests on the
+    /// baseline (design fork F1).
+    #[tokio::test]
+    async fn an_edit_that_cannot_be_journaled_does_not_happen() {
+        let (mut f, journal) = editable(&[("a.rs", "one\n")]);
+        // A file where the journal directory should be — the portable way to
+        // make the journal unwritable.
+        let blocked = journal.path().join("blocked");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        f.ctx.workspace_journal = Some(blocked);
+        let err = CodeEdit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "old_string": "one", "new_string": "two"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap(),
+            "one\n",
+            "the file must be untouched: {err}"
+        );
+    }
+
+    /// With no journal at all — a background turn — editing is impossible, and
+    /// the message says so rather than failing obscurely.
+    #[tokio::test]
+    async fn without_a_journal_editing_refuses() {
+        let f = fixture(&[("a.rs", "one\n")]);
+        assert!(f.ctx.workspace_journal.is_none());
+        assert!(
+            CodeEdit
+                .invoke(
+                    &f.ctx,
+                    serde_json::json!({"path": "a.rs", "old_string": "one", "new_string": "two"}),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn write_creates_a_file_with_its_parents_and_journals_it_as_new() {
+        let (f, journal) = editable(&[]);
+        let out = CodeWrite
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "src/deep/new.rs", "content": "fn main() {}\n"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(f.dir.path().join("src/deep/new.rs")).unwrap(),
+            "fn main() {}\n"
+        );
+        assert!(
+            out.result.contains("src/deep/new.rs"),
+            "got: {}",
+            out.result
+        );
+        let j = crate::features::workspace_journal::Journal::new(journal.path().join("chat"));
+        let entries = j.entries();
+        assert_eq!(entries.len(), 1);
+        assert!(
+            !entries[0].existed,
+            "reverting a created file deletes it, so the entry must say it was new"
+        );
+    }
+
+    /// Replacing a CRLF file whole keeps its endings: otherwise one write turns
+    /// every line of the file into a change in the user's version control.
+    #[tokio::test]
+    async fn write_keeps_an_existing_file_s_line_endings() {
+        let (f, _j) = editable(&[]);
+        let path = f.dir.path().join("a.rs");
+        std::fs::write(&path, b"old\r\n").unwrap();
+        CodeWrite
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "a.rs", "content": "new\nlines\n"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\r\nlines\r\n");
+    }
+
+    #[tokio::test]
+    async fn writing_outside_the_root_is_refused() {
+        let (f, _j) = editable(&[]);
+        assert!(
+            CodeWrite
+                .invoke(
+                    &f.ctx,
+                    serde_json::json!({"path": "../escaped.rs", "content": "x"}),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    /// The editing tools declare themselves dangerous, which is what
+    /// `tools.confirm_dangerous` (spec §9.8) keys on; the reading ones do not,
+    /// or the switch would ask about every listing.
+    #[test]
+    fn only_the_writing_tools_are_dangerous_and_none_spend_a_round() {
+        assert!(CodeEdit.danger() && CodeWrite.danger());
+        assert!(!CodeRead.danger() && !CodeGrep.danger() && !CodeList.danger());
+        for exempt in [
+            CodeEdit.counts_toward_round_limit(),
+            CodeWrite.counts_toward_round_limit(),
+            CodeRead.counts_toward_round_limit(),
+            CodeGrep.counts_toward_round_limit(),
+            CodeList.counts_toward_round_limit(),
+        ] {
+            assert!(!exempt, "the workspace family does not spend the budget");
+        }
     }
 
     #[test]

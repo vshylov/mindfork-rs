@@ -119,6 +119,10 @@ pub struct ToolContext {
     /// server and its text results keep working, which is the point of the switch
     /// being separate from enabling the server.
     pub mcp_images: bool,
+    /// Where this chat's change journal lives (`data/workspace/<chat-id>/`,
+    /// spec §9.12). `None` — no project, or a background turn; the editing tools
+    /// then refuse rather than change a file they cannot record the original of.
+    pub workspace_journal: Option<std::path::PathBuf>,
     /// The code project attached to this chat (`/project attach`, spec §9.12),
     /// as of the start of the turn. `None` — no project, and then the `code_*`
     /// tools are not offered at all (see [`effective_tool_ids`]); they refuse
@@ -200,6 +204,9 @@ pub struct TurnInfo {
     /// [`ToolContext::workspace`]; `None` for background turns, which have no
     /// chat and therefore no project.
     pub workspace: Option<crate::entities::workspace::Workspace>,
+    /// This chat's change-journal directory. See
+    /// [`ToolContext::workspace_journal`].
+    pub workspace_journal: Option<std::path::PathBuf>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -224,6 +231,7 @@ impl ToolContext {
             history_page_tokens: params.history_page_tokens,
             other_chats: turn.other_chats,
             workspace: turn.workspace,
+            workspace_journal: turn.workspace_journal,
             mcp_images: params.mcp_images,
             storage: deps.storage,
             engine: deps.engine,
@@ -466,6 +474,20 @@ pub trait Tool: Send + Sync {
     /// Whether the tool is enabled in the profile by default (`false` — optional,
     /// enabled manually). See [`default_tool_ids`]/[`all_tool_ids`].
     fn enabled_by_default(&self) -> bool {
+        true
+    }
+
+    /// Whether a round containing this call spends the `max_tool_rounds` budget
+    /// (spec §9.12).
+    ///
+    /// `true` for every tool but the code workspace. The limit exists to stop a
+    /// model looping on *external* work — searches, fetches, subagents — where
+    /// each round costs a request and possibly money. Reading and editing an
+    /// attached project is the opposite: a fix is a walk of read → change →
+    /// check, and a budget of eight rounds ends it in the middle. The user asked
+    /// for the exemption explicitly, and what bounds these calls instead is that
+    /// they are local, fast, and interruptible by `Esc`.
+    fn counts_toward_round_limit(&self) -> bool {
         true
     }
 }
@@ -725,6 +747,8 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(code::CodeList));
     reg.register(Arc::new(code::CodeRead));
     reg.register(Arc::new(code::CodeGrep));
+    reg.register(Arc::new(code::CodeEdit));
+    reg.register(Arc::new(code::CodeWrite));
     // Reading/searching files the user attached to the chat (`/file attach`). Not
     // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));
@@ -857,6 +881,7 @@ pub(crate) mod testkit {
             // No other chats by default; tests that need them set `ctx.other_chats`.
             other_chats: std::sync::Arc::from(Vec::new()),
             workspace: None,
+            workspace_journal: None,
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
         }
