@@ -1480,9 +1480,10 @@ this in another chat"). Design and the decided forks —
 
 The user attaches a **project directory** to a chat, and the assistant can list,
 read, search and change it, and run the build/run/test commands the user
-configured for it. Stages 1–3 of the track designed in
-[docs/code-workspace.md](docs/code-workspace.md); the changes screen and the
-optional semantic index are the stages after them.
+configured for it — and the user can see everything it changed, as a diff, and
+put any of it back. Stages 1–4 of the track designed in
+[docs/code-workspace.md](docs/code-workspace.md); the optional semantic index is
+the stage after them.
 
 Deliberately **not** the same thing as `fs_read`/`fs_write`/`fs_list` (§9.3),
 which stay exactly as they are. Those are a global capability behind
@@ -1632,6 +1633,30 @@ exist at all.
   one, and quotes each configured command line verbatim. The model reading the
   line is deliberate: it is what lets the assistant tell the user that their own
   command is the thing that is wrong, and it is the whole of its say over one.
+- **The changes screen** (`F4`, or `/changes`) is the other half of what the
+  editing tools promise. They apply a change without asking — there is no
+  per-edit popup by design — and what makes that safe is that every change is
+  visible afterwards and any of it can be put back. Two panes: the files the
+  assistant touched, and the selected file's unified diff against its journaled
+  pre-image. `↑↓` picks a file, `Tab` hands the arrows to the diff, `PgUp/PgDn`
+  scrolls it, `r` puts one file back behind a confirmation naming it, `Esc`
+  returns to the chat.
+  - The diff is **against the journal, not against git**, for the reason the
+    journal exists: an attached directory need not be a repository, and a
+    repository routinely carries the user's own uncommitted work, which is not
+    the assistant's doing.
+  - Every way a file can fail to have a diff is a **state that says which it
+    is** — created, gone from disk, binary or too large to show, or touched and
+    left exactly as it was. An empty pane for all five would be
+    indistinguishable from a defect.
+  - Reverting restores the bytes **and** drops the journal row in one step: a
+    restored file still listed would offer a second revert that does nothing,
+    and a dropped row whose file was not restored loses the pre-image for good.
+    A file the assistant *created* is deleted instead — the only deletion in the
+    feature, and it is the user who asks for it.
+  - Line endings alone are not a change (matching is on `\n`-normalized text, as
+    in the editing tools), and a path that would leave the root is neither
+    diffed nor written — re-checked here because a manifest is a file on disk.
 - **UI**: a feed note per command. The attach note names the root and what the
   assistant can now do; `/project status` with nothing attached names the command
   that attaches something; setting a slot echoes the line, and clearing one that

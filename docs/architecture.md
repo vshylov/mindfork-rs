@@ -1540,6 +1540,17 @@ Implementation notes:
   cancellation is `ToolContext.cancel` (a clone of the turn's token; the
   agentic loop additionally wraps any tool's `invoke` in a `select!` with it
   — Esc is never blocked).
+- **Code workspace, the changes screen** (`features/workspace_diff.rs` +
+  `screens/changes.rs`) — the diff is built in `features`, off the runtime, and
+  the screen is a pure projection of the snapshot, the rule the message-search
+  screen states in as many words. The plan had sketched the opposite (a screen
+  diffing the selected file lazily); building it against the codebase's own
+  invariant is also cheaper — a rendered diff is a fraction of the two files it
+  came from, and it is computed once rather than on every arrow key. `revert`
+  writes the baseline back and calls `Journal::forget` as one operation, because
+  either half alone is a worse state than neither. The screen opens on the
+  reply (`AppEvent::WorkspaceChanges`), not on the key press — the `F3`
+  round trip.
 - **Code workspace, the change journal** (`features/workspace_journal.rs`) —
   the pre-image of the first touch of every file, under
   `data/workspace/<chat-id>/` (a manifest plus `baseline/<hash-of-rel-path>`).

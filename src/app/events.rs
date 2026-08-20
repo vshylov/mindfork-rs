@@ -184,6 +184,14 @@ pub enum AppCommand {
     ProjectDetach,
     /// Report the active chat's code project (the `/project status` command).
     ProjectStatus,
+    /// Build what the assistant changed in the active chat's project, for the
+    /// changes screen (`F4` / `/changes`, spec §9.12). The result arrives as a
+    /// `WorkspaceChanges` event.
+    OpenChanges,
+    /// Put one file back to how it was before the assistant first touched it,
+    /// then re-send the change set. Confirmed on the screen, so this is the
+    /// decision already taken.
+    RevertWorkspaceFile { path: String },
     /// Set, show or clear one of the project's build/run/test command slots
     /// (spec §9.12). The result arrives as a `ProjectProgress` event.
     ProjectSlot {
@@ -292,13 +300,18 @@ impl AppCommand {
                 action,
                 crate::features::project_command::SlotAction::Show
             ),
+            AppCommand::RevertWorkspaceFile { .. } => true,
 
             // Reading the conversation out to a file changes nothing in it —
             // the same side as `CopyChat`.
             AppCommand::ExportChat { .. }
             // Reporting the project reads it and changes nothing, the side
-            // `FileList` is on.
+            // `FileList` is on — and so is looking at what changed. Reverting a
+            // file writes to the user's project, but not to the conversation:
+            // it is work *on the chat's project*, which is the same side as
+            // setting a command slot.
             | AppCommand::ProjectStatus
+            | AppCommand::OpenChanges
             | AppCommand::ConfirmTool { .. }
             | AppCommand::SetDraft(_)
             | AppCommand::SetFeedView(_)
@@ -535,6 +548,10 @@ pub enum AppEvent {
     /// Outcome of a `/file` command (attached/removed/list/error) — a note in the
     /// feed. See docs/file-attachments.md.
     FileProgress(FileProgress),
+    /// What the assistant changed in the active chat's project, for the changes
+    /// screen (spec §9.12). Built off the runtime by the orchestrator; the
+    /// screen is a pure projection of it.
+    WorkspaceChanges(Box<crate::features::workspace_diff::ChangeSet>),
     /// Outcome of a `/project` command (attached/detached/status/error) — a note
     /// in the feed. See docs/code-workspace.md, spec §9.12.
     ProjectProgress(crate::features::project_command::ProjectProgress),

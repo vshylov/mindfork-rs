@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: automatic chat titling on the first exchange (done)
 - Post-M9: the settings hint panel — one height for every section (done)
 - Post-M9: the "About" tab became a leader table (done)
+- Post-M9: the code workspace — stage 4, the changes screen (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1738,3 +1739,74 @@ rendering and locale data — no engine, memory or tool path touched.
 **Tests**: 2311 green (+1), 99 `#[ignore]`, clippy `-D warnings`/fmt clean.
 **A live run isn't required** (AGENTS.md §3): layout in the help dialog — no
 engine, memory or tool path is touched.
+
+### Post-M9: the code workspace — stage 4, the changes screen (done)
+
+`F4` / `/changes`: what the assistant changed in the attached project, as a
+unified diff, with per-file revert. Stage 4 of
+[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+Branch `feat/code-workspace-changes`.
+
+- **This screen is what makes the editing tools safe.** Stage 2 chose to apply a
+  change without asking (design fork F1: no per-edit popup), and the argument for
+  that was always "the user sees it afterwards and can put it back". Until this
+  stage, only the first half of that existed — the journal has been storing
+  pre-images since stage 2 with `entries`/`baseline_of` marked
+  `#[allow(dead_code)]`, waiting for their consumer.
+- **The diff is built in `features`, not in the screen, and that reverses the
+  plan.** §3.5 sketched a screen diffing the selected file lazily. The
+  codebase's own rule points the other way and is written down in the
+  message-search screen's module doc: a screen is a **pure projection** of a
+  snapshot the orchestrator built off the runtime. Following it is also the
+  cheaper design — a rendered diff is a fraction of the two files it came from,
+  so the event stays small, and it is computed once instead of on every `↑`. The
+  screen ended up with no file-system access at all, which is what FSD wanted
+  from it anyway.
+- **"Too large to display" turned out to be five states.** The plan named one.
+  The journal can hand the screen a file that is *gone* (deleted by the user, or
+  by a revert that already ran), *binary*, *too large*, *created* (there is
+  nothing to compare it against), or *touched and put back by hand*. Each has a
+  different next move, so each says which it is; an empty diff pane for all five
+  is indistinguishable from a defect (docs/lessons.md §4).
+- **Revert and forget are one operation.** The plan listed them as two steps.
+  Written apart they are two failure modes, and they are not symmetric: a
+  restored file still listed offers a second revert that does nothing, while a
+  dropped row whose file was not restored loses the pre-image **for good** —
+  those bytes exist nowhere else. So the write happens first and the row is
+  dropped second, and `Journal::forget` takes the stored pre-image with the row
+  rather than leaving a directory of orphaned copies of the user's source.
+- **The selection follows the path, not the index.** Reverting removes a row, so
+  a snapshot refresh with an index-based selection silently moves the cursor to
+  the next file down — and the next `r` would revert something the user never
+  looked at. Keeping the path and falling back to a clamp is two lines and closes
+  a class of "it deleted the wrong thing" that no amount of confirmation would.
+- **The layout defect was found by looking, not by asserting.** All fifteen
+  screen tests passed while the two panes ran together — a file's counts and the
+  first diff line shoulder to shoulder, `+12 −4@@ -940,7 +940,9 @@` — and each
+  row sized its counts column to its own text, leaving the column ragged. A
+  `contains()` assertion cannot see either. Rendering the screen once and reading
+  it is what caught them, and both now have tests that pin the **symptom**.
+- **The duplication gate found the screen-chrome opening, and it was right.**
+  1.4%%, under the 3%% bar, so nothing was blocked — but what it matched was the
+  six lines every full-screen screen here repeats verbatim: build the hotkey
+  grid, size the status row from it, split vertically, build the titled panel,
+  take its `inner`, render it. The changes screen was the fourth copy. So the
+  new code got the seam (`shared::ui::screen_chrome`) instead of a fifth, and
+  the three older screens keep their copies for now — a mechanical refactor does
+  not share a PR with a feature, and they are the seam's obvious next callers.
+  Same disposition as stage 1's `/project` parser (docs/lessons.md §2).
+- **One hoist, and it removes a copy rather than adding one.** The confirmation
+  popup has existed since the dangerous-tool track, `pub(super)` inside
+  `screens::chat`; `screens::changes` is a sibling and could not reach it. It
+  moved to `shared/ui.rs`, with the *keys* left at each call site — what confirms
+  differs (`Enter` here, `Enter`/`A`/`Esc` for a tool call) and only the drawing
+  is common.
+- **No live run**, per AGENTS.md §3: pure UI, no tool, no engine or memory path,
+  and nothing a model sees changes. What would otherwise go untested is the seam
+  where the journal, the diff and the revert meet — so that is covered end to end
+  through the orchestrator (`orchestrator::tests::project`), with the journal
+  written the way the editing tools write it rather than by fabricating a
+  manifest.
+- **Tests**: 2416 unit (+28). New dependency `similar` (Apache-2.0) — Myers with
+  the usual heuristics and a hunk-grouping writer; the only crate in the graph
+  that needed it.

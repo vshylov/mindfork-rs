@@ -45,6 +45,14 @@ hkdf = "0.12.4"
 # nothing else and normalizing once at attach time keeps the provider matrix uniform.
 # Without it a phone photo would ride **every** turn at full size, and a webp would be
 # attachable on three providers out of four. See docs/research/multimodal-images.md §5 F3.
+# The unified diff the changes screen shows: baseline bytes against the file as
+# it stands now, per file the assistant touched (spec §9.12). Diffing is one of
+# those problems that looks like an afternoon and is not - Myers with the usual
+# heuristics, grapheme-aware, and a `unified_diff` writer that already groups
+# hunks. Pure Rust, no build script, and the only crate in the graph that needs
+# it. See features/workspace_diff.rs.
+similar = "3.2.0"
+
 # Walking an attached project the way a developer expects: `.gitignore` (nested,
 # plus the repo's exclude file), hidden entries and `.git/` itself are skipped by
 # `code_list`/`code_grep`. A hand-rolled skip list gets the common cases and then

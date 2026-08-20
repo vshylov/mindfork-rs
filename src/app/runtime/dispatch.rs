@@ -166,6 +166,7 @@ pub(super) fn apply_event(
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
         AppEvent::SelfModelView(model) => show_self_model(screen, active, *model),
+        AppEvent::WorkspaceChanges(set) => show_changes(screen, active, *set),
         // The "self-model" changed in the background/via tools — refresh ONLY the open
         // `F3` screen (re-request a fresh snapshot); ignored when closed.
         AppEvent::SelfModelChanged => {
@@ -326,14 +327,66 @@ fn show_self_model(screen: &mut ChatScreen, active: &mut ActiveScreen, model: Op
     match active {
         ActiveScreen::SelfModel(view) => view.set_model(model),
         // A results list the user is reading must not be swapped out from
-        // under them by a stale reply to a request they have left behind.
-        ActiveScreen::Search(_) => {}
+        // under them by a stale reply to a request they have left behind — and
+        // neither must a diff the user is reading.
+        ActiveScreen::Search(_) | ActiveScreen::Changes(_) => {}
         ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
             *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                 model,
                 screen.palette(),
                 screen.loc(),
             )))
+        }
+    }
+}
+
+/// The `WorkspaceChanges` arm of [`apply_event`]: opens the `F4` screen, or
+/// refreshes the already-open one after a revert.
+///
+/// Exhaustive by variant for the reason `show_self_model` is: this match
+/// *replaces* the active screen, and a new screen that forgot about it would be
+/// silently stolen by an unrelated late event.
+fn show_changes(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    set: crate::features::workspace_diff::ChangeSet,
+) {
+    match active {
+        ActiveScreen::Changes(view) => view.set_changes(set),
+        // A results list the user is reading must not be swapped out from under
+        // them by a stale reply to a request they have left behind.
+        ActiveScreen::Search(_) => {}
+        ActiveScreen::Chat
+        | ActiveScreen::ChatList(_)
+        | ActiveScreen::Settings(_)
+        | ActiveScreen::SelfModel(_) => {
+            *active = ActiveScreen::Changes(Box::new(ChangesScreen::new(
+                set,
+                screen.palette(),
+                screen.loc(),
+            )))
+        }
+    }
+}
+
+/// Translates a changes-screen intent: closing returns to the chat, `Quit` ends
+/// the loop (`true`), a revert goes to the orchestrator — which does the work
+/// and answers with a fresh change set, so the screen shows the result rather
+/// than what it asked for.
+pub(super) fn dispatch_changes(
+    intent: ChangesIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    active: &mut ActiveScreen,
+) -> bool {
+    match intent {
+        ChangesIntent::Close => {
+            *active = ActiveScreen::Chat;
+            false
+        }
+        ChangesIntent::Quit => true,
+        ChangesIntent::Revert(path) => {
+            let _ = cmd_tx.send(AppCommand::RevertWorkspaceFile { path });
+            false
         }
     }
 }
@@ -377,6 +430,7 @@ pub(super) enum AnyIntent {
     List(ChatListIntent),
     Settings(SettingsIntent),
     SelfModel(SelfModelIntent),
+    Changes(ChangesIntent),
     Search(SearchIntent),
 }
 
@@ -394,6 +448,7 @@ pub(super) fn dispatch_any(
         AnyIntent::List(i) => dispatch_chat_list(i, cmd_tx, screen, active),
         AnyIntent::Settings(i) => dispatch_settings(i, cmd_tx, active),
         AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
+        AnyIntent::Changes(i) => dispatch_changes(i, cmd_tx, active),
         AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active, back),
     }
 }
@@ -523,6 +578,14 @@ pub(super) fn dispatch(
                 screen.palette(),
                 screen.loc(),
             )));
+            return false;
+        }
+        // What the assistant changed in the attached project. The same round
+        // trip as the self-model screen below: the orchestrator owns the journal
+        // and the project, so the screen opens on the reply
+        // (`WorkspaceChanges`), not on the key press.
+        ChatIntent::OpenChanges => {
+            let _ = cmd_tx.send(AppCommand::OpenChanges);
             return false;
         }
         // Viewing the self-model: the orchestrator owns the data — request a snapshot,

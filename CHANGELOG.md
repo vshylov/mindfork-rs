@@ -16,6 +16,12 @@ split by subsystem.
 
 ### Added
 
+- **See what the assistant changed in your project, and undo it** — `F4` (or
+  `/changes`) opens a screen listing every file it touched, with the changes
+  shown as a diff against the file as it was before it was first touched.
+  `r` puts one file back the way it was, after asking; a file the assistant
+  created is removed instead. Files it could not diff — binary, very large, or
+  deleted since — say so rather than showing nothing.
 - **The assistant can build, run and test the attached project** — through
   command lines you type: `/project build-cmd cargo build`, and the same for
   `run-cmd` and `test-cmd` (`/project clear build|run|test` removes one, and

@@ -600,6 +600,8 @@ impl Orchestrator {
             AppCommand::ProjectDetach => self.handle_project_detach(),
             AppCommand::ProjectStatus => self.handle_project_status(),
             AppCommand::ProjectSlot { slot, action } => self.handle_project_slot(slot, action),
+            AppCommand::OpenChanges => self.handle_open_changes(),
+            AppCommand::RevertWorkspaceFile { path } => self.handle_revert_workspace_file(path),
             AppCommand::ImageAttach { path } => self.handle_image_attach(path),
             AppCommand::ImageRemove { target } => self.handle_image_remove(target),
             AppCommand::ImageList => self.handle_image_list(),

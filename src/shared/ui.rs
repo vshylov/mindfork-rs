@@ -3,9 +3,10 @@
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
 use crate::shared::theme::Palette;
 
@@ -120,6 +121,103 @@ pub fn render_scrollbar(
         .track_style(palette.border_style(focused))
         .thumb_style(palette.border_style(focused));
     frame.render_stateful_widget(bar, area, &mut state);
+}
+
+/// What [`screen_chrome`] hands back: where the content goes, where the hotkey
+/// grid goes, and the grid itself.
+pub struct ScreenChrome {
+    /// Inside the panel's border — where the screen draws its own content.
+    pub inner: Rect,
+    /// The strip below the panel, for [`Self::hotkeys`] or a warning line.
+    pub status: Rect,
+    pub hotkeys: Vec<Line<'static>>,
+}
+
+/// Draws the chrome a full-screen screen opens with: a hotkey grid pinned to the
+/// bottom, and a titled panel filling everything above it.
+///
+/// Six lines that every screen here repeats verbatim — build the grid, size the
+/// status row from it, split vertically, build the panel, take its `inner`,
+/// render it. The duplication gate found the pair when the changes screen became
+/// the fourth; this is the seam the rule says to build when a new thing is a
+/// sibling of an existing one (docs/lessons.md §2). The three older screens keep
+/// their own copies for now: a mechanical refactor does not share a PR with a
+/// feature, and they are this function's obvious next callers.
+///
+/// `right` is the muted, right-aligned title some screens carry (a match count,
+/// a summary); the caller still renders `hotkeys` into `status`, because a screen
+/// with a confirmation to show puts that there instead.
+pub fn screen_chrome(
+    frame: &mut Frame,
+    palette: &Palette,
+    title: String,
+    right: Option<String>,
+    hk: &[(&str, &str, bool)],
+) -> ScreenChrome {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+    let hotkeys = palette.hotkey_grid(hk, area.width as usize);
+    let status_h = (hotkeys.len() as u16).max(1);
+    let [panel_area, status] =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+    let mut block = palette.panel(title, true);
+    if let Some(right) = right {
+        block = block.title(
+            Line::from(Span::styled(format!(" {right} "), palette.muted_style())).right_aligned(),
+        );
+    }
+    let inner = block.inner(panel_area);
+    frame.render_widget(block, panel_area);
+    ScreenChrome {
+        inner,
+        status,
+        hotkeys,
+    }
+}
+
+/// A modal confirmation: a centred, bordered box with a question and a footer
+/// naming the keys that answer it.
+///
+/// One renderer rather than one per screen. The chat screen has asked
+/// destructive questions since the dangerous-tool track (spec §9.8) and the
+/// changes screen asks the same shape of question about a revert; `screens` are
+/// siblings, so the second one could not have reached the first's without a
+/// copy. The **keys** stay with each caller — what confirms differs (`Enter`
+/// there, `Enter` here, `Enter`/`A`/`Esc` for a tool call) and only the drawing
+/// is common.
+pub fn confirm_popup(
+    frame: &mut Frame,
+    palette: &Palette,
+    title: &str,
+    question: &str,
+    footer: &str,
+) {
+    // Wide enough to read, never wider than the terminal; three rows of border
+    // and text, plus one for a wrapped second line.
+    let width = 56u16.min(frame.area().width);
+    let area = centered_rect(width, 5, frame.area());
+    frame.render_widget(Clear, area);
+    let block = palette.panel(title.to_string(), true).title_bottom(
+        Line::from(Span::styled(footer.to_string(), palette.muted_style())).centered(),
+    );
+    let body = Paragraph::new(Line::from(Span::styled(
+        question.to_string(),
+        Style::new().fg(palette.text),
+    )))
+    .block(block)
+    .wrap(Wrap { trim: true });
+    frame.render_widget(body, area);
+}
+
+/// A fixed-width/height rectangle centred in `area` (clamped).
+pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
+    v
 }
 
 #[cfg(test)]
