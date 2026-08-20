@@ -281,6 +281,19 @@ buffer**, whenever the value under assertion can be any length — a 2 KiB read 
 `PATH`-sourced key and the comparison failed on the tail, which reads as a resolution bug.
 — *the external server's API key, entered in settings*.
 
+**A `contains()` assertion over a rendered buffer cannot see a layout defect —
+render the screen once and look at it.** Fifteen passing tests said the changes
+screen drew its file list, its diff, its hunk headers and its confirmation; what
+it actually drew ran the two panes together (`+12 −4@@ -940,7 +940,9 @@`) and left
+the counts column ragged, because each row sized it to its own text. Every
+assertion was true and the screen was unusable. A single `println!` of the
+rendered buffer, read by eye, found both in a minute — and both then got tests
+that pin the **symptom** (no `−4@@` in the output; two rows' counts ending at the
+same column) rather than the layout arithmetic. Budget one look at the real
+render before calling a screen done; text assertions verify presence, not
+composition.
+— *the code workspace — stage 4*.
+
 **A process-wide gate in production code makes sibling async tests fail each
 other.** The code workspace runs one project command at a time through a
 `static Semaphore` — correct for the application, and it means two
@@ -838,6 +851,18 @@ back to the *exact* identity rather than to arithmetic that merely ought to canc
 — *database compaction on backup and restore*, *embedding-model change — stage 3*.
 
 ---
+
+**When two writes undo one thing, the order is the design — and so is doing them
+together.** Reverting a file the assistant changed is "restore the bytes" plus
+"drop the journal row", and the plan listed them as two steps. Apart they are two
+failure modes that are *not* symmetric: a restored file still listed offers a
+second revert that does nothing, while a dropped row whose file was not restored
+loses the pre-image **for good**, because those bytes exist nowhere else. So the
+recoverable half goes first, they live in one function, and the bookkeeping
+deletes the stored copy with the row rather than leaving orphaned copies of the
+user's source on disk. Ask which half, done alone, cannot be retried — that one
+goes second.
+— *the code workspace — stage 4*.
 
 ## 9. Live runs and model behaviour
 

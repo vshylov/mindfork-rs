@@ -9,7 +9,8 @@ results, and what they do not settle, in §7. **Stage 1 (attach + the read-only
 tools) is done** — `feat/code-workspace-core`; what it changed against the plan
 is in §7.5. **Stage 2 (editing + the journal) is done** —
 `feat/code-workspace-edit`, §7.6. **Stage 3 (the command slots) is done** —
-`feat/code-workspace-commands`, §7.7.
+`feat/code-workspace-commands`, §7.7. **Stage 4 (the changes screen) is done** —
+`feat/code-workspace-changes`, §7.8.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -401,10 +402,10 @@ Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
   kill on both OSes, timeout/truncation settings, console presentation. Live
   smoke: break a fixture crate, let the model build → fix → build green.
   Plus platform tests that a grandchild process dies on timeout. §7.7.
-- **Stage 4 — changes screen** (`feat/code-workspace-changes`): the screen,
-  `similar` diffs, revert with confirm, `F4` + `/changes`. Pure UI — unit
-  tests over an explicit journal fixture; no live run required (stated per
-  AGENTS.md §3).
+- **Stage 4 — changes screen** (`feat/code-workspace-changes`) — **done**: the
+  screen, `similar` diffs, revert with confirm, `F4` + `/changes`. Pure UI —
+  unit tests over an explicit journal fixture; no live run required (stated per
+  AGENTS.md §3). §7.8.
 - **Stage 5 — semantic index** (`feat/code-workspace-index`): chunker,
   `cache.db` tables, background indexing, `code_search`, `/project reindex`,
   and the F4 go/no-go measurement recorded here.
@@ -648,6 +649,46 @@ one part of §3.3 turned out to be already built in the wrong place.
 at the first attempt. What the stage *did* have to argue about is the build tool
 — see §4.1: `cargo build --offline` rather than a bare `rustc`, because `rustc`
 has no grandchildren and the grandchild is the reason this stage exists.
+
+### 7.8. Stage 4 — what it changed against this plan
+
+The stage shipped §3.5 as designed — two panes, `similar` diffs, `r` behind a
+confirmation, `F4` and `/changes`, no `Back`-stack extension. Three things
+differ, and one defect was found the only way it could have been.
+
+- **The diff is built in `features`, not in the screen.** §3.5 wrote "computed
+  lazily for the selected file with `similar`". The codebase's own rule is
+  stronger and points the other way: a screen here is a *pure projection* of a
+  snapshot the orchestrator built off the runtime — the message-search screen
+  says so in its own module doc. Following it is also cheaper than the plan's
+  version: a rendered diff is a fraction of the two files it came from, so the
+  event is small, and it is computed **once** rather than on every `↑`. The
+  screen ended up with no file-system access at all, which is what FSD wanted
+  from it anyway.
+- **"Oversized files render as too large to display" grew into five states.**
+  The plan named one; the journal can hand the screen a file that is *gone*
+  (the user deleted it, or a revert already happened), *binary*, *too large*,
+  *created* (nothing to compare against), or *touched and put back by hand*.
+  Each has a different next move, so each says which it is — an empty diff pane
+  for all five is indistinguishable from a defect (docs/lessons.md §4).
+- **Revert and forget are one operation.** §3.5 listed them as two steps ("restore
+  baseline …; the journal row is dropped"). Written apart they are two failure
+  modes: a restored file still listed offers a second revert that does nothing,
+  and a dropped row whose file was not restored loses the pre-image for good —
+  and those bytes exist nowhere else. `workspace_diff::revert` writes first and
+  forgets second, and `Journal::forget` takes the stored pre-image with the row.
+- **The layout defect was found by looking, not by asserting.** Every screen test
+  passed while the two panes ran together: a file's counts and the first diff
+  line sat shoulder to shoulder — `+12 −4@@ -940,7 +940,9 @@` — and each row
+  sized its counts column to its own text, so the column was ragged. Rendering
+  the screen once and reading it is what caught both; both now have tests that
+  pin the **symptom** rather than the layout maths.
+
+**No live run**, per AGENTS.md §3: this stage adds no tool, touches no engine or
+memory path, and changes nothing a model sees. The change set is exercised
+end-to-end through the orchestrator instead
+(`orchestrator::tests::project`), which is where the journal, the diff and the
+revert actually meet.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

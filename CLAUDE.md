@@ -6,11 +6,11 @@ in external mode any such server works — vLLM/LM Studio/Ollama), plus the clou
 providers OpenAI, Gemini and Anthropic. UI on **ratatui**. Platforms: Windows +
 Linux. Architecture — **Feature-Sliced Design (FSD)**.
 
-> **Engine:** originally designed around `xinfer`, but it turned out too raw
+> **Engine:** originally designed around `xinfer`, which turned out too raw
 > (incoherent output on Gemma 4, builds poorly on Windows) — switched to
 > llama.cpp. Generic-OpenAI client (`OpenAiClient`), managed launcher
-> `LlamaSupervisor`; the cloud providers are separate `EngineBackend`
-> implementations. See [docs/install.md](docs/install.md) §3 and
+> `LlamaSupervisor`; the clouds are separate `EngineBackend` implementations.
+> See [docs/install.md](docs/install.md) §3 and
 > [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
 
 ## How to use this file
@@ -165,32 +165,22 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-20, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2388 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2416 unit tests
 green, 106 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
 most recent tracks: **a code project attached to a chat**
-(`/project attach <directory>`, and the assistant can list, read, search and
-change it, and run the build/run/test command lines the user typed —
-stages 1–3 of the code-workspace track. The load-bearing decision is that
-**attaching is the permission**: the `code_*` tools are offered only while the
-chat has a project, so a chat without one sends a request byte-identical to what
-it sent before the feature, and there is no second switch to leave off. That
-inverts `fs_read`, which is a global capability *narrowed* by an optional root;
-this family is scoped to one chat and one directory and refuses when there is
-none. The track opened with a probe rather than a tier, because its one risky
-hypothesis was whether a local model honours an exact-substring edit contract —
-measured 5/5 on gemma-4-31b and 5/5 on qwen-3.6-27b, with the model reproducing
-a five-line fragment byte-for-byte from a numbered read and widening it past a
-duplicate on its own, which is why the `   12→` read format is now written down
-as a contract. Stage 1's measurement: `ignore` honours `.gitignore` only inside a
-git checkout, so an attached directory that is not a repository needs
-`require_git(false)` or `target/` comes back in every search. Stage 3's decision is
-that the model **cannot compose a command**: the three tools take no arguments at
-all, so the user's line is the whole of what runs and the model gets only its
-*text* — enough to say the command itself is wrong. Both halves of the runner
-already existed where `features` cannot reach (the Job Object in `shared/mcp.rs`,
-the argv splitter in `screens/settings`), so the stage hoisted them and wrote
-only the unix tree-kill MCP never needed;
+(`/project attach <directory>`; the assistant can list, read, search and change
+it, run the user's build/run/test command lines, and `F4` shows everything it
+changed as a diff with per-file revert — stages 1–4. Three load-bearing
+decisions. **Attaching is the permission**: the `code_*` tools are offered only
+while the chat has a project, so a chat without one sends a request
+byte-identical to what it sent before the feature — the inverse of `fs_read`, a
+global capability *narrowed* by an optional root. The model **cannot compose a
+command**: the three command tools take no arguments at all, so the user's line
+is the whole of what runs and the model gets only its *text*. And the `   12→`
+read format is a **contract**, because the whole track rested on whether a local
+model honours an exact-substring edit — measured 5/5 on both families, with the
+model reproducing a five-line fragment byte-for-byte from a numbered read;
 [docs/code-workspace.md](docs/code-workspace.md), spec §9.12), **the model's
 name on the assistant's header**
 (the feed said *who* answered but never *what*: every assistant message has
