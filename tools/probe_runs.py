@@ -44,13 +44,23 @@ def run_once(test_name):
     Returns `(passed, skipped, matched_nothing, evidence lines, seconds)`.
     """
     started = time.time()
-    # No shell, and an argv list rather than a composed command line: the test
-    # name comes from argv, and interpolating it into a string handed to a shell
-    # is a command-injection sink (SonarQube pythonsecurity:S8701 - the same
-    # agentic-workflows family as the path rule in docs/lessons.md section 1).
-    # With `shell=False` the name is one argument whatever it contains.
+    # Two things guard this call, and the order matters for both a reader and a
+    # taint analyser:
+    #
+    #  * the name is validated **here**, immediately before use, and what reaches
+    #    the command is the match object's own output rather than the argv string
+    #    it was derived from. The check used to live in `main` alone, which reads
+    #    as safe and is not: dataflow does not follow a guard across a function
+    #    boundary, and SonarQube said so twice (pythonsecurity:S8701, then S8705
+    #    on the surviving path) - the agentic-workflows family docs/lessons.md
+    #    section 1 already records for CLI paths;
+    #  * `shell=False` with an argv list, so no shell ever parses any of it.
+    checked = TEST_NAME.fullmatch(test_name)
+    if checked is None:
+        raise ValueError("not a test name: %r" % (test_name,))
+    name = checked.group(0)
     proc = subprocess.run(
-        ["cargo", "test", test_name, "--", "--ignored", "--nocapture", "--test-threads=1"],
+        ["cargo", "test", name, "--", "--ignored", "--nocapture", "--test-threads=1"],
         shell=False,
         capture_output=True,
         text=True,
@@ -87,7 +97,10 @@ def main():
             pass
 
     tests = sys.argv[1:] or DEFAULT_TESTS
-    bad = [t for t in tests if not TEST_NAME.match(t)]
+    # A readable refusal for a typo. The guard that matters is in `run_once`,
+    # next to the call it protects - this one only turns a raised ValueError
+    # into a sentence.
+    bad = [t for t in tests if not TEST_NAME.fullmatch(t)]
     if bad:
         print("not test names: %s" % ", ".join(bad))
         return 2
