@@ -37,12 +37,14 @@ const CHUNK_OVERLAP: usize = 8;
 /// Hard cap on one chunk's characters — and the **binding** constraint, not a
 /// safety net.
 ///
-/// Measured: the embedding server refuses a single input over its physical batch
-/// (`input (596 tokens) is too large to process … current batch size: 512`), so a
-/// window is bounded by characters first and by lines second. 1200 is what this
-/// project's own RAG chunker already uses (`DEFAULT_CHUNK_MAX_CHARS`) — the
-/// ceiling was encoded in the codebase before this probe met it.
-const CHUNK_MAX_CHARS: usize = 1200;
+/// Measured twice against the real embedder. It refuses a single input over its
+/// physical batch (`input (N tokens) is too large to process … current batch
+/// size: 512`), and **1200 characters of code is 514 tokens** — so this project's
+/// own RAG chunk size (`DEFAULT_CHUNK_MAX_CHARS`, 1200) does not carry over.
+/// It is calibrated for prose, where 1200 characters is 300–400 tokens; code
+/// runs about 2.3 characters per token, dense with punctuation and short
+/// identifiers. 900 leaves room for the densest real files.
+const CHUNK_MAX_CHARS: usize = 900;
 /// Files larger than this are skipped by the indexer.
 const MAX_FILE_BYTES: u64 = 512 * 1024;
 /// Hits returned by one search, unless the call asks for fewer.

@@ -104,13 +104,43 @@ async fn build_index(root: &std::path::Path, embedder: &Arc<dyn Embedder>) -> In
     eprintln!("index: embedding {} chunks…", corpus.len());
     let started = std::time::Instant::now();
     let mut chunks = Vec::with_capacity(corpus.len());
+    let mut refused = 0usize;
     for batch in corpus.chunks(32) {
         let texts: Vec<String> = batch.iter().map(|(_, _, _, body)| body.clone()).collect();
-        let vectors = embedder
+        let vectors = match embedder
             .embed(texts, crate::shared::api::contract::EmbedRole::Passage)
             .await
-            .expect("the embedding server must answer");
+        {
+            Ok(v) => v,
+            // One pathological input must not cost a fifteen-minute run: retry
+            // the batch one at a time and drop only what the server actually
+            // refuses. Counted and printed, because a corpus quietly missing a
+            // tenth of itself would make the measurement meaningless.
+            Err(err) => {
+                eprintln!("  batch refused ({err}); retrying one at a time");
+                let mut one_by_one = Vec::with_capacity(batch.len());
+                for (_, _, _, body) in batch {
+                    match embedder
+                        .embed(
+                            vec![body.clone()],
+                            crate::shared::api::contract::EmbedRole::Passage,
+                        )
+                        .await
+                    {
+                        Ok(v) => one_by_one.extend(v),
+                        Err(_) => {
+                            refused += 1;
+                            one_by_one.push(Vec::new());
+                        }
+                    }
+                }
+                one_by_one
+            }
+        };
         for ((path, start, end, body), vector) in batch.iter().zip(vectors) {
+            if vector.is_empty() {
+                continue; // refused above
+            }
             chunks.push(Chunk {
                 path: path.clone(),
                 start: *start,
@@ -124,9 +154,14 @@ async fn build_index(root: &std::path::Path, embedder: &Arc<dyn Embedder>) -> In
         }
     }
     eprintln!(
-        "index: {} chunks in {:.0} s",
+        "index: {} chunks in {:.0} s ({refused} refused by the embedder)",
         chunks.len(),
         started.elapsed().as_secs_f64()
+    );
+    assert!(
+        refused * 50 < corpus.len(),
+        "the embedder refused {refused} of {} chunks — the corpus is not what is being measured",
+        corpus.len()
     );
     let _ = std::fs::write(&cache, serde_json::to_vec(&chunks).unwrap());
     Index { chunks }
