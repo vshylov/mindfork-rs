@@ -3100,7 +3100,7 @@ async fn fetch_url_address_policy_e2e_live() {
     );
 }
 
-/// Code workspace, **stage 1 live check** (docs/code-workspace.md §6): with a
+/// Code workspace, **stage 1 live check** (docs/history/code-workspace.md §6): with a
 /// project attached, does the model actually navigate it — locate a fact it
 /// cannot know, read the file that holds it, and answer from what it read?
 ///
@@ -3411,7 +3411,7 @@ async fn run_workspace_turn_with(
     Some((ws, answer, calls))
 }
 
-/// The stage-0 probe, now on the real mechanism (docs/code-workspace.md §7): a
+/// The stage-0 probe, now on the real mechanism (docs/history/code-workspace.md §7): a
 /// project that does not compile, and the assistant fixes it through
 /// `code_edit`.
 ///
@@ -3480,11 +3480,11 @@ fn cargo_in(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// Code workspace, **stage 3 live check** (docs/code-workspace.md §6): a project
+/// Code workspace, **stage 3 live check** (docs/history/code-workspace.md §6): a project
 /// that does not compile, a build command the *user* configured, and the
 /// assistant working the loop — build, read the error, fix, build again.
 ///
-/// `cargo` rather than a bare `rustc`, deliberately (docs/code-workspace.md
+/// `cargo` rather than a bare `rustc`, deliberately (docs/history/code-workspace.md
 /// §4.1): only a real build system puts a `cargo → rustc` process tree behind
 /// the timeout and the kill this stage exists for, and only a real compiler's
 /// diagnostics are what the model has to read to find the fault. The crate has
@@ -3597,7 +3597,7 @@ async fn code_command_gate_e2e_live() {
     assert!(!answer.trim().is_empty(), "the model said nothing at all");
 }
 
-/// Stage 2's own commitment (docs/code-workspace.md §7.3): the **refusal paths
+/// Stage 2's own commitment (docs/history/code-workspace.md §7.3): the **refusal paths
 /// have to work live**, and stage 0 never exercised them because the model never
 /// missed.
 ///

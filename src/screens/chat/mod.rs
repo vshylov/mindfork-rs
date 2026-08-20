@@ -153,7 +153,7 @@ pub enum ChatIntent {
     /// Show the chat's attachments (command `/file list`).
     FileList,
     /// Attach a code project to the chat (command `/project attach <dir>`).
-    /// See docs/code-workspace.md, spec §9.12.
+    /// See docs/history/code-workspace.md, spec §9.12.
     ProjectAttach {
         path: String,
     },

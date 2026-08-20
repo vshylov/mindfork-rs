@@ -1,6 +1,6 @@
 //! What the assistant changed in the attached project, as a diff the changes
 //! screen can draw — and putting one file back (spec §9.12,
-//! [docs/code-workspace.md](../../docs/code-workspace.md) §3.5).
+//! [docs/history/code-workspace.md](../../docs/history/code-workspace.md) §3.5).
 //!
 //! The input is the change journal (`features/workspace_journal.rs`): the bytes
 //! of every file as it stood **before** the assistant first touched it in this

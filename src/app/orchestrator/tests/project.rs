@@ -2,7 +2,7 @@
 //! (`/project build-cmd|run-cmd|test-cmd`, `/project clear <slot>`) and the
 //! change set behind the changes screen (`F4` / `/changes`). Part of the
 //! [`super`] module (fixtures in mod.rs). See spec §9.12,
-//! docs/code-workspace.md §3.3, §3.5.
+//! docs/history/code-workspace.md §3.3, §3.5.
 
 use super::*;
 use crate::entities::workspace::CommandSlot;
@@ -201,7 +201,7 @@ async fn a_slot_command_without_a_project_says_so() {
     handle.await.unwrap();
 }
 
-// ---- the changes screen's data (docs/code-workspace.md §3.5) ----
+// ---- the changes screen's data (docs/history/code-workspace.md §3.5) ----
 
 /// Asks for the change set and waits for the one the orchestrator builds off
 /// the runtime.

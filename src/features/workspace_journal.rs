@@ -1,5 +1,5 @@
 //! The change journal of a chat's code workspace (spec §9.12,
-//! [docs/code-workspace.md](../../docs/code-workspace.md) §3.5): the **pre-image**
+//! [docs/history/code-workspace.md](../../docs/history/code-workspace.md) §3.5): the **pre-image**
 //! of every file the assistant touched, so the changes screen can show what
 //! changed and put it back.
 //!

@@ -56,6 +56,7 @@ Two rules that follow from that:
 | asking "how did it get this way" about M3–M9 | [docs/journal/milestones.md](docs/journal/milestones.md) · [docs/history/plan.md](docs/history/plan.md) |
 | adopting an **architectural decision** | [docs/decisions/](docs/decisions/) — write a new ADR (list below) |
 | **planning a track** | AGENTS.md §1 · prior art in [docs/research/](docs/research/) (pre-decision) and [docs/history/](docs/history/) (finished plans) |
+| working on the **code workspace** — the project attached to a chat | architecture §8, §10 · spec §9.12 · [docs/journal/tools.md](docs/journal/tools.md) · the finished plan [docs/history/code-workspace.md](docs/history/code-workspace.md) |
 | installing, running, configuring the engine | [docs/install.md](docs/install.md) |
 | what is left to do | [docs/roadmap.md](docs/roadmap.md) |
 | what the user sees as changed | [CHANGELOG.md](CHANGELOG.md) |
@@ -181,7 +182,7 @@ is the whole of what runs and the model gets only its *text*. And the `   12→`
 read format is a **contract**, because the whole track rested on whether a local
 model honours an exact-substring edit — measured 5/5 on both families, with the
 model reproducing a five-line fragment byte-for-byte from a numbered read;
-[docs/code-workspace.md](docs/code-workspace.md), spec §9.12), **the model's
+[docs/history/code-workspace.md](docs/history/code-workspace.md), spec §9.12), **the model's
 name on the assistant's header**
 (the feed said *who* answered but never *what*: every assistant message has
 stored a metadata snapshot of its turn since M9, and nothing read its `model`. `interface.show_model_name` (off by default) draws

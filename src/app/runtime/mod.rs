@@ -58,7 +58,7 @@ enum ActiveScreen {
     /// mode). See docs/history/chat-search-stage2.md.
     Search(Box<SearchScreen>),
     /// What the assistant changed in the attached project (`F4` / `/changes`).
-    /// See docs/code-workspace.md §3.5, spec §9.12.
+    /// See docs/history/code-workspace.md §3.5, spec §9.12.
     Changes(Box<ChangesScreen>),
 }
 

@@ -10,7 +10,10 @@ tools) is done** — `feat/code-workspace-core`; what it changed against the pla
 is in §7.5. **Stage 2 (editing + the journal) is done** —
 `feat/code-workspace-edit`, §7.6. **Stage 3 (the command slots) is done** —
 `feat/code-workspace-commands`, §7.7. **Stage 4 (the changes screen) is done** —
-`feat/code-workspace-changes`, §7.8.
+`feat/code-workspace-changes`, §7.8. **Stage 5 (the semantic index) was measured
+and rejected** — fork F4's go/no-go came back no, and the stage does not ship;
+the measurement, and what would change the answer, are in §7.9. **The track is
+complete.**
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -251,7 +254,13 @@ run the test command after edits when one exists). The model sees the command
 thing it can do itself is run the slot as-is. The block is stable across turns
 unless the workspace config changes (prefix-cache friendly, axis A language).
 
-### 3.7. Semantic index (stage 5, gated by F4's go/no-go)
+### 3.7. Semantic index (stage 5) — **measured and rejected**
+
+> **This section describes a design that did not ship.** Fork F4 made the stage
+> conditional on a live measurement, the measurement came back no, and §7.9
+> records it. The text is kept as written so the rejected design is legible to
+> whoever revisits the question — not as a description of the application.
+
 
 - Off by default: `workspace.semantic_index` toggle. Requires the ADR 0002
   embedder; absent embedder → indexing is skipped with a clear note and
@@ -406,9 +415,10 @@ Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
   screen, `similar` diffs, revert with confirm, `F4` + `/changes`. Pure UI —
   unit tests over an explicit journal fixture; no live run required (stated per
   AGENTS.md §3). §7.8.
-- **Stage 5 — semantic index** (`feat/code-workspace-index`): chunker,
-  `cache.db` tables, background indexing, `code_search`, `/project reindex`,
-  and the F4 go/no-go measurement recorded here.
+- **Stage 5 — semantic index** (`spike/code-search-probe`) — **no-go, does not
+  ship**. The probe was built, the measurement run, and the verdict recorded in
+  §7.9. Nothing of it is in the application: no `cache.db` tables, no background
+  indexing, no `code_search`, no `/project reindex`.
 
 Test discipline per stage: unit tests alongside (path-escape negatives, edit
 uniqueness/CRLF/BOM round-trips, truncation shapes, gitignore walking, journal
@@ -689,6 +699,90 @@ memory path, and changes nothing a model sees. The change set is exercised
 end-to-end through the orchestrator instead
 (`orchestrator::tests::project`), which is where the journal, the diff and the
 revert actually meet.
+
+### 7.9. Stage 5 — the go/no-go, and why it is a no
+
+**Verdict: NO-GO** (user's decision, 2026-08-21). The semantic index does not
+ship. Branch `spike/code-search-probe` holds the probe and is not merged.
+
+**What was measured.** A throwaway `code_search` over an in-memory index of this
+repository (~21 000 windows, `.gitignore`-walked like `code_list`), against a
+fixed set of eight questions asked in the *user's* vocabulary rather than the
+code's — "why does the app sometimes shorten the conversation by itself", where
+the code says `compaction`. Two arms: the shipped tools alone, and the shipped
+tools plus `code_search`. gemma-4-31b on the user's stack, three runs of the set
+per instrument version.
+
+**The numbers**, over the two runs of the final instrument (48 turns per arm):
+
+| | grep | grep + search |
+|---|---|---|
+| Correct, of turns that looked at the project | **16/22 (73%)** | **19/29 (66%)** |
+| Correct, of all turns | 16/48 (33%) | 19/48 (40%) |
+| Turns that produced no text at all | 11 | 11 |
+| Turns that answered without looking | 15 | 8 |
+| Tool calls | 111 | 127 |
+
+**Read those two top rows together, because they point in opposite directions.**
+By one denominator the index is ahead, by the other it is behind, and the choice
+of denominator is a judgement call about what an unusable turn means. An effect
+that changes sign with a definition is smaller than the instrument measuring it.
+The criterion was "ship only if it measurably improves answers or reduces
+rounds" (F4); it does neither, and rounds are slightly worse.
+
+**The instrument was harder than the thing it measured, and that is the finding
+worth keeping.** Six defects, each found by reading the raw turns rather than
+the summary table, and every one of them moved the headline number — twice
+reversing its direction:
+
+1. The first table was 5/5 vs 5/5 with `code_search` called **zero times**. The
+   tool was registered and offered — its schema reached the model — but the
+   workspace block *tells the model in words* which tools it has, and it is
+   built from `code::ALL`, where the probe's tool is not. The model believed the
+   block. An arm that cannot use the thing under test measures the control
+   twice.
+2. Correctness was a **rate, not an outcome**: the control arm scored 5/5 and
+   then 3/5 on the same questions. A verdict off one pass is a verdict about one
+   afternoon (docs/lessons.md §9).
+3. Two questions were **padding** — answerable by reasoning about the model's own
+   tooling, with zero tool calls in both arms.
+4. "Wrong" was **three different things**. A turn that spends itself on calls and
+   thinking and emits no text is the empty-turn failure mode, not a retrieval
+   failure; counting it as "this route could not find it" is a claim about
+   retrieval made from evidence about token budgets.
+5. The markers produced a false **positive** (a general-knowledge answer matching
+   `mutex` on a turn with no tool calls) and, once tightened to source-only
+   literals, false **negatives** (`machine-bound encryption` and `ADR 0008`
+   graded wrong for missing `dpapi`). **A keyword grader cannot resolve an
+   open-ended prose answer**; every marker set trades one error class for the
+   other.
+6. The harness was **starving both arms**: open-ended questions at the default
+   `max_tokens` of 2048 with thinking on, when this project had already measured
+   that ceiling (1024: 0/3, 2048: 2/3, 4096: 3/4 — docs/journal/ci.md, the
+   second-chat-model track). Raising it to 4096 changed the per-arm numbers and
+   did **not** reduce the empty turns, which is its own small finding.
+
+**What this does and does not settle.**
+
+- It does **not** say a semantic code index is a bad idea. It says one could not
+  be shown to help *here*: on a corpus commented in unusually discursive English
+  prose — which is exactly what makes `code_grep` strong — read by a 31B local
+  model whose turns are unusable about half the time.
+- The one effect that survived every instrument version is **not** the one F4
+  asked about: with a search tool available the model answers without looking at
+  the project far less often (8 turns against 15). Shipping on that would be
+  shipping on an unmeasured basis, which is what the fork exists to prevent.
+- **What would change the answer**: a judge-graded measurement (a model grading
+  the answers, not a keyword list) at n≈80 per arm; or a corpus with sparse
+  comments, where grep has much less to match on. Either is a new probe, not a
+  resumption of this one.
+
+**What the no-go buys.** Not shipping this keeps out a `cache.db` schema and its
+migration, a background indexing task with progress reporting, incremental
+reindex on every edit, a settings toggle, `/project reindex`, and a hard
+dependency on the embedding server being configured for a feature that otherwise
+does not need it. That is a permanent cost, and it was to be paid for an effect
+this measurement could not detect.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

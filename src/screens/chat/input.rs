@@ -460,7 +460,7 @@ impl ChatScreen {
     /// Sits beside `/file`: both attach something to *this chat* for the whole
     /// conversation. Works during generation, like its neighbours — attaching a
     /// project is a directory check, not a turn. Returns `None` when the text is
-    /// not a `/project` command. See docs/code-workspace.md, spec §9.12.
+    /// not a `/project` command. See docs/history/code-workspace.md, spec §9.12.
     fn try_project_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
         use crate::features::project_command::ProjectCommand;
         let parsed = crate::features::project_command::parse(text, self.loc)?;

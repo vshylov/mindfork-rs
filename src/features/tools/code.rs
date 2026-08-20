@@ -1,5 +1,5 @@
 //! Code-workspace tools (spec §9.12,
-//! [docs/code-workspace.md](../../../docs/code-workspace.md)): `code_list`,
+//! [docs/history/code-workspace.md](../../../docs/history/code-workspace.md)): `code_list`,
 //! `code_read`, `code_grep`, `code_edit`, `code_write` — listing, reading,
 //! searching and changing the project the user attached to this chat with
 //! `/project attach` — plus `code_build`, `code_run` and `code_test`, which run
@@ -24,7 +24,7 @@
 //! - **The read format is a contract with the model.** Lines come back as
 //!   `   12→text`, and stage 0 measured that both live model families strip
 //!   those prefixes and reproduce the payload byte-for-byte when they edit
-//!   (docs/code-workspace.md §7). Nothing here may change that shape casually.
+//!   (docs/history/code-workspace.md §7). Nothing here may change that shape casually.
 
 use std::path::{Path, PathBuf};
 
@@ -1914,7 +1914,7 @@ mod tests {
     /// is **kept**. This is the deliberate inverse of the Python sandbox, which
     /// discards partial output: a build's first errors arrive in its first
     /// second, and throwing them away because the build was slow wastes the
-    /// whole wait (docs/code-workspace.md §3.3).
+    /// whole wait (docs/history/code-workspace.md §3.3).
     #[tokio::test]
     async fn a_timed_out_command_keeps_what_it_printed() {
         let _serial = SERIAL.lock().await;

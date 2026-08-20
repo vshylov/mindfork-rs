@@ -208,7 +208,7 @@ impl Tool for PythonExec {
 /// that reads it back; what belongs here is the **truncation**, the one part
 /// that differs between the two producers of this shape: a script's output is
 /// cut at the tail, while a build keeps its head *and* its tail
-/// (docs/code-workspace.md, fork F12).
+/// (docs/history/code-workspace.md, fork F12).
 fn format_output_parts(
     stdout: &str,
     stderr: &str,

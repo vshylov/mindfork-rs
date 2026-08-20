@@ -19,7 +19,7 @@
 //! without breaking FSD's dependency direction — the arrangement `FileProgress`
 //! already uses.
 //!
-//! See docs/code-workspace.md, spec §9.12.
+//! See docs/history/code-workspace.md, spec §9.12.
 
 use crate::entities::workspace::CommandSlot;
 use crate::shared::i18n::Locale;

@@ -5,6 +5,21 @@
 > [docs/history/](history/).
 > A compact summary of what recently closed is at the end of the file.
 
+
+### Rejected: a semantic index over the attached project
+
+Measured and turned down on 2026-08-21 (fork F4 of the code-workspace track,
+[docs/history/code-workspace.md](history/code-workspace.md) §7.9). A probe
+indexed this repository and answered eight user-vocabulary questions beside
+`code_grep`; across 48 turns per arm the index could not be shown to improve
+correctness or reduce rounds, and the sign of the difference depends on how an
+unusable turn is counted.
+
+Not "never" — **not on this evidence**. What would change it: a judge-graded
+measurement at n≈80 per arm instead of a keyword grader, or a corpus with sparse
+comments, where `code_grep` has far less to match on. Either is a new probe.
+Re-proposing it without one repeats a day of work whose answer is written down.
+
 ## Most valuable next
 The unprioritized list below is an idea bank of equal weight; this section calls
 out the highest-payoff tracks (real user pain / direct savings). **It is empty
