@@ -578,6 +578,19 @@ list. Render row-by-row when items can be multi-line.
 
 ## 6. Windows and cross-platform
 
+**`Path` only knows the host's separators, and this app's data crosses hosts.**
+`Path::file_name()` on a `C:\Projects\app` string returns the **whole string** on
+Linux — there is no `\` separator there — so a label derived that way came out as
+the entire path instead of `app`. It matters because the data directory is
+portable and a backup restores across machines: a root canonicalized on Windows
+is read back on Linux. Split stored paths on **both** separators by hand
+(`rsplit(['/', '\\'])`), and remember the two degenerate roots that then have no
+component at all (`/`, and `C:\` trimming to `C:`). The Windows job was green and
+the Linux one red, which is the only reason it was caught before merge — a test
+that constructs a path for the *other* platform belongs in the suite for exactly
+this.
+— *the code workspace — stages 0 and 1*.
+
 **Bracketed paste does not work on Windows.** `Event::Paste` is emitted only by
 crossterm's unix parser; on Windows a paste arrives as ordinary key events (interleaved
 with releases), so the loop must batch and coalesce them. A large paste also spans

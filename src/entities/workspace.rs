@@ -28,13 +28,24 @@ impl Workspace {
     }
 
     /// The last path component — what a status line calls the project.
-    /// Falls back to the whole path for a root with no file name (`C:\`, `/`).
+    /// Falls back to the whole path for a root with no component of its own
+    /// (`/`, `C:\`).
+    ///
+    /// Split by hand rather than through `Path::file_name`, which only knows
+    /// **the host's** separators: the app's data is portable between machines,
+    /// so a root canonicalized on Windows can be read back on Linux, where
+    /// `C:\Projects\app` is one component and the label would come out as the
+    /// whole path. Caught by CI — the test passed on Windows and failed on
+    /// Linux.
     pub fn name(&self) -> &str {
-        std::path::Path::new(self.root.trim_end_matches(['/', '\\']))
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|n| !n.is_empty())
-            .unwrap_or(&self.root)
+        let trimmed = self.root.trim_end_matches(['/', '\\']);
+        let last = trimmed.rsplit(['/', '\\']).next().unwrap_or("");
+        // Nothing but separators (`/`), or a bare drive (`C:\` → `C:`): there is
+        // no component to show, and an empty label would read as "no project".
+        if last.is_empty() || last.ends_with(':') {
+            return &self.root;
+        }
+        last
     }
 }
 
@@ -42,14 +53,18 @@ impl Workspace {
 mod tests {
     use super::*;
 
+    /// Both separators, on **both** platforms: the root is stored in a chat file
+    /// that can travel to another machine, so a Windows path read on Linux (and
+    /// the reverse) must still name the project rather than repeat the path.
     #[test]
-    fn name_is_the_last_component() {
+    fn name_is_the_last_component_whatever_the_separator() {
         assert_eq!(
             Workspace::new("D:/Projects/mindfork-rs").name(),
             "mindfork-rs"
         );
         assert_eq!(Workspace::new("/home/u/app/").name(), "app");
         assert_eq!(Workspace::new(r"C:\Projects\app").name(), "app");
+        assert_eq!(Workspace::new(r"C:\Projects\app\").name(), "app");
     }
 
     /// A root with nothing after the separator has no component to show; the
