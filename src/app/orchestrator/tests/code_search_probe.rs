@@ -46,68 +46,58 @@ struct Question {
 /// The fixed set. Every one is answerable **only** from this project's own
 /// source, and none from general knowledge about Rust or TUIs.
 ///
-/// The first run had a sixth that was neither: "what happens if the model asks
-/// for a file above the attached directory" is a question about the *model's own
-/// tooling*, and it answered from reasoning with **zero tool calls in both
-/// arms** — contributing nothing to either. A question both arms can skip is not
-/// a measurement, it is padding.
+/// Two revisions, both forced by reading the runs rather than the table:
+///
+/// - a question about the model's *own* tooling ("what happens if you ask for a
+///   file above the attached directory") was answered by reasoning with **zero
+///   tool calls in both arms**. A question both arms can skip is padding.
+/// - the markers were too loose. "What stops two copies of the app corrupting
+///   each other" was graded **correct on a turn that made no tool call at all**:
+///   the model answered "a lock, presumably" from general knowledge and matched
+///   `mutex`. So every marker is now a literal only this repository contains —
+///   an identifier, a setting name, a command. A generic answer now fails, which
+///   is the point.
 const QUESTIONS: &[Question] = &[
     Question {
         ask: "Почему это приложение иногда само сокращает переписку в чате, и чем это управляется?",
-        expect: &["compact", "компакт", "сумм", "summar"],
+        expect: &["/compact", "compaction", "rolling summary", "роллинг"],
     },
     Question {
         ask: "Где хранятся ключи облачных провайдеров и что с ними будет на другом компьютере?",
-        expect: &["dpapi", "secrets", "машин", "machine"],
+        expect: &["dpapi", "machine-id", "machine id", "api_keys"],
     },
     Question {
         ask: "Как приложение узнаёт, что сервер вообще умеет принимать картинки?",
-        expect: &["props", "modalities", "vision", "capab"],
+        expect: &["/props", "modalities", "enginebackend::vision", "vision()"],
     },
     Question {
         ask: "Что мешает двум копиям приложения испортить друг другу данные?",
         expect: &[
+            "mindfork-rs-single-instance",
             "single-instance",
             "single_instance",
-            "instance",
-            "мьютекс",
-            "mutex",
         ],
     },
     Question {
         ask: "Почему модели не дают ходить по адресам внутри локальной сети, и как это разрешить?",
-        expect: &[
-            "web_allow_private",
-            "private",
-            "локальн",
-            "loopback",
-            "ssrf",
-        ],
+        expect: &["web_allow_private"],
     },
     Question {
         ask: "Что происходит с прикреплённым файлом, который слишком велик, чтобы уместиться в контекст?",
         expect: &[
+            "attachment_search",
+            "attachment_read",
             "by reference",
             "по ссылке",
-            "reference",
-            "индекс",
-            "index",
-            "attachment_search",
         ],
     },
     Question {
         ask: "На каком языке пишется текст, который читает сама модель, и чем он задаётся?",
-        expect: &[
-            "profile.language",
-            "scaffold",
-            "язык профил",
-            "axis a",
-            "ось a",
-        ],
+        expect: &["profile.language", "scaffold", "axis a", "ось a", "оси a"],
     },
     Question {
         ask: "Что случится с историей чата, если во время ответа модели оборвать генерацию?",
-        expect: &["cancel", "отмен", "esc", "частичн", "partial"],
+        expect: &["generation_id", "cancelling", "deleted", "takeback"],
     },
 ];
 
@@ -230,10 +220,37 @@ async fn ask(tools: &[&str], question: &str) -> Option<(String, Vec<(String, Str
     Some((answer, calls))
 }
 
-/// Whether a reply carries any of the markers a correct answer must.
-fn graded(answer: &str, expect: &[&str]) -> bool {
+/// What one turn actually did. Four outcomes, not two, because the first
+/// instrument called all three failures "wrong" and they are not the same thing:
+///
+/// - **Empty** — the model spent the turn on calls and thinking and emitted no
+///   text at all. A measured failure mode of local models (docs/lessons.md §9),
+///   and counting it as "this route could not find the answer" is a claim about
+///   retrieval made from evidence about token budgets.
+/// - **NoLookup** — it answered without touching the project. Whatever that
+///   tests, it is not retrieval; it was also where the loose markers produced a
+///   **false positive**, grading a general-knowledge guess as correct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Correct,
+    Wrong,
+    Empty,
+    NoLookup,
+}
+
+fn grade(answer: &str, calls: usize, expect: &[&str]) -> Outcome {
+    if answer.trim().is_empty() {
+        return Outcome::Empty;
+    }
+    if calls == 0 {
+        return Outcome::NoLookup;
+    }
     let lower = answer.to_lowercase();
-    expect.iter().any(|m| lower.contains(m))
+    if expect.iter().any(|m| lower.contains(m)) {
+        Outcome::Correct
+    } else {
+        Outcome::Wrong
+    }
 }
 
 /// The go/no-go itself (docs/code-workspace.md §3.7, fork F4).
@@ -277,6 +294,9 @@ async fn code_search_probe_e2e_live() {
     #[derive(Default, Clone, Copy)]
     struct Tally {
         correct: usize,
+        wrong: usize,
+        empty: usize,
+        no_lookup: usize,
         calls: usize,
         /// Turns in which the arm actually reached for `code_search` — the
         /// number that explains every other number here.
@@ -296,18 +316,22 @@ async fn code_search_probe_e2e_live() {
                     eprintln!("skip: MINDFORK_ENGINE_URL not set");
                     return;
                 };
-                let ok = graded(&answer, q.expect);
+                let outcome = grade(&answer, calls.len(), q.expect);
                 let searched = calls.iter().any(|(n, _, _)| n == CODE_SEARCH_ID);
                 let t = &mut tallies[qi][ai];
-                t.correct += usize::from(ok);
+                match outcome {
+                    Outcome::Correct => t.correct += 1,
+                    Outcome::Wrong => t.wrong += 1,
+                    Outcome::Empty => t.empty += 1,
+                    Outcome::NoLookup => t.no_lookup += 1,
+                }
                 t.calls += calls.len();
                 t.used_search += usize::from(searched);
                 t.runs += 1;
                 eprintln!(
-                    "\n=== run {run} Q{qi} [{arm}] {:.0}s · {} calls · {}{}\nQ: {}\nA: {}\ncalls: {:?}",
+                    "\n=== run {run} Q{qi} [{arm}] {:.0}s · {} calls · {outcome:?}{}\nQ: {}\nA: {}\ncalls: {:?}",
                     started.elapsed().as_secs_f64(),
                     calls.len(),
-                    if ok { "CORRECT" } else { "WRONG" },
                     if searched { " · used code_search" } else { "" },
                     q.ask,
                     answer.chars().take(500).collect::<String>(),
@@ -320,13 +344,28 @@ async fn code_search_probe_e2e_live() {
         }
     }
 
+    // Every category is printed. The headline rate is over turns that actually
+    // looked at the project, because a turn that looked at nothing measures
+    // nothing about retrieval — but the excluded turns are counted in the open,
+    // so the reader can see what the denominator is made of rather than take it
+    // on trust.
+    let cell = |t: &Tally| {
+        format!(
+            "{}/{} {}e {}n",
+            t.correct,
+            t.correct + t.wrong,
+            t.empty,
+            t.no_lookup
+        )
+    };
     eprintln!("\n===== go/no-go (fork F4), {runs} run(s) =====");
-    eprintln!("  q | grep          | grep+search   | search used");
+    eprintln!("  correct/looked, e=empty turn, n=no lookup");
+    eprintln!("  q | grep            | grep+search     | search used");
     for (qi, arms) in tallies.iter().enumerate() {
         eprintln!(
-            " Q{qi} | {:<13} | {:<13} | {}/{}",
-            format!("{}/{} · {}c", arms[0].correct, arms[0].runs, arms[0].calls),
-            format!("{}/{} · {}c", arms[1].correct, arms[1].runs, arms[1].calls),
+            " Q{qi} | {:<15} | {:<15} | {}/{}",
+            cell(&arms[0]),
+            cell(&arms[1]),
             arms[1].used_search,
             arms[1].runs
         );
@@ -334,12 +373,21 @@ async fn code_search_probe_e2e_live() {
     let sum =
         |ai: usize, f: fn(&Tally) -> usize| -> usize { tallies.iter().map(|a| f(&a[ai])).sum() };
     let total = runs * QUESTIONS.len();
+    for (ai, arm) in ["grep", "grep+search"].into_iter().enumerate() {
+        let (c, w, e, n) = (
+            sum(ai, |t| t.correct),
+            sum(ai, |t| t.wrong),
+            sum(ai, |t| t.empty),
+            sum(ai, |t| t.no_lookup),
+        );
+        eprintln!(
+            "\n{arm:<12}: correct {c}/{} of the turns that looked · wrong {w} · empty {e} · no lookup {n} · {} calls",
+            c + w,
+            sum(ai, |t| t.calls),
+        );
+    }
     eprintln!(
-        "\ncorrect: grep {}/{total} · grep+search {}/{total}\ncalls:   grep {} · grep+search {}\ncode_search reached for in {}/{total} of its arm's turns",
-        sum(0, |t| t.correct),
-        sum(1, |t| t.correct),
-        sum(0, |t| t.calls),
-        sum(1, |t| t.calls),
+        "code_search reached for in {}/{total} of its arm's turns",
         sum(1, |t| t.used_search),
     );
 }
