@@ -3099,3 +3099,197 @@ async fn fetch_url_address_policy_e2e_live() {
         "the local service was reached despite the policy"
     );
 }
+
+/// Code workspace, **stage 1 live check** (docs/code-workspace.md §6): with a
+/// project attached, does the model actually navigate it — locate a fact it
+/// cannot know, read the file that holds it, and answer from what it read?
+///
+/// The fact is deliberately arbitrary (a five-digit timeout no model has an
+/// opinion about) and sits behind one indirection: `main.rs` names a function,
+/// the function is in another file, and the number is a constant beside it. A
+/// decoy timeout in a third file makes "guessed a plausible number" fail.
+///
+/// The profile is narrowed to the three workspace tools — the "remove the
+/// alternative" rule (docs/lessons.md §9): with `fs_read` in reach the model
+/// could answer without the feature under test ever running.
+///
+/// **Two turns**, because the first live run showed the narrow assertion was
+/// wrong: asked for the timeout, the model answered correctly from `code_list` +
+/// `code_grep` alone and never opened the file — the hit line carries the whole
+/// constant, so a read would have been a wasted round. That is a better outcome,
+/// not a failure, and demanding `code_read` there would have pinned the model to
+/// the worse route (the same shape as `attachment_search` superseding
+/// `attachment_read`, docs/lessons.md §9). So turn 1 asserts the *outcome*, and
+/// turn 2 asks for something only a read can produce, keeping that tool covered.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_workspace_navigate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_workspace_navigate_e2e_live() {
+    use crate::features::project_command::ProjectProgress;
+    use crate::features::tools::code::{CODE_GREP_ID, CODE_LIST_ID, CODE_READ_ID};
+
+    const ANSWER: &str = "7300";
+    let files: [(&str, &str); 4] = [
+        (
+            "src/main.rs",
+            "mod config;\nmod util;\n\nfn main() {\n    let ms = config::default_timeout();\n    println!(\"waiting {ms} ms\");\n}\n",
+        ),
+        (
+            "src/config.rs",
+            "/// How long a request may take before it is abandoned.\nconst REQUEST_TIMEOUT_MS: u64 = 7300;\n\npub fn default_timeout() -> u64 {\n    REQUEST_TIMEOUT_MS\n}\n",
+        ),
+        // The decoy: a plausible number in a file the question does not lead to.
+        (
+            "src/util.rs",
+            "/// Delay between reconnect attempts.\npub const RECONNECT_DELAY_MS: u64 = 500;\n",
+        ),
+        (
+            "README.md",
+            "# probe\n\nA tiny client. Timeouts are configurable.\n",
+        ),
+    ];
+    let ws = tempfile::tempdir().unwrap();
+    for (name, body) in files {
+        let path = ws.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let _ = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            CODE_LIST_ID.into(),
+            CODE_READ_ID.into(),
+            CODE_GREP_ID.into(),
+        ],
+    )
+    .await;
+
+    // The command path itself is under test: attaching goes through the
+    // orchestrator exactly as a user's `/project attach` does.
+    cmd_tx
+        .send(AppCommand::ProjectAttach {
+            path: ws.path().to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let attached = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProjectProgress(_)))
+        .await
+        .unwrap();
+    let AppEvent::ProjectProgress(ProjectProgress::Attached { root, .. }) = &attached else {
+        panic!("the project did not attach: {attached:?}");
+    };
+    eprintln!("attached: {root}");
+
+    // Turn 1 — find a fact that is only in the project.
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "В прикреплённом проекте есть таймаут запроса по умолчанию. \
+         Найди его и скажи, чему он равен и в каком файле задан.",
+    )
+    .await;
+    let names: Vec<&String> = calls.iter().map(|(n, _)| n).collect();
+    eprintln!("turn 1 tool calls: {names:?}");
+    eprintln!("turn 1 reply: {answer}");
+
+    // The feature has to have actually run, or the smoke passes on a model that
+    // answered from the prompt (docs/lessons.md §9). *Which* tool found it is
+    // the model's call.
+    assert!(
+        calls
+            .iter()
+            .any(|(n, _)| crate::features::tools::code::is_workspace_tool(n)),
+        "the model must go into the project: {names:?}"
+    );
+    assert!(
+        answer.contains(ANSWER),
+        "the timeout is only knowable from the project: {answer}"
+    );
+    assert!(
+        answer.contains("config"),
+        "the answer must name the file it came from: {answer}"
+    );
+    // The decoy stayed a decoy.
+    assert!(
+        !answer.contains("500"),
+        "the reconnect delay is not the request timeout: {answer}"
+    );
+
+    // Turn 2 — something no search result can carry: the file's own shape.
+    // `code_read` is the only route to it, which is what keeps it covered live.
+    let (answer2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Сколько всего строк в файле src/config.rs и что написано в первой?",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let names2: Vec<&String> = calls2.iter().map(|(n, _)| n).collect();
+    eprintln!("turn 2 tool calls: {names2:?}");
+    eprintln!("turn 2 reply: {answer2}");
+    assert!(
+        calls2.iter().any(|(n, _)| n == CODE_READ_ID),
+        "only a read can answer this: {names2:?}"
+    );
+    assert!(
+        answer2.contains('6'),
+        "src/config.rs has 6 lines: {answer2}"
+    );
+}
+
+/// Code workspace, stage 1: **no project, no tools**. The gate is what keeps a
+/// chat without a workspace byte-identical to what the app sent before the
+/// feature, so it is worth one live turn: the model is asked to read a file and
+/// must answer that it cannot, without any `code_*` call happening.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_workspace_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_workspace_gate_e2e_live() {
+    use crate::features::tools::code::{CODE_GREP_ID, CODE_LIST_ID, CODE_READ_ID};
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    // The tools are enabled in the profile and still must not be offered: the
+    // project's absence is the gate, not the toggle.
+    let _ = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            CODE_LIST_ID.into(),
+            CODE_READ_ID.into(),
+            CODE_GREP_ID.into(),
+        ],
+    )
+    .await;
+
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Прочитай файл src/main.rs и скажи, что он делает.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let names: Vec<&String> = calls.iter().map(|(n, _)| n).collect();
+    eprintln!("tool calls: {names:?}");
+    eprintln!("reply: {answer}");
+    assert!(
+        calls
+            .iter()
+            .all(|(n, _)| !crate::features::tools::code::is_workspace_tool(n)),
+        "with no project attached the tools must not even be offered: {names:?}"
+    );
+}

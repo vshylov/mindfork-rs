@@ -1476,6 +1476,73 @@ this in another chat"). Design and the decided forks —
 
 ---
 
+### 9.12. The code workspace: `/project` and the `code_*` tools
+
+The user attaches a **project directory** to a chat, and the assistant can list,
+read and search it. Stage 1 of the track designed in
+[docs/code-workspace.md](docs/code-workspace.md); editing, the build/run/test
+command slots, the changes screen and the optional semantic index are the stages
+after it.
+
+Deliberately **not** the same thing as `fs_read`/`fs_write`/`fs_list` (§9.3),
+which stay exactly as they are. Those are a global capability behind
+`tools.fs_enabled`, reaching the whole file system unless `tools.fs_root` narrows
+them. The workspace family is the opposite shape: it is scoped to **one chat**
+and **one directory the user pointed at**, and with nothing attached it does not
+exist at all.
+
+- **Commands** (input box, like `/file`): `/project attach <directory>`,
+  `/project detach`, `/project status`. The path may contain spaces and may be
+  quoted; it is canonicalized when attached, and a path that is missing or is not
+  a directory is refused with the reason. `/project attach` on a chat that
+  already has a project replaces it.
+- **Storage**: `Chat.workspace` — the canonical root, stored in the **readable**
+  form (Windows canonicalization yields `\\?\C:\…`, which would otherwise travel
+  into the system prompt and every tool result). An additive field: old chat
+  files read without migration, and a chat with no project writes no new key
+  (ADR 0006 §8). A project is a path on *this* machine, so an imported chat never
+  carries one.
+- **Attaching is the consent.** There is no second switch: the `code_*` tools are
+  offered to the model only while a project is attached (`effective_tool_ids`),
+  so a chat without one sends **byte-identical** requests to what the app sent
+  before the feature existed. The profile's own per-tool toggles still apply on
+  top, and a project attached to a profile with the tools switched off is told to
+  the model as such rather than advertised (see the block below).
+- **The tools** (group "Files", off by default in the catalog, no global gate):
+  - `code_list(path?, depth?)` — the shape of the project or of one directory,
+    `.gitignore` honoured, hidden entries and `.git/` skipped, depth 2 by
+    default;
+  - `code_read(path, offset?, limit?)` — the file with **line numbers** in the
+    form `   12→text`, a header stating the total, and a window over a long file;
+  - `code_grep(pattern, path?, glob?)` — a regular-expression search returning
+    `path:line: text`, smart-case (a lowercase pattern matches any case), with
+    `glob` narrowing the files.
+- **The read format is a contract.** The line-number prefix is a reading aid the
+  model must strip when it quotes a fragment back; stage 0 measured both live
+  model families doing exactly that, byte-for-byte, including indentation
+  (docs/code-workspace.md §7). It is what the editing stage rests on, so it is
+  not changed casually.
+- **Confinement.** Every path argument is canonicalized and must lie inside the
+  root, which settles `..`, an absolute path elsewhere and a symlink pointing out
+  in one check; the walker does not follow links, for the same reason. Reads
+  refuse binaries and files over 2 MB, and every listing, search and read states
+  when it was truncated.
+- **`.gitignore` is honoured even outside a git checkout** — measured, the
+  walker's default consults it only inside a repository, and an attached
+  directory that is not one would have its ignore file silently disregarded (on a
+  Rust checkout, that is `target/`: most of the bytes on disk).
+- **The system prompt** carries a block naming the project and its root, marked
+  as **data, not instruction** (§13.4), and naming the tools that reach it. When
+  a project is attached but the profile has the tools off, the block says the
+  project is out of reach instead — a block promising an absent tool is how a
+  model spends a turn improvising with the wrong ones (§9.7 learned the same).
+- **The `code_*` tools are excluded from the tool-round limit** — planned for the
+  stage that adds the command tools, where a build-fix-build loop makes it matter
+  (docs/code-workspace.md §3.4).
+- **UI**: a feed note per command. The attach note names the root and what the
+  assistant can now do; `/project status` with nothing attached names the command
+  that attaches something.
+
 ## 10. AI-companion profiles
 
 A concept carried over in full from attempt #1 (section 10 of its specification):

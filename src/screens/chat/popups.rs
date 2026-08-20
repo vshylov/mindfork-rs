@@ -307,6 +307,12 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // the terminal's decision (Windows Terminal binds it to its own paste), and an image
     // on the clipboard produces no text for the terminal to inject.
     ("/image paste", "ui.help.image_paste"),
+    // A project is the third thing attached to *this chat*, after files and
+    // images — and the only one the assistant reaches through tools rather than
+    // through the prompt (spec §9.12).
+    ("ui.help.k.project_attach", "ui.help.project_attach"),
+    ("/project detach", "ui.help.project_detach"),
+    ("/project status", "ui.help.project_status"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
@@ -375,12 +381,14 @@ pub(super) const KEY_GROUP_OPENERS: &[&str] =
     &["Shift+←/→/↑/↓", "Esc", "F3", "Ctrl+K", "Ctrl+P", "F1 / ?"];
 
 /// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
-/// files · images · the knowledge base · housekeeping · speech · the screens ·
+/// files · images · the code project · the knowledge base · housekeeping ·
+/// speech · the screens ·
 /// the conversation · finding things · the feed · the way out. The last four
 /// groups before the exit row are the typed routes ([`command_rows`]), grouped
 /// the way the registry orders them.
 const COMMAND_GROUP_OPENERS: &[&str] = &[
     "ui.help.k.image_attach",
+    "ui.help.k.project_attach",
     "ui.help.k.rag_add",
     "/reindex",
     "ui.help.k.tts",

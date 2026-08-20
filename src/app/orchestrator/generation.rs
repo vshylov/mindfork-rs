@@ -262,15 +262,23 @@ impl Orchestrator {
         let history_upto = chat_ref
             .compaction_view(self.config.compaction.enabled)
             .map(|(_, upto)| upto);
+        // The chat's attached code project (spec §9.12). Like the folded range
+        // above, it decides two things at once — whether the `code_*` tools are
+        // offered and whether the prompt carries the workspace block — so the
+        // block can never name a tool the turn does not have.
+        let workspace = chat_ref.workspace.clone();
         // The effective set = profile ∩ global switches (spec §9.4).
         let allowed = effective_tool_ids(
             &enabled,
-            self.config.tools.web_enabled,
-            self.config.tools.python_enabled,
-            self.config.tools.fs_enabled,
-            self.config.mcp.enabled,
-            history_upto.is_some(),
-            self.config.engine.mode.cloud_provider(),
+            &crate::features::tools::ToolGates {
+                web: self.config.tools.web_enabled,
+                python: self.config.tools.python_enabled,
+                fs: self.config.tools.fs_enabled,
+                mcp: self.config.mcp.enabled,
+                history: history_upto.is_some(),
+                workspace: workspace.is_some(),
+                sampling_provider: self.config.engine.mode.cloud_provider(),
+            },
         );
         // Does this turn actually offer the read-back tools? A folded range
         // normally implies them, but a profile can have them switched off — and
@@ -279,6 +287,12 @@ impl Orchestrator {
             t == crate::features::tools::history::HISTORY_READ_ID
                 || t == crate::features::tools::history::HISTORY_SEARCH_ID
         });
+        // A project can be attached while the profile has the tools switched off;
+        // then the block must not describe a capability this turn lacks (the
+        // same rule the summary block follows for `history_read`).
+        let workspace_tools = allowed
+            .iter()
+            .any(|t| crate::features::tools::code::is_workspace_tool(t));
         let profile_loc = crate::shared::i18n::locale(profile_lang);
         let schemas = self.registry.schemas_for(&allowed, profile_loc);
         // Copied out before the `chat_mut` borrow below (config can't be read
@@ -351,6 +365,7 @@ impl Orchestrator {
                     compaction: &compact_cfg,
                     indexed: &indexed,
                     history_tools,
+                    workspace_tools,
                     loc: profile_loc,
                 },
             );
@@ -388,6 +403,7 @@ impl Orchestrator {
                     })
                     .map(std::sync::Arc::new),
                 other_chats: std::sync::Arc::from(other_chats),
+                workspace: workspace.clone(),
                 lang: profile_lang,
                 cancel: cancel.clone(),
             };

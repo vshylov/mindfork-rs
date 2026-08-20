@@ -130,6 +130,13 @@ build the moment they drift from what the app actually renders
   splitting, and stitching neighboring chunks back together on retrieval);
   `/rag list` shows the sources, `/rag rebuild` reindexes after tuning. Source
   text is kept in the database, so reindexing never needs the original files.
+- **A code project attached to a chat**: `/project attach <directory>` gives the
+  assistant a project it can explore — the file tree, a file read out with line
+  numbers, and a regular-expression search across the sources, all confined to
+  that directory and honouring its `.gitignore`. Attaching is the whole
+  permission: with nothing attached the tools are not offered at all, so a chat
+  without a project behaves exactly as before. `/project status` says what is
+  attached, `/project detach` takes it away.
 - **Chat attachments**: `/file attach <path>` pins a text file (source code,
   configs, logs, `.html` / `.pdf` / `.docx`) to the conversation — its full
   text travels with every message, and removing it genuinely removes it. A
@@ -356,6 +363,7 @@ Slash commands, typed straight into the input box:
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image (a file or a web address) for your next message / unstage one / list what is staged |
 | `/image paste` | stage the image on the clipboard — a screenshot needs no file. `Ctrl+V` does the same where the terminal forwards it (Windows Terminal keeps that key for its own paste, so the command is the reliable route) |
+| `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat (the assistant can then list, read and search it) / detach it / show what is attached |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model |

@@ -49,6 +49,7 @@ mod settings;
 mod title;
 mod tool_loop;
 mod tts;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -595,6 +596,9 @@ impl Orchestrator {
             AppCommand::FileAttach { path } => self.handle_file_attach(path),
             AppCommand::FileRemove { target } => self.handle_file_remove(target),
             AppCommand::FileList => self.handle_file_list(),
+            AppCommand::ProjectAttach { path } => self.handle_project_attach(path),
+            AppCommand::ProjectDetach => self.handle_project_detach(),
+            AppCommand::ProjectStatus => self.handle_project_status(),
             AppCommand::ImageAttach { path } => self.handle_image_attach(path),
             AppCommand::ImageRemove { target } => self.handle_image_remove(target),
             AppCommand::ImageList => self.handle_image_list(),
@@ -897,6 +901,10 @@ impl Orchestrator {
                 attachments: std::sync::Arc::from(Vec::new()),
                 history: None,
                 other_chats: std::sync::Arc::from(Vec::new()),
+                // A background turn (reflection, consolidation) runs without a
+                // chat in front of the user, so it has no attached project and
+                // the code tools stay unreachable from it.
+                workspace: None,
                 lang,
                 cancel,
             },
