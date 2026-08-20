@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -37,6 +37,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: cross-chat search for the assistant (`chat_search`/`chat_read`) (done)
 - Post-M9: `chat://` as the one address of a conversation (done)
 - Post-M9: the code workspace — stages 0 and 1 (done)
+- Post-M9: the code workspace — stage 2, editing and the journal (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1990,3 +1991,90 @@ Branches `docs/code-workspace` → `spike/code-workspace-probe` →
   version); `grep-searcher`/`grep-regex` were considered and skipped — matching
   line by line over files the walker already opened is a dozen lines, and the
   throughput they buy has no consumer here.
+
+### Post-M9: the code workspace — stage 2, editing and the journal (done)
+
+`code_edit` / `code_write`, the change journal every edit is recorded in, and the
+round-limit exemption. Stage 2 of
+[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+Branch `feat/code-workspace-edit`.
+
+- **The contract is the one stage 0 measured**, unchanged: an exact fragment that
+  must occur once, with the two refusals — missing, and ambiguous — as its
+  working half. What is new is that a refusal now provably writes nothing, which
+  is a test rather than a hope.
+- **The journal is the load-bearing addition.** Before a file is changed for the
+  first time in a chat, its bytes go to `data/workspace/<chat-id>/`. Three
+  decisions inside it: only the **first** touch is recorded (the baseline is "as
+  it was before the assistant started", so a second edit must not move it); the
+  baseline file is named by a **hash** of the relative path (a path is not a file
+  name — it carries separators, and on Windows characters a name cannot hold);
+  and a change that cannot be journaled is **refused rather than applied**,
+  because the user's control over what the assistant did is the changes screen
+  and its revert, and both rest on bytes that exist nowhere else once the file is
+  overwritten. It is not git, deliberately: "what did the assistant do" differs
+  from "what differs from HEAD" in both directions — an attached directory need
+  not be a repository, and a repository routinely carries the user's own
+  uncommitted work.
+- **"Exempt" and "unbounded" are not the same promise.** The user's requirement
+  was that the tool-round limit must not reach the development tools, and it does
+  not. But writing the test for it surfaced the other half: a model that repeats
+  one exempt call leaves a turn that never ends, burning a cloud provider's
+  tokens with only `Esc` to stop it — and a repeated tool call is a *measured*
+  failure mode here, not a hypothetical (5 in 20 on one family, in the
+  second-chat-model track). So the exemption is bounded by
+  `WORKSPACE_ROUND_CEILING = 200`, an order of magnitude above any real fix,
+  ending the turn exactly the way the ordinary limit does. The configurable
+  backstop stays in stage 3 with the other numbers.
+- **A round counts if *any* call in it counts**, so mixing a `web_search` into a
+  round of reads still spends one. Otherwise the exemption would be a way round
+  the limit rather than an exception to it.
+- **Two defects the tests found, both real.** `code_write` could not create a
+  file in a directory that did not exist yet — its own description promised
+  otherwise — because the path resolver canonicalized only the *immediate*
+  parent; it now walks to the deepest existing ancestor and re-attaches the tail,
+  with a test that a `..` in that tail cannot escape (it has no `file_name`, so
+  the walk ends in an error). And the round-limit exemption had been declared on
+  the two new tools only, leaving stage 1's readers still spending the budget —
+  caught by a test asserting the property for the whole family rather than for
+  the tools the change happened to touch.
+- **Live smoke — GO** (gemma-4-31B q4_0, the user's stack). The stage-0 scenario
+  now runs on the real mechanism: a project that does not compile, fixed through
+  `code_edit`, with `rustc` compiling **and running** the fixture as ground truth
+  so a "fix" that deletes the arithmetic cannot pass.
+  Full-set regression on the same stack: **40 passed / 0 failed in 774 s** — run
+  because the round-counting change sits on *every* turn, not only on one with a
+  project attached (docs/lessons.md §9).
+- **The commitment stage 0 left open could not be met, and that is the finding.**
+  Stage 0 recorded that the refusal paths had never fired live and asked stage 2
+  for a smoke that provokes a miss. Three fixtures were built to force one: a
+  user quoting the target line with a space missing, a file with the obvious
+  fragment twice, and the compile-error scenario. **Zero misses in seven live
+  runs.** The model normalizes an approximate quote to what the file says, and
+  includes the constant's name so its fragment is unique — because it reads
+  first, and a read tells it the truth. The refusal messages are therefore
+  insurance, not a hot path: they keep their unit coverage (including that
+  nothing is written), and the live smokes assert the **outcome** — an
+  approximate quote must not cost the user their change — while *reporting* the
+  miss count, so the rate stays visible instead of assumed.
+- **The `git checkout --` trap, for the fourth time**, in the session that had
+  the lesson in context: undoing a one-line mutation experiment took the whole
+  uncommitted file with it. It cost nothing only because every edit had been
+  applied by scripts kept outside the tree. docs/lessons.md §1 now says to commit
+  *before* mutating and treats "I will revert it after" as the moment to commit.
+- **The duplication gate caught the family, and the fix was structural.** Five
+  `impl Tool` blocks differing only by a label, a bundle key and a schema are the
+  same tokens with different literals — 5.1% against a 3% bar, the sixth recorded
+  instance of that shape (docs/lessons.md §2). Neither escape the lesson names was
+  available: this codebase has no `macro_rules!` anywhere, and a blanket
+  `impl<T: WorkspaceTool> Tool for T` is refused by coherence. So the repetition
+  was removed rather than disguised: **one** `CodeTool` enum with one `impl Tool`
+  dispatching to five free functions. The registry now loops `code::ALL`, so a
+  new tool cannot be registered without joining the family's list.
+- **A doc/code mismatch the same pass uncovered.** Stage 1's spec text said the
+  family is "off by default in the catalog"; the code has never overridden
+  `enabled_by_default`, so it is **on**. The code is right — the project's
+  presence is the permission, and requiring a directory *and* five toggles would
+  contradict it — so the sentence was corrected rather than the behaviour.
+- **Tests**: 2366 unit (+12), 104 `#[ignore]` (+3). Demo dumps regenerated (two
+  more catalog tools move the displayed count), and the screenshots with them.

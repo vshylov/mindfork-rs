@@ -267,6 +267,15 @@ impl Orchestrator {
         // offered and whether the prompt carries the workspace block — so the
         // block can never name a tool the turn does not have.
         let workspace = chat_ref.workspace.clone();
+        // Where the editing tools record what a file looked like before they
+        // changed it. Derived here, with the workspace, so the two cannot
+        // disagree about which chat is being edited.
+        let workspace_journal = workspace.as_ref().map(|_| {
+            self.storage
+                .json()
+                .workspace_dir()
+                .join(active_id.to_string())
+        });
         // The effective set = profile ∩ global switches (spec §9.4).
         let allowed = effective_tool_ids(
             &enabled,
@@ -404,6 +413,7 @@ impl Orchestrator {
                     .map(std::sync::Arc::new),
                 other_chats: std::sync::Arc::from(other_chats),
                 workspace: workspace.clone(),
+                workspace_journal,
                 lang: profile_lang,
                 cancel: cancel.clone(),
             };
@@ -580,6 +590,21 @@ impl Orchestrator {
         let _ = tx.send((call_id, decision));
     }
 }
+
+/// How many rounds a turn may spend **entirely** inside the attached project
+/// before the loop ends it anyway (spec §9.12).
+///
+/// Not the tool-round limit in disguise: the workspace family is exempt from
+/// that by design, and this sits an order of magnitude above any real fix (the
+/// default budget is 8, and a user running a deep research turn raised theirs to
+/// 32). It exists because "exempt" and "unbounded" are not the same promise — a
+/// model that repeats one call forever would otherwise leave a turn that never
+/// ends, burning a cloud provider's tokens with only `Esc` to stop it, and a
+/// repeated tool call is a measured failure mode of local models rather than a
+/// hypothetical one (docs/journal/tools.md). Reaching it ends the turn the same
+/// way the ordinary limit does: one final round with no tools, so the user gets
+/// an answer rather than silence.
+const WORKSPACE_ROUND_CEILING: u32 = 200;
 
 /// Parameters for launching the generation task (the agentic loop).
 struct GenSpawn {
@@ -824,6 +849,7 @@ fn spawn_generation(spawn: GenSpawn) {
             effects: Vec::new(),
             deleted: Vec::new(),
             round: 0,
+            workspace_rounds: 0,
             allowed_for_turn: HashSet::new(),
             total_tokens: 0,
             total_reasoning: 0,
@@ -877,6 +903,9 @@ struct TurnLoop {
     /// Discarded by the "rewrite" tool (for the deleted archive).
     deleted: Vec<Message>,
     round: u32,
+    /// Rounds spent entirely on the attached project. Exempt from
+    /// `max_tool_rounds`, bounded by [`WORKSPACE_ROUND_CEILING`].
+    workspace_rounds: u32,
     /// Tools the user approved "for the rest of this turn" (fork F4). The turn
     /// is the natural unit — it is the scope of one user request and it ends by
     /// itself, so nothing outlives it and no standing permission accumulates.
@@ -960,12 +989,29 @@ impl TurnLoop {
         }
     }
 
+    /// Whether the turn has run out of rounds — the ordinary budget, or the
+    /// workspace ceiling that keeps an exempt loop from running forever.
+    fn budget_exhausted(&self) -> bool {
+        self.round >= self.max_rounds || self.workspace_rounds >= WORKSPACE_ROUND_CEILING
+    }
+
+    /// Whether a call by this name spends a round of the `max_tool_rounds`
+    /// budget — the tool's own answer (`Tool::counts_toward_round_limit`).
+    ///
+    /// An unknown name counts: it is about to become a "no such tool" result,
+    /// and a model inventing tool names is exactly the loop the limit is for.
+    fn counts_toward_round_limit(&self, name: &str) -> bool {
+        self.registry
+            .get(name)
+            .is_none_or(|tool| tool.counts_toward_round_limit())
+    }
+
     /// One round that ended in tool calls: the round-limit final round, the
     /// control-tool recognition, executing every call, and assembling the
     /// round's domain messages. `Some(reason)` ends the turn; `None` — run the
     /// next round.
     async fn tool_round(&mut self, out: RoundOutput) -> Option<FinishReason> {
-        if self.round >= self.max_rounds {
+        if self.budget_exhausted() {
             // Limit reached: DON'T execute new calls, ask the model instead
             // to sum up what's already been gathered — a final round WITHOUT
             // tools. Otherwise (the previous behavior) `out` would only
@@ -993,7 +1039,23 @@ impl TurnLoop {
             // artificial Stop.
             return Some(final_out.reason);
         }
-        self.round += 1;
+        // A round spent entirely inside the attached project does not cost the
+        // budget (spec §9.12). The limit exists to stop a model looping on
+        // *external* work, where every round is a request and possibly money;
+        // a code fix is read → change → check, and eight rounds end it halfway.
+        // A round is counted when **any** call in it counts, so mixing a
+        // `web_search` into a round of reads still spends one — the exemption
+        // cannot be used as a way round the limit.
+        if out
+            .calls
+            .iter()
+            .any(|c| self.counts_toward_round_limit(&c.name))
+        {
+            self.round += 1;
+        } else {
+            // Exempt, but still counted: see `WORKSPACE_ROUND_CEILING`.
+            self.workspace_rounds += 1;
+        }
 
         // Conversation control tools (spec §9.3) are recognized only if
         // they're actually enabled in the profile — otherwise a plain

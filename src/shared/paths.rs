@@ -247,6 +247,15 @@ impl Paths {
         self.root.join("data.db")
     }
 
+    /// Change journals of chats' code workspaces (`workspace/<chat-id>/`,
+    /// spec §9.12). Under the app's data root rather than inside the user's
+    /// project: bookkeeping scattered through a checkout would show up in their
+    /// own `git status`. Backed up with the rest of the data root — a baseline
+    /// is the one thing this track stores that cannot be recomputed.
+    pub fn workspace_dir(&self) -> PathBuf {
+        self.root.join("workspace")
+    }
+
     /// The disposable search cache (`cache.db`) — a full-text index over chat
     /// content. Derived data: deleting it is a supported repair, and
     /// `features/backup.rs` leaves it out of archives by construction (its

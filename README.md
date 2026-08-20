@@ -131,9 +131,11 @@ build the moment they drift from what the app actually renders
   `/rag list` shows the sources, `/rag rebuild` reindexes after tuning. Source
   text is kept in the database, so reindexing never needs the original files.
 - **A code project attached to a chat**: `/project attach <directory>` gives the
-  assistant a project it can explore — the file tree, a file read out with line
-  numbers, and a regular-expression search across the sources, all confined to
-  that directory and honouring its `.gitignore`. Attaching is the whole
+  assistant a project it can explore and change — the file tree, a file read out
+  with line numbers, a regular-expression search across the sources, and edits
+  that replace an exact fragment, all confined to that directory and honouring
+  its `.gitignore`. Every file's previous content is kept before the first change
+  to it, and a change that cannot be recorded that way does not happen. Attaching is the whole
   permission: with nothing attached the tools are not offered at all, so a chat
   without a project behaves exactly as before. `/project status` says what is
   attached, `/project detach` takes it away.

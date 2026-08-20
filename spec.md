@@ -1508,7 +1508,9 @@ exist at all.
   before the feature existed. The profile's own per-tool toggles still apply on
   top, and a project attached to a profile with the tools switched off is told to
   the model as such rather than advertised (see the block below).
-- **The tools** (group "Files", off by default in the catalog, no global gate):
+- **The tools** (group "Files", no global gate, and **on** in a profile's tool
+  set by default — the project's presence is the permission, and making the user
+  attach a directory *and* tick five toggles would contradict that):
   - `code_list(path?, depth?)` — the shape of the project or of one directory,
     `.gitignore` honoured, hidden entries and `.git/` skipped, depth 2 by
     default;
@@ -1516,7 +1518,16 @@ exist at all.
     form `   12→text`, a header stating the total, and a window over a long file;
   - `code_grep(pattern, path?, glob?)` — a regular-expression search returning
     `path:line: text`, smart-case (a lowercase pattern matches any case), with
-    `glob` narrowing the files.
+    `glob` narrowing the files;
+  - `code_edit(path, old_string, new_string, replace_all?)` — replaces an exact
+    fragment. `old_string` must occur **exactly once**; a fragment that is
+    missing, or occurs more than once without `replace_all`, changes nothing and
+    the answer says which of the two it was. The result echoes the changed lines,
+    numbered, so a second read is not needed to verify;
+  - `code_write(path, content)` — creates a file (with any missing directories)
+    or replaces one whole. Its description sends the model to `code_edit` for a
+    change inside an existing file, since a whole-file write can silently drop
+    what it did not mention.
 - **The read format is a contract.** The line-number prefix is a reading aid the
   model must strip when it quotes a fragment back; stage 0 measured both live
   model families doing exactly that, byte-for-byte, including indentation
@@ -1536,9 +1547,31 @@ exist at all.
   a project is attached but the profile has the tools off, the block says the
   project is out of reach instead — a block promising an absent tool is how a
   model spends a turn improvising with the wrong ones (§9.7 learned the same).
-- **The `code_*` tools are excluded from the tool-round limit** — planned for the
-  stage that adds the command tools, where a build-fix-build loop makes it matter
-  (docs/code-workspace.md §3.4).
+- **Editing keeps the file's own shape.** Matching runs on text normalized to
+  `\n` (a model writes `\n`; a Windows checkout is CRLF), and the file is written
+  back with its original line endings and BOM. Without that, one edit reads as a
+  whole-file rewrite in the diff and in the user's own version control.
+- **Every change is journaled first.** Before a file is changed for the first
+  time in a chat, its bytes are copied to `data/workspace/<chat-id>/` together
+  with a manifest row (`features/workspace_journal.rs`). Only the **first** touch
+  is recorded — the baseline is "as it was before the assistant started" — and a
+  change that cannot be journaled is **refused rather than applied**: the user's
+  control over what the assistant did is the changes screen and its revert, and
+  both rest on those bytes, which exist nowhere else once the file is
+  overwritten. The journal lives under the app's data root, never inside the
+  user's project, and detaching the project drops it.
+- **`code_edit` and `code_write` declare themselves dangerous**, so
+  `tools.confirm_dangerous` (§9.8) parks them for confirmation when the user
+  wants that. The reading tools do not, exactly as `fs_read` does not.
+- **The `code_*` tools are excluded from the tool-round limit.** The limit exists
+  to stop a model looping on *external* work, where each round is a request and
+  possibly money; a code fix is read → change → check, and a budget of eight
+  rounds ends it halfway. A round is counted when **any** call in it counts, so
+  mixing a `web_search` into a round of reads still spends one — the exemption is
+  not a way round the limit. Exempt is not unbounded: a turn that spends 200
+  consecutive rounds inside the project ends the way the ordinary limit ends one
+  (a final round without tools), because a repeated tool call is a measured
+  failure mode of local models rather than a hypothetical one.
 - **UI**: a feed note per command. The attach note names the root and what the
   assistant can now do; `/project status` with nothing attached names the command
   that attaches something.

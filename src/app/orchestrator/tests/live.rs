@@ -3293,3 +3293,235 @@ async fn code_workspace_gate_e2e_live() {
         "with no project attached the tools must not even be offered: {names:?}"
     );
 }
+
+/// Compiles a probe fixture with `rustc` (no cargo, no manifest, no network) and
+/// runs it, returning its stdout. `Err` carries the compiler's diagnostics.
+///
+/// Output goes to `target/`, which `code_grep` and `code_list` skip — so
+/// building does not put artifacts in front of the model, exactly as a real
+/// checkout would not.
+fn rustc_run(root: &std::path::Path) -> Result<String, String> {
+    let build = std::process::Command::new("rustc")
+        .current_dir(root)
+        .args(["--edition", "2021", "src/main.rs", "--out-dir", "target"])
+        .output()
+        .map_err(|e| format!("could not start rustc: {e}"))?;
+    if !build.status.success() {
+        return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+    }
+    let exe = root
+        .join("target")
+        .join(if cfg!(windows) { "main.exe" } else { "main" });
+    let run = std::process::Command::new(&exe)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not run {}: {e}", exe.display()))?;
+    Ok(String::from_utf8_lossy(&run.stdout).into_owned())
+}
+
+/// Spins up a live orchestrator with `files` attached as the chat's project and
+/// the profile narrowed to the workspace tools, and runs one turn.
+///
+/// Returns `(the fixture directory, the reply, the calls)`, or `None` with no
+/// live server. The narrowing is the "remove the alternative" rule
+/// (docs/lessons.md §9): with `fs_write` in reach the model could rewrite a file
+/// wholesale and the contract under test would never run.
+async fn run_workspace_turn(
+    files: &[(&str, &str)],
+    prompt: &str,
+) -> Option<(tempfile::TempDir, String, Vec<(String, String, String)>)> {
+    use crate::features::project_command::ProjectProgress;
+    use crate::features::tools::code::WORKSPACE_TOOL_IDS;
+
+    let ws = tempfile::tempdir().unwrap();
+    for (name, body) in files {
+        let path = ws.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_live()?;
+    let _ = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        WORKSPACE_TOOL_IDS.iter().map(|id| (*id).into()).collect(),
+    )
+    .await;
+    cmd_tx
+        .send(AppCommand::ProjectAttach {
+            path: ws.path().to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let attached = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProjectProgress(_)))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            attached,
+            AppEvent::ProjectProgress(ProjectProgress::Attached { .. })
+        ),
+        "the project did not attach: {attached:?}"
+    );
+
+    let (answer, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, prompt).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    drop(dir);
+    for (name, args, result) in &calls {
+        eprintln!(
+            "→ {name}({}) => {}",
+            args.chars().take(240).collect::<String>(),
+            result.chars().take(240).collect::<String>()
+        );
+    }
+    eprintln!("reply: {answer}");
+    Some((ws, answer, calls))
+}
+
+/// The stage-0 probe, now on the real mechanism (docs/code-workspace.md §7): a
+/// project that does not compile, and the assistant fixes it through
+/// `code_edit`.
+///
+/// `rustc` is the ground truth on both sides — the fixture must fail to compile
+/// before and succeed after, and the built program must print the right number,
+/// so a "fix" that deletes the arithmetic cannot pass.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_edit_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_e2e_live() {
+    use crate::features::tools::code::CODE_EDIT_ID;
+    let files = [
+        (
+            "src/main.rs",
+            "mod stats;\n\nfn main() {\n    let samples = vec![2.0, 4.0, 6.0, 8.0];\n    println!(\"mean={}\", stats::mean(&samples));\n}\n",
+        ),
+        (
+            "src/stats.rs",
+            "/// Arithmetic mean of the samples.\npub fn mean(values: &[f64]) -> f64 {\n    let total: f64 = values.iter().sum();\n    total / values.len()\n}\n",
+        ),
+    ];
+    let prompt = "Проект в рабочей папке не собирается. cargo build выдаёт:\n\n\
+         error[E0277]: cannot divide `f64` by `usize`\n\
+         \x20--> src/stats.rs:4:5\n\
+         \x20 |\n\
+         4 |     total / values.len()\n\
+         \x20 |     ^^^^^^^^^^^^^^^^^^^^ no implementation for `f64 / usize`\n\n\
+         Разберись и почини.";
+
+    let Some((ws, _answer, calls)) = run_workspace_turn(&files, prompt).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    assert!(
+        calls.iter().any(|(n, _, _)| n == CODE_EDIT_ID),
+        "the model never called {CODE_EDIT_ID}"
+    );
+    match rustc_run(ws.path()) {
+        Ok(stdout) => assert_eq!(
+            stdout.trim(),
+            "mean=5",
+            "it builds, but no longer computes the right answer"
+        ),
+        Err(err) => panic!("does not compile after the edit:\n{err}"),
+    }
+}
+
+/// Stage 2's own commitment (docs/code-workspace.md §7.3): the **refusal paths
+/// have to work live**, and stage 0 never exercised them because the model never
+/// missed.
+///
+/// So the miss is arranged: the user quotes the line to change, and their quote
+/// is subtly not what the file says — a space that is not there. A model that
+/// trusts the quote gets `tool.code.edit.not_found`, whose whole job is to say
+/// what to do next. What is asserted is the **outcome** — the file ends up
+/// correct — because a model that reads first and never misses is behaving
+/// better, not worse; whether the miss happened is *reported*, so the rate is
+/// visible across runs rather than assumed (docs/lessons.md §3).
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_edit_recovers_from_a_miss_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_recovers_from_a_miss_e2e_live() {
+    use crate::features::tools::code::CODE_EDIT_ID;
+    let files = [
+        (
+            "src/main.rs",
+            "mod config;\n\nfn main() {\n    println!(\"retries={}\", config::RETRY_LIMIT);\n}\n",
+        ),
+        // The file says `u32 = 3`; the user's quote below says `u32=3`.
+        (
+            "src/config.rs",
+            "/// How many times a request is retried.\npub const RETRY_LIMIT: u32 = 3;\n",
+        ),
+    ];
+    let prompt = "Подними лимит ретраев с 3 до 5. Строка такая:\n\n\
+         pub const RETRY_LIMIT: u32=3;\n\n\
+         Поменяй её в проекте.";
+
+    let Some((ws, _answer, calls)) = run_workspace_turn(&files, prompt).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let edits: Vec<&(String, String, String)> =
+        calls.iter().filter(|(n, _, _)| n == CODE_EDIT_ID).collect();
+    let refusal = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+        .tf("tool.code.edit.not_found", &[("path", "src/config.rs")]);
+    let head: String = refusal.chars().take(30).collect();
+    let missed = edits.iter().filter(|(_, _, r)| r.contains(&head)).count();
+    eprintln!("PROBE: {} edit calls, {missed} of them missed", edits.len());
+
+    assert!(!edits.is_empty(), "the model never called {CODE_EDIT_ID}");
+    match rustc_run(ws.path()) {
+        Ok(stdout) => assert_eq!(
+            stdout.trim(),
+            "retries=5",
+            "the user's approximate quote must not cost them the change"
+        ),
+        Err(err) => panic!("does not compile after the edit:\n{err}"),
+    }
+}
+
+/// A refused edit must leave the file **untouched** — live, not only in unit
+/// tests: the ambiguity refusal is what stops a one-line fragment occurring
+/// twice from being changed in the wrong place.
+///
+/// The fixture puts the obvious fragment in the file twice with identical
+/// surroundings, and the request names which one to change. Whatever route the
+/// model takes, exactly one of them must end up changed and the other left
+/// alone.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_edit_ambiguity_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_ambiguity_e2e_live() {
+    let files = [
+        (
+            "src/main.rs",
+            "mod limits;\n\nfn main() {\n    println!(\"{} {}\", limits::READ_TIMEOUT, limits::WRITE_TIMEOUT);\n}\n",
+        ),
+        (
+            "src/limits.rs",
+            "/// Reading.\npub const READ_TIMEOUT: u64 = 30;\n\n/// Writing.\npub const WRITE_TIMEOUT: u64 = 30;\n",
+        ),
+    ];
+    let prompt = "В проекте таймаут записи должен быть 60, а таймаут чтения оставь как есть. \
+         Поправь.";
+
+    let Some((ws, _answer, _calls)) = run_workspace_turn(&files, prompt).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let after = std::fs::read_to_string(ws.path().join("src/limits.rs")).unwrap();
+    eprintln!("PROBE: src/limits.rs now:\n{after}");
+    assert!(
+        after.contains("WRITE_TIMEOUT: u64 = 60"),
+        "the write timeout had to change: {after}"
+    );
+    assert!(
+        after.contains("READ_TIMEOUT: u64 = 30"),
+        "the read timeout had to be left alone — a blind replace_all would take both: {after}"
+    );
+}

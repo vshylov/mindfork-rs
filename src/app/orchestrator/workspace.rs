@@ -70,6 +70,18 @@ impl Orchestrator {
             return;
         };
         self.mark_dirty(chat_id);
+        // The journal describes files of a project this chat no longer has, and
+        // the changes screen would otherwise offer to revert into a directory
+        // the user has let go of. Best-effort: a journal that cannot be removed
+        // is a log line, not a reason to refuse the detach.
+        let dir = self
+            .storage
+            .json()
+            .workspace_dir()
+            .join(chat_id.to_string());
+        if let Err(err) = crate::features::workspace_journal::Journal::new(dir).clear() {
+            tracing::warn!("could not clear the workspace journal: {err}");
+        }
         self.emit_project(ProjectProgress::Detached {
             root: previous.root,
         });

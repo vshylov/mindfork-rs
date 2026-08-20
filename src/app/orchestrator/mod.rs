@@ -905,6 +905,7 @@ impl Orchestrator {
                 // chat in front of the user, so it has no attached project and
                 // the code tools stay unreachable from it.
                 workspace: None,
+                workspace_journal: None,
                 lang,
                 cancel,
             },

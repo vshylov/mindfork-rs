@@ -937,3 +937,87 @@ async fn send_without_backend_emits_error() {
     drop(cmd_tx);
     handle.await.unwrap();
 }
+
+/// The code workspace is exempt from `max_tool_rounds` (spec §9.12), and the
+/// exemption has to be **both** halves of a promise: a turn survives far past a
+/// budget that would have cut it, and it still ends.
+///
+/// The engine here asks for `code_list` forever, with a budget of one round —
+/// without the exemption the turn would stop at the first round, and without the
+/// ceiling it would never stop at all. The wait is bounded, so a regression fails
+/// instead of hanging (docs/lessons.md §2).
+#[tokio::test]
+async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
+    use crate::shared::api::contract::ToolCallDelta;
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::ToolCall(ToolCallDelta {
+            thought_signature: None,
+            index: 0,
+            id: Some("c1".into()),
+            name: Some(crate::features::tools::code::CODE_LIST_ID.into()),
+            arguments: "{}".into(),
+        }),
+        ChatChunk::Finished(FinishReason::ToolCalls),
+    ])) as Arc<dyn EngineBackend>;
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("a.rs"), "fn main() {}\n").unwrap();
+
+    let config = AppConfig {
+        // One round: enough that an unexempt tool would be cut off immediately.
+        max_tool_rounds: 1,
+        ..Default::default()
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(vec![crate::features::tools::code::CODE_LIST_ID.into()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::ProjectAttach {
+            path: project.path().to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProjectProgress(_)))
+        .await
+        .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SendMessage("посмотри проект".into()))
+        .unwrap();
+    let mut calls = 0usize;
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while let Some(ev) = evt_rx.recv().await {
+            match ev {
+                AppEvent::ToolCall { .. } => calls += 1,
+                AppEvent::Finished { .. } => return true,
+                _ => {}
+            }
+        }
+        false
+    })
+    .await
+    .expect("the turn must end rather than loop forever");
+    assert!(finished, "the event stream closed before the turn finished");
+    assert!(
+        calls > 1,
+        "a budget of one round must not stop an exempt tool: {calls} calls"
+    );
+    drop(cmd_tx);
+    handle.await.unwrap();
+}

@@ -57,6 +57,11 @@ impl JsonStore {
         self.paths.sandbox_dir()
     }
 
+    /// Change journals of chats' code workspaces (spec §9.12).
+    pub fn workspace_dir(&self) -> std::path::PathBuf {
+        self.paths.workspace_dir()
+    }
+
     // ---------- config ----------
 
     /// Loads the config; returns the default if the file is missing.
