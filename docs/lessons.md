@@ -281,6 +281,28 @@ buffer**, whenever the value under assertion can be any length — a 2 KiB read 
 `PATH`-sourced key and the comparison failed on the tail, which reads as a resolution bug.
 — *the external server's API key, entered in settings*.
 
+**A process-wide gate in production code makes sibling async tests fail each
+other.** The code workspace runs one project command at a time through a
+`static Semaphore` — correct for the application, and it means two
+`#[tokio::test]`s that spawn commands refuse each other with the "busy" message,
+with the loser decided by the scheduler. It reads as a flaky feature and is a
+flaky *test harness*. Make such tests queue behind a `SERIAL` mutex of their own,
+and assert the gate's behaviour in a test written for it rather than meeting it
+by accident. The rule generalizes to any process-wide singleton the tests touch:
+if production says "one at a time", the tests have to say it too.
+— *the code workspace — stage 3*.
+
+**An assertion that reads a rendered screen at scroll 0 is an "everything fits"
+assumption, and it fails as "the thing is missing".** Two rows added to the help
+overlay pushed `/tts` below the fold, and the test said `missing the /tts
+command` — which points at the command, not at the page. Reading at both scroll
+extremes was still not enough: the tab had grown past *two* screens, so five rows
+were invisible in both frames. Either render tall enough that the frames overlap,
+or assert against the model behind the screen. The failure mode is worth
+recognizing on sight: a render test that names a long-standing item as missing is
+usually reporting a layout change.
+— *the code workspace — stage 3*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while
@@ -531,7 +553,27 @@ with no arguments and no result gets no "expand me" pill.
 
 ---
 
+**A message that names the wrong knob is the same defect as a message that names
+none.** Two limits ended a turn — the tool-round budget and the workspace
+ceiling — and the note always quoted `max_tool_rounds`, sending the user to
+change a setting that was not the problem. Same shape as an under-described
+capability: the workspace system block still named the three read-only tools a
+stage after the editors shipped. The durable fix in both cases was to derive the
+text from the state it describes (which limit fired; which tools this turn
+actually offers) rather than to correct the sentence, because a sentence
+maintained by hand drifts again on the next stage.
+— *the code workspace — stage 3*.
+
 ## 5. Terminal and ratatui rendering
+
+**One wide label in an aligned table re-wraps every description in it.** The help
+overlay aligns its label column to the widest entry, so a 44-character command
+(`/project build-cmd|run-cmd|test-cmd [line]`) squeezed the description column
+across the *whole tab* and broke phrases other tests asserted on — a change that
+announces itself somewhere entirely unrelated to what was edited. Keep a new row
+the width of its neighbours and let the description carry the rest; the sibling
+subcommands read just as well there.
+— *the code workspace — stage 3*.
 
 **A wide glyph's trailing cell is where terminal rendering goes wrong.** ratatui resets
 it to the default style, `Buffer::diff` normally omits it, and `CrosstermBackend::draw`
@@ -609,6 +651,22 @@ the Linux one red, which is the only reason it was caught before merge — a tes
 that constructs a path for the *other* platform belongs in the suite for exactly
 this.
 — *the code workspace — stages 0 and 1*.
+
+**Killing a child is not killing a tree, and every launcher spawns a tree.**
+`Child::kill`/`kill_on_drop` end the process this application spawned and nothing
+it spawned in turn: killing `cargo` leaves its `rustc` children compiling, and
+the machine stays busy after the user pressed `Esc`. It needs a kill-on-close Job
+Object on Windows and `process_group(0)` + `killpg` on unix — both in
+`shared/proc.rs`. Two details that are easy to get wrong and cheap to get right:
+the group must be **opt-in**, because a guard that remembers a pid without having
+made a group would `killpg` the *application's own* group; and the guard has to
+kill on **`Drop`**, because cancellation drops the tool's future and no cleanup
+code of yours runs at all — with `disarm()` after the child is reaped, so a late
+signal cannot reach a pid the OS has since reused. Verify it the way it fails:
+spawn a grandchild that keeps writing to a file, kill, and assert the file stops
+growing — and mutate the kill back to `start_kill()` to check the test can see
+the difference.
+— *the code workspace — stage 3*.
 
 **Bracketed paste does not work on Windows.** `Event::Paste` is emitted only by
 crossterm's unix parser; on Windows a paste arrives as ordinary key events (interleaved

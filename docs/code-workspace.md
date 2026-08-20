@@ -8,7 +8,8 @@ is done this file moves to `docs/history/`.
 results, and what they do not settle, in §7. **Stage 1 (attach + the read-only
 tools) is done** — `feat/code-workspace-core`; what it changed against the plan
 is in §7.5. **Stage 2 (editing + the journal) is done** —
-`feat/code-workspace-edit`, §7.6.
+`feat/code-workspace-edit`, §7.6. **Stage 3 (the command slots) is done** —
+`feat/code-workspace-commands`, §7.7.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -395,11 +396,11 @@ Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
   `code_write`, EOL/BOM fidelity, the baseline journal, `danger()` wiring,
   round-limit exemption + backstop. Live smoke: the stage-0 scenario, now on
   production code.
-- **Stage 3 — command slots** (`feat/code-workspace-commands`):
+- **Stage 3 — command slots** (`feat/code-workspace-commands`) — **done**:
   `code_build`/`code_run`/`code_test`, `/project *-cmd|clear`, process-tree
   kill on both OSes, timeout/truncation settings, console presentation. Live
   smoke: break a fixture crate, let the model build → fix → build green.
-  Plus platform tests that a grandchild process dies on timeout.
+  Plus platform tests that a grandchild process dies on timeout. §7.7.
 - **Stage 4 — changes screen** (`feat/code-workspace-changes`): the screen,
   `similar` diffs, revert with confirm, `F4` + `/changes`. Pure UI — unit
   tests over an explicit journal fixture; no live run required (stated per
@@ -597,6 +598,56 @@ the live smokes assert the *outcome* (an approximate quote must not cost the use
 their change) while **reporting** the miss count, so the rate stays visible
 across runs instead of being assumed. If a future model family does miss, the
 count in the smoke's output is where it will show up first.
+
+### 7.7. Stage 3 — what it changed against this plan
+
+The stage delivered §3.3 as written, including the two things §1 flagged as
+missing from the repository. Four decisions differ from what §3 guessed at, and
+one part of §3.3 turned out to be already built in the wrong place.
+
+- **Nothing had to be written from scratch for the process-tree kill.** §1 said
+  "nothing in the repo kills a process tree", which was true of the *unix* half
+  only: `shared/mcp.rs::JobGuard` had been doing exactly the Windows job
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) since the MCP host shipped, for exactly
+  this reason — `cmd /c npx` → `node`. The stage hoisted it into
+  `shared/proc.rs` and added `process_group(0)` + `killpg`. The same was true of
+  the argv splitter §3.3 planned to reuse "the shell-quote splitter the MCP
+  editor already uses": it lives in `screens/settings/helpers.rs`, and `features`
+  cannot import `screens` at all, so it had to move down a layer
+  (`shared/cmdline.rs`) rather than be reused where it stood.
+- **The unix process group is opt-in, not part of the hoist.** `TreeGuard::
+  assign` keeps MCP's behaviour byte-for-byte (a Windows job, nothing on unix);
+  only `assign_group` remembers a pgid. Giving an MCP server its own process
+  group changes how signals reach it — an unrelated behaviour change, and not
+  one to smuggle into a feature PR. The split also makes the dangerous case
+  unreachable by construction: a guard with no group has no pgid to `killpg`, so
+  the application's own group id can never be the argument.
+- **The system block outgrew its sentence.** §3.6 described one block naming the
+  tools; it had already fallen a stage behind (stage 2 added the editors and
+  never updated the text), and stage 3 would have made it two. Instead of a
+  longer sentence that will drift again, the block now lists the tools **this
+  turn actually offers**, one gloss each, built from the turn's own tool set —
+  the same input `effective_tool_ids` produced. A profile with the editors off
+  cannot be told it can edit, and a slot with no line contributes nothing.
+- **`parse_console` needed one section, not a rewrite.** §3.3 promised "a
+  console block with zero new widget code", which held — but the assembler for
+  the shape lived in `python.rs` and the parser in `present.rs`. The command
+  result adds a `command:` section (the line, and how it ended), so the assembler
+  moved next to the parser (`present::format_console`) and `python_exec` now
+  delegates to it. Truncation stayed with each caller: `python_exec` drops the
+  tail, a build keeps head and tail (F12), and that is the one thing the two
+  genuinely disagree about.
+- **The one-at-a-time gate is process-wide, and the tests had to admit it.** Two
+  `#[tokio::test]`s spawning commands in parallel refuse each other, with the
+  loser decided by the scheduler. A `SERIAL` mutex makes them queue, and the
+  gate's own behaviour is asserted by a test written for it rather than
+  discovered as flake.
+
+**The live run needed no fixture surgery**, unlike stages 0 and 2: the loop
+`code_build` → real `E0277` → `code_read` → `code_edit` → `code_build`-green ran
+at the first attempt. What the stage *did* have to argue about is the build tool
+— see §4.1: `cargo build --offline` rather than a bare `rustc`, because `rustc`
+has no grandchildren and the grandchild is the reason this stage exists.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

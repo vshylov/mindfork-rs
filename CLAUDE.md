@@ -165,12 +165,13 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-20, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2366 unit tests
-green, 104 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2384 unit tests
+green, 106 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
 most recent tracks: **a code project attached to a chat**
-(`/project attach <directory>`, and the assistant can list, read and search it —
-stage 1 of the code-workspace track. The load-bearing decision is that
+(`/project attach <directory>`, and the assistant can list, read, search and
+change it, and run the build/run/test command lines the user typed —
+stages 1–3 of the code-workspace track. The load-bearing decision is that
 **attaching is the permission**: the `code_*` tools are offered only while the
 chat has a project, so a chat without one sends a request byte-identical to what
 it sent before the feature, and there is no second switch to leave off. That
@@ -181,16 +182,19 @@ hypothesis was whether a local model honours an exact-substring edit contract �
 measured 5/5 on gemma-4-31b and 5/5 on qwen-3.6-27b, with the model reproducing
 a five-line fragment byte-for-byte from a numbered read and widening it past a
 duplicate on its own, which is why the `   12→` read format is now written down
-as a contract. Two measurements shaped stage 1: `ignore` honours `.gitignore`
-only inside a git checkout, so an attached directory that is not a repository
-needed `require_git(false)` or `target/` came back in every search; and the live
-run rewrote its own test, since the model answered from `code_grep` alone and
-demanding a read would have pinned it to the worse route;
+as a contract. Stage 1's measurement: `ignore` honours `.gitignore` only inside a
+git checkout, so an attached directory that is not a repository needs
+`require_git(false)` or `target/` comes back in every search. Stage 3's decision is
+that the model **cannot compose a command**: the three tools take no arguments at
+all, so the user's line is the whole of what runs and the model gets only its
+*text* — enough to say the command itself is wrong. Both halves of the runner
+already existed where `features` cannot reach (the Job Object in `shared/mcp.rs`,
+the argv splitter in `screens/settings`), so the stage hoisted them and wrote
+only the unix tree-kill MCP never needed;
 [docs/code-workspace.md](docs/code-workspace.md), spec §9.12), **the model's
 name on the assistant's header**
 (the feed said *who* answered but never *what*: every assistant message has
-stored a metadata snapshot of its turn since M9 — mode, sampling, `model` — and
-nothing read the last field. `interface.show_model_name` (off by default) draws
+stored a metadata snapshot of its turn since M9, and nothing read its `model`. `interface.show_model_name` (off by default) draws
 it next to `✦ ASSISTANT`, muted like the "thoughts" pill. The load-bearing
 decision is **whose** answer it is: reading the *current* engine setting would
 have been one line and no new field, and it would be wrong for the only case

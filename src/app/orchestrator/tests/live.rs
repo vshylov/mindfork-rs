@@ -3330,6 +3330,21 @@ async fn run_workspace_turn(
     files: &[(&str, &str)],
     prompt: &str,
 ) -> Option<(tempfile::TempDir, String, Vec<(String, String, String)>)> {
+    run_workspace_turn_with(files, &[], prompt).await
+}
+
+/// [`run_workspace_turn`], with command lines put into the project's slots
+/// first — the stage-3 shape, where the assistant can also build, run and test.
+///
+/// The lines go in through the same `AppCommand::ProjectSlot` the user's
+/// `/project build-cmd` sends, rather than by writing the field: the smoke is
+/// then measuring the route that ships, including the shell-syntax refusal that
+/// sits on it.
+async fn run_workspace_turn_with(
+    files: &[(&str, &str)],
+    commands: &[(crate::entities::workspace::CommandSlot, &str)],
+    prompt: &str,
+) -> Option<(tempfile::TempDir, String, Vec<(String, String, String)>)> {
     use crate::features::project_command::ProjectProgress;
     use crate::features::tools::code::WORKSPACE_TOOL_IDS;
 
@@ -3361,6 +3376,25 @@ async fn run_workspace_turn(
         ),
         "the project did not attach: {attached:?}"
     );
+
+    for (slot, line) in commands {
+        cmd_tx
+            .send(AppCommand::ProjectSlot {
+                slot: *slot,
+                action: crate::features::project_command::SlotAction::Set((*line).to_string()),
+            })
+            .unwrap();
+        let set = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProjectProgress(_)))
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                set,
+                AppEvent::ProjectProgress(ProjectProgress::CommandSet { .. })
+            ),
+            "the {slot:?} command did not take: {set:?}"
+        );
+    }
 
     let (answer, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, prompt).await;
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -3425,6 +3459,142 @@ async fn code_edit_e2e_live() {
         ),
         Err(err) => panic!("does not compile after the edit:\n{err}"),
     }
+}
+
+/// Runs `cargo` in `dir` and returns its combined output, or an error.
+fn cargo_in(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("cargo")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("could not run cargo: {e}"))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(text)
+    }
+}
+
+/// Code workspace, **stage 3 live check** (docs/code-workspace.md §6): a project
+/// that does not compile, a build command the *user* configured, and the
+/// assistant working the loop — build, read the error, fix, build again.
+///
+/// `cargo` rather than a bare `rustc`, deliberately (docs/code-workspace.md
+/// §4.1): only a real build system puts a `cargo → rustc` process tree behind
+/// the timeout and the kill this stage exists for, and only a real compiler's
+/// diagnostics are what the model has to read to find the fault. The crate has
+/// no dependencies and builds `--offline`, so nothing here touches the network.
+///
+/// Ground truth is on **both** sides and is not a string comparison against the
+/// source: the fixture must fail to build before the turn, and afterwards
+/// `cargo run` must print the right number — so a "fix" that deletes the
+/// arithmetic cannot pass (the stage-0 rule).
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_build_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_build_e2e_live() {
+    use crate::entities::workspace::CommandSlot;
+    use crate::features::tools::code::{CODE_BUILD_ID, CODE_EDIT_ID};
+
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+        ),
+        (
+            "src/main.rs",
+            "mod stats;\n\nfn main() {\n    let samples = vec![2.0, 4.0, 6.0, 8.0];\n    println!(\"mean={}\", stats::mean(&samples));\n}\n",
+        ),
+        (
+            "src/stats.rs",
+            "/// Arithmetic mean of the samples.\npub fn mean(values: &[f64]) -> f64 {\n    let total: f64 = values.iter().sum();\n    total / values.len()\n}\n",
+        ),
+    ];
+    // The prompt says nothing about *what* is wrong and quotes no code: the
+    // compiler error can only come from running the build command, which is the
+    // whole point of the stage (docs/lessons.md §2 — a test worded so it can be
+    // satisfied without doing the thing it checks measures nothing).
+    let prompt = "Собери проект в рабочей папке. Если сборка падает — разберись, \
+         почини и собери снова.";
+
+    let Some((ws, _answer, calls)) = run_workspace_turn_with(
+        &files,
+        &[(CommandSlot::Build, "cargo build --offline")],
+        prompt,
+    )
+    .await
+    else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+
+    let builds: Vec<&(String, String, String)> = calls
+        .iter()
+        .filter(|(n, _, _)| n == CODE_BUILD_ID)
+        .collect();
+    assert!(
+        !builds.is_empty(),
+        "the model never called {CODE_BUILD_ID} — it cannot have seen the error"
+    );
+    // The first build must have carried the compiler's own diagnostic: that is
+    // what proves the command really ran and its stderr was captured, rather
+    // than the model recognizing the bug by eye.
+    assert!(
+        builds[0].2.contains("E0277") || builds[0].2.contains("error"),
+        "the first build did not return the compiler error: {}",
+        builds[0].2
+    );
+    assert!(
+        calls.iter().any(|(n, _, _)| n == CODE_EDIT_ID),
+        "the model never called {CODE_EDIT_ID}"
+    );
+    // Reported rather than asserted: whether it rebuilt to confirm is a matter
+    // of the model's judgement, and pinning it would pin the route rather than
+    // the outcome (the §7.6 pattern).
+    eprintln!("builds: {} · calls: {}", builds.len(), calls.len());
+
+    match cargo_in(ws.path(), &["run", "--offline", "-q"]) {
+        Ok(stdout) => assert!(
+            stdout.contains("mean=5"),
+            "it builds, but no longer computes the right answer: {stdout}"
+        ),
+        Err(err) => panic!("does not build after the turn:\n{err}"),
+    }
+}
+
+/// The stage-3 safety property: a command line the user never typed cannot be
+/// run. The tools take no arguments at all, so there is nothing for the model to
+/// put a second command into — and a slot with no line is not offered.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_command_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_command_gate_e2e_live() {
+    use crate::features::tools::code::{CODE_BUILD_ID, CODE_RUN_ID, CODE_TEST_ID};
+
+    let files = [("src/main.rs", "fn main() { println!(\"hi\"); }\n")];
+    let prompt = "Запусти тесты этого проекта.";
+
+    // No slot is configured, so none of the three tools exists this turn.
+    let Some((_ws, answer, calls)) = run_workspace_turn(&files, prompt).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    for id in [CODE_BUILD_ID, CODE_RUN_ID, CODE_TEST_ID] {
+        assert!(
+            !calls.iter().any(|(n, _, _)| n == id),
+            "{id} must not exist without a configured command: {calls:?}"
+        );
+    }
+    assert!(!answer.trim().is_empty(), "the model said nothing at all");
 }
 
 /// Stage 2's own commitment (docs/code-workspace.md §7.3): the **refusal paths

@@ -135,10 +135,16 @@ build the moment they drift from what the app actually renders
   with line numbers, a regular-expression search across the sources, and edits
   that replace an exact fragment, all confined to that directory and honouring
   its `.gitignore`. Every file's previous content is kept before the first change
-  to it, and a change that cannot be recorded that way does not happen. Attaching is the whole
-  permission: with nothing attached the tools are not offered at all, so a chat
-  without a project behaves exactly as before. `/project status` says what is
-  attached, `/project detach` takes it away.
+  to it, and a change that cannot be recorded that way does not happen. It can also
+  **build, run and test** the project — through command lines *you* type
+  (`/project build-cmd cargo build`, and the same for `run-cmd` and `test-cmd`):
+  the assistant runs them as they are and can never change one, add a flag to it
+  or compose a new command. A command that outruns its time limit is stopped
+  along with everything it started, and what it printed until then still comes
+  back. Attaching is the whole permission: with nothing attached the tools are
+  not offered at all, so a chat without a project behaves exactly as before.
+  `/project status` says what is attached and what the three command slots hold,
+  `/project detach` takes it away.
 - **Chat attachments**: `/file attach <path>` pins a text file (source code,
   configs, logs, `.html` / `.pdf` / `.docx`) to the conversation — its full
   text travels with every message, and removing it genuinely removes it. A
@@ -365,7 +371,9 @@ Slash commands, typed straight into the input box:
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image (a file or a web address) for your next message / unstage one / list what is staged |
 | `/image paste` | stage the image on the clipboard — a screenshot needs no file. `Ctrl+V` does the same where the terminal forwards it (Windows Terminal keeps that key for its own paste, so the command is the reliable route) |
-| `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat (the assistant can then list, read and search it) / detach it / show what is attached |
+| `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat (the assistant can then list, read, search and change it) / detach it / show what is attached and what the command slots hold |
+| `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it. It runs the line as typed and can never change or extend it |
+| `/project clear build\|run\|test` | unset one of those commands (the assistant then has no such tool at all) |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model |

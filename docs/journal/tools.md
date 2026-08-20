@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -38,6 +38,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `chat://` as the one address of a conversation (done)
 - Post-M9: the code workspace — stages 0 and 1 (done)
 - Post-M9: the code workspace — stage 2, editing and the journal (done)
+- Post-M9: the code workspace — stage 3, the build/run/test command slots (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2078,3 +2079,121 @@ Branch `feat/code-workspace-edit`.
   contradict it — so the sentence was corrected rather than the behaviour.
 - **Tests**: 2366 unit (+12), 104 `#[ignore]` (+3). Demo dumps regenerated (two
   more catalog tools move the displayed count), and the screenshots with them.
+
+### Post-M9: the code workspace — stage 3, the build/run/test command slots (done)
+
+`code_build`/`code_run`/`code_test`, the `/project *-cmd` commands that fill
+their slots, and the process-tree kill underneath them. Stage 3 of
+[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+Branch `feat/code-workspace-commands`.
+
+- **The load-bearing decision was made before this stage and this stage is where
+  it pays**: the model **cannot compose a command**. The three tools take no
+  arguments at all — `{"type": "object", "properties": {}}` — so there is nothing
+  to inject into, no flag to append and no second command to chain. What the
+  model *can* do is read the line, which the system block quotes verbatim; that
+  is what lets it tell the user their own command is the thing that is wrong, and
+  it is the whole of its say over one. A test-filter argument is the first thing
+  to want and the first injection vector, so the test slot itself is the answer.
+- **Both halves of the runner already existed in the repository, in places
+  `features` cannot reach.** The Windows Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` was `shared/mcp.rs::JobGuard`, written for
+  `cmd /c npx → node`; the shell-style argv splitter was
+  `screens/settings/helpers.rs::parse_args`, and FSD forbids importing `screens`
+  from `features`. Both were hoisted rather than copied (`shared/proc.rs`,
+  `shared/cmdline.rs`) — the stage-1 `FsRoot` precedent, and the rule
+  docs/lessons.md §2 states about a parser written twice. MCP's behaviour is
+  byte-for-byte unchanged: it still calls `TreeGuard::assign`, which is the
+  Windows job and nothing else.
+- **The unix half is the genuinely new code, and it is opt-in for a reason.**
+  `process_group(0)` at spawn plus `killpg(SIGKILL)` reaches the grandchildren;
+  `TreeGuard::assign` (MCP's constructor) deliberately does **not** take a group,
+  because giving a server its own process group changes how signals reach it —
+  a behaviour change unrelated to running a build, and not one to smuggle into a
+  feature PR. The two constructors also encode a safety property in the type: a
+  guard with no group remembers no pgid, so `killpg` cannot be reached with the
+  application's *own* group id.
+- **Dropping the guard kills, and that is not an accident.** Cancellation
+  (`Esc`) drops the tool's future, so no cleanup code of ours runs at all —
+  `Drop` is the only hook left. The counterpart is `disarm()` after the child has
+  been reaped: from that moment its pid is free for the OS to reuse, and a late
+  `killpg` would reach a stranger.
+- **The tree kill is a measured property, not a hope.** A fixture spawns a parent
+  that spawns a grandchild writing to a file forever; the test waits until the
+  file is actually growing (otherwise it could pass by killing a tree that never
+  grew one), kills, and asserts the file stops growing. Mutation-checked in both
+  directions: removing `guard.kill()` and leaving `child.start_kill()` — exactly
+  what `kill_on_drop` would give — turns it red. That is `cargo build` leaving
+  `rustc` behind, reproduced in a unit test.
+- **A pipeline is refused when the line is *set*, not when a model first runs
+  it.** `cargo build 2>&1 | tee log.txt` cannot work in an application that
+  spawns the program itself, and without a check it would surface three turns
+  later as "cargo: program not found" — which reads as a broken toolchain. The
+  refusal names the character it found and the route that works (put the steps in
+  a script, name the script). The same check runs again inside the tool, because
+  a chat file is JSON on disk and can be edited by hand, and a guard living at
+  one end of a path is one refactor from being gone (docs/lessons.md §2). Quoted
+  metacharacters stay legal: `grep "a|b" src` is a correct command line, and
+  refusing it would be the check becoming a nuisance.
+- **Partial output is kept on a timeout** — the deliberate inverse of the Python
+  sandbox, which discards it. A script's value is its final answer; a build's
+  first errors arrived in its first second, and throwing them away because the
+  build was slow wastes the whole wait. Truncation keeps head **and** tail for
+  the same reason (fork F12): a compiler puts its first errors at the top and its
+  summary at the bottom, so a tail-only cut keeps the *count* of errors and drops
+  the errors.
+- **`workspace.max_rounds` supersedes stage 2's constant, and the user chose the
+  shape.** Both options the design offered read badly — a number that cannot be
+  raised is a wall with no door, and a `0` meaning "the built-in default" is a
+  field lying about its own value. So `WORKSPACE_ROUND_CEILING = 200` became the
+  setting's default of **500**, and `0` genuinely means no limit: a legitimate
+  choice for a long refactor, with `Esc`, the per-command timeout and the
+  one-at-a-time gate still underneath. Writing it also exposed a message defect
+  of exactly the class docs/lessons.md §4 names — the exhaustion note always
+  quoted `max_tool_rounds`, even when the *workspace* ceiling was what fired,
+  sending the user to a setting that was not the problem. It now names which of
+  the two ended the turn.
+- **Two more messages fixed in passing, same class.** The system block still
+  named only `code_list`/`code_read`/`code_grep`, a stage behind: stage 2 added
+  the editors and never updated it. Rather than adding two more names to a
+  sentence that will drift again, the block now lists the tools **this turn
+  actually offers**, one gloss each, derived from the turn's own tool set — so a
+  profile with the editors switched off cannot be told it can edit, and a slot
+  with no line contributes nothing.
+- **The console shape has one owner now.** `python_exec::format_output_parts`
+  built the `stdout:`/`stderr:`/exit-code text and `present::parse_console` read
+  it back, in two files. The command tools need the same shape plus a `command:`
+  section, so the assembly moved next to the parser (`present::format_console`)
+  and `python_exec` delegates to it — the two halves of one format cannot drift
+  when they are ten lines apart. Truncation stayed with each caller, because that
+  is the one part they genuinely disagree about.
+- **The tests' own gate had to be dealt with honestly.** `COMMAND_GATE` is
+  process-wide by design, so two `#[tokio::test]`s spawning commands in parallel
+  make each other fail with the "busy" refusal, and which one loses depends on
+  the scheduler. A `SERIAL` mutex makes them queue, and the gate's behaviour is
+  asserted deliberately by its own test rather than observed as flake.
+- **Adding two rows to the help overlay broke two render tests, and one of them
+  was right to break.** A 44-character command label (`/project
+  build-cmd|run-cmd|test-cmd [line]`) widened the aligned label column and
+  re-wrapped every description on the tab — so the labels shrank to the width of
+  their `/project attach` neighbour. The second failure was real: the commands
+  tab has outgrown one screen, and an assertion reading it at scroll 0 was an
+  "everything fits" assumption that any new command falsifies. Reading it at both
+  scroll extremes was not enough either — five rows in the middle were invisible
+  in *both* frames, an absence that reads as a missing command; the frame is now
+  tall enough that the two overlap.
+- **Live smoke — GO** (gemma-4-31B q4_0, the user's stack). The stage-3 loop ran
+  as designed on the first attempt: `code_build` → the real `E0277` from `cargo`
+  → `code_read` → `code_edit` → `code_build`, green. `cargo build --offline` on a
+  dependency-free fixture crate rather than a bare `rustc` (the stage-0 and -2
+  choice), because only a real build system puts a `cargo → rustc` tree behind
+  the kill this stage exists for, and only a real compiler's diagnostics are what
+  the model has to read. Ground truth on both sides: the fixture must fail to
+  build before, and `cargo run` must print the right number after, so a "fix"
+  that deletes the arithmetic cannot pass. A second smoke covers the finer gate —
+  with no slot configured, the model asked for tests, found none, and called none
+  of the three tools, because they do not exist that turn.
+- **Tests**: 2384 unit (+18), 106 `#[ignore]` (+2). Demo dumps regenerated (three
+  more catalog tools move the displayed count), and the screenshots with them.
+  New dependency `libc`, unix-only and one call wide (`killpg`); the Windows half
+  of the same job is the `windows-sys` Job Object already in the graph.

@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **The assistant can build, run and test the attached project** — through
+  command lines you type: `/project build-cmd cargo build`, and the same for
+  `run-cmd` and `test-cmd` (`/project clear build|run|test` removes one, and
+  `/project status` shows all three). It runs them exactly as written and can
+  never change one, add a flag to it or compose a command of its own; a slot you
+  have not filled gives it no such tool at all. A command that outruns its time
+  limit is stopped together with everything it started, and whatever it printed
+  by then still comes back. Pipelines and redirects are not run — the refusal
+  says so when you set the line, and points at wrapping the steps in a script.
+  New settings under Tools → Workspace: the command time limit, how much output
+  reaches the model, and how many rounds one answer may spend inside the project.
 - **The assistant can change the attached project** — it edits a file by
   replacing an exact fragment, or writes a file whole. Every file's previous
   content is saved before it is first touched, so a coming release can show the
