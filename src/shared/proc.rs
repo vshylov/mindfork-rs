@@ -203,33 +203,36 @@ fn create_job(child: &Child) -> Option<JobHandle> {
     }
 }
 
+/// A python interpreter, for tests that need a program behaving the same on
+/// both platforms — a subprocess fixture, or a grandchild that keeps writing to
+/// a file so its death is observable from outside.
+///
+/// Python rather than a shell because the two shells spell such a fixture
+/// differently enough to be two fixtures, and this repository already depends on
+/// python for its own gates. `None` when there is none: a test then says so out
+/// loud rather than reporting `ok` (docs/lessons.md §9).
+///
+/// Lives here, next to the process machinery, because two test modules wrote it
+/// minutes apart — which is the point at which an opening is a fixture rather
+/// than part of a test (docs/lessons.md §2).
+#[cfg(test)]
+pub fn test_python() -> Option<String> {
+    ["python", "python3"].into_iter().find_map(|c| {
+        std::process::Command::new(c)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()
+            .filter(|st| st.success())
+            .map(|_| c.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Stdio;
-
-    /// A parent that outlives its child, and a grandchild that keeps writing to
-    /// a file so its death is observable from outside.
-    ///
-    /// Python is the fixture rather than a shell because the two shells spell
-    /// this differently enough to be two fixtures, and this repository already
-    /// depends on python for its own gates. When it is missing the test says so
-    /// out loud instead of reporting `ok` (docs/lessons.md §9).
-    fn python() -> Option<String> {
-        for candidate in ["python", "python3"] {
-            if crate::shared::mcp::resolve_command(candidate).is_some()
-                || std::process::Command::new(candidate)
-                    .arg("--version")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok()
-            {
-                return Some(candidate.to_string());
-            }
-        }
-        None
-    }
 
     /// The property the whole module exists for: killing the process we spawned
     /// must also kill what *it* spawned. A `kill_on_drop`/`Child::kill` would
@@ -237,7 +240,7 @@ mod tests {
     /// what `cargo build` leaving `rustc` behind looks like.
     #[tokio::test]
     async fn a_grandchild_dies_with_the_tree() {
-        let Some(py) = python() else {
+        let Some(py) = test_python() else {
             println!("SKIP: no python interpreter — the grandchild fixture needs one");
             return;
         };

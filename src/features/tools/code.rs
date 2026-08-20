@@ -971,7 +971,7 @@ async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome
     let Some(line) = ws.command(slot) else {
         anyhow::bail!(ctx.loc.tf(
             "tool.code.cmd.not_set",
-            &[("slot", slot.key()), ("cmd", &slash_command(slot))]
+            &[("slot", slot.key()), ("cmd", &slot.setter_command())]
         ));
     };
     // Checked here as well as when the line was set: a chat file is JSON on disk
@@ -987,7 +987,7 @@ async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome
     let Some((program, args)) = argv.split_first() else {
         anyhow::bail!(ctx.loc.tf(
             "tool.code.cmd.not_set",
-            &[("slot", slot.key()), ("cmd", &slash_command(slot))]
+            &[("slot", slot.key()), ("cmd", &slot.setter_command())]
         ));
     };
     let Ok(_permit) = COMMAND_GATE.try_acquire() else {
@@ -1014,10 +1014,13 @@ async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome
     // which is the only influence over it this design gives the model at all.
     let header = format!("{line}\n{status}");
     let limit = cfg.output_limit_chars.max(200);
-    let success = matches!(&ended, Ended::Exited(st) if st.success());
-    let code = match &ended {
-        Ended::Exited(st) => st.code(),
-        _ => None,
+    // A command we killed has no exit code at all. The header already says it
+    // timed out or was stopped, so the failure line is suppressed rather than
+    // filled with a fabricated `-1` — which the model would otherwise quote back
+    // to the user as the command's exit code.
+    let (success, code) = match &ended {
+        Ended::Exited(st) => (st.success(), st.code()),
+        Ended::TimedOut | Ended::Cancelled => (true, None),
     };
     Ok(ToolOutcome::text(super::present::format_console(
         Some(&header),
@@ -1027,12 +1030,6 @@ async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome
         code,
         ctx.loc,
     )))
-}
-
-/// The `/project` subcommand that sets `slot` — named by every refusal, so a
-/// dead end is never the whole answer (docs/lessons.md §4).
-fn slash_command(slot: CommandSlot) -> String {
-    format!("/project {}-cmd", slot.key())
 }
 
 /// Spawns the command, drains both pipes concurrently, and ends the **tree** on
@@ -1790,23 +1787,6 @@ mod tests {
 
     // ---- the command slots (spec §9.12) ----
 
-    /// A python interpreter, or `None`. The command fixtures need *some*
-    /// program that behaves the same on both platforms, and this repository
-    /// already depends on python for its own gates. A missing one says so out
-    /// loud rather than reporting `ok` (docs/lessons.md §9).
-    fn python() -> Option<String> {
-        ["python", "python3"].into_iter().find_map(|c| {
-            std::process::Command::new(c)
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .ok()
-                .filter(|st| st.success())
-                .map(|_| c.to_string())
-        })
-    }
-
     /// The command tests run one at a time.
     ///
     /// Not a fixture nicety: [`COMMAND_GATE`] is process-wide by design — one
@@ -1872,7 +1852,7 @@ mod tests {
     #[tokio::test]
     async fn a_command_reports_its_output_and_its_exit_code() {
         let _serial = SERIAL.lock().await;
-        let Some(py) = python() else {
+        let Some(py) = crate::shared::proc::test_python() else {
             println!("SKIP: no python interpreter for the command fixture");
             return;
         };
@@ -1912,7 +1892,7 @@ mod tests {
     #[tokio::test]
     async fn a_command_runs_in_the_project_root() {
         let _serial = SERIAL.lock().await;
-        let Some(py) = python() else {
+        let Some(py) = crate::shared::proc::test_python() else {
             println!("SKIP: no python interpreter for the command fixture");
             return;
         };
@@ -1938,7 +1918,7 @@ mod tests {
     #[tokio::test]
     async fn a_timed_out_command_keeps_what_it_printed() {
         let _serial = SERIAL.lock().await;
-        let Some(py) = python() else {
+        let Some(py) = crate::shared::proc::test_python() else {
             println!("SKIP: no python interpreter for the command fixture");
             return;
         };
@@ -1959,6 +1939,13 @@ mod tests {
         // whole answer.
         let timed_out = f.ctx.loc.tf("tool.code.cmd.timed_out", &[("secs", "1")]);
         assert!(out.contains(&timed_out), "{out}");
+        // A killed command has no exit code, so none is reported. `-1` here
+        // would be a number we invented, and the model would pass it on to the
+        // user as the command's own.
+        assert!(
+            !out.contains("-1"),
+            "a fabricated exit code for a killed command: {out}"
+        );
     }
 
     /// One command at a time, across the whole application. Two builds of one
@@ -1967,7 +1954,7 @@ mod tests {
     /// rather than leaving the model to guess (docs/lessons.md §4).
     #[tokio::test]
     async fn a_second_command_is_refused_while_one_runs() {
-        let Some(py) = python() else {
+        let Some(py) = crate::shared::proc::test_python() else {
             println!("SKIP: no python interpreter for the command fixture");
             return;
         };

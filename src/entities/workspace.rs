@@ -48,6 +48,13 @@ impl CommandSlot {
         }
     }
 
+    /// The `/project` subcommand that fills this slot. Every refusal and every
+    /// "nothing here" note names it, so it is spelled **once** — in the tool's
+    /// answer to the model and in the feed's answer to the user alike.
+    pub fn setter_command(self) -> String {
+        format!("/project {}-cmd", self.key())
+    }
+
     /// Parses the word back, case-insensitively (`/project clear BUILD`).
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim().to_ascii_lowercase();

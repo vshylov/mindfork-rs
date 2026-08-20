@@ -539,6 +539,7 @@ mod impersonation;
 mod live;
 mod mcp;
 mod profiles;
+mod project;
 mod rag;
 mod reflection;
 mod request;

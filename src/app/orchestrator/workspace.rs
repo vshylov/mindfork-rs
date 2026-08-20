@@ -153,48 +153,42 @@ impl Orchestrator {
             });
             return;
         }
-        let progress = match &action {
-            SlotAction::Show => {
-                let line = self
-                    .chats
-                    .iter()
-                    .find(|c| c.id == chat_id)
-                    .and_then(|c| c.workspace.as_ref())
-                    .and_then(|w| w.command(slot))
-                    .map(str::to_string);
-                return self.emit_project(ProjectProgress::CommandShown { slot, line });
-            }
-            SlotAction::Set(line) => ProjectProgress::CommandSet {
-                slot,
-                line: line.clone(),
-            },
-            SlotAction::Clear => ProjectProgress::CommandCleared { slot, had: false },
-        };
-        let Some(chat) = self.chat_mut(chat_id) else {
-            self.fail_project(self.ui_locale().t("ui.err.project_no_active_chat"));
+        // Showing changes nothing, so it never reaches the mutation below.
+        if action == SlotAction::Show {
+            let line = self
+                .chats
+                .iter()
+                .find(|c| c.id == chat_id)
+                .and_then(|c| c.workspace.as_ref())
+                .and_then(|w| w.command(slot))
+                .map(str::to_string);
+            self.emit_project(ProjectProgress::CommandShown { slot, line });
             return;
-        };
-        let Some(ws) = chat.workspace.as_mut() else {
+        }
+        let Some(ws) = self
+            .chat_mut(chat_id)
+            .and_then(|chat| chat.workspace.as_mut())
+        else {
             self.fail_project(self.ui_locale().t("ui.err.project_no_active_chat"));
             return;
         };
         let had = ws.command(slot).is_some();
-        ws.set_command(
-            slot,
-            match &action {
-                SlotAction::Set(line) => Some(line.clone()),
-                _ => None,
-            },
-        );
+        let line = match &action {
+            SlotAction::Set(line) => Some(line.clone()),
+            _ => None,
+        };
+        ws.set_command(slot, line.clone());
         // Like attaching: the chat's setup changed, the conversation did not, so
         // `modified_at` stays where it was and the chat keeps its place in the
         // list (the `draft`/`feed_view` rule).
         self.mark_dirty(chat_id);
-        self.emit_project(match progress {
-            ProjectProgress::CommandCleared { slot, .. } => {
-                ProjectProgress::CommandCleared { slot, had }
-            }
-            other => other,
+        // Decided after the write, from what the write knew: clearing a slot
+        // that was already empty is not an error and must not be silent either —
+        // saying so is what tells the user their earlier `build-cmd` never
+        // landed.
+        self.emit_project(match line {
+            Some(line) => ProjectProgress::CommandSet { slot, line },
+            None => ProjectProgress::CommandCleared { slot, had },
         });
     }
 

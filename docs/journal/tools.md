@@ -2172,6 +2172,18 @@ Branch `feat/code-workspace-commands`.
   make each other fail with the "busy" refusal, and which one loses depends on
   the scheduler. A `SERIAL` mutex makes them queue, and the gate's behaviour is
   asserted deliberately by its own test rather than observed as flake.
+- **Reviewing the stage's own diff found five things, one of them a real
+  defect.** A command we kill has **no exit code**, and the result was reporting
+  a fabricated `-1` that the model would have passed on to the user as the
+  command's own — the header already says it timed out, so the failure line is
+  now suppressed instead. The other four are the shapes this project keeps
+  recording: `/project <slot>-cmd` spelled by two identical helpers (now
+  `CommandSlot::setter_command`), the `python()` test probe written twice minutes
+  apart (hoisted to `shared::proc::test_python` — docs/lessons.md §2's own rule
+  about the second test starting like the first), a note built before the
+  mutation and patched afterwards, and the round-budget test still asserting
+  `calls > 1` where it could assert the ceiling **came from the setting**
+  (`max_rounds: 3`, and the count is a number only the setting can produce).
 - **Adding two rows to the help overlay broke two render tests, and one of them
   was right to break.** A 44-character command label (`/project
   build-cmd|run-cmd|test-cmd [line]`) widened the aligned label column and
@@ -2193,7 +2205,16 @@ Branch `feat/code-workspace-commands`.
   that deletes the arithmetic cannot pass. A second smoke covers the finer gate —
   with no slot configured, the model asked for tests, found none, and called none
   of the three tools, because they do not exist that turn.
-- **Tests**: 2384 unit (+18), 106 `#[ignore]` (+2). Demo dumps regenerated (three
+  Full-set regression on the same stack: **41 passed / 1 failed in 834 s**, and
+  the one failure — a history read-back smoke — **passed on isolated re-run**.
+  Read as docs/lessons.md §9 says to read it: the union of the runs is green and
+  no failure repeated. The diff supports that reading rather than only the
+  re-run doing so — round counting for *counting* tools is byte-for-byte what it
+  was (`self.round >= self.max_rounds`, unchanged), the history gate is
+  untouched, and the compaction block is built by the same call as before. Worth
+  running at all because `effective_tool_ids` and `build_request` sit on every
+  turn, not only on one with a project.
+- **Tests**: 2388 unit (+22), 106 `#[ignore]` (+2). Demo dumps regenerated (three
   more catalog tools move the displayed count), and the screenshots with them.
   New dependency `libc`, unix-only and one call wide (`killpg`); the Windows half
   of the same job is the `windows-sys` Job Object already in the graph.

@@ -3,7 +3,6 @@
 //! See docs/code-workspace.md, spec §9.12.
 
 use super::*;
-use crate::entities::workspace::CommandSlot;
 use crate::features::project_command::ProjectProgress;
 
 impl ChatScreen {
@@ -70,7 +69,7 @@ impl ChatScreen {
                     // here, or the answer is a dead end (docs/lessons.md §4).
                     None => self.loc.tf(
                         "ui.project.command_none",
-                        &[("slot", slot.key()), ("cmd", &slash_command(slot))],
+                        &[("slot", slot.key()), ("cmd", &slot.setter_command())],
                     ),
                 };
                 self.push_note(&msg);
@@ -100,15 +99,10 @@ impl ChatScreen {
     }
 }
 
-/// The `/project` subcommand that fills `slot` — what a "nothing here" note
-/// points at.
-fn slash_command(slot: CommandSlot) -> String {
-    format!("/project {}-cmd", slot.key())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::workspace::CommandSlot;
 
     /// Every outcome must produce a visible note: a command that answers with
     /// nothing is the silence the command-only-control track exists to remove
