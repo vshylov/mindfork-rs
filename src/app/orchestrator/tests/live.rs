@@ -46,7 +46,7 @@ async fn fill_then_compact(
 /// the default profile to exactly `tools` — the "remove the alternative" rule
 /// the tool smokes share: a smoke must not depend on the model's mood not to
 /// take a shortcut. Returns `(profile id, the bootstrap chat's id)`.
-async fn narrow_profile_to(
+pub(super) async fn narrow_profile_to(
     cmd_tx: &UnboundedSender<AppCommand>,
     evt_rx: &mut UnboundedReceiver<AppEvent>,
     tools: Vec<crate::entities::profile::ToolId>,

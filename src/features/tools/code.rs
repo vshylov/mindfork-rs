@@ -323,6 +323,14 @@ fn numbered(lines: &[&str], from: usize, to: usize) -> String {
 /// Not following links matters twice: a link out of the project would escape the
 /// root check every *path* argument passes, and a link back into it is an
 /// endless walk.
+/// The project walker, for the stage-5 probe (`code_search_probe`): the corpus
+/// it indexes has to be the same one `code_list`/`code_grep` see, or the two
+/// arms of the measurement are not looking at the same project.
+#[cfg(test)]
+pub fn probe_walker(dir: &Path) -> ignore::Walk {
+    walker(dir, None, None)
+}
+
 fn walker(
     dir: &Path,
     max_depth: Option<usize>,

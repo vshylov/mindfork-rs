@@ -13,6 +13,10 @@ pub mod attachment;
 pub mod calc;
 pub mod chats;
 pub mod code;
+/// Throwaway probe for the stage-5 go/no-go (docs/code-workspace.md §3.7).
+/// Test builds only — nothing ships until the measurement says it should.
+#[cfg(test)]
+pub mod code_search_probe;
 pub mod confirm;
 pub mod control;
 pub mod datetime;
@@ -761,6 +765,14 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // presence rather than by a global switch.
     for tool in code::ALL {
         reg.register(Arc::new(tool));
+    }
+    // The stage-5 probe's `code_search` (docs/code-workspace.md §3.7). Behind an
+    // env var rather than plain `#[cfg(test)]`: the catalog is built from this
+    // registry, so an unconditional registration would move the tool count every
+    // committed demo dump asserts on. Set only by the probe's own command line.
+    #[cfg(test)]
+    if std::env::var("MINDFORK_CODE_SEARCH_PROBE").is_ok() {
+        reg.register(Arc::new(code_search_probe::CodeSearch));
     }
     // Reading/searching files the user attached to the chat (`/file attach`). Not
     // gated: unlike fs_read they can only reach what the user explicitly attached.
