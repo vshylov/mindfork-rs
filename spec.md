@@ -1508,7 +1508,9 @@ exist at all.
   before the feature existed. The profile's own per-tool toggles still apply on
   top, and a project attached to a profile with the tools switched off is told to
   the model as such rather than advertised (see the block below).
-- **The tools** (group "Files", off by default in the catalog, no global gate):
+- **The tools** (group "Files", no global gate, and **on** in a profile's tool
+  set by default — the project's presence is the permission, and making the user
+  attach a directory *and* tick five toggles would contradict that):
   - `code_list(path?, depth?)` — the shape of the project or of one directory,
     `.gitignore` honoured, hidden entries and `.git/` skipped, depth 2 by
     default;

@@ -744,11 +744,9 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // the user attached to this chat. Stateless - the root is per chat and comes
     // from the turn snapshot, not from config - and gated by the project's
     // presence rather than by a global switch.
-    reg.register(Arc::new(code::CodeList));
-    reg.register(Arc::new(code::CodeRead));
-    reg.register(Arc::new(code::CodeGrep));
-    reg.register(Arc::new(code::CodeEdit));
-    reg.register(Arc::new(code::CodeWrite));
+    for tool in code::ALL {
+        reg.register(Arc::new(tool));
+    }
     // Reading/searching files the user attached to the chat (`/file attach`). Not
     // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));

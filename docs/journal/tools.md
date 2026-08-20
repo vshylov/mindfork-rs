@@ -2062,5 +2062,19 @@ Branch `feat/code-workspace-edit`.
   uncommitted file with it. It cost nothing only because every edit had been
   applied by scripts kept outside the tree. docs/lessons.md §1 now says to commit
   *before* mutating and treats "I will revert it after" as the moment to commit.
+- **The duplication gate caught the family, and the fix was structural.** Five
+  `impl Tool` blocks differing only by a label, a bundle key and a schema are the
+  same tokens with different literals — 5.1% against a 3% bar, the sixth recorded
+  instance of that shape (docs/lessons.md §2). Neither escape the lesson names was
+  available: this codebase has no `macro_rules!` anywhere, and a blanket
+  `impl<T: WorkspaceTool> Tool for T` is refused by coherence. So the repetition
+  was removed rather than disguised: **one** `CodeTool` enum with one `impl Tool`
+  dispatching to five free functions. The registry now loops `code::ALL`, so a
+  new tool cannot be registered without joining the family's list.
+- **A doc/code mismatch the same pass uncovered.** Stage 1's spec text said the
+  family is "off by default in the catalog"; the code has never overridden
+  `enabled_by_default`, so it is **on**. The code is right — the project's
+  presence is the permission, and requiring a directory *and* five toggles would
+  contradict it — so the sentence was corrected rather than the behaviour.
 - **Tests**: 2366 unit (+12), 104 `#[ignore]` (+3). Demo dumps regenerated (two
   more catalog tools move the displayed count), and the screenshots with them.
