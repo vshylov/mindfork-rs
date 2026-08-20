@@ -313,6 +313,10 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.project_attach", "ui.help.project_attach"),
     ("/project detach", "ui.help.project_detach"),
     ("/project status", "ui.help.project_status"),
+    // The command slots: a project the assistant can only read is half the
+    // feature, and these two rows are the only way to give it the other half.
+    ("ui.help.k.project_cmd", "ui.help.project_cmd"),
+    ("ui.help.k.project_clear", "ui.help.project_clear"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),

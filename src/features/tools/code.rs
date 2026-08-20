@@ -2,7 +2,8 @@
 //! [docs/code-workspace.md](../../../docs/code-workspace.md)): `code_list`,
 //! `code_read`, `code_grep`, `code_edit`, `code_write` — listing, reading,
 //! searching and changing the project the user attached to this chat with
-//! `/project attach`.
+//! `/project attach` — plus `code_build`, `code_run` and `code_test`, which run
+//! the command lines the **user** typed into that project's three slots.
 //!
 //! Three properties shape everything here:
 //!
@@ -15,6 +16,11 @@
 //!   tools *narrow* access to one directory the user pointed at.
 //! - **Every path is confined by canonicalization**, so `..`, an absolute path
 //!   elsewhere and a symlink pointing out are one check rather than three.
+//! - **The model never composes a command.** The three command tools take no
+//!   arguments at all (`{}`): the line comes from `/project build-cmd` and is
+//!   run as written, so there is no argument to inject into and no slot the
+//!   model can point somewhere else. It can *read* the line, which is what lets
+//!   it tell the user their command is wrong — and that is the whole of its say.
 //! - **The read format is a contract with the model.** Lines come back as
 //!   `   12→text`, and stage 0 measured that both live model families strip
 //!   those prefixes and reproduce the payload byte-for-byte when they edit
@@ -25,6 +31,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::entities::profile::ToolId;
+use crate::entities::workspace::CommandSlot;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -33,30 +40,87 @@ pub const CODE_READ_ID: &str = "code_read";
 pub const CODE_GREP_ID: &str = "code_grep";
 pub const CODE_EDIT_ID: &str = "code_edit";
 pub const CODE_WRITE_ID: &str = "code_write";
+pub const CODE_BUILD_ID: &str = "code_build";
+pub const CODE_RUN_ID: &str = "code_run";
+pub const CODE_TEST_ID: &str = "code_test";
 
 /// The workspace family, in one place, so the registry, the gate and the system
 /// block cannot drift apart.
-pub const WORKSPACE_TOOL_IDS: [&str; 5] = [
+pub const WORKSPACE_TOOL_IDS: [&str; 8] = [
     CODE_LIST_ID,
     CODE_READ_ID,
     CODE_GREP_ID,
     CODE_EDIT_ID,
     CODE_WRITE_ID,
+    CODE_BUILD_ID,
+    CODE_RUN_ID,
+    CODE_TEST_ID,
 ];
 
 /// Every workspace tool, for the registry.
-pub const ALL: [CodeTool; 5] = [
+pub const ALL: [CodeTool; 8] = [
     CodeTool::List,
     CodeTool::Read,
     CodeTool::Grep,
     CodeTool::Edit,
     CodeTool::Write,
+    CodeTool::Command(CommandSlot::Build),
+    CodeTool::Command(CommandSlot::Run),
+    CodeTool::Command(CommandSlot::Test),
 ];
+
+/// Which of the project's command slots carry a line this turn.
+///
+/// A slot with nothing in it means its tool is **not offered at all** — a
+/// disabled tool is never advertised (spec §9.4, S12), and a `code_test` that
+/// can only answer "no command is configured" would spend a round teaching the
+/// model something the system block already says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkspaceCommands {
+    pub build: bool,
+    pub run: bool,
+    pub test: bool,
+}
+
+impl WorkspaceCommands {
+    /// The slots a project actually has lines for.
+    pub fn of(ws: &crate::entities::workspace::Workspace) -> Self {
+        Self {
+            build: ws.command(CommandSlot::Build).is_some(),
+            run: ws.command(CommandSlot::Run).is_some(),
+            test: ws.command(CommandSlot::Test).is_some(),
+        }
+    }
+
+    fn has(self, slot: CommandSlot) -> bool {
+        match slot {
+            CommandSlot::Build => self.build,
+            CommandSlot::Run => self.run,
+            CommandSlot::Test => self.test,
+        }
+    }
+}
 
 /// Whether `id` belongs to the workspace family (consulted by
 /// [`super::effective_tool_ids`], which offers them only with a project attached).
 pub fn is_workspace_tool(id: &str) -> bool {
     WORKSPACE_TOOL_IDS.contains(&id)
+}
+
+/// Whether the turn offers `id`, given what the chat has attached.
+/// `None` — not a workspace tool at all, so the caller's other gates decide.
+///
+/// The rule lives here rather than in `effective_tool_ids` because it is the
+/// family's own: a reader needs a project, and a command tool needs a project
+/// **and** a line in its slot.
+pub fn offered(id: &str, attached: bool, commands: WorkspaceCommands) -> Option<bool> {
+    if !is_workspace_tool(id) {
+        return None;
+    }
+    Some(match CodeTool::from_id(id) {
+        Some(CodeTool::Command(slot)) => attached && commands.has(slot),
+        _ => attached,
+    })
 }
 
 /// Default window of a read, in lines.
@@ -298,6 +362,11 @@ pub enum CodeTool {
     Grep,
     Edit,
     Write,
+    /// `code_build`/`code_run`/`code_test` — one variant, because the three
+    /// differ **only** in which slot they read (design fork F3). Three
+    /// variants would be three copies of one runner, which is the shape that
+    /// already cost this file a duplication-gate failure once.
+    Command(CommandSlot),
 }
 
 impl CodeTool {
@@ -309,7 +378,15 @@ impl CodeTool {
             Self::Grep => CODE_GREP_ID,
             Self::Edit => CODE_EDIT_ID,
             Self::Write => CODE_WRITE_ID,
+            Self::Command(CommandSlot::Build) => CODE_BUILD_ID,
+            Self::Command(CommandSlot::Run) => CODE_RUN_ID,
+            Self::Command(CommandSlot::Test) => CODE_TEST_ID,
         }
+    }
+
+    /// The tool this id names, if any.
+    pub fn from_id(id: &str) -> Option<Self> {
+        ALL.into_iter().find(|t| t.id() == id)
     }
 
     /// Short label for the profile's tool toggles.
@@ -320,6 +397,9 @@ impl CodeTool {
             Self::Grep => "search project",
             Self::Edit => "edit project file",
             Self::Write => "write project file",
+            Self::Command(CommandSlot::Build) => "build the project",
+            Self::Command(CommandSlot::Run) => "run the project",
+            Self::Command(CommandSlot::Test) => "test the project",
         }
     }
 
@@ -331,6 +411,38 @@ impl CodeTool {
             Self::Grep => "tool.code_grep.desc",
             Self::Edit => "tool.code_edit.desc",
             Self::Write => "tool.code_write.desc",
+            Self::Command(CommandSlot::Build) => "tool.code_build.desc",
+            Self::Command(CommandSlot::Run) => "tool.code_run.desc",
+            Self::Command(CommandSlot::Test) => "tool.code_test.desc",
+        }
+    }
+
+    /// Bundle key of the one-line gloss the **system block** uses (axis A).
+    ///
+    /// Shorter than [`Self::description_key`], which the schema already carries:
+    /// the block's job is to say which of the family this turn actually has, not
+    /// to re-teach each one. Per tool rather than one sentence listing all of
+    /// them, because a profile can switch any of them off individually, and a
+    /// block naming an absent tool costs the model a turn of improvising with
+    /// the wrong ones (spec §9.7 learned this).
+    pub fn gloss_key(self) -> &'static str {
+        match self {
+            Self::List => "prompt.workspace.tool.list",
+            Self::Read => "prompt.workspace.tool.read",
+            Self::Grep => "prompt.workspace.tool.grep",
+            Self::Edit => "prompt.workspace.tool.edit",
+            Self::Write => "prompt.workspace.tool.write",
+            Self::Command(CommandSlot::Build) => "prompt.workspace.tool.build",
+            Self::Command(CommandSlot::Run) => "prompt.workspace.tool.run",
+            Self::Command(CommandSlot::Test) => "prompt.workspace.tool.test",
+        }
+    }
+
+    /// The slot this tool runs, if it is a command tool.
+    pub fn slot(self) -> Option<CommandSlot> {
+        match self {
+            Self::Command(slot) => Some(slot),
+            _ => None,
         }
     }
 
@@ -338,7 +450,13 @@ impl CodeTool {
     /// `tools.confirm_dangerous` (spec §9.8) keys on. Reading the project is not
     /// asked about, exactly as `fs_read` is not.
     fn changes_files(self) -> bool {
-        matches!(self, Self::Edit | Self::Write)
+        // A command tool is dangerous for a different reason than an edit is:
+        // it does not write a file itself, it runs the project's own code
+        // (`build.rs`, an npm script, the test suite). That is inherent to the
+        // feature and consented to twice already — the user typed the line and
+        // attached the directory — but it is exactly what someone who turns on
+        // `tools.confirm_dangerous` wants to be asked about.
+        matches!(self, Self::Edit | Self::Write | Self::Command(_))
     }
 }
 
@@ -409,6 +527,9 @@ impl Tool for CodeTool {
                 },
                 "required": ["path", "content"]
             }),
+            // No properties, deliberately: the schema is the guarantee that the
+            // model cannot add an argument, a flag or a second command.
+            Self::Command(_) => serde_json::json!({"type": "object", "properties": {}}),
         }
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
@@ -418,6 +539,7 @@ impl Tool for CodeTool {
             Self::Grep => grep(ctx, args).await,
             Self::Edit => edit(ctx, args).await,
             Self::Write => write(ctx, args).await,
+            Self::Command(slot) => run_command(ctx, *slot).await,
         }
     }
 }
@@ -813,6 +935,257 @@ async fn write(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome
         key,
         &[("path", &rel), ("n", &content.lines().count().to_string())],
     )))
+}
+
+/// One command at a time across the whole application.
+///
+/// The agentic loop is sequential anyway, so this is defence in depth rather
+/// than a queue — two builds of the same project would fight over the same
+/// `target/` directory, and the second one is never what the user wanted. A
+/// caller that cannot take the permit is told so and can try again, which is
+/// the sandbox's rule (ADR 0005) applied to a heavier subprocess.
+static COMMAND_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// How a command run ended — the three outcomes the result has to distinguish,
+/// because the next move differs for each.
+enum Ended {
+    Exited(std::process::ExitStatus),
+    TimedOut,
+    Cancelled,
+}
+
+/// `code_build`/`code_run`/`code_test` — runs the line the **user** put in
+/// `slot`, in the project root, with no shell involved.
+///
+/// One function for the three tools: they differ in which slot they read and in
+/// nothing else (design fork F3), and three copies of this would be three copies
+/// of the spawn, the timeout, the tree kill and the truncation.
+async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome> {
+    let root = workspace_root(ctx)?;
+    let ws = ctx
+        .workspace
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.no_root").to_string()))?;
+    // Not offered without a line (see `offered`), so reaching this means a stale
+    // schema or a background turn — and it still has to say who sets the line.
+    let Some(line) = ws.command(slot) else {
+        anyhow::bail!(ctx.loc.tf(
+            "tool.code.cmd.not_set",
+            &[("slot", slot.key()), ("cmd", &slot.setter_command())]
+        ));
+    };
+    // Checked here as well as when the line was set: a chat file is JSON on disk
+    // and can be edited by hand, and "the check ran once, somewhere else" is how
+    // a guard quietly stops guarding (docs/lessons.md §2).
+    if let Some(ch) = crate::shared::cmdline::shell_syntax(line) {
+        anyhow::bail!(ctx.loc.tf(
+            "tool.code.cmd.shell",
+            &[("char", &ch.to_string()), ("line", line)]
+        ));
+    }
+    let argv = crate::shared::cmdline::split(line);
+    let Some((program, args)) = argv.split_first() else {
+        anyhow::bail!(ctx.loc.tf(
+            "tool.code.cmd.not_set",
+            &[("slot", slot.key()), ("cmd", &slot.setter_command())]
+        ));
+    };
+    let Ok(_permit) = COMMAND_GATE.try_acquire() else {
+        anyhow::bail!(ctx.loc.t("tool.code.cmd.busy").to_string());
+    };
+
+    let cfg = ctx.workspace_cfg;
+    let timeout = std::time::Duration::from_secs(cfg.command_timeout_secs.max(1));
+    let started = std::time::Instant::now();
+    let (ended, stdout, stderr) =
+        spawn_and_wait(program, args, &root, timeout, &ctx.cancel).await?;
+
+    let secs = format!("{:.1}", started.elapsed().as_secs_f64());
+    let status = match &ended {
+        Ended::Exited(_) => ctx.loc.tf("tool.code.cmd.finished", &[("secs", &secs)]),
+        Ended::TimedOut => ctx.loc.tf(
+            "tool.code.cmd.timed_out",
+            &[("secs", &cfg.command_timeout_secs.to_string())],
+        ),
+        Ended::Cancelled => ctx.loc.t("tool.code.cmd.cancelled").to_string(),
+    };
+    // The command line first, then how it ended: the model has to be able to
+    // quote the line back when it tells the user the command itself is wrong,
+    // which is the only influence over it this design gives the model at all.
+    let header = format!("{line}\n{status}");
+    let limit = cfg.output_limit_chars.max(200);
+    // A command we killed has no exit code at all. The header already says it
+    // timed out or was stopped, so the failure line is suppressed rather than
+    // filled with a fabricated `-1` — which the model would otherwise quote back
+    // to the user as the command's exit code.
+    let (success, code) = match &ended {
+        Ended::Exited(st) => (st.success(), st.code()),
+        Ended::TimedOut | Ended::Cancelled => (true, None),
+    };
+    Ok(ToolOutcome::text(super::present::format_console(
+        Some(&header),
+        &clip(&strip_ansi(&stdout), limit, ctx.loc),
+        &clip(&strip_ansi(&stderr), limit, ctx.loc),
+        success,
+        code,
+        ctx.loc,
+    )))
+}
+
+/// Spawns the command, drains both pipes concurrently, and ends the **tree** on
+/// a timeout or on `Esc`.
+///
+/// Two things here are deliberate and easy to get wrong:
+///
+/// - stdout and stderr are drained by tasks of their own. Waiting on the process
+///   while a pipe fills is the classic deadlock, and a compiler fills stderr.
+/// - partial output is **kept** when the command is killed. The Python sandbox
+///   discards it, which is right for a script whose value is its final answer,
+///   and wrong for a build, whose first errors arrived in the first second.
+async fn spawn_and_wait(
+    program: &str,
+    args: &[String],
+    root: &Path,
+    timeout: std::time::Duration,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<(Ended, String, String)> {
+    use tokio::io::AsyncReadExt;
+
+    // Resolved the way a shell would, so one command line works on both
+    // platforms: Rust does not complete a bare name from `PATHEXT` and
+    // `cmd.exe` does, which is why `npm test` needs `npm.cmd` on Windows.
+    let resolved = crate::shared::mcp::resolve_command(program);
+    let mut cmd = match &resolved {
+        Some(path) => tokio::process::Command::new(path),
+        None => tokio::process::Command::new(program),
+    };
+    cmd.args(args)
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // Colour is escape codes in a pipe, and this output is read by a model
+        // and drawn by our own renderer. Ask for it to be off rather than only
+        // stripping it afterwards.
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // No console window (CREATE_NO_WINDOW): the TUI owns this terminal, and
+        // a build popping up a console would repaint over it.
+        cmd.creation_flags(0x0800_0000);
+    }
+    crate::shared::proc::prepare_group(&mut cmd);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!(format!("{program}: {e}")))?;
+    let mut guard = crate::shared::proc::TreeGuard::assign_group(&child);
+
+    let mut out_pipe = child.stdout.take().expect("stdout piped");
+    let mut err_pipe = child.stderr.take().expect("stderr piped");
+    let out_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = out_pipe.read_to_end(&mut buf).await;
+        buf
+    });
+    let err_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = err_pipe.read_to_end(&mut buf).await;
+        buf
+    });
+
+    let ended = tokio::select! {
+        status = child.wait() => match status {
+            Ok(st) => Ended::Exited(st),
+            Err(e) => return Err(anyhow::anyhow!(format!("{program}: {e}"))),
+        },
+        _ = tokio::time::sleep(timeout) => Ended::TimedOut,
+        _ = cancel.cancelled() => Ended::Cancelled,
+    };
+    if !matches!(ended, Ended::Exited(_)) {
+        // The tree, not the process: `cargo` is a launcher, and killing it alone
+        // leaves the `rustc` children it started compiling.
+        guard.kill();
+        let _ = child.start_kill();
+    }
+    let _ = child.wait().await;
+    guard.disarm();
+    // The pipes close with the processes holding them, so these finish now — and
+    // they carry whatever was printed before the kill.
+    let stdout = out_task.await.unwrap_or_default();
+    let stderr = err_task.await.unwrap_or_default();
+    Ok((
+        ended,
+        String::from_utf8_lossy(&stdout).into_owned(),
+        String::from_utf8_lossy(&stderr).into_owned(),
+    ))
+}
+
+/// Removes ANSI escape sequences from captured output.
+///
+/// `NO_COLOR` is a convention, not a guarantee: a tool that ignores it would
+/// otherwise put raw escapes into the model's context and into a feed that draws
+/// them as literal text.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            // CSI — parameters and intermediates, then one final byte.
+            Some('[') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC — runs to BEL or ST; a terminal title is the common case.
+            Some(']') => {
+                chars.next();
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {
+                chars.next();
+            }
+        }
+    }
+    out
+}
+
+/// Caps one stream, keeping the **head and the tail** (design fork F12).
+///
+/// A compiler puts its first errors at the top and its summary at the bottom,
+/// and those are the two things worth reading; a tail-only cut — which is what
+/// `python_exec` does, correctly, for a script — would throw away the errors and
+/// keep the count of them.
+fn clip(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
+    let total = s.chars().count();
+    if total <= max {
+        return s.to_string();
+    }
+    let head_len = max / 2;
+    let tail_len = max - head_len;
+    let head: String = s.chars().take(head_len).collect();
+    let tail: String = s.chars().skip(total - tail_len).collect();
+    let note = loc.tf(
+        "tool.code.cmd.truncated",
+        &[("n", &(total - max).to_string())],
+    );
+    format!("{head}\n{note}\n{tail}")
 }
 
 #[cfg(test)]
@@ -1410,5 +1783,239 @@ mod tests {
             assert!(is_workspace_tool(id), "{id}");
         }
         assert!(!is_workspace_tool("fs_read"));
+    }
+
+    // ---- the command slots (spec §9.12) ----
+
+    /// The command tests run one at a time.
+    ///
+    /// Not a fixture nicety: [`COMMAND_GATE`] is process-wide by design — one
+    /// project command at a time, whichever chat asked — so two tests spawning
+    /// commands in parallel make each other fail with the "busy" refusal, and
+    /// which one loses depends on the scheduler. Taking this first makes them
+    /// queue instead, and the gate's own behaviour is asserted deliberately by
+    /// `a_second_command_is_refused_while_one_runs`.
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// A fixture whose project carries `line` in `slot`.
+    fn with_command(slot: CommandSlot, line: &str) -> Fixture {
+        let mut f = fixture(&[("a.rs", "fn main() {}\n")]);
+        let ws = f.ctx.workspace.as_mut().expect("the fixture attaches one");
+        ws.set_command(slot, Some(line.to_string()));
+        f
+    }
+
+    /// The tool is not offered without a line, so a call that arrives anyway is
+    /// a stale schema — and it still has to name **who** can set the line and
+    /// with which command, or the model tries another tool instead of telling
+    /// the user (docs/lessons.md §4).
+    #[tokio::test]
+    async fn a_slot_with_no_line_names_the_command_that_fills_it() {
+        let f = fixture(&[]);
+        for slot in CommandSlot::ALL {
+            let err = CodeTool::Command(slot)
+                .invoke(&f.ctx, serde_json::json!({}))
+                .await
+                .expect_err("no line means no run");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(&format!("/project {}-cmd", slot.key())),
+                "{slot:?}: {msg}"
+            );
+        }
+    }
+
+    /// The shell check runs at execution time too, not only when the line was
+    /// typed: a chat file is JSON on disk and can be edited by hand, and a guard
+    /// that only lives at one end of the path is one refactor from being gone
+    /// (docs/lessons.md §2). The refusal names the character and the way out.
+    #[tokio::test]
+    async fn a_pipeline_that_reached_the_tool_is_refused_by_name() {
+        let f = with_command(CommandSlot::Build, "cargo build 2>&1 | tee log.txt");
+        let err = CodeTool::Command(CommandSlot::Build)
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .expect_err("a pipeline cannot run without a shell");
+        let msg = err.to_string();
+        assert!(msg.contains('|') || msg.contains('>'), "{msg}");
+        assert!(
+            msg.contains("cargo build 2>&1 | tee log.txt"),
+            "the line the user typed must be quoted back: {msg}"
+        );
+        // And nothing was spawned: the file the pipeline would have written
+        // must not exist.
+        assert!(!f.dir.path().join("log.txt").exists());
+    }
+
+    /// The ordinary path: output, exit code and the command line all reach the
+    /// model, in the shape `present::parse_console` reads back.
+    #[tokio::test]
+    async fn a_command_reports_its_output_and_its_exit_code() {
+        let _serial = SERIAL.lock().await;
+        let Some(py) = crate::shared::proc::test_python() else {
+            println!("SKIP: no python interpreter for the command fixture");
+            return;
+        };
+        let f = with_command(
+            CommandSlot::Test,
+            &format!("{py} -c \"import sys; print('out'); sys.stderr.write('err'); sys.exit(3)\""),
+        );
+        let out = CodeTool::Command(CommandSlot::Test)
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("command:"), "{out}");
+        assert!(out.contains("out"), "stdout is missing: {out}");
+        assert!(out.contains("err"), "stderr is missing: {out}");
+        assert!(out.contains('3'), "the exit code is missing: {out}");
+        // The whole point of the shape: the feed renders it as a console rather
+        // than as flat text.
+        let console = super::super::present::present(
+            CODE_TEST_ID,
+            "{}",
+            &out,
+            super::super::present::ArgDetail::Compact,
+        );
+        assert!(
+            console
+                .result
+                .iter()
+                .any(|b| matches!(b, super::super::present::ToolBlock::Console(_))),
+            "the result must render as a console: {console:?}"
+        );
+    }
+
+    /// The command runs **in the project**, not wherever the application was
+    /// started from. Everything a build command does — finding a manifest,
+    /// writing `target/` — depends on it.
+    #[tokio::test]
+    async fn a_command_runs_in_the_project_root() {
+        let _serial = SERIAL.lock().await;
+        let Some(py) = crate::shared::proc::test_python() else {
+            println!("SKIP: no python interpreter for the command fixture");
+            return;
+        };
+        let f = with_command(
+            CommandSlot::Run,
+            &format!("{py} -c \"import pathlib; pathlib.Path('here.txt').write_text('x')\""),
+        );
+        CodeTool::Command(CommandSlot::Run)
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(
+            f.dir.path().join("here.txt").is_file(),
+            "the command's working directory was not the project root"
+        );
+    }
+
+    /// A command that outruns the limit is stopped — and what it printed first
+    /// is **kept**. This is the deliberate inverse of the Python sandbox, which
+    /// discards partial output: a build's first errors arrive in its first
+    /// second, and throwing them away because the build was slow wastes the
+    /// whole wait (docs/code-workspace.md §3.3).
+    #[tokio::test]
+    async fn a_timed_out_command_keeps_what_it_printed() {
+        let _serial = SERIAL.lock().await;
+        let Some(py) = crate::shared::proc::test_python() else {
+            println!("SKIP: no python interpreter for the command fixture");
+            return;
+        };
+        let mut f = with_command(
+            CommandSlot::Build,
+            &format!(
+                "{py} -c \"import sys,time; print('early'); sys.stdout.flush(); time.sleep(60)\""
+            ),
+        );
+        f.ctx.workspace_cfg.command_timeout_secs = 1;
+        let out = CodeTool::Command(CommandSlot::Build)
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("early"), "partial output was discarded: {out}");
+        // And it says it timed out rather than presenting the fragment as the
+        // whole answer.
+        let timed_out = f.ctx.loc.tf("tool.code.cmd.timed_out", &[("secs", "1")]);
+        assert!(out.contains(&timed_out), "{out}");
+        // A killed command has no exit code, so none is reported. `-1` here
+        // would be a number we invented, and the model would pass it on to the
+        // user as the command's own.
+        assert!(
+            !out.contains("-1"),
+            "a fabricated exit code for a killed command: {out}"
+        );
+    }
+
+    /// One command at a time, across the whole application. Two builds of one
+    /// project would fight over the same `target/`, and the second was never
+    /// what the user wanted — so the refusal is the answer, and it says to wait
+    /// rather than leaving the model to guess (docs/lessons.md §4).
+    #[tokio::test]
+    async fn a_second_command_is_refused_while_one_runs() {
+        let Some(py) = crate::shared::proc::test_python() else {
+            println!("SKIP: no python interpreter for the command fixture");
+            return;
+        };
+        let _serial = SERIAL.lock().await;
+        let slow = with_command(
+            CommandSlot::Run,
+            &format!("{py} -c \"import time; time.sleep(30)\""),
+        );
+        let mut first = slow;
+        first.ctx.workspace_cfg.command_timeout_secs = 1;
+        let ctx = first.ctx.clone();
+        let running = tokio::spawn(async move {
+            CodeTool::Command(CommandSlot::Run)
+                .invoke(&ctx, serde_json::json!({}))
+                .await
+        });
+        // Wait until the permit is actually taken, rather than racing the spawn.
+        for _ in 0..100 {
+            if COMMAND_GATE.available_permits() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let second = with_command(CommandSlot::Build, &format!("{py} -c \"print(1)\""));
+        let err = CodeTool::Command(CommandSlot::Build)
+            .invoke(&second.ctx, serde_json::json!({}))
+            .await
+            .expect_err("the second command must be refused, not queued");
+        assert!(
+            err.to_string() == second.ctx.loc.t("tool.code.cmd.busy"),
+            "the refusal must name the reason: {err}"
+        );
+        let _ = running.await;
+    }
+
+    /// Truncation keeps the head **and** the tail (design fork F12): a compiler
+    /// puts its first errors at the top and its summary at the bottom, and a
+    /// tail-only cut — right for a script — would keep the count of errors and
+    /// throw away the errors.
+    #[test]
+    fn clipping_keeps_both_ends() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let body: String = (1..=200).map(|i| format!("line {i}\n")).collect();
+        let clipped = clip(&body, 300, loc);
+        assert!(clipped.contains("line 1\n"), "the head is gone: {clipped}");
+        assert!(clipped.contains("line 200"), "the tail is gone: {clipped}");
+        assert!(
+            !clipped.contains("line 100\n"),
+            "the middle should have gone instead: {clipped}"
+        );
+        // Short output passes through untouched — the common case must not grow
+        // a note about nothing.
+        assert_eq!(clip("short", 300, loc), "short");
+    }
+
+    /// `NO_COLOR` is a convention, not a guarantee. Escapes that survive it
+    /// would otherwise reach the model's context and be drawn as literal text.
+    #[test]
+    fn ansi_escapes_are_stripped() {
+        assert_eq!(strip_ansi("\u{1b}[31merror\u{1b}[0m: x"), "error: x");
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}ok"), "ok");
+        assert_eq!(strip_ansi("plain"), "plain");
     }
 }

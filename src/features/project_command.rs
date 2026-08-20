@@ -1,7 +1,9 @@
 //! Parses the code-workspace slash-command in the input box
-//! (`/project attach <dir>`, `/project detach`, `/project status`). Pure,
-//! testable logic: the chat screen calls it on send; a recognized command turns
-//! into an intent, an unrecognized string goes out as an ordinary message.
+//! (`/project attach <dir>`, `/project detach`, `/project status`, and the three
+//! command slots — `/project build-cmd|run-cmd|test-cmd [line]`,
+//! `/project clear build|run|test`). Pure, testable logic: the chat screen calls
+//! it on send; a recognized command turns into an intent, an unrecognized string
+//! goes out as an ordinary message.
 //! Error messages are localized in the interface language (axis B) — the caller
 //! passes its `Locale`.
 //!
@@ -19,6 +21,7 @@
 //!
 //! See docs/code-workspace.md, spec §9.12.
 
+use crate::entities::workspace::CommandSlot;
 use crate::shared::i18n::Locale;
 
 /// A recognized `/project` command.
@@ -30,6 +33,25 @@ pub enum ProjectCommand {
     Detach,
     /// Report what is attached to the current chat.
     Status,
+    /// Set, show or clear one command slot. One variant rather than three,
+    /// because everything downstream of it — the intent, the command, the
+    /// orchestrator handler, the note — is one path parameterized by the slot
+    /// and the action (design fork F3).
+    Slot {
+        slot: CommandSlot,
+        action: SlotAction,
+    },
+}
+
+/// What a `/project <slot>-cmd …` or `/project clear <slot>` asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlotAction {
+    /// Store this line, verbatim.
+    Set(String),
+    /// Report what is stored.
+    Show,
+    /// Store nothing.
+    Clear,
 }
 
 /// Outcome of a `/project` command, for the feed note.
@@ -39,8 +61,26 @@ pub enum ProjectProgress {
     Attached { root: String, name: String },
     /// The project was detached (`root` — what it had been).
     Detached { root: String },
-    /// `/project status`: the attached root, or `None` for "nothing attached".
-    Status { root: Option<String> },
+    /// `/project status`: the attached root, or `None` for "nothing attached",
+    /// plus every slot and what it holds. The slot list is always all three —
+    /// a status that hides the empty ones cannot be read as "these are the
+    /// commands the assistant has", which is the question being asked.
+    Status {
+        root: Option<String>,
+        commands: Vec<(CommandSlot, Option<String>)>,
+    },
+    /// One slot was set to `line`.
+    CommandSet { slot: CommandSlot, line: String },
+    /// One slot's current line, or `None` when it has none.
+    CommandShown {
+        slot: CommandSlot,
+        line: Option<String>,
+    },
+    /// One slot was unset (`had` — whether there was anything to unset).
+    CommandCleared { slot: CommandSlot, had: bool },
+    /// The line was refused: it contains shell syntax this application does not
+    /// run (`char`), and the answer names the route that does work.
+    CommandRefused { line: String, ch: char },
     /// The command failed (no such directory, not a directory, no active chat…).
     Failed(String),
 }
@@ -67,10 +107,42 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<ProjectCommand, String>
         Some(path) => Ok(ProjectCommand::Attach { path }),
         None => Err(loc.tf("ui.project.err.missing_path", &[("usage", usage())])),
     };
-    Some(match sub.to_ascii_lowercase().as_str() {
+    let sub_lower = sub.to_ascii_lowercase();
+    // The three slots are one subcommand with three names: `<slot>-cmd`. Written
+    // as a lookup rather than three arms, because three arms is where the
+    // fourth-slot copy-paste bug lives, and because the slot vocabulary already
+    // exists (`CommandSlot::ALL`).
+    if let Some(slot) = sub_lower.strip_suffix("-cmd").and_then(CommandSlot::parse) {
+        let action = match crate::features::slash::argument(&rest) {
+            // A line is stored **verbatim**, quotes and all: it is a command
+            // line, not a path, and `argument` strips the outer quotes a path
+            // needs. `"cargo test"` as a whole-line quote would otherwise become
+            // one program named `cargo test`.
+            Some(_) => SlotAction::Set(rest.join(" ").trim().to_string()),
+            None => SlotAction::Show,
+        };
+        return Some(Ok(ProjectCommand::Slot { slot, action }));
+    }
+    Some(match sub_lower.as_str() {
         "attach" => attach(),
         "detach" => Ok(ProjectCommand::Detach),
         "status" => Ok(ProjectCommand::Status),
+        // Clearing is its own subcommand rather than "set to an empty line": a
+        // command line can legitimately be any string, so an empty argument is
+        // ambiguous where a word is not (design §3.1).
+        "clear" => match crate::features::slash::argument(&rest).as_deref() {
+            Some(word) => match CommandSlot::parse(word) {
+                Some(slot) => Ok(ProjectCommand::Slot {
+                    slot,
+                    action: SlotAction::Clear,
+                }),
+                None => Err(loc.tf(
+                    "ui.project.err.unknown_slot",
+                    &[("slot", word), ("usage", usage())],
+                )),
+            },
+            None => Err(loc.tf("ui.project.err.missing_slot", &[("usage", usage())])),
+        },
         _ => Err(loc.tf(
             "ui.project.err.unknown_subcommand",
             &[("sub", sub), ("usage", usage())],
@@ -121,6 +193,61 @@ mod tests {
         );
     }
 
+    /// The three slots and the clear word, in one loop over the vocabulary: a
+    /// per-slot test trio is the sliding self-duplicate the gate reads as one
+    /// block written three times (docs/lessons.md §2), and it is also how a
+    /// fourth slot would get forgotten.
+    #[test]
+    fn every_slot_sets_shows_and_clears() {
+        for slot in CommandSlot::ALL {
+            let key = slot.key();
+            assert_eq!(
+                parse(&format!("/project {key}-cmd cargo build --offline"), ru())
+                    .unwrap()
+                    .unwrap(),
+                ProjectCommand::Slot {
+                    slot,
+                    action: SlotAction::Set("cargo build --offline".into())
+                }
+            );
+            assert_eq!(
+                parse(&format!("/project {key}-cmd"), ru())
+                    .unwrap()
+                    .unwrap(),
+                ProjectCommand::Slot {
+                    slot,
+                    action: SlotAction::Show
+                }
+            );
+            assert_eq!(
+                parse(&format!("/project clear {key}"), ru())
+                    .unwrap()
+                    .unwrap(),
+                ProjectCommand::Slot {
+                    slot,
+                    action: SlotAction::Clear
+                }
+            );
+        }
+    }
+
+    /// A command line is stored as typed. The parser that handles `/project
+    /// attach` strips outer quotes because a Windows path arrives quoted — and
+    /// doing that to a command line would turn `"cargo test"` into a single
+    /// program with a space in its name.
+    #[test]
+    fn a_command_line_keeps_its_own_quoting() {
+        assert_eq!(
+            parse(r#"/project test-cmd cargo test --test "my thing""#, ru())
+                .unwrap()
+                .unwrap(),
+            ProjectCommand::Slot {
+                slot: CommandSlot::Test,
+                action: SlotAction::Set(r#"cargo test --test "my thing""#.into())
+            }
+        );
+    }
+
     #[test]
     fn a_non_command_is_left_alone() {
         assert!(parse("project attach x", ru()).is_none());
@@ -144,7 +271,13 @@ mod tests {
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             let usage = loc.t("ui.project.usage");
-            for input in ["/project", "/project attach", "/project frobnicate"] {
+            for input in [
+                "/project",
+                "/project attach",
+                "/project frobnicate",
+                "/project clear",
+                "/project clear frobnicate",
+            ] {
                 let Some(Err(msg)) = parse(input, loc) else {
                     panic!("{lang:?}: {input} must be a localized refusal");
                 };

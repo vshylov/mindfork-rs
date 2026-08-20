@@ -8,7 +8,8 @@ is done this file moves to `docs/history/`.
 results, and what they do not settle, in §7. **Stage 1 (attach + the read-only
 tools) is done** — `feat/code-workspace-core`; what it changed against the plan
 is in §7.5. **Stage 2 (editing + the journal) is done** —
-`feat/code-workspace-edit`, §7.6.
+`feat/code-workspace-edit`, §7.6. **Stage 3 (the command slots) is done** —
+`feat/code-workspace-commands`, §7.7.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -303,14 +304,53 @@ gate), locale keys in both bundles.
 | # | Fork | Options | Recommendation |
 |---|---|---|---|
 | F5 | Tool id family | `code_*` / `project_*` / `ws_*` | `code_*` — matches the `X_read`/`X_search` convention, short, no collisions (`fs_*`, `file_*` avoided per survey) |
-| F6 | Command execution | argv split + `resolve_command` / `sh -c`+`cmd /c` | argv split — predictable, reuses MCP machinery; pipelines are out of scope by design |
-| F7 | `workspace.max_rounds` default | 0 (off) / 200 | 0 — honors the requirement literally; the setting exists for those who want a ceiling |
+| F6 | Command execution | argv split + `resolve_command` / `sh -c`+`cmd /c` | **Decided (stage 3): argv split** — predictable, reuses MCP machinery; pipelines are out of scope by design, and the refusal says so (§4.1) |
+| F7 | `workspace.max_rounds` default | 0 (off) / 200 | **Superseded (stage 3): a setting of its own, default 500, `0` = no limit** (§4.1) |
 | F8 | `fs_*` relationship | untouched / hidden while a workspace is attached | untouched — orthogonal global capability, off by default anyway; revisit only if live runs show the model confusing the families |
 | F9 | Settings home | group in Tools / own section | group in Tools |
 | F10 | Hotkey | `F4` / `Ctrl+S` | `F4` (clean in VS Code and browsers; `Ctrl+S` collides with save reflexes) |
 | F11 | Index storage | `cache.db` / `data.db` | `cache.db` — derived data, disposable, out of backups |
 | F12 | Output truncation | head+tail / tail only | head+tail — first compiler errors live at the head, summaries at the tail |
 | F13 | Journal on re-attach | reset for a new root / keep per-root history | reset — the screen shows the current workspace; multi-root history is complexity nobody asked for |
+
+### 4.1. Decided before stage 3 (user, 2026-08-20)
+
+Four decisions the stage needed, taken after reading the code rather than from
+the plan's guesses. The first two were the user's call; the rest follow from what
+the survey found already built.
+
+- **The round ceiling becomes its own setting** (supersedes F7).
+  `workspace.max_rounds` — an editable field, **default 500**, and **`0` means no
+  limit**. Stage 2's `WORKSPACE_ROUND_CEILING = 200` was a constant written
+  because "exempt" and "unbounded" are different promises; the user's answer is
+  that both of the options built on it read badly — a number that cannot be
+  raised is a wall with no door, and a number that silently means "the built-in
+  default" is a field lying about its own value. So the constant becomes the
+  field's default and the field says what it does, including the way out. Turning
+  the limit off is a legitimate choice for a long refactor and it is the user's to
+  make; `Esc`, the per-command timeout and the one-at-a-time gate stay the safety
+  net underneath it. The exhaustion message names **which** of the two limits
+  ended the turn and the setting that raises it — until this stage it always
+  quoted `max_tool_rounds`, even when the workspace ceiling was what fired.
+- **Settings live in `WorkspaceSettings` on `AppConfig`** (keys `workspace.*`), as
+  §3.8 wrote, not flat in `ToolSettings` next to `python_*`/`fs_*`. That struct
+  already carries sixteen fields, stage 5 adds a fifth workspace one, and the key
+  names are the ones spec and this plan already quote.
+- **The live smoke builds with `cargo`, the unit tests with `rustc` and scripts.**
+  Stages 0 and 2 compiled their fixtures with bare `rustc` — no manifest, no
+  network — and that is still right for a fast unit test. But `rustc` has no
+  grandchildren, and the grandchild is the whole reason this stage exists: only
+  `cargo build --offline` (a dependency-free fixture crate) puts a real
+  `cargo → rustc` tree behind the kill, and only a real compiler's output is what
+  the model has to read to fix the break.
+- **Both halves of the runner already exist in the repository, in the wrong
+  place.** The Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is
+  `shared/mcp.rs::JobGuard`, written for `cmd /c npx → node`; the shell-style argv
+  splitter is `screens/settings/helpers.rs::parse_args`, and `features` cannot
+  import `screens` at all (FSD). Both are hoisted rather than copied — the stage-1
+  `FsRoot` precedent, and the duplication gate's own rule (docs/lessons.md §2).
+  What is genuinely new is the **unix** half, which MCP never needed:
+  `process_group(0)` at spawn plus `killpg` on timeout or `Esc`.
 
 ## 5. Deliberately not doing (and why)
 
@@ -356,11 +396,11 @@ Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
   `code_write`, EOL/BOM fidelity, the baseline journal, `danger()` wiring,
   round-limit exemption + backstop. Live smoke: the stage-0 scenario, now on
   production code.
-- **Stage 3 — command slots** (`feat/code-workspace-commands`):
+- **Stage 3 — command slots** (`feat/code-workspace-commands`) — **done**:
   `code_build`/`code_run`/`code_test`, `/project *-cmd|clear`, process-tree
   kill on both OSes, timeout/truncation settings, console presentation. Live
   smoke: break a fixture crate, let the model build → fix → build green.
-  Plus platform tests that a grandchild process dies on timeout.
+  Plus platform tests that a grandchild process dies on timeout. §7.7.
 - **Stage 4 — changes screen** (`feat/code-workspace-changes`): the screen,
   `similar` diffs, revert with confirm, `F4` + `/changes`. Pure UI — unit
   tests over an explicit journal fixture; no live run required (stated per
@@ -558,6 +598,56 @@ the live smokes assert the *outcome* (an approximate quote must not cost the use
 their change) while **reporting** the miss count, so the rate stays visible
 across runs instead of being assumed. If a future model family does miss, the
 count in the smoke's output is where it will show up first.
+
+### 7.7. Stage 3 — what it changed against this plan
+
+The stage delivered §3.3 as written, including the two things §1 flagged as
+missing from the repository. Four decisions differ from what §3 guessed at, and
+one part of §3.3 turned out to be already built in the wrong place.
+
+- **Nothing had to be written from scratch for the process-tree kill.** §1 said
+  "nothing in the repo kills a process tree", which was true of the *unix* half
+  only: `shared/mcp.rs::JobGuard` had been doing exactly the Windows job
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) since the MCP host shipped, for exactly
+  this reason — `cmd /c npx` → `node`. The stage hoisted it into
+  `shared/proc.rs` and added `process_group(0)` + `killpg`. The same was true of
+  the argv splitter §3.3 planned to reuse "the shell-quote splitter the MCP
+  editor already uses": it lives in `screens/settings/helpers.rs`, and `features`
+  cannot import `screens` at all, so it had to move down a layer
+  (`shared/cmdline.rs`) rather than be reused where it stood.
+- **The unix process group is opt-in, not part of the hoist.** `TreeGuard::
+  assign` keeps MCP's behaviour byte-for-byte (a Windows job, nothing on unix);
+  only `assign_group` remembers a pgid. Giving an MCP server its own process
+  group changes how signals reach it — an unrelated behaviour change, and not
+  one to smuggle into a feature PR. The split also makes the dangerous case
+  unreachable by construction: a guard with no group has no pgid to `killpg`, so
+  the application's own group id can never be the argument.
+- **The system block outgrew its sentence.** §3.6 described one block naming the
+  tools; it had already fallen a stage behind (stage 2 added the editors and
+  never updated the text), and stage 3 would have made it two. Instead of a
+  longer sentence that will drift again, the block now lists the tools **this
+  turn actually offers**, one gloss each, built from the turn's own tool set —
+  the same input `effective_tool_ids` produced. A profile with the editors off
+  cannot be told it can edit, and a slot with no line contributes nothing.
+- **`parse_console` needed one section, not a rewrite.** §3.3 promised "a
+  console block with zero new widget code", which held — but the assembler for
+  the shape lived in `python.rs` and the parser in `present.rs`. The command
+  result adds a `command:` section (the line, and how it ended), so the assembler
+  moved next to the parser (`present::format_console`) and `python_exec` now
+  delegates to it. Truncation stayed with each caller: `python_exec` drops the
+  tail, a build keeps head and tail (F12), and that is the one thing the two
+  genuinely disagree about.
+- **The one-at-a-time gate is process-wide, and the tests had to admit it.** Two
+  `#[tokio::test]`s spawning commands in parallel refuse each other, with the
+  loser decided by the scheduler. A `SERIAL` mutex makes them queue, and the
+  gate's own behaviour is asserted by a test written for it rather than
+  discovered as flake.
+
+**The live run needed no fixture surgery**, unlike stages 0 and 2: the loop
+`code_build` → real `E0277` → `code_read` → `code_edit` → `code_build`-green ran
+at the first attempt. What the stage *did* have to argue about is the build tool
+— see §4.1: `cargo build --offline` rather than a bare `rustc`, because `rustc`
+has no grandchildren and the grandchild is the reason this stage exists.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

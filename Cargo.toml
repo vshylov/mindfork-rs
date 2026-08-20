@@ -157,6 +157,14 @@ zip = { version = "2.2.2", default-features = false, features = ["deflate", "aes
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
+# `killpg` — ending a spawned process **tree** on unix (the code workspace's
+# build/run/test commands: `cargo build` outlives its own kill through the
+# `rustc` children it spawned). The Windows half of the same job is a Job Object
+# from `windows-sys` above; unix needs one libc call, so the dependency is one
+# call wide and unix-only. See shared/proc.rs, docs/code-workspace.md §3.3.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 # Assembling the vendored syntax grammars into a dump (see build.rs and
 # syntaxes/SOURCES.md). The regex engine must be the **same as the runtime's**

@@ -2514,11 +2514,33 @@ fn help_tabs_render_distinct_content() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    // The same render, scrolled to the bottom: the tab is taller than the popup.
+    let scrolled_to_end = |tab: HelpTab| -> String {
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        let help = s.help.as_mut().unwrap();
+        help.tab = tab;
+        help.scroll = usize::MAX;
+        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    };
     let text_for = |tab: HelpTab| -> String {
         let mut s = ChatScreen::new();
         s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
         s.help.as_mut().unwrap().tab = tab;
-        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        // 60 rows, not 40: two frames of a 40-row popup no longer cover the
+        // commands tab, and five rows in its middle were invisible at *both*
+        // scroll extremes — an absence that reads as a missing command.
+        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
@@ -2569,8 +2591,17 @@ fn help_tabs_render_distinct_content() {
         "commands must not be on the hotkeys tab"
     );
 
-    // "Commands": input-box commands.
-    let commands = text_for(HelpTab::Commands);
+    // "Commands": input-box commands. Read at both scroll extremes, because the
+    // list outgrew one screen when the project command slots joined it — the
+    // convention `popups::tests::commands_tab_text` already uses. Asserting
+    // against scroll 0 alone is an "everything fits" assumption that any new
+    // command eventually falsifies, and it fails in a way that reads as a
+    // missing command rather than a full page.
+    let commands = format!(
+        "{}{}",
+        text_for(HelpTab::Commands),
+        scrolled_to_end(HelpTab::Commands)
+    );
     assert!(
         commands.contains("/rag add"),
         "missing the /rag add command"

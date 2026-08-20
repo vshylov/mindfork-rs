@@ -942,10 +942,13 @@ async fn send_without_backend_emits_error() {
 /// exemption has to be **both** halves of a promise: a turn survives far past a
 /// budget that would have cut it, and it still ends.
 ///
-/// The engine here asks for `code_list` forever, with a budget of one round —
-/// without the exemption the turn would stop at the first round, and without the
-/// ceiling it would never stop at all. The wait is bounded, so a regression fails
-/// instead of hanging (docs/lessons.md §2).
+/// The engine here asks for `code_list` forever, with a budget of one round and
+/// a project ceiling of three — without the exemption the turn would stop at the
+/// first round, and without the ceiling it would never stop at all. The ceiling
+/// is read from `workspace.max_rounds` rather than from a constant, which is
+/// what the count below pins: three is a number only the setting can produce.
+/// The wait is bounded, so a regression fails instead of hanging
+/// (docs/lessons.md §2).
 #[tokio::test]
 async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
     use crate::shared::api::contract::ToolCallDelta;
@@ -966,6 +969,12 @@ async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
     let config = AppConfig {
         // One round: enough that an unexempt tool would be cut off immediately.
         max_tool_rounds: 1,
+        workspace: crate::shared::config::WorkspaceSettings {
+            // Well below the default of 500, so the turn ends quickly *and* the
+            // count proves the setting is what bounds it.
+            max_rounds: 3,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
@@ -1001,10 +1010,12 @@ async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
         .send(AppCommand::SendMessage("посмотри проект".into()))
         .unwrap();
     let mut calls = 0usize;
+    let mut errors: Vec<String> = Vec::new();
     let finished = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         while let Some(ev) = evt_rx.recv().await {
             match ev {
                 AppEvent::ToolCall { .. } => calls += 1,
+                AppEvent::Error(msg) => errors.push(msg),
                 AppEvent::Finished { .. } => return true,
                 _ => {}
             }
@@ -1017,6 +1028,19 @@ async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
     assert!(
         calls > 1,
         "a budget of one round must not stop an exempt tool: {calls} calls"
+    );
+    assert_eq!(
+        calls, 3,
+        "the ceiling must come from workspace.max_rounds: {calls} calls"
+    );
+    // And the note that ends such a turn must name the limit that fired. It
+    // quoted `max_tool_rounds` for both until stage 3 — sending the user to
+    // change a setting that was not the problem (docs/lessons.md §4).
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let expected = loc.tf("loop.workspace_round_limit_reached", &[("max_rounds", "3")]);
+    assert!(
+        errors.contains(&expected),
+        "the project limit must name itself: {errors:?}"
     );
     drop(cmd_tx);
     handle.await.unwrap();

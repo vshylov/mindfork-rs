@@ -758,6 +758,34 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
+        // The code workspace (spec §9.12). A group in "Tools" rather than a
+        // section of its own (design fork F9): three numbers do not make a
+        // section, and the capability's own gate is a *project*, which the user
+        // attaches from the chat — there is nothing to switch on here.
+        let ws = &self.config.workspace;
+        rows.extend(grouped(
+            loc.t("ui.settings.group.workspace"),
+            vec![
+                num_field(
+                    FieldId::WsTimeout,
+                    loc.t("ui.settings.field.workspace_timeout"),
+                    ws.command_timeout_secs,
+                )
+                .describe(loc.t("ui.settings.desc.workspace_timeout")),
+                num_field(
+                    FieldId::WsOutput,
+                    loc.t("ui.settings.field.workspace_output"),
+                    ws.output_limit_chars,
+                )
+                .describe(loc.t("ui.settings.desc.workspace_output")),
+                num_field(
+                    FieldId::WsMaxRounds,
+                    loc.t("ui.settings.field.workspace_max_rounds"),
+                    ws.max_rounds,
+                )
+                .describe(loc.t("ui.settings.desc.workspace_max_rounds")),
+            ],
+        ));
         rows
     }
 

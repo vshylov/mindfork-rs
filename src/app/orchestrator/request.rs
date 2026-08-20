@@ -93,9 +93,12 @@ pub(super) struct PromptContext<'a> {
     /// Whether this turn offers `history_read`/`history_search` — the summary
     /// block only names them when it does (see [`inject_compaction`]).
     pub history_tools: bool,
-    /// Whether this turn offers the `code_*` tools — the workspace block only
-    /// describes them when it does (see [`inject_workspace`]).
-    pub workspace_tools: bool,
+    /// The tools this turn actually offers. The workspace block names the
+    /// `code_*` ones it finds here and no others — a bool would have been enough
+    /// while the family was read-only, and stopped being enough the moment the
+    /// block had to say whether the assistant can *change* the project and
+    /// which commands it can run (see [`inject_workspace`]).
+    pub offered_tools: &'a [crate::entities::profile::ToolId],
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -129,7 +132,7 @@ pub(super) fn build_request(
         cx.loc,
     );
     ChatRequest {
-        system: inject_workspace(system, chat.workspace.as_ref(), cx.workspace_tools, cx.loc),
+        system: inject_workspace(system, chat.workspace.as_ref(), cx.offered_tools, cx.loc),
         messages: chat.messages[upto..]
             .iter()
             .filter_map(|m| message_to_api(m, cx.loc))
@@ -148,35 +151,62 @@ pub(super) fn build_request(
 ///
 /// Two rules, both learned the hard way (docs/lessons.md §4):
 ///
-/// - the block **names the tools that reach the project**, and is only emitted
-///   when the turn actually offers them — a profile can have them switched off
-///   while a project is attached, and a block promising an absent tool is how a
-///   model spends a turn improvising with the wrong ones;
+/// - the block **names the tools this turn actually offers**, one by one, and
+///   nothing else — a profile can have any of them switched off while a project
+///   is attached, and a block promising an absent tool is how a model spends a
+///   turn improvising with the wrong ones;
 /// - it marks the root as **data, not instruction**, the way the attachment
 ///   block marks file content: a path is user-supplied text arriving in the
 ///   system prompt (spec §13.4).
+///
+/// The command lines are quoted **verbatim**. The model cannot change them, pass
+/// arguments to them or compose new ones — the tools take no arguments at all —
+/// but it can read them, which is what lets it tell the user their own command is
+/// the thing that is wrong.
 pub(super) fn inject_workspace(
     system: Option<String>,
     workspace: Option<&crate::entities::workspace::Workspace>,
-    tools: bool,
+    offered: &[crate::entities::profile::ToolId],
     loc: &Locale,
 ) -> Option<String> {
+    use crate::features::tools::code::CodeTool;
+
     // No project — `system` passes through untouched, and a request from a chat
     // without one is byte-identical to what the app sent before this feature.
     let Some(ws) = workspace else {
         return system;
     };
-    let reach = if tools {
-        loc.t("prompt.workspace.tools")
-    } else {
+    let has = |tool: CodeTool| offered.iter().any(|id| id.as_str() == tool.id());
+    let available: Vec<CodeTool> = crate::features::tools::code::ALL
+        .into_iter()
+        .filter(|&t| has(t))
+        .collect();
+    let reach = if available.is_empty() {
         // Attached, but this profile cannot reach it. Saying so is the whole
         // point: otherwise the model reads the root as an invitation and tries
         // `fs_read`, or asks the user for something they already did.
-        loc.t("prompt.workspace.no_tools")
+        loc.t("prompt.workspace.no_tools").to_string()
+    } else {
+        let mut reach = loc.t("prompt.workspace.tools").to_string();
+        for tool in &available {
+            reach.push('\n');
+            match tool.slot() {
+                // A command tool's gloss carries the line it runs: the text is
+                // the whole of what the model knows about it.
+                Some(slot) => reach.push_str(&loc.tf(
+                    tool.gloss_key(),
+                    &[("line", ws.command(slot).unwrap_or_default())],
+                )),
+                None => reach.push_str(loc.t(tool.gloss_key())),
+            }
+        }
+        reach.push_str("\n\n");
+        reach.push_str(loc.t("prompt.workspace.rules"));
+        reach
     };
     let block = loc.tf(
         "prompt.workspace.block",
-        &[("root", &ws.root), ("name", ws.name()), ("reach", reach)],
+        &[("root", &ws.root), ("name", ws.name()), ("reach", &reach)],
     );
     Some(match system {
         Some(s) if !s.trim().is_empty() => format!("{s}\n\n{block}"),

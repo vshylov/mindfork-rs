@@ -466,6 +466,7 @@ pub(super) fn dispatch(
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,
         ChatIntent::ProjectAttach { path } => AppCommand::ProjectAttach { path },
+        ChatIntent::ProjectSlot { slot, action } => AppCommand::ProjectSlot { slot, action },
         ChatIntent::ProjectDetach => AppCommand::ProjectDetach,
         ChatIntent::ProjectStatus => AppCommand::ProjectStatus,
         ChatIntent::ImageAttach { path } => AppCommand::ImageAttach { path },

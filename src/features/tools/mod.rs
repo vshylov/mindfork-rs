@@ -129,6 +129,11 @@ pub struct ToolContext {
     /// rather than widen to the file system, which is the opposite of what
     /// `fs_read` does without `tools.fs_root`.
     pub workspace: Option<crate::entities::workspace::Workspace>,
+    /// Command-execution limits and the project round budget
+    /// (`config.workspace`, spec §9.12). A per-turn snapshot like every other
+    /// config here, so a settings edit mid-turn cannot change the timeout a
+    /// running command was started with.
+    pub workspace_cfg: crate::shared::config::WorkspaceSettings,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -167,6 +172,9 @@ pub struct ToolParams {
     /// Whether an MCP tool's image blocks may reach the model
     /// (`config.tools.mcp_images`). See [`ToolContext::mcp_images`].
     pub mcp_images: bool,
+    /// Command-execution limits for the code workspace (`config.workspace`).
+    /// See [`ToolContext::workspace_cfg`].
+    pub workspace: crate::shared::config::WorkspaceSettings,
 }
 
 impl ToolParams {
@@ -179,6 +187,7 @@ impl ToolParams {
             attachments: cfg.attachments,
             history_page_tokens: cfg.compaction.page_tokens,
             mcp_images: cfg.tools.mcp_images,
+            workspace: cfg.workspace,
         }
     }
 }
@@ -232,6 +241,7 @@ impl ToolContext {
             other_chats: turn.other_chats,
             workspace: turn.workspace,
             workspace_journal: turn.workspace_journal,
+            workspace_cfg: params.workspace,
             mcp_images: params.mcp_images,
             storage: deps.storage,
             engine: deps.engine,
@@ -574,6 +584,10 @@ pub struct ToolGates {
     pub history: bool,
     /// Whether **this chat** has a code project attached (spec §9.12).
     pub workspace: bool,
+    /// Which of that project's three command slots carry a line. A slot with
+    /// none means its tool is not offered — the same S12 rule as the pair above,
+    /// one level finer.
+    pub workspace_commands: code::WorkspaceCommands,
     /// The chat engine's cloud provider, deciding which sampling parameters
     /// exist at all (ADR 0004).
     pub sampling_provider: Option<CloudProvider>,
@@ -595,9 +609,10 @@ pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> 
             // The workspace family is gated by the *project*, not by a switch:
             // attaching one is the consent, so there is no second toggle to
             // forget, and with nothing attached the schemas never reach the
-            // prompt (the S12 rationale, spec §9.12).
-            if code::is_workspace_tool(id) {
-                return gates.workspace;
+            // prompt (the S12 rationale, spec §9.12). The family owns the rule,
+            // because a command tool also needs a line in its slot.
+            if let Some(offered) = code::offered(id, gates.workspace, gates.workspace_commands) {
+                return offered;
             }
             if id.starts_with(mcp::MCP_TOOL_PREFIX) {
                 return gates.mcp;
@@ -862,6 +877,7 @@ pub(crate) mod testkit {
             history_page_tokens: crate::shared::config::DEFAULT_COMPACTION_PAGE_TOKENS,
             attachments: crate::shared::config::AttachmentSettings::default(),
             mcp_images: true,
+            workspace: crate::shared::config::WorkspaceSettings::default(),
         }
     }
 
@@ -1338,7 +1354,43 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(attached.len(), code::WORKSPACE_TOOL_IDS.len());
+        // A project with no command lines offers the readers and the editors —
+        // and none of the three command tools, which have nothing to run.
+        assert_eq!(
+            attached.len(),
+            code::WORKSPACE_TOOL_IDS.len() - 3,
+            "a slot with no line must not be offered: {attached:?}"
+        );
+        for id in [code::CODE_BUILD_ID, code::CODE_RUN_ID, code::CODE_TEST_ID] {
+            assert!(!attached.iter().any(|t| t == id), "{id} without a line");
+        }
+
+        // Give one slot a line and exactly its tool appears. Per slot rather
+        // than for "the commands", because the wrong-slot wiring is invisible
+        // from a count (docs/lessons.md §2).
+        for slot in crate::entities::workspace::CommandSlot::ALL {
+            let mut ws = crate::entities::workspace::Workspace::new("/p");
+            ws.set_command(slot, Some("cargo build".into()));
+            let offered = effective_tool_ids(
+                &enabled,
+                &ToolGates {
+                    history: true,
+                    workspace: true,
+                    workspace_commands: code::WorkspaceCommands::of(&ws),
+                    ..Default::default()
+                },
+            );
+            let wanted = crate::features::tools::code::CodeTool::Command(slot).id();
+            assert!(
+                offered.iter().any(|t| t == wanted),
+                "{wanted} must be offered once its slot has a line: {offered:?}"
+            );
+            assert_eq!(
+                offered.len(),
+                code::WORKSPACE_TOOL_IDS.len() - 2,
+                "only this slot's tool joins: {offered:?}"
+            );
+        }
 
         // The gate is the project *and* the profile: a tool the user switched
         // off stays off with a project attached.

@@ -1476,7 +1476,7 @@ by `ToolGroup` (`Ord`).
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
-| Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). The editing pair is `danger()` (so §9.8's confirmation can park it) and journals a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds`. **No global gate**: the project's presence is the gate, so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. Stateless — the root is a per-turn snapshot (`ToolContext.workspace`), not a registry parameter |
+| Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
@@ -1556,10 +1556,35 @@ Implementation notes:
   `ignore` with `require_git(false)` — the default consults `.gitignore` only
   inside a git checkout, so an attached directory that is not a repository
   would have its ignore file disregarded. `effective_tool_ids` gates the
-  family through `code::is_workspace_tool`, and `ToolGates` carries the
-  flag — the booleans became a named struct when the eighth positional
-  argument tripped `clippy::too_many_arguments`, which also removed the
-  wrong-position hazard at the test call sites.
+  family through `code::offered`, and `ToolGates` carries the flag plus
+  `WorkspaceCommands` (which slots hold a line) — the booleans became a named
+  struct when the eighth positional argument tripped
+  `clippy::too_many_arguments`, which also removed the wrong-position hazard at
+  the test call sites. The gate rule lives in `code.rs` rather than in
+  `effective_tool_ids` because it is the family's own: a reader needs a project,
+  a command tool needs a project *and* a line.
+- **Code workspace, the command slots** — `code_build`/`code_run`/`code_test`
+  are one `CodeTool::Command(CommandSlot)` variant running one function, since
+  the three differ only in which slot they read. No shell: the line is split by
+  `shared::cmdline::split` and the program resolved by `shared::mcp::
+  resolve_command` (`PATHEXT` completion on Windows), so quoting is predictable
+  and `cmd.exe` never re-parses the arguments — at the cost that a pipeline
+  cannot run, which `shared::cmdline::shell_syntax` refuses **by name** both
+  when the line is set and when it is executed. stdout and stderr are drained by
+  tasks of their own (waiting on a process while a pipe fills is the classic
+  deadlock, and a compiler fills stderr), a timeout or `Esc` ends the whole
+  process tree through `shared::proc`, and the partial output is **kept** —
+  the deliberate inverse of the Python sandbox. One `COMMAND_GATE` semaphore
+  permit across the application, and the result is assembled by
+  `present::format_console`, which also parses it back, so the two halves of the
+  console shape cannot drift.
+- **Process trees (`shared/proc.rs`)** — `TreeGuard`, the one place that knows
+  how to end a spawned tree: a kill-on-close Job Object on Windows (hoisted out
+  of `shared/mcp.rs`, which still uses it unchanged) and `process_group(0)` +
+  `killpg` on unix, which MCP deliberately does not take — giving a server its
+  own process group changes how signals reach it. Dropping the guard kills,
+  because cancellation drops the tool's future and no cleanup of ours runs;
+  `disarm()` after reaping stops it signalling a pid the OS has since reused.
 - **`web_search`** — falls back across providers (DDG lite → DDG html →
   Mojeek → Ecosia); recognizes anti-bot throttling (HTTP 202/403/429) and
   switches providers instead of parsing an empty result set.

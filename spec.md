@@ -1479,10 +1479,10 @@ this in another chat"). Design and the decided forks —
 ### 9.12. The code workspace: `/project` and the `code_*` tools
 
 The user attaches a **project directory** to a chat, and the assistant can list,
-read and search it. Stage 1 of the track designed in
-[docs/code-workspace.md](docs/code-workspace.md); editing, the build/run/test
-command slots, the changes screen and the optional semantic index are the stages
-after it.
+read, search and change it, and run the build/run/test commands the user
+configured for it. Stages 1–3 of the track designed in
+[docs/code-workspace.md](docs/code-workspace.md); the changes screen and the
+optional semantic index are the stages after them.
 
 Deliberately **not** the same thing as `fs_read`/`fs_write`/`fs_list` (§9.3),
 which stay exactly as they are. Those are a global capability behind
@@ -1495,9 +1495,16 @@ exist at all.
   `/project detach`, `/project status`. The path may contain spaces and may be
   quoted; it is canonicalized when attached, and a path that is missing or is not
   a directory is refused with the reason. `/project attach` on a chat that
-  already has a project replaces it.
-- **Storage**: `Chat.workspace` — the canonical root, stored in the **readable**
-  form (Windows canonicalization yields `\\?\C:\…`, which would otherwise travel
+  already has a project replaces it. The command slots are set the same way —
+  `/project build-cmd|run-cmd|test-cmd [line]` (with a line: set it; without:
+  show it) and `/project clear build|run|test`. Clearing is its own subcommand
+  rather than "set to nothing", because a command line can legitimately be any
+  string, so an empty argument would be ambiguous where a word is not.
+  `/project status` lists all three slots, the empty ones included: the question
+  it answers is what the assistant can run here, and an answer that hides the
+  empty slots cannot say "none of them".
+- **Storage**: `Chat.workspace` — the canonical root and the three command
+  lines, the root stored in the **readable** form (Windows canonicalization yields `\\?\C:\…`, which would otherwise travel
   into the system prompt and every tool result). An additive field: old chat
   files read without migration, and a chat with no project writes no new key
   (ADR 0006 §8). A project is a path on *this* machine, so an imported chat never
@@ -1527,7 +1534,41 @@ exist at all.
   - `code_write(path, content)` — creates a file (with any missing directories)
     or replaces one whole. Its description sends the model to `code_edit` for a
     change inside an existing file, since a whole-file write can silently drop
-    what it did not mention.
+    what it did not mention;
+  - `code_build()`, `code_run()`, `code_test()` — run the corresponding slot's
+    line. **No arguments at all**, by schema: the line is the user's, and the
+    model can neither change it, add a flag to it, nor point it somewhere else.
+    A slot with no line means its tool is not offered.
+- **Running a command** (spec-level behaviour, `features/tools/code.rs`):
+  - **No shell.** The line is split into `argv` the way a shell would split it
+    (quotes honoured) and the program is spawned directly, completed from
+    `PATHEXT` on Windows so one line works on both platforms. A pipeline or a
+    redirect therefore cannot run, and the refusal says so **when the line is
+    set** — naming the character it found and the route that works (put the
+    steps in a script, name the script) — rather than surfacing three turns
+    later as a program that could not be found. The same check runs again at
+    execution time, because a chat file is JSON on disk and can be edited by
+    hand.
+  - **The whole process tree is killed** on the timeout and on `Esc`: a Job
+    Object on Windows, a process group and `killpg` on unix
+    (`shared/proc.rs`). Killing only the process we spawned would leave
+    `cargo`'s `rustc` children compiling — the reason this is not `kill_on_drop`
+    like the Python sandbox, which runs its interpreter *inside* the process it
+    kills.
+  - **Partial output is kept** when a command is stopped, and the answer says it
+    timed out. That is the deliberate inverse of the sandbox, which discards it:
+    a build's first errors arrive in its first second, and throwing them away
+    because the build was slow wastes the whole wait.
+  - The command runs with the project root as its working directory, with
+    `NO_COLOR=1`/`CLICOLOR=0` and any surviving ANSI escapes stripped. Output is
+    capped per stream and cut from the **middle**, keeping head and tail: a
+    compiler puts its first errors at the top and its summary at the bottom.
+  - **One at a time**, across the application: a second command is refused with
+    a message saying to wait, rather than queued — two builds of one project
+    fight over the same output directory.
+  - The result carries the command line, the duration and the exit code in the
+    same shape `python_exec` uses, so the feed renders it as a console with no
+    new widget code.
 - **The read format is a contract.** The line-number prefix is a reading aid the
   model must strip when it quotes a fragment back; stage 0 measured both live
   model families doing exactly that, byte-for-byte, including indentation
@@ -1560,21 +1601,41 @@ exist at all.
   both rest on those bytes, which exist nowhere else once the file is
   overwritten. The journal lives under the app's data root, never inside the
   user's project, and detaching the project drops it.
-- **`code_edit` and `code_write` declare themselves dangerous**, so
+- **The editing and command tools declare themselves dangerous**, so
   `tools.confirm_dangerous` (§9.8) parks them for confirmation when the user
-  wants that. The reading tools do not, exactly as `fs_read` does not.
+  wants that. The reading tools do not, exactly as `fs_read` does not. A command
+  tool is dangerous for a different reason than an edit: it runs the project's
+  own code (`build.rs`, an npm script, the test suite). That is inherent to the
+  feature and already consented to twice — the user typed the line and attached
+  the directory — but it is exactly what someone who turns the setting on wants
+  to be asked about.
 - **The `code_*` tools are excluded from the tool-round limit.** The limit exists
   to stop a model looping on *external* work, where each round is a request and
   possibly money; a code fix is read → change → check, and a budget of eight
   rounds ends it halfway. A round is counted when **any** call in it counts, so
   mixing a `web_search` into a round of reads still spends one — the exemption is
-  not a way round the limit. Exempt is not unbounded: a turn that spends 200
-  consecutive rounds inside the project ends the way the ordinary limit ends one
-  (a final round without tools), because a repeated tool call is a measured
-  failure mode of local models rather than a hypothetical one.
+  not a way round the limit. Exempt is not unbounded: a turn that spends
+  `workspace.max_rounds` consecutive rounds inside the project ends the way the
+  ordinary limit ends one (a final round without tools), because a repeated tool
+  call is a measured failure mode of local models rather than a hypothetical one.
+  That number is a setting, defaulting to **500**, and **0 switches it off** —
+  turning it off is a legitimate choice for a long refactor, and `Esc`, the
+  per-command timeout and the one-at-a-time gate remain underneath it either way.
+  The message that ends such a turn names **which** of the two limits fired and
+  the setting that raises it.
+- **Settings** (§11.6, "Tools" → "Workspace"): `workspace.command_timeout_secs`
+  (300), `workspace.output_limit_chars` (10 000 per stream) and
+  `workspace.max_rounds` (500; 0 — off). A group rather than a section of its
+  own: the capability's gate is a *project*, attached from the chat, so there is
+  nothing to switch on here.
+- **The system prompt** names the tools **this turn actually offers**, one by
+  one, and quotes each configured command line verbatim. The model reading the
+  line is deliberate: it is what lets the assistant tell the user that their own
+  command is the thing that is wrong, and it is the whole of its say over one.
 - **UI**: a feed note per command. The attach note names the root and what the
   assistant can now do; `/project status` with nothing attached names the command
-  that attaches something.
+  that attaches something; setting a slot echoes the line, and clearing one that
+  was already empty says so rather than answering with silence.
 
 ## 10. AI-companion profiles
 

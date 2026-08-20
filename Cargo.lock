@@ -2054,6 +2054,7 @@ dependencies = [
  "hkdf",
  "ignore",
  "image",
+ "libc",
  "mermaid-text",
  "pdf-extract",
  "percent-encoding",

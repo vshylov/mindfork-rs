@@ -161,6 +161,12 @@ pub enum ChatIntent {
     ProjectDetach,
     /// Report the chat's code project (command `/project status`).
     ProjectStatus,
+    /// Set, show or clear one of the project's command slots
+    /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).
+    ProjectSlot {
+        slot: crate::entities::workspace::CommandSlot,
+        action: crate::features::project_command::SlotAction,
+    },
     /// Stage an image for the next message (command `/image attach <path>`). See
     /// spec §9.10.
     ImageAttach {
