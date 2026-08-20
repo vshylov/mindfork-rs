@@ -315,4 +315,35 @@ mod tests {
         assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
         assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0);
     }
+
+    /// Was the probe's tool actually **offered**? The first measurement returned
+    /// a table in which `code_search` was never called once, and "the model
+    /// declined it" and "it was never on the menu" are different findings.
+    #[test]
+    fn probe_tool_is_registered_and_offered() {
+        if std::env::var("MINDFORK_CODE_SEARCH_PROBE").is_err() {
+            println!("SKIP: the probe registry gate is not set");
+            return;
+        }
+        let reg = super::super::standard_registry(&super::super::ToolConfig::default());
+        assert!(
+            reg.get(CODE_SEARCH_ID).is_some(),
+            "the probe tool is not in the registry"
+        );
+        let enabled: Vec<crate::entities::profile::ToolId> = vec![
+            super::super::code::CODE_GREP_ID.into(),
+            CODE_SEARCH_ID.into(),
+        ];
+        let offered = super::super::effective_tool_ids(
+            &enabled,
+            &super::super::ToolGates {
+                workspace: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            offered.iter().any(|t| t == CODE_SEARCH_ID),
+            "the gate dropped it: {offered:?}"
+        );
+    }
 }

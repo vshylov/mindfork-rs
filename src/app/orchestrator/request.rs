@@ -200,6 +200,20 @@ pub(super) fn inject_workspace(
                 None => reach.push_str(loc.t(tool.gloss_key())),
             }
         }
+        // The stage-5 probe's `code_search` (docs/code-workspace.md §3.7). It has
+        // to be named here or the measurement is void: the first run returned a
+        // table in which the tool was never called once, and the reason was this
+        // list — its schema did reach the model, but the block tells the model in
+        // words which tools it has, and the model believed the block.
+        #[cfg(test)]
+        if offered
+            .iter()
+            .any(|id| id.as_str() == crate::features::tools::code_search_probe::CODE_SEARCH_ID)
+        {
+            reach.push_str(
+                "\n- code_search \u{2014} find where something is handled by describing it in your own words",
+            );
+        }
         reach.push_str("\n\n");
         reach.push_str(loc.t("prompt.workspace.rules"));
         reach
