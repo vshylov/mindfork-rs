@@ -2042,6 +2042,9 @@ Branch `feat/code-workspace-edit`.
   now runs on the real mechanism: a project that does not compile, fixed through
   `code_edit`, with `rustc` compiling **and running** the fixture as ground truth
   so a "fix" that deletes the arithmetic cannot pass.
+  Full-set regression on the same stack: **40 passed / 0 failed in 774 s** — run
+  because the round-counting change sits on *every* turn, not only on one with a
+  project attached (docs/lessons.md §9).
 - **The commitment stage 0 left open could not be met, and that is the finding.**
   Stage 0 recorded that the refusal paths had never fired live and asked stage 2
   for a smoke that provokes a miss. Three fixtures were built to force one: a
