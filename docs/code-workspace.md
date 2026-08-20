@@ -4,9 +4,8 @@ Track design plan (stages, scope, forks). Genre per AGENTS.md §1; once the trac
 is done this file moves to `docs/history/`.
 
 **Status:** design accepted by the user on 2026-08-20 (forks F1–F4 below).
-**Stage 0 (the MVP probe) is done and is a GO on gemma-4-31b** — results and
-what they do not settle in §7; the qwen arm is pending a model swap on the live
-stack.
+**Stage 0 (the MVP probe) is done and is a GO on both model families** —
+results, and what they do not settle, in §7.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -377,10 +376,10 @@ the three command tools share one implementation parameterized by slot.
 
 ## 7. Stage 0 — probe results
 
-**Verdict: GO on gemma-4-31b** (2026-08-20). The qwen arm is pending a model
-swap on the live stack; the criterion below is per family, so the track's
-stage 1 starts on the gemma evidence and the qwen arm is run before stage 2
-commits to the edit contract.
+**Verdict: GO on both families** (2026-08-20): gemma-4-31b **5/5** and
+qwen-3.6-27b **5/5** on each of the two arms, against a bar of 3 of 5. The
+criterion is per family precisely because docs/lessons.md §9 records the two
+families flaking for *different* reasons; here neither flaked at all.
 
 Branch `spike/code-workspace-probe`: throwaway `code_read`/`code_grep`/`code_edit`
 (`src/features/tools/code.rs`, root taken from `tools.fs_root`, all three off by
@@ -398,12 +397,12 @@ model that merely explains the fix in prose (docs/lessons.md §9).
 
 - **Arm A — the compile error a user pastes.** `f64 / usize` in a file
   `main.rs` never names; the prompt is the `cargo build` output, as a user would
-  paste it. **5/5** (gemma-4-31b, `q4_0`, the live stack's llama.cpp).
+  paste it. **5/5 on both families**.
 - **Arm B — the fragment is **not** in the prompt.** A median that builds and
   prints 6 instead of 5, with no code quoted in the message, so `old_string` can
   only come from what `code_read` returned. The obvious one-line fragment
   (`        values[mid]`) occurs **twice** in the file by construction, so a
-  naive edit is refused as ambiguous. **5/5**.
+  naive edit is refused as ambiguous. **5/5 on both families**.
 
 Arm B exists because arm A cannot settle the question on its own: with the
 failing line quoted in the prompt, a model can assemble `old_string` from the
@@ -413,12 +412,20 @@ doing the thing it checks").
 
 ### 7.2. What the runs actually looked like
 
-The intended workflow emerged without being scripted, and the same shape
-repeated in all ten runs: locate → read → one edit. Arm A ran
-`code_read` then `code_edit` (2 calls); arm B ran `code_grep("median")`,
-`code_read`, sometimes a second read of `main.rs`, then `code_edit` (3–4 calls).
-**Exactly one `code_edit` per run across all ten** — no run needed a second
-attempt, and no refusal ever fired.
+The intended workflow emerged without being scripted: locate → read → one
+edit. On gemma the shape was identical in all ten runs — arm A ran `code_read`
+then `code_edit` (2 calls), arm B ran `code_grep("median")`, `code_read`,
+sometimes a second read of `main.rs`, then `code_edit` (3–4 calls).
+**Exactly one `code_edit` per run across all twenty runs of both families** —
+no run ever needed a second attempt, and no refusal ever fired.
+
+The families differed in the *route*, not the outcome, and in the direction
+the journal already predicts for a reasoning model: qwen wandered more before
+committing (2–8 tool calls on arm A against gemma's steady 2, up to 6 on arm B)
+and one arm-B run took 74 s against gemma's ~20 s. None of that reached the
+contract — whatever route it took, the edit it finally sent was exact and
+single. That is the useful shape of this result: the thing being measured was
+insensitive to the difference that usually separates these two families.
 
 The strongest single datum is arm B's argument. The model reproduced a
 **five-line** fragment byte-for-byte, indentation included, from a read that had
@@ -435,6 +442,16 @@ sending the ambiguous one line. The fix itself was minimal and correct in every
 run (`values.len() as f64` in arm A, `(values[mid - 1] + values[mid]) / 2.0` in
 arm B).
 
+The qwen arm was measured on a **rented** endpoint, since the live stack loads
+one chat model at a time: `python tools/e2e_hf.py run --chat-model qwen-3.6-27b
+--no-embed --no-alt-embed --no-mmproj --filter code_edit_probe --command "python
+tools/probe_runs.py"`. The three `--no-*` flags cut the run to the single
+endpoint the probe actually needs, and `tools/probe_runs.py` loops both arms
+inside that one deployment — ten model turns for one deploy, ~5.5 minutes of
+L40S in total. The endpoint was deleted by the gate and the deletion confirmed
+independently with `e2e_hf.py list`, which is the one property that run has to
+get right.
+
 ### 7.3. What this does *not* settle
 
 - **The refusal paths never fired live.** Because the model never missed,
@@ -442,9 +459,11 @@ arm B).
   tests only. Those messages are load-bearing by design (§3.2: a miss must say
   what to do next), so **stage 2 keeps a smoke that provokes a miss** and asserts
   the model recovers from the message rather than giving up.
-- **One model family.** gemma-4-31b only; qwen-3.6-27b is the other family the
-  live gate runs, and docs/lessons.md §9 records that two families flake for two
-  *different* reasons — a rate measured on one says nothing about the other.
+- **Two families, one quantization each** (gemma-4-31b `q4_0` on the local
+  stack, qwen-3.6-27b `Q4_K_M` on a rented endpoint). These are the two the live
+  gate runs, so the coverage matches the project's own bar — but nothing here
+  speaks for the cloud providers, which is where the edit contract will next
+  meet a model whose tool-calling differs.
 - **One fixture size.** Both fixtures are a few files of a few lines. Nothing
   here measures the contract on a 2000-line file where the read window matters,
   which is a stage-1 concern (the `offset`/`limit` half of `code_read`).
