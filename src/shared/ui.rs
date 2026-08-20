@@ -123,6 +123,58 @@ pub fn render_scrollbar(
     frame.render_stateful_widget(bar, area, &mut state);
 }
 
+/// What [`screen_chrome`] hands back: where the content goes, where the hotkey
+/// grid goes, and the grid itself.
+pub struct ScreenChrome {
+    /// Inside the panel's border — where the screen draws its own content.
+    pub inner: Rect,
+    /// The strip below the panel, for [`Self::hotkeys`] or a warning line.
+    pub status: Rect,
+    pub hotkeys: Vec<Line<'static>>,
+}
+
+/// Draws the chrome a full-screen screen opens with: a hotkey grid pinned to the
+/// bottom, and a titled panel filling everything above it.
+///
+/// Six lines that every screen here repeats verbatim — build the grid, size the
+/// status row from it, split vertically, build the panel, take its `inner`,
+/// render it. The duplication gate found the pair when the changes screen became
+/// the fourth; this is the seam the rule says to build when a new thing is a
+/// sibling of an existing one (docs/lessons.md §2). The three older screens keep
+/// their own copies for now: a mechanical refactor does not share a PR with a
+/// feature, and they are this function's obvious next callers.
+///
+/// `right` is the muted, right-aligned title some screens carry (a match count,
+/// a summary); the caller still renders `hotkeys` into `status`, because a screen
+/// with a confirmation to show puts that there instead.
+pub fn screen_chrome(
+    frame: &mut Frame,
+    palette: &Palette,
+    title: String,
+    right: Option<String>,
+    hk: &[(&str, &str, bool)],
+) -> ScreenChrome {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+    let hotkeys = palette.hotkey_grid(hk, area.width as usize);
+    let status_h = (hotkeys.len() as u16).max(1);
+    let [panel_area, status] =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+    let mut block = palette.panel(title, true);
+    if let Some(right) = right {
+        block = block.title(
+            Line::from(Span::styled(format!(" {right} "), palette.muted_style())).right_aligned(),
+        );
+    }
+    let inner = block.inner(panel_area);
+    frame.render_widget(block, panel_area);
+    ScreenChrome {
+        inner,
+        status,
+        hotkeys,
+    }
+}
+
 /// A modal confirmation: a centred, bordered box with a question and a footer
 /// naming the keys that answer it.
 ///

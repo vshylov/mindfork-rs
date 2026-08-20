@@ -1786,6 +1786,15 @@ Branch `feat/code-workspace-changes`.
   row sized its counts column to its own text, leaving the column ragged. A
   `contains()` assertion cannot see either. Rendering the screen once and reading
   it is what caught them, and both now have tests that pin the **symptom**.
+- **The duplication gate found the screen-chrome opening, and it was right.**
+  1.4%%, under the 3%% bar, so nothing was blocked — but what it matched was the
+  six lines every full-screen screen here repeats verbatim: build the hotkey
+  grid, size the status row from it, split vertically, build the titled panel,
+  take its `inner`, render it. The changes screen was the fourth copy. So the
+  new code got the seam (`shared::ui::screen_chrome`) instead of a fifth, and
+  the three older screens keep their copies for now — a mechanical refactor does
+  not share a PR with a feature, and they are the seam's obvious next callers.
+  Same disposition as stage 1's `/project` parser (docs/lessons.md §2).
 - **One hoist, and it removes a copy rather than adding one.** The confirmation
   popup has existed since the dangerous-tool track, `pub(super)` inside
   `screens::chat`; `screens::changes` is a sibling and could not reach it. It

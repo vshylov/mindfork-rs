@@ -21,13 +21,13 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::features::workspace_diff::{ChangeSet, DiffKind, FileChange, FileState};
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{confirm_popup, render_scrollbar};
+use crate::shared::ui::{confirm_popup, render_scrollbar, screen_chrome};
 
 /// How far `PageUp`/`PageDown` move the diff. Fixed rather than a screenful:
 /// the pane's height is only known at render time, and a fixed step is what the
@@ -213,11 +213,8 @@ impl ChangesScreen {
 
     /// Draws the screen full-screen.
     pub fn render(&mut self, frame: &mut Frame) {
-        let area = frame.area();
         let palette = self.palette;
         let loc = self.loc;
-        frame.render_widget(Clear, area);
-
         let hk: [(&str, &str, bool); 5] = [
             ("↑↓", loc.t("ui.changes.hk.select"), false),
             ("Tab", loc.t("ui.changes.hk.pane"), false),
@@ -225,29 +222,18 @@ impl ChangesScreen {
             ("R", loc.t("ui.changes.hk.revert"), false),
             ("Esc", loc.t("ui.changes.hk.back"), false),
         ];
-        let hotkeys = palette.hotkey_grid(&hk, area.width as usize);
-        let status_h = (hotkeys.len() as u16).max(1);
-        let [panel_area, status_area] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
-
-        let block = palette
-            .panel(
-                format!(
-                    "{} {}",
-                    palette.glyphs().title_marker,
-                    loc.t("ui.changes.title")
-                ),
-                true,
-            )
-            .title(
-                Line::from(Span::styled(
-                    format!(" {} ", self.summary()),
-                    palette.muted_style(),
-                ))
-                .right_aligned(),
-            );
-        let inner = block.inner(panel_area);
-        frame.render_widget(block, panel_area);
+        let chrome = screen_chrome(
+            frame,
+            &palette,
+            format!(
+                "{} {}",
+                palette.glyphs().title_marker,
+                loc.t("ui.changes.title")
+            ),
+            Some(self.summary()),
+            &hk,
+        );
+        let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
 
         if self.set.is_empty() {
             // Nothing changed is an answer, not a blank screen — and it names
