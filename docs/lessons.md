@@ -33,11 +33,20 @@ so read the section that matches what you are touching.
 
 **Never `git checkout -- <file>` to undo a scripted mutation.** It discards *all*
 uncommitted work in that file, not just the mutation. Commit first, back the file up,
-or apply the mutation as a reversible patch. **Recorded three times**: it cost a
+or apply the mutation as a reversible patch. **Recorded four times**: it cost a
 `Cargo.toml` feature trim plus the whole of `code.rs`, then all of `apply.rs`, then a
-third file that had to be reconstructed by hand.
+third file that had to be reconstructed by hand — and then, in the session that had
+this very entry in context, an hour of a stage's work in one file, because the
+mutation being undone was a *one-line* experiment and the revert looked
+proportionate to it. That is the shape of the trap: the command is scoped to the
+mutation in the author's head and to the file on disk. What made the fourth cheap
+was accidental — every edit had been applied by a script kept outside the tree, so
+re-running three scripts rebuilt the file. **Make that deliberate**: commit before
+mutating, and treat "I will just revert it after" as the moment to commit rather
+than the reason not to.
 — *vendored syntax grammars for 19 languages*, *MCP servers in the settings window*,
-*collapsible tool calls, and the collapse state per chat*.
+*collapsible tool calls, and the collapse state per chat*, *the code workspace —
+stage 2*.
 
 **Keep subagents out of a second build of the same crate.** An agent building in a
 *copy* of the tree poisons the shared `target/`, so `cargo test` runs artifacts

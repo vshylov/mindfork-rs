@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **The assistant can change the attached project** — it edits a file by
+  replacing an exact fragment, or writes a file whole. Every file's previous
+  content is saved before it is first touched, so a coming release can show the
+  changes and put them back; a change that cannot be saved that way is refused
+  rather than made. Turn on "confirm dangerous tool calls" in settings to approve
+  each change before it happens. Reading and editing the project no longer spend
+  the tool-call limit — a fix takes as many steps as it takes.
 - **A code project can be attached to a chat** — `/project attach <directory>`,
   `/project detach`, `/project status`. With a project attached the assistant
   can see its structure, read its files (with line numbers) and search them by

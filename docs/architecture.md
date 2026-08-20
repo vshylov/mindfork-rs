@@ -1476,7 +1476,7 @@ by `ToolGroup` (`Ord`).
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
-| Files (project) | `code_list`, `code_read`, `code_grep` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). **No global gate**: the project's presence is the gate, so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. Stateless — the root is a per-turn snapshot (`ToolContext.workspace`), not a registry parameter |
+| Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). The editing pair is `danger()` (so §9.8's confirmation can park it) and journals a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds`. **No global gate**: the project's presence is the gate, so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. Stateless — the root is a per-turn snapshot (`ToolContext.workspace`), not a registry parameter |
 | Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
@@ -1540,6 +1540,14 @@ Implementation notes:
   cancellation is `ToolContext.cancel` (a clone of the turn's token; the
   agentic loop additionally wraps any tool's `invoke` in a `select!` with it
   — Esc is never blocked).
+- **Code workspace, the change journal** (`features/workspace_journal.rs`) —
+  the pre-image of the first touch of every file, under
+  `data/workspace/<chat-id>/` (a manifest plus `baseline/<hash-of-rel-path>`).
+  Not git: the question is "what did the assistant do", which differs from "what
+  differs from HEAD" in both directions — an attached directory need not be a
+  repository, and a repository routinely carries the user's own uncommitted work.
+  The tools call it **before** writing and refuse the change if it fails; the
+  reader half (`entries`/`baseline_of`) is what the changes screen will use.
 - **Code workspace (`code.rs`)** — the root comes from the turn snapshot,
   because the registry is built per config while a project is attached per
   chat; every `invoke` therefore starts by resolving `ctx.workspace`, and a

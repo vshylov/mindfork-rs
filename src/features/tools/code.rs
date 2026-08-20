@@ -1360,6 +1360,34 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"new\r\nlines\r\n");
     }
 
+    /// A path whose directories do not exist yet is resolved against its
+    /// deepest existing ancestor, so an escape must still be caught there — a
+    /// `..` in the not-yet-existing tail is where a containment check written
+    /// for existing paths would have a hole.
+    #[tokio::test]
+    async fn a_missing_chain_cannot_be_used_to_escape() {
+        let (f, _j) = editable(&[]);
+        for path in ["new_dir/../../escaped.rs", "a/b/c/../../../../escaped.rs"] {
+            assert!(
+                CodeWrite
+                    .invoke(&f.ctx, serde_json::json!({"path": path, "content": "x"}))
+                    .await
+                    .is_err(),
+                "must be refused: {path}"
+            );
+        }
+        // The legitimate half of the same mechanism still works.
+        assert!(
+            CodeWrite
+                .invoke(
+                    &f.ctx,
+                    serde_json::json!({"path": "deep/nested/ok.rs", "content": "x"})
+                )
+                .await
+                .is_ok()
+        );
+    }
+
     #[tokio::test]
     async fn writing_outside_the_root_is_refused() {
         let (f, _j) = editable(&[]);

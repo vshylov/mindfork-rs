@@ -7,7 +7,8 @@ is done this file moves to `docs/history/`.
 **Stage 0 (the MVP probe) is done and is a GO on both model families** —
 results, and what they do not settle, in §7. **Stage 1 (attach + the read-only
 tools) is done** — `feat/code-workspace-core`; what it changed against the plan
-is in §7.5.
+is in §7.5. **Stage 2 (editing + the journal) is done** —
+`feat/code-workspace-edit`, §7.6.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -351,7 +352,7 @@ Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
   dynamic gating, the system block, `code_list`/`code_read`/`code_grep`, the
   `FsRoot` hoist, settings group, i18n, docs. Live smoke: navigate a real repo
   and answer a code question.
-- **Stage 2 — edits + journal** (`feat/code-workspace-edit`): `code_edit` /
+- **Stage 2 — edits + journal** (`feat/code-workspace-edit`) — **done**: `code_edit` /
   `code_write`, EOL/BOM fidelity, the baseline journal, `danger()` wiring,
   round-limit exemption + backstop. Live smoke: the stage-0 scenario, now on
   production code.
@@ -521,6 +522,42 @@ correctly from `code_list` + `code_grep` and never opened the file, because a
 grep hit carries the whole line. Demanding `code_read` there would have pinned
 the model to the worse route, so the smoke became two turns — one asserting the
 outcome, one asking for the file's own shape, which only a read can give.
+
+### 7.6. Stage 2 — the refusal paths, measured
+
+The stage did what §6 asked, with one addition and one thing it could not
+deliver.
+
+**The addition — a ceiling on the exemption.** §3.4 made the `code_*` family
+exempt from `max_tool_rounds` and put the backstop behind a setting defaulting to
+off. Writing the test showed why that is not enough on its own: a model repeating
+one exempt call leaves a turn that never ends, and a repeated tool call is a
+*measured* failure mode of local models. So `WORKSPACE_ROUND_CEILING = 200` bounds
+it in code — far above any real fix, and it ends the turn the way the ordinary
+limit does. The configurable number still belongs to stage 3.
+
+**What could not be delivered: a live miss.** §7.3 recorded that the refusal
+paths (`not_found`, `ambiguous`) had never fired live, and asked this stage for a
+smoke that provokes one. Three fixtures tried:
+
+1. the user quotes the line to change, with a space missing from their quote;
+2. the obvious fragment occurs twice in the file, with the request naming which
+   one to change;
+3. the stage-0 compile-error scenario.
+
+**Zero misses in seven live runs.** The model normalizes an approximate quote to
+what the file actually says, and includes the constant's name so its fragment is
+unique — both because it reads the file first, and a read tells it the truth. A
+miss appears reachable only by taking `code_read` away, which would also take
+away the recovery the refusal message asks for, making the smoke measure a dead
+end rather than the contract.
+
+So the refusal messages are **insurance rather than a hot path**. They keep their
+unit coverage — including the property that a refused edit writes nothing — and
+the live smokes assert the *outcome* (an approximate quote must not cost the user
+their change) while **reporting** the miss count, so the rate stays visible
+across runs instead of being assumed. If a future model family does miss, the
+count in the smoke's output is where it will show up first.
 
 ## 8. Documentation impact (AGENTS.md §4)
 
