@@ -155,6 +155,7 @@ pub(super) fn apply_event(
         } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
         AppEvent::FileProgress(progress) => screen.set_file_progress(progress),
+        AppEvent::ProjectProgress(progress) => screen.set_project_progress(progress),
         // Always applied to the chat screen (like `CharacterNames`): the chip
         // must be current whichever screen is visible right now.
         AppEvent::Attachments(items) => screen.set_attachments(items),
@@ -464,6 +465,9 @@ pub(super) fn dispatch(
         ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,
+        ChatIntent::ProjectAttach { path } => AppCommand::ProjectAttach { path },
+        ChatIntent::ProjectDetach => AppCommand::ProjectDetach,
+        ChatIntent::ProjectStatus => AppCommand::ProjectStatus,
         ChatIntent::ImageAttach { path } => AppCommand::ImageAttach { path },
         ChatIntent::ImageRemove { target } => AppCommand::ImageRemove { target },
         ChatIntent::ImageList => AppCommand::ImageList,

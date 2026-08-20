@@ -175,6 +175,15 @@ pub enum AppCommand {
     /// Show the active chat's attachments (the `/file list` command). The result
     /// is a `FileProgress::Listed` event.
     FileList,
+    /// Attach a code project to the active chat (the `/project attach <dir>`
+    /// command). The directory is checked and canonicalized synchronously — it
+    /// is a `stat`, not a read — and the result arrives as a `ProjectProgress`
+    /// event. See docs/code-workspace.md, spec §9.12.
+    ProjectAttach { path: String },
+    /// Detach the active chat's code project (the `/project detach` command).
+    ProjectDetach,
+    /// Report the active chat's code project (the `/project status` command).
+    ProjectStatus,
     /// Stage an image for the next message (the `/image attach <path>` command).
     /// Reading, decoding and downscaling run as a background task; the result arrives as
     /// an `ImageProgress` event. See spec §9.10.
@@ -265,11 +274,18 @@ impl AppCommand {
             | AppCommand::DeleteLastExchange
             | AppCommand::Compact
             | AppCommand::FileAttach { .. }
-            | AppCommand::FileRemove { .. } => true,
+            | AppCommand::FileRemove { .. }
+            // Attaching or detaching a project changes what this chat's turns
+            // can reach, and is stored in the chat file.
+            | AppCommand::ProjectAttach { .. }
+            | AppCommand::ProjectDetach => true,
 
             // Reading the conversation out to a file changes nothing in it —
             // the same side as `CopyChat`.
             AppCommand::ExportChat { .. }
+            // Reporting the project reads it and changes nothing, the side
+            // `FileList` is on.
+            | AppCommand::ProjectStatus
             | AppCommand::ConfirmTool { .. }
             | AppCommand::SetDraft(_)
             | AppCommand::SetFeedView(_)
@@ -506,6 +522,9 @@ pub enum AppEvent {
     /// Outcome of a `/file` command (attached/removed/list/error) — a note in the
     /// feed. See docs/file-attachments.md.
     FileProgress(FileProgress),
+    /// Outcome of a `/project` command (attached/detached/status/error) — a note
+    /// in the feed. See docs/code-workspace.md, spec §9.12.
+    ProjectProgress(crate::features::project_command::ProjectProgress),
     /// The active chat's attachment cards — for the status-bar chip (attachments
     /// cost tokens on every turn, so their presence has to be visible). Sent on
     /// chat activation and after every attach/remove, like `CharacterNames`.

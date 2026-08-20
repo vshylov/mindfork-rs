@@ -82,6 +82,13 @@ pub struct Chat {
     /// new key (ADR 0006 F12).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub renamed_manually: bool,
+    /// The code project attached to this chat (`/project attach`, spec §9.12).
+    /// While it is `None` the `code_*` tools are not offered to the model at
+    /// all — attaching a directory *is* the consent, so there is no second
+    /// switch to forget. Additive field: old chat files read without migration,
+    /// and a chat with no project writes no new key (ADR 0006 F12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<crate::entities::workspace::Workspace>,
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
@@ -204,6 +211,7 @@ impl Chat {
             reflected_upto: None,
             reflected_at: None,
             renamed_manually: false,
+            workspace: None,
             is_hidden: false,
         }
     }
@@ -300,6 +308,32 @@ pub struct ChatSummary {
 
 #[cfg(test)]
 mod tests {
+    /// The additive contract for `workspace`, mirroring `renamed_manually`'s:
+    /// a chat file written before the field existed still loads, a chat with no
+    /// project writes no new key, and a set value survives the round trip. All
+    /// three are what let ADR 0006 keep `CHAT_SCHEMA` at 1.
+    #[test]
+    fn workspace_is_additive_and_round_trips() {
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "t");
+        let json = serde_json::to_string(&chat).unwrap();
+        assert!(
+            !json.contains("workspace"),
+            "a chat with no project must not write the key: {json}"
+        );
+
+        // A file from before the field existed.
+        let old: Chat = serde_json::from_str(&json).unwrap();
+        assert_eq!(old.workspace, None);
+
+        let mut attached = chat.clone();
+        attached.workspace = Some(crate::entities::workspace::Workspace::new("D:/proj"));
+        let json = serde_json::to_string(&attached).unwrap();
+        assert!(json.contains("workspace"), "{json}");
+        let back: Chat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.workspace.unwrap().root, "D:/proj");
+    }
+
     use super::*;
     use crate::entities::message::Message;
 

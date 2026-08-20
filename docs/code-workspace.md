@@ -5,7 +5,9 @@ is done this file moves to `docs/history/`.
 
 **Status:** design accepted by the user on 2026-08-20 (forks F1–F4 below).
 **Stage 0 (the MVP probe) is done and is a GO on both model families** —
-results, and what they do not settle, in §7.
+results, and what they do not settle, in §7. **Stage 1 (attach + the read-only
+tools) is done** — `feat/code-workspace-core`; what it changed against the plan
+is in §7.5.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -337,14 +339,14 @@ gate), locale keys in both bundles.
 
 Each stage is its own branch/PR (AGENTS.md §2); the track starts with a probe.
 
-- **Stage 0 — MVP probe** (`spike/code-workspace-probe`, throwaway code).
+- **Stage 0 — MVP probe** (`spike/code-workspace-probe`, throwaway code) — **done, GO**.
   Minimal `code_read`/`code_grep`/`code_edit` wired to a fixture workspace; a
   live `#[ignore]` smoke: "this tiny crate fails to build; find and fix the
   bug" against gemma-4-31b and qwen-3.6-27b (the two live-gate families).
   **Go/no-go: ≥3/5 runs per family reach a correct edit** (exact-match format
   honored, right fix) without human help. No-go → re-design the edit contract
   (line-anchored edits / whole-file rewrite) before any tier ships.
-- **Stage 1 — attach + read-only tools** (`feat/code-workspace-core`):
+- **Stage 1 — attach + read-only tools** (`feat/code-workspace-core`) — **done**:
   `/project attach|detach|status`, `Chat.workspace`, `TurnInfo` snapshot +
   dynamic gating, the system block, `code_list`/`code_read`/`code_grep`, the
   `FsRoot` hoist, settings group, i18n, docs. Live smoke: navigate a real repo
@@ -484,6 +486,41 @@ get right.
   profile gained a tool, no default-tool test moved, and the probe enabled the
   three explicitly. Stage 1 should keep that and let the workspace's presence be
   the gate, as designed.
+
+### 7.5. Stage 1 — what it changed against this plan
+
+Three decisions differ from what §3 and §6 wrote down, each because building it
+answered a question the plan had guessed at.
+
+- **The settings section moved to stage 3.** §3.8 lists four fields; all four
+  belong to stages that do not exist yet (command timeout and output truncation
+  to stage 3, the round backstop with them, the semantic index to stage 5).
+  Shipping a section with no field would be UI describing behaviour the binary
+  does not have.
+- **`grep-searcher`/`grep-regex` were not taken.** §1 assumed the ripgrep search
+  crates alongside `ignore`. Matching line by line over files the walker has
+  already opened is a dozen lines, and the throughput the crates buy has no
+  consumer in a TUI searching one project — so the dependency list is `ignore`
+  (gitignore semantics, genuinely hard to replicate) plus `regex` (already in the
+  graph transitively, pinned to the lock version).
+- **`effective_tool_ids` became `ToolGates`.** Not a refactor for its own sake:
+  the workspace flag made it an eight-argument function with six `bool`s, which
+  `clippy::too_many_arguments` refuses. The named struct also removed the
+  wrong-position hazard at thirteen call sites.
+
+And one thing the plan did **not** anticipate, found by a fixture: `ignore`
+honours `.gitignore` **only inside a git checkout** unless told otherwise. An
+attached directory that is not a repository would have had its ignore file
+silently disregarded — on a Rust checkout, `target/` in every listing and search.
+`require_git(false)` is the fix, and the test that caught it is a plain temp
+directory with a `.gitignore` in it.
+
+The live run also rewrote a test, in the shape docs/lessons.md §9 already
+records: asked for a fact that is only in the project, the model answered
+correctly from `code_list` + `code_grep` and never opened the file, because a
+grep hit carries the whole line. Demanding `code_read` there would have pinned
+the model to the worse route, so the smoke became two turns — one asserting the
+outcome, one asking for the file's own shape, which only a read can give.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

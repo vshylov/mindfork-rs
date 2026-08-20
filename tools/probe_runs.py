@@ -1,13 +1,19 @@
-"""Runs the stage-0 code-workspace probes N times per arm and tallies them.
+"""Runs one or more `#[ignore]` live smokes N times each and tallies them.
 
-Handed to `tools/e2e_hf.py run --command`, so one rented endpoint covers the
-whole measurement instead of one deploy per run. Locally it is just:
+Model behaviour is a rate, not a yes/no: a single green run says little, which is
+why the code-workspace track's go/no-go is "at least K of N per model family"
+(docs/code-workspace.md section 6). This is the instrument for that.
 
     MINDFORK_ENGINE_URL=http://host:8000/v1 python tools/probe_runs.py
+    MINDFORK_ENGINE_URL=... python tools/probe_runs.py code_workspace_gate_e2e_live
+    PROBE_RUNS=10 python tools/probe_runs.py my_smoke_live
 
-The go/no-go bar is per family (docs/code-workspace.md section 6): at least
-THRESHOLD of RUNS reaching a correct, compiling edit. Exits non-zero below it,
-so the run's status is honest rather than decorative.
+It is also what `tools/e2e_hf.py run --command` is handed when an arm has to run
+against a rented endpoint, so one deployment covers every repetition instead of
+one deploy per run.
+
+Exits non-zero when a smoke falls below the bar, so a run's status is honest
+rather than decorative.
 """
 
 import os
@@ -16,18 +22,22 @@ import subprocess
 import sys
 import time
 
-ARMS = [
-    ("A", "code_edit_probe_live"),
-    ("B", "code_edit_probe_ambiguous_live"),
+# The smokes to repeat when none are named on the command line.
+DEFAULT_TESTS = [
+    "code_workspace_navigate_e2e_live",
+    "code_workspace_gate_e2e_live",
 ]
 RUNS = int(os.environ.get("PROBE_RUNS", "5"))
-# The plan's bar is 3 of 5; a shortened run (smoke-testing this script) keeps
-# the same spirit rather than reporting NO-GO for having run once.
+# The plan's bar is 3 of 5; a shortened run (smoke-testing this script) keeps the
+# same spirit rather than reporting NO-GO for having run once.
 THRESHOLD = 3 if RUNS >= 5 else (RUNS + 1) // 2
 
 
 def run_once(test_name):
-    """One `cargo test` invocation. Returns (passed, probe_lines, edit_args)."""
+    """One `cargo test` invocation.
+
+    Returns `(passed, skipped, matched_nothing, evidence lines, seconds)`.
+    """
     started = time.time()
     proc = subprocess.run(
         "cargo test %s -- --ignored --nocapture --test-threads=1" % test_name,
@@ -37,60 +47,71 @@ def run_once(test_name):
         encoding="utf-8",
         errors="replace",
     )
-    # The diagnostics the smoke prints (tool calls, PROBE lines) go to stderr
-    # via eprintln!, so both streams are always needed - reading stdout alone
+    # The diagnostics a smoke prints (tool calls, replies) go to stderr via
+    # eprintln!, so both streams are always needed - reading stdout alone
     # silently loses exactly the evidence this measurement exists to collect.
     out = (proc.stdout or "") + (proc.stderr or "")
-    passed = "test result: ok." in out and proc.returncode == 0
-    # A smoke that skips reports ok too, which is the failure mode a gate exists
-    # to prevent (docs/lessons.md section 9) - treat it as neither pass nor fail.
+    ran = re.search(r"test result: ok\. (\d+) passed", out)
+    # A filter that matches nothing also reports `ok`, which is the "a skipped
+    # smoke reporting ok is worse than a failing one" trap (docs/lessons.md
+    # section 9). Zero tests run is never a pass.
+    matched_nothing = bool(ran) and int(ran.group(1)) == 0
+    passed = bool(ran) and int(ran.group(1)) > 0 and proc.returncode == 0
     skipped = "skip: MINDFORK_ENGINE_URL not set" in out
-    probe = [ln for ln in out.splitlines() if ln.startswith("PROBE:")]
-    edits = re.findall(r"^→ code_edit\((.*)$", out, re.M)
-    return passed, skipped, probe, edits, time.time() - started
+    evidence = [
+        ln
+        for ln in out.splitlines()
+        if ln.startswith("PROBE:") or ln.startswith("→ ") or "tool calls:" in ln
+    ]
+    return passed, skipped, matched_nothing, evidence, time.time() - started
 
 
 def main():
-    # The evidence lines carry the tool results verbatim, which are in the
-    # agent-scaffold language - on a Windows console that is cp1252 and the
-    # whole run dies on a print rather than on anything it measured.
+    # The evidence lines carry tool results verbatim, which are in the
+    # agent-scaffold language - on a Windows console that is cp1252, and the run
+    # would die on a print rather than on anything it measured.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except AttributeError:
             pass
+
+    tests = sys.argv[1:] or DEFAULT_TESTS
     if not os.environ.get("MINDFORK_ENGINE_URL"):
         print("MINDFORK_ENGINE_URL is not set - nothing to measure")
         return 2
     print("engine: %s" % os.environ["MINDFORK_ENGINE_URL"], flush=True)
+    print("smokes: %s (%d runs each)" % (", ".join(tests), RUNS), flush=True)
+
     verdicts = {}
-    for label, test in ARMS:
+    for test in tests:
         wins = 0
         for i in range(1, RUNS + 1):
-            passed, skipped, probe, edits, secs = run_once(test)
+            passed, skipped, matched_nothing, evidence, secs = run_once(test)
+            if matched_nothing:
+                print("%s: no test matches this name - nothing was measured" % test, flush=True)
+                return 2
             if skipped:
-                print("arm %s run %d: SKIPPED - no engine" % (label, i), flush=True)
+                print("%s run %d: SKIPPED - no engine" % (test, i), flush=True)
                 continue
             wins += 1 if passed else 0
             print(
-                "arm %s run %d: %s (%.0fs) %s"
-                % (label, i, "PASS" if passed else "FAIL", secs, probe[0] if probe else ""),
+                "%s run %d: %s (%.0fs)" % (test, i, "PASS" if passed else "FAIL", secs),
                 flush=True,
             )
-            for e in edits:
-                print("    edit: %s" % e[:400], flush=True)
-        verdicts[label] = wins
-        print("ARM %s: %d/%d" % (label, wins, RUNS), flush=True)
+            for line in evidence:
+                print("    %s" % line[:400], flush=True)
+        verdicts[test] = wins
+        print("%s: %d/%d" % (test, wins, RUNS), flush=True)
 
-    print("\n=== stage 0 tally ===", flush=True)
+    print("\n=== tally ===", flush=True)
     ok = True
-    for label, _ in ARMS:
-        wins = verdicts.get(label, 0)
+    for test in tests:
+        wins = verdicts.get(test, 0)
         good = wins >= THRESHOLD
         ok = ok and good
         print(
-            "arm %s: %d/%d - %s (bar: %d)"
-            % (label, wins, RUNS, "GO" if good else "NO-GO", THRESHOLD),
+            "%s: %d/%d - %s (bar: %d)" % (test, wins, RUNS, "GO" if good else "NO-GO", THRESHOLD),
             flush=True,
         )
     return 0 if ok else 1

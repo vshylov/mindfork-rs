@@ -25,6 +25,7 @@ pub mod import;
 pub mod mcp_import;
 pub mod profile_command;
 pub mod profiles;
+pub mod project_command;
 pub mod rag_command;
 pub mod rag_ingest;
 pub mod reindex_command;

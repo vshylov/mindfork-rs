@@ -335,6 +335,9 @@ impl ChatScreen {
         if let Some(intent) = self.try_compact_command(&text) {
             return intent;
         }
+        if let Some(intent) = self.try_project_command(&text) {
+            return intent;
+        }
         if let Some(intent) = self.try_file_command(&text) {
             return intent;
         }
@@ -443,6 +446,27 @@ impl ChatScreen {
             Ok(FileCommand::List) => Some(ChatIntent::FileList),
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
+                None
+            }
+        })
+    }
+
+    /// A code-workspace slash command (`/project …`) — not a message either.
+    /// Sits beside `/file`: both attach something to *this chat* for the whole
+    /// conversation. Works during generation, like its neighbours — attaching a
+    /// project is a directory check, not a turn. Returns `None` when the text is
+    /// not a `/project` command. See docs/code-workspace.md, spec §9.12.
+    fn try_project_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        use crate::features::project_command::ProjectCommand;
+        let parsed = crate::features::project_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(ProjectCommand::Attach { path }) => Some(ChatIntent::ProjectAttach { path }),
+            Ok(ProjectCommand::Detach) => Some(ChatIntent::ProjectDetach),
+            Ok(ProjectCommand::Status) => Some(ChatIntent::ProjectStatus),
+            Err(msg) => {
+                self.push_error(&self.loc.tf("ui.project.failed", &[("err", &msg)]));
                 None
             }
         })

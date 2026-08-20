@@ -45,6 +45,13 @@ hkdf = "0.12.4"
 # nothing else and normalizing once at attach time keeps the provider matrix uniform.
 # Without it a phone photo would ride **every** turn at full size, and a webp would be
 # attachable on three providers out of four. See docs/research/multimodal-images.md §5 F3.
+# Walking an attached project the way a developer expects: `.gitignore` (nested,
+# plus the repo's exclude file), hidden entries and `.git/` itself are skipped by
+# `code_list`/`code_grep`. A hand-rolled skip list gets the common cases and then
+# lies about every project-specific ignore - and on a Rust checkout the difference
+# is `target/`, which is most of the bytes on disk. ripgrep's own crate; pure Rust,
+# and `walkdir`/`regex-automata` were already in the graph. See features/tools/code.rs.
+ignore = "0.4.23"
 image = { version = "0.25.9", default-features = false, features = [
     "png",
     "jpeg",
@@ -75,6 +82,12 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 # Cargo.lock, so as not to spawn a duplicate. See features/doc_extract.rs.
 quick-xml = "0.39.4"
 ratatui = "0.30.1"
+# `code_grep`'s pattern (spec 9.12). Already in the graph transitively; the version
+# is pinned to the one in Cargo.lock, so as not to spawn a duplicate (precedent -
+# quick-xml, base64). Deliberately *not* `grep-searcher`/`grep-regex`: matching line
+# by line over files this walker already opened is a dozen lines, and the two extra
+# crates would buy throughput this app has no use for. See features/tools/code.rs.
+regex = "1.12.4"
 # Playing synthesized speech (`/tts`) within the application process: a source
 # queue (`Player::append`) gives a "synthesize chunk N+1 while chunk N
 # plays" pipeline and instant cancellation. `default-features = false` — only the needed

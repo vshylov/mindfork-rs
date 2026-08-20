@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -36,6 +36,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an address policy for model-chosen URLs (done)
 - Post-M9: cross-chat search for the assistant (`chat_search`/`chat_read`) (done)
 - Post-M9: `chat://` as the one address of a conversation (done)
+- Post-M9: the code workspace — stages 0 and 1 (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1892,3 +1893,85 @@ same trap in this project (lessons §2, §9).
   `narrow_profile_to` now returns the bootstrap chat id so the assertion is
   exact rather than "not the current one". Details and the full-set regression
   (34/34, 827 s) in [ui-feed.md](ui-feed.md).
+
+### Post-M9: the code workspace — stages 0 and 1 (done)
+
+A project directory attached to a chat, and the tools that read it: `/project
+attach|detach|status` plus `code_list`/`code_read`/`code_grep`. Stage 1 of the
+track planned in
+[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+Branches `docs/code-workspace` → `spike/code-workspace-probe` →
+`feat/code-workspace-core`.
+
+- **Stage 0 was a probe, and it decided the shape of everything after it.** The
+  track's one genuinely risky hypothesis was whether a local model honours an
+  exact-substring edit contract at all; everything else it plans is composition
+  of machinery this repository already has. Measured on a throwaway branch:
+  gemma-4-31b **5/5** and qwen-3.6-27b **5/5**, on two arms, against a bar of 3
+  of 5. Full record and limits — docs/code-workspace.md §7.
+- **The second arm is the one that measured anything.** Arm A pastes the `cargo
+  build` error, which is how a user actually arrives — and puts the failing line
+  *in the prompt*, so a model can assemble `old_string` from the message rather
+  than from the file. Arm B quotes no code and puts the obvious fragment in the
+  file **twice**, so the fragment can only come from a read and has to be widened
+  to be unique. Both arms compile **and run** the fixture with `rustc` as ground
+  truth, so a "fix" that deletes the arithmetic cannot pass.
+- **What the model did with the read format**: reproduced a five-line fragment
+  byte-for-byte from a numbered read — prefixes stripped, indentation intact —
+  and widened past the duplicate on its own. That is why the `   12→` shape is
+  written down in spec §9.12 as a contract rather than a formatting choice.
+- **Attaching is the gate, and it buys the safety property.** The `code_*` tools
+  are offered only while `Chat.workspace` is set (`effective_tool_ids` through
+  `code::is_workspace_tool`), so a chat without a project sends a request
+  byte-identical to what it sent before the feature. No global switch: a second
+  toggle would recreate the "enabled but still off" confusion the cross-chat pair
+  deliberately avoided (fork F1 there), and the project's presence is a more
+  honest permission than a checkbox.
+- **The family is deliberately not gated by `tools.fs_enabled`.** `fs_read` is a
+  global capability narrowed by an optional `fs_root`; this is the opposite
+  shape — scoped to one chat and one directory, refusing when there is none
+  rather than widening to the disk. Pairing them would mean attaching a project
+  is not enough, which is exactly what the design set out to avoid.
+- **`.gitignore` is honoured outside a git checkout too, and that is a
+  measurement.** `ignore`'s walker consults it **only inside a repository** by
+  default; the fixture that caught this is a plain temp directory with a
+  `.gitignore`, where `target/` and `secret.txt` came back in every search until
+  `require_git(false)`. On a real Rust checkout that difference is most of the
+  bytes on disk.
+- **`ToolGates` came out of clippy, not taste.** The workspace flag made
+  `effective_tool_ids` an eight-argument function, six of them `bool`, and
+  `clippy::too_many_arguments` refused it. The booleans became a named struct
+  with `Default`, which also removed the wrong-position hazard at thirteen call
+  sites — a test now says `history: true, workspace: true` instead of counting
+  commas.
+- **The prompt block only describes what the turn actually has.** A project can
+  be attached to a profile with the tools switched off; then the block says the
+  project is out of reach rather than naming `code_read`. Same rule the summary
+  block follows for `history_read`, and the same defect class §9.7 recorded — a
+  block promising an absent tool costs the model a turn of improvising.
+- **Live smoke — GO** (gemma-4-31B q4_0, the user's stack). Two turns, and the
+  first run rewrote the test: asked for a timeout that only exists in the
+  project, the model answered correctly from `code_list` + `code_grep` and never
+  opened the file — the hit line carries the whole constant, so a read would have
+  been a wasted round. The narrow "must call `code_read`" assertion was *wrong*,
+  the same way `attachment_search` superseded `attachment_read`'s assertion once
+  attachments gained an index (lessons §9). Turn 1 now asserts the outcome; turn
+  2 asks for the file's line count and first line, which only a read can answer,
+  and the model obliged. A second smoke covers the gate: with no project
+  attached, the model made **zero** tool calls and said it has no access.
+  Full-set regression on the same stack (gemma-4-31B q4_0 + bge-m3):
+  **37 passed / 0 failed in 725 s** — worth running rather than reasoning about,
+  since `effective_tool_ids` and `build_request` sit on every turn, not only on
+  a turn with a project (docs/lessons.md §9).
+- **Scope call:** the settings section the plan listed for this stage moved to
+  stage 3. All four planned fields (command timeout, output truncation, the round
+  backstop, the semantic index) belong to stages that do not exist yet; a section
+  with no field is not a deliverable, and adding one now would ship UI describing
+  behaviour the binary does not have.
+- **Tests**: 2344 unit (+33), 101 `#[ignore]` (+2 stage-1 live smokes; the two
+  stage-0 probes stay on the spike branch, which is where the editing contract
+  they measure lives until stage 2). New dependencies `ignore` (gitignore
+  semantics) and `regex` (already in the graph transitively, pinned to the lock
+  version); `grep-searcher`/`grep-regex` were considered and skipped — matching
+  line by line over files the walker already opened is a dozen lines, and the
+  throughput they buy has no consumer here.

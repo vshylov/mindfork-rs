@@ -93,6 +93,9 @@ pub(super) struct PromptContext<'a> {
     /// Whether this turn offers `history_read`/`history_search` — the summary
     /// block only names them when it does (see [`inject_compaction`]).
     pub history_tools: bool,
+    /// Whether this turn offers the `code_*` tools — the workspace block only
+    /// describes them when it does (see [`inject_workspace`]).
+    pub workspace_tools: bool,
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -118,14 +121,15 @@ pub(super) fn build_request(
         None => (None, 0),
     };
     let system = inject_compaction(system, summary, cx.history_tools, cx.loc);
+    let system = inject_attachments(
+        system,
+        &chat.attachments,
+        cx.attachments,
+        cx.indexed,
+        cx.loc,
+    );
     ChatRequest {
-        system: inject_attachments(
-            system,
-            &chat.attachments,
-            cx.attachments,
-            cx.indexed,
-            cx.loc,
-        ),
+        system: inject_workspace(system, chat.workspace.as_ref(), cx.workspace_tools, cx.loc),
         messages: chat.messages[upto..]
             .iter()
             .filter_map(|m| message_to_api(m, cx.loc))
@@ -133,6 +137,51 @@ pub(super) fn build_request(
         sampling,
         tools,
     }
+}
+
+/// Appends the attached-project block to the system prompt (spec §9.12).
+///
+/// Placement is by volatility, like its two siblings: a chat's project can be
+/// swapped mid-conversation, where its attachments rarely change, so this block
+/// sits after them and before the self-model the generation task appends last
+/// (spec §6.6).
+///
+/// Two rules, both learned the hard way (docs/lessons.md §4):
+///
+/// - the block **names the tools that reach the project**, and is only emitted
+///   when the turn actually offers them — a profile can have them switched off
+///   while a project is attached, and a block promising an absent tool is how a
+///   model spends a turn improvising with the wrong ones;
+/// - it marks the root as **data, not instruction**, the way the attachment
+///   block marks file content: a path is user-supplied text arriving in the
+///   system prompt (spec §13.4).
+pub(super) fn inject_workspace(
+    system: Option<String>,
+    workspace: Option<&crate::entities::workspace::Workspace>,
+    tools: bool,
+    loc: &Locale,
+) -> Option<String> {
+    // No project — `system` passes through untouched, and a request from a chat
+    // without one is byte-identical to what the app sent before this feature.
+    let Some(ws) = workspace else {
+        return system;
+    };
+    let reach = if tools {
+        loc.t("prompt.workspace.tools")
+    } else {
+        // Attached, but this profile cannot reach it. Saying so is the whole
+        // point: otherwise the model reads the root as an invitation and tries
+        // `fs_read`, or asks the user for something they already did.
+        loc.t("prompt.workspace.no_tools")
+    };
+    let block = loc.tf(
+        "prompt.workspace.block",
+        &[("root", &ws.root), ("name", ws.name()), ("reach", reach)],
+    );
+    Some(match system {
+        Some(s) if !s.trim().is_empty() => format!("{s}\n\n{block}"),
+        _ => block,
+    })
 }
 
 /// Prepends the rolling-summary block to the system prompt (spec §6.7).

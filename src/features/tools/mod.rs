@@ -119,6 +119,12 @@ pub struct ToolContext {
     /// server and its text results keep working, which is the point of the switch
     /// being separate from enabling the server.
     pub mcp_images: bool,
+    /// The code project attached to this chat (`/project attach`, spec §9.12),
+    /// as of the start of the turn. `None` — no project, and then the `code_*`
+    /// tools are not offered at all (see [`effective_tool_ids`]); they refuse
+    /// rather than widen to the file system, which is the opposite of what
+    /// `fs_read` does without `tools.fs_root`.
+    pub workspace: Option<crate::entities::workspace::Workspace>,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -190,6 +196,10 @@ pub struct TurnInfo {
     /// and when the cross-chat tools are not offered). See
     /// [`ToolContext::other_chats`].
     pub other_chats: std::sync::Arc<[chats::ChatRef]>,
+    /// The chat's attached code project (spec §9.12). See
+    /// [`ToolContext::workspace`]; `None` for background turns, which have no
+    /// chat and therefore no project.
+    pub workspace: Option<crate::entities::workspace::Workspace>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -213,6 +223,7 @@ impl ToolContext {
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
             other_chats: turn.other_chats,
+            workspace: turn.workspace,
             mcp_images: params.mcp_images,
             storage: deps.storage,
             engine: deps.engine,
@@ -526,16 +537,28 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// importantly it earns an invariant, since the same `compaction_view` decides
 /// both this and whether the summary block is in the prompt — so the block can
 /// name the tools without ever promising one that is absent.
-pub fn effective_tool_ids(
-    enabled: &[ToolId],
-    web_enabled: bool,
-    python_enabled: bool,
-    fs_enabled: bool,
-    mcp_enabled: bool,
-    history_available: bool,
-    sampling_provider: Option<CloudProvider>,
-) -> Vec<ToolId> {
-    let sampling_available = !supported_sampling_fields(sampling_provider).is_empty();
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToolGates {
+    /// `tools.web_enabled` — `web_search` and `fetch_url`.
+    pub web: bool,
+    /// `tools.python_enabled` — `python_exec`.
+    pub python: bool,
+    /// `tools.fs_enabled` — the `fs_*` family. Deliberately **not** the code
+    /// workspace: that is a different capability, narrowed to one directory.
+    pub fs: bool,
+    /// `mcp.enabled` — every `mcp__…` tool.
+    pub mcp: bool,
+    /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
+    pub history: bool,
+    /// Whether **this chat** has a code project attached (spec §9.12).
+    pub workspace: bool,
+    /// The chat engine's cloud provider, deciding which sampling parameters
+    /// exist at all (ADR 0004).
+    pub sampling_provider: Option<CloudProvider>,
+}
+
+pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> {
+    let sampling_available = !supported_sampling_fields(gates.sampling_provider).is_empty();
     let gate_of = |id: &str| CATALOG.iter().find(|i| i.id == id).and_then(|i| i.gate);
     enabled
         .iter()
@@ -545,16 +568,23 @@ pub fn effective_tool_ids(
             }
             if id.as_str() == history::HISTORY_READ_ID || id.as_str() == history::HISTORY_SEARCH_ID
             {
-                return history_available;
+                return gates.history;
+            }
+            // The workspace family is gated by the *project*, not by a switch:
+            // attaching one is the consent, so there is no second toggle to
+            // forget, and with nothing attached the schemas never reach the
+            // prompt (the S12 rationale, spec §9.12).
+            if code::is_workspace_tool(id) {
+                return gates.workspace;
             }
             if id.starts_with(mcp::MCP_TOOL_PREFIX) {
-                return mcp_enabled;
+                return gates.mcp;
             }
             match gate_of(id) {
-                Some(meta::ToolGate::Web) => web_enabled,
-                Some(meta::ToolGate::Python) => python_enabled,
-                Some(meta::ToolGate::Fs) => fs_enabled,
-                Some(meta::ToolGate::Mcp) => mcp_enabled,
+                Some(meta::ToolGate::Web) => gates.web,
+                Some(meta::ToolGate::Python) => gates.python,
+                Some(meta::ToolGate::Fs) => gates.fs,
+                Some(meta::ToolGate::Mcp) => gates.mcp,
                 None => true,
             }
         })
@@ -688,12 +718,13 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
-    // SPIKE (stage 0 probe, docs/code-workspace.md): the code-workspace family,
-    // wired to `fs_root` as its stand-in workspace root and off by default, so a
-    // real profile never sees it and the probe enables it explicitly.
-    reg.register(Arc::new(code::CodeRead::new(cfg.fs_root.clone())));
-    reg.register(Arc::new(code::CodeGrep::new(cfg.fs_root.clone())));
-    reg.register(Arc::new(code::CodeEdit::new(cfg.fs_root.clone())));
+    // The code workspace (spec §9.12): reading, listing and searching the project
+    // the user attached to this chat. Stateless - the root is per chat and comes
+    // from the turn snapshot, not from config - and gated by the project's
+    // presence rather than by a global switch.
+    reg.register(Arc::new(code::CodeList));
+    reg.register(Arc::new(code::CodeRead));
+    reg.register(Arc::new(code::CodeGrep));
     // Reading/searching files the user attached to the chat (`/file attach`). Not
     // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));
@@ -825,6 +856,7 @@ pub(crate) mod testkit {
             history: None,
             // No other chats by default; tests that need them set `ctx.other_chats`.
             other_chats: std::sync::Arc::from(Vec::new()),
+            workspace: None,
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
         }
@@ -1108,7 +1140,13 @@ mod tests {
             );
         }
         // DB-only: pass the effective set with no global gates.
-        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, false, true, None);
+        let eff = effective_tool_ids(
+            &all_tool_ids(),
+            &ToolGates {
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(eff.iter().any(|t| t == self_model::GET_SELF_MODEL_ID));
         assert!(eff.iter().any(|t| t == self_model::UPDATE_SELF_MODEL_ID));
     }
@@ -1117,13 +1155,26 @@ mod tests {
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
         // web on, python off, fs off → web_search/fetch_url present, no python/fs.
-        let eff = effective_tool_ids(&enabled, true, false, false, false, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                web: true,
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
         assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
         assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
         // everything off → no external/file tools, but internal ones remain.
-        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
             !eff.iter()
@@ -1134,7 +1185,14 @@ mod tests {
         assert!(eff.iter().any(|t| t == "calculate"));
         assert!(eff.iter().any(|t| t == "current_time"));
         // fs on → file tools appear.
-        let eff = effective_tool_ids(&enabled, false, false, true, false, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                fs: true,
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
         assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
         assert!(eff.iter().any(|t| t == fs::FS_LIST_ID));
@@ -1151,7 +1209,14 @@ mod tests {
             Some(CloudProvider::Gemini),
             Some(CloudProvider::Claude),
         ] {
-            let eff = effective_tool_ids(&enabled, false, false, false, false, true, provider);
+            let eff = effective_tool_ids(
+                &enabled,
+                &ToolGates {
+                    history: true,
+                    sampling_provider: provider,
+                    ..Default::default()
+                },
+            );
             assert!(
                 eff.iter().any(|t| t == GET_SAMPLING_ID),
                 "get_sampling must be available for {provider:?}"
@@ -1171,7 +1236,12 @@ mod tests {
             history::HISTORY_READ_ID.into(),
             history::HISTORY_SEARCH_ID.into(),
         ];
-        let eff = effective_tool_ids(&enabled, false, false, false, false, false, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                ..Default::default()
+            },
+        );
         assert!(
             !eff.iter()
                 .any(|t| t == history::HISTORY_READ_ID || t == history::HISTORY_SEARCH_ID),
@@ -1179,7 +1249,13 @@ mod tests {
         );
         assert!(eff.iter().any(|t| t == "note_save"), "unrelated tools stay");
 
-        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(eff.iter().any(|t| t == history::HISTORY_READ_ID));
         assert!(eff.iter().any(|t| t == history::HISTORY_SEARCH_ID));
     }
@@ -1189,11 +1265,87 @@ mod tests {
         // MCP tools (dynamic, outside CATALOG) are gated by the master switch by
         // the `mcp__` prefix; internal tools don't depend on it.
         let enabled: Vec<ToolId> = vec!["note_save".into(), "mcp__fs__read_text_file".into()];
-        let eff = effective_tool_ids(&enabled, false, false, false, false, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(!eff.iter().any(|t| t.starts_with(mcp::MCP_TOOL_PREFIX)));
         assert!(eff.iter().any(|t| t == "note_save"));
-        let eff = effective_tool_ids(&enabled, false, false, false, true, true, None);
+        let eff = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                mcp: true,
+                history: true,
+                ..Default::default()
+            },
+        );
         assert!(eff.iter().any(|t| t == "mcp__fs__read_text_file"));
+    }
+
+    /// The workspace family is gated by the **project**, not by a switch: with
+    /// nothing attached the schemas never reach the prompt, and attaching is the
+    /// consent (spec §9.12). This mirrors the history pair's gate, and is what
+    /// keeps a chat with no project byte-identical to what the app sent before
+    /// the feature existed.
+    #[test]
+    fn workspace_tools_need_an_attached_project() {
+        let enabled: Vec<ToolId> = code::WORKSPACE_TOOL_IDS
+            .iter()
+            .map(|id| ToolId::from(*id))
+            .collect();
+        let detached = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            detached.is_empty(),
+            "with no project the tools must not be offered: {detached:?}"
+        );
+        let attached = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                workspace: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(attached.len(), code::WORKSPACE_TOOL_IDS.len());
+
+        // The gate is the project *and* the profile: a tool the user switched
+        // off stays off with a project attached.
+        let one: Vec<ToolId> = vec![code::CODE_READ_ID.into()];
+        let narrow = effective_tool_ids(
+            &one,
+            &ToolGates {
+                history: true,
+                workspace: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(narrow, one);
+    }
+
+    /// The family is not gated by `tools.fs_enabled`: it is a different
+    /// capability, narrowed to one directory the user pointed at, and pairing it
+    /// with the file-system switch would make attaching a project insufficient.
+    #[test]
+    fn workspace_tools_do_not_ride_the_fs_switch() {
+        let enabled: Vec<ToolId> = vec![code::CODE_LIST_ID.into()];
+        let fs_off = effective_tool_ids(
+            &enabled,
+            &ToolGates {
+                history: true,
+                workspace: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(fs_off, enabled, "fs_enabled must not gate the code tools");
     }
 
     #[test]

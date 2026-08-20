@@ -33,6 +33,9 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             compaction,
             indexed: NO_INDEX,
             history_tools,
+            // The workspace block has its own tests below; this shared helper
+            // builds requests for chats with no project, where the flag is moot.
+            workspace_tools: true,
             loc: ru(),
         },
     )
@@ -328,4 +331,70 @@ fn a_vanished_boundary_falls_back_to_the_whole_history() {
     let req = request_of(&chat, &CompactionSettings::default(), true);
     assert_eq!(req.system.as_deref(), Some("Ты — X."));
     assert_eq!(req.messages.len(), 9);
+}
+
+/// The workspace block: present only with a project, naming the tools only when
+/// the turn actually offers them, and absent entirely otherwise — the property
+/// that keeps every existing conversation's request unchanged (spec §9.12).
+#[test]
+fn the_workspace_block_appears_only_with_a_project() {
+    use crate::app::orchestrator::request::inject_workspace;
+    use crate::entities::workspace::Workspace;
+
+    let ws = Workspace::new("D:/Projects/app");
+    let none = inject_workspace(Some("persona".into()), None, true, ru());
+    assert_eq!(
+        none,
+        Some("persona".into()),
+        "no project must leave the system prompt untouched"
+    );
+
+    let with = inject_workspace(Some("persona".into()), Some(&ws), true, ru()).unwrap();
+    assert!(
+        with.starts_with("persona"),
+        "the persona stays first: {with}"
+    );
+    assert!(with.contains("D:/Projects/app"), "{with}");
+    assert!(with.contains("app"), "the name is shown too: {with}");
+    // It must name the tools that reach the project, or the model improvises
+    // with the wrong ones (docs/lessons.md §4).
+    assert!(with.contains("code_read"), "{with}");
+
+    // Attached, but the profile has the tools off: the block must say the
+    // project is out of reach rather than advertise an absent capability.
+    let unreachable = inject_workspace(Some("persona".into()), Some(&ws), false, ru()).unwrap();
+    assert!(unreachable.contains("D:/Projects/app"), "{unreachable}");
+    assert!(
+        !unreachable.contains("code_read"),
+        "a tool this turn does not have must not be named: {unreachable}"
+    );
+}
+
+/// An empty persona must not leave a stray blank line, and the block must still
+/// be the whole system prompt.
+#[test]
+fn the_workspace_block_stands_alone_without_a_persona() {
+    use crate::app::orchestrator::request::inject_workspace;
+    use crate::entities::workspace::Workspace;
+
+    let ws = Workspace::new("/home/u/app");
+    let only = inject_workspace(None, Some(&ws), true, ru()).unwrap();
+    assert!(!only.starts_with('\n'), "leading blank line: {only:?}");
+    assert!(only.contains("/home/u/app"));
+}
+
+/// A request for a chat with no project is byte-identical to one built before
+/// the feature — the safety property for every stored conversation.
+#[test]
+fn a_chat_without_a_project_builds_an_unchanged_request() {
+    let p = Profile::new("X", "persona");
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("hi"));
+    assert!(chat.workspace.is_none());
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    assert!(
+        req.system.is_none() || !req.system.as_deref().unwrap().contains("code_read"),
+        "no project must add nothing: {:?}",
+        req.system
+    );
 }

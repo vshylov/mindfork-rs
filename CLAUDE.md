@@ -163,12 +163,31 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-19, version 0.9.7)
+## Status (2026-08-20, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2311 unit tests
-green, 99 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2344 unit tests
+green, 101 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **the model's name on the assistant's header**
+most recent tracks: **a code project attached to a chat**
+(`/project attach <directory>`, and the assistant can list, read and search it —
+stage 1 of the code-workspace track. The load-bearing decision is that
+**attaching is the permission**: the `code_*` tools are offered only while the
+chat has a project, so a chat without one sends a request byte-identical to what
+it sent before the feature, and there is no second switch to leave off. That
+inverts `fs_read`, which is a global capability *narrowed* by an optional root;
+this family is scoped to one chat and one directory and refuses when there is
+none. The track opened with a probe rather than a tier, because its one risky
+hypothesis was whether a local model honours an exact-substring edit contract —
+measured 5/5 on gemma-4-31b and 5/5 on qwen-3.6-27b, with the model reproducing
+a five-line fragment byte-for-byte from a numbered read and widening it past a
+duplicate on its own, which is why the `   12→` read format is now written down
+as a contract. Two measurements shaped stage 1: `ignore` honours `.gitignore`
+only inside a git checkout, so an attached directory that is not a repository
+needed `require_git(false)` or `target/` came back in every search; and the live
+run rewrote its own test, since the model answered from `code_grep` alone and
+demanding a read would have pinned it to the worse route;
+[docs/code-workspace.md](docs/code-workspace.md), spec §9.12), **the model's
+name on the assistant's header**
 (the feed said *who* answered but never *what*: every assistant message has
 stored a metadata snapshot of its turn since M9 — mode, sampling, `model` — and
 nothing read the last field. `interface.show_model_name` (off by default) draws

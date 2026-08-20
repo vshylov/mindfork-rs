@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A code project can be attached to a chat** — `/project attach <directory>`,
+  `/project detach`, `/project status`. With a project attached the assistant
+  can see its structure, read its files (with line numbers) and search them by
+  regular expression, all confined to that directory and honouring
+  `.gitignore`. Attaching is the whole permission: with no project attached
+  nothing changes about what the assistant can reach, and the tools are not
+  even offered to it. Editing, build/run/test commands and a changes screen
+  come in the following stages.
+
 ### Changed
 
 - **The "About" tab of the help dialog (`F1`) reads across the full width.**

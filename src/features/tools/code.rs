@@ -1,19 +1,23 @@
-//! **SPIKE (stage 0 probe, `docs/code-workspace.md`) — throwaway wiring.**
+//! Code-workspace tools (spec §9.12,
+//! [docs/code-workspace.md](../../../docs/code-workspace.md)): `code_list`,
+//! `code_read`, `code_grep` — listing, reading and searching the project the
+//! user attached to this chat with `/project attach`.
 //!
-//! Minimal `code_read` / `code_grep` / `code_edit` for the go/no-go measurement:
-//! does a local model honour the exact-substring edit contract at all? Only the
-//! *contract the model sees* is real here; everything around it is deliberately
-//! cheap and is replaced in stage 1:
+//! Three properties shape everything here:
 //!
-//! - the workspace root is taken from `tools.fs_root` instead of
-//!   `Chat.workspace`, so no `Chat`/`ToolContext` plumbing is touched;
-//! - `code_grep` is a literal substring scan, not `grep-searcher` + regex;
-//! - the path resolver is a local copy of `fs::FsRoot`'s idea rather than the
-//!   shared one stage 1 hoists.
-//!
-//! What is **not** cheap, because it is exactly what the probe measures: the
-//! line-numbered read format, the uniqueness rules of the edit, the errors the
-//! model reads when a match misses, and EOL/BOM fidelity on write.
+//! - **The workspace is the gate.** The root comes from the turn snapshot
+//!   (`ToolContext.workspace`), and with no project attached the tools are not
+//!   offered to the model at all (`effective_tool_ids`). A call that arrives
+//!   anyway — a background turn, a stale schema — refuses and says who attaches
+//!   a project, rather than falling back to the whole disk the way `fs_read`
+//!   does when `tools.fs_root` is unset. The inversion is deliberate: these
+//!   tools *narrow* access to one directory the user pointed at.
+//! - **Every path is confined by canonicalization**, so `..`, an absolute path
+//!   elsewhere and a symlink pointing out are one check rather than three.
+//! - **The read format is a contract with the model.** Lines come back as
+//!   `   12→text`, and stage 0 measured that both live model families strip
+//!   those prefixes and reproduce the payload byte-for-byte when they edit
+//!   (docs/code-workspace.md §7). Nothing here may change that shape casually.
 
 use std::path::{Path, PathBuf};
 
@@ -23,91 +27,93 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
+pub const CODE_LIST_ID: &str = "code_list";
 pub const CODE_READ_ID: &str = "code_read";
 pub const CODE_GREP_ID: &str = "code_grep";
-pub const CODE_EDIT_ID: &str = "code_edit";
+
+/// The workspace family, in one place, so the registry, the gate and the system
+/// block cannot drift apart.
+pub const WORKSPACE_TOOL_IDS: [&str; 3] = [CODE_LIST_ID, CODE_READ_ID, CODE_GREP_ID];
+
+/// Whether `id` belongs to the workspace family (consulted by
+/// [`super::effective_tool_ids`], which offers them only with a project attached).
+pub fn is_workspace_tool(id: &str) -> bool {
+    WORKSPACE_TOOL_IDS.contains(&id)
+}
 
 /// Default window of a read, in lines.
 const DEFAULT_READ_LINES: usize = 400;
 /// Ceiling on characters returned by one read.
 const MAX_READ_CHARS: usize = 40_000;
-/// Ceiling on grep matches returned.
+/// Ceiling on entries in one listing.
+const MAX_LIST_ENTRIES: usize = 400;
+/// Default depth of a listing: deep enough to show a source tree's shape,
+/// shallow enough that a large repository's root is not a wall of text.
+const DEFAULT_LIST_DEPTH: usize = 2;
+/// Ceiling on matches returned by one search.
 const MAX_GREP_HITS: usize = 100;
-/// Files larger than this are refused (bytes) — a probe-sized guard.
+/// Ceiling on the length of one returned match line.
+const MAX_GREP_LINE: usize = 300;
+/// Files larger than this are refused rather than read (bytes).
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-/// Directory names never walked by `code_grep`.
-const SKIP_DIRS: [&str; 5] = [".git", "target", "node_modules", ".venv", "dist"];
 
-/// The attached project's root. Unlike `fs::FsRoot`, having **no** root is not
-/// "unrestricted" but "no workspace attached" — the tools refuse, because a
-/// workspace tool without a workspace has nothing legitimate to reach.
-#[derive(Clone)]
-struct Workspace {
-    root: Option<PathBuf>,
+/// Resolves the turn's workspace root, or explains that there is none.
+///
+/// A `Tool` cannot take the root in its constructor: the registry is built once
+/// per config, while a project is attached per chat. So every `invoke` starts
+/// here.
+fn workspace_root(ctx: &ToolContext) -> Result<PathBuf> {
+    let Some(ws) = &ctx.workspace else {
+        anyhow::bail!(ctx.loc.t("tool.code.err.no_root").to_string());
+    };
+    let root = PathBuf::from(&ws.root);
+    let canonical = root
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!(format!("{}: {e}", ws.root)))?;
+    Ok(strip_verbatim(&canonical))
 }
 
-impl Workspace {
-    fn new(root: Option<String>) -> Self {
-        Self {
-            root: root
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| PathBuf::from(s.trim())),
-        }
+/// Resolves an argument path inside `root` (relative to it, or absolute within).
+fn resolve(root: &Path, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        anyhow::bail!(loc.t("tool.code.err.path_required").to_string());
     }
-
-    /// Canonical workspace root, or an error naming what the user must do.
-    fn root(&self, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
-        let Some(root) = &self.root else {
-            anyhow::bail!(loc.t("tool.code.err.no_root").to_string());
-        };
-        let canonical = root
-            .canonicalize()
-            .map_err(|e| anyhow::anyhow!(format!("{}: {e}", root.display())))?;
-        Ok(strip_verbatim(&canonical))
-    }
-
-    /// Resolves a (relative or absolute) argument path inside the root.
-    fn resolve(&self, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            anyhow::bail!(loc.t("tool.code.err.path_required").to_string());
+    let requested = PathBuf::from(raw);
+    let candidate = if requested.is_absolute() {
+        requested
+    } else {
+        root.join(&requested)
+    };
+    // An existing path canonicalizes; one that does not exist yet is judged by
+    // its parent plus its name (the file `code_write` will create, stage 2).
+    let canonical = match candidate.canonicalize() {
+        Ok(c) => strip_verbatim(&c),
+        Err(_) => {
+            let parent = candidate
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string()))?;
+            let parent = parent
+                .canonicalize()
+                .map_err(|e| anyhow::anyhow!(format!("{}: {e}", parent.display())))?;
+            let name = candidate
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string()))?;
+            strip_verbatim(&parent).join(name)
         }
-        let root = self.root(loc)?;
-        let requested = PathBuf::from(raw);
-        let candidate = if requested.is_absolute() {
-            requested
-        } else {
-            root.join(&requested)
-        };
-        // Existing path → canonical form; a new file → canonical parent + name.
-        let canonical = match candidate.canonicalize() {
-            Ok(c) => strip_verbatim(&c),
-            Err(_) => {
-                let parent = candidate.parent().ok_or_else(|| {
-                    anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string())
-                })?;
-                let parent = parent
-                    .canonicalize()
-                    .map_err(|e| anyhow::anyhow!(format!("{}: {e}", parent.display())))?;
-                let name = candidate.file_name().ok_or_else(|| {
-                    anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string())
-                })?;
-                strip_verbatim(&parent).join(name)
-            }
-        };
-        if !canonical.starts_with(&root) {
-            anyhow::bail!(loc.tf(
-                "tool.code.err.outside",
-                &[("root", &root.display().to_string())]
-            ));
-        }
-        Ok(canonical)
+    };
+    if !canonical.starts_with(root) {
+        anyhow::bail!(loc.tf(
+            "tool.code.err.outside",
+            &[("root", &root.display().to_string())]
+        ));
     }
+    Ok(canonical)
 }
 
-/// Windows canonicalization yields `\\?\C:\…`; that form leaks into results and
-/// then comes back from the model as a path we would have to accept. Strip it
-/// once, at the boundary.
+/// Windows canonicalization yields `\\?\C:\…`; that form would travel into the
+/// system prompt and every tool result, and come back from the model as a path
+/// we would then have to accept. Strip it once, at the boundary.
 fn strip_verbatim(p: &Path) -> PathBuf {
     let s = p.display().to_string();
     match s.strip_prefix(r"\\?\") {
@@ -116,7 +122,8 @@ fn strip_verbatim(p: &Path) -> PathBuf {
     }
 }
 
-/// Path as the model should see it: relative to the root, forward slashes.
+/// Path as the model should see it: relative to the root, forward slashes. The
+/// model sends these back verbatim, so there is one spelling in and out.
 fn display_rel(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -125,16 +132,21 @@ fn display_rel(path: &Path, root: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// The EOL/BOM shape of a file, so an edit gives it back unchanged.
-struct TextFile {
-    /// Content with `\n` endings and no BOM — what matching runs against.
-    text: String,
-    crlf: bool,
-    bom: bool,
+/// The EOL/BOM shape of a file, so an edit can hand it back unchanged.
+///
+/// Stage 1 only reads, but the normalization belongs here rather than in the
+/// future editor: reading and matching have to agree on one text. A model emits
+/// `\n`, a Windows checkout is CRLF, and a fragment quoted back from a read must
+/// match the file it came from.
+pub(crate) struct TextFile {
+    /// Content with `\n` endings and no BOM — what reading and matching use.
+    pub text: String,
+    pub crlf: bool,
+    pub bom: bool,
 }
 
 impl TextFile {
-    fn load(bytes: &[u8]) -> Option<Self> {
+    pub fn load(bytes: &[u8]) -> Option<Self> {
         if bytes.contains(&0) {
             return None; // binary
         }
@@ -151,8 +163,9 @@ impl TextFile {
         })
     }
 
-    /// Restores the original shape for writing back.
-    fn encode(&self, text: &str) -> Vec<u8> {
+    /// Restores the file's original shape for writing back (stage 2's editor).
+    #[allow(dead_code)] // The writer lands with `code_edit`; stage 1 needs the detection above.
+    pub fn encode(&self, text: &str) -> Vec<u8> {
         let body = if self.crlf {
             text.replace('\n', "\r\n")
         } else {
@@ -207,18 +220,122 @@ fn numbered(lines: &[&str], from: usize, to: usize) -> String {
     out
 }
 
-/// `code_read` — line-numbered window over a file of the attached project.
-pub struct CodeRead {
-    ws: Workspace,
+/// Builds the project walker: `.gitignore` honoured (nested, plus the repo's
+/// exclude file), hidden entries and `.git/` skipped, symlinks not followed.
+///
+/// Not following links matters twice: a link out of the project would escape the
+/// root check every *path* argument passes, and a link back into it is an
+/// endless walk.
+fn walker(
+    dir: &Path,
+    max_depth: Option<usize>,
+    overrides: Option<ignore::overrides::Override>,
+) -> ignore::Walk {
+    let mut builder = ignore::WalkBuilder::new(dir);
+    builder
+        .hidden(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .parents(true)
+        // Without this,  is consulted **only inside a git checkout**
+        // — measured, an attached directory that is not a repository has its
+        // ignore file silently disregarded, so  comes back in every
+        // listing and search. A user who wrote the file meant it either way.
+        .require_git(false)
+        .follow_links(false)
+        .max_depth(max_depth);
+    if let Some(ov) = overrides {
+        builder.overrides(ov);
+    }
+    builder.build()
 }
 
-impl CodeRead {
-    pub fn new(root: Option<String>) -> Self {
-        Self {
-            ws: Workspace::new(root),
+/// `code_list` — the shape of the project, or of one directory in it.
+pub struct CodeList;
+
+#[async_trait::async_trait]
+impl Tool for CodeList {
+    fn id(&self) -> ToolId {
+        CODE_LIST_ID.into()
+    }
+    fn group(&self) -> super::meta::ToolGroup {
+        super::meta::ToolGroup::Files
+    }
+    fn ui_label(&self) -> &'static str {
+        "list project files"
+    }
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.code_list.desc").into()
+    }
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": loc.t("tool.code.param.dir")},
+                "depth": {"type": "integer", "description": loc.t("tool.code.param.depth")}
+            }
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let root = workspace_root(ctx)?;
+        let dir = match arg_str(&args, "path").filter(|s| !s.trim().is_empty()) {
+            Some(raw) => resolve(&root, &raw, ctx.loc)?,
+            None => root.clone(),
+        };
+        let depth = arg_usize(&args, "depth")
+            .unwrap_or(DEFAULT_LIST_DEPTH)
+            .clamp(1, 16);
+        let base = dir.clone();
+        let (entries, truncated) = tokio::task::spawn_blocking(move || {
+            let mut entries = Vec::new();
+            let mut truncated = false;
+            for entry in walker(&base, Some(depth), None).flatten() {
+                if entry.depth() == 0 {
+                    continue; // the directory itself
+                }
+                if entries.len() >= MAX_LIST_ENTRIES {
+                    truncated = true;
+                    break;
+                }
+                let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
+                let rel = display_rel(entry.path(), &base);
+                entries.push(if is_dir { format!("{rel}/") } else { rel });
+            }
+            entries.sort();
+            (entries, truncated)
+        })
+        .await?;
+
+        let shown = display_rel(&dir, &root);
+        let shown = if shown.is_empty() {
+            ".".to_string()
+        } else {
+            shown
+        };
+        if entries.is_empty() {
+            return Ok(ToolOutcome::text(
+                ctx.loc.tf("tool.code.list.empty", &[("path", &shown)]),
+            ));
         }
+        let mut out = ctx.loc.tf(
+            "tool.code.list.header",
+            &[("path", &shown), ("n", &entries.len().to_string())],
+        );
+        out.push('\n');
+        out.push_str(&entries.join("\n"));
+        if truncated {
+            out.push('\n');
+            out.push_str(&ctx.loc.tf(
+                "tool.code.list.truncated",
+                &[("max", &MAX_LIST_ENTRIES.to_string())],
+            ));
+        }
+        Ok(ToolOutcome::text(out))
     }
 }
+
+/// `code_read` — a line-numbered window over a file of the attached project.
+pub struct CodeRead;
 
 #[async_trait::async_trait]
 impl Tool for CodeRead {
@@ -230,12 +347,6 @@ impl Tool for CodeRead {
     }
     fn ui_label(&self) -> &'static str {
         "read project file"
-    }
-    fn gate(&self) -> Option<super::meta::ToolGate> {
-        Some(super::meta::ToolGate::Fs)
-    }
-    fn enabled_by_default(&self) -> bool {
-        false
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.code_read.desc").into()
@@ -252,10 +363,10 @@ impl Tool for CodeRead {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let root = self.ws.root(ctx.loc)?;
+        let root = workspace_root(ctx)?;
         let raw = arg_str(&args, "path")
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
-        let path = self.ws.resolve(&raw, ctx.loc)?;
+        let path = resolve(&root, &raw, ctx.loc)?;
         let file = read_text(&path, ctx.loc).await?;
         let lines: Vec<&str> = file.text.lines().collect();
         let total = lines.len();
@@ -297,35 +408,19 @@ impl Tool for CodeRead {
     }
 }
 
-/// `code_grep` — literal, case-insensitive substring search over the project.
-pub struct CodeGrep {
-    ws: Workspace,
-}
+/// `code_grep` — regular-expression search over the project's text files.
+pub struct CodeGrep;
 
-impl CodeGrep {
-    pub fn new(root: Option<String>) -> Self {
-        Self {
-            ws: Workspace::new(root),
-        }
-    }
-}
-
-/// Collects text files under `dir` (depth-first, skipping `SKIP_DIRS`).
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_dir() {
-            if !SKIP_DIRS.contains(&name.as_str()) && !name.starts_with('.') {
-                collect_files(&path, out);
-            }
-        } else {
-            out.push(path);
-        }
-    }
+/// Compiles the optional `glob` argument into a walker override.
+///
+/// The override is the walker's own filter, so a glob costs nothing extra and
+/// composes with `.gitignore` instead of fighting it. Matching is against the
+/// **project-relative** path, so `src/**/*.rs` means what it looks like rather
+/// than depending on where the application happens to be running.
+fn glob_override(root: &Path, glob: &str) -> Result<ignore::overrides::Override, ignore::Error> {
+    let mut builder = ignore::overrides::OverrideBuilder::new(root);
+    builder.add(glob)?;
+    builder.build()
 }
 
 #[async_trait::async_trait]
@@ -339,12 +434,6 @@ impl Tool for CodeGrep {
     fn ui_label(&self) -> &'static str {
         "search project"
     }
-    fn gate(&self) -> Option<super::meta::ToolGate> {
-        Some(super::meta::ToolGate::Fs)
-    }
-    fn enabled_by_default(&self) -> bool {
-        false
-    }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.code_grep.desc").into()
     }
@@ -352,58 +441,120 @@ impl Tool for CodeGrep {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": loc.t("tool.code.param.pattern")}
+                "pattern": {"type": "string", "description": loc.t("tool.code.param.pattern")},
+                "path": {"type": "string", "description": loc.t("tool.code.param.grep_dir")},
+                "glob": {"type": "string", "description": loc.t("tool.code.param.glob")}
             },
             "required": ["pattern"]
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let root = self.ws.root(ctx.loc)?;
+        let root = workspace_root(ctx)?;
         let pattern = arg_str(&args, "pattern")
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| {
                 anyhow::anyhow!(ctx.loc.t("tool.code.err.pattern_required").to_string())
             })?;
-        let needle = pattern.to_lowercase();
-        let root_for_walk = root.clone();
-        let files = tokio::task::spawn_blocking(move || {
-            let mut files = Vec::new();
-            collect_files(&root_for_walk, &mut files);
-            files
-        })
-        .await?;
+        let dir = match arg_str(&args, "path").filter(|s| !s.trim().is_empty()) {
+            Some(raw) => resolve(&root, &raw, ctx.loc)?,
+            None => root.clone(),
+        };
+        // Smart case, as a developer's grep does it: an all-lowercase pattern is
+        // case-insensitive, one carrying a capital is taken as written.
+        let smart_case = !pattern.chars().any(char::is_uppercase);
+        // A broken pattern is the model's mistake, not a crash — and it has to
+        // come back as an answer naming what broke, or the next round retries
+        // the same expression.
+        let re = match regex::RegexBuilder::new(&pattern)
+            .case_insensitive(smart_case)
+            .build()
+        {
+            Ok(re) => re,
+            Err(err) => {
+                return Ok(ToolOutcome::text(ctx.loc.tf(
+                    "tool.code.grep.bad_pattern",
+                    &[("pattern", &pattern), ("err", &err.to_string())],
+                )));
+            }
+        };
+        let glob = arg_str(&args, "glob").filter(|s| !s.trim().is_empty());
+        let overrides = match &glob {
+            Some(g) => match glob_override(&root, g) {
+                Ok(ov) => Some(ov),
+                Err(err) => {
+                    return Ok(ToolOutcome::text(ctx.loc.tf(
+                        "tool.code.grep.bad_glob",
+                        &[("glob", g), ("err", &err.to_string())],
+                    )));
+                }
+            },
+            None => None,
+        };
 
-        let mut hits = Vec::new();
-        let mut truncated = false;
-        for path in files {
-            let Ok(bytes) = tokio::fs::read(&path).await else {
-                continue;
-            };
-            let Some(file) = TextFile::load(&bytes) else {
-                continue;
-            };
-            for (i, line) in file.text.lines().enumerate() {
-                if line.to_lowercase().contains(&needle) {
+        let root_for_walk = root.clone();
+        let (hits, truncated, files) = tokio::task::spawn_blocking(move || {
+            let mut hits: Vec<String> = Vec::new();
+            let mut truncated = false;
+            let mut files = 0usize;
+            for entry in walker(&dir, None, overrides).flatten() {
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    continue;
+                }
+                let path = entry.path();
+                let Ok(meta) = path.metadata() else { continue };
+                if meta.len() > MAX_FILE_BYTES {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(path) else {
+                    continue;
+                };
+                let Some(file) = TextFile::load(&bytes) else {
+                    continue; // binary
+                };
+                files += 1;
+                for (i, line) in file.text.lines().enumerate() {
+                    if !re.is_match(line) {
+                        continue;
+                    }
                     if hits.len() >= MAX_GREP_HITS {
                         truncated = true;
                         break;
                     }
+                    let text = line.trim_end();
+                    let text: String = if text.chars().count() > MAX_GREP_LINE {
+                        text.chars().take(MAX_GREP_LINE).collect::<String>() + "…"
+                    } else {
+                        text.to_string()
+                    };
                     hits.push(format!(
-                        "{}:{}: {}",
-                        display_rel(&path, &root),
-                        i + 1,
-                        line.trim_end()
+                        "{}:{}: {text}",
+                        display_rel(path, &root_for_walk),
+                        i + 1
                     ));
                 }
+                if truncated {
+                    break;
+                }
             }
-            if truncated {
-                break;
-            }
-        }
+            (hits, truncated, files)
+        })
+        .await?;
+
         if hits.is_empty() {
-            return Ok(ToolOutcome::text(
-                ctx.loc.tf("tool.code.grep.empty", &[("pattern", &pattern)]),
-            ));
+            // "Nothing matched" and "there was nothing to match against" call for
+            // different next moves, so they are different answers (lessons §4).
+            let key = if files == 0 {
+                "tool.code.grep.nothing_searched"
+            } else {
+                "tool.code.grep.empty"
+            };
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                key,
+                &[
+                    ("pattern", &pattern),
+                    ("glob", glob.as_deref().unwrap_or("*")),
+                ],
+            )));
         }
         let mut out = ctx.loc.tf(
             "tool.code.grep.header",
@@ -422,262 +573,260 @@ impl Tool for CodeGrep {
     }
 }
 
-/// `code_edit` — exact-substring replacement. The contract under measurement.
-pub struct CodeEdit {
-    ws: Workspace,
-}
-
-impl CodeEdit {
-    pub fn new(root: Option<String>) -> Self {
-        Self {
-            ws: Workspace::new(root),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for CodeEdit {
-    fn id(&self) -> ToolId {
-        CODE_EDIT_ID.into()
-    }
-    fn group(&self) -> super::meta::ToolGroup {
-        super::meta::ToolGroup::Files
-    }
-    fn danger(&self) -> bool {
-        true
-    }
-    fn ui_label(&self) -> &'static str {
-        "edit project file"
-    }
-    fn gate(&self) -> Option<super::meta::ToolGate> {
-        Some(super::meta::ToolGate::Fs)
-    }
-    fn enabled_by_default(&self) -> bool {
-        false
-    }
-    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
-        loc.t("tool.code_edit.desc").into()
-    }
-    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": loc.t("tool.code.param.path")},
-                "old_string": {"type": "string", "description": loc.t("tool.code.param.old_string")},
-                "new_string": {"type": "string", "description": loc.t("tool.code.param.new_string")},
-                "replace_all": {"type": "boolean", "description": loc.t("tool.code.param.replace_all")}
-            },
-            "required": ["path", "old_string", "new_string"]
-        })
-    }
-    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let root = self.ws.root(ctx.loc)?;
-        let raw = arg_str(&args, "path")
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
-        let path = self.ws.resolve(&raw, ctx.loc)?;
-        let old = arg_str(&args, "old_string")
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.edit_args").to_string()))?;
-        let new = arg_str(&args, "new_string")
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.edit_args").to_string()))?;
-        let replace_all = args
-            .get("replace_all")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if old.is_empty() {
-            anyhow::bail!(ctx.loc.t("tool.code.err.edit_args").to_string());
-        }
-        let file = read_text(&path, ctx.loc).await?;
-        // The model writes `\n`; the file may be CRLF. Match on the normalized
-        // text and give the file's own shape back on write.
-        let old_n = old.replace("\r\n", "\n");
-        let new_n = new.replace("\r\n", "\n");
-        let count = file.text.matches(&old_n).count();
-        let rel = display_rel(&path, &root);
-        if count == 0 {
-            // A miss must say what to do next, or the model retries the same string.
-            return Ok(ToolOutcome::text(
-                ctx.loc.tf("tool.code.edit.not_found", &[("path", &rel)]),
-            ));
-        }
-        if count > 1 && !replace_all {
-            return Ok(ToolOutcome::text(ctx.loc.tf(
-                "tool.code.edit.ambiguous",
-                &[("n", &count.to_string()), ("path", &rel)],
-            )));
-        }
-        let updated = if replace_all {
-            file.text.replace(&old_n, &new_n)
-        } else {
-            file.text.replacen(&old_n, &new_n, 1)
-        };
-        tokio::fs::write(&path, file.encode(&updated))
-            .await
-            .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
-
-        // Echo the neighbourhood of the change, numbered, so the model can verify
-        // without spending a second round on a read.
-        let at = updated
-            .find(&new_n)
-            .map(|byte| updated[..byte].matches('\n').count())
-            .unwrap_or(0);
-        let lines: Vec<&str> = updated.lines().collect();
-        let from = at.saturating_sub(3);
-        let to = (at + new_n.lines().count() + 3).min(lines.len());
-        let applied = if replace_all { count } else { 1 };
-        let mut out = ctx.loc.tf(
-            "tool.code.edit.ok",
-            &[("path", &rel), ("n", &applied.to_string())],
-        );
-        out.push('\n');
-        out.push_str(&numbered(&lines, from, to));
-        Ok(ToolOutcome::text(out))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::testkit::ctx_with_storage;
     use super::*;
+    use crate::entities::workspace::Workspace;
     use uuid::Uuid;
 
-    /// Builds a workspace with `files` and returns its tempdir plus the root string.
-    fn workspace(files: &[(&str, &str)]) -> (tempfile::TempDir, Option<String>) {
+    /// Fixture: a project directory holding `files`, plus a `ToolContext` whose
+    /// turn snapshot has it attached. Every test starts this way, so it is a
+    /// fixture rather than a test opening (docs/lessons.md §2).
+    struct Fixture {
+        _data: tempfile::TempDir,
+        dir: tempfile::TempDir,
+        ctx: ToolContext,
+    }
+
+    fn fixture(files: &[(&str, &str)]) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         for (name, body) in files {
             let path = dir.path().join(name);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).unwrap();
-            }
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, body).unwrap();
         }
-        let root = dir.path().to_string_lossy().to_string();
-        (dir, Some(root))
+        let (data, _storage, mut ctx) = ctx_with_storage(Uuid::new_v4());
+        ctx.workspace = Some(Workspace::new(dir.path().to_string_lossy().into_owned()));
+        Fixture {
+            _data: data,
+            dir,
+            ctx,
+        }
+    }
+
+    /// Like [`fixture`], with no project attached.
+    fn detached() -> Fixture {
+        let f = fixture(&[]);
+        Fixture {
+            ctx: ToolContext {
+                workspace: None,
+                ..f.ctx
+            },
+            ..f
+        }
     }
 
     #[tokio::test]
     async fn read_numbers_lines_and_reports_total() {
-        let (_d, root) = workspace(&[("a.rs", "one\ntwo\nthree\n")]);
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        let out = CodeRead::new(root)
-            .invoke(&ctx, serde_json::json!({"path": "a.rs"}))
+        let f = fixture(&[("a.rs", "one\ntwo\nthree\n")]);
+        let out = CodeRead
+            .invoke(&f.ctx, serde_json::json!({"path": "a.rs"}))
             .await
             .unwrap();
         assert!(out.result.contains("\u{2192}two"), "got: {}", out.result);
         assert!(
             out.result.contains('3'),
-            "total must be stated: {}",
+            "the total must be stated: {}",
             out.result
         );
     }
 
+    /// The window half of the contract: `offset` picks up where the previous read
+    /// stopped, the result says where to continue, and the numbers shown are the
+    /// file's own — a fragment quoted back from a later window must not name the
+    /// wrong line.
     #[tokio::test]
-    async fn edit_replaces_unique_fragment() {
-        let (d, root) = workspace(&[("a.rs", "let x = 1;\nlet y = 2;\n")]);
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        CodeEdit::new(root)
-            .invoke(
-                &ctx,
-                serde_json::json!({"path": "a.rs", "old_string": "let y = 2;", "new_string": "let y = 3;"}),
-            )
+    async fn read_windows_a_long_file_and_says_where_to_continue() {
+        let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+        let f = fixture(&[("big.rs", body.as_str())]);
+        let first = CodeRead
+            .invoke(&f.ctx, serde_json::json!({"path": "big.rs", "limit": 10}))
             .await
             .unwrap();
-        let after = std::fs::read_to_string(d.path().join("a.rs")).unwrap();
-        assert_eq!(after, "let x = 1;\nlet y = 3;\n");
-    }
-
-    /// The two refusals are the whole point of the contract: a miss and an
-    /// ambiguous match must leave the file untouched and say which it was.
-    #[tokio::test]
-    async fn edit_refuses_missing_and_ambiguous() {
-        let (d, root) = workspace(&[("a.rs", "dup\ndup\n")]);
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        let tool = CodeEdit::new(root);
-        let miss = tool
-            .invoke(
-                &ctx,
-                serde_json::json!({"path": "a.rs", "old_string": "absent", "new_string": "x"}),
-            )
-            .await
-            .unwrap();
-        let ambiguous = tool
-            .invoke(
-                &ctx,
-                serde_json::json!({"path": "a.rs", "old_string": "dup", "new_string": "x"}),
-            )
-            .await
-            .unwrap();
-        assert_ne!(miss.result, ambiguous.result, "the two must be told apart");
+        assert!(first.result.contains("\u{2192}line 10"), "{}", first.result);
         assert!(
-            ambiguous.result.contains('2'),
-            "the count is what makes the message actionable: {}",
-            ambiguous.result
+            !first.result.contains("\u{2192}line 11"),
+            "{}",
+            first.result
         );
-        assert_eq!(
-            std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
-            "dup\ndup\n",
-            "a refused edit must not touch the file"
-        );
-        // `replace_all` is the sanctioned way past the ambiguity.
-        tool.invoke(
-            &ctx,
-            serde_json::json!({"path": "a.rs", "old_string": "dup", "new_string": "x", "replace_all": true}),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
-            "x\nx\n"
-        );
-    }
+        assert!(first.result.contains("offset=11"), "{}", first.result);
 
-    /// A model emits `\n`; a Windows checkout is CRLF. Without normalization the
-    /// match misses, and without re-encoding one edit rewrites every line.
-    #[tokio::test]
-    async fn edit_preserves_crlf_and_bom() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a.rs");
-        let mut bytes = vec![0xEF, 0xBB, 0xBF];
-        bytes.extend_from_slice(b"let x = 1;\r\nlet y = 2;\r\n");
-        std::fs::write(&path, &bytes).unwrap();
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        CodeEdit::new(Some(dir.path().to_string_lossy().to_string()))
+        let second = CodeRead
             .invoke(
-                &ctx,
-                serde_json::json!({"path": "a.rs", "old_string": "let y = 2;", "new_string": "let y = 3;"}),
+                &f.ctx,
+                serde_json::json!({"path": "big.rs", "offset": 11, "limit": 10}),
             )
             .await
             .unwrap();
-        let after = std::fs::read(&path).unwrap();
-        assert_eq!(
-            after,
-            {
-                let mut want = vec![0xEF, 0xBB, 0xBF];
-                want.extend_from_slice(b"let x = 1;\r\nlet y = 3;\r\n");
-                want
-            },
-            "CRLF and BOM must survive an edit"
+        assert!(
+            second.result.contains("    11\u{2192}line 11"),
+            "{}",
+            second.result
         );
     }
 
     #[tokio::test]
-    async fn grep_finds_and_locates() {
-        let (_d, root) = workspace(&[("src/a.rs", "fn mean() {}\n"), ("src/b.rs", "// nothing\n")]);
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        let out = CodeGrep::new(root)
-            .invoke(&ctx, serde_json::json!({"pattern": "mean"}))
+    async fn grep_locates_matches_and_takes_a_regex() {
+        let f = fixture(&[
+            ("src/a.rs", "fn mean() {}\nfn median() {}\n"),
+            ("src/b.rs", "// nothing here\n"),
+        ]);
+        let out = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": r"fn me(an|dian)"}))
             .await
             .unwrap();
         assert!(out.result.contains("src/a.rs:1"), "got: {}", out.result);
+        assert!(out.result.contains("src/a.rs:2"), "got: {}", out.result);
         assert!(!out.result.contains("b.rs"), "got: {}", out.result);
     }
 
     #[tokio::test]
+    async fn grep_is_case_insensitive_until_the_pattern_has_a_capital() {
+        let f = fixture(&[("a.rs", "struct Widget;\n")]);
+        let lower = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "widget"}))
+            .await
+            .unwrap();
+        assert!(lower.result.contains("a.rs:1"), "got: {}", lower.result);
+        let upper = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "WIDGET"}))
+            .await
+            .unwrap();
+        assert!(!upper.result.contains("a.rs:1"), "got: {}", upper.result);
+    }
+
+    /// A broken pattern or glob is an answer the model can act on, not an error
+    /// that ends the round with nothing to do next.
+    #[tokio::test]
+    async fn grep_names_a_broken_pattern() {
+        let f = fixture(&[("a.rs", "x\n")]);
+        let out = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "fn ("}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("fn ("), "got: {}", out.result);
+    }
+
+    #[tokio::test]
+    async fn grep_filters_by_glob() {
+        let f = fixture(&[("src/a.rs", "target\n"), ("notes.md", "target\n")]);
+        let out = CodeGrep
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"pattern": "target", "glob": "**/*.rs"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("src/a.rs"), "got: {}", out.result);
+        assert!(!out.result.contains("notes.md"), "got: {}", out.result);
+    }
+
+    /// "No hits" and "nothing was searched" call for different next moves, so a
+    /// glob that matches no file at all must not read as "the project does not
+    /// contain this".
+    #[tokio::test]
+    async fn an_empty_search_says_which_kind_of_empty_it_was() {
+        let f = fixture(&[("a.rs", "needle\n")]);
+        let no_hits = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "absent"}))
+            .await
+            .unwrap();
+        let no_files = CodeGrep
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"pattern": "needle", "glob": "**/*.py"}),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            no_hits.result, no_files.result,
+            "the two empties must be told apart"
+        );
+        assert!(no_files.result.contains("*.py"), "{}", no_files.result);
+    }
+
+    /// The reason `ignore` is a dependency: the project's own rules decide what
+    /// exists, and on a Rust checkout that is most of the bytes on disk.
+    #[tokio::test]
+    async fn gitignored_and_hidden_entries_are_invisible() {
+        let f = fixture(&[
+            (".gitignore", "target/\nsecret.txt\n"),
+            ("src/a.rs", "needle\n"),
+            ("target/build.rs", "needle\n"),
+            ("secret.txt", "needle\n"),
+            (".hidden/x.rs", "needle\n"),
+        ]);
+        let grep = CodeGrep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "needle"}))
+            .await
+            .unwrap();
+        assert!(grep.result.contains("src/a.rs"), "got: {}", grep.result);
+        for hidden in ["target/", "secret.txt", ".hidden"] {
+            assert!(
+                !grep.result.contains(hidden),
+                "{hidden} must not be searched: {}",
+                grep.result
+            );
+        }
+        let list = CodeList
+            .invoke(&f.ctx, serde_json::json!({"depth": 3}))
+            .await
+            .unwrap();
+        assert!(list.result.contains("src/"), "got: {}", list.result);
+        assert!(!list.result.contains("target/"), "got: {}", list.result);
+    }
+
+    #[tokio::test]
+    async fn list_shows_the_tree_and_marks_directories() {
+        let f = fixture(&[("src/a.rs", "x\n"), ("README.md", "y\n")]);
+        let out = CodeList
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("src/"), "got: {}", out.result);
+        assert!(out.result.contains("src/a.rs"), "got: {}", out.result);
+        assert!(out.result.contains("README.md"), "got: {}", out.result);
+    }
+
+    /// Depth is a real bound, not decoration: a deep file must be absent at
+    /// depth 1 and present when asked for.
+    #[tokio::test]
+    async fn list_respects_depth() {
+        let f = fixture(&[("src/deep/x.rs", "x\n")]);
+        let shallow = CodeList
+            .invoke(&f.ctx, serde_json::json!({"depth": 1}))
+            .await
+            .unwrap();
+        assert!(!shallow.result.contains("x.rs"), "{}", shallow.result);
+        let deep = CodeList
+            .invoke(&f.ctx, serde_json::json!({"depth": 3}))
+            .await
+            .unwrap();
+        assert!(deep.result.contains("src/deep/x.rs"), "{}", deep.result);
+    }
+
+    #[tokio::test]
     async fn paths_outside_the_root_are_refused() {
-        let (_d, root) = workspace(&[("a.rs", "x\n")]);
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let f = fixture(&[("a.rs", "x\n")]);
+        for path in ["../../secrets.txt", ".."] {
+            assert!(
+                CodeRead
+                    .invoke(&f.ctx, serde_json::json!({"path": path}))
+                    .await
+                    .is_err(),
+                "escaping the workspace must be refused: {path}"
+            );
+        }
+        // An absolute path elsewhere is the same escape in another spelling.
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::write(elsewhere.path().join("out.txt"), "x").unwrap();
         assert!(
-            CodeRead::new(root)
-                .invoke(&ctx, serde_json::json!({"path": "../../secrets.txt"}))
+            CodeRead
+                .invoke(
+                    &f.ctx,
+                    serde_json::json!({"path": elsewhere.path().join("out.txt").to_string_lossy()})
+                )
                 .await
                 .is_err()
         );
@@ -686,13 +835,66 @@ mod tests {
     /// No workspace is a refusal, not "the whole disk" — the one place this
     /// family deliberately differs from `fs_read`.
     #[tokio::test]
-    async fn without_a_root_the_tools_refuse() {
-        let (_dd, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+    async fn without_a_workspace_every_tool_refuses() {
+        let f = detached();
         assert!(
-            CodeRead::new(None)
-                .invoke(&ctx, serde_json::json!({"path": "Cargo.toml"}))
+            CodeRead
+                .invoke(&f.ctx, serde_json::json!({"path": "Cargo.toml"}))
                 .await
                 .is_err()
         );
+        assert!(
+            CodeGrep
+                .invoke(&f.ctx, serde_json::json!({"pattern": "fn"}))
+                .await
+                .is_err()
+        );
+        assert!(
+            CodeList
+                .invoke(&f.ctx, serde_json::json!({}))
+                .await
+                .is_err()
+        );
+        // The refusal must name the route that works, not merely say "no".
+        let err = CodeList
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("/project"), "got: {err}");
+        let _ = f.dir;
+    }
+
+    #[tokio::test]
+    async fn a_binary_file_is_refused_rather_than_mangled() {
+        let f = fixture(&[]);
+        std::fs::write(f.dir.path().join("a.bin"), [0x00, 0x01, 0x02]).unwrap();
+        assert!(
+            CodeRead
+                .invoke(&f.ctx, serde_json::json!({"path": "a.bin"}))
+                .await
+                .is_err()
+        );
+    }
+
+    /// A model emits `\n`; a Windows checkout is CRLF. Reading normalizes, or a
+    /// fragment quoted from a read cannot match the file it came from — the
+    /// contract stage 2 rests on.
+    #[test]
+    fn crlf_and_bom_are_normalized_for_reading_and_restored_for_writing() {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"let x = 1;\r\nlet y = 2;\r\n");
+        let file = TextFile::load(&bytes).unwrap();
+        assert_eq!(file.text, "let x = 1;\nlet y = 2;\n");
+        assert!(file.crlf && file.bom);
+        assert_eq!(file.encode(&file.text), bytes);
+    }
+
+    #[test]
+    fn the_family_list_matches_the_predicate() {
+        for id in WORKSPACE_TOOL_IDS {
+            assert!(is_workspace_tool(id), "{id}");
+        }
+        assert!(!is_workspace_tool("fs_read"));
     }
 }

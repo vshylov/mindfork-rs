@@ -152,6 +152,15 @@ pub enum ChatIntent {
     },
     /// Show the chat's attachments (command `/file list`).
     FileList,
+    /// Attach a code project to the chat (command `/project attach <dir>`).
+    /// See docs/code-workspace.md, spec §9.12.
+    ProjectAttach {
+        path: String,
+    },
+    /// Detach the chat's code project (command `/project detach`).
+    ProjectDetach,
+    /// Report the chat's code project (command `/project status`).
+    ProjectStatus,
     /// Stage an image for the next message (command `/image attach <path>`). See
     /// spec §9.10.
     ImageAttach {
@@ -873,6 +882,7 @@ mod images;
 mod impersonation;
 mod input;
 mod popups;
+mod project;
 mod rag;
 mod render;
 
