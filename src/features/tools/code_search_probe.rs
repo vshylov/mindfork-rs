@@ -33,10 +33,16 @@ pub const CODE_SEARCH_ID: &str = "code_search";
 /// Lines per chunk, and how many of them the next chunk repeats
 /// (docs/code-workspace.md §3.7: "line windows (~40 lines, ~10 overlap)").
 const CHUNK_LINES: usize = 40;
-const CHUNK_OVERLAP: usize = 10;
-/// Hard cap on one chunk's characters, so a minified or generated file cannot
-/// produce a chunk the embedder refuses.
-const CHUNK_MAX_CHARS: usize = 4000;
+const CHUNK_OVERLAP: usize = 8;
+/// Hard cap on one chunk's characters — and the **binding** constraint, not a
+/// safety net.
+///
+/// Measured: the embedding server refuses a single input over its physical batch
+/// (`input (596 tokens) is too large to process … current batch size: 512`), so a
+/// window is bounded by characters first and by lines second. 1200 is what this
+/// project's own RAG chunker already uses (`DEFAULT_CHUNK_MAX_CHARS`) — the
+/// ceiling was encoded in the codebase before this probe met it.
+const CHUNK_MAX_CHARS: usize = 1200;
 /// Files larger than this are skipped by the indexer.
 const MAX_FILE_BYTES: u64 = 512 * 1024;
 /// Hits returned by one search, unless the call asks for fewer.
@@ -67,33 +73,45 @@ pub fn install(index: Index) {
     let _ = INDEX.set(index);
 }
 
-/// Splits `text` into overlapping line windows.
+/// Splits `text` into overlapping windows, bounded by **characters first**.
+///
+/// A fixed line count cannot work against a hard per-input ceiling: 40 lines of
+/// dense Rust is well past it while 40 lines of a sparse header is a fraction of
+/// it. So a window grows until it would exceed [`CHUNK_MAX_CHARS`] or reaches
+/// [`CHUNK_LINES`], and the next one starts [`CHUNK_OVERLAP`] lines back — the
+/// overlap is what keeps a fact straddling a boundary retrievable, and it has to
+/// be in lines because that is the unit a reader is given back.
 pub fn windows(path: &str, text: &str) -> Vec<(usize, usize, String)> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {
         return Vec::new();
     }
-    let step = CHUNK_LINES.saturating_sub(CHUNK_OVERLAP).max(1);
+    // The path rides inside every embedded window: half of "where does X live"
+    // is answered by the file's own name, and a vector that does not carry it
+    // cannot use that.
+    let header = format!("{path}\n");
     let mut out = Vec::new();
     let mut start = 0usize;
     while start < lines.len() {
-        let end = (start + CHUNK_LINES).min(lines.len());
-        // The path rides inside the embedded text: half of "where does X live"
-        // is answered by the file's own name, and a vector that does not carry
-        // it cannot use that.
-        let mut body = format!("{path}\n");
-        for line in &lines[start..end] {
-            body.push_str(line);
-            body.push('\n');
-            if body.chars().count() > CHUNK_MAX_CHARS {
+        let mut body = header.clone();
+        let mut end = start;
+        while end < lines.len() && end - start < CHUNK_LINES {
+            let next = lines[end].chars().count() + 1;
+            // At least one line per window, however long that line is: a
+            // 3000-character generated line would otherwise stall the walk.
+            if end > start && body.chars().count() + next > CHUNK_MAX_CHARS {
                 break;
             }
+            body.push_str(lines[end]);
+            body.push('\n');
+            end += 1;
         }
         out.push((start + 1, end, body));
-        if end == lines.len() {
+        if end >= lines.len() {
             break;
         }
-        start += step;
+        // Step back for the overlap, but always forward overall.
+        start = (end.saturating_sub(CHUNK_OVERLAP)).max(start + 1);
     }
     out
 }
@@ -248,13 +266,45 @@ mod tests {
         let w = windows("a.rs", &text);
         assert!(w.len() > 1, "100 lines must not be one window");
         assert_eq!(w[0].0, 1);
-        assert_eq!(w[0].1, CHUNK_LINES);
+        assert_eq!(w[0].1, CHUNK_LINES, "short lines fill the line budget");
         // The second window starts inside the first — that overlap is what keeps
         // a fact that straddles a boundary retrievable.
         assert!(w[1].0 <= CHUNK_LINES, "no overlap: {:?}", &w[..2]);
         assert_eq!(w.last().unwrap().1, 100, "the tail must be covered");
         // Every chunk carries its path, so the vector knows where it came from.
         assert!(w.iter().all(|(_, _, body)| body.starts_with("a.rs\n")));
+    }
+
+    /// The binding constraint, measured against the real server: a single input
+    /// over its physical batch is refused outright, so no window may exceed the
+    /// character cap — whatever the lines look like.
+    #[test]
+    fn no_window_exceeds_the_character_cap() {
+        let dense: String = (1..=200)
+            .map(|i| format!("{} // {}\n", "x".repeat(100), i))
+            .collect();
+        let w = windows("dense.rs", &dense);
+        assert!(w.len() > 1);
+        for (start, end, body) in &w {
+            assert!(
+                body.chars().count() <= CHUNK_MAX_CHARS + 120,
+                "{start}-{end} is {} chars",
+                body.chars().count()
+            );
+            assert!(end > start, "an empty window at {start}");
+        }
+        // …and the walk still terminates, covering the file.
+        assert_eq!(w.last().unwrap().1, 200);
+    }
+
+    /// One line longer than the whole budget still becomes a window rather than
+    /// stalling the walk — a generated or minified file is the normal case.
+    #[test]
+    fn a_single_overlong_line_still_advances() {
+        let text = format!("{}\nshort\n", "y".repeat(CHUNK_MAX_CHARS * 3));
+        let w = windows("min.js", &text);
+        assert!(!w.is_empty());
+        assert_eq!(w.last().unwrap().1, 2, "the file must be covered");
     }
 
     #[test]

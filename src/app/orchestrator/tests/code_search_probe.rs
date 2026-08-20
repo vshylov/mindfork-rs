@@ -104,7 +104,7 @@ async fn build_index(root: &std::path::Path, embedder: &Arc<dyn Embedder>) -> In
     eprintln!("index: embedding {} chunks…", corpus.len());
     let started = std::time::Instant::now();
     let mut chunks = Vec::with_capacity(corpus.len());
-    for batch in corpus.chunks(64) {
+    for batch in corpus.chunks(32) {
         let texts: Vec<String> = batch.iter().map(|(_, _, _, body)| body.clone()).collect();
         let vectors = embedder
             .embed(texts, crate::shared::api::contract::EmbedRole::Passage)
@@ -119,7 +119,7 @@ async fn build_index(root: &std::path::Path, embedder: &Arc<dyn Embedder>) -> In
                 vector,
             });
         }
-        if chunks.len() % 1024 < 64 {
+        if chunks.len() % 2048 < 32 {
             eprintln!("  {} / {}", chunks.len(), corpus.len());
         }
     }
