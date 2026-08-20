@@ -3099,3 +3099,213 @@ async fn fetch_url_address_policy_e2e_live() {
         "the local service was reached despite the policy"
     );
 }
+
+/// Runs one stage-0 code-workspace probe against the live model
+/// ([docs/code-workspace.md](../../../../docs/code-workspace.md) §6) and asserts
+/// the ground truth: the fixture builds with `rustc` and prints `want_stdout`.
+///
+/// Returns `(tool calls, `code_edit` calls)` for the run's log line, or `None`
+/// when there is no live server and the smoke is skipped.
+///
+/// The profile is narrowed to the three workspace tools — the "remove the
+/// alternative" rule (docs/lessons.md §9): with `fs_write` in reach the model
+/// could rewrite the file wholesale and the contract under test would never run.
+async fn run_code_probe(
+    files: &[(&str, &str)],
+    prompt: &str,
+    want_stdout: &str,
+    starts_broken: bool,
+) -> Option<(usize, usize)> {
+    use crate::features::tools::code::{CODE_EDIT_ID, CODE_GREP_ID, CODE_READ_ID};
+    use crate::shared::config::ToolSettings;
+
+    let ws = tempfile::tempdir().unwrap();
+    for (name, body) in files {
+        let path = ws.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    // The smoke's own validity check: the fixture must really be in the state the
+    // prompt describes, or the run can pass without the defect ever existing
+    // (docs/lessons.md §2).
+    let before = rustc_run(ws.path());
+    if starts_broken {
+        let Err(err) = &before else {
+            panic!("the fixture must start broken, it compiled: {before:?}");
+        };
+        eprintln!("fixture is broken as intended:\n{}", first_lines(err, 6));
+    } else {
+        let Ok(out) = &before else {
+            panic!("the fixture must start compiling: {before:?}");
+        };
+        assert_ne!(
+            out.trim(),
+            want_stdout,
+            "the fixture must start with the wrong answer"
+        );
+        eprintln!("fixture starts with the wrong answer: {}", out.trim());
+    }
+
+    let config = AppConfig {
+        tools: ToolSettings {
+            fs_enabled: true,
+            // The spike's stand-in for `Chat.workspace` (stage 1 replaces it).
+            fs_root: Some(ws.path().to_string_lossy().into_owned()),
+            ..Default::default()
+        },
+        // Locate, read, edit, verify — four rounds is the honest shape; twelve
+        // leaves room to recover from a missed match without the smoke becoming a
+        // measurement of the round budget instead of the edit contract.
+        max_tool_rounds: 12,
+        ..Default::default()
+    };
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_live_cfg(config)?;
+    let _ = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            CODE_READ_ID.into(),
+            CODE_GREP_ID.into(),
+            CODE_EDIT_ID.into(),
+        ],
+    )
+    .await;
+
+    let (answer, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, prompt).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    for (name, args, result) in &calls {
+        eprintln!(
+            "→ {name}({}) => {}",
+            args.chars().take(300).collect::<String>(),
+            result.chars().take(300).collect::<String>()
+        );
+    }
+    eprintln!("reply: {answer}");
+    let edits = calls.iter().filter(|(n, _, _)| n == CODE_EDIT_ID).count();
+    eprintln!(
+        "PROBE: {} tool calls, {edits} of them {CODE_EDIT_ID}",
+        calls.len()
+    );
+
+    // The tool under test has to have actually run — without this the smoke passes
+    // when the model merely explains the fix in prose (docs/lessons.md §9).
+    assert!(edits > 0, "the model never called {CODE_EDIT_ID}");
+    match rustc_run(ws.path()) {
+        Ok(stdout) => assert_eq!(
+            stdout.trim(),
+            want_stdout,
+            "it builds, but the program no longer computes the right answer"
+        ),
+        Err(err) => panic!("does not compile after the edit:\n{err}"),
+    }
+    Some((calls.len(), edits))
+}
+
+/// Compiles the probe fixture with `rustc` (no cargo, no manifest, no network)
+/// and runs it, returning its stdout. `Err` carries the compiler's diagnostics.
+///
+/// Output goes to `target/`, which `code_grep` skips — so building does not put
+/// artifacts in front of the model, exactly as a real checkout would not.
+fn rustc_run(root: &std::path::Path) -> Result<String, String> {
+    let build = std::process::Command::new("rustc")
+        .current_dir(root)
+        .args(["--edition", "2021", "src/main.rs", "--out-dir", "target"])
+        .output()
+        .map_err(|e| format!("could not start rustc: {e}"))?;
+    if !build.status.success() {
+        return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+    }
+    let exe = root
+        .join("target")
+        .join(if cfg!(windows) { "main.exe" } else { "main" });
+    let run = std::process::Command::new(&exe)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not run {}: {e}", exe.display()))?;
+    Ok(String::from_utf8_lossy(&run.stdout).into_owned())
+}
+
+fn first_lines(s: &str, n: usize) -> String {
+    s.lines().take(n).collect::<Vec<_>>().join("\n")
+}
+
+/// Stage 0, **arm A — the compile error a user pastes**. The situation people
+/// actually arrive with: `cargo build` failed and its output is in the message.
+/// The fault is one line deep in a file `main.rs` never names.
+///
+/// Note what this arm can and cannot settle. The failing line is quoted **in the
+/// prompt**, so a model could assemble `old_string` from the message rather than
+/// from what `code_read` returned — arm B exists because of that.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test code_edit_probe_live
+/// -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_probe_live() {
+    // The fault: `total` is f64, `values.len()` is usize. The minimal fix is
+    // `as f64` on the length — inside a line that occurs exactly once.
+    let files = [
+        (
+            "src/main.rs",
+            "mod stats;\n\nfn main() {\n    let samples = vec![2.0, 4.0, 6.0, 8.0];\n    println!(\"mean={}\", stats::mean(&samples));\n}\n",
+        ),
+        (
+            "src/stats.rs",
+            "/// Arithmetic mean of the samples.\npub fn mean(values: &[f64]) -> f64 {\n    let total: f64 = values.iter().sum();\n    total / values.len()\n}\n\n/// Largest of the samples, or 0.0 for an empty slice.\npub fn max(values: &[f64]) -> f64 {\n    values.iter().copied().fold(0.0, f64::max)\n}\n",
+        ),
+        ("README.md", "# probe\n\nA tiny statistics program.\n"),
+    ];
+    let prompt = "Проект в рабочей папке не собирается. cargo build выдаёт:\n\n\
+         error[E0277]: cannot divide `f64` by `usize`\n\
+         \x20--> src/stats.rs:4:5\n\
+         \x20 |\n\
+         4 |     total / values.len()\n\
+         \x20 |     ^^^^^^^^^^^^^^^^^^^^ no implementation for `f64 / usize`\n\n\
+         Разберись и почини.";
+    if let Some((calls, edits)) = run_code_probe(&files, prompt, "mean=5", true).await {
+        eprintln!("ARM A: {calls} calls / {edits} edits");
+    } else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+    }
+}
+
+/// Stage 0, **arm B — the fragment is not in the prompt**. A program that builds
+/// and prints the wrong number; the user quotes no code at all, so `old_string`
+/// can only come from what `code_read` returned. This is the arm that actually
+/// measures the contract.
+///
+/// It also lands on the contract's hard case by construction: the obvious
+/// one-line fragment (`        values[mid]`) occurs **twice** in the file, so a
+/// naive edit is refused as ambiguous and the model has to widen it — which is
+/// what the refusal message tells it to do. A run that recovers is the evidence
+/// those messages carry their weight; a run that gives up is the evidence the
+/// contract needs more help than a message.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_edit_probe_ambiguous_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_probe_ambiguous_live() {
+    // For an even count the median must average the two middle samples; the
+    // even branch returns one of them, so [2,4,6,8] gives 6 instead of 5.
+    let files = [
+        (
+            "src/main.rs",
+            "mod stats;\n\nfn main() {\n    let samples = vec![2.0, 4.0, 6.0, 8.0];\n    println!(\"median={}\", stats::median(&samples));\n}\n",
+        ),
+        (
+            "src/stats.rs",
+            "/// Median of an already sorted slice.\npub fn median(values: &[f64]) -> f64 {\n    let mid = values.len() / 2;\n    if values.len() % 2 == 0 {\n        values[mid]\n    } else {\n        values[mid]\n    }\n}\n",
+        ),
+        ("README.md", "# probe\n\nA tiny statistics program.\n"),
+    ];
+    let prompt = "Программа в рабочей папке печатает median=6, хотя для выборки \
+         2, 4, 6, 8 медиана равна 5. Найди причину и почини.";
+    if let Some((calls, edits)) = run_code_probe(&files, prompt, "median=5", false).await {
+        eprintln!("ARM B: {calls} calls / {edits} edits");
+    } else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+    }
+}

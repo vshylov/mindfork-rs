@@ -12,6 +12,7 @@ mod embed_roles_tests;
 pub mod attachment;
 pub mod calc;
 pub mod chats;
+pub mod code;
 pub mod confirm;
 pub mod control;
 pub mod datetime;
@@ -687,6 +688,12 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
+    // SPIKE (stage 0 probe, docs/code-workspace.md): the code-workspace family,
+    // wired to `fs_root` as its stand-in workspace root and off by default, so a
+    // real profile never sees it and the probe enables it explicitly.
+    reg.register(Arc::new(code::CodeRead::new(cfg.fs_root.clone())));
+    reg.register(Arc::new(code::CodeGrep::new(cfg.fs_root.clone())));
+    reg.register(Arc::new(code::CodeEdit::new(cfg.fs_root.clone())));
     // Reading/searching files the user attached to the chat (`/file attach`). Not
     // gated: unlike fs_read they can only reach what the user explicitly attached.
     reg.register(Arc::new(attachment::AttachmentRead));

@@ -3,8 +3,10 @@
 Track design plan (stages, scope, forks). Genre per AGENTS.md §1; once the track
 is done this file moves to `docs/history/`.
 
-**Status:** design accepted by the user on 2026-08-20 (forks F1–F4 below);
-implementation not started.
+**Status:** design accepted by the user on 2026-08-20 (forks F1–F4 below).
+**Stage 0 (the MVP probe) is done and is a GO on gemma-4-31b** — results and
+what they do not settle in §7; the qwen arm is pending a model swap on the live
+stack.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -373,7 +375,98 @@ the standard env-gated `#[ignore]` route. New-code duplication: the search/read
 schema helpers (`search_parameters`/`paged_read_parameters`) are reused, and
 the three command tools share one implementation parameterized by slot.
 
-## 7. Documentation impact (AGENTS.md §4)
+## 7. Stage 0 — probe results
+
+**Verdict: GO on gemma-4-31b** (2026-08-20). The qwen arm is pending a model
+swap on the live stack; the criterion below is per family, so the track's
+stage 1 starts on the gemma evidence and the qwen arm is run before stage 2
+commits to the edit contract.
+
+Branch `spike/code-workspace-probe`: throwaway `code_read`/`code_grep`/`code_edit`
+(`src/features/tools/code.rs`, root taken from `tools.fs_root`, all three off by
+default) plus two live smokes in `src/app/orchestrator/tests/live.rs`.
+
+### 7.1. What was measured
+
+Both arms use the same ground truth, and it is not a string comparison against
+the source: the fixture is compiled with `rustc` (no cargo, no manifest, no
+network) and **run**, so a "fix" that deletes the arithmetic cannot pass. Each
+arm checks its own precondition first — arm A asserts the fixture really does
+not compile, arm B that it compiles and prints the *wrong* number — and both
+assert `code_edit` was actually called, without which the smoke would pass on a
+model that merely explains the fix in prose (docs/lessons.md §9).
+
+- **Arm A — the compile error a user pastes.** `f64 / usize` in a file
+  `main.rs` never names; the prompt is the `cargo build` output, as a user would
+  paste it. **5/5** (gemma-4-31b, `q4_0`, the live stack's llama.cpp).
+- **Arm B — the fragment is **not** in the prompt.** A median that builds and
+  prints 6 instead of 5, with no code quoted in the message, so `old_string` can
+  only come from what `code_read` returned. The obvious one-line fragment
+  (`        values[mid]`) occurs **twice** in the file by construction, so a
+  naive edit is refused as ambiguous. **5/5**.
+
+Arm B exists because arm A cannot settle the question on its own: with the
+failing line quoted in the prompt, a model can assemble `old_string` from the
+message rather than from the file — the smoke would then measure copying, not
+the contract (docs/lessons.md §2, "a test worded so it can be satisfied without
+doing the thing it checks").
+
+### 7.2. What the runs actually looked like
+
+The intended workflow emerged without being scripted, and the same shape
+repeated in all ten runs: locate → read → one edit. Arm A ran
+`code_read` then `code_edit` (2 calls); arm B ran `code_grep("median")`,
+`code_read`, sometimes a second read of `main.rs`, then `code_edit` (3–4 calls).
+**Exactly one `code_edit` per run across all ten** — no run needed a second
+attempt, and no refusal ever fired.
+
+The strongest single datum is arm B's argument. The model reproduced a
+**five-line** fragment byte-for-byte, indentation included, from a read that had
+line numbers prefixed to every line:
+
+```
+old_string: "    if values.len() % 2 == 0 {\n        values[mid]\n    } else {\n        values[mid]\n    }"
+```
+
+That is three separate things working at once: the `   12→` prefixes were
+stripped rather than copied, the leading whitespace of each line survived, and
+the model **widened the fragment past the duplicate on its own** instead of
+sending the ambiguous one line. The fix itself was minimal and correct in every
+run (`values.len() as f64` in arm A, `(values[mid - 1] + values[mid]) / 2.0` in
+arm B).
+
+### 7.3. What this does *not* settle
+
+- **The refusal paths never fired live.** Because the model never missed,
+  `tool.code.edit.not_found` and `tool.code.edit.ambiguous` are covered by unit
+  tests only. Those messages are load-bearing by design (§3.2: a miss must say
+  what to do next), so **stage 2 keeps a smoke that provokes a miss** and asserts
+  the model recovers from the message rather than giving up.
+- **One model family.** gemma-4-31b only; qwen-3.6-27b is the other family the
+  live gate runs, and docs/lessons.md §9 records that two families flake for two
+  *different* reasons — a rate measured on one says nothing about the other.
+- **One fixture size.** Both fixtures are a few files of a few lines. Nothing
+  here measures the contract on a 2000-line file where the read window matters,
+  which is a stage-1 concern (the `offset`/`limit` half of `code_read`).
+
+### 7.4. Side findings for stage 1
+
+- **Adding tools to the catalog drifts the committed demo dumps.** Three new
+  catalog entries moved a displayed count from 48 to 51 and reddened
+  `committed_dumps_match_the_code`. Stage 1 must regenerate: `cargo test
+  dump_demo_frames -- --ignored`, then `python tools/screenshots.py`, and commit
+  both (docs/lessons.md §1 on the font the regenerator needs).
+- **The contract is testable without any `Chat`/`ToolContext` plumbing.** The
+  spike reached a real model, a real profile and a real agentic loop with the
+  root threaded through an existing config field. Stage 1's `Chat.workspace` work
+  is therefore about *scope and lifecycle*, not about making the tools reachable
+  — the two can be reviewed separately.
+- **`enabled_by_default = false` kept the blast radius at zero**: no existing
+  profile gained a tool, no default-tool test moved, and the probe enabled the
+  three explicitly. Stage 1 should keep that and let the workspace's presence be
+  the gate, as designed.
+
+## 8. Documentation impact (AGENTS.md §4)
 
 - spec.md: new §9.12 (workspace tools) + §11.7 command/key tables + a changes
   screen subsection in §11; architecture.md: §3 module map, §8 tool table, §10
