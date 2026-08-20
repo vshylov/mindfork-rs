@@ -198,7 +198,15 @@ async fn build_index(root: &std::path::Path, embedder: &Arc<dyn Embedder>) -> In
 /// repository as the attached project. Returns the reply and the calls made.
 async fn ask(tools: &[&str], question: &str) -> Option<(String, Vec<(String, String, String)>)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
-    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_live()?;
+    // 4096, not the default 2048. This project has already measured what that
+    // ceiling does to an open-ended prompt on a reasoning model with thinking on
+    // — 1024: 0/3, 2048: 2/3, 4096: 3/4 (docs/journal/ci.md, the second-chat-
+    // model track) — and the first honest run of this probe reproduced it: more
+    // than half the control arm's turns ended with no text at all. Two arms
+    // starved by the same harness do not compare to anything.
+    let mut config = AppConfig::default();
+    config.default_sampling.max_tokens = Some(4096);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_live_cfg(config)?;
     let _ = super::live::narrow_profile_to(
         &cmd_tx,
         &mut evt_rx,
