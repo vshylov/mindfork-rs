@@ -161,6 +161,9 @@ pub enum ChatIntent {
     ProjectDetach,
     /// Report the chat's code project (command `/project status`).
     ProjectStatus,
+    /// Open the changes screen (`F4`, `/changes`): what the assistant changed
+    /// in the attached project. See spec §9.12.
+    OpenChanges,
     /// Set, show or clear one of the project's command slots
     /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).
     ProjectSlot {

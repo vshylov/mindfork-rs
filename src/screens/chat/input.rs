@@ -269,6 +269,11 @@ impl ChatScreen {
             }
             // View of the active profile's "self-model" (a read-only view).
             (KeyCode::F(3), _) => Some(ChatIntent::OpenSelfModel),
+            // What the assistant changed in the attached project. `F4` was the
+            // one function key free in the app and unclaimed by both measured
+            // hosts (VS Code's `commandsToSkipShell`, browser tabs) — design
+            // fork F10.
+            (KeyCode::F(4), _) => Some(ChatIntent::OpenChanges),
             // Copy the active chat's conversation to the clipboard (like F5
             // in the chat list). The confirmation/error arrives as a note in
             // the feed (no overlay).

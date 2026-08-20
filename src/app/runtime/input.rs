@@ -215,6 +215,7 @@ fn handle_key_event(
         ActiveScreen::Settings(settings) => settings.handle_key(key).map(AnyIntent::Settings),
         ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
         ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
+        ActiveScreen::Changes(changes) => changes.handle_key(key).map(AnyIntent::Changes),
     };
     match intent {
         // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —

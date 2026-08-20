@@ -192,6 +192,71 @@ impl Orchestrator {
         });
     }
 
+    /// Builds the change set for the active chat and sends it to the screen
+    /// (`F4` / `/changes`).
+    ///
+    /// Off the runtime: it reads every journaled file and diffs it, which is
+    /// synchronous I/O that would otherwise stall the UI thread's bridge. The
+    /// event goes straight out rather than back through the orchestrator —
+    /// nothing here changes orchestrator state.
+    pub(super) fn handle_open_changes(&mut self) {
+        let Some((dir, root)) = self.workspace_paths() else {
+            // No chat, or no project: an empty set, and the screen says what
+            // would put something in it (docs/lessons.md §4).
+            self.emit_changes(Default::default());
+            return;
+        };
+        let tx = self.evt_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let set = crate::features::workspace_diff::build(&dir, &root);
+            let _ = tx.send(AppEvent::WorkspaceChanges(Box::new(set)));
+        });
+    }
+
+    /// Puts one file back and re-sends the change set, so the screen shows the
+    /// result rather than what it asked for.
+    ///
+    /// A failure is reported as a `/project` note in the feed: the screen the
+    /// user is looking at has no error line of its own, and a revert that
+    /// silently did nothing is the worst of the three outcomes.
+    pub(super) fn handle_revert_workspace_file(&mut self, path: String) {
+        let Some((dir, root)) = self.workspace_paths() else {
+            self.emit_changes(Default::default());
+            return;
+        };
+        let tx = self.evt_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = crate::features::workspace_diff::revert(&dir, &root, &path) {
+                let _ = tx.send(AppEvent::ProjectProgress(ProjectProgress::Failed(
+                    err.to_string(),
+                )));
+            }
+            let set = crate::features::workspace_diff::build(&dir, &root);
+            let _ = tx.send(AppEvent::WorkspaceChanges(Box::new(set)));
+        });
+    }
+
+    /// The active chat's journal directory and project root, when it has both.
+    fn workspace_paths(&self) -> Option<(std::path::PathBuf, String)> {
+        let chat_id = self.active_id?;
+        let root = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .and_then(|c| c.workspace.as_ref())
+            .map(|w| w.root.clone())?;
+        let dir = self
+            .storage
+            .json()
+            .workspace_dir()
+            .join(chat_id.to_string());
+        Some((dir, root))
+    }
+
+    fn emit_changes(&self, set: crate::features::workspace_diff::ChangeSet) {
+        let _ = self.evt_tx.send(AppEvent::WorkspaceChanges(Box::new(set)));
+    }
+
     fn emit_project(&self, progress: ProjectProgress) {
         let _ = self.evt_tx.send(AppEvent::ProjectProgress(progress));
     }

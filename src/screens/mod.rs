@@ -4,6 +4,7 @@
 //! `settings.rs` — the settings screen (M8); `chat_list.rs` — the fullscreen chat
 //! list (opened from the chat via `Esc`).
 
+pub mod changes;
 pub mod chat;
 pub mod chat_list;
 pub mod search;

@@ -62,6 +62,7 @@ impl ChatScreen {
             // generation first, and this command is the half that always means
             // "the chat list" (`/stop` is the other half).
             UiCommand::Chats => Some(ChatIntent::OpenChatList),
+            UiCommand::Changes => Some(ChatIntent::OpenChanges),
             UiCommand::Help => {
                 self.help = Some(HelpState::open(self.help_last_tab));
                 None

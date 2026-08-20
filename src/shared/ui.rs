@@ -3,9 +3,10 @@
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
 use crate::shared::theme::Palette;
 
@@ -120,6 +121,51 @@ pub fn render_scrollbar(
         .track_style(palette.border_style(focused))
         .thumb_style(palette.border_style(focused));
     frame.render_stateful_widget(bar, area, &mut state);
+}
+
+/// A modal confirmation: a centred, bordered box with a question and a footer
+/// naming the keys that answer it.
+///
+/// One renderer rather than one per screen. The chat screen has asked
+/// destructive questions since the dangerous-tool track (spec §9.8) and the
+/// changes screen asks the same shape of question about a revert; `screens` are
+/// siblings, so the second one could not have reached the first's without a
+/// copy. The **keys** stay with each caller — what confirms differs (`Enter`
+/// there, `Enter` here, `Enter`/`A`/`Esc` for a tool call) and only the drawing
+/// is common.
+pub fn confirm_popup(
+    frame: &mut Frame,
+    palette: &Palette,
+    title: &str,
+    question: &str,
+    footer: &str,
+) {
+    // Wide enough to read, never wider than the terminal; three rows of border
+    // and text, plus one for a wrapped second line.
+    let width = 56u16.min(frame.area().width);
+    let area = centered_rect(width, 5, frame.area());
+    frame.render_widget(Clear, area);
+    let block = palette.panel(title.to_string(), true).title_bottom(
+        Line::from(Span::styled(footer.to_string(), palette.muted_style())).centered(),
+    );
+    let body = Paragraph::new(Line::from(Span::styled(
+        question.to_string(),
+        Style::new().fg(palette.text),
+    )))
+    .block(block)
+    .wrap(Wrap { trim: true });
+    frame.render_widget(body, area);
+}
+
+/// A fixed-width/height rectangle centred in `area` (clamped).
+pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
+    v
 }
 
 #[cfg(test)]

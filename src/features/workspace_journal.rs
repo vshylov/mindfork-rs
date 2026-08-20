@@ -146,21 +146,44 @@ impl Journal {
 
     /// Everything journaled for this chat, oldest touch first.
     ///
-    /// The reader half of the journal: its consumer is the changes screen
-    /// (stage 4). Written with the writer deliberately — the two agree on one
-    /// manifest shape, and splitting them across stages is how they drift.
-    #[allow(dead_code)] // Consumer lands with the changes screen; covered by tests here.
+    /// The reader half of the journal, consumed by
+    /// [`crate::features::workspace_diff`]. Written with the writer
+    /// deliberately — the two agree on one manifest shape, and splitting them
+    /// across stages is how they drift.
     pub fn entries(&self) -> Vec<JournalEntry> {
         self.load().files
     }
 
     /// The stored pre-image of `rel`, or `None` when it was a new file (or is
-    /// not journaled at all). Reverting a file is this plus a write (stage 4).
-    #[allow(dead_code)] // Consumer lands with the changes screen; covered by tests here.
+    /// not journaled at all). Reverting a file is this plus a write
+    /// ([`crate::features::workspace_diff::revert`]).
     pub fn baseline_of(&self, rel: &str) -> Option<Vec<u8>> {
         let entry = self.load().files.into_iter().find(|e| e.path == rel)?;
         let name = entry.baseline?;
         std::fs::read(self.baseline_dir().join(name)).ok()
+    }
+
+    /// Drops one file's row and its stored pre-image — what a revert does once
+    /// the bytes are back where they belong.
+    ///
+    /// The baseline file goes with the row: it is the only thing referencing it,
+    /// and a directory of orphaned pre-images is bytes of the user's source kept
+    /// for no reason. Forgetting something that is not there is not an error —
+    /// the end state is the one that was asked for.
+    pub fn forget(&self, rel: &str) -> Result<()> {
+        let mut manifest = self.load();
+        let Some(index) = manifest.files.iter().position(|e| e.path == rel) else {
+            return Ok(());
+        };
+        let entry = manifest.files.remove(index);
+        if let Some(name) = entry.baseline {
+            let path = self.baseline_dir().join(name);
+            if path.exists() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("removing {}", path.display()))?;
+            }
+        }
+        self.save(&manifest)
     }
 
     /// Drops the whole journal (a new project, or the chat's workspace detached).
@@ -267,6 +290,25 @@ mod tests {
         std::fs::write(&blocked, "not a directory").unwrap();
         let j = Journal::new(&blocked);
         assert!(j.record("/proj", "src/a.rs", Some(b"x")).is_err());
+    }
+
+    /// Forgetting one file takes its stored pre-image with it: nothing else
+    /// references those bytes, and they are the user's source.
+    #[test]
+    fn forget_drops_the_row_and_its_baseline() {
+        let (_d, j) = journal();
+        j.record("/proj", "src/a.rs", Some(b"a")).unwrap();
+        j.record("/proj", "src/b.rs", Some(b"b")).unwrap();
+        j.forget("src/a.rs").unwrap();
+        let entries = j.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "src/b.rs");
+        assert_eq!(j.baseline_of("src/a.rs"), None);
+        // The other file's baseline must survive — a shared directory means a
+        // careless delete takes a neighbour with it.
+        assert_eq!(j.baseline_of("src/b.rs").as_deref(), Some(&b"b"[..]));
+        // Forgetting what is not there is the end state already.
+        assert!(j.forget("src/a.rs").is_ok());
     }
 
     #[test]

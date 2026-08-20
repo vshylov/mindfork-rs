@@ -94,6 +94,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("serde", "1.0.228", "MIT OR Apache-2.0"),
     ("serde_json", "1.0.150", "MIT OR Apache-2.0"),
     ("sha2", "0.10.9", "MIT OR Apache-2.0"),
+    ("similar", "3.2.0", "Apache-2.0"),
     ("single-instance", "0.3.3", "MIT"),
     ("spellbook", "0.4.2", "MPL-2.0"),
     ("sqlite-vec", "0.1.9", "MIT/Apache-2.0"),

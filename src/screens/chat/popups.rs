@@ -262,6 +262,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+G", "ui.help.search_messages"),
     ("Ctrl+N", "ui.help.new_chat"),
     ("F3", "ui.help.self_model"),
+    ("F4", "ui.help.changes"),
     ("F5", "ui.help.copy_chat"),
     ("Ctrl+R", "ui.help.regenerate"),
     ("Ctrl+E", "ui.help.delete_exchange"),
@@ -317,6 +318,10 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     // feature, and these two rows are the only way to give it the other half.
     ("ui.help.k.project_cmd", "ui.help.project_cmd"),
     ("ui.help.k.project_clear", "ui.help.project_clear"),
+    // The other half of what the editing tools promise: they change a file
+    // without asking, and this is where the user sees what changed and puts any
+    // of it back (spec §9.12).
+    ("/changes", "ui.help.changes"),
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
@@ -1008,30 +1013,25 @@ pub(super) fn render_suggest(
 }
 
 /// Draws the modal confirmation popup for an irreversible operation
-/// (`Ctrl+R`/`Ctrl+E`) centered on screen. See spec §11.7.
+/// The modal confirmation popup for a destructive chat action (`Ctrl+R`,
+/// `Ctrl+E`, `/profile delete`, `/self clear`).
+///
+/// The drawing lives in [`crate::shared::ui::confirm_popup`], shared with the
+/// changes screen's revert question; what stays here is *which* question, since
+/// that is the part the two screens do not have in common.
 pub(super) fn render_confirm(
     frame: &mut Frame,
     action: &ConfirmAction,
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    let width = 56u16.min(frame.area().width);
-    let area = centered_rect(width, 5, frame.area());
-    frame.render_widget(Clear, area);
-    let block = palette.panel(loc.t("ui.confirm.title"), true).title_bottom(
-        Line::from(Span::styled(
-            loc.t("ui.confirm.footer"),
-            palette.muted_style(),
-        ))
-        .centered(),
+    crate::shared::ui::confirm_popup(
+        frame,
+        palette,
+        loc.t("ui.confirm.title"),
+        &action.prompt(loc),
+        loc.t("ui.confirm.footer"),
     );
-    let body = Paragraph::new(Line::from(Span::styled(
-        action.prompt(loc),
-        Style::new().fg(palette.text),
-    )))
-    .block(block)
-    .wrap(Wrap { trim: true });
-    frame.render_widget(body, area);
 }
 
 /// Draws the dangerous-tool confirmation popup (spec §9.8).

@@ -37,4 +37,5 @@ pub mod terminal_input;
 pub mod tools;
 pub mod tts_command;
 pub mod ui_command;
+pub mod workspace_diff;
 pub mod workspace_journal;

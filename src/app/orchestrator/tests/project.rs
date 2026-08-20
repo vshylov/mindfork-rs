@@ -1,7 +1,8 @@
 //! Orchestrator tests — the code project's command slots
-//! (`/project build-cmd|run-cmd|test-cmd`, `/project clear <slot>`). Part of the
+//! (`/project build-cmd|run-cmd|test-cmd`, `/project clear <slot>`) and the
+//! change set behind the changes screen (`F4` / `/changes`). Part of the
 //! [`super`] module (fixtures in mod.rs). See spec §9.12,
-//! docs/code-workspace.md §3.3.
+//! docs/code-workspace.md §3.3, §3.5.
 
 use super::*;
 use crate::entities::workspace::CommandSlot;
@@ -13,15 +14,18 @@ use crate::features::project_command::{ProjectProgress, SlotAction};
 async fn with_project() -> (
     tempfile::TempDir,
     tempfile::TempDir,
+    uuid::Uuid,
     UnboundedSender<AppCommand>,
     UnboundedReceiver<AppEvent>,
     tokio::task::JoinHandle<()>,
 ) {
     let project = tempfile::tempdir().unwrap();
     let (data, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
-    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .unwrap();
+    let chat_id = match wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await
+    {
+        Some(AppEvent::ChatActivated { id, .. }) => id,
+        other => panic!("no chat was activated: {other:?}"),
+    };
     cmd_tx
         .send(AppCommand::ProjectAttach {
             path: project.path().to_string_lossy().into_owned(),
@@ -35,7 +39,7 @@ async fn with_project() -> (
     })
     .await
     .unwrap();
-    (project, data, cmd_tx, evt_rx, handle)
+    (project, data, chat_id, cmd_tx, evt_rx, handle)
 }
 
 /// Sends one slot command and returns the outcome it reported.
@@ -62,7 +66,7 @@ async fn slot(
 /// three times, and looping is what makes a fourth slot impossible to forget.
 #[tokio::test]
 async fn a_slot_is_set_shown_and_cleared_through_the_orchestrator() {
-    let (_project, _data, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let (_project, _data, _chat, cmd_tx, mut evt_rx, handle) = with_project().await;
     for s in CommandSlot::ALL {
         let line = format!("cargo {} --offline", s.key());
         assert_eq!(
@@ -103,7 +107,7 @@ async fn a_slot_is_set_shown_and_cleared_through_the_orchestrator() {
 /// so the answer is not a dead end (docs/lessons.md §4). Nothing is stored.
 #[tokio::test]
 async fn a_pipeline_is_refused_at_the_moment_it_is_typed() {
-    let (_project, _data, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let (_project, _data, _chat, cmd_tx, mut evt_rx, handle) = with_project().await;
     let line = "cargo build 2>&1 | tee log.txt".to_string();
     let refused = slot(
         &cmd_tx,
@@ -137,7 +141,7 @@ async fn a_pipeline_is_refused_at_the_moment_it_is_typed() {
 /// empty slots cannot say "none of them".
 #[tokio::test]
 async fn status_lists_every_slot_including_the_empty_ones() {
-    let (_project, _data, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let (_project, _data, _chat, cmd_tx, mut evt_rx, handle) = with_project().await;
     slot(
         &cmd_tx,
         &mut evt_rx,
@@ -193,6 +197,88 @@ async fn a_slot_command_without_a_project_says_so() {
             commands: Vec::new()
         }
     );
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
+// ---- the changes screen's data (docs/code-workspace.md §3.5) ----
+
+/// Asks for the change set and waits for the one the orchestrator builds off
+/// the runtime.
+async fn changes(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+) -> crate::features::workspace_diff::ChangeSet {
+    cmd_tx.send(AppCommand::OpenChanges).unwrap();
+    match wait_for(evt_rx, |e| matches!(e, AppEvent::WorkspaceChanges(_))).await {
+        Some(AppEvent::WorkspaceChanges(set)) => *set,
+        other => panic!("expected a change set, got {other:?}"),
+    }
+}
+
+/// The route `F4` takes: a file the assistant edited comes back as a diff, and
+/// reverting it puts the bytes back **and** drops the row.
+///
+/// The journal is written the way the editing tools write it — `record` with the
+/// pre-image, *before* the change — rather than by fabricating a manifest, so a
+/// test cannot pass while the tools' own contract is broken.
+#[tokio::test]
+async fn the_change_set_round_trips_through_the_orchestrator() {
+    use crate::features::workspace_diff::FileState;
+
+    let (project, data, chat_id, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let root = project.path().to_string_lossy().into_owned();
+    let file = project.path().join("a.rs");
+    std::fs::write(&file, "before\n").unwrap();
+    crate::features::workspace_journal::Journal::new(
+        data.path().join("workspace").join(chat_id.to_string()),
+    )
+    .record(&root, "a.rs", Some(b"before\n"))
+    .unwrap();
+    std::fs::write(&file, "after\n").unwrap();
+
+    let set = changes(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(set.files.len(), 1, "{set:?}");
+    assert_eq!(set.files[0].path, "a.rs");
+    assert_eq!(set.files[0].state, FileState::Modified);
+    assert_eq!((set.files[0].added, set.files[0].removed), (1, 1));
+
+    cmd_tx
+        .send(AppCommand::RevertWorkspaceFile {
+            path: "a.rs".into(),
+        })
+        .unwrap();
+    let after = match wait_for(&mut evt_rx, |e| matches!(e, AppEvent::WorkspaceChanges(_))).await {
+        Some(AppEvent::WorkspaceChanges(set)) => *set,
+        other => panic!("expected a refreshed change set, got {other:?}"),
+    };
+    assert!(after.is_empty(), "the row must be gone too: {after:?}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
+/// A chat with no project answers with an empty set **and no root** — which is
+/// what makes the screen say "attach one" rather than "nothing changed yet".
+/// Two different answers to two different situations (docs/lessons.md §4).
+#[tokio::test]
+async fn without_a_project_the_change_set_has_no_root() {
+    let (_data, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let set = changes(&cmd_tx, &mut evt_rx).await;
+    assert!(set.is_empty());
+    assert!(set.root.is_empty(), "got: {set:?}");
+
+    // …and with a project but nothing touched, the root is there and the list
+    // is empty — the other of the two.
+    let (_project, _data, _chat, cmd_tx2, mut evt_rx2, handle2) = with_project().await;
+    let set = changes(&cmd_tx2, &mut evt_rx2).await;
+    assert!(set.is_empty());
+    assert!(!set.root.is_empty(), "got: {set:?}");
+    drop(cmd_tx2);
+    handle2.await.unwrap();
     drop(cmd_tx);
     handle.await.unwrap();
 }

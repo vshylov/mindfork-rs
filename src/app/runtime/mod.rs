@@ -32,6 +32,7 @@ use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ClipboardImage};
 use crate::features::spellcheck::{SpellChecker, dict};
+use crate::screens::changes::{ChangesIntent, ChangesScreen};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
 use crate::screens::search::{SearchIntent, SearchScreen};
@@ -56,6 +57,9 @@ enum ActiveScreen {
     /// The message-level search results (`Ctrl+G` from the chat list's content
     /// mode). See docs/history/chat-search-stage2.md.
     Search(Box<SearchScreen>),
+    /// What the assistant changed in the attached project (`F4` / `/changes`).
+    /// See docs/code-workspace.md §3.5, spec §9.12.
+    Changes(Box<ChangesScreen>),
 }
 
 impl ActiveScreen {
@@ -86,6 +90,10 @@ impl ActiveScreen {
                 search.set_palette(palette);
                 search.set_loc(loc);
             }
+            ActiveScreen::Changes(changes) => {
+                changes.set_palette(palette);
+                changes.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }
@@ -101,7 +109,7 @@ impl ActiveScreen {
             ActiveScreen::ChatList(list) => list.handle_paste(text),
             ActiveScreen::SelfModel(view) => view.handle_paste(text),
             // Read-only results — nothing to paste into.
-            ActiveScreen::Search(_) => {}
+            ActiveScreen::Search(_) | ActiveScreen::Changes(_) => {}
         }
     }
 }
@@ -565,6 +573,7 @@ fn draw_frame(
         ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
         ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
         ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
+        ActiveScreen::Changes(changes) => terminal.draw(|frame| changes.render(frame)),
     };
     let _ = execute!(stdout(), EndSynchronizedUpdate);
     drawn?;
