@@ -43,16 +43,18 @@ struct Question {
     expect: &'static [&'static str],
 }
 
-/// The fixed set. Every one of these is answerable from the source, and none is
-/// answerable from general knowledge about Rust or TUIs.
+/// The fixed set. Every one is answerable **only** from this project's own
+/// source, and none from general knowledge about Rust or TUIs.
+///
+/// The first run had a sixth that was neither: "what happens if the model asks
+/// for a file above the attached directory" is a question about the *model's own
+/// tooling*, and it answered from reasoning with **zero tool calls in both
+/// arms** — contributing nothing to either. A question both arms can skip is not
+/// a measurement, it is padding.
 const QUESTIONS: &[Question] = &[
     Question {
         ask: "Почему это приложение иногда само сокращает переписку в чате, и чем это управляется?",
         expect: &["compact", "компакт", "сумм", "summar"],
-    },
-    Question {
-        ask: "Что произойдёт, если модель попросит прочитать файл, лежащий выше прикреплённого каталога?",
-        expect: &["canonical", "канониз", "корн", "root", "откаж", "refus"],
     },
     Question {
         ask: "Где хранятся ключи облачных провайдеров и что с ними будет на другом компьютере?",
@@ -68,9 +70,44 @@ const QUESTIONS: &[Question] = &[
             "single-instance",
             "single_instance",
             "instance",
-            "блокиров",
-            "lock",
+            "мьютекс",
+            "mutex",
         ],
+    },
+    Question {
+        ask: "Почему модели не дают ходить по адресам внутри локальной сети, и как это разрешить?",
+        expect: &[
+            "web_allow_private",
+            "private",
+            "локальн",
+            "loopback",
+            "ssrf",
+        ],
+    },
+    Question {
+        ask: "Что происходит с прикреплённым файлом, который слишком велик, чтобы уместиться в контекст?",
+        expect: &[
+            "by reference",
+            "по ссылке",
+            "reference",
+            "индекс",
+            "index",
+            "attachment_search",
+        ],
+    },
+    Question {
+        ask: "На каком языке пишется текст, который читает сама модель, и чем он задаётся?",
+        expect: &[
+            "profile.language",
+            "scaffold",
+            "язык профил",
+            "axis a",
+            "ось a",
+        ],
+    },
+    Question {
+        ask: "Что случится с историей чата, если во время ответа модели оборвать генерацию?",
+        expect: &["cancel", "отмен", "esc", "частичн", "partial"],
     },
 ];
 
@@ -228,55 +265,81 @@ async fn code_search_probe_e2e_live() {
 
     let control: &[&str] = &[CODE_LIST_ID, CODE_READ_ID, CODE_GREP_ID];
     let treatment: &[&str] = &[CODE_LIST_ID, CODE_READ_ID, CODE_GREP_ID, CODE_SEARCH_ID];
+    // Model behaviour is a rate, not an outcome: the control arm scored 5/5 and
+    // then 3/5 on the *same* questions across two runs (docs/lessons.md §9). A
+    // verdict off one pass would be a verdict about one afternoon.
+    let runs: usize = std::env::var("PROBE_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
 
-    let mut rows: Vec<(usize, bool, usize, bool, usize)> = Vec::new();
-    for (i, q) in QUESTIONS.iter().enumerate() {
-        for (arm, tools) in [("grep", control), ("grep+search", treatment)] {
-            let started = std::time::Instant::now();
-            let Some((answer, calls)) = ask(tools, q.ask).await else {
-                eprintln!("skip: MINDFORK_ENGINE_URL not set");
-                return;
-            };
-            let ok = graded(&answer, q.expect);
-            eprintln!(
-                "\n=== Q{i} [{arm}] {:.0}s · {} calls · {}\nQ: {}\nA: {}\ncalls: {:?}",
-                started.elapsed().as_secs_f64(),
-                calls.len(),
-                if ok { "CORRECT" } else { "WRONG" },
-                q.ask,
-                answer.chars().take(700).collect::<String>(),
-                calls
-                    .iter()
-                    .map(|(n, a, _)| format!("{n}({a})"))
-                    .collect::<Vec<_>>()
-            );
-            match arm {
-                "grep" => rows.push((i, ok, calls.len(), false, 0)),
-                _ => {
-                    if let Some(row) = rows.last_mut() {
-                        row.3 = ok;
-                        row.4 = calls.len();
-                    }
-                }
+    /// What one arm did on one question, summed over runs.
+    #[derive(Default, Clone, Copy)]
+    struct Tally {
+        correct: usize,
+        calls: usize,
+        /// Turns in which the arm actually reached for `code_search` — the
+        /// number that explains every other number here.
+        used_search: usize,
+        runs: usize,
+    }
+    let mut tallies = vec![[Tally::default(); 2]; QUESTIONS.len()];
+
+    for run in 0..runs {
+        for (qi, q) in QUESTIONS.iter().enumerate() {
+            for (ai, (arm, tools)) in [("grep", control), ("grep+search", treatment)]
+                .into_iter()
+                .enumerate()
+            {
+                let started = std::time::Instant::now();
+                let Some((answer, calls)) = ask(tools, q.ask).await else {
+                    eprintln!("skip: MINDFORK_ENGINE_URL not set");
+                    return;
+                };
+                let ok = graded(&answer, q.expect);
+                let searched = calls.iter().any(|(n, _, _)| n == CODE_SEARCH_ID);
+                let t = &mut tallies[qi][ai];
+                t.correct += usize::from(ok);
+                t.calls += calls.len();
+                t.used_search += usize::from(searched);
+                t.runs += 1;
+                eprintln!(
+                    "\n=== run {run} Q{qi} [{arm}] {:.0}s · {} calls · {}{}\nQ: {}\nA: {}\ncalls: {:?}",
+                    started.elapsed().as_secs_f64(),
+                    calls.len(),
+                    if ok { "CORRECT" } else { "WRONG" },
+                    if searched { " · used code_search" } else { "" },
+                    q.ask,
+                    answer.chars().take(500).collect::<String>(),
+                    calls
+                        .iter()
+                        .map(|(n, a, _)| format!("{n}({a})"))
+                        .collect::<Vec<_>>()
+                );
             }
         }
     }
 
-    eprintln!("\n===== go/no-go (fork F4) =====");
-    eprintln!("  q | grep       | grep+search");
-    for (i, a_ok, a_calls, b_ok, b_calls) in &rows {
+    eprintln!("\n===== go/no-go (fork F4), {runs} run(s) =====");
+    eprintln!("  q | grep          | grep+search   | search used");
+    for (qi, arms) in tallies.iter().enumerate() {
         eprintln!(
-            " Q{i} | {:<9} | {:<9}",
-            format!("{} {}c", if *a_ok { "ok " } else { "err" }, a_calls),
-            format!("{} {}c", if *b_ok { "ok " } else { "err" }, b_calls),
+            " Q{qi} | {:<13} | {:<13} | {}/{}",
+            format!("{}/{} · {}c", arms[0].correct, arms[0].runs, arms[0].calls),
+            format!("{}/{} · {}c", arms[1].correct, arms[1].runs, arms[1].calls),
+            arms[1].used_search,
+            arms[1].runs
         );
     }
-    let a_correct = rows.iter().filter(|r| r.1).count();
-    let b_correct = rows.iter().filter(|r| r.3).count();
-    let a_calls: usize = rows.iter().map(|r| r.2).sum();
-    let b_calls: usize = rows.iter().map(|r| r.4).sum();
+    let sum =
+        |ai: usize, f: fn(&Tally) -> usize| -> usize { tallies.iter().map(|a| f(&a[ai])).sum() };
+    let total = runs * QUESTIONS.len();
     eprintln!(
-        "\ncorrect: grep {a_correct}/{n} · grep+search {b_correct}/{n}\ncalls:   grep {a_calls} · grep+search {b_calls}",
-        n = rows.len()
+        "\ncorrect: grep {}/{total} · grep+search {}/{total}\ncalls:   grep {} · grep+search {}\ncode_search reached for in {}/{total} of its arm's turns",
+        sum(0, |t| t.correct),
+        sum(1, |t| t.correct),
+        sum(0, |t| t.calls),
+        sum(1, |t| t.calls),
+        sum(1, |t| t.used_search),
     );
 }
