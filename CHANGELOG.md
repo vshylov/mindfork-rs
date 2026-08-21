@@ -77,6 +77,17 @@ split by subsystem.
   silently replaced by the "Model name in the feed" toggle's text (a duplicated
   translation key — JSON keeps the later entry); the two fields have their own
   keys now, and a new gate keeps duplicate keys out of the bundles.
+- **The indexing banner keeps its counter on screen.** While a file or an
+  attachment is being indexed, the `RAG:` row above the input box used to be cut
+  off at the right edge, and a long name — a web page's title, a deep folder —
+  took the `64/128` progress with it. The row now fits the window: the folder
+  is left out first, then the name is shortened in the middle (`GitHub - open…
+  weight models`), and the counter always stays.
+- **The collapsed tool call's `▸ details · Ctrl+O` no longer breaks in two.**
+  When it did not fit after a long call header, the label stayed on one row and
+  the key landed alone on the next, under the icon. It now moves to the next
+  row whole, aligned under the call's name; the "images returned" chip does the
+  same.
 
 ## [0.9.7] — 2026-08-17
 

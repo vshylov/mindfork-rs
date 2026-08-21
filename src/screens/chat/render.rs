@@ -4,6 +4,7 @@
 
 use super::popups::{render_confirm, render_help, render_suggest, render_tool_confirm};
 use super::*;
+use crate::shared::wrap;
 
 impl ChatScreen {
     // ---------- rendering ----------
@@ -132,9 +133,14 @@ impl ChatScreen {
             // compat — ASCII).
             let frames = self.palette.glyphs().spinner;
             let spinner = frames[(banner.tick / 2) % frames.len()];
+            let prefix = format!("{spinner} RAG: ");
+            // The row is one line high and the widget would clip a long text at
+            // the edge — counters last, which are the point of the banner. Fit
+            // the text into the columns left after the prefix instead.
+            let avail = (banner_area.width as usize).saturating_sub(wrap::str_width(&prefix));
             let line = Line::from(vec![
-                Span::styled(format!("{spinner} RAG: "), self.palette.accent_style()),
-                Span::from(banner.text.clone()),
+                Span::styled(prefix, self.palette.accent_style()),
+                Span::from(banner.fit(avail)),
             ]);
             frame.render_widget(line, banner_area);
         }

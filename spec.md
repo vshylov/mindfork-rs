@@ -1112,7 +1112,9 @@ chip, `/file list`, `/file remove`.
   that actually have an index, and the tool distinguishes "nothing indexed here"
   from "no hits", pointing at page reading in both cases.
 - **UI**: a feed note per command, a background-indexing banner with a spinner
-  (the same slot RAG indexing uses), a `§ files: N (~tokens)` status-bar chip
+  (the same slot RAG indexing uses; one row, **fitted to the window** rather
+  than clipped — the folder is left out first, then the name is shortened in
+  the middle, and the progress counter always stays), a `§ files: N (~tokens)` status-bar chip
   (attachments cost tokens on every turn — the standing cost has to be visible),
   and budget fields in the settings "Memory" section.
 
@@ -1945,7 +1947,11 @@ this?"*; this screen answers *"where exactly, and take me there."*
   one-line summary the presenter puts there) and folds away the argument and
   result blocks; the header then carries the same pill the collapsed "thoughts"
   block uses — marker, label and the key that opens it. A call with nothing to
-  hide (no arguments, no result yet) gets no pill.
+  hide (no arguments, no result yet) gets no pill. The pill is **one piece**:
+  it follows the header's last row when it fits there and otherwise takes the
+  next row whole, aligned under the name — it is never split at its spaces
+  with the keycap alone on a row. The "images returned" chip (§9.10) is placed
+  by the same rule.
   **Expanded, the card is a different presentation, not a longer one**: the
   header carries the tool's **name alone**, every argument is enumerated below as
   one `key: value` line each (untruncated; arrays/objects as compact JSON — the

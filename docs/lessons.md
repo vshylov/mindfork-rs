@@ -695,6 +695,20 @@ height** — rendering nothing rather than clipping, so the gap reads as the end
 list. Render row-by-row when items can be multi-line.
 — *SelfModel — partial display of a long item on the `F3` screen*.
 
+**A multi-span decoration appended to a header row is re-wrapped with it — at its
+spaces.** The collapsed tool pill was pushed onto the header's last row on the
+promise that `build_message_block` "wraps every body line afterwards"; it does, at
+whitespace, so a long `web_search` header ended its row with `▸ details ·` and the
+keycap alone opened the next, under the icon. Measure the group against the row at
+the wrap width and move it **whole** to a continuation row when it does not fit
+(`push_trailing`) — the seam any future chip on a card header should go through.
+The sibling trap on a one-row status line: a bare `Line` in a one-row area is
+**clipped** at the edge with no marker, and the part that falls off is the tail —
+which for the indexing banner was the progress counter, the one thing that moves.
+A row whose middle varies in length needs a width-aware fit that decides which part
+gives way (`RagBanner::fit`), not a truncation from the end.
+— *the indexing banner fits its row, the collapsed pill wraps whole*.
+
 ---
 
 ## 6. Windows and cross-platform

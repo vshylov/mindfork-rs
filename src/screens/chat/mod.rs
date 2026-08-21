@@ -441,9 +441,24 @@ struct ImpersonationState {
 /// being built in the background", and in practice they don't overlap. Lives
 /// while indexing is in progress; completion/error clear the banner and leave a
 /// note in the feed.
+///
+/// The text is kept in **parts** rather than as one string, because the row is
+/// one line high and a long file name or page title would otherwise push the
+/// counters — the only thing that changes while the banner is up — off the
+/// right edge. The renderer fits the parts into the width it has
+/// ([`RagBanner::fit`]): the location goes first, then the name is shortened in
+/// the middle, and the counters stay.
 struct RagBanner {
-    /// The indicator's current text (without the spinner).
-    text: String,
+    /// The fixed text before the name (without the spinner).
+    before: String,
+    /// What is being indexed — the file or attachment name. The one part the
+    /// renderer may shorten; empty for a banner that names nothing (`Started`).
+    name: String,
+    /// Where it is (` from <dir>`; `/rag add` only) — a detail, dropped whole
+    /// when the row is short of columns.
+    location: String,
+    /// The fixed text after the name — the file and chunk counters.
+    after: String,
     /// A repaint-tick counter for the spinner animation.
     tick: usize,
 }
