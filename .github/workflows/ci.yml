@@ -10,6 +10,17 @@
 # build plus 1m06s to save, i.e. ~19 billable minutes per merge (Windows bills at
 # 2x), buying back the ~7.5 minutes of cold compile every pull request used to
 # pay. That is the trade this workflow deliberately makes.
+#
+# Every job carries a `timeout-minutes`, and so does every `apt-get` step — the
+# one network fetch of ours that sits before the build. Without one GitHub lets
+# a job run for six hours, and it bills every one of them: on 2026-08-19 four
+# jobs across two runs (32270019208, 32274156069) hung on `apt-get update` for
+# 2.5 hours until they were cancelled by hand — left alone they would have
+# burned 24 hours of Linux minutes, 72 % of a month's Free-plan allowance, for
+# nothing. A ceiling that fires on a legitimately slow run costs one rerun; a
+# missing one costs six hours per job. Each value is sized from the job's
+# measured history (every run since 2026-07-17, see docs/journal/ci.md) with
+# room for a cold cache on top, not from a guess.
 name: CI
 
 on:
@@ -39,6 +50,8 @@ jobs:
   changes:
     name: Changed paths
     runs-on: ubuntu-latest
+    # Measured: a few seconds, every one of 296 runs under 0.1 min. Two API calls.
+    timeout-minutes: 5
     # Reading the PR's file list needs `pull-requests: read`, which the default
     # GITHUB_TOKEN does not carry. Without this the API call 403s, the fail-safe
     # below runs the tests, and the whole optimization is silently inert — which
@@ -99,6 +112,9 @@ jobs:
   lint:
     name: Lints (source language + fmt + clippy)
     runs-on: ubuntu-latest
+    # Measured over 291 runs: p50 1.1 min, max 5.2 — with the cache warm. A cold
+    # clippy over all targets is a few minutes more, hence the room.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       # The source language is English (CLAUDE.md/AGENTS.md §Conventions); this
@@ -143,8 +159,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Bounded on both sides, after 2026-08-19. The runner image's apt mirror
+      # (azure.archive.ubuntu.com, a recurring offender — actions/runner-images
+      # #6894, #7048, #12949) stopped answering; apt fell back to
+      # archive.ubuntu.com, fetched the four InRelease files and then stalled
+      # for good, and every Linux job of two runs sat on this step for 2.5 hours
+      # until someone noticed. Normal duration is ~10 s. The step timeout is the
+      # bound; the apt options make a dead connection fail and retry *inside*
+      # that budget (4 × 30 s, against apt's default 120 s per attempt), so the
+      # usual outcome is apt's own "Connection timed out" — an error that names
+      # its cause — rather than a kill. A failure here costs a rerun, which is
+      # the right price for a network step. The same line, same reasons, in the
+      # `test` and `sonar` jobs below and in packaging.yml / release.yml /
+      # e2e-live.yml.
       - name: System dependencies (ALSA — speech playback /tts)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
       - name: Formatting
         run: cargo fmt --check
       - name: Clippy (all targets, warnings = errors)
@@ -175,6 +207,12 @@ jobs:
         # request (measured: 7m31s of cold compile out of a 19-minute job).
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # Measured: Linux p50 2.3 min, max 4.7 over 269 runs. Windows p50 6.1, max
+    # 27.6 over 231 runs — the worst of them before the 2026-08-05 speedup
+    # (since then max 16), but a cold cache on top of the disk-contention tail
+    # the journal records (a 2.4x test phase) can still reach the low twenties,
+    # so Windows keeps the wider ceiling rather than the current-regime one.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 15 }}
     steps:
       - uses: actions/checkout@v5
       - name: Install the toolchain (from rust-toolchain.toml)
@@ -199,9 +237,13 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
+      # Bounded (timeout + apt options) — see the comment on the `lint` job's copy.
       - name: System dependencies (ALSA — speech playback /tts)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
       # On `main` the Windows entry builds without running: the suite already
       # passed on the pull request, and building is what fills the cache. This
       # keeps the same job id — and therefore the same rust-cache key, which
@@ -236,6 +278,10 @@ jobs:
     # Same two guards as `test`, for the same reasons (see the comment there).
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    # Measured over 199 runs: p50 4.0 min, max 8.1. Two builds, the analyzer's
+    # own clippy, and up to five minutes of `sonar.qualitygate.wait` on top
+    # when the server is slow — the widest Linux budget in this workflow.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
@@ -254,8 +300,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Bounded (timeout + apt options) — see the comment on the `lint` job's copy.
       - name: System dependencies (ALSA — speech playback /tts)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
       - uses: taiki-e/install-action@cargo-llvm-cov
       # #[ignore] smokes stay skipped, exactly as in the `test` job — no network,
       # no live server, no cloud keys.

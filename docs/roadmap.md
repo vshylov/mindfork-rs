@@ -693,7 +693,7 @@ A compact summary (details — in [docs/journal/](journal/) and
   llama.cpp engine) plus **two** embedding models, runs the `#[ignore]` suite
   against them, and deletes them — **verifying** the deletion, since a leaked
   endpoint is the one outcome that costs money. In CI as a
-  `workflow_dispatch` job with an hourly sweeper as the backstop; two
+  `workflow_dispatch` job with a scheduled sweeper as the backstop; two
   consecutive green runs (66 passed / 0 failed). The platform was chosen for
   its *cleanup guarantee* rather than its price — idle scale-to-zero is a
   dead-man's switch no rented pod offers. See

@@ -828,12 +828,13 @@ T4s at $0.50/hr, billed by the minute). The endpoints are deleted from `finally`
 `atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
 a failed delete exits non-zero even when the tests passed. If the process is
 killed outright, the endpoints scale to zero after their idle window (15 min, so
-≈ $0.57 worst case) and the hourly sweeper removes them, which also reclaims
+≈ $0.57 worst case) and the sweeper removes them, which also reclaims
 endpoint quota. Use `--keep` only when debugging, and delete by hand afterwards.
 
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
 test-filter, model and GPU inputs; it needs the `HF_TOKEN` repository secret. **Live e2e
-sweeper** runs hourly as the backstop. Design and decisions:
+sweeper** runs every six hours as the backstop (hourly until 2026-08-21; the cadence
+bounds how long an orphan holds endpoint quota, not money). Design and decisions:
 [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),
 [docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).
 

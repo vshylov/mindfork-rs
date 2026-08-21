@@ -15,9 +15,19 @@ name: Live e2e sweeper
 
 on:
   schedule:
-    # Hourly, off the top of the hour (that minute is the busiest on the
-    # shared cron scheduler, and a delayed sweep is a delayed backstop).
-    - cron: "17 * * * *"
+    # Every six hours, off the top of the hour (that minute is the busiest on
+    # the shared cron scheduler, and a delayed sweep is a delayed backstop).
+    #
+    # Hourly until 2026-08-21, and that made a 5–9 s job the repository's
+    # single largest consumer of Actions minutes: GitHub bills a job at a
+    # minimum of one minute, so 24 sweeps a day came to ~630 billable minutes a
+    # month — some 26 merges' worth of CI — as a backstop for a gate dispatched
+    # five times since it was built. What the cadence bounds is how long an
+    # orphan holds endpoint *quota*: now up to ~7.5 h (one interval plus the
+    # 90-minute age threshold) against ~2.5 h before. The *money* was never its
+    # job — scale-to-zero idles an orphan out after 15 minutes either way. Four
+    # sweeps a day keep that guarantee at a sixth of the cost.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       max_age_minutes:

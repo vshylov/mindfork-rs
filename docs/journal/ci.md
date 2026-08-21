@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (11)
+## Entries (12)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -23,6 +23,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: orchestrator fixtures — two convertible, the rest not (done)
 - Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
 - Post-M9: the rewrite probe's flake — two models, two causes (done)
+- Post-M9: a ceiling on every job, and two orphaned workflows (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -514,7 +515,9 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   test.** A throwaway workflow on its own branch (`push`-triggered, so it needed
   no pull request and could not touch `ci.yml`) ran the suite once under nextest
   purely for its per-test timings — the reason nextest was borrowed rather than
-  adopted, since stable libtest has no `--report-time`. Run 31043133962, a
+  adopted, since stable libtest has no `--report-time`. Run 31043133962 (deleted
+  on 2026-08-21 with its orphaned workflow — see the "a ceiling on every job"
+  entry; its `nextest.log` artifact was downloaded first), a
   *normal* instance (438.2s wall against 52.3s local, the usual ~8x), joined
   against local per-test times for all 1833 tests:
   - **The timeout hypothesis is dead.** The genuinely timeout-bound tests are
@@ -849,3 +852,120 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   tests green**, 97 `#[ignore]`; fmt/clippy/`cyrillic_scan`/`link_check`/
   `doc_index_check` clean. No CHANGELOG entry — test-side only, no user-visible
   effect (AGENTS.md §4).
+
+### Post-M9: a ceiling on every job, and two orphaned workflows (done)
+- **Trigger**: on 2026-08-19 two CI runs (32270019208, a pull request;
+  32274156069, the push to `main` forty minutes later) each had Linux jobs that
+  never finished — one in the first, **three** in the second (`Lints`, `Tests
+  (ubuntu-latest)`, `SonarQube Cloud`) while the Windows entry of the same run
+  passed in three minutes. They were noticed and cancelled by hand after ~2.5
+  hours, and the cancel itself took about a minute to land. The incident was
+  read as "a runner froze"; the logs say otherwise.
+- **Diagnosis, from the four job logs**: every one stopped on the *same step*,
+  `System dependencies (ALSA)` — `sudo apt-get update && sudo apt-get install
+  -y libasound2-dev`, a step that normally takes ~10 s. The trace is identical
+  in all four: the image's apt mirror `azure.archive.ubuntu.com` answered
+  nothing (`Ign:` with apt's 1-2-4 s backoff), apt fell back to
+  `archive.ubuntu.com`, fetched the four `InRelease` files there — and then
+  printed nothing more for 2.5 hours, until `##[error]The operation was
+  canceled`. A stalled package-index download behind an unhealthy mirror, which
+  the runner-images tracker records as a recurring class (actions/runner-images
+  #6894, #6913, #7048, #12949). Nothing on the runner was frozen: the
+  cancellation propagated, the post-steps ran, the other jobs were fine.
+- **Why it cost 2.5 hours rather than 10 minutes**: not one job in `ci.yml`,
+  `packaging.yml`, `release.yml`, `site.yml` or `audit.yml` had a
+  `timeout-minutes`, so the only ceiling was GitHub's default — **360 minutes**
+  ("each job in a workflow can run for up to 6 hours"). What was actually burned:
+  155 + 3 × 113 ≈ **494 Linux minutes** (≈ $3.95 at the overage rate). What the
+  default would have allowed: 4 × 360 = **1440 minutes — 24 hours, 72 % of the
+  Free plan's monthly 2000** — for a step whose outcome was already known at
+  minute two. Only the two live-gate workflows had ceilings, because they hold
+  real money (45 min, and the sweeper's 10). The lesson is the asymmetry: a
+  ceiling that fires on a legitimately slow run costs one rerun; a missing one
+  costs six hours per job, billed.
+- **The minute-long cancel is GitHub's, not ours.** A cancel reaches the runner
+  over its long-polling message channel (up to ~50 s), and the step's process
+  then gets SIGINT, a 7.5 s grace, SIGTERM, a further 2.5 s, and a kill. A
+  `timeout-minutes` cancel travels the same path — the difference is that it
+  happens without anyone watching.
+- **Fix, two layers, all six workflows** (no Rust):
+  1. **`timeout-minutes` on every job** — seventeen jobs. Each value was sized
+     from the job's *measured* history, every run the API still lists
+     (2026-07-17 onward, 1454 job rows), plus room for a cold cache, and the
+     figure is written next to the value so the next reader can re-check it:
+     `changes` 5 (max 0.1 over 296 runs); `lint` 15 (p50 1.1, max 5.2 / 291);
+     `test` **15 on Linux, 35 on Windows** — an expression on `matrix.os` — from
+     Linux p50 2.3 / max 4.7 (269) and Windows p50 6.1 / max **27.6** (231): the
+     worst Windows figures pre-date the 2026-08-05 speedup (max 16 since), but a
+     cold cache on top of the 2.4x disk-contention tail the earlier entry
+     records still reaches the low twenties, so Windows keeps the wider ceiling
+     rather than the current-regime one; `sonar` 30 (p50 4.0, max 8.1 / 199,
+     plus up to five minutes of `sonar.qualitygate.wait`); packaging `build` 30
+     (max 10.0 / 26), its smokes 10 (max 0.8), the `.iss` compile 15; release
+     `build` 45 (Linux 7.8–8.8, Windows 14.9–17.9 — LTO builds on a tag ref
+     with no warm cache to count on), packages 10, installer 15, publish 10;
+     site 10 + 10 (max 0.3); audit 15 (0.9).
+  2. **The apt step bounded on both sides** — a step-level `timeout-minutes: 5`
+     on every `apt-get` step (seven of them, including the nfpm installs and
+     the live gate's own copy, which runs before any endpoint exists), and
+     `-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30`
+     on every `apt-get update`. The step timeout is the bound; the options make
+     a dead connection fail and retry *inside* that budget (4 × 30 s against
+     apt's default 120 s per attempt), so the usual outcome is apt's own
+     "Connection timed out" — an error that names its cause — rather than a
+     kill. Honest caveat, recorded so it is not over-trusted: the options
+     narrow a known class of stall, but the 19 August hang outlasted apt's own
+     120 s timeout by two hours, so it is the GitHub-level timeout that is
+     demonstrably the fix, and the options are the defence in depth.
+- **Rejected shapes.** A local *composite action* for the apt line (one place
+  instead of seven): step-level `timeout-minutes` on a composite step is a
+  documented grey zone (actions/runner #646, #1979, #2415), and a bound that is
+  silently inert is the lesson-10 pattern this project already has a name for
+  — seven explicit copies of one line, with the reasoning on the first and
+  pointers on the rest. Skipping `apt-get update` in favour of the image's
+  stale index with a fallback: saves ~7 s of an already 2-minute job and only
+  moves the exposure from the index to the `.deb`, for a two-path step. A
+  scheduled "watchdog" workflow that cancels long runs: redundant once every
+  job has a ceiling, and it would itself be an hourly billable job. Defender
+  exclusions, `nextest`, a self-hosted runner: unrelated to this failure.
+- **Orphaned workflows.** The Actions sidebar listed nine workflows against
+  seven files: `crossterm base-layout verify` and `nextest timings (temporary)`
+  were throwaway probes on their own branches (`ci/crossterm-base-layout-verify`,
+  2026-07-24, the upstream-patch check recorded in
+  [layout-independent-hotkeys.md](../research/layout-independent-hotkeys.md);
+  `ci/nextest-timings`, 2026-08-05, the timing probe of the "cutting the Windows
+  CI job" entry). The branches were long gone — GitHub keeps a workflow in the
+  list for as long as one of its runs exists, and each had exactly one. Both
+  runs were deleted (`DELETE /repos/…/actions/runs/{id}`), after the nextest
+  run's `nextest-timings-windows` artifact — the 1833 per-test timings, 438.2 s
+  wall — and both job logs were downloaded, since the journal cites that run by
+  id. The list is seven again, and every one of the seven is live: CI and Site
+  on pull requests, Packaging path-filtered, Release on tags, Audit weekly, the
+  live gate by dispatch, the sweeper on its schedule.
+- **A finding beside the task — the sweeper's minutes — and the decision it
+  got.** The hourly sweeper had become the repository's single largest consumer
+  of Actions minutes. Each sweep runs 5–9 s and GitHub bills a job at a minimum
+  of one minute: 438 runs in the first 21 days of August → **~630 billable
+  minutes a month**, about 26 merges' worth of CI, as a backstop for a gate
+  dispatched five times since it was built. Its bound is *time and endpoint
+  quota*, not money (scale-to-zero already bounds that at one 15-minute idle
+  window), so the cadence is a trade between how long an orphan may hold quota
+  and what the backstop costs — and, being part of the remote gate's design
+  (remote-e2e-hf.md §6), not a tweak to make unasked. It was raised as a finding;
+  **user's decision (2026-08-21): every six hours** — `17 */6 * * *`, the
+  off-the-hour minute kept. An orphan now holds quota for up to ~7.5 h (one
+  interval plus the 90-minute age threshold) against ~2.5 h before, at roughly a
+  sixth of the cost (~105 billable minutes a month); the 90-minute threshold
+  itself is unchanged, since what it guards is the live job's 45-minute ceiling,
+  not the cadence. `docs/install.md` and the plan's §6 say so.
+- **Verification**: the workflows were validated by *rendering* (lessons §10) —
+  a PyYAML pass over all seven files printing every job's ceiling and every
+  bounded step's command, so the folded `>-` scalars and the matrix expression
+  are seen as GitHub will see them; the pull request's own CI run is the live
+  render (all five jobs green on the first run, the bounded apt step at 12 s
+  with the new options accepted). The sweeper's new schedule can only be seen
+  live once merged — a `schedule` fires on the default branch alone — so the
+  first post-merge day's four runs are its check. No Rust changed: **2425 unit
+  tests green, 106 `#[ignore]`**, unchanged; `cyrillic_scan`/`link_check`/
+  `doc_index_check` clean. No CHANGELOG entry — dev infrastructure, no
+  user-visible effect (AGENTS.md §4).

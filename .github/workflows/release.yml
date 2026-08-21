@@ -12,6 +12,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Every job has a `timeout-minutes` and every apt step is bounded — the reasons,
+# and the incident behind them, are in the header and the `lint` job of ci.yml.
 jobs:
   # Builds the binary on each platform; packaging is centralized in the release job
   # (on Linux both tar and zip are available — avoiding Windows shell differences).
@@ -28,6 +30,10 @@ jobs:
             bin: mindfork-rs.exe
             artifact: windows
     runs-on: ${{ matrix.os }}
+    # Measured over the last three releases: Linux 7.8–8.8 min, Windows
+    # 14.9–17.9 — LTO release builds, and a tag ref has no warm cache of its
+    # own to count on. One budget for both, sized from the Windows figure.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - name: Install the toolchain (from rust-toolchain.toml)
@@ -36,7 +42,10 @@ jobs:
       # ALSA is only needed by the Linux build (rodio/cpal — speech playback /tts).
       - name: System dependencies (ALSA)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
       - name: Release build
         run: cargo build --release --locked
       - name: Upload the binary
@@ -51,6 +60,8 @@ jobs:
     name: Linux packages (deb/rpm/archlinux)
     needs: build
     runs-on: ubuntu-22.04
+    # Measured: 0.5 min on every release so far; the nfpm install is the network part.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Download the Linux binary
@@ -59,10 +70,11 @@ jobs:
           name: bin-linux
           path: bin
       - name: Install nfpm
+        timeout-minutes: 5
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
             | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y nfpm
       - name: Build packages
         run: |
@@ -83,6 +95,8 @@ jobs:
     name: Windows installer (Inno Setup)
     needs: build
     runs-on: windows-latest
+    # Measured: 0.6–0.7 min on every release so far; `choco install` is the network part.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: Download the Windows binary
@@ -113,6 +127,8 @@ jobs:
     name: Publish the release
     needs: [build, linux-packages, windows-installer]
     runs-on: ubuntu-22.04
+    # Measured: 0.3–0.4 min on every release so far; the asset upload is the network part.
+    timeout-minutes: 10
     permissions:
       contents: write        # needed for gh release create
     steps:

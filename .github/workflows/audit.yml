@@ -16,6 +16,9 @@ jobs:
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest
+    # Measured: 0.9 min on every run so far; the advisory-database fetch is the
+    # network part. Why every job has a ceiling: the header of ci.yml.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
