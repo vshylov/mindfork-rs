@@ -1107,3 +1107,16 @@ a `run:` block and execute it against stubs — six scenarios of a docs-only cla
 were verified that way, including the truncated-listing case.
 — *cutting the Windows CI job from 19 minutes*, *skipping the test job for docs-only
 pull requests*.
+
+**Every job gets a `timeout-minutes`, sized from its measured history; so does every
+step that talks to the network.** GitHub's default ceiling is **six hours**, billed.
+A stalled `apt-get update` behind an unhealthy Ubuntu mirror — a ten-second step —
+held four Linux jobs across two runs for 2.5 hours until someone noticed, and would
+have held them for 24 hours of billable minutes otherwise; the runner was never
+frozen, and the "hung runner" reading only survived until the step logs were opened.
+The asymmetry decides it: a ceiling that fires on a legitimately slow run costs one
+rerun, a missing one costs six hours per job. Size each value from the job's run
+history (p50/max, with room for a cold cache), and write the figure next to the value.
+And when a job does hang, read the *step* timestamps before blaming the machine: four
+jobs stopping on the same line is a dependency, not a runner.
+— *a ceiling on every job, and two orphaned workflows*.

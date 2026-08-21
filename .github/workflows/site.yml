@@ -35,11 +35,15 @@ concurrency:
   group: site-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job has a `timeout-minutes` — the reasons, and the incident behind them,
+# are in the header of ci.yml. Measured over 35 builds and 20 deploys: max 0.3 min;
+# the Zola download, the S3 sync and the invalidation are the network parts.
 jobs:
   build:
     name: Build (gate)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Install Zola
@@ -57,6 +61,7 @@ jobs:
     name: Deploy to mindfork.io
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       id-token: write # the OIDC token that assumes the deploy role
       contents: read

@@ -72,8 +72,13 @@ jobs:
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
+      # Bounded (timeout + apt options) — see the comment on ci.yml's `lint` job.
+      # Runs before any endpoint exists, so a failure here bills no GPU.
       - name: System dependencies (ALSA — speech playback /tts)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
 
       # The two MCP smokes spawn `npx @modelcontextprotocol/server-filesystem`.
       # Its first run on a cold npm cache can exceed the 120 s readiness timeout
