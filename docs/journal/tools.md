@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -40,6 +40,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace — stage 2, editing and the journal (done)
 - Post-M9: the code workspace — stage 3, the build/run/test command slots (done)
 - Post-M9: the code workspace — stage 5, the semantic index, measured and rejected (done)
+- Post-M9: the change journal followed the chat, not the project (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2282,3 +2283,82 @@ the probe lives on `spike/code-search-probe`, unmerged.
   unmeasured basis, which is what the fork exists to prevent.
 - **Tests**: none added to the application — nothing shipped. The probe carries
   four unit tests of its chunker on its own branch.
+
+### Post-M9: the change journal followed the chat, not the project (done)
+
+- **Found by pulling on a loose thread, not by a report.** A dead `Journal`
+  binding in `journal_before_write` (built, never used, explicitly dropped —
+  born that way in the code-workspace stage-2 commit) prompted the question
+  "what was that meant to do". It was meant to do nothing — `record` does its
+  own `load` and its own first-touch check. But the *journal operation that is
+  missing* turned out to be one call site away, on attach. Branch
+  `fix/workspace-journal-reattach`.
+- **Design fork F13 was specified and half-built.** The plan says it plainly
+  (docs/history/code-workspace.md §3.5: "attaching a different root starts a
+  fresh manifest") and the code does it — inside `Journal::record`, so the
+  reset fires on the assistant's **next write** in the new project. Nothing
+  fired on attach, and neither reader (`workspace_diff::build`, `::revert`)
+  ever compared the manifest's recorded root with the one it was handed:
+  `workspace_paths` takes the root from the chat's *current* workspace, while
+  the journal is keyed by *chat id*. So between `/project attach B` and B's
+  first edit, `F4` listed A's journaled paths resolved against B.
+- **Measured before fixing, because "confusing" and "destructive" are
+  different bugs.** Most stale rows come back `Gone`, which is only confusing.
+  A path both projects have does not: sibling repositories share `Cargo.toml`,
+  `README.md`, `src/main.rs`. The reproduction (A edits `Cargo.toml`, attach B,
+  press `r`) ended with `B/Cargo.toml` holding **A's** bytes and A's own file
+  still unrepaired. That is the hazard the writer's own comment already named
+  — "a stale entry would make the changes screen offer a revert into an
+  unrelated directory" — with the comment sitting in the one place that could
+  not prevent it.
+- **Fixed at the attach *and* in both readers**, deliberately not just the
+  one-line attach fix. The bug was not a missing line; it was an invariant that
+  lived only in the writer, so any new caller could undo it. One predicate now
+  answers "whose project is this" — `Journal::describes(root)` over a free
+  `same_root`, shared with `record` so writer and readers cannot disagree.
+  `build` answers with an empty set (truthful: nothing changed in *this*
+  project), `revert` refuses with a reason (an action must not silently
+  no-op, docs/lessons.md §4), and `handle_project_attach` clears the journal
+  best-effort, mirroring detach.
+- **`same_root` is fail-safe, not fail-open, and the asymmetry is reasoned.**
+  Plain string equality answers every normal case — both spellings come from
+  canonicalizing helpers that also strip the Windows `\\?\` prefix
+  (`canonical_dir`, `workspace_root`), and the pre-existing end-to-end test
+  `the_change_set_round_trips_through_the_orchestrator` is what proves they
+  agree, since a mismatch there would have emptied a real change list. A
+  differing spelling gets a second chance through `canonicalize`; anything
+  else counts as a different project. Guessing "same" wrongly puts bytes in
+  the wrong file, while guessing "different" wrongly hides a list whose files
+  a revert could not have resolved anyway (`workspace_diff::resolve`
+  canonicalizes the root and refuses when it is gone).
+- **Re-attaching the same directory keeps the journal** — typing `/project
+  attach .` twice must not throw away the record of what the assistant did.
+  Its own test, and it passes with the fix reverted, which is what makes it a
+  guard rather than a restatement.
+- **Five tests, and the three that assert the fix were run against the
+  unfixed code first**: `another_projects_journal_is_neither_shown_nor_
+  reverted` (the reproduction, now asserting B's file is untouched),
+  `re_attaching_a_different_project_drops_the_old_journal` (orchestrator
+  level, through `AppCommand::ProjectAttach`),
+  `a_journal_says_which_project_it_describes`,
+  `one_directory_spelled_two_ways_is_still_the_same_project`, and
+  `re_attaching_the_same_project_keeps_the_journal`. With the guard neutered
+  the first three fail and the last two pass — a regression test that passes
+  either way is decoration.
+- **Verification**: **2423 unit tests green** (0 failed, 106 `#[ignore]` — the
+  2418 baseline plus five), clippy `-D warnings`/fmt and every repository gate
+  clean. **Live run — GO** (AGENTS.md §3): the change is on the code-workspace
+  tool path, so the whole orchestrator e2e set ran against the LAN stack
+  (Gemma 4 31B q4_0 on `192.168.1.20:8000`, bge-m3 on `:8001`) — **42 passed /
+  0 failed** in 862 s, the seven `code_*` smokes among them, which is what
+  exercises journaling through real tool calls rather than through a fixture.
+- **Left open, deliberately**: `JournalEntry::first_touched_at` is written and
+  serialized but read by nothing (only the `Serialize` derive keeps rustc
+  quiet); the plan specifies it in the manifest row, and `entries()`'s
+  "oldest touch first" comes from `Vec::push` order rather than from the
+  field. Sort by it, surface it, or drop it — not decided here. Separately,
+  docs/history/code-workspace.md has drifted from the code in five further
+  places (`code_list`'s `glob`, `code_grep`'s `max_results`,
+  `ToolGroup::Workspace`, `/project status`'s change count, detach keeping
+  the journal) where **spec §9.12 matches the code** — plan drift to reconcile
+  in a docs pass, not defects.

@@ -1606,6 +1606,16 @@ exist at all.
   both rest on those bytes, which exist nowhere else once the file is
   overwritten. The journal lives under the app's data root, never inside the
   user's project, and detaching the project drops it.
+- **The journal belongs to one project, and says so.** Its manifest records
+  the root it describes, and attaching a *different* directory drops it at
+  that moment. It has to be that moment rather than the assistant's next
+  write: in between, the changes screen would diff the previous project's
+  baselines against the new root, and reverting a file the two projects both
+  have (`Cargo.toml`, `README.md` between sibling repositories) would write
+  the previous project's bytes into this one. Both readers check the recorded
+  root as well, so the guarantee does not rest on the attach path alone — a
+  journal that describes another project is shown as no changes and refuses
+  to revert. Re-attaching the **same** directory keeps the journal.
 - **The editing and command tools declare themselves dangerous**, so
   `tools.confirm_dangerous` (§9.8) parks them for confirmation when the user
   wants that. The reading tools do not, exactly as `fs_read` does not. A command

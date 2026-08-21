@@ -59,6 +59,13 @@ split by subsystem.
 
 ### Fixed
 
+- **Attaching a different project no longer mixes up the change list.** A chat's
+  record of what the assistant changed is now dropped the moment you attach
+  another directory. Before, it survived until the assistant's next edit — so
+  `F4` could list the previous project's files against the new one's directory,
+  and reverting a file the two projects both have (`Cargo.toml`, `README.md`)
+  wrote the previous project's contents into it. Re-attaching the same directory
+  keeps the change list, as before.
 - **The settings hint panel keeps one height everywhere.** The description
   panel under the field list is now sized to the longest hint of the whole
   settings catalog rather than the current section's, so switching sections no

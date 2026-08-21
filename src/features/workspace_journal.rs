@@ -25,7 +25,7 @@
 //!   cannot be written (`features/tools/code.rs`) instead of proceeding
 //!   unjournaled.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -109,15 +109,23 @@ impl Journal {
     /// caller must not write.
     pub fn record(&self, root: &str, rel: &str, current: Option<&[u8]>) -> Result<()> {
         let mut manifest = self.load();
-        if manifest.root != root {
+        if !same_root(&manifest.root, root) {
             // A different project: the previous journal describes files this
             // workspace no longer has, and a stale entry would make the changes
             // screen offer a revert into an unrelated directory.
+            //
+            // This is the *last* line of that defence, not the only one: it
+            // fires on the first write in the new project, and `/project
+            // attach` clears the journal before that (design fork F13).
             self.clear()?;
             manifest = Manifest {
                 root: root.to_string(),
                 files: Vec::new(),
             };
+        } else if manifest.root.is_empty() {
+            // First use of this chat's journal — stamp it with the project it
+            // now describes, which is what every later comparison reads.
+            manifest.root = root.to_string();
         }
         if manifest.files.iter().any(|e| e.path == rel) {
             return Ok(()); // already journaled — the first touch is the baseline
@@ -142,6 +150,24 @@ impl Journal {
             first_touched_at: Utc::now(),
         });
         self.save(&manifest)
+    }
+
+    /// Does this journal describe the project at `root`?
+    ///
+    /// The journal belongs to a **chat**, while the root comes from that chat's
+    /// **current** workspace — and `/project attach` can move the second. Every
+    /// reader has to ask this first: diffing one project's baselines against
+    /// another's tree is not merely wrong on screen, a revert would write the
+    /// first project's bytes into the second one's file (design fork F13).
+    ///
+    /// An empty journal describes every root — it has nothing to misattribute,
+    /// and answering `false` would make the very first [`Self::record`] look
+    /// like a conflict.
+    ///
+    /// The comparison is deliberately **fail-safe, not fail-open**: see
+    /// [`same_root`].
+    pub fn describes(&self, root: &str) -> bool {
+        same_root(&self.load().root, root)
     }
 
     /// Everything journaled for this chat, oldest touch first.
@@ -194,6 +220,31 @@ impl Journal {
         }
         Ok(())
     }
+}
+
+/// Do a manifest's recorded root and a workspace root name the same project?
+///
+/// An empty `owner` is a journal that has never been written and matches
+/// anything. Otherwise plain string equality answers it in every normal case:
+/// both spellings are produced by canonicalizing helpers that also strip the
+/// Windows `\\?\` prefix (`orchestrator::workspace::canonical_dir`,
+/// `tools::code::workspace_root`). A manifest written by hand or by an older
+/// build gets a second chance through `canonicalize`.
+///
+/// **Anything else counts as a different project.** The asymmetry is on
+/// purpose: guessing "same" wrongly is how the assistant's bytes end up in an
+/// unrelated file, while guessing "different" wrongly only hides a change list
+/// whose files a revert could not have resolved anyway
+/// (`workspace_diff::resolve` canonicalizes the root and refuses when it does
+/// not exist).
+fn same_root(owner: &str, root: &str) -> bool {
+    if owner.is_empty() || owner == root {
+        return true;
+    }
+    matches!(
+        (Path::new(owner).canonicalize(), Path::new(root).canonicalize()),
+        (Ok(a), Ok(b)) if a == b
+    )
 }
 
 /// The baseline file's name: a hash of the project-relative path.
@@ -263,6 +314,47 @@ mod tests {
         assert_eq!(entries.len(), 1, "{entries:?}");
         assert_eq!(entries[0].path, "src/b.rs");
         assert_eq!(j.baseline_of("src/a.rs"), None);
+    }
+
+    /// The question every reader of the journal has to ask before it trusts a
+    /// baseline (design fork F13): whose project is this?
+    #[test]
+    fn a_journal_says_which_project_it_describes() {
+        let (_d, j) = journal();
+        assert!(
+            j.describes("/anywhere"),
+            "an empty journal has nothing to misattribute"
+        );
+        j.record("/proj-one", "src/a.rs", Some(b"one")).unwrap();
+        assert!(j.describes("/proj-one"));
+        assert!(
+            !j.describes("/proj-two"),
+            "a different project must not be able to read these baselines"
+        );
+        // Recording stamps the root even though the first call takes the
+        // "same root" branch — everything later compares against it.
+        assert!(!j.describes(""), "an unnamed root is not this project");
+    }
+
+    /// Two spellings of one directory are one project. The everyday case is
+    /// plain equality; this covers a manifest written by hand or by an older
+    /// build, where the fallback through `canonicalize` is what keeps a real
+    /// change list from silently emptying.
+    #[test]
+    fn one_directory_spelled_two_ways_is_still_the_same_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let j = Journal::new(dir.path().join("journal"));
+        j.record(&root.to_string_lossy(), "a.rs", Some(b"x"))
+            .unwrap();
+
+        let roundabout = root.join("sub").join("..").to_string_lossy().into_owned();
+        assert_ne!(roundabout, root.to_string_lossy(), "a different spelling");
+        assert!(
+            j.describes(&roundabout),
+            "…of the same directory: {roundabout}"
+        );
     }
 
     #[test]
