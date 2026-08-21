@@ -4034,6 +4034,52 @@ fn profile_commands_are_highlighted_and_never_sent() {
     }
 }
 
+/// Every command family the input chain dispatches is highlighted while it is
+/// being typed. One line per family rather than per form: what this guards is
+/// the *drift* between the dispatch chain in `submit` and the predicate the
+/// renderer asks — `/project` was dispatched but not highlighted, so the command
+/// worked and looked like prose the whole time it was typed.
+#[test]
+fn every_command_family_is_highlighted_as_it_is_typed() {
+    for text in [
+        "/rag list",
+        "/reindex",
+        "/compact",
+        "/file attach x.txt",
+        "/project attach .",
+        "/project status",
+        "/project test-cmd cargo test",
+        "/image list",
+        "/tts off",
+        "/settings",
+        "/profile list",
+        "/export md",
+        "/exit",
+    ] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(c.s.input_is_command(), "{text} is not highlighted");
+        let mut c = Cmd::new();
+        assert!(
+            !matches!(c.run(text), Some(ChatIntent::Send(_))),
+            "{text} must not go out as a message"
+        );
+    }
+    // A malformed member of a family is still a command, not prose — the box and
+    // `Enter` read it through the same parser.
+    for text in ["/project", "/project nonsense", "/rag"] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(c.s.input_is_command(), "{text} is not highlighted");
+    }
+    // Near-words stay prose.
+    for text in ["/projects", "/project-attach", "how do I attach a project?"] {
+        let mut c = Cmd::new();
+        type_str(&mut c.s, text);
+        assert!(!c.s.input_is_command(), "{text} must stay plain text");
+    }
+}
+
 /// The confirmation popup, rendered to text — the question has to be readable,
 /// not merely present (the popup wraps at 56 columns).
 fn confirm_popup_text(s: &mut ChatScreen) -> String {

@@ -59,6 +59,12 @@ split by subsystem.
 
 ### Fixed
 
+- **`/project` commands are highlighted as you type them, like every other
+  command.** A line starting with `/project` stayed the colour of an ordinary
+  message right up to `Enter` — and was spellchecked as prose, so a path or a
+  slot name could pick up red underlines under a line that was never going to be
+  sent to the model. It is now coloured from the first recognised word, exactly
+  like `/rag`, `/file`, `/image` and the rest.
 - **Attaching a different project no longer mixes up the change list.** A chat's
   record of what the assistant changed is now dropped the moment you attach
   another directory. Before, it survived until the assistant's next edit — so

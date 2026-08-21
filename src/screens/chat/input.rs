@@ -827,10 +827,15 @@ impl ChatScreen {
         true
     }
 
-    /// Whether the current input is a command (`/rag …`, `/file …`, `/image …`,
-    /// `/tts …`, `/reindex`, `/compact`, `/exit`, and everything in the typed-route
-    /// registry). Such text is highlighted yellow and isn't spellchecked. See
-    /// spec §11.5.
+    /// Whether the current input is a command (`/rag …`, `/file …`, `/project …`,
+    /// `/image …`, `/tts …`, `/reindex`, `/compact`, `/exit`, and everything in the
+    /// typed-route registry). Such text is highlighted yellow and isn't
+    /// spellchecked. See spec §11.5.
+    ///
+    /// The arms below are the same parsers, in the same order, as the dispatch
+    /// chain in `submit` — the box and `Enter` have to agree about what a command
+    /// is, and the one time they drifted (`/project`, added to the chain alone)
+    /// the command worked while typing it looked like prose.
     /// Checked every frame, so first — a cheap guard: a command always
     /// starts with `/` (the first non-whitespace character), and only then
     /// do we parse the full text (an allocation via `text()` + parsing). For
@@ -844,6 +849,7 @@ impl ChatScreen {
             || crate::features::reindex_command::parse(&text, self.loc).is_some()
             || crate::features::compact_command::parse(&text, self.loc).is_some()
             || crate::features::file_command::parse(&text, self.loc).is_some()
+            || crate::features::project_command::parse(&text, self.loc).is_some()
             || crate::features::image_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
             || crate::features::ui_command::parse(&text, self.loc).is_some()

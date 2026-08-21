@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -36,6 +36,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: command-only control — stage 1 (typed routes for the chords) (done)
 - Post-M9: command-only control — stage 2 (`/profile`, `/self clear`) (done)
 - Post-M9: OSC 52 — copying to the client's clipboard (done)
+- Post-M9: `/project` is highlighted while it is typed (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1310,3 +1311,55 @@ path is touched. What unit tests cannot reach is the claim itself, since it is
 about terminals: the acceptance pass needs **two machines** — SSH from a laptop
 into a headless box, `/copy` there, paste locally — and is worth repeating under
 tmux and once in VS Code Remote-SSH.
+
+### Post-M9: `/project` is highlighted while it is typed (done)
+
+**What.** `/project …` was the one command family the input box did not colour:
+typing `/project attach .` looked like an ordinary message all the way to
+`Enter`, which then attached the project. It was also spellchecked as prose —
+the same predicate gates both — so a path or a slot name could pick up red
+underlines under a line that was never going to be sent anywhere.
+
+**Why it happened.** There are two lists of the command parsers, and they are
+kept by hand. One is the dispatch chain in `ChatScreen::submit` (`try_rag_command`
+→ `try_reindex_command` → … → `try_exit_command`); the other is the pure
+predicate `input_is_command`, which the renderer asks every frame for the
+`warning` style and which `maybe_recheck_spelling` asks to skip the dictionary.
+The code-workspace track added `/project` to the chain and to nothing else, and
+because the chain is what makes the command *work*, every test and every live
+run of that track passed. Nothing reads the two lists together, so the drift was
+invisible from inside the code — it is visible only on screen, in the colour of a
+line nobody asserted about.
+
+**The fix** is one arm, placed at the same position in the predicate that
+`try_project_command` occupies in the chain — between `/file` and `/image` — so
+the two read as the same list rather than as two sets that happen to agree. The
+doc comment now says out loud that they are the same parsers in the same order,
+and names this defect, because the next command added will face exactly the same
+fork.
+
+**What was deliberately not done: unifying the two lists.** The obvious repair is
+to make the chain the single source of truth and derive the predicate from it.
+The chain cannot serve as one: each `try_*` is `&mut self`, clears the box,
+pushes a note on a syntax error and returns an intent — asking it "is this a
+command?" would run all of that on every keystroke, on every frame. The other
+direction (a registry row per family, the way `ui_command::COMMANDS` already
+works) is a real refactor of eleven parsers, three of which are in the chain
+precisely *because* they take a subcommand plus an argument and did not fit a
+registry row (`/profile`, `/export`, `/project` itself). That is a track, not a
+bug fix; what this change buys instead is a test that fails when the lists drift
+again, which is the property the refactor would have provided.
+
+**Tests** (+1, 2437 → 2438 green). One table over every command family the chain
+dispatches — `/rag`, `/reindex`, `/compact`, `/file`, `/project` (attach, status
+and a `<slot>-cmd` line), `/image`, `/tts`, the registry, `/profile`, `/export`,
+`/exit` — asserting for each that it is highlighted *and* that it never leaves as
+a message; a malformed member of a family (`/project`, `/project nonsense`,
+`/rag`) is still a command and not prose, since the box and `Enter` read it
+through the same parser; and the near-words (`/projects`, `/project-attach`,
+`how do I attach a project?`) stay plain text. The test was run against the
+unfixed predicate first and fails there on `/project attach .` — a guard nobody
+has watched fail is only a guard by assertion.
+
+**A live model run is not required** (AGENTS.md §3): no engine, memory or tool
+path is touched, and the change is a pure predicate over text the user typed.
