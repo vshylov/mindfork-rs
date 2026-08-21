@@ -308,7 +308,8 @@ timeout). Its `timeout-minutes` (45) matters in one direction only: it must stay
 **below the sweeper's threshold** (90 min), or the sweeper would delete the
 endpoints of a run still using them.
 
-**`.github/workflows/e2e-sweeper.yml`** — hourly `cron` + `workflow_dispatch`:
+**`.github/workflows/e2e-sweeper.yml`** — scheduled `cron` (hourly as built; every
+six hours since 2026-08-21 — journal, *a ceiling on every job*) + `workflow_dispatch`:
 list endpoints, delete anything named `e2e-*` older than the max lifetime. This
 is the reduced §6 of the research (R3): HF's auto scale-to-zero already bounds
 the *money* at one idle window; the sweeper bounds the *time* and reclaims

@@ -285,16 +285,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   even for a filter that only exercises the embedders (~$0.10 wasted per such
   iteration). The probe has `--embed-only`; the runner has no `--no-chat`.
   Minor, and the full gate always needs chat.
-- **The hourly sweeper's minutes** — measured 2026-08-21 while putting a ceiling
-  on every job: each sweep runs 5–9 s, GitHub bills a job at a minimum of one
-  minute, and 438 sweeps in 21 days make it **~630 billable minutes a month** —
-  the repository's single largest consumer of Actions minutes (≈ 26 merges'
-  worth of CI), as a backstop for a gate dispatched five times since it was
-  built. It bounds *time and endpoint quota*, not money (scale-to-zero bounds
-  that), so a 6-hourly cron would keep the guarantee at a sixth of the cost; an
-  orphan would then hold quota for up to six hours instead of one to two. Part
-  of the remote gate's design (remote-e2e-hf.md §6), so the cadence is a
-  decision, not a tweak.
 - **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
   wrapping, brute-force memory cosine — a performance regression detector.
 - **cargo-nextest — evaluated and rejected** (2026-08-05, measured, so that it
@@ -703,7 +693,7 @@ A compact summary (details — in [docs/journal/](journal/) and
   llama.cpp engine) plus **two** embedding models, runs the `#[ignore]` suite
   against them, and deletes them — **verifying** the deletion, since a leaked
   endpoint is the one outcome that costs money. In CI as a
-  `workflow_dispatch` job with an hourly sweeper as the backstop; two
+  `workflow_dispatch` job with a scheduled sweeper as the backstop; two
   consecutive green runs (66 passed / 0 failed). The platform was chosen for
   its *cleanup guarantee* rather than its price — idle scale-to-zero is a
   dead-man's switch no rented pod offers. See

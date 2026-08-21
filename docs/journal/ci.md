@@ -941,20 +941,31 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   wall — and both job logs were downloaded, since the journal cites that run by
   id. The list is seven again, and every one of the seven is live: CI and Site
   on pull requests, Packaging path-filtered, Release on tags, Audit weekly, the
-  live gate by dispatch, the sweeper hourly.
-- **A finding beside the task, left as a roadmap item rather than changed
-  unasked**: the hourly sweeper is now the repository's single largest consumer
+  live gate by dispatch, the sweeper on its schedule.
+- **A finding beside the task — the sweeper's minutes — and the decision it
+  got.** The hourly sweeper had become the repository's single largest consumer
   of Actions minutes. Each sweep runs 5–9 s and GitHub bills a job at a minimum
   of one minute: 438 runs in the first 21 days of August → **~630 billable
   minutes a month**, about 26 merges' worth of CI, as a backstop for a gate
   dispatched five times since it was built. Its bound is *time and endpoint
-  quota*, not money (scale-to-zero already bounds that), so a 6-hourly cadence
-  would keep the guarantee at a sixth of the cost — a user's call, because the
-  cadence is part of the remote gate's design (remote-e2e-hf.md §6).
+  quota*, not money (scale-to-zero already bounds that at one 15-minute idle
+  window), so the cadence is a trade between how long an orphan may hold quota
+  and what the backstop costs — and, being part of the remote gate's design
+  (remote-e2e-hf.md §6), not a tweak to make unasked. It was raised as a finding;
+  **user's decision (2026-08-21): every six hours** — `17 */6 * * *`, the
+  off-the-hour minute kept. An orphan now holds quota for up to ~7.5 h (one
+  interval plus the 90-minute age threshold) against ~2.5 h before, at roughly a
+  sixth of the cost (~105 billable minutes a month); the 90-minute threshold
+  itself is unchanged, since what it guards is the live job's 45-minute ceiling,
+  not the cadence. `docs/install.md` and the plan's §6 say so.
 - **Verification**: the workflows were validated by *rendering* (lessons §10) —
-  a PyYAML pass over all six files printing every job's ceiling and every
+  a PyYAML pass over all seven files printing every job's ceiling and every
   bounded step's command, so the folded `>-` scalars and the matrix expression
   are seen as GitHub will see them; the pull request's own CI run is the live
-  render. No Rust changed: **2425 unit tests green, 106 `#[ignore]`**,
-  unchanged; `cyrillic_scan`/`link_check`/`doc_index_check` clean. No CHANGELOG
-  entry — dev infrastructure, no user-visible effect (AGENTS.md §4).
+  render (all five jobs green on the first run, the bounded apt step at 12 s
+  with the new options accepted). The sweeper's new schedule can only be seen
+  live once merged — a `schedule` fires on the default branch alone — so the
+  first post-merge day's four runs are its check. No Rust changed: **2425 unit
+  tests green, 106 `#[ignore]`**, unchanged; `cyrillic_scan`/`link_check`/
+  `doc_index_check` clean. No CHANGELOG entry — dev infrastructure, no
+  user-visible effect (AGENTS.md §4).
