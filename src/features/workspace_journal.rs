@@ -43,6 +43,17 @@ pub struct JournalEntry {
     /// did not exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<String>,
+    /// When the assistant first touched this file — what [`Journal::entries`]
+    /// orders by.
+    ///
+    /// `#[serde(default)]` for the reason every stored field in this project
+    /// has it: a manifest is JSON on the user's disk, and a row missing this
+    /// key fails the whole `Manifest` — which `Journal::load` turns into an
+    /// *empty* journal, silently dropping the change list and orphaning the
+    /// pre-images it points at. The default is the Unix epoch, and it sorts
+    /// first on purpose: a row whose time was never recorded is the oldest
+    /// thing known about the file, which is truer than inventing "now".
+    #[serde(default)]
     pub first_touched_at: DateTime<Utc>,
 }
 
@@ -170,14 +181,24 @@ impl Journal {
         same_root(&self.load().root, root)
     }
 
-    /// Everything journaled for this chat, oldest touch first.
+    /// Everything journaled for this chat, **oldest touch first**.
+    ///
+    /// The order comes from the rows' own `first_touched_at` rather than from
+    /// the order [`Self::record`] happened to append them in. Push order gives
+    /// the same answer today, which is exactly why it was not enough: the
+    /// promise is made here and kept by a different function, and a manifest is
+    /// a JSON file a user can edit. The sort is stable, so rows sharing a
+    /// timestamp — two edits inside one second — keep the order they were
+    /// written in.
     ///
     /// The reader half of the journal, consumed by
     /// [`crate::features::workspace_diff`]. Written with the writer
     /// deliberately — the two agree on one manifest shape, and splitting them
     /// across stages is how they drift.
     pub fn entries(&self) -> Vec<JournalEntry> {
-        self.load().files
+        let mut files = self.load().files;
+        files.sort_by_key(|e| e.first_touched_at);
+        files
     }
 
     /// The stored pre-image of `rel`, or `None` when it was a new file (or is
@@ -314,6 +335,68 @@ mod tests {
         assert_eq!(entries.len(), 1, "{entries:?}");
         assert_eq!(entries[0].path, "src/b.rs");
         assert_eq!(j.baseline_of("src/a.rs"), None);
+    }
+
+    /// The changes screen's row order is this module's promise, so it rests on
+    /// the rows' own timestamps rather than on the order they were appended.
+    #[test]
+    fn entries_come_back_oldest_touch_first() {
+        let (_d, j) = journal();
+        j.record("/p", "second.rs", Some(b"2")).unwrap();
+        j.record("/p", "third.rs", Some(b"3")).unwrap();
+
+        // A manifest is a file on disk: reordered by hand, or written by some
+        // future caller in another order. The reader must not care.
+        let path = j.manifest_path();
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let files = doc["files"].as_array_mut().unwrap();
+        files.reverse();
+        files.push(serde_json::json!({
+            "path": "first.rs",
+            "existed": true,
+            "first_touched_at": DateTime::<Utc>::default(),
+        }));
+        std::fs::write(&path, serde_json::to_string(&doc).unwrap()).unwrap();
+
+        let order: Vec<String> = j.entries().into_iter().map(|e| e.path).collect();
+        assert_eq!(order, ["first.rs", "second.rs", "third.rs"], "{order:?}");
+    }
+
+    /// A row missing the timestamp costs that row its place in the order — not
+    /// the whole journal.
+    ///
+    /// Without `#[serde(default)]` the `Manifest` fails to parse, `load`
+    /// swallows the error by design ("a corrupt manifest must not make the
+    /// workspace unusable"), and the user's entire change list disappears while
+    /// its baselines stay on disk with nothing referencing them.
+    #[test]
+    fn a_row_without_a_timestamp_does_not_blank_the_journal() {
+        let (_d, j) = journal();
+        j.record("/p", "a.rs", Some(b"x")).unwrap();
+
+        let path = j.manifest_path();
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(
+            doc["files"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("first_touched_at")
+                .is_some(),
+            "the fixture has to remove a field that was actually there"
+        );
+        std::fs::write(&path, serde_json::to_string(&doc).unwrap()).unwrap();
+
+        let entries = j.entries();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].path, "a.rs");
+        assert_eq!(entries[0].first_touched_at, DateTime::<Utc>::default());
+        assert_eq!(
+            j.baseline_of("a.rs").as_deref(),
+            Some(&b"x"[..]),
+            "and the pre-image is still reachable"
+        );
     }
 
     /// The question every reader of the journal has to ask before it trusts a

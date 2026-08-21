@@ -832,7 +832,6 @@ async fn journal_before_write(
         // programming error rather than a user-facing state.
         anyhow::bail!(ctx.loc.t("tool.code.err.no_journal").to_string());
     };
-    let journal = crate::features::workspace_journal::Journal::new(dir.clone());
     let rel = display_rel(path, root);
     let root = root.display().to_string();
     let bytes = existing.map(<[u8]>::to_vec);
@@ -850,7 +849,6 @@ async fn journal_before_write(
                 .tf("tool.code.err.journal_failed", &[("err", &err.to_string())])
         )
     })?;
-    drop(journal);
     Ok(())
 }
 

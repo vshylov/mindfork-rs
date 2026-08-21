@@ -13,7 +13,8 @@ is in §7.5. **Stage 2 (editing + the journal) is done** —
 `feat/code-workspace-changes`, §7.8. **Stage 5 (the semantic index) was measured
 and rejected** — fork F4's go/no-go came back no, and the stage does not ship;
 the measurement, and what would change the answer, are in §7.9. **The track is
-complete.**
+complete.** Where the shipped code differs from what this plan describes —
+audited afterwards, in §7.10.
 
 The request, in one paragraph: the assistant should be able to work on a code
 project the way modern coding agents (Claude Code, aider) do — the user attaches
@@ -783,6 +784,44 @@ reindex on every edit, a settings toggle, `/project reindex`, and a hard
 dependency on the embedding server being configured for a feature that otherwise
 does not need it. That is a permanent cost, and it was to be paid for an effect
 this measurement could not detect.
+
+
+### 7.10. After the track — where the shipped code differs from this plan
+
+Written after the fact (2026-08-21), from an audit of the finished feature
+rather than from a stage. §7.5–§7.8 record each stage's own deltas; these are
+the ones that were never written down, found by checking every `pub` item and
+every command against what this document promises. **In all of them
+[spec.md](../../spec.md) §9.12 already matches the code**, so the plan is the
+stale document and the spec is the one to trust.
+
+- **`code_list` takes no `glob`.** §3.2's table says `{ path?, depth?, glob? }`;
+  the schema offers `path` and `depth`. `code_grep` kept its `glob` — which is
+  where a glob earns its place, since a search is the thing you narrow.
+- **`code_grep` takes no `max_results`.** §3.2's table says
+  `{ pattern, path?, glob?, max_results? }`; the cap is the constant
+  `MAX_GREP_HITS` (100) and the answer names it when it truncates. A model
+  choosing its own cap can only choose it wrong in one direction.
+- **The group is `ToolGroup::Files`, not `ToolGroup::Workspace`.** §3.2 names a
+  variant that was never added; the `code_*` tools sit in the existing Files
+  group, which is what the settings screen shows.
+- **`/project status` lists the root and the three slots — no index state, no
+  changed-file count.** §3.1 promised both. The index state is not drift but
+  §7.9: there is no index. The changed-file count simply never shipped, and
+  `F4` is where that number lives.
+- **`/project detach` clears the journal** rather than keeping it "on disk
+  until the next attach" (§3.1). The stronger rule is the right one — a journal
+  outliving the project it describes is the hazard F13 is about — and it is
+  what the code has done since stage 2.
+
+**F13 itself was the one delta that was a defect rather than a divergence.**
+"Re-attach to a different root resets the change journal" (§3.1, and the F13
+row) was implemented only inside `Journal::record`, so the reset fired on the
+assistant's next write instead of on the attach, and neither reader checked the
+manifest's recorded root. Fixed on `fix/workspace-journal-reattach`
+(docs/journal/tools.md, "the change journal followed the chat, not the
+project"), which is what prompted this audit. Everything else above is a plan
+that outran its implementation, harmlessly, and now says so.
 
 ## 8. Documentation impact (AGENTS.md §4)
 

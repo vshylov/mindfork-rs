@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace — stage 3, the build/run/test command slots (done)
 - Post-M9: the code workspace — stage 5, the semantic index, measured and rejected (done)
 - Post-M9: the change journal followed the chat, not the project (done)
+- Post-M9: the code workspace's loose ends (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2362,3 +2363,62 @@ the probe lives on `spike/code-search-probe`, unmerged.
   `ToolGroup::Workspace`, `/project status`'s change count, detach keeping
   the journal) where **spec §9.12 matches the code** — plan drift to reconcile
   in a docs pass, not defects.
+
+### Post-M9: the code workspace's loose ends (done)
+
+- **The three things the F13 fix deliberately left open**, closed together
+  because they are one feature's tail and none is big enough for a PR of its
+  own. Branch `fix/workspace-loose-ends`.
+- **`JournalEntry::first_touched_at` was written, serialized and read by
+  nothing** — only the `Serialize` derive kept rustc quiet about it. Of the
+  three options (sort by it, surface it, drop it) the choice is **sort**, and
+  it is the same argument the previous entry's lesson makes: `entries()`'s doc
+  comment promises "oldest touch first" while what kept that promise was
+  `Vec::push` order in a *different* function. Push order gives the same answer
+  today, which is exactly why it was not enough — a manifest is a JSON file on
+  the user's disk. `entries()` now sorts by the field (stably, so two edits
+  inside one second keep their written order), and the field is load-bearing
+  instead of decorative.
+- **The same field was missing `#[serde(default)]`, and that was a real
+  failure mode**, not a convention nit — measured before deciding: a manifest
+  row without the key fails the whole `Manifest`, `load` swallows the error by
+  design ("a corrupt manifest must not make the workspace unusable"), and the
+  user's entire change list disappears while its baselines stay on disk with
+  nothing referencing them. The default is the Unix epoch, which sorts first on
+  purpose: a row whose time was never recorded *is* the oldest thing known
+  about that file, and saying so beats inventing "now". No released build ever
+  wrote such a manifest, so no CHANGELOG entry — this is tolerance for a
+  hand-edited file, not a bug anyone hit.
+- **The dead `Journal` binding in `journal_before_write` is gone.** Established
+  first that it was inert rather than assuming it: `Journal` is a one-field
+  `PathBuf` wrapper, `new` does no I/O, and there is no `impl Drop` for it
+  anywhere in the crate (all eight were listed). It was born dead in the
+  stage-2 commit — the shape of a first draft where `journal.record(…)` was
+  inline before moving into `spawn_blocking` — and the explicit `drop(journal)`
+  is why clippy never mentioned it. Kept out of the F13 PR on AGENTS.md §2's
+  rule and merged here instead.
+- **Plan drift recorded rather than papered over** — a new
+  docs/history/code-workspace.md §7.10, following the §7.5–§7.8 convention of
+  writing deltas down instead of editing the plan's body, which would erase
+  what was actually planned. Five places where the finished code differs from
+  §3.1/§3.2 (`code_list`'s `glob`, `code_grep`'s `max_results`,
+  `ToolGroup::Workspace`, `/project status`'s index state and change count,
+  detach keeping the journal), each verified against the source, and in every
+  one of them **spec §9.12 already matched the code** — so the spec needed no
+  change and the plan is the stale document. One of the five, the index state,
+  is not drift at all but §7.9's no-go.
+- **Two tests, both run against the unfixed code first**:
+  `entries_come_back_oldest_touch_first` (a manifest reordered by hand, plus an
+  epoch-stamped row appended last) and
+  `a_row_without_a_timestamp_does_not_blank_the_journal` — both FAILED without
+  their fix and pass with it. Deleting the dead binding needs no test: the
+  existing `code_edit`/`code_write` journaling tests already cover the function,
+  and a deletion that changed behaviour would have broken them.
+- **Verification**: **2425 unit tests green** (0 failed, 106 `#[ignore]` — the
+  2423 baseline plus two), clippy `-D warnings`/fmt and every repository gate
+  clean. **Live run — GO** (AGENTS.md §3): the deletion sits on the tool write
+  path, so the whole orchestrator e2e set ran against the LAN stack (Gemma 4
+  31B q4_0 on `192.168.1.20:8000`, bge-m3 on `:8001`) — **42 passed / 0
+  failed** in 846 s, the seven `code_*` smokes among them. No CHANGELOG entry:
+  the sort is invisible (push order already gave it), the serde tolerance
+  guards a file no release ever wrote, and the deletion is inert.
