@@ -49,7 +49,39 @@ impl Orchestrator {
         // change to the chat's setup, not to the conversation, and it must not
         // push the chat up the list (the `draft`/`feed_view` rule).
         self.mark_dirty(chat_id);
+        self.reset_journal_for(chat_id, &root);
         self.emit_project(ProjectProgress::Attached { root, name });
+    }
+
+    /// Drops the chat's change journal when it describes a **different**
+    /// project (design fork F13).
+    ///
+    /// [`crate::features::workspace_journal::Journal::record`] resets on a new
+    /// root too, but only when the assistant next writes — and the window
+    /// before that is exactly when `F4` gets looked at. Until this ran, the
+    /// changes screen diffed the previous project's baselines against the new
+    /// root, and reverting a same-named file (`Cargo.toml`, `README.md` between
+    /// sibling repositories) wrote the previous project's bytes into this one.
+    ///
+    /// Re-attaching the **same** root keeps the journal: running `/project
+    /// attach .` twice must not throw away the list of what the assistant did.
+    ///
+    /// Best-effort, like the detach path: a journal that cannot be removed is a
+    /// log line, not a reason to refuse the attach — and the readers carry the
+    /// same guard, so nothing rests on this alone.
+    fn reset_journal_for(&self, chat_id: uuid::Uuid, root: &str) {
+        let dir = self
+            .storage
+            .json()
+            .workspace_dir()
+            .join(chat_id.to_string());
+        let journal = crate::features::workspace_journal::Journal::new(dir);
+        if journal.describes(root) {
+            return;
+        }
+        if let Err(err) = journal.clear() {
+            tracing::warn!("could not clear the previous project's journal: {err}");
+        }
     }
 
     /// Detaches the active chat's project (`/project detach`).

@@ -111,6 +111,18 @@ impl ChangeSet {
 /// Blocking file I/O — the caller runs it off the async runtime.
 pub fn build(journal_dir: &Path, root: &str) -> ChangeSet {
     let journal = Journal::new(journal_dir.to_path_buf());
+    // The journal is the chat's, `root` is the chat's *current* workspace, and
+    // `/project attach` moves the second. It clears the journal when it does —
+    // but the guard lives here as well, because the invariant belongs to
+    // whoever reads the baselines, not to whoever happens to write the
+    // workspace field (design fork F13). "Nothing changed in *this* project" is
+    // the truthful answer and the one that cannot revert into the wrong tree.
+    if !journal.describes(root) {
+        return ChangeSet {
+            root: root.to_string(),
+            files: Vec::new(),
+        };
+    }
     let files = journal
         .entries()
         .into_iter()
@@ -252,6 +264,13 @@ fn render(before: &str, after: &str) -> (Vec<DiffLine>, usize, usize) {
 /// try again.
 pub fn revert(journal_dir: &Path, root: &str, rel: &str) -> Result<()> {
     let journal = Journal::new(journal_dir.to_path_buf());
+    // Same guard as `build`, and here it is the one that matters: this writes
+    // the user's files. Refusing rather than answering empty, because a revert
+    // is an action and a silent no-op reads as "done" (docs/lessons.md §4).
+    anyhow::ensure!(
+        journal.describes(root),
+        "this chat's change journal belongs to another project — nothing was written"
+    );
     let entry = journal
         .entries()
         .into_iter()
@@ -469,5 +488,49 @@ mod tests {
     fn an_empty_journal_is_an_empty_change_set() {
         let f = Fixture::new();
         assert!(f.build().is_empty());
+    }
+
+    /// A journal belonging to **another** project is not read at all — neither
+    /// to show a diff nor, above all, to write one back (design fork F13).
+    ///
+    /// The shape that made this worth a guard rather than a comment: two
+    /// sibling repositories both have a `Cargo.toml`, so the stale row resolves
+    /// against the new root instead of coming back `Gone`, and reverting it put
+    /// the *first* project's bytes into the second one's file. Measured before
+    /// the fix, which is why the assertions below name the bytes.
+    #[test]
+    fn another_projects_journal_is_neither_shown_nor_reverted() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal_dir = dir.path().join("journal");
+
+        // Project A: the assistant edited its Cargo.toml, so the pre-image is
+        // journaled and the file on disk differs from it.
+        let a = dir.path().join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("Cargo.toml"), "name = \"a\"\n").unwrap();
+        Journal::new(journal_dir.clone())
+            .record(&a.to_string_lossy(), "Cargo.toml", Some(b"name = \"a\"\n"))
+            .unwrap();
+        std::fs::write(a.join("Cargo.toml"), "name = \"a-edited\"\n").unwrap();
+
+        // Project B, attached to the same chat, with a file of the same name.
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(&b).unwrap();
+        let b_root = b.to_string_lossy().into_owned();
+        std::fs::write(b.join("Cargo.toml"), "name = \"b\"\n").unwrap();
+
+        assert!(
+            build(&journal_dir, &b_root).is_empty(),
+            "project A's rows must not be listed against project B's root"
+        );
+        assert!(
+            revert(&journal_dir, &b_root, "Cargo.toml").is_err(),
+            "and a revert must refuse rather than write"
+        );
+        assert_eq!(
+            std::fs::read_to_string(b.join("Cargo.toml")).unwrap(),
+            "name = \"b\"\n",
+            "project B's file is untouched"
+        );
     }
 }

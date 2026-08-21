@@ -1072,6 +1072,16 @@ named method fixed it and read better — a table of one-liners.
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
 stage 2*.
 
+**An invariant enforced only where data is *written* is not enforced.** The code
+workspace's journal reset lived inside `Journal::record` — correct, and useless for the
+window it mattered in: re-attaching a chat to another project left the old journal in
+place until the assistant's next edit, and that window is exactly when the changes screen
+gets looked at. Reverting a file both projects have then wrote the old project's bytes
+into the new one's tree. Ask of any such rule: *who reads this between the event and the
+next write?* — and put the check in the reader too, so it cannot be undone by a new caller
+of the writer.
+— *the change journal followed the chat, not the project*.
+
 **`cargo clippy -D warnings` green is not "Sonar-clean" for Rust.** The analyzer's
 rule set is broader than clippy's default warn set, so an analyzer update raises findings
 on code nobody has touched — 22 of one 30-issue backlog dated back two months. Measured on

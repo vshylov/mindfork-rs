@@ -258,6 +258,89 @@ async fn the_change_set_round_trips_through_the_orchestrator() {
     handle.await.unwrap();
 }
 
+/// Re-attaching the chat to a **different** project drops the previous
+/// project's journal there and then (design fork F13) — not lazily, on the
+/// assistant's next write.
+///
+/// The window between the two is exactly when `F4` is looked at, and what used
+/// to happen in it was measured: the changes screen listed the old project's
+/// files against the new root, and reverting one wrote the old project's bytes
+/// into the new project's file.
+#[tokio::test]
+async fn re_attaching_a_different_project_drops_the_old_journal() {
+    let (project, data, chat_id, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let root = project.path().to_string_lossy().into_owned();
+    std::fs::write(project.path().join("a.rs"), "before\n").unwrap();
+    let journal_dir = data.path().join("workspace").join(chat_id.to_string());
+    crate::features::workspace_journal::Journal::new(journal_dir.clone())
+        .record(&root, "a.rs", Some(b"before\n"))
+        .unwrap();
+    std::fs::write(project.path().join("a.rs"), "after\n").unwrap();
+    assert_eq!(changes(&cmd_tx, &mut evt_rx).await.files.len(), 1);
+
+    let other = tempfile::tempdir().unwrap();
+    cmd_tx
+        .send(AppCommand::ProjectAttach {
+            path: other.path().to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ProjectProgress(ProjectProgress::Attached { .. })
+        )
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        changes(&cmd_tx, &mut evt_rx).await.is_empty(),
+        "the previous project's rows must be gone"
+    );
+    assert!(
+        crate::features::workspace_journal::Journal::new(journal_dir)
+            .entries()
+            .is_empty(),
+        "…and gone from disk, not merely hidden"
+    );
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
+/// Re-attaching the **same** directory keeps the journal: typing `/project
+/// attach .` a second time must not throw away the list of what the assistant
+/// did.
+#[tokio::test]
+async fn re_attaching_the_same_project_keeps_the_journal() {
+    let (project, data, chat_id, cmd_tx, mut evt_rx, handle) = with_project().await;
+    let root = project.path().to_string_lossy().into_owned();
+    std::fs::write(project.path().join("a.rs"), "before\n").unwrap();
+    crate::features::workspace_journal::Journal::new(
+        data.path().join("workspace").join(chat_id.to_string()),
+    )
+    .record(&root, "a.rs", Some(b"before\n"))
+    .unwrap();
+    std::fs::write(project.path().join("a.rs"), "after\n").unwrap();
+
+    cmd_tx
+        .send(AppCommand::ProjectAttach { path: root })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ProjectProgress(ProjectProgress::Attached { .. })
+        )
+    })
+    .await
+    .unwrap();
+
+    let set = changes(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(set.files.len(), 1, "{set:?}");
+    assert_eq!(set.files[0].path, "a.rs");
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
 /// A chat with no project answers with an empty set **and no root** — which is
 /// what makes the screen say "attach one" rather than "nothing changed yet".
 /// Two different answers to two different situations (docs/lessons.md §4).
