@@ -1,5 +1,5 @@
 //! The code workspace attached to a chat (spec §9.12,
-//! [docs/code-workspace.md](../../docs/code-workspace.md)): a project directory
+//! [docs/history/code-workspace.md](../../docs/history/code-workspace.md)): a project directory
 //! the assistant may read, search and edit through the `code_*` tools.
 //!
 //! Deliberately a **struct with one field** rather than a bare

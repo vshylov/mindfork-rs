@@ -1744,7 +1744,7 @@ engine, memory or tool path is touched.
 
 `F4` / `/changes`: what the assistant changed in the attached project, as a
 unified diff, with per-file revert. Stage 4 of
-[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+[docs/history/code-workspace.md](../../docs/history/code-workspace.md); behaviour — spec §9.12.
 Branch `feat/code-workspace-changes`.
 
 - **This screen is what makes the editing tools safe.** Stage 2 chose to apply a

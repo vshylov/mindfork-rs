@@ -1,6 +1,6 @@
 //! The chat screen — the attached code project (`/project attach`): the feed
 //! note for a command's outcome. Part of the [`super`] module.
-//! See docs/code-workspace.md, spec §9.12.
+//! See docs/history/code-workspace.md, spec §9.12.
 
 use super::*;
 use crate::features::project_command::ProjectProgress;

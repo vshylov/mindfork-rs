@@ -522,6 +522,41 @@ wording existed to prevent.
 
 ---
 
+**When a measurement decides whether something ships, budget more for the
+instrument than for the thing.** The code-workspace track's semantic index took
+one afternoon to build as a probe and **six revisions of the measurement** to
+get an answer — and every defect was found by reading the raw turns, never by
+reading the summary table, which looked plausible every single time. In order:
+the tool under test was never called at all; one pass was treated as a rate (the
+control scored 5/5 then 3/5 on the same questions); two questions were padding
+both arms could skip; "wrong" conflated a retrieval miss with an empty turn and
+with a turn that never looked; the grader had false positives, then false
+negatives once tightened; and the harness was starving both arms at the default
+token ceiling. Four of the six moved the headline number, two reversed its
+direction. The rule that falls out: **before believing a table, read enough raw
+trials to reconstruct one of its cells by hand.**
+— *the code workspace — stage 5*.
+
+**An effect that changes sign when you change a denominator is smaller than your
+instrument.** The same 96 turns said the index was ahead (19/48 against 16/48 of
+all turns) or behind (19/29 against 16/22 of the turns that looked), depending on
+whether an unusable turn counts as a failure. That is not a result to argue
+about — it is the measurement telling you it cannot resolve the question. Say so
+and stop, or build a better instrument; picking the flattering denominator is how
+a feature ships on nothing.
+— *the code workspace — stage 5*.
+
+**A keyword grader cannot resolve an open-ended prose answer.** Loose markers
+graded a general-knowledge guess *correct* on a turn that made no tool call at
+all (it matched `mutex`); markers tightened to literals only the source contains
+then graded "machine-bound encryption … ADR 0008" *wrong* for missing `dpapi`.
+Every marker set trades false positives for false negatives, and the residual
+error lands in the same range as the effect being chased. A keyword marker is
+fine for "did the model reach the one fact only this file has"; it is not an
+instrument for "was this answer good". That needs a judge model, and budgeting
+for one is part of designing the measurement, not a fallback.
+— *the code workspace — stage 5*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
@@ -565,6 +600,18 @@ with no arguments and no result gets no "expand me" pill.
 — *collapsible tool calls, and the collapse state per chat*.
 
 ---
+
+**A tool the system prompt does not name does not get used — even with its
+schema in the request.** Stages 1–3 wrote the workspace block against one fear,
+the one §9.7 records: it must never promise a tool the turn does not have. Stage
+5 measured the converse and it is just as strong. The probe's `code_search` was
+registered, gated in and its schema sent, and the first measurement came back
+with the tool called **zero times in twenty turns** — because the block
+enumerates the turn's tools in words, was built from a list the new tool was not
+in, and the model believed the block over its own tool list. That block is not
+documentation of the turn; it is the model's working inventory. Anything added to
+a family has to be added to both.
+— *the code workspace — stage 5*.
 
 **A message that names the wrong knob is the same defect as a message that names
 none.** Two limits ended a turn — the tool-round budget and the workspace
@@ -945,6 +992,17 @@ list stops a model from answering with the *wrong* tool; it does nothing to stop
 spending the turn thinking, and appears to invite it. Check which failure the rule
 addresses before reaching for it.
 — *the rewrite probe's flake, found by the live gate*.
+
+**Check the journal for a measured ceiling before spending a run discovering it
+again.** A probe asked open-ended questions at the default `max_tokens` of 2048
+with thinking on, and more than half of one arm's turns came back with **no text
+at all** — while `docs/journal/ci.md` already held the measurement for that exact
+class of prompt on that exact model family: 1024: 0/3, 2048: 2/3, 4096: 3/4. The
+cost was a thirty-minute live run and a headline number that had to be thrown
+away. Two arms starved by the same harness do not compare to anything. (The
+sequel is worth knowing too: raising it to 4096 moved the per-arm numbers and did
+**not** clear the empty turns, so the ceiling was necessary and not sufficient.)
+— *the code workspace — stage 5*.
 
 **In a smoke, remove the alternative rather than hope the model does not take it.**
 Enabling only the tools under test is what makes a live assertion mean something. Some

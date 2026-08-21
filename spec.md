@@ -1481,9 +1481,13 @@ this in another chat"). Design and the decided forks —
 The user attaches a **project directory** to a chat, and the assistant can list,
 read, search and change it, and run the build/run/test commands the user
 configured for it — and the user can see everything it changed, as a diff, and
-put any of it back. Stages 1–4 of the track designed in
-[docs/code-workspace.md](docs/code-workspace.md); the optional semantic index is
-the stage after them.
+put any of it back. The finished track is
+[docs/history/code-workspace.md](docs/history/code-workspace.md). Its last
+planned stage, an optional **semantic index** over the project, was built as a
+probe, measured against `code_grep` and **rejected** — it could not be shown to
+improve answers or reduce rounds on this codebase, and §7.9 there records the
+measurement and what would change the answer. `code_grep` is the search this
+feature has.
 
 Deliberately **not** the same thing as `fs_read`/`fs_write`/`fs_list` (§9.3),
 which stay exactly as they are. Those are a global capability behind
@@ -1573,7 +1577,7 @@ exist at all.
 - **The read format is a contract.** The line-number prefix is a reading aid the
   model must strip when it quotes a fragment back; stage 0 measured both live
   model families doing exactly that, byte-for-byte, including indentation
-  (docs/code-workspace.md §7). It is what the editing stage rests on, so it is
+  (docs/history/code-workspace.md §7). It is what the editing stage rests on, so it is
   not changed casually.
 - **Confinement.** Every path argument is canonicalized and must lie inside the
   root, which settles `..`, an absolute path elsewhere and a symlink pointing out

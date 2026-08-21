@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -39,6 +39,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace — stages 0 and 1 (done)
 - Post-M9: the code workspace — stage 2, editing and the journal (done)
 - Post-M9: the code workspace — stage 3, the build/run/test command slots (done)
+- Post-M9: the code workspace — stage 5, the semantic index, measured and rejected (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -1901,7 +1902,7 @@ same trap in this project (lessons §2, §9).
 A project directory attached to a chat, and the tools that read it: `/project
 attach|detach|status` plus `code_list`/`code_read`/`code_grep`. Stage 1 of the
 track planned in
-[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+[docs/history/code-workspace.md](../../docs/history/code-workspace.md); behaviour — spec §9.12.
 Branches `docs/code-workspace` → `spike/code-workspace-probe` →
 `feat/code-workspace-core`.
 
@@ -1910,7 +1911,7 @@ Branches `docs/code-workspace` → `spike/code-workspace-probe` →
   exact-substring edit contract at all; everything else it plans is composition
   of machinery this repository already has. Measured on a throwaway branch:
   gemma-4-31b **5/5** and qwen-3.6-27b **5/5**, on two arms, against a bar of 3
-  of 5. Full record and limits — docs/code-workspace.md §7.
+  of 5. Full record and limits — docs/history/code-workspace.md §7.
 - **The second arm is the one that measured anything.** Arm A pastes the `cargo
   build` error, which is how a user actually arrives — and puts the failing line
   *in the prompt*, so a model can assemble `old_string` from the message rather
@@ -1997,7 +1998,7 @@ Branches `docs/code-workspace` → `spike/code-workspace-probe` →
 
 `code_edit` / `code_write`, the change journal every edit is recorded in, and the
 round-limit exemption. Stage 2 of
-[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+[docs/history/code-workspace.md](../../docs/history/code-workspace.md); behaviour — spec §9.12.
 Branch `feat/code-workspace-edit`.
 
 - **The contract is the one stage 0 measured**, unchanged: an exact fragment that
@@ -2084,7 +2085,7 @@ Branch `feat/code-workspace-edit`.
 
 `code_build`/`code_run`/`code_test`, the `/project *-cmd` commands that fill
 their slots, and the process-tree kill underneath them. Stage 3 of
-[docs/code-workspace.md](../../docs/code-workspace.md); behaviour — spec §9.12.
+[docs/history/code-workspace.md](../../docs/history/code-workspace.md); behaviour — spec §9.12.
 Branch `feat/code-workspace-commands`.
 
 - **The load-bearing decision was made before this stage and this stage is where
@@ -2218,3 +2219,66 @@ Branch `feat/code-workspace-commands`.
   more catalog tools move the displayed count), and the screenshots with them.
   New dependency `libc`, unix-only and one call wide (`killpg`); the Windows half
   of the same job is the `windows-sys` Job Object already in the graph.
+
+### Post-M9: the code workspace — stage 5, the semantic index, measured and rejected (done)
+
+The track's last planned stage does not ship. Fork F4 made it conditional on a
+live measurement against `code_grep`; the measurement came back no, and the
+rejection is the deliverable. Full record —
+[docs/history/code-workspace.md](../../docs/history/code-workspace.md) §7.9;
+the probe lives on `spike/code-search-probe`, unmerged.
+
+- **The verdict.** Over 48 turns per arm on gemma-4-31b, with the shipped tools
+  as the control and the same plus `code_search` as the treatment: correct in
+  16/22 of the control's turns that looked at the project against 19/29 of the
+  treatment's — and 16/48 against 19/48 of *all* turns. **The two denominators
+  point in opposite directions**, and choosing between them is a judgement about
+  what an unusable turn means. An effect that changes sign with a definition is
+  smaller than the instrument measuring it. Calls: 111 against 127. The
+  criterion was "measurably improves answers or reduces rounds"; it does
+  neither.
+- **The instrument took more work than the thing it measured, and needed six
+  revisions — every one found by reading the raw turns, never by reading the
+  summary table, which looked plausible each time.** In order: the tool was
+  never called at all (the workspace block enumerates the turn's tools in words,
+  is built from `code::ALL`, and the model believed it over its own schema
+  list); one pass is not a rate (the control scored 5/5 then 3/5 on the same
+  questions); two questions were padding (zero calls in both arms); "wrong"
+  conflated a retrieval miss with an empty turn and with a turn that never
+  looked; the grader had false positives, then — once tightened — false
+  negatives; and the harness was starving both arms at the default
+  `max_tokens`.
+- **The first defect is the one worth carrying elsewhere.** The workspace block
+  was written across stages 1–3 against the opposite fear — that it must never
+  promise a tool the turn does not have (§9.7's lesson). This measured the
+  converse and it is just as strong: **a tool the block does not name does not
+  get used**, even though its schema is right there in the request. The block is
+  not documentation, it is the model's working inventory.
+- **The fifth is a limit, not a bug.** A keyword grader cannot resolve an
+  open-ended prose answer. Loose markers graded a general-knowledge guess correct
+  on a turn with no tool calls; markers tightened to source-only literals graded
+  "machine-bound encryption … ADR 0008" wrong for missing `dpapi`. Every marker
+  set trades one error class for the other, and the residual error is the size of
+  the effect being chased. Resolving this needs a judge, not a better list.
+- **The sixth was already written down in this repository.** The probe asked
+  open-ended questions at the default `max_tokens` of 2048 with thinking on,
+  while docs/journal/ci.md had measured that exact ceiling on that exact class of
+  prompt (1024: 0/3, 2048: 2/3, 4096: 3/4). Raising it to 4096 moved the per-arm
+  numbers and did **not** reduce the empty turns — half of every arm's turns are
+  unusable either way, which is the real ceiling on what a probe of this shape
+  can resolve.
+- **What the no-go buys.** No `cache.db` schema and migration, no background
+  indexing task with progress reporting, no incremental reindex on every edit, no
+  settings toggle, no `/project reindex`, and no hard dependency on the embedding
+  server for a feature that otherwise does not need one. Permanent cost, for an
+  effect that could not be detected.
+- **What it does not settle.** Not that a semantic code index is a bad idea —
+  that one could not be shown to help *here*: a corpus commented in unusually
+  discursive English prose, which is exactly what makes `code_grep` strong, read
+  by a 31B local model whose turns are unusable about half the time. The one
+  effect that survived every revision is not the one F4 asked about: with a
+  search tool available the model answers **without looking at the project** far
+  less often (8 turns against 15). Shipping on that would be shipping on an
+  unmeasured basis, which is what the fork exists to prevent.
+- **Tests**: none added to the application — nothing shipped. The probe carries
+  four unit tests of its chunker on its own branch.

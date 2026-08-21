@@ -7,7 +7,7 @@
 //! background task. What the model can then *do* with it is the `code_*` tools'
 //! problem, and they run inside a turn.
 //!
-//! See docs/code-workspace.md.
+//! See docs/history/code-workspace.md.
 
 use std::path::PathBuf;
 

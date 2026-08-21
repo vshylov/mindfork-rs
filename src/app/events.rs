@@ -178,7 +178,7 @@ pub enum AppCommand {
     /// Attach a code project to the active chat (the `/project attach <dir>`
     /// command). The directory is checked and canonicalized synchronously — it
     /// is a `stat`, not a read — and the result arrives as a `ProjectProgress`
-    /// event. See docs/code-workspace.md, spec §9.12.
+    /// event. See docs/history/code-workspace.md, spec §9.12.
     ProjectAttach { path: String },
     /// Detach the active chat's code project (the `/project detach` command).
     ProjectDetach,
@@ -553,7 +553,7 @@ pub enum AppEvent {
     /// screen is a pure projection of it.
     WorkspaceChanges(Box<crate::features::workspace_diff::ChangeSet>),
     /// Outcome of a `/project` command (attached/detached/status/error) — a note
-    /// in the feed. See docs/code-workspace.md, spec §9.12.
+    /// in the feed. See docs/history/code-workspace.md, spec §9.12.
     ProjectProgress(crate::features::project_command::ProjectProgress),
     /// The active chat's attachment cards — for the status-bar chip (attachments
     /// cost tokens on every turn, so their presence has to be visible). Sent on

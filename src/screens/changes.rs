@@ -1,6 +1,6 @@
 //! The changes screen (FSD "page", `F4` / `/changes`): what the assistant did
 //! to the attached project, as a unified diff, with per-file revert.
-//! See spec §9.12, [docs/code-workspace.md](../../docs/code-workspace.md) §3.5.
+//! See spec §9.12, [docs/history/code-workspace.md](../../docs/history/code-workspace.md) §3.5.
 //!
 //! It is the other half of the promise the editing tools make. They apply a
 //! change without asking (design fork F1: no per-edit popup), and what makes

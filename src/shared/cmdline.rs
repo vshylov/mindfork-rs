@@ -11,7 +11,7 @@
 //! twice (docs/lessons.md §2).
 //!
 //! **No shell is involved anywhere downstream** (design fork F6,
-//! docs/code-workspace.md §3.3): the line is split here and the program is
+//! docs/history/code-workspace.md §3.3): the line is split here and the program is
 //! spawned directly. That buys predictable quoting on both platforms and takes
 //! `cmd.exe`'s second round of argument parsing out of the picture — but it also
 //! means a pipeline or a redirect is not a command this application can run, and
