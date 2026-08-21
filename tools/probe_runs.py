@@ -86,15 +86,62 @@ def run_once(test_name):
     return passed, skipped, matched_nothing, evidence, time.time() - started
 
 
-def main():
-    # The evidence lines carry tool results verbatim, which are in the
-    # agent-scaffold language - on a Windows console that is cp1252, and the run
-    # would die on a print rather than on anything it measured.
+def _utf8_streams():
+    """Forces UTF-8 on the two output streams.
+
+    The evidence lines carry tool results verbatim, which are in the
+    agent-scaffold language - on a Windows console that is cp1252, and the run
+    would die on a print rather than on anything it measured.
+    """
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except AttributeError:
             pass
+
+
+def _measure(test):
+    """Runs one smoke `RUNS` times and returns how many passed.
+
+    `None` means *stop the whole measurement*: the filter matched no test, so
+    nothing was measured and every later number would be meaningless.
+    """
+    wins = 0
+    for i in range(1, RUNS + 1):
+        passed, skipped, matched_nothing, evidence, secs = run_once(test)
+        if matched_nothing:
+            print("%s: no test matches this name - nothing was measured" % test, flush=True)
+            return None
+        if skipped:
+            print("%s run %d: SKIPPED - no engine" % (test, i), flush=True)
+            continue
+        wins += 1 if passed else 0
+        print(
+            "%s run %d: %s (%.0fs)" % (test, i, "PASS" if passed else "FAIL", secs),
+            flush=True,
+        )
+        for line in evidence:
+            print("    %s" % line[:400], flush=True)
+    return wins
+
+
+def _tally(tests, verdicts):
+    """Prints the per-smoke verdicts and answers whether all of them cleared the bar."""
+    print("\n=== tally ===", flush=True)
+    ok = True
+    for test in tests:
+        wins = verdicts.get(test, 0)
+        good = wins >= THRESHOLD
+        ok = ok and good
+        print(
+            "%s: %d/%d - %s (bar: %d)" % (test, wins, RUNS, "GO" if good else "NO-GO", THRESHOLD),
+            flush=True,
+        )
+    return ok
+
+
+def main():
+    _utf8_streams()
 
     tests = sys.argv[1:] or DEFAULT_TESTS
     # A readable refusal for a typo. The guard that matters is in `run_once`,
@@ -112,36 +159,13 @@ def main():
 
     verdicts = {}
     for test in tests:
-        wins = 0
-        for i in range(1, RUNS + 1):
-            passed, skipped, matched_nothing, evidence, secs = run_once(test)
-            if matched_nothing:
-                print("%s: no test matches this name - nothing was measured" % test, flush=True)
-                return 2
-            if skipped:
-                print("%s run %d: SKIPPED - no engine" % (test, i), flush=True)
-                continue
-            wins += 1 if passed else 0
-            print(
-                "%s run %d: %s (%.0fs)" % (test, i, "PASS" if passed else "FAIL", secs),
-                flush=True,
-            )
-            for line in evidence:
-                print("    %s" % line[:400], flush=True)
+        wins = _measure(test)
+        if wins is None:
+            return 2
         verdicts[test] = wins
         print("%s: %d/%d" % (test, wins, RUNS), flush=True)
 
-    print("\n=== tally ===", flush=True)
-    ok = True
-    for test in tests:
-        wins = verdicts.get(test, 0)
-        good = wins >= THRESHOLD
-        ok = ok and good
-        print(
-            "%s: %d/%d - %s (bar: %d)" % (test, wins, RUNS, "GO" if good else "NO-GO", THRESHOLD),
-            flush=True,
-        )
-    return 0 if ok else 1
+    return 0 if _tally(tests, verdicts) else 1
 
 
 if __name__ == "__main__":

@@ -261,7 +261,7 @@ impl Tag {
         let name: String = trimmed
             .trim_start_matches('/')
             .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
+            .take_while(char::is_ascii_alphanumeric)
             .collect();
         Self {
             name: name.to_ascii_lowercase(),

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (12)
+## Entries (13)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -24,6 +24,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the doc gate's regexes and one test's complexity (done)
 - Post-M9: SonarQube follow-up — the screenshots SVG writer (done)
 - Post-M9: SonarQube follow-up — `chat_search`'s renderer (done)
+- Post-M9: SonarQube follow-up — two new lint families, and eight complexity findings (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -768,3 +769,84 @@ three findings are invisible from the workflow's own status):
   change moves rendering code inside one tool module and touches no engine,
   memory, storage or provider path; the tool's own behaviour is unchanged. No
   CHANGELOG entry — internal refactor with no user-visible effect (§4).
+
+### Post-M9: SonarQube follow-up — two new lint families, and eight complexity findings (done)
+
+- **The backlog was back at 30 open issues** on `main` (read through the Sonar
+  MCP server, 2026-08-21) — and two thirds of it is not a regression at all.
+  Branch `fix/sonar-backlog-followup`. The split: **14 × `rust:S1612`**
+  ("replace this closure with a reference to the method"), **8 × `rust:S8863`**
+  ("remove this redundant `'static`"), **7 Rust + 1 Python `S3776`**
+  (cognitive complexity). The two lint families had never raised anything here
+  before and their sites date back to 2026-06-17 — code that had passed every
+  analysis since the four-stage burn-down closed the backlog at zero. An
+  analyzer that gained rules, not a codebase that slipped.
+- **`cargo clippy --all-targets -- -D warnings` is green on all twenty of
+  them**, before and after — measured, not assumed, on a scratch crate
+  reproducing the four shapes:
+  - `S1612` maps to clippy's `redundant_closure_for_method_calls`, which is
+    **pedantic**, so the project's default warn set never sees it;
+  - `S8863` maps to `redundant_static_lifetimes`, which *is* on by default —
+    but it fires only on a free `const`/`static`. It does not reach an
+    **associated** const (`impl Lang { const ALL: &'static [Lang] }`,
+    `SelfModelScreen::HOTKEYS`) nor a `'static` nested inside a generic
+    argument (`static POOL: OnceLock<Mutex<HashSet<&'static str>>>`) — which
+    is every one of the eight sites. Enabling the lint explicitly changes
+    nothing; Sonar's implementation is simply broader.
+- **The twenty lint fixes are mechanical and behaviour-free**: nine
+  `.and_then(|e| e.to_str())` → `.and_then(OsStr::to_str)` (one
+  `use std::ffi::OsStr;` per file), three `.map(|id| id.to_string())` →
+  `.map(ToString::to_string)`, one `take_while(char::is_ascii_alphanumeric)`,
+  one `existing.map(<[u8]>::to_vec)`, and the eight `'static` deletions — in
+  a `const`/`static` item type an elided reference lifetime already *is*
+  `'static`, so nothing changes but the character count. Only the item types
+  were touched; `&'static` in a signature, a field or a `Box::leak` return is
+  not redundant and was left alone, as was the surrounding prose that
+  correctly still talks about `'static`.
+- **All eight complexity findings closed by extraction, none by Accept** —
+  the same verdict the four burn-down stages reached, and for the same reason:
+  each had a natural seam.
+  - `tools/code.rs::grep` (**37**) → `searchable` / `clip_hit` / `scan_text` /
+    `search_files`. Most of the 37 was the `spawn_blocking` closure, which is
+    a *sync* function that had been written inline; naming it also let the
+    nested `match` over the glob collapse into one `.transpose()`.
+  - `tools/code.rs::strip_ansi` (24) → `skip_csi` / `skip_osc`, one function
+    per escape family. `tools/code.rs::list` (17) → `collect_entries`, the
+    same "the blocking half has a name" move as `grep`.
+  - `orchestrator/generation.rs::handle_done` (19) → `is_first_reply` +
+    a free `apply_effects` (the effect `match` cannot be a method: it runs
+    inside the `chat` borrow, which is the whole reason attachments are
+    collected rather than applied). `::tool_round` (16) → `final_round`
+    (the round-limit final round, comments and all) + `file_round` (the
+    rewrite/followup dispatch).
+  - `tools/present.rs::compact_args` (17) → `code_block` / `big_string_block`
+    / `scalar_pairs`; the "tool's own code field outranks the large-string
+    fallback" precedence, previously an `if blocks.is_empty()` after the
+    fact, is now literally `code_block(..).or_else(|| big_string_block(..))`.
+  - `chat_export.rs::format_assistant` (16) → `thoughts_part` / `tool_parts`.
+  - `tools/probe_runs.py::main` (29) → `_utf8_streams` / `_measure` / `_tally`.
+    `_measure` returning `None` is the "the filter matched nothing, stop
+    everything" case, which is the one branch in that script that must not be
+    mistaken for a zero (docs/lessons.md §9); its docstring says so now.
+- **Two tests added, and only two** — a pure extraction does not need them,
+  but two of the moved branches had never been covered and were about to
+  become their own functions: `strip_ansi`'s OSC-closed-by-ST path (`ESC \`
+  rather than BEL), its two-character escapes, and three unterminated
+  sequences; plus `clip_hit`'s character-counted cap. Everything else is
+  pinned by the tests that already existed — the `code_grep` set, the 24
+  `present.rs` cases, the `chat_export` formatting set — none of which was
+  edited. `_tally` has no such suite, so it was exercised directly (GO,
+  NO-GO and a missing verdict) rather than only read; its format strings
+  moved verbatim.
+- **Verification**: **2418 unit tests green** (0 failed, 106 `#[ignore]` —
+  the 2416 baseline plus the two above), clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check`/`doc_index_check`/`wizard_rtf --check` clean.
+  **Live run — GO** (AGENTS.md §3): the change touches the agentic loop and
+  the code-workspace tool paths, so the whole orchestrator e2e set ran
+  against the LAN stack (Gemma 4 31B q4_0 on `192.168.1.20:8000`, bge-m3 on
+  `:8001`) — **42 passed / 0 failed** in 815 s, the code-workspace smokes
+  (`code_workspace_navigate`/`_gate`, `code_edit`/`_ambiguity`/`_recovers`,
+  `code_build`, `code_command_gate`) among them, plus the round-limit,
+  rewrite/followup and auto-title paths that `tool_round` and `handle_done`
+  carry. No CHANGELOG entry — internal refactor with no user-visible effect
+  (§4).

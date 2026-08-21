@@ -82,6 +82,40 @@ fn role_label(custom: Option<&str>, key: &str, loc: &'static Locale) -> String {
     }
 }
 
+/// The message's "thoughts" block, when they are wanted and there are any.
+fn thoughts_part(m: &Message, opts: &CopySettings, loc: &'static Locale) -> Option<String> {
+    if !opts.copy_thoughts {
+        return None;
+    }
+    let thoughts = m.thoughts.as_deref()?.trim();
+    if thoughts.is_empty() {
+        return None;
+    }
+    Some(format!("{}\n{thoughts}", loc.t("ui.export.thoughts")))
+}
+
+/// One block per tool call: its name, and whichever of the call's arguments and
+/// its result the settings ask for. Empty when neither is wanted.
+fn tool_parts(m: &Message, opts: &CopySettings, loc: &'static Locale) -> Vec<String> {
+    if !opts.copy_tool_calls && !opts.copy_tool_results {
+        return Vec::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for tc in &m.tool_calls {
+        let mut lines = vec![loc.tf("ui.export.tool", &[("name", &tc.name)])];
+        if opts.copy_tool_calls {
+            let args = serde_json::to_string(&tc.arguments).unwrap_or_default();
+            lines.push(loc.tf("ui.export.args", &[("args", &args)]));
+        }
+        if opts.copy_tool_results {
+            let result = tc.result.as_deref().unwrap_or("").trim();
+            lines.push(loc.tf("ui.export.result", &[("result", result)]));
+        }
+        parts.push(lines.join("\n"));
+    }
+    parts
+}
+
 /// Builds the block for a single assistant message: optional "thoughts", text, and
 /// optional tool blocks. `None` if the block is empty after filtering.
 fn format_assistant(
@@ -91,35 +125,14 @@ fn format_assistant(
     loc: &'static Locale,
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-
-    if opts.copy_thoughts
-        && let Some(thoughts) = &m.thoughts
-    {
-        let thoughts = thoughts.trim();
-        if !thoughts.is_empty() {
-            parts.push(format!("{}\n{thoughts}", loc.t("ui.export.thoughts")));
-        }
-    }
+    parts.extend(thoughts_part(m, opts, loc));
 
     let text = m.text.trim();
     if !text.is_empty() {
         parts.push(text.to_string());
     }
 
-    if opts.copy_tool_calls || opts.copy_tool_results {
-        for tc in &m.tool_calls {
-            let mut lines = vec![loc.tf("ui.export.tool", &[("name", &tc.name)])];
-            if opts.copy_tool_calls {
-                let args = serde_json::to_string(&tc.arguments).unwrap_or_default();
-                lines.push(loc.tf("ui.export.args", &[("args", &args)]));
-            }
-            if opts.copy_tool_results {
-                let result = tc.result.as_deref().unwrap_or("").trim();
-                lines.push(loc.tf("ui.export.result", &[("result", result)]));
-            }
-            parts.push(lines.join("\n"));
-        }
-    }
+    parts.extend(tool_parts(m, opts, loc));
 
     if parts.is_empty() {
         return None;

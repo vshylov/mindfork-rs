@@ -544,6 +544,27 @@ impl Tool for CodeTool {
     }
 }
 
+/// The blocking half of [`list`]: the project-relative names under `base`,
+/// sorted, and whether [`MAX_LIST_ENTRIES`] cut them short.
+fn collect_entries(base: &Path, depth: usize) -> (Vec<String>, bool) {
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    for entry in walker(base, Some(depth), None).flatten() {
+        if entry.depth() == 0 {
+            continue; // the directory itself
+        }
+        if entries.len() >= MAX_LIST_ENTRIES {
+            truncated = true;
+            break;
+        }
+        let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
+        let rel = display_rel(entry.path(), base);
+        entries.push(if is_dir { format!("{rel}/") } else { rel });
+    }
+    entries.sort();
+    (entries, truncated)
+}
+
 /// `code_list` — the shape of the project, or of one directory in it.
 async fn list(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
     let root = workspace_root(ctx)?;
@@ -555,25 +576,8 @@ async fn list(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
         .unwrap_or(DEFAULT_LIST_DEPTH)
         .clamp(1, 16);
     let base = dir.clone();
-    let (entries, truncated) = tokio::task::spawn_blocking(move || {
-        let mut entries = Vec::new();
-        let mut truncated = false;
-        for entry in walker(&base, Some(depth), None).flatten() {
-            if entry.depth() == 0 {
-                continue; // the directory itself
-            }
-            if entries.len() >= MAX_LIST_ENTRIES {
-                truncated = true;
-                break;
-            }
-            let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
-            let rel = display_rel(entry.path(), &base);
-            entries.push(if is_dir { format!("{rel}/") } else { rel });
-        }
-        entries.sort();
-        (entries, truncated)
-    })
-    .await?;
+    let (entries, truncated) =
+        tokio::task::spawn_blocking(move || collect_entries(&base, depth)).await?;
 
     let shown = display_rel(&dir, &root);
     let shown = if shown.is_empty() {
@@ -660,6 +664,73 @@ fn glob_override(root: &Path, glob: &str) -> Result<ignore::overrides::Override,
     builder.build()
 }
 
+/// One walker entry as searchable text, or `None` when it is not something
+/// `code_grep` reads: not a regular file, too large, unreadable, or binary.
+fn searchable(entry: &ignore::DirEntry) -> Option<TextFile> {
+    if !entry.file_type().is_some_and(|t| t.is_file()) {
+        return None;
+    }
+    let path = entry.path();
+    if path.metadata().ok()?.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    TextFile::load(&bytes)
+}
+
+/// One hit's text, capped at [`MAX_GREP_LINE`] **characters** — a minified file
+/// has lines that would otherwise fill the whole answer with one of them.
+fn clip_hit(text: &str) -> String {
+    if text.chars().count() > MAX_GREP_LINE {
+        text.chars().take(MAX_GREP_LINE).collect::<String>() + "…"
+    } else {
+        text.to_string()
+    }
+}
+
+/// Appends one file's matching lines to `hits`, prefixed `<path>:<line>: `.
+/// `true` when [`MAX_GREP_HITS`] was reached and the walk must stop.
+fn scan_text(text: &str, re: &regex::Regex, prefix: &str, hits: &mut Vec<String>) -> bool {
+    for (i, line) in text.lines().enumerate() {
+        if !re.is_match(line) {
+            continue;
+        }
+        if hits.len() >= MAX_GREP_HITS {
+            return true;
+        }
+        let text = clip_hit(line.trim_end());
+        hits.push(format!("{prefix}:{}: {text}", i + 1));
+    }
+    false
+}
+
+/// The blocking half of [`grep`]: walks `dir` and collects the hits.
+/// Returns them with the truncation flag and the number of files actually read
+/// — the last of which is what separates "nothing matched" from "there was
+/// nothing to match against".
+fn search_files(
+    dir: &Path,
+    overrides: Option<ignore::overrides::Override>,
+    re: &regex::Regex,
+    root: &Path,
+) -> (Vec<String>, bool, usize) {
+    let mut hits: Vec<String> = Vec::new();
+    let mut truncated = false;
+    let mut files = 0usize;
+    for entry in walker(dir, None, overrides).flatten() {
+        let Some(file) = searchable(&entry) else {
+            continue;
+        };
+        files += 1;
+        let prefix = display_rel(entry.path(), root);
+        if scan_text(&file.text, re, &prefix, &mut hits) {
+            truncated = true;
+            break;
+        }
+    }
+    (hits, truncated, files)
+}
+
 /// `code_grep` — regular-expression search over the project's text files.
 async fn grep(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
     let root = workspace_root(ctx)?;
@@ -689,67 +760,25 @@ async fn grep(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
         }
     };
     let glob = arg_str(&args, "glob").filter(|s| !s.trim().is_empty());
-    let overrides = match &glob {
-        Some(g) => match glob_override(&root, g) {
-            Ok(ov) => Some(ov),
-            Err(err) => {
-                return Ok(ToolOutcome::text(ctx.loc.tf(
-                    "tool.code.grep.bad_glob",
-                    &[("glob", g), ("err", &err.to_string())],
-                )));
-            }
-        },
-        None => None,
+    let overrides = match glob.as_deref().map(|g| glob_override(&root, g)).transpose() {
+        Ok(ov) => ov,
+        Err(err) => {
+            // Only reachable with a glob given, so the `unwrap_or_default` never
+            // fires — it is there because the compiler cannot see that from here.
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.code.grep.bad_glob",
+                &[
+                    ("glob", glob.as_deref().unwrap_or_default()),
+                    ("err", &err.to_string()),
+                ],
+            )));
+        }
     };
 
     let root_for_walk = root.clone();
-    let (hits, truncated, files) = tokio::task::spawn_blocking(move || {
-        let mut hits: Vec<String> = Vec::new();
-        let mut truncated = false;
-        let mut files = 0usize;
-        for entry in walker(&dir, None, overrides).flatten() {
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
-                continue;
-            }
-            let path = entry.path();
-            let Ok(meta) = path.metadata() else { continue };
-            if meta.len() > MAX_FILE_BYTES {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(path) else {
-                continue;
-            };
-            let Some(file) = TextFile::load(&bytes) else {
-                continue; // binary
-            };
-            files += 1;
-            for (i, line) in file.text.lines().enumerate() {
-                if !re.is_match(line) {
-                    continue;
-                }
-                if hits.len() >= MAX_GREP_HITS {
-                    truncated = true;
-                    break;
-                }
-                let text = line.trim_end();
-                let text: String = if text.chars().count() > MAX_GREP_LINE {
-                    text.chars().take(MAX_GREP_LINE).collect::<String>() + "…"
-                } else {
-                    text.to_string()
-                };
-                hits.push(format!(
-                    "{}:{}: {text}",
-                    display_rel(path, &root_for_walk),
-                    i + 1
-                ));
-            }
-            if truncated {
-                break;
-            }
-        }
-        (hits, truncated, files)
-    })
-    .await?;
+    let (hits, truncated, files) =
+        tokio::task::spawn_blocking(move || search_files(&dir, overrides, &re, &root_for_walk))
+            .await?;
 
     if hits.is_empty() {
         // "Nothing matched" and "there was nothing to match against" call for
@@ -806,7 +835,7 @@ async fn journal_before_write(
     let journal = crate::features::workspace_journal::Journal::new(dir.clone());
     let rel = display_rel(path, root);
     let root = root.display().to_string();
-    let bytes = existing.map(|b| b.to_vec());
+    let bytes = existing.map(<[u8]>::to_vec);
     // Off the async runtime: this is a handful of small synchronous file
     // operations, and a blocking write inside the turn's task would stall it.
     let dir = dir.clone();
@@ -1136,34 +1165,45 @@ fn strip_ansi(s: &str) -> String {
             continue;
         }
         match chars.peek() {
-            // CSI — parameters and intermediates, then one final byte.
             Some('[') => {
                 chars.next();
-                for c in chars.by_ref() {
-                    if ('@'..='~').contains(&c) {
-                        break;
-                    }
-                }
+                skip_csi(&mut chars);
             }
-            // OSC — runs to BEL or ST; a terminal title is the common case.
             Some(']') => {
                 chars.next();
-                while let Some(c) = chars.next() {
-                    if c == '\u{7}' {
-                        break;
-                    }
-                    if c == '\u{1b}' && chars.peek() == Some(&'\\') {
-                        chars.next();
-                        break;
-                    }
-                }
+                skip_osc(&mut chars);
             }
+            // A two-character escape (or a trailing ESC): drop what follows it.
             _ => {
                 chars.next();
             }
         }
     }
     out
+}
+
+/// Consumes a CSI sequence's body: parameters and intermediates, then the one
+/// final byte in `@`..=`~` that ends it.
+fn skip_csi(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    for c in chars.by_ref() {
+        if ('@'..='~').contains(&c) {
+            break;
+        }
+    }
+}
+
+/// Consumes an OSC string's body: it runs to BEL or to ST (`ESC \`). A terminal
+/// title is the common case.
+fn skip_osc(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while let Some(c) = chars.next() {
+        if c == '\u{7}' {
+            break;
+        }
+        if c == '\u{1b}' && chars.peek() == Some(&'\\') {
+            chars.next();
+            break;
+        }
+    }
 }
 
 /// Caps one stream, keeping the **head and the tail** (design fork F12).
@@ -2017,5 +2057,34 @@ mod tests {
         assert_eq!(strip_ansi("\u{1b}[31merror\u{1b}[0m: x"), "error: x");
         assert_eq!(strip_ansi("\u{1b}]0;title\u{7}ok"), "ok");
         assert_eq!(strip_ansi("plain"), "plain");
+    }
+
+    /// The escape shapes the common case does not reach: an OSC string closed by
+    /// ST (`ESC \`) rather than BEL, a two-character escape, and a sequence cut
+    /// off by the output cap — each of which used to be an inline branch of
+    /// [`strip_ansi`] and is now its own function.
+    #[test]
+    fn ansi_stripping_covers_the_less_common_terminators() {
+        // OSC closed by ST — what a terminal that follows ECMA-48 emits.
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{1b}\\ok"), "ok");
+        // A two-character escape (here RIS) takes its second character with it.
+        assert_eq!(strip_ansi("a\u{1b}cb"), "ab");
+        // Unterminated: a stream clipped mid-sequence must not put the tail back
+        // into the model's context.
+        assert_eq!(strip_ansi("a\u{1b}[31"), "a");
+        assert_eq!(strip_ansi("a\u{1b}]0;title"), "a");
+        assert_eq!(strip_ansi("a\u{1b}"), "a");
+    }
+
+    /// One matching line is capped by **characters**, so a minified file cannot
+    /// spend the whole answer on one of them — and a line under the cap is
+    /// returned untouched, note included.
+    #[test]
+    fn a_grep_hit_is_clipped_by_characters() {
+        assert_eq!(clip_hit("short"), "short");
+        let long = "п".repeat(MAX_GREP_LINE + 50);
+        let clipped = clip_hit(&long);
+        assert_eq!(clipped.chars().count(), MAX_GREP_LINE + 1, "the … is extra");
+        assert!(clipped.ends_with('…'));
     }
 }

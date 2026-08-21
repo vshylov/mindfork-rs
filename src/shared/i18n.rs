@@ -34,6 +34,7 @@
 //! explicit `\n` inside a fragment.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex, OnceLock};
 
@@ -64,8 +65,7 @@ const REFERENCE: Lang = Lang::Ru;
 /// Interner for external-language codes: a runtime `String` → `&'static str` (`Box::leak`).
 /// There are finitely many languages — a bounded one-time leak (a precedent — the
 /// syntect-theme cache in `markdown/code.rs`). The built-in `ru`/`en` are literals, the interner doesn't touch them.
-static INTERN: LazyLock<Mutex<HashSet<&'static str>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static INTERN: LazyLock<Mutex<HashSet<&str>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn intern(code: &str) -> &'static str {
     let mut set = INTERN.lock().expect("language-code interner poisoned");
@@ -100,7 +100,7 @@ impl Lang {
     /// Built-in languages — for completeness gate tests and per-locale structural
     /// tests (they check the **built-in** bundles; external ones are user content, not gated).
     /// UI selectors and functional consumers use [`Lang::all`] (the registry).
-    pub const ALL: &'static [Lang] = &[Lang::Ru, Lang::En];
+    pub const ALL: &[Lang] = &[Lang::Ru, Lang::En];
 
     /// Stable language code (for serde and the locale file name).
     pub fn code(self) -> &'static str {
@@ -431,9 +431,9 @@ fn build_builtin_registry() -> HashMap<Lang, &'static Locale> {
         .collect()
 }
 
-static BUILTIN: LazyLock<HashMap<Lang, &'static Locale>> = LazyLock::new(build_builtin_registry);
+static BUILTIN: LazyLock<HashMap<Lang, &Locale>> = LazyLock::new(build_builtin_registry);
 /// The full registry (built-in + external), filled by [`init`] once at startup.
-static REGISTRY: OnceLock<HashMap<Lang, &'static Locale>> = OnceLock::new();
+static REGISTRY: OnceLock<HashMap<Lang, &Locale>> = OnceLock::new();
 
 /// Merges external `data/locales/*.json` files into owned bundle maps: `<code>.json`
 /// on top of the built-in bundle of the same code (a key-level override) or as a
@@ -462,10 +462,10 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         .unwrap_or_default();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if path.extension().and_then(OsStr::to_str) != Some("json") {
             continue;
         }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
             continue;
         };
         // The language code is BCP-47-like (lowercase letters/digits/hyphen, starts
