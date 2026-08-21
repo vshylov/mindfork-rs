@@ -79,6 +79,84 @@ pub fn display_width(chars: &[char]) -> usize {
     (0..chars.len()).map(|i| width_at(chars, i)).sum()
 }
 
+/// Width of a string in columns — [`display_width`] over its characters.
+pub fn str_width(s: &str) -> usize {
+    display_width(&s.chars().collect::<Vec<_>>())
+}
+
+/// Truncates a string to width `max` columns, adding "…" on truncation. Returns
+/// the truncated string and its actual width. At `max == 0` — an empty string.
+/// Cuts the **tail**: for a title or a label the start is what identifies it
+/// (the chat list's rows). For a name whose end matters too, see
+/// [`elide_middle`].
+pub fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let full = display_width(&chars);
+    if full <= max {
+        return (s.to_string(), full);
+    }
+    if max == 0 {
+        return (String::new(), 0);
+    }
+    // Leave room for "…" (1 column).
+    let budget = max.saturating_sub(1);
+    let mut out = String::new();
+    let mut w = 0;
+    for i in 0..chars.len() {
+        let cw = width_at(&chars, i);
+        if w + cw > budget {
+            break;
+        }
+        w += cw;
+        out.push(chars[i]);
+    }
+    out.push('…');
+    (out, w + 1)
+}
+
+/// Shortens a string to at most `max` columns by replacing its **middle** with
+/// "…", keeping the head and the tail: a file name's start says what it is and
+/// its end carries the extension, and a page title's start is what identifies
+/// it — so neither end is the one to lose. The tail gets half of the columns
+/// left after the marker, the head the rest (one more when odd). Both ends are
+/// cut on grapheme-cluster boundaries, so an emoji is never split around the
+/// marker. Returns the string unchanged when it fits; at `max == 0` — an empty
+/// string; at `max == 1` — the marker alone.
+pub fn elide_middle(s: &str, max: usize) -> String {
+    if str_width(s) <= max {
+        return s.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let body = max - 1;
+    let tail_budget = body / 2;
+    let head_budget = body - tail_budget;
+    let clusters: Vec<&str> = s.graphemes(true).collect();
+    let mut head = String::new();
+    let mut w = 0;
+    for g in &clusters {
+        let gw = str_width(g);
+        if w + gw > head_budget {
+            break;
+        }
+        head.push_str(g);
+        w += gw;
+    }
+    let mut tail_parts: Vec<&str> = Vec::new();
+    let mut w = 0;
+    for g in clusters.iter().rev() {
+        let gw = str_width(g);
+        if w + gw > tail_budget {
+            break;
+        }
+        tail_parts.push(g);
+        w += gw;
+    }
+    let tail: String = tail_parts.iter().rev().copied().collect();
+    format!("{head}…{tail}")
+}
+
 /// Grapheme-cluster boundary **to the left** of position `col` (character
 /// index): the start of the cluster the cursor is in/before. The cursor and
 /// deletion must move by clusters, not by Unicode scalars — otherwise `❤️`
@@ -434,5 +512,47 @@ mod tests {
         let line = Line::from("");
         let rows = wrap_line(&line, 10);
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn truncate_to_width_cuts_the_tail_with_a_marker() {
+        // Fits — returned as is, with its width.
+        assert_eq!(truncate_to_width("abc", 3), ("abc".to_string(), 3));
+        // Too long — the head plus "…", exactly `max` columns wide.
+        assert_eq!(truncate_to_width("abcdef", 4), ("abc…".to_string(), 4));
+        // A wide glyph that would straddle the cut is dropped, not split.
+        assert_eq!(truncate_to_width("a🔧b", 3), ("a…".to_string(), 2));
+        assert_eq!(truncate_to_width("abc", 0), (String::new(), 0));
+    }
+
+    #[test]
+    fn elide_middle_keeps_both_ends() {
+        // Fits — untouched.
+        assert_eq!(elide_middle("report.pdf", 10), "report.pdf");
+        // The head keeps the name, the tail keeps the extension; the result is
+        // exactly `max` columns wide.
+        let out = elide_middle("quarterly-report-2026-final.pdf", 16);
+        assert_eq!(out, "quarterl…nal.pdf");
+        assert_eq!(str_width(&out), 16);
+        // An odd budget: the head gets the extra column.
+        assert_eq!(elide_middle("abcdefghij", 4), "ab…j");
+        assert_eq!(elide_middle("abcdefghij", 5), "ab…ij");
+        // The degenerate budgets.
+        assert_eq!(elide_middle("abcdef", 1), "…");
+        assert_eq!(elide_middle("abcdef", 0), "");
+    }
+
+    #[test]
+    fn elide_middle_does_not_split_emoji_clusters() {
+        // `❤️` is a base plus U+FE0F: a cut between them would leave an orphaned
+        // selector at the start of the tail (drawn as a phantom glyph).
+        let out = elide_middle("aaaa❤\u{FE0F}bbbb", 6);
+        assert!(
+            !out.contains('\u{FE0F}') || out.contains("❤\u{FE0F}"),
+            "the cluster survives whole or not at all: {out:?}"
+        );
+        assert!(str_width(&out) <= 6, "{out:?}");
+        // Wide glyphs count two columns on either side of the marker.
+        assert_eq!(elide_middle("🔧🔧🔧🔧", 5), "🔧…🔧");
     }
 }

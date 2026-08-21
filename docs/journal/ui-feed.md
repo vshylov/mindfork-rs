@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: navigable `chat://` references in the feed (done)
 - Post-M9: `Esc` retraces a followed `chat://` reference (done)
 - Post-M9: the model's name on the assistant's header (done)
+- Post-M9: the indexing banner fits its row, the collapsed pill wraps whole (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1838,3 +1839,67 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   (AGENTS.md §3): pure UI, no engine, memory or tool path touched — the one
   non-UI edit adds a field to an event the orchestrator already had the value
   for.
+
+### Post-M9: the indexing banner fits its row, the collapsed pill wraps whole (done)
+- **What and why.** Two rendering defects, both from the same attachment-heavy
+  conversation. The `RAG:` banner (one row above the input box, shared by
+  `/rag add` and the `/file attach` index) was a bare `Line` in a one-row area,
+  so ratatui **clipped** it at the right edge — and a web page's title as the
+  attachment name pushed the `fragments 64/128` counter, the only part of the
+  banner that moves, off the screen. And the collapsed tool card's pill
+  (`▸ details · Ctrl+O`) was appended to the header's last row whatever room
+  was left, then re-wrapped with everything else by `build_message_block` —
+  whose wrap breaks at spaces, so a long `web_search` header ended its row with
+  `▸ details ·` and the keycap alone opened the next, under the `⚒` icon, where
+  it read as a stray label.
+- **The banner keeps its parts apart.** The fix is not a tail truncation — that
+  would cut exactly the counter the banner exists to show. `RagBanner` now
+  stores `before / name / location / after` instead of one string, and the
+  renderer fits them into the columns left after the spinner prefix
+  (`RagBanner::fit`): the **location** (`from <dir>`, `/rag add` only — a
+  detail; the event carries the file's full parent path, which is as long as
+  any name) goes first and whole; then the **name** is shortened in the
+  *middle*, because both ends of a name carry meaning (`report.pdf`'s head
+  says what it is, its tail the extension; a page title's head identifies it);
+  and only when the fixed text alone overflows is the tail cut with a marker —
+  the one case in which the counter can be lost, and still better than the
+  widget's silent clip. With room to spare the parts joined are byte-for-byte
+  what `tf` produced before, which a test pins.
+- **How the name is kept apart from a localized template.** The template
+  (`ui.file.indexing`: `… for {name} — fragments {done}/{total}`) is
+  interpolated with U+FFFC — the OBJECT REPLACEMENT CHARACTER, a stand-in for
+  an object in text — in the name's slot and split on it afterwards. The name
+  itself is never in the string being split, so a name containing the marker
+  cannot confuse it, and a template without the slot (a broken external
+  locale) yields exactly what `tf` would have: the text with no name. No new
+  i18n API for one consumer. The `{location}` slot of `ui.rag.indexing` is
+  filled with nothing and the location carried as its own part; the chunk
+  suffix is appended to `after`.
+- **The pill is measured before it is appended.** `push_trailing` measures
+  the header's last row against the wrap width `push_tool` already has — the
+  same width `build_message_block` wraps at, so a fit measured there is a fit
+  here — and either appends the group or pushes it **whole** on a continuation
+  row under `tool_cont`, aligned with a wrapped header row rather than with the
+  icon. The images chip (`# N image(s) returned`) was appended the same way and
+  now goes through the same seam, so the pill then measures against the chip's
+  row and joins it when it fits. Rejected: gluing the pill with no-break
+  spaces so the wrapper would treat it as one word — `char::is_whitespace`
+  is true for U+00A0, so the wrapper would need a special case, and the pill
+  would land at column 0 of the next row, under the icon, instead of under the
+  name.
+- **A small promotion.** `truncate_to_width` moved from a private helper of
+  `chat_list` to `shared::wrap`, where it sits beside the new `elide_middle`
+  and `str_width`; the chat list calls the shared one, unchanged.
+- **Tests**: 12 new — `wrap` (tail truncation, middle elision with an odd
+  budget, emoji clusters kept whole around the marker), the feed (the pill
+  moving whole at 60 columns and staying on the header row at 80; the chip
+  following the same rule), the banner (parts reassembling to the interpolated
+  text, the name shortened with the counters intact across widths, the
+  location dropped before the name is touched, the tail cut when even the
+  fixed text overflows, the spinner phase surviving an update) and one
+  screen-level render that reads the banner's buffer row and asserts it ends
+  with `64/128`. Both load-bearing lines were mutation-tested: "always fits"
+  in `push_trailing` fails two of the three feed tests, and "always the full
+  text" in `fit` fails all four banner tests. Suite **2425 → 2437**. **No
+  live run** (AGENTS.md §3): pure UI, no engine, memory or tool path touched;
+  the real render was checked by eye at 60/80/100 columns.

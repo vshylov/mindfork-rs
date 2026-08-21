@@ -1707,16 +1707,13 @@ fn push_tool(
     // the feed renders text, so without this chip the only visible trace would be
     // whatever the tool happened to say. Shown in both modes — it is not a detail that
     // `Ctrl+O` reveals, it is part of what the call did.
-    if tool.images > 0
-        && let Some(line) = lines.last_mut()
-    {
-        line.spans.push(Span::styled(
-            format!(
-                "  {}",
-                loc.tf("ui.feed.tool_images", &[("n", &tool.images.to_string())])
-            ),
-            palette.muted_style(),
-        ));
+    let muted = palette.muted_style();
+    if tool.images > 0 {
+        let chip = Span::styled(
+            loc.tf("ui.feed.tool_images", &[("n", &tool.images.to_string())]),
+            muted,
+        );
+        push_trailing(lines, vec![chip], glyphs.tool_cont, width);
     }
     if !expanded {
         // Nothing to reveal — no pill (an argument-less call whose result hasn't
@@ -1725,22 +1722,22 @@ fn push_tool(
             return;
         }
         // Appended to the header's **last** row rather than pushed as a line of
-        // its own: one line per call collapsed, same as expanded. Overflowing the
-        // width is safe — `build_message_block` wraps every body line afterwards.
-        let muted = palette.muted_style();
-        if let Some(line) = lines.last_mut() {
-            line.spans
-                .push(Span::styled(format!("  {} ", glyphs.collapsed), muted));
-            line.spans.push(Span::styled(
+        // its own: one line per call collapsed, same as expanded — unless it
+        // would not fit there, in which case the whole pill takes the next row
+        // (`push_trailing`).
+        let pill = vec![
+            Span::styled(format!("{} ", glyphs.collapsed), muted),
+            Span::styled(
                 loc.t("ui.feed.tool_details").to_string(),
                 muted.add_modifier(Modifier::ITALIC),
-            ));
+            ),
             // The same ` · ` the thoughts pill puts before its keycap (there it
             // arrives inside `ui.feed.thoughts_lines`, which this pill has no
             // counterpart for — there is no count to show).
-            line.spans.push(Span::styled(" · ", muted));
-            line.spans.push(palette.keycap("Ctrl+O"));
-        }
+            Span::styled(" · ", muted),
+            palette.keycap("Ctrl+O"),
+        ];
+        push_trailing(lines, pill, glyphs.tool_cont, width);
         return;
     }
     for block in &p.args {
@@ -1898,6 +1895,42 @@ fn push_wrapped(
     }
 }
 
+/// The gap between a row's text and a trailing group appended to it.
+const TRAILING_GAP: &str = "  ";
+
+/// Appends a trailing group of spans — the collapsed pill, the images chip — to
+/// the last line: on the same row when it fits beside what is already there,
+/// and otherwise **whole on a row of its own** under `cont` (the card's name
+/// indent). The wrap that follows (`build_message_block`) breaks at spaces, so
+/// a group appended regardless of room came apart — `▸ details ·` at the end of
+/// one row and the keycap alone at the start of the next, under the icon —
+/// which reads as a stray label rather than a pill. `width` is the wrap width,
+/// so a fit measured here is a fit there.
+fn push_trailing(
+    lines: &mut Vec<Line<'static>>,
+    group: Vec<Span<'static>>,
+    cont: &str,
+    width: usize,
+) {
+    let span_width =
+        |spans: &[Span<'_>]| -> usize { spans.iter().map(|s| wrap::str_width(&s.content)).sum() };
+    let group_w = span_width(&group);
+    if let Some(last) = lines.last_mut()
+        && span_width(&last.spans) + TRAILING_GAP.len() + group_w <= width
+    {
+        // The gap takes the group's own style — the head span's, so the
+        // whole group reads as one decoration.
+        let style = group.first().map(|s| s.style).unwrap_or_default();
+        last.spans.push(Span::styled(TRAILING_GAP, style));
+        last.spans.extend(group);
+        return;
+    }
+    let mut spans = Vec::with_capacity(group.len() + 1);
+    spans.push(Span::raw(cont.to_string()));
+    spans.extend(group);
+    lines.push(Line::from(spans));
+}
+
 /// The nearest (rounding down) valid char boundary for a byte offset.
 fn clamp_boundary(text: &str, mut off: usize) -> usize {
     while off < text.len() && !text.is_char_boundary(off) {
@@ -2035,6 +2068,112 @@ mod tests {
             .filter(|l| joined(std::slice::from_ref(l)).contains("python_exec"))
             .count();
         assert_eq!(card_rows, 1, "one row per collapsed call");
+    }
+
+    /// A collapsed `web_search` with a long query — the header wraps, and how
+    /// much of its last row is left decides where the pill goes.
+    fn long_search_call() -> FeedMessage {
+        let mut m = msg(FeedRole::Assistant, "", "");
+        m.tools.push(FeedToolCall {
+            name: "web_search".into(),
+            arguments: "{\"query\":\"gpt-oss-120b vs GPT-4o comparison architecture benchmarks multimodal\"}"
+                .into(),
+            result: "results".into(),
+            text_offset: 0,
+            images: 0,
+        });
+        m
+    }
+
+    /// The rows of a rendered feed as plain strings.
+    fn rows(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| joined(std::slice::from_ref(l)))
+            .collect()
+    }
+
+    #[test]
+    fn collapsed_pill_moves_whole_to_the_next_row_when_it_does_not_fit() {
+        // At 60 columns the header's last row is `architecture benchmarks
+        // multimodal)` and the pill cannot follow it. It used to be appended
+        // anyway and come apart in the wrap — `▸ details ·` at the end of that
+        // row, `Ctrl+O` alone at the start of the next, under the icon.
+        let mut feed = MessageFeed::new();
+        let glyphs = Palette::default().glyphs();
+        let out = rows(&feed.build_lines(&[long_search_call()], &Palette::default(), 60, ru()));
+        let pill_row = out
+            .iter()
+            .find(|r| r.contains("Ctrl+O"))
+            .unwrap_or_else(|| panic!("the pill is drawn: {out:#?}"));
+        // Whole: the marker, the label and the keycap share one row...
+        assert!(
+            pill_row.contains(&format!("{} детали · ", glyphs.collapsed)),
+            "the pill is one piece: {pill_row:?}"
+        );
+        // ...of its own, below the header, aligned under the name like a
+        // wrapped header row — not under the `⚒` icon.
+        assert!(
+            !pill_row.contains("multimodal"),
+            "a row of its own: {pill_row:?}"
+        );
+        assert!(
+            pill_row.starts_with(&format!("{RAIL}{}{} ", glyphs.tool_cont, glyphs.collapsed)),
+            "aligned under the name: {pill_row:?}"
+        );
+        // Nothing of the pill leaked onto the header's row.
+        let header_row = out
+            .iter()
+            .find(|r| r.contains("multimodal"))
+            .unwrap_or_else(|| panic!("the header's last row: {out:#?}"));
+        assert!(
+            !header_row.contains(glyphs.collapsed),
+            "the header row carries no half of the pill: {header_row:?}"
+        );
+    }
+
+    #[test]
+    fn collapsed_pill_stays_on_the_header_row_when_it_fits() {
+        // The same call at 80 columns leaves `multimodal)` alone on the last
+        // row with room to spare — the pill rides it, one row per call.
+        let mut feed = MessageFeed::new();
+        let out = rows(&feed.build_lines(&[long_search_call()], &Palette::default(), 80, ru()));
+        let pill_row = out
+            .iter()
+            .find(|r| r.contains("Ctrl+O"))
+            .unwrap_or_else(|| panic!("the pill is drawn: {out:#?}"));
+        assert!(
+            pill_row.contains("multimodal)") && pill_row.contains("детали · "),
+            "the pill follows the header on its row: {pill_row:?}"
+        );
+    }
+
+    #[test]
+    fn images_chip_follows_the_same_rule_as_the_pill() {
+        // The chip is appended the same way, so it moves whole too; the pill
+        // then measures against the chip's row and joins it when it fits.
+        let mut feed = MessageFeed::new();
+        let glyphs = Palette::default().glyphs();
+        let mut m = long_search_call();
+        m.tools[0].images = 3;
+        let out = rows(&feed.build_lines(&[m], &Palette::default(), 60, ru()));
+        let chip = ru().tf("ui.feed.tool_images", &[("n", "3")]);
+        let chip_row = out
+            .iter()
+            .find(|r| r.contains(&chip))
+            .unwrap_or_else(|| panic!("the chip is whole on one row: {out:#?}"));
+        assert!(
+            !chip_row.contains("multimodal"),
+            "the chip did not fit the header row: {chip_row:?}"
+        );
+        assert!(
+            chip_row.starts_with(&format!("{RAIL}{}{chip}", glyphs.tool_cont)),
+            "aligned under the name: {chip_row:?}"
+        );
+        assert!(
+            chip_row.contains("Ctrl+O"),
+            "the pill fits beside the chip and shares its row: {chip_row:?}"
+        );
     }
 
     #[test]

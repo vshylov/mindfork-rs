@@ -41,18 +41,14 @@ impl ChatScreen {
                 // Reuses the background-indexing banner slot (see the `rag`
                 // field): both are "a background index is being built", and they
                 // don't overlap in practice.
-                let text = self.loc.tf(
+                let banner = RagBanner::around_name(
+                    self.loc,
                     "ui.file.indexing",
-                    &[
-                        ("name", &name),
-                        ("done", &done.to_string()),
-                        ("total", &total.to_string()),
-                    ],
+                    &name,
+                    String::new(),
+                    &[("done", &done.to_string()), ("total", &total.to_string())],
                 );
-                match &mut self.rag {
-                    Some(banner) => banner.text = text,
-                    None => self.rag = Some(RagBanner { text, tick: 0 }),
-                }
+                self.show_banner(banner);
             }
             FileProgress::Indexed { name, chunks } => {
                 self.rag = None;

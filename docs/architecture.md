@@ -226,7 +226,8 @@ src/
 │  │  │                     dialog's tabs (spec §11.7); "Disclaimer" renders
 │  │  │                     DISCLAIMER.md through shared::markdown (ADR 0003)
 │  │  ├─ impersonation.rs   preview of the reply written on the user's behalf (Ctrl+U)
-│  │  ├─ rag.rs             RAG indexing progress banner
+│  │  ├─ rag.rs             RAG indexing progress banner (RagBanner: before/name/location/after,
+│  │  │                     fitted to the row at render time — location dropped, name elided)
 │  │  └─ render.rs          screen rendering
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
 │  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
@@ -517,7 +518,8 @@ src/
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
    │                       prime_full_redraw (full-redraw sentinel — space +
    │                       marker modifier, doesn't touch wide-glyph tail cells)
-   ├─ wrap.rs              word wrap by column (unicode-width)
+   ├─ wrap.rs              word wrap by column (unicode-width) + width-aware truncation
+   │                       (truncate_to_width — tail, elide_middle — both ends kept)
    ├─ i18n.rs              agent scaffold language (axis A) + UI (axis B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)

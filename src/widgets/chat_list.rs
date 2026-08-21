@@ -722,7 +722,7 @@ impl ChatListState {
         const TRAIL: usize = 1; // right-hand margin
         // Available width for the title (a minimum 1-column gap before the counter).
         let max_title = width.saturating_sub(PREFIX_W + count_w + TRAIL + 1);
-        let (title, title_w) = truncate_to_width(&chat.title, max_title);
+        let (title, title_w) = wrap::truncate_to_width(&chat.title, max_title);
         let gap = width
             .saturating_sub(PREFIX_W + title_w + count_w + TRAIL)
             .max(1);
@@ -814,33 +814,6 @@ fn sort_label(sort: SortMode, loc: &'static Locale) -> &'static str {
         SortMode::Created => loc.t("ui.sort.created"),
         SortMode::Modified => loc.t("ui.sort.modified"),
     }
-}
-
-/// Truncates a string to width `max` columns, adding "…" on truncation. Returns
-/// the truncated string and its actual width. At `max == 0` — an empty string.
-fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
-    let chars: Vec<char> = s.chars().collect();
-    let full = wrap::display_width(&chars);
-    if full <= max {
-        return (s.to_string(), full);
-    }
-    if max == 0 {
-        return (String::new(), 0);
-    }
-    // Leave room for "…" (1 column).
-    let budget = max.saturating_sub(1);
-    let mut out = String::new();
-    let mut w = 0;
-    for i in 0..chars.len() {
-        let cw = wrap::width_at(&chars, i);
-        if w + cw > budget {
-            break;
-        }
-        w += cw;
-        out.push(chars[i]);
-    }
-    out.push('…');
-    (out, w + 1)
 }
 
 #[cfg(test)]

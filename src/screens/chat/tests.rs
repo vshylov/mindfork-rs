@@ -2202,9 +2202,9 @@ fn rag_progress_banner_lifecycle() {
     });
     assert!(s.is_rag_active());
     assert!(
-        !s.rag.as_ref().unwrap().text.contains("чанки"),
+        !s.rag.as_ref().unwrap().text().contains("чанки"),
         "with no chunks_total there must be no chunk suffix: {:?}",
-        s.rag.as_ref().unwrap().text
+        s.rag.as_ref().unwrap().text()
     );
     // Chunk progress (chunks_total>0) — the banner carries the chunk counter.
     s.set_rag_progress(RagProgress::Indexing {
@@ -2215,7 +2215,7 @@ fn rag_progress_banner_lifecycle() {
         chunks_done: 16,
         chunks_total: 42,
     });
-    let banner = s.rag.as_ref().unwrap().text.clone();
+    let banner = s.rag.as_ref().unwrap().text();
     assert!(
         banner.contains("16") && banner.contains("42"),
         "the banner must show chunks 16/42: {banner:?}"
@@ -2231,6 +2231,46 @@ fn rag_progress_banner_lifecycle() {
         s.feed
             .iter()
             .any(|m| m.role == FeedRole::Note && m.text.contains("завершена"))
+    );
+}
+
+#[test]
+fn rag_banner_row_keeps_the_counters_on_a_narrow_screen() {
+    use crate::features::file_command::FileProgress;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    // The screenshot case: an attachment whose name is a web page's title,
+    // indexed on a screen narrower than the banner's text. The widget used to
+    // clip the row at the edge, and the counters — the only part that moves —
+    // were the part that fell off.
+    let mut s = ChatScreen::new();
+    s.set_file_progress(FileProgress::Indexing {
+        name: "GitHub - openai/gpt-oss: gpt-oss-120b and gpt-oss-20b are two open-weight models"
+            .into(),
+        done: 64,
+        total: 128,
+    });
+    let mut term = Terminal::new(TestBackend::new(90, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let rows: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    let banner = rows
+        .iter()
+        .find(|r| r.contains("RAG:"))
+        .unwrap_or_else(|| panic!("the banner row: {rows:#?}"));
+    assert!(
+        banner.trim_end().ends_with("64/128"),
+        "the counters end the row: {banner:?}"
+    );
+    assert!(
+        banner.contains('…') && banner.contains("GitHub"),
+        "the name gave way, from the middle: {banner:?}"
     );
 }
 
