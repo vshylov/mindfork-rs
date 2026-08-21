@@ -112,7 +112,7 @@ pub fn mcp_tool_id(server: &str, tool: &str) -> ToolId {
 /// dynamic tool names; there's a finite number of them, so the leak is bounded
 /// (a precedent — interning language codes in `shared/i18n`).
 fn intern(s: &str) -> &'static str {
-    static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    static POOL: OnceLock<Mutex<HashSet<&str>>> = OnceLock::new();
     let pool = POOL.get_or_init(|| Mutex::new(HashSet::new()));
     let mut guard = pool.lock().expect("intern pool poisoned");
     if let Some(existing) = guard.get(s) {

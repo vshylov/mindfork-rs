@@ -1072,6 +1072,16 @@ named method fixed it and read better — a table of one-liners.
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
 stage 2*.
 
+**`cargo clippy -D warnings` green is not "Sonar-clean" for Rust.** The analyzer's
+rule set is broader than clippy's default warn set, so an analyzer update raises findings
+on code nobody has touched — 22 of one 30-issue backlog dated back two months. Measured on
+a scratch crate: `rust:S1612` is clippy's `redundant_closure_for_method_calls`, which is
+*pedantic* and therefore off; `rust:S8863` is `redundant_static_lifetimes`, which is on by
+default but never reaches an **associated** const or a `'static` nested inside a generic
+argument — enabling it explicitly changes nothing. Expect a periodic lint backlog that no
+local gate could have caught, and do not read it as a regression.
+— *SonarQube follow-up — two new lint families, and eight complexity findings*.
+
 **On CI, distrust a single run.** Identical code produced Windows test phases of
 359 / 469 / 376 / 386 / 927 s; a controlled local measurement is the trustworthy one. The
 outlier was diagnosed by joining per-test CI timings against local ones — a 3.9x median

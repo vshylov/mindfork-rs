@@ -178,7 +178,7 @@ fn blockquote_style() -> Style {
 /// and lives for the whole process. The alternative (theme on `render`'s
 /// stack + a lifetime on `Writer`) would complicate the type for savings that
 /// don't exist.
-static CODE_THEMES: LazyLock<Mutex<HashMap<Palette, &'static Theme>>> =
+static CODE_THEMES: LazyLock<Mutex<HashMap<Palette, &Theme>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Returns (building on first access and caching) the syntect code-highlight

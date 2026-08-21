@@ -74,7 +74,7 @@ impl Orchestrator {
             allowed = CONSOLIDATE_TOOL_IDS
                 .iter()
                 .filter(|id| profile.enabled_tools.iter().any(|t| t == **id))
-                .map(|id| id.to_string())
+                .map(ToString::to_string)
                 .collect();
             system_message = chat.system_message.clone();
             last_user = last_user_message_at(chat);

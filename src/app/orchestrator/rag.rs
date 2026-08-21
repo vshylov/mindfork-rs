@@ -4,6 +4,7 @@
 //! operations. Everything is isolated by `profile_id`.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -660,7 +661,7 @@ async fn index_source(
 pub(super) fn is_markdown_source(source: &str) -> bool {
     std::path::Path::new(source)
         .extension()
-        .and_then(|e| e.to_str())
+        .and_then(OsStr::to_str)
         .is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 

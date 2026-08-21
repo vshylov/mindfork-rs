@@ -7,6 +7,7 @@
 //! heavy (parsing `.dic`) — called from a background thread (see `main.rs`).
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -86,11 +87,11 @@ fn load_entry(
     loaded: &mut HashSet<String>,
     dicts: &mut Vec<Dictionary>,
 ) {
-    if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
+    if aff.extension().and_then(OsStr::to_str) != Some("aff") {
         return;
     }
     // Filter by the selected dictionaries (by the file's base name).
-    let stem = aff.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let stem = aff.file_stem().and_then(OsStr::to_str).unwrap_or_default();
     if !selected.is_empty() && !selected.iter().any(|s| s == stem) {
         return;
     }

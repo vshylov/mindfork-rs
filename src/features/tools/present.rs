@@ -161,6 +161,54 @@ fn present_args(
     }
 }
 
+/// The tool's own code field as a highlighted block, with the field name that
+/// produced it — `None` when this tool has no such field or the value is empty.
+fn code_block(name: &str, map: &serde_json::Map<String, Value>) -> Option<(ToolBlock, String)> {
+    let (field, lang) = code_field(name, map)?;
+    let Some(Value::String(code)) = map.get(field) else {
+        return None;
+    };
+    if code.trim().is_empty() {
+        return None;
+    }
+    Some((
+        ToolBlock::Code {
+            lang,
+            text: code.clone(),
+        },
+        field.to_string(),
+    ))
+}
+
+/// The first large string field as a plain block (e.g. `content` for note_save,
+/// `text` for rag_add) — the fallback when the tool has no code field of its own.
+fn big_string_block(map: &serde_json::Map<String, Value>) -> Option<(ToolBlock, String)> {
+    map.iter().find_map(|(k, v)| match v {
+        Value::String(s) if is_big(s) => Some((ToolBlock::Plain(s.clone()), k.clone())),
+        _ => None,
+    })
+}
+
+/// The short scalar fields, in the map's order, skipping the one already shown
+/// as a block.
+fn scalar_pairs(
+    map: &serde_json::Map<String, Value>,
+    consumed: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (k, v) in map.iter() {
+        if consumed == Some(k.as_str()) {
+            continue;
+        }
+        if let Some(s) = scalar_str(v)
+            && !s.trim().is_empty()
+        {
+            pairs.push((k.clone(), s));
+        }
+    }
+    pairs
+}
+
 /// A summary: as much as fits on the header line, nothing below except a value
 /// too large for it (code, a long string).
 fn compact_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, Vec<ToolBlock>) {
@@ -178,45 +226,16 @@ fn compact_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         );
     };
 
-    let mut blocks = Vec::new();
-    let mut consumed: Option<String> = None;
-    if let Some((field, lang)) = code_field(name, map)
-        && let Some(Value::String(code)) = map.get(field)
-        && !code.trim().is_empty()
-    {
-        blocks.push(ToolBlock::Code {
-            lang,
-            text: code.clone(),
-        });
-        consumed = Some(field.to_string());
-    }
-    // No special field → show the large string field as a separate Plain block
-    // (e.g. `content` for note_save, `text` for rag_add).
-    if blocks.is_empty() {
-        for (k, v) in map.iter() {
-            if let Value::String(s) = v
-                && is_big(s)
-            {
-                blocks.push(ToolBlock::Plain(s.clone()));
-                consumed = Some(k.clone());
-                break;
-            }
-        }
-    }
-
+    // At most one block, and the tool's own code field outranks the fallback.
+    let (blocks, consumed) = match code_block(name, map).or_else(|| big_string_block(map)) {
+        Some((block, field)) => (vec![block], Some(field)),
+        None => (Vec::new(), None),
+    };
     // The remaining short scalar fields → a compact header.
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for (k, v) in map.iter() {
-        if consumed.as_deref() == Some(k.as_str()) {
-            continue;
-        }
-        if let Some(s) = scalar_str(v)
-            && !s.trim().is_empty()
-        {
-            pairs.push((k.clone(), s));
-        }
-    }
-    (header_from_pairs(&pairs), blocks)
+    (
+        header_from_pairs(&scalar_pairs(map, consumed.as_deref())),
+        blocks,
+    )
 }
 
 /// The whole request: one `key: value` line per field, untruncated; a value that

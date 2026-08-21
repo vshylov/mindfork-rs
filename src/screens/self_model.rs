@@ -413,7 +413,7 @@ impl SelfModelScreen {
     /// the chat-list overlay (left-to-right, columns line up vertically).
     /// Pairs "key — description key — is it dangerous"; descriptions are resolved through the locale
     /// in [`Self::render`].
-    const HOTKEYS: [(&'static str, &'static str, bool); 5] = [
+    const HOTKEYS: [(&str, &str, bool); 5] = [
         ("Enter", "ui.self_model.hk.edit", false),
         ("Space", "ui.self_model.hk.goal_status", false),
         ("Del", "ui.self_model.hk.delete", true),

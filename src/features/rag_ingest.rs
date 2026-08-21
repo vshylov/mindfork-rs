@@ -11,6 +11,7 @@
 //! `features` layer so both `app` (emits events) and `screens`
 //! (renders the indicator) can use it, without breaking FSD's dependency direction.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Supported file extensions (lowercase, no dot): text, markdown,
@@ -69,14 +70,14 @@ pub enum RagProgress {
 /// Is the file supported by extension (case-insensitive)?
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
-        .and_then(|e| e.to_str())
+        .and_then(OsStr::to_str)
         .is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 /// Does the path's extension match `ext` (case-insensitive)?
 fn has_ext(path: &Path, ext: &str) -> bool {
     path.extension()
-        .and_then(|e| e.to_str())
+        .and_then(OsStr::to_str)
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 

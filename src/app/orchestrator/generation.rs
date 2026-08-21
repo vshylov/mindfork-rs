@@ -472,6 +472,29 @@ impl Orchestrator {
         });
     }
 
+    /// Did this turn deliver the conversation's **first** substantive reply?
+    ///
+    /// Asked **before** the turn's result is applied: afterwards the reply is
+    /// part of the history and the question can no longer be asked.
+    /// Regenerating the first reply re-fires by construction — the truncation
+    /// removed the only reply, so the next one is again the first
+    /// (spec §11.2, D2).
+    fn is_first_reply(&self, res: &GenResult) -> bool {
+        let substantive = res
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty());
+        substantive
+            && self
+                .chats
+                .iter()
+                .find(|c| c.id == res.chat_id)
+                .is_some_and(|c| {
+                    c.messages.iter().any(|m| m.role == MessageRole::User)
+                        && !crate::features::rename_chat::has_assistant_reply(&c.messages)
+                })
+    }
+
     pub(super) fn handle_done(&mut self, res: GenResult) {
         // Apply only the result of the current generation (protection against
         // stale ones): finish() transitions to Idle only on a matching id.
@@ -495,23 +518,9 @@ impl Orchestrator {
                 .iter()
                 .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
         });
-        // Did this turn deliver the conversation's **first** substantive reply?
         // Read before the apply below — afterwards the reply is part of the
-        // history and the question can no longer be asked. Regenerating the
-        // first reply re-fires by construction: the truncation removed the only
-        // reply, so the next one is again the first (spec §11.2, D2).
-        let first_reply = res
-            .messages
-            .iter()
-            .any(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
-            && self
-                .chats
-                .iter()
-                .find(|c| c.id == res.chat_id)
-                .is_some_and(|c| {
-                    c.messages.iter().any(|m| m.role == MessageRole::User)
-                        && !crate::features::rename_chat::has_assistant_reply(&c.messages)
-                });
+        // history and the question can no longer be asked.
+        let first_reply = self.is_first_reply(&res);
         // Attachments a tool produced this turn (spec §9.9) — applied below,
         // outside the `chat` borrow.
         let mut attached: Vec<crate::entities::attachment::Attachment> = Vec::new();
@@ -525,16 +534,7 @@ impl Orchestrator {
                 chat.push_message(msg);
             }
             // Tool effects are applied by the orchestrator (the owner of Chat, §4.4.2).
-            for effect in res.effects {
-                match effect {
-                    ChatEffect::SetSystemMessage(s) => chat.system_message = s,
-                    ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(*s),
-                    // Needs the whole orchestrator (index prune, background
-                    // indexing, the feed note), so it is applied after the `chat`
-                    // borrow ends — collected here, executed below.
-                    ChatEffect::AddAttachment(a) => attached.push(*a),
-                }
-            }
+            attached = apply_effects(chat, res.effects);
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
         }
@@ -593,6 +593,27 @@ impl Orchestrator {
         }
         let _ = tx.send((call_id, decision));
     }
+}
+
+/// Applies one turn's tool effects to `chat` and returns the attachments among
+/// them.
+///
+/// An attachment needs the whole orchestrator (index prune, background
+/// indexing, the feed note), which cannot be had while `chat` is borrowed — so
+/// it is collected here and applied by the caller once the borrow ends.
+fn apply_effects(
+    chat: &mut crate::entities::chat::Chat,
+    effects: Vec<ChatEffect>,
+) -> Vec<crate::entities::attachment::Attachment> {
+    let mut attached = Vec::new();
+    for effect in effects {
+        match effect {
+            ChatEffect::SetSystemMessage(s) => chat.system_message = s,
+            ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(*s),
+            ChatEffect::AddAttachment(a) => attached.push(*a),
+        }
+    }
+    attached
 }
 
 /// Which limit ended a turn — the two are enforced together and the message has
@@ -1026,47 +1047,87 @@ impl TurnLoop {
             .is_none_or(|tool| tool.counts_toward_round_limit())
     }
 
+    /// The turn's round budget is spent: one final round **without tools**.
+    ///
+    /// DON'T execute new calls — ask the model instead to sum up what's already
+    /// been gathered. Otherwise (the previous behavior) the round would only
+    /// contain an intent to call more tools with empty text →
+    /// `finalize_message` returned `None`, and the user got no reply at all,
+    /// even though enough data had accumulated over the previous rounds. Tools
+    /// are removed from the request, so the model must answer with text (the
+    /// stream goes into the feed).
+    ///
+    /// Returns the finish reason of that final round (usually `Stop`; on user
+    /// cancellation/a stream error — `Cancelled`/`Error`), not an artificial
+    /// `Stop`.
+    async fn final_round(&mut self, limit: RoundLimit) -> FinishReason {
+        // Name the limit that actually fired: quoting `max_tool_rounds` at
+        // someone whose turn was ended by the *project* budget points them
+        // at the wrong setting (docs/lessons.md §4).
+        let (key, n) = match limit {
+            RoundLimit::Tools => ("loop.round_limit_reached", self.max_rounds),
+            RoundLimit::Workspace => (
+                "loop.workspace_round_limit_reached",
+                self.workspace_max_rounds,
+            ),
+        };
+        let _ = self.evt_tx.send(AppEvent::Error(
+            self.ctx.loc.tf(key, &[("max_rounds", &n.to_string())]),
+        ));
+        self.request.tools.clear();
+        // The final round's token counter is emitted by `stream_round` itself
+        // (from `base = total_*`); after that the turn ends, no need to accumulate.
+        let final_out = self.stream().await;
+        if let Some(mut m) =
+            finalize_message(&final_out, &self.ctx, self.engine_mode, &self.model_name)
+        {
+            m.new_bubble = self.pending_new_bubble;
+            self.messages.push(m);
+        }
+        final_out.reason
+    }
+
+    /// Files the round's messages: on `rewrite` the round is discarded into the
+    /// deleted archive, otherwise it is appended, with `followup` opening the
+    /// next assistant message as its own bubble.
+    fn file_round(
+        &mut self,
+        mut am: Message,
+        tool_msgs: Vec<Message>,
+        rewrite: bool,
+        followup: bool,
+    ) {
+        if rewrite {
+            // Discard the round: assistant + tool messages → the deleted archive.
+            // The live feed clears the current bubble for the rewritten reply.
+            // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
+            self.deleted.push(am);
+            self.deleted.extend(tool_msgs);
+            let _ = self.evt_tx.send(AppEvent::AssistantRewrite {
+                generation_id: self.id,
+            });
+            return;
+        }
+        // assistant BEFORE this round's tool messages.
+        am.new_bubble = std::mem::take(&mut self.pending_new_bubble);
+        self.messages.push(am);
+        self.messages.extend(tool_msgs);
+        if followup {
+            // The next assistant message — as a separate bubble.
+            self.pending_new_bubble = true;
+            let _ = self.evt_tx.send(AppEvent::AssistantContinue {
+                generation_id: self.id,
+            });
+        }
+    }
+
     /// One round that ended in tool calls: the round-limit final round, the
     /// control-tool recognition, executing every call, and assembling the
     /// round's domain messages. `Some(reason)` ends the turn; `None` — run the
     /// next round.
     async fn tool_round(&mut self, out: RoundOutput) -> Option<FinishReason> {
         if let Some(limit) = self.budget_exhausted() {
-            // Limit reached: DON'T execute new calls, ask the model instead
-            // to sum up what's already been gathered — a final round WITHOUT
-            // tools. Otherwise (the previous behavior) `out` would only
-            // contain an intent to call more tools with empty text →
-            // `finalize_message` returned `None`, and the user got no reply
-            // at all, even though enough data had accumulated over the
-            // previous rounds. Tools are removed from the request, so the
-            // model must answer with text (the stream goes into the feed).
-            // Name the limit that actually fired: quoting `max_tool_rounds` at
-            // someone whose turn was ended by the *project* budget points them
-            // at the wrong setting (docs/lessons.md §4).
-            let (key, n) = match limit {
-                RoundLimit::Tools => ("loop.round_limit_reached", self.max_rounds),
-                RoundLimit::Workspace => (
-                    "loop.workspace_round_limit_reached",
-                    self.workspace_max_rounds,
-                ),
-            };
-            let _ = self.evt_tx.send(AppEvent::Error(
-                self.ctx.loc.tf(key, &[("max_rounds", &n.to_string())]),
-            ));
-            self.request.tools.clear();
-            // The final round's token counter is emitted by `stream_round` itself
-            // (from `base = total_*`); after that the turn ends, no need to accumulate.
-            let final_out = self.stream().await;
-            if let Some(mut m) =
-                finalize_message(&final_out, &self.ctx, self.engine_mode, &self.model_name)
-            {
-                m.new_bubble = self.pending_new_bubble;
-                self.messages.push(m);
-            }
-            // The finish reason comes from the final round (usually Stop; on
-            // user cancellation/a stream error — Cancelled/Error), not an
-            // artificial Stop.
-            return Some(final_out.reason);
+            return Some(self.final_round(limit).await);
         }
         // A round spent entirely inside the attached project does not cost the
         // budget (spec §9.12). The limit exists to stop a model looping on
@@ -1129,28 +1190,7 @@ impl TurnLoop {
         }
         am.tool_calls = records;
 
-        if rewrite {
-            // Discard the round: assistant + tool messages → the deleted archive.
-            // The live feed clears the current bubble for the rewritten reply.
-            // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
-            self.deleted.push(am);
-            self.deleted.extend(tool_msgs);
-            let _ = self.evt_tx.send(AppEvent::AssistantRewrite {
-                generation_id: self.id,
-            });
-        } else {
-            // assistant BEFORE this round's tool messages.
-            am.new_bubble = std::mem::take(&mut self.pending_new_bubble);
-            self.messages.push(am);
-            self.messages.extend(tool_msgs);
-            if followup {
-                // The next assistant message — as a separate bubble.
-                self.pending_new_bubble = true;
-                let _ = self.evt_tx.send(AppEvent::AssistantContinue {
-                    generation_id: self.id,
-                });
-            }
-        }
+        self.file_round(am, tool_msgs, rewrite, followup);
         // An attachment a tool produced this round (a video transcript,
         // spec §9.9) is mirrored into the turn's snapshot, so
         // `attachment_read`/`attachment_search` find it in the **next

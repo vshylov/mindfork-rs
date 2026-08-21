@@ -16,6 +16,7 @@
 //! Today all schemas = 1, so the plan is always empty: `run` effectively only validates
 //! (the downgrade/corruption gates), while the migration engine is covered by tests on a synthetic artifact.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -267,7 +268,7 @@ fn chat_files(paths: &Paths) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(&dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+        if path.extension().and_then(OsStr::to_str) == Some("json") {
             out.push(path);
         }
     }

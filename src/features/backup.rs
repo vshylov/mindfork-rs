@@ -61,6 +61,7 @@
 //! where the lines go (`println!`) and a non-interactive caller passes `|_| {}`.
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -469,7 +470,7 @@ fn gather_entries(
             let path = entry.path();
             if path.is_file()
                 && path.extension().is_some_and(|e| e == "bak")
-                && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && let Some(name) = path.file_name().and_then(OsStr::to_str)
             {
                 out.push(Entry {
                     abs: path.clone(),
