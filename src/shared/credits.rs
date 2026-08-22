@@ -1,13 +1,16 @@
 //! App metadata for the "About" dialog (`F1`): author, links, license text, and
 //! the list of third-party components with their licenses. `shared` layer (FSD):
-//! the data is language-neutral (names/URLs/SPDX/legal text), so it does not go
-//! through locales — the chat screen (`screens/chat/popups.rs`) reads it directly.
+//! the data is language-neutral (names/URLs/SPDX) or a whole document
+//! ([`license_text`], [`disclaimer_text`]), so none of it goes through the
+//! locale bundles — the chat screen (`screens/chat/popups.rs`) reads it directly.
 //!
 //! The [`COMPONENTS`] list is kept in sync with `Cargo.toml`'s direct
 //! dependencies by the gate test [`tests::components_cover_direct_dependencies`]
 //! — mirroring how the logo glyph table is checked against the SVG asset
 //! (`widgets/logo.rs`). Licenses are cross-checked against `cargo metadata`
 //! (crates' SPDX identifiers).
+
+use crate::shared::i18n::Lang;
 
 /// App brand name (as in the wordmark logo and on crates.io). The package/binary
 /// is `mindfork-rs` (`CARGO_PKG_NAME`), but the user sees the short "mindfork".
@@ -38,7 +41,8 @@ pub fn platform() -> String {
 }
 
 /// App license text (MIT) — from the `LICENSE` file at the repository root.
-/// Legal text in English, language-neutral — not localized.
+/// The authoritative text; the Russian rendering is [`LICENSE_TEXT_RU`], and
+/// [`license_text`] is what picks between them.
 ///
 /// The file is kept **byte-identical to the canonical MIT text**: the SPDX
 /// identifier `MIT` in `Cargo.toml`, `packaging/nfpm.yaml` and the README badge
@@ -48,13 +52,55 @@ pub fn platform() -> String {
 /// license lives in [`DISCLAIMER_TEXT`].
 pub const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 
+/// The MIT license in Russian — `docs/legal/LICENSE.ru.txt`, an **unofficial
+/// translation** that says so in its own first paragraph: the grant is the
+/// English [`LICENSE_TEXT`], and this file is there so a `ru` user is not handed
+/// a page of legal English (docs/history/legal-ru-translations.md §2).
+///
+/// It lives under `docs/legal/` rather than beside its original because the
+/// root's `LICENSE*` namespace belongs to the scanners above — a
+/// `LICENSE.ru.md` there is exactly what makes one report "Other". Plain text
+/// with **no markdown**, like the file it translates: the "License" tab reflows
+/// paragraphs and would print a `#` verbatim (gate test
+/// [`tests::the_russian_license_is_paragraphs_only`]).
+pub const LICENSE_TEXT_RU: &str = include_str!("../../docs/legal/LICENSE.ru.txt");
+
 /// The disclaimer covering model output, third-party models/providers and the
 /// software's automated actions — from `DISCLAIMER.md` at the repository root.
 /// A supplement to the MIT license, deliberately a **separate file** (see
 /// [`LICENSE_TEXT`]); markdown, rendered by our own renderer (ADR 0003) on the
-/// help dialog's "Disclaimer" tab. Legal text in English — not localized, same
-/// as the license.
+/// help dialog's "Disclaimer" tab. The authoritative text; the Russian rendering
+/// is [`DISCLAIMER_TEXT_RU`].
 pub const DISCLAIMER_TEXT: &str = include_str!("../../DISCLAIMER.md");
+
+/// The disclaimer in Russian — `docs/legal/DISCLAIMER.ru.md`, an unofficial
+/// translation on the same terms as [`LICENSE_TEXT_RU`]. Markdown, written to
+/// the same subset as its original, so the renderer and the installer's RTF
+/// converter (`tools/wizard_rtf.py`) meet nothing new.
+pub const DISCLAIMER_TEXT_RU: &str = include_str!("../../docs/legal/DISCLAIMER.ru.md");
+
+/// The license text for an interface language: Russian for [`Lang::Ru`],
+/// English for everything else — an external `data/locales/<code>.json` bundle
+/// included, since a user-supplied bundle cannot bring legal text we would then
+/// be shipping as ours.
+///
+/// The mapping lives here rather than at the call site so the help dialog and
+/// any later reader cannot disagree about which text is "the" one for a
+/// language.
+pub fn license_text(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ru => LICENSE_TEXT_RU,
+        _ => LICENSE_TEXT,
+    }
+}
+
+/// The disclaimer for an interface language — same rule as [`license_text`].
+pub fn disclaimer_text(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ru => DISCLAIMER_TEXT_RU,
+        _ => DISCLAIMER_TEXT,
+    }
+}
 
 /// Third-party components — **direct** runtime dependencies (`[dependencies]` +
 /// `[target.'cfg(windows)'.dependencies]`): `(name, version, SPDX license)`. Dev/
@@ -324,6 +370,95 @@ mod tests {
             !LICENSE_TEXT.contains('#'),
             "LICENSE has markdown headings — an addendum crept in"
         );
+    }
+
+    /// The two Russian files are embedded, and each one says in its own text
+    /// what it legally is: a translation, with the English original governing
+    /// (docs/history/legal-ru-translations.md §2). Dropping that sentence would turn a
+    /// convenience into a second, unintended contract — which is the one part
+    /// of this that cannot be walked back after a release.
+    #[test]
+    fn the_russian_texts_declare_themselves_unofficial_translations() {
+        for (name, text) in [
+            ("LICENSE.ru.txt", LICENSE_TEXT_RU),
+            ("DISCLAIMER.ru.md", DISCLAIMER_TEXT_RU),
+        ] {
+            assert!(text.len() > 500, "{name} looks empty");
+            // The status line each translation carries, in its own language.
+            assert!(
+                text.contains("неофициальный перевод") || text.contains("Неофициальный перевод"),
+                "{name} does not call itself an unofficial translation"
+            );
+            assert!(
+                text.contains("английский"),
+                "{name} does not name the English original as the governing text"
+            );
+        }
+    }
+
+    /// The accessors map a language to a text: `ru` gets the translation,
+    /// everything else — including an external bundle, which cannot bring legal
+    /// text of its own — gets the authoritative English.
+    #[test]
+    fn the_legal_texts_follow_the_interface_language() {
+        assert_eq!(license_text(Lang::Ru), LICENSE_TEXT_RU);
+        assert_eq!(disclaimer_text(Lang::Ru), DISCLAIMER_TEXT_RU);
+        for lang in [Lang::En, Lang::from_code("de")] {
+            assert_eq!(license_text(lang), LICENSE_TEXT);
+            assert_eq!(disclaimer_text(lang), DISCLAIMER_TEXT);
+        }
+    }
+
+    /// The translation follows the original **section for section**: the same
+    /// sequence of heading levels and the same number of list items. A section
+    /// silently missing from one language is exactly the failure a translated
+    /// legal notice must not have, and it is invisible to anyone reading only
+    /// the other language.
+    #[test]
+    fn the_russian_disclaimer_mirrors_the_originals_structure() {
+        let shape = |text: &str| {
+            let levels: Vec<usize> = text
+                .lines()
+                .filter(|l| l.starts_with('#'))
+                .map(|l| l.chars().take_while(|c| *c == '#').count())
+                .collect();
+            let bullets = text.lines().filter(|l| l.starts_with("- ")).count();
+            let rules = text.lines().filter(|l| l.trim() == "---").count();
+            (levels, bullets, rules)
+        };
+        assert_eq!(
+            shape(DISCLAIMER_TEXT),
+            shape(DISCLAIMER_TEXT_RU),
+            "the ru disclaimer has drifted from DISCLAIMER.md (headings/bullets/rules)"
+        );
+    }
+
+    /// The Russian license file is **plain paragraphs**, like the English one:
+    /// the "License" tab reflows paragraphs and renders no markdown, so a
+    /// heading or a link added here would reach the screen — and the installer's
+    /// wizard page — verbatim. The extension says `.txt` for this reason; this
+    /// test is what holds it.
+    #[test]
+    fn the_russian_license_is_paragraphs_only() {
+        for (i, line) in LICENSE_TEXT_RU.lines().enumerate() {
+            let l = line.trim_start();
+            assert!(
+                !l.starts_with('#') && !l.starts_with("- ") && !l.starts_with('>'),
+                "docs/legal/LICENSE.ru.txt:{}: markdown in a plain-text file",
+                i + 1
+            );
+            assert!(
+                !l.contains("]("),
+                "docs/legal/LICENSE.ru.txt:{}: a markdown link would print verbatim",
+                i + 1
+            );
+        }
+        // The grant itself, and the copyright line the English file carries.
+        assert!(
+            LICENSE_TEXT_RU.contains(AUTHOR),
+            "the ru license lost the copyright holder"
+        );
+        assert!(LICENSE_TEXT_RU.contains("MIT"));
     }
 
     /// The disclaimer is embedded, names itself a supplement to the license,

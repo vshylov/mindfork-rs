@@ -145,7 +145,10 @@ jobs:
           mkdir -p dist
 
           # A shared doc set for every archive.
-          DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md docs/install.md)
+          # Flattened into the archive root; the two ru files are the
+          # translations of the pair above (docs/legal-ru-translations.md).
+          DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md docs/install.md
+                docs/legal/LICENSE.ru.txt docs/legal/DISCLAIMER.ru.md)
 
           # Put spellcheck dictionaries into data/dictionaries/ — the portable layout
           # the app reads next to the binary (data/ next to the exe → spellcheck

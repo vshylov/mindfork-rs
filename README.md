@@ -555,6 +555,11 @@ leaves it when you use a cloud provider, is spelled out in
 **[DISCLAIMER.md](DISCLAIMER.md)** — also readable in the app on the `F1` →
 "Disclaimer" tab. It supplements the license and takes nothing away from it.
 
+Both texts have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt)
+and [docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) — shown on those `F1` tabs
+and on the installer's wizard pages when the interface language is Russian. They are
+unofficial, for convenience: the English originals are the texts that have legal force.
+
 ## Project status
 
 Actively developed; the current release is

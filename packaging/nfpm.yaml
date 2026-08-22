@@ -136,5 +136,12 @@ contents:
   # only useful if it reaches the machine the model runs on.
   - src: ./DISCLAIMER.md
     dst: /usr/share/doc/mindfork-rs/DISCLAIMER.md
+  # The Russian translations of both (docs/history/legal-ru-translations.md). Unofficial
+  # — each says so in its own first paragraph — so they sit beside the originals
+  # rather than replacing them for a ru system.
+  - src: ./docs/legal/LICENSE.ru.txt
+    dst: /usr/share/doc/mindfork-rs/LICENSE.ru.txt
+  - src: ./docs/legal/DISCLAIMER.ru.md
+    dst: /usr/share/doc/mindfork-rs/DISCLAIMER.ru.md
   - src: ./docs/install.md
     dst: /usr/share/doc/mindfork-rs/install.md

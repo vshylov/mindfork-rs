@@ -867,6 +867,19 @@ rescanned, so a placeholder inside a value cannot expand — retiring several ha
 call sites that had been working around the old behaviour.
 — *hardening i18n (single-pass tf, gates, observability, export)*.
 
+**A localized *document* is a file, not a bundle key** — and it needs a structural gate.
+A legal notice or any long text belongs next to its original as a file the language picks
+(`credits::license_text`), never inside `locales/*.json`, where it is unreviewable,
+undiffable and unwrappable. What the pair does need is a test comparing the two files'
+*shape* — heading levels, list items — because a section missing from one language is
+invisible to everyone reading the other.
+— *the licence and the disclaimer in Russian*.
+
+**Our markdown renderer prints a link's target after its text** (a terminal cannot click),
+so `[LICENSE.ru.txt](LICENSE.ru.txt)` draws "LICENSE.ru.txt (LICENSE.ru.txt)". Any markdown
+the app itself displays wants link text that *describes* rather than repeats the target.
+— *the licence and the disclaimer in Russian*.
+
 ---
 
 ## 8. Storage, schema and data safety

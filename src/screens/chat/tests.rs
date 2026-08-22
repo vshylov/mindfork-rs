@@ -2504,6 +2504,68 @@ fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
     }
 }
 
+/// The legal tabs are the one place where a whole *document*, not a UI string,
+/// follows the interface language: `ru` gets the translations under
+/// `docs/legal/`, every other language the authoritative English
+/// (docs/history/legal-ru-translations.md §4.2). Rendered through the whole screen
+/// rather than off `credits`, because the wiring is what can break — a tab still
+/// reading the constant directly would pass a test written against the accessor.
+#[test]
+fn the_legal_tabs_follow_the_interface_language() {
+    use crate::shared::i18n::{Lang, locale};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let text_for = |lang: Lang, tab: HelpTab| -> String {
+        let mut s = ChatScreen::new();
+        s.loc = locale(lang);
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        s.help.as_mut().unwrap().tab = tab;
+        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    };
+
+    // `(language, tab, the marker that must show, the marker that must not)`.
+    let cases = [
+        (Lang::En, HelpTab::License, "MIT License", "перевод"),
+        (
+            Lang::Ru,
+            HelpTab::License,
+            "неофициальный перевод",
+            "MIT License",
+        ),
+        (
+            Lang::En,
+            HelpTab::Disclaimer,
+            "mindfork is a client",
+            "клиент",
+        ),
+        (Lang::Ru, HelpTab::Disclaimer, "это клиент", "is a client"),
+    ];
+    for (lang, tab, wanted, unwanted) in cases {
+        let text = text_for(lang, tab);
+        assert!(
+            text.contains(wanted),
+            "the {} {tab:?} tab does not show {wanted:?}",
+            lang.code()
+        );
+        assert!(
+            !text.contains(unwanted),
+            "the {} {tab:?} tab shows the other language's text ({unwanted:?})",
+            lang.code()
+        );
+    }
+}
+
 /// A level-1 markdown heading is accent + bold + **underlined**, and the writer
 /// puts that on the `Line` rather than on its spans — so the "Disclaimer" tab's
 /// left indent inherited it and the underline visibly ran out to the left of the
@@ -2658,17 +2720,19 @@ fn help_tabs_render_distinct_content() {
         "the /file commands must come before /rag: {commands}"
     );
 
-    // "License": the MIT text.
+    // "License": the MIT text. This screen runs in the default locale (`ru`), and
+    // since docs/history/legal-ru-translations.md the legal tabs follow the interface
+    // language — so the markers here are the translation's, and the two-language
+    // rule itself is pinned by `the_legal_tabs_follow_the_interface_language`.
     let license = text_for(HelpTab::License);
-    assert!(
-        license.contains("MIT License"),
-        "missing the license header"
-    );
-    assert!(license.contains("WARRANTY"), "missing the license body");
+    assert!(license.contains("MIT"), "missing the license header");
+    assert!(license.contains("ГАРАНТИЙ"), "missing the license body");
     // The disclaimer is a separate tab, not a tail on the license: the MIT text
-    // must stay pure (see `credits::LICENSE_TEXT`).
+    // must stay pure (see `credits::LICENSE_TEXT`). The marker is a phrase from
+    // the notice's body, not its title — the title is also a tab label, and the
+    // strip is drawn on every tab.
     assert!(
-        !license.contains("Disclaimer"),
+        !license.contains("это клиент"),
         "the disclaimer leaked into the license tab"
     );
 
@@ -2678,11 +2742,11 @@ fn help_tabs_render_distinct_content() {
     // the text went through the renderer rather than being dumped verbatim.
     let disclaimer = text_for(HelpTab::Disclaimer);
     assert!(
-        disclaimer.contains("Disclaimer"),
+        disclaimer.contains("Дисклеймер"),
         "missing the disclaimer heading"
     );
     assert!(
-        disclaimer.contains("mindfork is a client"),
+        disclaimer.contains("это клиент"),
         "missing the disclaimer body"
     );
     assert!(
