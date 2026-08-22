@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the settings hint panel — one height for every section (done)
 - Post-M9: the "About" tab became a leader table (done)
 - Post-M9: the code workspace — stage 4, the changes screen (done)
+- Post-M9: the licence and the disclaimer in Russian (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1810,3 +1811,66 @@ Branch `feat/code-workspace-changes`.
 - **Tests**: 2416 unit (+28). New dependency `similar` (Apache-2.0) — Myers with
   the usual heuristics and a hunk-grouping writer; the only crate in the graph
   that needed it.
+
+### Post-M9: the licence and the disclaimer in Russian (done)
+- **The task** (user, 2026-08-22; branch `feat/legal-ru-translations`): Russian
+  versions of the disclaimer and the licence, shown both on the `F1` tabs and in
+  the Windows installer. This entry is the app half; the wizard and the packaging
+  are in [release.md](release.md) ("the installer's legal pages speak Russian").
+  Plan: [docs/history/legal-ru-translations.md](../history/legal-ru-translations.md).
+- **It reverses a decision that was written down three times** — `credits.rs`,
+  `mindfork.iss` and `wizard_rtf.py` each said the legal texts stay English and
+  only the chrome around them is localized. The chrome is exactly the problem:
+  the `ru` tab strip has carried the Russian label since the notice was written,
+  and behind it sat 4 500 words of legal English.
+- **A translated licence is not the licence.** The grant is the English text; a
+  translation that disagrees with it somewhere would be a second, unintended
+  contract. Both files therefore open with one paragraph saying they are
+  unofficial, that the English original governs, and that it wins on any
+  discrepancy — the practice CC, the FSF and every distribution that ships
+  translated licences follow (user's decision, 2026-08-22). A gate test asserts
+  that paragraph is still there, because it is the one part of this that cannot
+  be walked back after a release.
+- **Where they live, and why not next to their originals.** `docs/legal/`, not
+  the repository root: the root's `LICENSE*` namespace belongs to the scanners.
+  A root `LICENSE.ru.md` is matched by `licensee` and friends by glob, and a
+  second licence-shaped file there is how the `MIT` identifier we publish stops
+  being believed — the same failure the disclaimer was split out to avoid.
+- **The licence translation is `.txt` and the disclaimer's is `.md`**, each
+  keeping its original's shape, because each is read by the renderer written for
+  that shape. The "License" tab reflows paragraphs and renders no markdown: a `#`
+  or a `[link](target)` in that file would reach the screen verbatim — and the
+  wizard's RTF converter would carry the same text into the installer. The
+  extension says so, and `the_russian_license_is_paragraphs_only` holds it.
+- **The tab follows the interface language** (user's decision), which is also the
+  only option the geometry left: a separate pair of tabs was out because the `ru`
+  strip already measures exactly 76 of the dialog's 76 minimum columns — the gate
+  test `the_help_tab_strip_fits_the_dialog_in_every_locale` exists because the
+  sixth tab overflowed it once. `Lang::Ru` gets the translation, everything else
+  — an external `data/locales/<code>.json` bundle included — the English
+  original, since a user-supplied bundle bringing legal text would mean shipping
+  someone else's text as ours.
+- **The mapping is `credits`', not the call site's.** `license_text(lang)` /
+  `disclaimer_text(lang)` next to the `include_str!`s they choose between, so the
+  help dialog and any later reader cannot disagree about which text is "the" one
+  for a language — the reasoning that put `secret_key()` on the settings struct
+  in the external-API-key track. The tabs just pass the `Locale` they already had.
+- **The structural gate is the interesting one.** A section quietly missing from
+  one language is invisible to anyone reading the other, so
+  `the_russian_disclaimer_mirrors_the_originals_structure` compares the *shape* of
+  the two files — the sequence of heading levels, the number of list items, the
+  rules — rather than trusting a translator (human or model) to have kept all
+  seven sections.
+- **One wording fix came from looking at it.** Our markdown renderer prints a
+  link's target after its text (a terminal cannot click), so
+  `[LICENSE.ru.txt](LICENSE.ru.txt)` drew "LICENSE.ru.txt (LICENSE.ru.txt)". The
+  preamble's link texts were reworded to describe rather than repeat the target —
+  worth knowing before writing markdown that this renderer will show.
+- **Tests**: **2443 unit tests green** (+5), 106 `#[ignore]`; `fmt`/`clippy -D
+  warnings`/`cyrillic_scan`/`link_check`/`doc_index_check`/`wizard_rtf --check`
+  clean. The two translations join `cyrillic_scan.py`'s allowlist for the reason
+  `locales/ru.json` is on it: Russian *is* their content.
+- **A live run isn't required** (AGENTS.md §3) — two documents, an accessor pair
+  and a tab's argument list; no engine, memory, tool or provider path is touched.
+  The tabs were still rendered in both languages through the whole screen (the
+  new test does it, and the layout was eyeballed from a 100×44 dump).

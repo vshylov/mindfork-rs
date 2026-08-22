@@ -164,6 +164,14 @@ SKIP_FILES = {
     # byte-offset-vs-char-offset bug that ASCII would not trigger. Inline
     # markers cannot be used there without breaking the table/code fence.
     "docs/research/mermaid-ascii-rendering.md",
+    # The Russian legal texts: translations of LICENSE and DISCLAIMER.md, shown
+    # on the app's F1 tabs and on the ru installer's wizard pages
+    # (docs/history/legal-ru-translations.md). Russian *is* their content — the same
+    # reason locales/ru.json is here. The RTFs generated from them for the
+    # wizard need no entry: tools/wizard_rtf.py escapes every non-ASCII
+    # character, so those files are pure ASCII.
+    "docs/legal/LICENSE.ru.txt",
+    "docs/legal/DISCLAIMER.ru.md",
 }
 
 # Opt-in markers for content that must stay Cyrillic because the text *is* the

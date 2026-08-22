@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Render `DISCLAIMER.md` into the RTF the Windows installer shows on its
-"Information" page (`packaging/windows/mindfork.iss`, `InfoBeforeFile`).
+"""Render the installer's legal pages into the RTF Inno Setup can display
+(`packaging/windows/mindfork.iss`, `LicenseFile`/`InfoBeforeFile`).
 
 Why a generated file at all. Inno Setup's license and info pages take plain
 text or RTF and nothing else — the disclaimer is Markdown, and pointed at
@@ -13,9 +13,12 @@ wizard's copy is *derived*, committed next to the `.iss` (the installer
 compiles on a machine with no Python), and `--check` runs in CI's `lint` job so
 the two can never disagree.
 
-`LICENSE` needs none of this: it is plain ASCII text and the wizard's license
-page renders it as-is — which is also the point of keeping that file free of
-Markdown (see `credits::license_file_carries_nothing_but_the_mit_text`).
+The English `LICENSE` needs none of this: it is plain ASCII text and the
+wizard's license page renders it as-is — which is also the point of keeping that
+file free of Markdown (see `credits::license_file_carries_nothing_but_the_mit_text`).
+The **Russian** pages do need it, and for a second reason on top of the Markdown:
+a plain-text file full of Cyrillic would leave the compiler guessing at an
+encoding, while the output below is pure ASCII by construction.
 
 The Markdown subset is the one `DISCLAIMER.md` actually uses: ATX headings,
 paragraphs (hard-wrapped in the source, unwrapped here so the wizard's memo can
@@ -30,9 +33,12 @@ Every non-ASCII character becomes a `\\uNNNN?` escape, so the output is pure
 ASCII: no encoding negotiation with the compiler, and no Cyrillic for
 `cyrillic_scan.py` to trip over should the source ever gain any.
 
-The text is deliberately **not** translated for the `ru` wizard, matching the
-app itself (`shared/credits.rs`): the legal texts are English, only the page
-chrome around them is localized (by Inno's own `Russian.isl`).
+The `ru` wizard shows the **translations** under `docs/legal/`, matching the app
+itself (`shared/credits.rs`, `credits::license_text`): Inno takes
+`LicenseFile`/`InfoBeforeFile` per `[Languages]` entry, so each language's pages
+are chosen where its message file is. The English original governs, and each
+translation says so in its own first paragraph
+(`docs/history/legal-ru-translations.md` §2).
 
 Usage:
     python tools/wizard_rtf.py            # regenerate the RTF
@@ -45,10 +51,14 @@ import re
 import sys
 from pathlib import Path
 
-# The one source → output pair. A list, because the license page may one day
-# want the same treatment, and because a single place to look beats a constant
-# named after what it happens to hold today.
-PAIRS = [("DISCLAIMER.md", "packaging/windows/disclaimer.rtf")]
+# The source → output pairs. The English license page is absent on purpose: it
+# points at the root `LICENSE` directly, plain ASCII with no Markdown — the same
+# property that keeps the SPDX scanners honest is what makes it displayable.
+PAIRS = [
+    ("DISCLAIMER.md", "packaging/windows/disclaimer.rtf"),
+    ("docs/legal/DISCLAIMER.ru.md", "packaging/windows/disclaimer-ru.rtf"),
+    ("docs/legal/LICENSE.ru.txt", "packaging/windows/license-ru.rtf"),
+]
 
 # Half-point font sizes: body 9pt, `##` 11pt, `#` 13pt — the wizard's own
 # controls are 8pt, so the body stays a touch larger than its surroundings
@@ -60,7 +70,7 @@ HEADER = (
     "\n"
     r"{\fonttbl{\f0\fswiss\fcharset0 Segoe UI;}{\f1\fmodern\fcharset0 Consolas;}}"
     "\n"
-    r"{\*\comment Generated from DISCLAIMER.md by tools/wizard_rtf.py - do not edit.}"
+    r"{\*\comment Generated from %SOURCE% by tools/wizard_rtf.py - do not edit.}"
     "\n"
     rf"\viewkind4\f0\fs{BODY_FS}"
     "\n"
@@ -143,8 +153,10 @@ def rule() -> str:
     return r"\pard\sb120\sa120\brdrb\brdrs\brdrw10\brsp40\par" + "\n"
 
 
-def render(markdown: str) -> str:
-    """The Markdown subset above → a complete RTF document."""
+def render(markdown: str, source: str = "DISCLAIMER.md") -> str:
+    """The Markdown subset above → a complete RTF document, stamped with the file
+    it came from: an `.rtf` opened on its own has to say what regenerates it, and
+    there are three of them now."""
     body: list[str] = []
     pending: list[str] = []  # the paragraph or list item being accumulated
     pending_is_bullet = False
@@ -174,7 +186,7 @@ def render(markdown: str) -> str:
             # list item, whichever is open.
             pending.append(stripped)
     flush()
-    return HEADER + "".join(body) + "}\n"
+    return HEADER.replace("%SOURCE%", source) + "".join(body) + "}\n"
 
 
 def repo_root() -> Path:
@@ -186,7 +198,7 @@ def main() -> int:
     root = repo_root()
     stale = []
     for src_rel, out_rel in PAIRS:
-        wanted = render((root / src_rel).read_text(encoding="utf-8"))
+        wanted = render((root / src_rel).read_text(encoding="utf-8"), src_rel)
         out = root / out_rel
         # Compared as text, not bytes: the line endings are the checkout's
         # business (`.gitattributes`), not this gate's.
@@ -203,9 +215,9 @@ def main() -> int:
         for src_rel, out_rel in stale:
             print(f"STALE: {out_rel} does not match {src_rel}", file=sys.stderr)
         print(
-            "\nThe Windows installer shows the disclaimer from the generated RTF, so it\n"
+            "\nThe Windows installer shows its legal pages from the generated RTF, so it\n"
             "would present a different text than the repository, the release archives\n"
-            "and the app's F1 tab. Regenerate and commit:\n"
+            "and the app's F1 tabs. Regenerate and commit:\n"
             "    python tools/wizard_rtf.py",
             file=sys.stderr,
         )
@@ -214,7 +226,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # The disclaimer carries em-dashes; on Windows the console defaults to
+    # The legal texts carry em-dashes; on Windows the console defaults to
     # cp1252, where printing one raises UnicodeEncodeError and kills the run
     # exactly when the report is needed (the trap `doc_index_check.py` hit).
     if hasattr(sys.stdout, "reconfigure"):

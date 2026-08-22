@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **The licence and the disclaimer in Russian** — with the interface language
+  set to Russian, the `F1` → "Licence"/"Disclaimer" tabs and the Windows
+  installer's two legal pages show a Russian text instead of an English one.
+  The translations are unofficial and say so in their first paragraph: the
+  English originals are the texts that have legal force. Both travel with the
+  product, next to the originals, in the archives, the Linux packages and the
+  installed folder.
 - **See what the assistant changed in your project, and undo it** — `F4` (or
   `/changes`) opens a screen listing every file it touched, with the changes
   shown as a diff against the file as it was before it was first touched.

@@ -1,6 +1,7 @@
 ﻿; The Inno Setup installer script for mindfork-rs on Windows (§3.3 docs/history/installers.md).
-; The stock legal pages (the MIT license, then the disclaimer — see [Setup] below) and
-; two custom ones — "Application language" and "Data location" — with the choice written
+; The stock legal pages (the MIT license, then the disclaimer — see [Setup] and
+; [Languages] below, one text per language) and two custom ones — "Application
+; language" and "Data location" — with the choice written
 ; into defaults.json next to the binary. A bilingual UI (ru/en), a per-user install
 ; with no UAC. The script is compatible with Inno Setup 6.7.x.
 ;
@@ -29,22 +30,28 @@ AppPublisherURL=https://mindfork.io
 AppSupportURL=https://github.com/vshylov/mindfork-rs/issues
 AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
 ; The two legal pages, in the order the wizard shows them:
-;  * the MIT text on Inno's own license page (accept/decline gates Next). It points
-;    straight at the root LICENSE — plain ASCII with no markdown, which is exactly
-;    the shape a gate test already holds it to (credits::license_file_carries_
-;    nothing_but_the_mit_text), so the wizard needs no copy of its own;
-;  * the disclaimer (DISCLAIMER.md) on the "info before install" page: read-only,
-;    Next continues. It is a supplement to the license, not a second contract, so
-;    it gets one acceptance rather than two. That file IS markdown, and Inno renders
-;    only text or RTF — hence the generated `disclaimer.rtf` next to this script,
-;    which `tools/wizard_rtf.py --check` keeps in step with the source in CI's lint
-;    job. Never edit the .rtf by hand: the installer would then present a different
-;    text than the repository, the release archives and the app's F1 tab.
-; Both texts stay English in the ru wizard, as they do in the app (shared/credits.rs)
-; — only the page chrome around them is localized (by Inno's own Russian.isl, plus
-; the [Messages] overrides below).
-LicenseFile={#SourcePath}..\..\LICENSE
-InfoBeforeFile={#SourcePath}disclaimer.rtf
+;  * the MIT text on Inno's own license page (accept/decline gates Next);
+;  * the disclaimer on the "info before install" page: read-only, Next continues.
+;    It is a supplement to the license, not a second contract, so it gets one
+;    acceptance rather than two.
+; WHICH text each page shows is a per-language choice, so it lives in [Languages]
+; below, on the same line as that language's message file — one place to look,
+; rather than a default here and an override there. What the entries point at:
+;  * en — the root LICENSE, extension-less file and all: plain ASCII with no
+;    markdown, which is exactly the shape a gate test already holds it to
+;    (credits::license_file_carries_nothing_but_the_mit_text), so the English
+;    license page needs no copy of its own; and the generated disclaimer.rtf,
+;    because DISCLAIMER.md IS markdown and Inno renders only text or RTF;
+;  * ru — license-ru.rtf and disclaimer-ru.rtf, generated from the translations
+;    under docs/legal/. They are unofficial translations, each saying so in its
+;    own first paragraph, with the English original governing
+;    (docs/history/legal-ru-translations.md). Generated for the markdown, and for the
+;    encoding: an RTF of \uNNNN? escapes is pure ASCII, where a Cyrillic .txt
+;    would leave the compiler guessing.
+; All three .rtf files come from tools/wizard_rtf.py, kept in step with their
+; sources by `--check` in CI's lint job. Never edit one by hand: the installer
+; would then present a different text than the repository, the release archives
+; and the app's F1 tabs.
 DefaultDirName={autopf}\mindfork-rs
 DefaultGroupName=mindfork-rs
 DisableProgramGroupPage=yes
@@ -68,8 +75,10 @@ SetupIconFile={#SourcePath}..\..\artwork\mindfork.ico
 WizardSmallImageFile={#SourcePath}..\..\artwork\mindfork-wizard-small.png
 
 [Languages]
-Name: "en"; MessagesFile: "compiler:Default.isl"
-Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
+Name: "en"; MessagesFile: "compiler:Default.isl"; \
+  LicenseFile: "{#SourcePath}..\..\LICENSE"; InfoBeforeFile: "{#SourcePath}disclaimer.rtf"
+Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"; \
+  LicenseFile: "{#SourcePath}license-ru.rtf"; InfoBeforeFile: "{#SourcePath}disclaimer-ru.rtf"
 
 ; The stock "info before install" page calls itself "Information" and asks the user to
 ; read "important information" — true of a readme, and an understatement for a notice
@@ -78,7 +87,8 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 ; two steps rather than one page plus a stray readme. The ru caption is the borrowed
 ; "дисклеймер" (cyrillic-ok: the ru caption itself), the same word the app's F1
 ; tab settled on (locales/ru.json, ui.help.tab.disclaimer): the native alternative
-; mostly means a slip of the tongue.
+; mostly means a slip of the tongue. The text on the page is Russian too now
+; (see [Languages]); before this, only the caption ever was.
 ; InfoBeforeClickLabel ("When you are ready to continue with Setup, click Next") is
 ; left at Inno's default — it says the right thing already.
 [Messages]
@@ -140,6 +150,10 @@ Source: "{#SourcePath}..\..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversio
 Source: "{#SourcePath}..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; The model-output disclaimer travels with the license it supplements.
 Source: "{#SourcePath}..\..\DISCLAIMER.md"; DestDir: "{app}"; Flags: ignoreversion
+; ...and so do the Russian translations of the pair, flattened next to their
+; originals: whoever read the ru pages in this wizard can find that text again.
+Source: "{#SourcePath}..\..\docs\legal\LICENSE.ru.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\..\docs\legal\DISCLAIMER.ru.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

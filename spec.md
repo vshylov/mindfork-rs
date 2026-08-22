@@ -2524,8 +2524,14 @@ the screen instead of shrinking further (a hard degradation). The logo is drawn 
 when there's enough height/width (a hard degradation, docs/branding.md §5); the license
 text wraps by word to the dialog's width, and the disclaimer — markdown at the source —
 goes through our own renderer (ADR 0003), with wrapped list items hung under their marker.
-The "License"/"Disclaimer"/"Components" tabs'
-data is language-neutral and comes straight from `shared/credits.rs`, bypassing the locale bundles.
+The "License"/"Disclaimer"/"Components" tabs' data comes straight from
+`shared/credits.rs`, bypassing the locale bundles — "Components" because it is language-neutral
+(names/versions/SPDX), the two legal tabs because they are whole **documents**: `ru` shows the
+translations under `docs/legal/` and every other language (an external bundle included) the
+authoritative English original, chosen by `credits::license_text`/`disclaimer_text`. The
+translations are unofficial and say so in their own first paragraph — the English text governs, and
+a locale bundle cannot bring legal text of its own. A separate pair of tabs for them was never an
+option: the `ru` strip already measures exactly the dialog's minimum width (below).
 The **disclaimer is a tab of its own, not a tail on "License"**: the `LICENSE` file must stay
 byte-identical to the canonical MIT text or the `MIT` SPDX identifier we publish stops being
 truthful and license scanners start reporting "Other" (a `shared::credits` gate test holds

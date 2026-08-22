@@ -164,12 +164,16 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-21, version 0.9.7)
+## Status (2026-08-22, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2438 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2443 unit tests
 green, 106 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator). The
-most recent tracks: **a code project attached to a chat**
+most recent tracks: **the licence and the disclaimer in Russian**
+(unofficial translations under `docs/legal/`, on the `F1` tabs and the ru
+installer's wizard pages, chosen by interface language — the English originals
+govern; [docs/history/legal-ru-translations.md](docs/history/legal-ru-translations.md)),
+**a code project attached to a chat**
 (`/project attach <directory>`; the assistant can list, read, search and change
 it, run the user's build/run/test command lines, and `F4` shows everything it
 changed as a diff with per-file revert — stages 1–4. Three load-bearing

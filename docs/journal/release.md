@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -35,6 +35,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: demo screenshots — the canvas padding measured in cells (done)
 - Post-M9: the Windows installer shows the license and the disclaimer (done)
 - Release 0.9.7 (prepared)
+- Post-M9: the installer's legal pages speak Russian (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1253,3 +1254,47 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   green too. No live run needed (version + docs + site content, app code
   untouched). CLAUDE.md's "## Status" header carries the new version; its test
   count and date were already current.
+
+### Post-M9: the installer's legal pages speak Russian (done)
+- **The packaging half** of the track whose app side is in
+  [ui-screens.md](ui-screens.md) ("the licence and the disclaimer in Russian");
+  plan: [docs/history/legal-ru-translations.md](../history/legal-ru-translations.md).
+  The `ru` wizard showed a page whose caption was already the borrowed Russian
+  word and then handed the reader the English notice; both legal pages now show
+  the translation.
+- **Inno takes the pages per language.** `LicenseFile`/`InfoBeforeFile` are
+  `[Languages]` parameters, not only `[Setup]` directives, so both moved out of
+  `[Setup]` onto the language entries — one place answering "which text does this
+  wizard show", rather than a default in one section and an override in another.
+  The `en` wizard is byte-for-byte what it was.
+- **The RTF converter grew from one pair to three.** `tools/wizard_rtf.py`'s
+  `PAIRS` was written as a list because "the license page may one day want the
+  same treatment" — this was the day. The Russian pages need generating for the
+  markdown *and* for the encoding: every non-ASCII character becomes a `\uNNNN?`
+  escape, so a page of Cyrillic reaches ISCC as pure ASCII and neither the
+  compiler nor `cyrillic_scan.py` has to care. The English `LICENSE` still needs
+  no copy — plain ASCII, pointed at directly. Each generated file is now stamped
+  with the source it came from, since three of them share one "do not edit" note.
+- **Live run — GO** (Inno Setup 6.7 on the dev machine; packaging, so no model is
+  involved). The `.iss` compiles, and the wizard was launched in **both** locales
+  (`/CURRENTUSER /LANG=en|ru`) and screenshotted on each legal page. The `ru`
+  licence page renders the translation with the Next button disabled until the
+  accept radio is chosen, and the `ru` disclaimer page renders real headings, bold and
+  monospaced `llama.cpp` — which is what proves a whole document of `\uNNNN?`
+  escapes survives RichEdit, not just the em dashes the English page tested.
+  Nothing was installed (the wizard was killed after the captures) and the test
+  `setup.exe` was deleted.
+- **Two GUI-automation notes for the next such run**, on top of the earlier
+  entry's (drive with `Tab`+arrows, not the accept radio's `Alt+A`, which is a
+  different letter in `ru`; capture the whole screen, not the window):
+  `Setup.exe` re-launches itself, so the PID `Start-Process` returns is not the
+  window's — find the window, then **verify it is in the foreground before
+  sending a single key**, or the keystrokes land in whatever the user has open.
+  And there is no Welcome page (Inno 6 disables it under `WizardStyle=modern`),
+  so the licence page is the *first* page, not the second.
+- **Both translations ship**, next to the originals they translate: the release
+  archives' doc set, the `.deb`/`.rpm`/`.pkg` doc directory and the installed
+  folder (user's decision) — someone who read a Russian page in the wizard can
+  find that text again afterwards.
+- **Checks**: 2443 unit tests green, 106 `#[ignore]`; `fmt`/`clippy -D warnings`
+  /`cyrillic_scan`/`link_check`/`doc_index_check`/`wizard_rtf --check` clean.

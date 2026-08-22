@@ -223,8 +223,9 @@ src/
 │  │  ├─ feed.rs            projects AppEvent into the feed (messages/generation/tool/tokens)
 │  │  ├─ input.rs           key/mouse/paste handling, draft, spellcheck, commands
 │  │  ├─ popups.rs          popups: spellcheck, confirmation, emoji, help. The help
-│  │  │                     dialog's tabs (spec §11.7); "Disclaimer" renders
-│  │  │                     DISCLAIMER.md through shared::markdown (ADR 0003)
+│  │  │                     dialog's tabs (spec §11.7); "License"/"Disclaimer" show
+│  │  │                     the text for the interface language (credits::license_text),
+│  │  │                     the disclaimer through shared::markdown (ADR 0003)
 │  │  ├─ impersonation.rs   preview of the reply written on the user's behalf (Ctrl+U)
 │  │  ├─ rag.rs             RAG indexing progress banner (RagBanner: before/name/location/after,
 │  │  │                     fitted to the row at render time — location dropped, name elided)
@@ -478,9 +479,13 @@ src/
    ├─ credits.rs           app metadata for the "About" dialog (F1): brand name,
    │                       author, links, license text (MIT), the model-output
    │                       disclaimer (DISCLAIMER.md — a supplement, kept OUT of
-   │                       LICENSE so the MIT text stays byte-identical), components
+   │                       LICENSE so the MIT text stays byte-identical), plus the
+   │                       Russian translations of both (docs/legal/, unofficial —
+   │                       license_text/disclaimer_text pick by interface language),
+   │                       components
    │                       (name/version/license) + gates (names ↔ Cargo.toml,
-   │                       versions ↔ Cargo.lock, LICENSE carries nothing but MIT)
+   │                       versions ↔ Cargo.lock, LICENSE carries nothing but MIT,
+   │                       each translation mirrors its original's structure)
    ├─ markdown/            our own pulldown-cmark renderer (ADR 0003): tables + LaTeX +
    │  │                    theme. God object broken up by subsystem (docs/refactoring-god-
    │  │                    objects.md, stage 6; internal wiring via re-export; subsystem

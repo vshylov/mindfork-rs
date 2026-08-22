@@ -518,8 +518,8 @@ pub(super) fn render_help(
             loc,
             inner_w,
         ),
-        HelpTab::License => license_lines(palette, inner_w),
-        HelpTab::Disclaimer => disclaimer_lines(palette, inner_w),
+        HelpTab::License => license_lines(palette, loc, inner_w),
+        HelpTab::Disclaimer => disclaimer_lines(palette, loc, inner_w),
         HelpTab::Components => component_lines(palette, loc, inner_w),
     };
     let total = content.len();
@@ -755,19 +755,21 @@ fn span_width(span: &Span<'_>) -> usize {
     wrap::display_width(&span.content.chars().collect::<Vec<_>>())
 }
 
-/// The "License" tab: the app's license text (MIT). Paragraphs (separated by a
-/// blank line in the file) are reassembled and word-wrapped to the content width
-/// `width` — the source's hard wrap at ~76 columns would otherwise clip on the
-/// right, while wrapping line-by-line would leave orphaned words. Wrapping
+/// The "License" tab: the app's license text (MIT), in the interface language —
+/// `credits::license_text` picks the authoritative English original or its
+/// Russian translation (docs/history/legal-ru-translations.md). Paragraphs (separated by
+/// a blank line in the file) are reassembled and word-wrapped to the content
+/// width `width` — the source's hard wrap at ~76 columns would otherwise clip on
+/// the right, while wrapping line-by-line would leave orphaned words. Wrapping
 /// produces logical lines, so the scroll/scrollbar model (by line count) isn't
 /// broken. Assembly via `lines()` is CRLF-safe.
-fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
+fn license_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
     // Assemble paragraphs: non-empty lines are joined with a space, an empty one
     // is a boundary.
     let mut paras: Vec<String> = Vec::new();
     let mut cur = String::new();
-    for raw in credits::LICENSE_TEXT.lines() {
+    for raw in credits::license_text(loc.lang()).lines() {
         if raw.trim().is_empty() {
             if !cur.is_empty() {
                 paras.push(std::mem::take(&mut cur));
@@ -806,9 +808,14 @@ fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
 /// deliberately does not wrap paragraphs (that is the feed's job), so the
 /// logical lines it returns are wrapped here, exactly as
 /// [`crate::widgets::message_feed`] does it.
-fn disclaimer_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
+///
+/// Which of the two texts, like the license tab's: the interface language picks
+/// it, and the translation is written to the same markdown subset, so nothing
+/// new reaches the renderer.
+fn disclaimer_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
-    let rendered = crate::shared::markdown::render(credits::DISCLAIMER_TEXT, body_w, palette);
+    let rendered =
+        crate::shared::markdown::render(credits::disclaimer_text(loc.lang()), body_w, palette);
     let mut lines = vec![Line::raw("")];
     for line in rendered.lines {
         // A wrapped list item is indented under its own marker: the feed can
