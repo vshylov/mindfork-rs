@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Esc` retraces a followed `chat://` reference (done)
 - Post-M9: the model's name on the assistant's header (done)
 - Post-M9: the indexing banner fits its row, the collapsed pill wraps whole (done)
+- Post-M9: a tool card lists its arguments in the tool's own order (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1903,3 +1904,51 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   text" in `fit` fails all four banner tests. Suite **2425 → 2437**. **No
   live run** (AGENTS.md §3): pure UI, no engine, memory or tool path touched;
   the real render was checked by eye at 60/80/100 columns.
+
+### Post-M9: a tool card lists its arguments in the tool's own order (done)
+- **The report was about one card, the cause was in every card.** With
+  `call_subagent` expanded, the feed showed `message:` above `system_message:` —
+  the request before the persona it was addressed to. Nothing in the subagent
+  tool decides that: `full_args` iterated the parsed arguments, and a
+  `serde_json::Map` without the `preserve_order` feature is a `BTreeMap`, so the
+  listing was alphabetical. `message` sorts before `system_message`, and the same
+  sort put `code_edit`'s `new_string` above the `path` it edits, `fs_write`'s
+  `append` above both, and `note_revise`'s `content` above the `id` it revises.
+- **What the alphabetical order was chosen for still holds**, and is why the fix
+  is a table rather than a switch: the wire format does not preserve the order
+  the model wrote the arguments in (the deltas arrive as a JSON *string*, and it
+  is parsed into a `BTreeMap`), so "as the model sent it" is not available at
+  all. `preserve_order` would only make the map keep whatever order the parse
+  saw — and it is a crate-wide feature, so it would also reorder every
+  config/profile/chat file the JSON storage writes. Rejected on both counts.
+- **`FIELD_ORDER` in `features/tools/present.rs`**: tool name → its schema's
+  field order, for the 18 tools where that differs from alphabetical. It belongs
+  next to `code_field` and `PROSE_RESULT_TOOLS` — per-tool knowledge addressed by
+  string literal is what this module already is (the names are a stable wire
+  protocol; the model reads them too). One helper, `ordered_fields`, is used by
+  all three iteration sites (`full_args`, `scalar_pairs`, `big_string_block`), so
+  the expanded listing, the compact header and the choice of *which* large field
+  becomes the block cannot drift apart.
+- **A tool the table does not name keeps the old behaviour** — an MCP tool above
+  all, whose name is not knowable here — and so does an argument it does not
+  name: listed after the ones it does, alphabetically. A schema that grows a
+  field never loses it from the card.
+- **The drift guard is the interesting test.** The table addresses tools and
+  fields by literal, where a rename would silently do nothing, so
+  `field_order_matches_the_registry_schemas` builds `standard_registry` and
+  asserts every entry names a registered tool and **exactly** its schema's
+  properties — set equality, not inclusion, so a tool that gains an argument
+  fails the test until the table says where it goes. The order itself is the one
+  thing the schema cannot tell us back: `json!` builds a `BTreeMap` too, which is
+  also why declaring the order in `Tool::parameters` was never an option.
+- **Two existing expectations changed and one moved**: the `note_link` and
+  `fetch_url` presenter tests spelled out the alphabetical order and now spell
+  out the schema's, and the feed's `expanding_a_card_shows_the_request_in_full`
+  asserted the collapsed header dropped the URL's tail — with `url` first it is
+  the `focus` value that falls off the end, so the assertion anchors on that
+  instead. All three are the intended change, not collateral: the header lists
+  arguments in the same order as the listing under it.
+- **Tests**: 4 new (the schema order for `call_subagent`, an unlisted argument
+  kept after the listed ones, an unlisted tool still alphabetical, the registry
+  drift guard). Suite **2443 → 2447**. **No live run** (AGENTS.md §3): pure UI,
+  the presenter is a pure layer and no engine, memory or tool path is touched.

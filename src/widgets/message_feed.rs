@@ -2219,8 +2219,10 @@ mod tests {
         });
         let collapsed = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 100, ru()));
         assert!(collapsed.contains('…'), "collapsed truncates: {collapsed}");
+        // What falls off is the tail of the header, and the header lists the
+        // arguments in the tool's own order (`url` first — see FIELD_ORDER).
         assert!(
-            !collapsed.contains("past/any/header"),
+            !collapsed.contains("management modes"),
             "collapsed stays a summary: {collapsed}"
         );
 
