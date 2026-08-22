@@ -1959,9 +1959,14 @@ this?"*; this screen answers *"where exactly, and take me there."*
   `│` gutter** rather than being blank — a blank row would cut the card in two. A value that
   cannot share a line with its key — code, a large or multiline string — goes
   under a `key:` label as its own block, so `python_exec`'s code keeps its
-  highlighting and still says which argument it is. Field order is
-  `serde_json::Map`'s (alphabetical), which the wire format does not let us
-  improve on. The detail level is [`ArgDetail`] on the presenter — the
+  highlighting and still says which argument it is. Field order is the **tool's
+  own** — its schema order, from a table in the presenter (`FIELD_ORDER`), for
+  the tools where that differs from the alphabetical order a `serde_json::Map`
+  iterates in; the wire format does not preserve the model's own order, and
+  alphabetical put `call_subagent`'s request above the persona it was addressed
+  to. An argument the table does not name (a schema that grew, an MCP tool) is
+  listed after the ones it does, alphabetically. The same order applies to the
+  compact header. The detail level is [`ArgDetail`] on the presenter — the
   dangerous-tool confirmation popup (§9.8) stays `Compact`, being a decision
   prompt rather than a viewer.
   **The state is stored per chat** (`Chat.feed_view`, the [`Chat::draft`

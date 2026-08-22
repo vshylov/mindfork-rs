@@ -180,23 +180,30 @@ fn code_block(name: &str, map: &serde_json::Map<String, Value>) -> Option<(ToolB
     ))
 }
 
-/// The first large string field as a plain block (e.g. `content` for note_save,
-/// `text` for rag_add) — the fallback when the tool has no code field of its own.
-fn big_string_block(map: &serde_json::Map<String, Value>) -> Option<(ToolBlock, String)> {
-    map.iter().find_map(|(k, v)| match v {
-        Value::String(s) if is_big(s) => Some((ToolBlock::Plain(s.clone()), k.clone())),
-        _ => None,
-    })
+/// The first large string field **in display order** ([`ordered_fields`]) as a
+/// plain block (e.g. `content` for note_save, `text` for rag_add) — the fallback
+/// when the tool has no code field of its own.
+fn big_string_block(
+    name: &str,
+    map: &serde_json::Map<String, Value>,
+) -> Option<(ToolBlock, String)> {
+    ordered_fields(name, map)
+        .into_iter()
+        .find_map(|(k, v)| match v {
+            Value::String(s) if is_big(s) => Some((ToolBlock::Plain(s.clone()), k.clone())),
+            _ => None,
+        })
 }
 
-/// The short scalar fields, in the map's order, skipping the one already shown
-/// as a block.
+/// The short scalar fields, in display order ([`ordered_fields`]), skipping the
+/// one already shown as a block.
 fn scalar_pairs(
+    name: &str,
     map: &serde_json::Map<String, Value>,
     consumed: Option<&str>,
 ) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
-    for (k, v) in map.iter() {
+    for (k, v) in ordered_fields(name, map) {
         if consumed == Some(k.as_str()) {
             continue;
         }
@@ -227,13 +234,13 @@ fn compact_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
     };
 
     // At most one block, and the tool's own code field outranks the fallback.
-    let (blocks, consumed) = match code_block(name, map).or_else(|| big_string_block(map)) {
+    let (blocks, consumed) = match code_block(name, map).or_else(|| big_string_block(name, map)) {
         Some((block, field)) => (vec![block], Some(field)),
         None => (Vec::new(), None),
     };
     // The remaining short scalar fields → a compact header.
     (
-        header_from_pairs(&scalar_pairs(map, consumed.as_deref())),
+        header_from_pairs(&scalar_pairs(name, map, consumed.as_deref())),
         blocks,
     )
 }
@@ -244,10 +251,11 @@ fn compact_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
 /// and objects (which the header cannot represent at all) are shown as compact
 /// JSON.
 ///
-/// Field order is `serde_json::Map`'s, i.e. **alphabetical** (a `BTreeMap`
-/// without the `preserve_order` feature) — not the order the model wrote them
-/// in, which the wire format does not preserve for us. Stable either way, which
-/// is what matters for something read repeatedly.
+/// Field order is the tool's own, when [`FIELD_ORDER`] knows it, and otherwise
+/// `serde_json::Map`'s, i.e. **alphabetical** (a `BTreeMap` without the
+/// `preserve_order` feature) — never the order the model wrote them in, which
+/// the wire format does not preserve for us. Stable either way, which is what
+/// matters for something read repeatedly.
 fn full_args(name: &str, raw: &str, val: Option<&Value>) -> Vec<ToolBlock> {
     let Some(Value::Object(map)) = val else {
         // Not a JSON object (a parse failure, an array, a bare scalar): the raw
@@ -261,7 +269,7 @@ fn full_args(name: &str, raw: &str, val: Option<&Value>) -> Vec<ToolBlock> {
     };
     let code = code_field(name, map);
     let mut blocks = Vec::new();
-    for (k, v) in map.iter() {
+    for (k, v) in ordered_fields(name, map) {
         match v {
             // A field with a language of its own (python's `code`, fs_write's
             // `content`) — highlighted, under its label.
@@ -289,6 +297,81 @@ fn full_args(name: &str, raw: &str, val: Option<&Value>) -> Vec<ToolBlock> {
         }
     }
     blocks
+}
+
+/// Display order of a tool's arguments, for the tools whose schema order is not
+/// the alphabetical one a `serde_json::Map` iterates in (a `BTreeMap` without
+/// the `preserve_order` feature — the wire format does not preserve the model's
+/// own order for us either, see [`full_args`]).
+///
+/// Alphabetical is stable, which is what a card read repeatedly needs, but it is
+/// not *meaningful*: `call_subagent` listed its request before the persona it
+/// was addressed to, `code_edit` its replacement before the file. So each entry
+/// here is the tool's **schema order** — the same order the model reads the
+/// parameters in, and the order its author put them in.
+///
+/// Only the tools where the two orders differ are listed; for everything else
+/// (and for MCP tools, whose names are not known here) the map's own order is
+/// already the schema's. Names are string literals for the same reason the rest
+/// of this module matches them that way — they are a stable wire protocol; a
+/// typo or a rename is caught by `field_order_matches_the_registry_schemas`.
+const FIELD_ORDER: &[(&str, &[&str])] = &[
+    ("call_subagent", &["system_message", "message"]),
+    (
+        "code_edit",
+        &["path", "old_string", "new_string", "replace_all"],
+    ),
+    ("code_grep", &["pattern", "path", "glob"]),
+    ("code_list", &["path", "depth"]),
+    ("code_read", &["path", "offset", "limit"]),
+    ("code_write", &["path", "content"]),
+    ("fetch_url", &["url", "focus", "summarize"]),
+    ("fs_write", &["path", "content", "append"]),
+    ("note_link", &["from_id", "to_id", "relation"]),
+    ("note_merge", &["ids", "content"]),
+    ("note_recall", &["query", "tags", "limit"]),
+    ("note_revise", &["id", "content"]),
+    ("note_supersede", &["old_id", "content"]),
+    ("rag_add", &["text", "source"]),
+    (
+        "update_self_model",
+        &["summary", "add_goals", "complete_goals", "abandon_goals"],
+    ),
+    (
+        "update_user_model",
+        &[
+            "add_traits",
+            "remove_traits",
+            "add_interests",
+            "remove_interests",
+            "relationship_dynamic",
+            "note",
+        ],
+    ),
+    ("web_search", &["query", "max_results", "fetch_content"]),
+    (
+        "youtube_watch",
+        &["url", "focus", "start", "end", "transcript"],
+    ),
+];
+
+/// The call's fields in display order: the ones [`FIELD_ORDER`] names for this
+/// tool first, in that order, then everything the table does not mention in the
+/// map's own (alphabetical) order — an argument stays visible whether or not the
+/// table knows about it.
+fn ordered_fields<'a>(
+    name: &str,
+    map: &'a serde_json::Map<String, Value>,
+) -> Vec<(&'a String, &'a Value)> {
+    let Some((_, order)) = FIELD_ORDER.iter().find(|(tool, _)| *tool == name) else {
+        return map.iter().collect();
+    };
+    let mut fields: Vec<(&String, &Value)> = order
+        .iter()
+        .filter_map(|field| map.get_key_value(*field))
+        .collect();
+    fields.extend(map.iter().filter(|(k, _)| !order.contains(&k.as_str())));
+    fields
 }
 
 /// A tool's "code field": the argument that is source text, and the language to
@@ -508,7 +591,7 @@ mod tests {
         let compact = present("fetch_url", args, "ok");
         assert_eq!(
             compact.header_suffix.as_deref(),
-            Some("summarize=true, url=http://x/y"),
+            Some("url=http://x/y, summarize=true"),
             "collapsed folds them into the header"
         );
         assert!(compact.args.is_empty());
@@ -517,8 +600,8 @@ mod tests {
         assert_eq!(full.header_suffix, None, "the name alone");
         assert_eq!(
             arg_text(&full),
-            "summarize: true\nurl: http://x/y",
-            "one line per argument"
+            "url: http://x/y\nsummarize: true",
+            "one line per argument, in the tool's own field order"
         );
     }
 
@@ -790,10 +873,11 @@ mod tests {
             r#"{"from_id":"a","to_id":"b","relation":"supports"}"#,
             "Связь создана",
         );
-        // serde_json::Map (BTreeMap) → keys are sorted.
+        // `note_link` is in FIELD_ORDER, so the fields keep the schema's order
+        // (alphabetically `relation` would come second).
         assert_eq!(
             p.header_suffix.as_deref(),
-            Some("from_id=a, relation=supports, to_id=b")
+            Some("from_id=a, to_id=b, relation=supports")
         );
         assert_eq!(p.result, vec![ToolBlock::Plain("Связь создана".into())]);
     }
@@ -842,5 +926,98 @@ mod tests {
         let p = present("note_save", &args, "ок");
         assert_eq!(p.header_suffix, None);
         assert_eq!(p.args, vec![ToolBlock::Plain(long)]);
+    }
+
+    #[test]
+    fn field_order_follows_the_tools_own_schema() {
+        // The complaint this table answers: `call_subagent` showed the request
+        // above the persona it was sent to, because a `serde_json::Map` is a
+        // BTreeMap and `message` sorts before `system_message`.
+        let args = serde_json::json!({
+            "system_message": "Ты рецензент. ".repeat(10),
+            "message": "Проверь этот вывод. ".repeat(10),
+        })
+        .to_string();
+        let full = super::present("call_subagent", &args, "", ArgDetail::Full);
+        let labels: Vec<&String> = full
+            .args
+            .iter()
+            .filter_map(|b| match b {
+                ToolBlock::Plain(t) if t.ends_with(':') => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["system_message:", "message:"],
+            "the schema's order, not the alphabetical one"
+        );
+    }
+
+    #[test]
+    fn field_order_keeps_an_unlisted_argument() {
+        // A field the table does not name (a provider extension, a schema that
+        // grew) still shows — after the listed ones, in the map's own order.
+        let args = r#"{"replace_all":true,"new_string":"b","old_string":"a","path":"src/x.rs","dry_run":true}"#;
+        let full = super::present("code_edit", args, "", ArgDetail::Full);
+        assert_eq!(
+            arg_text(&full),
+            "path: src/x.rs
+old_string: a
+new_string: b
+replace_all: true
+dry_run: true"
+        );
+    }
+
+    #[test]
+    fn unlisted_tool_keeps_the_alphabetical_order() {
+        // Everything the table does not mention — an MCP tool above all, whose
+        // name is not knowable here — keeps the map's order, as before.
+        let args = r#"{"zeta":1,"alpha":2}"#;
+        let full = super::present("mcp__server__whatever", args, "", ArgDetail::Full);
+        assert_eq!(
+            arg_text(&full),
+            "alpha: 2
+zeta: 1"
+        );
+    }
+
+    #[test]
+    fn field_order_matches_the_registry_schemas() {
+        // The table addresses tools and fields by string literal; a rename or a
+        // typo would silently do nothing. Every entry must name a registered
+        // tool and only fields its schema declares (the order itself the schema
+        // cannot tell us back — `json!` builds a BTreeMap too).
+        use crate::features::tools::{ToolConfig, standard_registry};
+        let reg = standard_registry(&ToolConfig::default());
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        for (tool, fields) in FIELD_ORDER {
+            let t = reg
+                .get(tool)
+                .unwrap_or_else(|| panic!("{tool} not registered"));
+            let schema = t.parameters(loc);
+            let props = schema
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .unwrap_or_else(|| panic!("{tool}: no properties in the schema"));
+            for field in *fields {
+                assert!(
+                    props.contains_key(*field),
+                    "{tool}: no such argument {field}"
+                );
+            }
+            assert_eq!(
+                fields.len(),
+                props.len(),
+                "{tool}: the table lists {:?}, the schema {:?}",
+                fields,
+                props.keys().collect::<Vec<_>>()
+            );
+        }
+        let mut names: Vec<&str> = FIELD_ORDER.iter().map(|(t, _)| *t).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), FIELD_ORDER.len(), "a tool listed twice");
     }
 }

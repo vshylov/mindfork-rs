@@ -58,6 +58,12 @@ split by subsystem.
 
 ### Changed
 
+- **An expanded tool card lists the call's arguments in the tool's own order.**
+  Before, they were sorted alphabetically, which read as scrambled: a subagent
+  call showed the request above the instruction it was sent with, and a file
+  edit showed the replacement text above the file's path. Every card now follows
+  the order the tool declares its arguments in, and the collapsed one-line header
+  follows the same order.
 - **The Windows installer is a 64-bit program now.** It installs exactly what it
   installed before, but it refuses a system that cannot run mindfork-rs before
   the wizard opens rather than on a page inside it — the program is 64-bit only,
