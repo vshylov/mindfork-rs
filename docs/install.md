@@ -42,7 +42,9 @@ verify integrity against the release's `sha256sums.txt`.
 
 ### Windows installer
 
-Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It installs
+Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It is a
+64-bit program, like the application it carries, so on a system that cannot run
+mindfork-rs it does not open at all. It installs
 **for the current user without administrator rights** (an "all users" option is
 available). It opens with the **MIT license** (which has to be accepted to
 continue) and the **disclaimer** — the same text as

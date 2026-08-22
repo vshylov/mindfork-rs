@@ -95,7 +95,8 @@ jobs:
     name: Windows installer (Inno Setup)
     needs: build
     runs-on: windows-latest
-    # Measured: 0.6–0.7 min on every release so far; `choco install` is the network part.
+    # Measured: 0.6–0.7 min on every release so far; the compiler download (14 MB) is
+    # the network part, and it replaced a `choco install` of comparable weight.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -104,19 +105,18 @@ jobs:
         with:
           name: bin-windows
           path: bin
+      # The pinned Inno Setup 7 (hash-verified), the same one packaging.yml's gate
+      # uses. $env:ISCC is its absolute path: PATH here still carries the runner
+      # image's chocolatey shim for Inno 6, so resolving by name would compile the
+      # release with the wrong compiler and say nothing (docs/research/inno-setup-7.md §4).
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        shell: pwsh
+        run: ./tools/install_inno.ps1
       - name: Compile the installer
         shell: pwsh
         run: |
           $ver = "${env:GITHUB_REF_NAME}" -replace '^v', ''   # v0.9.0 → 0.9.0
-          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) {
-            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
-                    Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $iscc) { throw "ISCC.exe not found" }
-          & $iscc "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
+          & $env:ISCC "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
       - uses: actions/upload-artifact@v5
         with:
           name: windows-installer

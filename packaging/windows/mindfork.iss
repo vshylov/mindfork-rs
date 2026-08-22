@@ -3,7 +3,12 @@
 ; [Languages] below, one text per language) and two custom ones — "Application
 ; language" and "Data location" — with the choice written
 ; into defaults.json next to the binary. A bilingual UI (ru/en), a per-user install
-; with no UAC. The script is compatible with Inno Setup 6.7.x.
+; with no UAC.
+;
+; The script requires **Inno Setup 7** — for SetupArchitecture (see [Setup]); everything
+; else here compiles on 6.7.x as well. CI installs the pinned compiler with
+; tools/install_inno.ps1, which is also the way to get locally the exact build the
+; releases are compiled with (docs/research/inno-setup-7.md).
 ;
 ; The version and the directory with the binary are passed to the compiler via /D:
 ;   ISCC.exe /DAppVersion=0.9.0 /DBinDir="C:\path\to\dir-with-exe" packaging\windows\mindfork.iss
@@ -58,6 +63,17 @@ DisableProgramGroupPage=yes
 ; Per-user by default (no UAC); the user can choose "for everyone" at startup.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+; The setup binary itself is 64-bit (Inno 7; the default is still a 32-bit setup, which
+; is what 6 could only build), matching the application it carries. The two directives
+; below already refuse a system that cannot run the program — but they refuse it from
+; *inside* a wizard that started. A 64-bit setup cannot start there at all, which is the
+; harder cut-off, and the one asked for: the program is x64-only, so there is no
+; scenario where the wizard should get as far as drawing a page. Cost, measured: the
+; setup grows from 3.13 MB to 3.88 MB (+746 KB) — see docs/research/inno-setup-7.md §3.
+; The Architectures* pair stays explicit even though SetupArchitecture=x64 now makes
+; x64compatible their default: they state the *installation's* rule, not the compiler's,
+; and neither should silently follow the other.
+SetupArchitecture=x64
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#SourcePath}..\..\dist
@@ -68,7 +84,8 @@ WizardStyle=modern
 UninstallDisplayName=mindfork-rs
 UninstallDisplayIcon={app}\mindfork-rs.exe
 ; Branding (docs/branding.md §4.1). The icon of setup.exe itself and the logo in the
-; wizard's header. PNG is verified to work on Inno 6 — accepted on par with BMP and 35x lighter.
+; wizard's header. PNG is accepted on par with BMP and 35x lighter — verified on
+; Inno 6, and taken unchanged by 7 (the header logo was looked at on a 64-bit setup).
 ; The installed .exe's icon is embedded by build.rs (winresource), so the
 ; [Icons] shortcuts and UninstallDisplayIcon pick it up with no extra settings.
 SetupIconFile={#SourcePath}..\..\artwork\mindfork.ico
