@@ -11,6 +11,9 @@ on:
     paths:
       - "packaging/**"
       - ".github/workflows/packaging.yml"
+      # The pinned Inno Setup compiler both this gate and release.yml install:
+      # a change to the pin is a change to what compiles the installer.
+      - "tools/install_inno.ps1"
       - "Cargo.toml"
       - "Cargo.lock"
       - "dictionaries/**"
