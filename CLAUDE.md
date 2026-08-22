@@ -168,244 +168,94 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **2443 unit tests
 green, 106 `#[ignore]`** (live smokes + a real-clipboard round trip + the
-screenshot-dump regenerator). The
-most recent tracks: **the licence and the disclaimer in Russian**
-(unofficial translations under `docs/legal/`, on the `F1` tabs and the ru
-installer's wizard pages, chosen by interface language — the English originals
-govern; [docs/history/legal-ru-translations.md](docs/history/legal-ru-translations.md)),
-**a code project attached to a chat**
-(`/project attach <directory>`; the assistant can list, read, search and change
-it, run the user's build/run/test command lines, and `F4` shows everything it
-changed as a diff with per-file revert — stages 1–4. Three load-bearing
-decisions. **Attaching is the permission**: the `code_*` tools are offered only
-while the chat has a project, so a chat without one sends a request
-byte-identical to what it sent before the feature — the inverse of `fs_read`, a
-global capability *narrowed* by an optional root. The model **cannot compose a
-command**: the three command tools take no arguments at all, so the user's line
-is the whole of what runs and the model gets only its *text*. And the `   12→`
-read format is a **contract**, because the whole track rested on whether a local
-model honours an exact-substring edit — measured 5/5 on both families, with the
-model reproducing a five-line fragment byte-for-byte from a numbered read;
-[docs/history/code-workspace.md](docs/history/code-workspace.md), spec §9.12), **the model's
-name on the assistant's header**
-(the feed said *who* answered but never *what*: every assistant message has
-stored a metadata snapshot of its turn since M9, and nothing read its `model`. `interface.show_model_name` (off by default) draws
-it next to `✦ ASSISTANT`, muted like the "thoughts" pill. The load-bearing
-decision is **whose** answer it is: reading the *current* engine setting would
-have been one line and no new field, and it would be wrong for the only case
-that makes the row worth spending — reopen a chat after switching provider and
-every bubble would claim the model selected now. Reading the **message's** own
-snapshot also fixes the failure mode: a reply stored before the snapshot
-existed, or a mode that names no model, shows nothing and keeps a header
-byte-for-byte the one drawn before the setting existed. The live bubble needed
-its own answer — it is pushed from literals and has no domain message yet, so
-`AppEvent::GenerationStarted` now carries the model, from a **single** read of
-`active_model_name()` shared with the finished message's metadata, and the
-header cannot change under the reader when the turn ends;
-[docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3),
-**automatic chat titling on the first exchange**
-(a new conversation names itself once — `interface.auto_title`, a tri-state
-defaulting to **after the assistant's first reply**, the user's call: cloud UIs
-title on the user's message and the names are visibly worse than what the same
-model writes once the reply exists to disambiguate a terse opening. The task is
-the one the chat list's `Ctrl+R` has always run — the track added a trigger and
-an **origin**, not a second mechanism: automatic runs are quiet (failures log,
-the spec §6.8 background-turn rule) where requested ones report to the overlay.
-"First reply" means first **substantive** reply, so a cancelled first turn
-defers rather than forfeits, pre-feature chats can never match, and
-regenerating the first reply re-titles deliberately; a chat renamed by hand
-(`F2`, `/rename`) sets `Chat.renamed_manually` and outranks the model at
-trigger *and* apply time, so a rename made during the task's flight wins. In
-`AfterUserMessage` mode the title request fires **after** the reply's own,
-because on a single-slot `llama-server` it would otherwise queue ahead of the
-answer — the mechanical reason the cloud timing is not the default. Verified
-live: the default title became a topic-naming one, in the conversation's own
-language, with no command sent;
-[docs/history/auto-chat-title.md](docs/history/auto-chat-title.md), spec
-§11.2), **the external server's API key, entered in settings**
-(`external` mode — any OpenAI-compatible server you run or rent — could only take
-its Bearer key from an environment variable *named* in settings, which is exactly
-the barrier [ADR 0008](docs/decisions/0008-api-key-storage.md) removed for the
-clouds, left standing in the one mode whose URL is typed by hand. ADR 0008 had
-deferred it on an argument about **addressing** — an arbitrary URL cannot be pinned
-to a provider — and the MCP reuse had since answered that: a secret can be addressed
-by whatever the user is looking at. Here that is the **slot**
-(`SecretKey::External(ExternalSlot)`), which deliberately inverts the ADR's
-provider-centric rule, because one provider is one account while the four `external`
-sub-sections are four independent URLs — a cloud gateway for chat beside a local
-`llama-server` for embeddings is the normal setup, and one shared key would send the
-gateway's token to localhost. Reading the code first shrank it to plumbing: no new
-mechanism in `secrets.rs`, no change to the `ServerSupervisor` signature, and **no new
-field id** — the masked row already existed, what changed is which secret it resolves
-to, now the settings struct's own answer (`secret_key()`) consulted by both the
-orchestrator and the screen, since a row addressing a different secret than the server
-resolves is invisible from outside. Having **no** key stays legitimate, unlike a cloud
-mode: a local server needs none, and a keyless request is byte-for-byte what the app
-sent before. Verified live against a `llama-server --api-key`, with the control arm —
-no key anywhere — getting a real `401`, which is what makes the first arm mean
-anything; [docs/history/external-api-key.md](docs/history/external-api-key.md),
-spec §11.6), **a second chat model on the live e2e gate — track complete**
-(the gate ran on exactly one model, so everything it asserted about a model was
-asserted about *that* model; it now takes `--chat-model`
-`gemma-4-31b`/`qwen-3.6-27b`, one per dispatch, because both in one job would run
-the suite twice — ~50 min against a 45-minute timeout that cannot rise without
-crowding the sweeper's 90-minute threshold. A model is **one decision**, not
-three flags: a name carries repository, weights and projector together, so an
-impossible combination cannot be typed and then discovered twenty minutes into a
-deploy. The product needed no change at all — all 44 orchestrator smokes were
-green on Qwen at the first attempt — and what the second family exposed was three
-**Gemma-shaped assumptions in the tests**: token ceilings sized for how much
-Gemma thinks. Two options died on measurement and are written down so they are
-not re-tried: a bigger ceiling cannot fix an open-ended prompt for a reasoning
-model (1024: 0/3, 2048: 2/3, 4096: 3/4, one run burning 4096 tokens over 129 s),
-and temperature is not the lever for a repeated tool call — matching the
-orchestrator's 0.1 made it *worse* (5/20 vs 2/11) against 0/20 with thinking
-muted. Designing it also found the gate **blind**: three smokes require a vision
-projector and fail rather than skip, while the create payload omitted
-`mmprojModelPath` — a decision written before the images track existed, never
-reconciled since, so the gate would have gone red for a reason unrelated to the
-code. Both dispatches are green on that point;
-[docs/history/e2e-second-chat-model.md](docs/history/e2e-second-chat-model.md)),
-**`/export` — a conversation to a file**
-(`/export [md|json] [path]`: Markdown is byte-for-byte what `F5` copies, so one
-formatter serves both and they cannot drift — the content is Markdown already,
-being how models write; JSON is the `mindfork-import` v1 document the app
-already reads, with explicit ids, so an export imports back onto the **same**
-chat, at the documented cost of carrying no tool calls, which every such export
-says. Paths and the generated `<date>-<slug>` name resolve against the current
-directory, an existing file is refused, and the note answers with the absolute
-path. It is also the only route out of JupyterLab's terminal, where the
-clipboard cannot reach the user's machine at all;
-[docs/history/chat-export-file.md](docs/history/chat-export-file.md), spec
-§11.7), **OSC 52 — copying to the client's clipboard**
-(over SSH `arboard` wrote the *server's* clipboard, and on a headless server it
-failed outright, so `/copy` there produced only an error; a copy now also goes to
-the terminal's own clipboard, automatically when the session looks remote —
-`interface.clipboard_osc52`: `auto`/`always`/`off`. The research overturned the
-roadmap item's own premise: **JupyterLab drops OSC 52** — it embeds xterm.js
-without the clipboard addon — while VS Code supports it but usually runs the pty
-locally, so the beneficiary is plain SSH, which is where the old behaviour was
-worst. The protocol acknowledges nothing and cannot be queried for support, so
-the note says the text was *sent* and names the possibility it was ignored; past
-the 74 994-byte ceiling nothing is sent and the note says where the text did go,
-a silently halved conversation being the worse failure. Both copy routes share
-one funnel, and the decision is split from the side effects because a mutation of
-the ceiling check survived while it lived inside them;
-[docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md), spec §11.7),
-**command-only control — track complete**
-(the app is operable without a single chord, for terminals embedded in a host
-that claims them: measured, VS Code's default `commandsToSkipShell` takes
-`Ctrl+P`/`Ctrl+E`/`Ctrl+F`/`Ctrl+K`, `F1`/`F3`/`F5`/`F10` and `Ctrl+Q` — six
-features were unreachable there — while a browser tab reserves
-`Ctrl+N`/`Ctrl+T`/`Ctrl+W`, the last of which **closes the tab the session runs
-in**. Nineteen commands close the class, and each reaches its action through the
-**same handler its chord uses**, so one behaviour sits behind two routes —
-confirmation popups and generation gates included; what a command adds is a
-*voice*, since a chord that does nothing is cheap while a typed command that
-vanishes reads as a refusal, so every blocked precondition names a route that
-works. The scope stayed small because typing survives every host and every `Esc`
-chain already ends at the chat screen: safe keys navigate, commands act. One
-declarative registry rather than nineteen sibling parsers, with the help tab's
-rows derived from it. Stage 2 took the two actions that lived inside *other*
-screens — `/profile list|new|delete` and `/self clear` — and is the one place
-the track breaks parity on purpose: both **always** confirm, because a typed
-prefix can name a profile the user did not picture where the screen would have
-shown it selected, and the outcome of profile CRUD is now announced by the
-orchestrator so both routes answer alike. Verified live in VS Code's integrated
-terminal;
-[docs/history/command-only-control.md](docs/history/command-only-control.md),
-spec §11.7), **navigable `chat://` references — track complete**
-(`chat://<short-id>` is now the one address a conversation has: the cross-chat
-tools print it, their descriptions teach the model to **cite it when it mentions
-a conversation to the user**, and the feed draws a resolvable one as a link that
-`Ctrl+L` follows. The scheme was **observed before it was designed** — a model
-invented it out of the bracketed address the tools used to print — so the load-
-bearing half turned out to be the teaching, not the rendering. Only an address
-that resolves is styled, against the current profile's chats, so a link is never
-a dead end and the profile boundary needs no separate check; recognition runs in
-the block builder *before* the wrap, because an address is 15 columns and a
-narrow panel splits it where the post-render matching used by in-feed search
-would miss it. A key rather than a click: feed clicks are a no-op and mouse
-capture is off by default; stage 2 then added the click anyway, from a map
-derived at render time for the viewport only — the one point where the wrap, the
-scroll and the panel's origin have all been applied, so nothing stored can go
-stale;
-[docs/research/chat-uri-links.md](docs/research/chat-uri-links.md), spec §11.3),
-**cross-chat search for the assistant — track complete**
-(`chat_search`/`chat_read`, **off by default** per profile: the model can
-search and read the profile's *other* chats over the full-text index the app
-already keeps — results grouped by conversation and page-addressed through the
-same renderer as `history_read`, so a hit's page is exactly what a read
-returns; the index is profile-blind and includes the current chat, so the
-scope lives in a single turn snapshot — current profile only, current chat
-excluded, hidden dropped — and the SQL is scoped by chat ids so another
-profile's rows cannot starve the cap;
-[docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md),
-spec §9.11), **images in a message — track complete**
-(`/image attach|remove|list`
-stages an image for the **next** message, which is what every provider's wire
-format actually models; it reaches a local `llama-server --mmproj` and **all four
-clouds** — one shared change served llama.cpp and Grok, whose request shapes are
-byte-identical, and stage 2 added the Anthropic `image` block, Gemini
-`inline_data` and Responses `input_image` dialects.
-Decode/downscale/normalize happens once at attach time — xAI takes png/jpeg only,
-and an unscaled photo would ride every later turn — while a png already within the
-ceiling passes through byte for byte. Capability is *asked*
-(`EngineBackend::vision`, llama.cpp's `/props` `modalities.vision`), never guessed
-from a model name, and a request with no images stays byte-identical to what the
-app sent before the feature — in **all four** wire formats, each with its own
-test, which is what makes the change safe for every stored conversation.
-`/image paste` then took a screenshot straight off the clipboard: the app never
-had a `Ctrl+V` handler at all — pasting works because the *terminal* injects
-text, and an image injects nothing — so the command is the route that works in
-every terminal and the key is the convenience. An **MCP tool's** image reaches the
-model too: inside the tool result on four engines, and — since Gemini answers a
-hard `400` there — as user parts right after it on the fifth, chosen per provider
-rather than by catching the error. `/image attach` finally learned a **web
-address** as well as a path — the bytes are always downloaded client-side, so one
-path serves all five engines and the pixels live in the chat, where a dead link
-cannot break a stored conversation; designing it found that the SSRF care the
-deferred note promised to inherit from `fetch_url` had never existed — which
-became the **next** track: `fetch_url` and `web_search`'s page fetches now refuse
-anything not publicly routable, with the check inside the client's DNS resolver
-so the approved address is the connected one, an IP-literal check `hyper` would
-otherwise skip, and `tools.web_allow_private` (off) as the way back in;
-[docs/research/multimodal-images.md](docs/research/multimodal-images.md),
-[docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md),
-[docs/research/image-url-attach.md](docs/research/image-url-attach.md),
-spec §9.10),
-**cloud-error retry/backoff — track complete** (a transient
-`429`/`5xx`/`529` no longer costs the turn: a `RetryBackend` decorator over the
-cloud and external backends retries three times with jittered backoff, honouring
-`Retry-After` up to 30 s, and only while the turn is *uncommitted* — a tool call
-counts as content, so a round that emitted calls is never replayed and no tool
-effect fires twice; stage 1 first made such failures visible at all, since a
-mid-answer failure used to leave a silent fragment on screen and Anthropic's
-in-stream `error` events were swallowed entirely;
-[docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md), spec §6.8),
-the **mindfork.io website, S1–S4 — track complete** (a
-Zola site under `site/`, terminal-styled on the brand palette, **live at
-https://mindfork.io** — currently behind a temporary maintenance IP
-allowlist while the repository is private (the stack's `AllowedIps`
-parameter; set it empty to reopen): one CloudFormation stack
-`infra/website.cfn.yaml` —
-private S3 + OAC, CloudFront, ACM, Route53 — with CI deploys on push to main
-through the stack's OIDC role, no stored keys; the landing inlines
-screenshots as generated SVG — the demo-screenshots stage 4, shipped from
-the site side; Zola pinned to 0.22.1 for a Windows template-discovery
-regression in 0.23.x;
-[docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)),
-**demo screenshots + demo mode** (a private-data-free,
-rot-gated capture pipeline — demo fixture → headless frame dumps →
-`tools/screenshots.py` — plus the interactive `mindfork demo`: the real TUI on
-seeded data with a scripted engine, nothing touched outside a temp folder;
-[docs/history/demo-screenshots.md](docs/history/demo-screenshots.md)),
-**Grok (xAI) as a
-fourth cloud provider** (the first one added without a client of its own — see
-[docs/research/grok-xai-provider.md](docs/research/grok-xai-provider.md)), the
-**history compression** track (a rolling summary keeps a long chat inside the
-model's context window — `/compact`, an automatic trigger, and read-back tools
-for the folded range), and the documentation refactor.
+screenshot-dump regenerator).
+
+**This list is pointers, not summaries.** One line per track, newest first: what
+it is, and where the reasoning lives. What was decided, what was measured and
+what was rejected belongs in the linked document and is not repeated here — a
+paragraph per track is how this section grew to 18 KB inside a file that is
+loaded in full at the start of every session and is capped at 30 000 bytes by
+`tools/doc_index_check.py`. A new track adds a line; a line that has stopped
+being recent is dropped, not shortened.
+
+- **Inno Setup 7 for the Windows installer** — a 64-bit setup, and a pinned,
+  hash-verified compiler in CI instead of a chocolatey package frozen at 6.7.1
+  ([docs/research/inno-setup-7.md](docs/research/inno-setup-7.md)).
+- **The licence and the disclaimer in Russian** — unofficial translations under
+  `docs/legal/`, on the `F1` tabs and the ru installer's wizard pages, chosen by
+  interface language; the English originals govern
+  ([docs/history/legal-ru-translations.md](docs/history/legal-ru-translations.md)).
+- **A code project attached to a chat** — `/project attach <directory>`: list,
+  read, search and change it, run the user's build/run/test command lines, `F4`
+  shows every change as a diff with per-file revert. Attaching *is* the
+  permission, and the model cannot compose a command
+  ([docs/history/code-workspace.md](docs/history/code-workspace.md), spec §9.12).
+- **The model's name on the assistant's header** —
+  `interface.show_model_name` (off), from the **message's** own metadata
+  snapshot rather than the current engine setting
+  ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3).
+- **Automatic chat titling on the first exchange** — `interface.auto_title`, a
+  tri-state defaulting to after the assistant's first *substantive* reply; a
+  manual rename outranks it
+  ([docs/history/auto-chat-title.md](docs/history/auto-chat-title.md), spec §11.2).
+- **The external server's API key, entered in settings** — addressed by *slot*
+  (`SecretKey::External`), since four `external` sub-sections are four
+  independent URLs; having no key stays legitimate
+  ([docs/history/external-api-key.md](docs/history/external-api-key.md), spec §11.6).
+- **A second chat model on the live e2e gate** — `--chat-model`
+  `gemma-4-31b`/`qwen-3.6-27b`, one per dispatch; the product needed no change,
+  the test-side assumptions did
+  ([docs/history/e2e-second-chat-model.md](docs/history/e2e-second-chat-model.md)).
+- **`/export` — a conversation to a file** — `md` is byte-for-byte what `F5`
+  copies; `json` is the `mindfork-import` v1 document, so an export imports back
+  onto the same chat
+  ([docs/history/chat-export-file.md](docs/history/chat-export-file.md), spec §11.7).
+- **OSC 52 — copying to the client's clipboard** — `interface.clipboard_osc52`
+  (`auto`/`always`/`off`); the beneficiary is plain SSH, and JupyterLab drops the
+  sequence entirely
+  ([docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md), spec §11.7).
+- **Command-only control** — nineteen commands make the app operable without a
+  chord, each through the same handler its chord uses
+  ([docs/history/command-only-control.md](docs/history/command-only-control.md),
+  spec §11.7).
+- **Navigable `chat://` references** — one address per conversation: the tools
+  print it, their descriptions teach the model to cite it, the feed resolves it
+  and `Ctrl+L` (or a click) follows
+  ([docs/research/chat-uri-links.md](docs/research/chat-uri-links.md), spec §11.3).
+- **Cross-chat search for the assistant** — `chat_search`/`chat_read`, off by
+  default per profile, scoped in one turn snapshot
+  ([docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md),
+  spec §9.11).
+- **Images in a message** — `/image attach|remove|list|paste`, a path or a web
+  address, to a local `--mmproj` server and all four clouds; capability is asked,
+  never guessed, and a request with no images is byte-identical to before. Its
+  SSRF follow-up closed `fetch_url`/`web_search` to non-routable addresses
+  ([docs/research/multimodal-images.md](docs/research/multimodal-images.md),
+  [mcp-tool-images.md](docs/research/mcp-tool-images.md),
+  [image-url-attach.md](docs/research/image-url-attach.md),
+  [fetch-url-address-policy.md](docs/research/fetch-url-address-policy.md),
+  spec §9.10).
+- **Cloud-error retry/backoff** — a `RetryBackend` decorator retries only while
+  the turn is *uncommitted*, so no tool effect fires twice
+  ([docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md),
+  spec §6.8).
+- **The mindfork.io website, S1–S4** — a Zola site under `site/`, one
+  CloudFormation stack (`infra/website.cfn.yaml`), CI deploys through an OIDC
+  role. **Live at https://mindfork.io, behind a temporary maintenance IP
+  allowlist while the repository is private** — the stack's `AllowedIps`
+  parameter; set it empty to reopen
+  ([docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)).
+- **Demo screenshots + demo mode** — a private-data-free, rot-gated capture
+  pipeline, plus the interactive `mindfork demo`
+  ([docs/history/demo-screenshots.md](docs/history/demo-screenshots.md)).
+- **Grok (xAI) as a fourth cloud provider** — the first added without a client of
+  its own ([docs/research/grok-xai-provider.md](docs/research/grok-xai-provider.md)).
+- **History compression** — a rolling summary keeps a long chat inside the
+  context window: `/compact`, an automatic trigger, read-back tools for the
+  folded range ([docs/journal/engine.md](docs/journal/engine.md)).
+- **The documentation refactor** — this router, the per-area journal and
+  `docs/lessons.md`, with the gates that keep the structure from rotting
+  ([docs/journal/quality.md](docs/journal/quality.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and
