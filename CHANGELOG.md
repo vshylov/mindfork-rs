@@ -58,6 +58,12 @@ split by subsystem.
 
 ### Changed
 
+- **The Windows installer is a 64-bit program now.** It installs exactly what it
+  installed before, but it refuses a system that cannot run mindfork-rs before
+  the wizard opens rather than on a page inside it — the program is 64-bit only,
+  and now so is its installer. The download grows by about 0.7 MB. The wizard's
+  title bar also drops the word "version" before the number, following the
+  installer toolkit's own change.
 - **The "About" tab of the help dialog (`F1`) reads across the full width.**
   Its values now line up in one column against the right edge, with dotted
   leaders bridging the gap — the layout the "Components" tab already uses —

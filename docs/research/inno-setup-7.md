@@ -1,7 +1,10 @@
 # Inno Setup 7 for the Windows installer
 
-Status: **research, no decision** — the forks in §7 are open and none has been
-implemented. Nothing was changed outside this file.
+Status: **accepted 2026-08-22** — all five forks decided by the user (F1a, F2a,
+F3**b**, F4**b**, F5**b**: migrate, pin the official release asset by hash, build a
+**64-bit** setup, take Inno 7's new caption wording, and let the script require 7).
+**Implemented** in `feat/inno-setup-7`, with the wizard driven and screenshotted
+on the real 64-bit build (§6).
 Date: 2026-08-22.
 
 Subject: whether
@@ -18,6 +21,8 @@ GHA image" as the reason to defer;
 **The script needs no changes at all** — it compiles unmodified on Inno Setup
 7.1.0 and produces an installer that behaves identically, verified down to the
 bytes of the file it writes (§3). So the migration is not a script question.
+(The one directive the script did gain, `SetupArchitecture=x64`, is a decision
+taken *on top of* the migration — F3 — not something Inno 7 asked for.)
 
 It is a **CI supply question**, and there the finding is the interesting one:
 the chocolatey `innosetup` package our two workflows install has been **stalled
@@ -120,7 +125,9 @@ installed 7. Any migration must **pin the absolute ISCC path** and, ideally,
 assert its version — `ISCC.exe --version` prints `7.1.0` and exists only in 7,
 which makes the assertion free.
 
-The replacement step (F2a), for both `release.yml` and `packaging.yml`:
+The replacement step (F2a), for both `release.yml` and `packaging.yml` — sketched
+here, and shipped as [`tools/install_inno.ps1`](../../tools/install_inno.ps1) so
+that the pin lives in one place:
 
 ```powershell
 $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe'
@@ -190,26 +197,43 @@ would never have noticed.
 None is changed, deprecated or removed in 7. The functions 7 *did* remove are
 the file-system-redirection ones, which we never called.
 
-## 6. What is still unverified
+## 6. The GUI pass on the 64-bit build
 
-Everything above is compiler- and silent-install evidence. The product here is
-a **wizard**, and a wizard is verified by looking at it. Before any migration
-merges, one manual GUI run of the 7-built installer, in both languages, is
-required — the same checklist [installers.md](../history/installers.md) §8 (stage 3's
-definition of done) used for the original track:
+Compiler and silent-install evidence says nothing about a wizard, and a wizard
+is what this is. So the **x64 setup was driven and captured** with the technique
+the sandbox-checkbox entry left behind in
+[docs/journal/release.md](../journal/release.md) — `PostMessage(BM_CLICK)` to
+advance, `PrintWindow` to capture — against the real build, nothing installed
+(the wizard was killed before the Ready page, and its temp directories removed).
 
-* the license page (English `LICENSE`, plain text) and the Russian
-  `license-ru.rtf`, then the disclaimer page in each language — the RTF pages
-  are where a compiler change could plausibly show up at all, since the
-  `\uNNNN?`-escaped Cyrillic is rendered by Setup's RichEdit;
-* the two custom pages, all three data modes, and the directory picker;
-* the upgrade path (`defaults.json` present → all three pages skipped);
-* the per-machine (elevated) run, where the portable option is hidden;
-* the PNG `WizardSmallImageFile` in the header, whose acceptance on par with
-  BMP was verified against Inno 6 and is asserted, not measured, on 7;
-* the wizard caption, which is where F4 is decided by eye.
+What it showed, on Inno Setup 7.1.0, `SetupArchitecture=x64`:
 
-None of this needs a live model or a live engine — it is packaging.
+* **The caption is the F4 evidence**: `Setup - mindfork-rs 9.9.9` in English and
+  `Установка — mindfork-rs 9.9.9` in Russian <!-- cyrillic-ok: the ru window caption, quoted -->
+  — the new `AppVerName` default, the word "version" gone, taken as chosen.
+* The **licence page** renders the plain-ASCII `LICENSE` in English, and
+  `license-ru.rtf` in Russian: the "unofficial translation" first paragraph, the
+  em dashes and the guillemets all intact. That is the answer for both generated
+  RTFs — the same RichEdit draws the disclaimer page, and the licence is the
+  longer document of the two.
+* **Both custom Pascal pages** draw correctly — "Application language"
+  (English first, English selected) and "Data location" with all three options,
+  the portable one included, as a per-user run should show.
+* The **PNG `WizardSmallImageFile`** renders in the page header, and the
+  embedded icon in the title bar, on a 64-bit setup binary — the one branding
+  claim that was asserted rather than measured on 7.
+
+Two things the pass deliberately did not cover, because nothing in this change
+can reach them: the upgrade path (`defaults.json` present → the three pages
+skipped) and the elevated per-machine run (portable hidden). Both are pure
+`[Code]` logic, unchanged, and both were exercised by the silent installs.
+
+A note for the next such run, on top of the two the journal already carries:
+control text carries its **accelerator ampersand** (`I &accept the agreement`,
+`&Next`), so a `-like` pattern written from the screenshot matches nothing; and
+the capturing process must call `SetProcessDPIAware` first, or `GetWindowRect`
+returns logical pixels while `PrintWindow` renders physical ones and the capture
+comes back cropped.
 
 ## 7. Forks
 
@@ -223,6 +247,8 @@ None of this needs a live model or a live engine — it is packaging.
 * (c) Wait for chocolatey to ship 7.x. No date; the package has been frozen for
   six months.
 
+**User's decision (2026-08-22): (a).**
+
 **F2 — How does CI get the compiler?**
 
 * **(a) [recommended]** Pinned download of the official GitHub release asset +
@@ -232,6 +258,12 @@ None of this needs a live model or a live engine — it is packaging.
   Actions runners is historically unreliable in non-interactive sessions and
   pins nothing.
 * (c) Keep chocolatey. Impossible for 7, and stale for 6.
+
+**User's decision (2026-08-22): (a)** — implemented as
+[`tools/install_inno.ps1`](../../tools/install_inno.ps1) rather than inline in
+both YAMLs, so the pinned version and hash exist once: a gate compiling with a
+different Inno Setup than the release is a gate that has stopped testing the
+release.
 
 **F3 — 32-bit or 64-bit setup binary?**
 
@@ -243,6 +275,16 @@ None of this needs a live model or a live engine — it is packaging.
   64-bit executables. It is a one-line change we can make later; nothing about
   choosing (a) now closes it.
 
+**User's decision (2026-08-22): (b)** — against the recommendation, and for a
+reason the recommendation had not weighed: the program is 64-bit, so the
+installer should be too, to **cut off an attempt to install it on an
+unsupported OS**. Worth recording precisely, because the two refusals are not
+the same refusal. `ArchitecturesAllowed` already refuses — from inside a wizard
+that has started, on the page after the user has read a licence. A 64-bit setup
+does not start at all there: Windows itself declines to load the image. The
+cost is the +746 KB measured in §3, and what is bought is that the wizard can
+never get as far as drawing a page on a machine that cannot run the program.
+
 **F4 — The wizard caption wording.**
 
 * **(a) [recommended]** Pin the old wording with
@@ -252,6 +294,10 @@ None of this needs a live model or a live engine — it is packaging.
   as a side effect of a toolchain bump.
 * (b) Accept the new default.
 
+**User's decision (2026-08-22): (b).** Verified by eye afterwards (§6): the
+caption reads `Setup - mindfork-rs 9.9.9`, and Russian.isl's own separator makes
+it `Установка — mindfork-rs 9.9.9`. <!-- cyrillic-ok: the ru window caption, quoted -->
+
 **F5 — Does the script stay compilable on Inno 6?**
 
 * **(a) [recommended]** Yes. Nothing we adopt requires 7 (unless F3b), so a
@@ -260,23 +306,40 @@ None of this needs a live model or a live engine — it is packaging.
   lines, and CI is the one that pins 7.
 * (b) Adopt 7-only directives and require 7 for a local build.
 
+**User's decision (2026-08-22): (b)** — which F3b decides on its own:
+`SetupArchitecture` is a 7 directive, so the script is 7-only whatever F5 said.
+Inno 6 now refuses it by name — *Unrecognized [Setup] section directive
+"SetupArchitecture"* — which is the failure worth having: a contributor on 6
+gets told what is missing, rather than a setup.exe that quietly differs from the
+released one. `tools/install_inno.ps1` is also how they get the right compiler.
+
 Not a fork, a consequence: **CI must pin the absolute `ISCC.exe` path** and
 assert the major version, or the migration silently does nothing (§4).
 
-## 8. Effort
+## 8. What the change came to
 
-Half a day, and most of it is the manual GUI pass.
+Estimated at half a day, and that is roughly what it was, most of it the GUI
+pass. What landed:
 
-* `release.yml` + `packaging.yml`: replace the install step, pin the path,
-  assert the version — ~15 lines each, and the two jobs stay under their
-  15-minute ceilings (the download replaces a `choco install` of comparable
-  size).
-* `mindfork.iss`: 0 lines, or 1 with F4a, or 2 with F3b.
-* Docs: the header comment in the `.iss`, the "Inno 6" statements in
-  [docs/branding.md](../branding.md) §4.1 (the PNG note, the Welcome-page note),
-  a [docs/journal/release.md](../journal/release.md) entry, and a line in
-  [docs/roadmap.md](../roadmap.md) if F1 is deferred rather than taken.
-* The GUI smoke of §6.
+* **[`tools/install_inno.ps1`](../../tools/install_inno.ps1)** — the pin (version,
+  URL, SHA-256), the verified download, the silent install, the version
+  assertion, and the absolute ISCC path returned rather than searched for.
+  Idempotent, so it is also how a developer gets the exact compiler the releases
+  use. The repository's first PowerShell script; `cyrillic_scan.py` covers it
+  already, since that gate skips by extension and `.ps1` is not on the list.
+* **`release.yml` and `packaging.yml`** — the `choco install` step and both
+  copies of the `Get-Command ISCC.exe` resolution replaced by that script plus
+  `& $env:ISCC`.
+* **`mindfork.iss`** — one directive (`SetupArchitecture=x64`) and comments: why
+  the setup is 64-bit, why the `Architectures*` pair stays explicit beside it,
+  and that the script now needs Inno 7.
+* **Docs** — this section, a [journal entry](../journal/release.md), the
+  CHANGELOG (the installer is 64-bit now, which is user-visible), and one
+  sentence in [docs/install.md](../install.md). [docs/branding.md](../branding.md)
+  §4.1 was left alone on purpose: its Inno 6 statements are a **dated record of
+  what was verified on 2026-07-18**, and rewriting a measurement's subject after
+  the fact is how a verification log stops meaning anything. The PNG claim is
+  re-measured here instead (§6).
 
 ## 9. Sources
 

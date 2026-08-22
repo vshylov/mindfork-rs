@@ -159,12 +159,17 @@ jobs:
   windows-installer:
     name: Windows installer (compile .iss)
     runs-on: windows-latest
-    # Measured over 26 runs: max 0.9 min; `choco install` is the network part.
+    # Measured over 26 runs: max 0.9 min; the compiler download (14 MB) is the network
+    # part, and it replaced a `choco install` of comparable weight.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+      # The same pinned compiler release.yml compiles the real artifact with — shared
+      # through one script so the gate cannot drift onto a different Inno Setup than
+      # the release (docs/research/inno-setup-7.md §4).
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        shell: pwsh
+        run: ./tools/install_inno.ps1
       - name: Stub binary + compile the installer
         shell: pwsh
         run: |
@@ -172,13 +177,7 @@ jobs:
           # Pascal code) compiles. The stub satisfies [Files].
           New-Item -ItemType Directory -Force stage | Out-Null
           Set-Content -Path stage\mindfork-rs.exe -Value "dummy"
-          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) {
-            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
-                    Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $iscc) { throw "ISCC.exe not found" }
-          & $iscc "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
+          & $env:ISCC "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
       - uses: actions/upload-artifact@v5
         with:
           name: windows-installer-ci

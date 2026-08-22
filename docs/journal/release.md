@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -36,6 +36,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the Windows installer shows the license and the disclaimer (done)
 - Release 0.9.7 (prepared)
 - Post-M9: the installer's legal pages speak Russian (done)
+- Post-M9: the Windows installer moves to Inno Setup 7 (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1298,3 +1299,65 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   find that text again afterwards.
 - **Checks**: 2443 unit tests green, 106 `#[ignore]`; `fmt`/`clippy -D warnings`
   /`cyrillic_scan`/`link_check`/`doc_index_check`/`wizard_rtf --check` clean.
+
+### Post-M9: the Windows installer moves to Inno Setup 7 (done)
+- **The question was the compiler; the answer was the supply** (branch
+  `feat/inno-setup-7`, research
+  [docs/research/inno-setup-7.md](../research/inno-setup-7.md), five forks
+  confirmed by the user). `packaging/windows/mindfork.iss` compiles on Inno Setup
+  7.1.0 **unmodified**, zero warnings, and the installer it produces was verified
+  identical to the 6.7.3 one down to the bytes of `defaults.json` — same 17-file
+  tree, same 46 bytes with the BOM, same clean uninstall; the only differences
+  are in the install log (extended-length paths, UTC time stamps). So nothing in
+  the script forced the move.
+- **What forced it was CI.** Both workflows ran `choco install innosetup`, and
+  that package has been **frozen at 6.7.1 since 2026-02-17** while upstream
+  shipped 6.7.2, 6.7.3, 7.0.2 and 7.1.0 — so every release so far was compiled
+  two maintenance releases behind its own line, by a step that also reinstalls
+  what the runner image already carries (the image installs the same chocolatey
+  package). There is no 7.x on chocolatey at all. The install step had to be
+  rebuilt whichever line we stayed on, which is what made 7 free.
+- **The trap, found while designing and worth remembering**: chocolatey puts an
+  `ISCC.exe` shim on `PATH`, and both jobs resolved the compiler with
+  `Get-Command ISCC.exe`. Installing 7 without touching that would have kept
+  compiling with 6.7.1 while the log said 7 was installed — a silent wrong-tool
+  failure. `tools/install_inno.ps1` therefore **returns** the absolute path
+  (`$env:ISCC` for later steps) and asserts `--version`, never searches for one.
+- **One script, not two inline copies** (the repository's first `.ps1`): the pin
+  — version, release URL, SHA-256 — lives once, because a gate compiling with a
+  different Inno Setup than the release is a gate that has stopped testing the
+  release. The download is the official `jrsoftware/issrc` release asset, hash
+  verified before it is run; the pinned hash was checked against the real
+  download. The script is idempotent, so it is also how a developer gets exactly
+  the compiler CI uses.
+- **The installer is now 64-bit** (`SetupArchitecture=x64`, user's decision
+  against the recommendation, and for a reason the recommendation had missed).
+  `ArchitecturesAllowed=x64compatible` already refused an unsupported OS — but
+  from *inside* a wizard that had started, a page after the licence. A 64-bit
+  setup does not start there at all: Windows declines to load the image. Cost,
+  measured: 3.13 MB → 3.88 MB (+746 KB). The `Architectures*` pair stays explicit
+  beside it, since it states the installation's rule rather than the compiler's.
+- **Two visible consequences, both taken deliberately.** Inno 7 changed the
+  `AppVerName` default, so the wizard caption lost the word "version" — accepted
+  rather than pinned back with `{cm:NameAndVersion}`. And `SetupArchitecture` is
+  a 7 directive, so the script is now 7-only: Inno 6 refuses it **by name**
+  (*Unrecognized [Setup] section directive "SetupArchitecture"*), which is the
+  right failure — a contributor on 6 is told what is missing instead of building
+  a setup.exe that quietly differs from the released one.
+- **Live run — GO** (Inno Setup 7.1.0 on the dev machine; packaging, so no model
+  is involved). The x64 setup was silently installed and uninstalled (17 files,
+  `defaults.json` byte-identical to the Inno 6 build, directory gone afterwards),
+  and the **wizard was driven and screenshotted** with the technique the earlier
+  entries left behind — `PostMessage(BM_CLICK)` to advance, `PrintWindow` to
+  capture: the licence page in English (plain `LICENSE`) and Russian
+  (`license-ru.rtf`, the escaped-Cyrillic RTF rendering intact), both custom
+  Pascal pages, and the PNG header logo on a 64-bit setup binary. Nothing was
+  installed by the GUI runs and their temp directories were removed.
+- **Two more GUI-automation notes for the next run**: control text carries its
+  **accelerator ampersand** (`I &accept the agreement`, `&Next`), so a pattern
+  copied off a screenshot matches nothing; and the capturing process must call
+  `SetProcessDPIAware` first, or `GetWindowRect` returns logical pixels while
+  `PrintWindow` renders physical ones and the capture comes back cropped.
+- **Checks**: 2443 unit tests green, 106 `#[ignore]` (no Rust code touched);
+  `fmt`/`clippy -D warnings`/`cyrillic_scan`/`link_check`/`doc_index_check`
+  /`wizard_rtf --check` clean, both workflow YAMLs valid.
