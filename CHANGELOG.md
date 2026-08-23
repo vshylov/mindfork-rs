@@ -125,6 +125,17 @@ split by subsystem.
 
 ### Changed
 
+- **`/reindex` now also rebuilds an attached file's search index when it is
+  missing entirely.** Before, it re-embedded vectors that already existed, which
+  is what an embedding-model change leaves behind — but an index can be gone
+  altogether: copy a data folder to another machine without `data.db` and the
+  conversations arrive with every attached file's text and no index over any of
+  it. Since that text lives in the chat itself, nothing needs re-attaching:
+  `/reindex` walks the chats and rebuilds the missing indexes from it, so search
+  over an attached file works again even when the original file is on the other
+  machine. Files small enough to be sent whole are untouched, as always, and so
+  are deleted conversations.
+
 - **A model split across several GGUF files.** Large models are published as
   parts (`…-00001-of-00003.gguf`, `…-00002-of-00003.gguf`, …); point the GGUF
   setting at the **first** part, with the rest beside it, and the server loads

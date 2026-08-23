@@ -494,7 +494,11 @@ indexed manually — with commands right in the chat input box:
   profile's knowledge base (the embedding server is global, so a model change
   invalidates them all at once). It works from the text already stored, so it
   needs no source files, repairs old entries whose file is long gone, and brings
-  attachment indexes back without re-attaching each file. It runs in the
+  attachment indexes back without re-attaching each file. It also **rebuilds an
+  attachment index that is missing entirely** — the case you get by copying
+  `chats/` to another machine without `data.db` (§2): the file's text is in the
+  chat file, so search over it comes back without the original file being
+  anywhere near. It runs in the
   background with a progress banner and is safe to interrupt: whatever it has
   already rebuilt stays rebuilt, and running it again continues from there. If
   the new model has a different vector size, that is handled by the same pass.

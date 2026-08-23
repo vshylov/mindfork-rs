@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
@@ -239,13 +240,13 @@ impl Orchestrator {
 }
 
 /// What to index: the attachment's identity and its text snapshot.
-struct AttachIndex {
-    chat_id: Uuid,
-    attachment_id: Uuid,
-    name: String,
+pub(super) struct AttachIndex {
+    pub(super) chat_id: Uuid,
+    pub(super) attachment_id: Uuid,
+    pub(super) name: String,
     /// The canonical path — only to pick the chunker (markdown by headings).
-    source: String,
-    text: String,
+    pub(super) source: String,
+    pub(super) text: String,
 }
 
 /// Parameters of the background attachment-indexing task.
@@ -259,9 +260,86 @@ struct AttachIndexTask {
     index: AttachIndex,
 }
 
-/// Chunks, embeds, and writes one attachment into the chat-scoped index. Reuses
-/// RAG's chunking (`chunk_text`/`chunk_markdown`) and its sub-batched embedding,
-/// so progress moves while a large file is being embedded.
+/// Chunks, embeds and writes one attachment into the chat-scoped index — the
+/// single place that turns an [`AttachIndex`] into rows. Reuses RAG's chunking
+/// (`chunk_text`/`chunk_markdown`) and its sub-batched embedding, calling
+/// `progress(done, total)` after each batch so a large file does not look stuck.
+///
+/// Shared with the `/reindex` backfill (`super::reembed`), which rebuilds
+/// attachments the index has no rows for at all — after a data move without
+/// `data.db`, say. Two callers, one writer: the chunking, the replace-don't-
+/// duplicate delete and the row shape cannot drift apart between the file the
+/// user attaches now and the file the repair job restores later.
+///
+/// The embedder precheck is deliberately **not** here: `/file attach` needs it
+/// (there is usually no embedder at all), while `/reindex` has already pinged
+/// once for the whole job and must not ping per file.
+///
+/// `Ok(n)` — rows written (`0` when the text yields no chunks). `Err` — a reason
+/// to show, already a sentence; nothing partial is left behind that a rerun
+/// would not replace.
+pub(super) async fn index_attachment(
+    embedder: &Arc<dyn Embedder>,
+    storage: &Arc<Storage>,
+    params: ChunkParams,
+    index: &AttachIndex,
+    loc: &'static Locale,
+    cancel: &CancellationToken,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<usize, String> {
+    let chunks = if is_markdown_source(&index.source) {
+        crate::features::tools::rag::chunk_markdown(&index.text, params)
+    } else {
+        crate::features::tools::rag::chunk_text(&index.text, params)
+    };
+    if chunks.is_empty() {
+        return Ok(0);
+    }
+    // Re-indexing replaces the previous run's chunks instead of duplicating them.
+    storage
+        .db()
+        .attachment_delete(index.chat_id, index.attachment_id)
+        .map_err(|e| e.to_string())?;
+
+    let total = chunks.len();
+    progress(0, total);
+    let mut done = 0usize;
+    for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
+        if cancel.is_cancelled() {
+            // Stopping mid-file leaves fewer rows than the file has. That is
+            // safe by construction: the next run's `attachment_delete` above
+            // wipes them before writing, and until then the partial set is
+            // simply a smaller index over the same text.
+            return Ok(done);
+        }
+        let embeddings = match embedder.embed(batch.to_vec(), EmbedRole::Passage).await {
+            Ok(v) if v.len() == batch.len() => v,
+            Ok(_) => return Err(loc.t("ui.err.rag_wrong_vector_count").to_string()),
+            Err(err) => return Err(err.to_string()),
+        };
+        for (chunk, embedding) in batch.iter().zip(embeddings) {
+            let doc = AttachmentChunk::new(
+                index.chat_id,
+                index.attachment_id,
+                &index.name,
+                chunk,
+                embedding,
+            );
+            if let Err(err) = storage.db().attachment_insert(&doc) {
+                // A dimensionality mismatch with the RAG base lands here —
+                // an honest note beats a half-built index.
+                tracing::warn!(error = %err, name = %index.name, "attachments: indexing failed");
+                return Err(err.to_string());
+            }
+        }
+        done += batch.len();
+        progress(done, total);
+    }
+    Ok(done)
+}
+
+/// Indexes one attachment in the background, reporting through `FileProgress` —
+/// the `/file attach` path. The work itself is [`index_attachment`].
 ///
 /// **Graceful degradation** (ADR 0002): if the embedder isn't configured or the
 /// dimensionality doesn't match the DB, indexing is skipped with a clear note —
@@ -278,9 +356,6 @@ fn spawn_attachment_index(task: AttachIndexTask) {
     } = task;
 
     tokio::spawn(async move {
-        let send = |p: FileProgress| {
-            let _ = evt_tx.send(AppEvent::FileProgress(p));
-        };
         let skip = |reason: String| {
             let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::IndexSkipped {
                 name: index.name.clone(),
@@ -288,16 +363,9 @@ fn spawn_attachment_index(task: AttachIndexTask) {
             }));
         };
 
-        let chunks = if is_markdown_source(&index.source) {
-            crate::features::tools::rag::chunk_markdown(&index.text, params)
-        } else {
-            crate::features::tools::rag::chunk_text(&index.text, params)
-        };
-        if chunks.is_empty() {
-            return;
-        }
         // Precheck — a fast, clear answer when there's no embedder (the common
-        // case: RAG isn't configured at all).
+        // case: RAG isn't configured at all). Before the chunking, which is
+        // pointless without one.
         if embedder
             .embed(vec!["ping".into()], EmbedRole::Passage)
             .await
@@ -306,61 +374,40 @@ fn spawn_attachment_index(task: AttachIndexTask) {
             skip(loc.t("ui.file.index_no_embedder").to_string());
             return;
         }
-        // Re-indexing replaces the previous run's chunks instead of duplicating them.
-        if let Err(err) = storage
-            .db()
-            .attachment_delete(index.chat_id, index.attachment_id)
-        {
-            skip(err.to_string());
-            return;
-        }
 
-        let total = chunks.len();
-        send(FileProgress::Indexing {
-            name: index.name.clone(),
-            done: 0,
-            total,
-        });
-        let mut done = 0usize;
-        for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
-            let embeddings = match embedder.embed(batch.to_vec(), EmbedRole::Passage).await {
-                Ok(v) if v.len() == batch.len() => v,
-                Ok(_) => {
-                    skip(loc.t("ui.err.rag_wrong_vector_count").to_string());
-                    return;
-                }
-                Err(err) => {
-                    skip(err.to_string());
-                    return;
-                }
-            };
-            for (chunk, embedding) in batch.iter().zip(embeddings) {
-                let doc = AttachmentChunk::new(
-                    index.chat_id,
-                    index.attachment_id,
-                    &index.name,
-                    chunk,
-                    embedding,
-                );
-                if let Err(err) = storage.db().attachment_insert(&doc) {
-                    // A dimensionality mismatch with the RAG base lands here —
-                    // an honest note beats a half-built index.
-                    tracing::warn!(error = %err, name = %index.name, "attachments: indexing failed");
-                    skip(err.to_string());
-                    return;
-                }
+        // Nothing cancels a single attach: the task is bounded by one file.
+        let cancel = CancellationToken::new();
+        let progress_tx = evt_tx.clone();
+        let name = index.name.clone();
+        let outcome = index_attachment(
+            &embedder,
+            &storage,
+            params,
+            &index,
+            loc,
+            &cancel,
+            |done, total| {
+                let _ = progress_tx.send(AppEvent::FileProgress(FileProgress::Indexing {
+                    name: name.clone(),
+                    done,
+                    total,
+                }));
+            },
+        )
+        .await;
+
+        match outcome {
+            // No chunks at all: the file had nothing to index, and the attach
+            // itself already reported success — saying more would be noise.
+            Ok(0) => {}
+            Ok(chunks) => {
+                let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::Indexed {
+                    name: index.name,
+                    chunks,
+                }));
             }
-            done += batch.len();
-            send(FileProgress::Indexing {
-                name: index.name.clone(),
-                done,
-                total,
-            });
+            Err(reason) => skip(reason),
         }
-        send(FileProgress::Indexed {
-            name: index.name,
-            chunks: total,
-        });
     });
 }
 

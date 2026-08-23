@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -27,6 +27,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: embedding-model change — stage 2 (re-embedding in place) (done)
 - Post-M9: embedding-model change — stage 3 (per-model similarity thresholds) (done)
 - Post-M9: per-model input prefixes for embeddings (done)
+- Post-M9: `/reindex` rebuilds an attachment index that is missing entirely (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1176,3 +1177,82 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `search_query:`/`search_document:`) — the design is a table, so a row is cheap;
   per-role calibration is explicitly **not** needed, since all four gate sites are
   passage↔passage.
+
+
+### Post-M9: `/reindex` rebuilds an attachment index that is missing entirely (done)
+- **The gap, and where it came from.** Stage 2 of the embedding-model track
+  built `/reindex` around a work queue defined by the generation marker: a row
+  whose `embed_gen` is not current. That is the right queue for a model change
+  — the rows are all still there, they only need new vectors — and its own
+  module doc says so: "attachments … the rows stay available for `/reindex` to
+  rebuild without the user re-attaching anything." The audit of "chat files
+  moved to another machine without `data.db`" found the case the queue cannot
+  see: **no rows at all**. The attachment's snapshot text is in the chat file
+  and travels with it, but the index does not, so the file was searchable
+  before the move and unrecoverable after it — `/reindex` had nothing to work
+  from, and the only route back was `/file attach` of an original that is on
+  the other machine. Everything else degraded correctly (the pinned block stops
+  offering `attachment_search`, the tool answers `not_indexed`, `attachment_read`
+  keeps paging), so nothing was broken — only permanently poorer.
+- **A stage, not a second command.** It runs inside `/reindex`, first, because
+  the command already means "bring every vector store back in line", already
+  has the banner, the cancellation and the resumability, and is what every
+  document and the startup notice already point at. A separate command would
+  have split one repair across two names.
+- **Disjoint by construction.** The new query is
+  `Db::attachment_known_ids` — any row, any generation — deliberately *not*
+  `attachment_indexed_ids`, which answers "searchable now". A file whose rows
+  are merely from an older model is the re-embed queue's work; a file with no
+  rows is the backfill's. Asking the searchable question would have made a
+  model change put every attachment through both paths: re-chunked by one,
+  counted into the queue of the other, which would then come up short of the
+  total the banner was promised. Both queries and the boundary between them are
+  pinned by tests.
+- **One writer for the rows.** The chunk-embed-insert core came out of
+  `spawn_attachment_index` as `attachments::index_attachment`, and both callers
+  now go through it — the file the user attaches today and the file the repair
+  restores later cannot drift apart in chunking, in the replace-don't-duplicate
+  delete, or in the row shape. The embedder precheck stayed in the attach
+  wrapper on purpose: `/file attach` needs it (usually there is no embedder at
+  all), while `/reindex` has pinged once for the whole job and must not ping per
+  file. One deliberate order change came with the extraction: the attach path
+  now prechecks the embedder *before* chunking rather than after, so a 32 MB
+  file is not chunked to discover there is nowhere to send it. The only
+  behavioural difference is for text that yields no chunks at all with no
+  embedder configured — silent before, a skip note now, and the note is the more
+  honest of the two.
+- **What the scan costs.** Knowing whether a chat has attachments means parsing
+  its file: the stat-only walk gives ids, and nothing indexes "which chats have
+  attachments". So the scan parses every chat file once — the same order of work
+  as the search index's first pass (~94 ms for a corpus of 171 chats), paid only
+  on an explicit `/reindex`, which is a rare and already expensive command.
+- **Memory, and why the chat files are read twice.** The scan keeps ids only.
+  An attachment's text is what makes it big (up to 32 MB each), so holding every
+  missing file's text just to *plan* the work could cost more than the work; the
+  second pass loads one chat at a time. The re-read pays for itself: an
+  attachment removed between planning and doing is simply not found, and not
+  rebuilt.
+- **Two counters, because one number cannot be both.** A re-embed stage writes
+  one vector per unit of work; the backfill's unit is a *file*, which is many
+  vectors. So the banner counts units against a total fixed before the work
+  starts, and the closing note counts vectors actually written. Pinned by a
+  fixture whose file spans several chunks: `Started { total: 1 }` and
+  `rows > 1` in the same run.
+- **Scope.** By-reference only (an inline attachment is never indexed — its
+  whole text is in every request, so search would return duplicates of what the
+  model can see) and visible chats only (a soft-deleted conversation must not
+  have work done for it, let alone become searchable again).
+- **Tests**: 2524 green (+6; 2517 on Linux, where the Windows-only tests do not
+  compile). The rebuild end to end (searchable again, and the text really in the
+  index); inline and hidden left alone; a mixed chat where only the by-reference
+  half is rebuilt; the disjointness — a file whose rows are only stale keeps
+  them verbatim and is not re-chunked; an attachment gone since the scan, which
+  is skipped without an error while still spending its unit; and
+  `known` vs `indexed` diverging at the DB level after a generation bump. Five
+  mutations checked (stage disabled; the scan asking the searchable question;
+  both scope filters; the per-attachment one alone) — each fails the test that
+  should catch it. No live run: the job's live smoke
+  (`reindex_restores_retrieval_after_a_model_swap_live`) covers the re-embed
+  path and is unchanged; the backfill is chunking plus the same insert the
+  attach path already smokes, over a mock embedder that is deterministic where a
+  real one would only add noise.

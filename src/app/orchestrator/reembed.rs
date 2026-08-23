@@ -12,6 +12,16 @@
 //! - cover **every** profile in one run, instead of one per switch;
 //! - bring attachment indexes back without the user re-attaching each file.
 //!
+//! **And what has no vectors at all** (the backfill stage). Re-embedding assumes
+//! rows to re-embed; a chat attachment can be missing them entirely — a data
+//! directory carried to another machine without `data.db` brings the chats, and
+//! with them every attachment's text, but no index over it (spec §5.2). The text
+//! is right there in the chat file, so the repair needs no re-attaching either:
+//! the stage walks the chat files, finds by-reference attachments the index holds
+//! **no** rows for, and rebuilds them through the very function `/file attach`
+//! uses. It runs first, and it is disjoint from the queues below by construction
+//! — see [`Db::attachment_known_ids`](crate::shared::storage::db::Db::attachment_known_ids).
+//!
 //! It is driven by the generation marker: a row whose `embed_gen` is not current
 //! is work, and stamping it removes it from the queue. That makes the job
 //! **resumable** — interrupting it leaves a consistent partial state, and a rerun
@@ -23,14 +33,18 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::app::events::{AppEvent, RagProgress};
+use crate::entities::attachment::AttachMode;
+use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 use crate::shared::storage::db::{Db, ReembedPending, ReembedRow};
 
 use super::Orchestrator;
+use super::attachments::{AttachIndex, index_attachment};
 use super::rag::EMBED_BATCH_CHUNKS;
 
 impl Orchestrator {
@@ -42,6 +56,10 @@ impl Orchestrator {
         spawn_reembed(Reembed {
             embedder: self.engines.embedder(),
             storage: self.storage.clone(),
+            // Only the backfill stage chunks anything, and it chunks exactly as
+            // `/file attach` would today — a file restored from a chat file must
+            // land in the same shape as one attached by hand.
+            params: ChunkParams::from_settings(&self.config.rag),
             cancel,
             loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
@@ -53,6 +71,9 @@ impl Orchestrator {
 struct Reembed {
     embedder: Arc<dyn Embedder>,
     storage: Arc<Storage>,
+    /// Chunking for the backfill stage (the re-embed stages reuse stored text
+    /// and never chunk).
+    params: ChunkParams,
     cancel: CancellationToken,
     /// The interface language (axis B) — progress and errors are for the user.
     loc: &'static Locale,
@@ -111,19 +132,51 @@ impl Store {
     }
 }
 
-/// Outcome of draining one store. The count of rows written is not carried here
-/// — it is threaded through the job-wide `done` counter, so the banner shows one
-/// continuous figure across all three stores.
+/// Outcome of draining one store (or of the backfill stage). The counts written
+/// are not carried here — they are threaded through the job-wide [`Counters`],
+/// so the banner shows one continuous figure across every stage.
 struct Drained {
     errors: usize,
     /// The embedder itself failed — the whole job must stop, not just this store.
     fatal: Option<String>,
 }
 
+/// The job's two running totals, which are **not** the same number.
+///
+/// A re-embed stage writes one vector per unit of work, so for it they move
+/// together. The backfill's unit is a *file*: one attachment is one step of the
+/// banner and many vectors in the database. Reporting the banner's figure at the
+/// end would then undercount the work, and reporting the vector count in the
+/// banner would need a total nobody can know before chunking. So the banner
+/// counts what was planned (`done` against a total fixed up front) and the
+/// closing note counts what was written (`rows`).
+#[derive(Default)]
+struct Counters {
+    /// Units of work finished — the banner's `index/total`.
+    done: usize,
+    /// Vectors actually written — the closing note's figure.
+    rows: usize,
+}
+
+/// A by-reference attachment the index holds no rows for at all: the chat file
+/// has its text, the database has nothing. Found by [`scan_missing_attachments`]
+/// and rebuilt by [`backfill_attachments`].
+///
+/// Only the ids are kept. The text is what makes an attachment big — up to
+/// `MAX_ATTACH_BYTES` each — so holding every missing file's text to plan the
+/// work could cost more memory than the work itself; the second pass loads one
+/// chat at a time instead, which also re-checks that the attachment is still
+/// there.
+struct MissingIndex {
+    chat_id: Uuid,
+    attachment_id: Uuid,
+}
+
 fn spawn_reembed(task: Reembed) {
     let Reembed {
         embedder,
         storage,
+        params,
         cancel,
         loc,
         evt_tx,
@@ -179,7 +232,21 @@ fn spawn_reembed(task: Reembed) {
                 return;
             }
         };
-        let total = pending.notes + pending.attachments + pending.rag;
+        // Attachments with no rows at all — disjoint from `pending` above, which
+        // only ever counts rows that exist. A blocking walk of the chat files:
+        // it parses JSON off the async runtime, exactly as the search index's
+        // reconciliation pass does.
+        let missing = {
+            let storage = storage.clone();
+            match tokio::task::spawn_blocking(move || scan_missing_attachments(&storage)).await {
+                Ok(found) => found,
+                Err(err) => {
+                    tracing::warn!(error = %err, "reindex: the attachment scan panicked");
+                    Vec::new()
+                }
+            }
+        };
+        let total = pending.notes + pending.attachments + pending.rag + missing.len();
         if total == 0 {
             // Everything already matches the current model — say so plainly
             // rather than pretending work happened.
@@ -192,14 +259,45 @@ fn spawn_reembed(task: Reembed) {
         }
         send(RagProgress::Started { total });
 
-        let mut done = 0usize;
+        let mut counters = Counters::default();
         let mut errors = 0usize;
+
+        // First: the files that have no index at all. Cheapest to reason about
+        // (nothing downstream depends on it) and, after a data move, the only
+        // work there is.
+        if !missing.is_empty() {
+            let drained = backfill_attachments(
+                &missing,
+                &embedder,
+                &storage,
+                params,
+                &cancel,
+                loc,
+                total,
+                &mut counters,
+                &evt_tx,
+            )
+            .await;
+            errors += drained.errors;
+            if let Some(err) = drained.fatal {
+                send(RagProgress::Failed(err));
+                return;
+            }
+        }
+
         for store in Store::ALL {
             if cancel.is_cancelled() || store.pending(&pending) == 0 {
                 continue;
             }
             let drained = drain_store(
-                store, &embedder, &storage, &cancel, loc, total, &mut done, &evt_tx,
+                store,
+                &embedder,
+                &storage,
+                &cancel,
+                loc,
+                total,
+                &mut counters,
+                &evt_tx,
             )
             .await;
             errors += drained.errors;
@@ -223,7 +321,7 @@ fn spawn_reembed(task: Reembed) {
         }
 
         send(RagProgress::Reembedded {
-            rows: done,
+            rows: counters.rows,
             errors,
             cancelled: cancel.is_cancelled(),
         });
@@ -231,8 +329,8 @@ fn spawn_reembed(task: Reembed) {
 }
 
 /// Re-embeds one store batch by batch until its queue is empty, cancelled, or
-/// stuck. `done` is the job-wide counter so the banner shows one continuous
-/// progress figure across all three stores.
+/// stuck. [`Counters`] is job-wide, so the banner shows one continuous progress
+/// figure across every stage.
 #[allow(clippy::too_many_arguments)] // cohesive job state, threaded from one call site
 async fn drain_store(
     store: Store,
@@ -241,7 +339,7 @@ async fn drain_store(
     cancel: &CancellationToken,
     loc: &'static Locale,
     total: usize,
-    done: &mut usize,
+    counters: &mut Counters,
     evt_tx: &UnboundedSender<AppEvent>,
 ) -> Drained {
     let mut errors = 0usize;
@@ -288,7 +386,7 @@ async fn drain_store(
             }
         };
 
-        let (written, write_errors) = write_batch(store, storage, &rows, embeddings, done);
+        let (written, write_errors) = write_batch(store, storage, &rows, embeddings, counters);
         errors += write_errors;
         // A batch that wrote nothing leaves the queue unchanged, so the next
         // fetch returns the same rows — the loop would never end. Stop this
@@ -298,7 +396,7 @@ async fn drain_store(
         }
 
         let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
-            index: *done,
+            index: counters.done,
             total,
             name: store.label(loc).to_string(),
             dir: String::new(),
@@ -313,6 +411,176 @@ async fn drain_store(
     }
 }
 
+/// Walks the chat files and lists by-reference attachments the index holds no
+/// rows for. Blocking (JSON parsing + SQLite), so it runs on the blocking pool.
+///
+/// **Scope.** By-reference only, because inline attachments are deliberately not
+/// indexed at all (their whole text is in every request already, so search would
+/// return duplicates of what the model can see). Hidden chats are skipped: a
+/// soft-deleted conversation must not have work done for it, let alone become
+/// searchable again. And `attachment_known_ids` — not `attachment_indexed_ids` —
+/// keeps this disjoint from the re-embed queues: a file whose rows are merely
+/// from an older model already has a home there.
+///
+/// One chat's failure is logged and skipped, never aborting the walk: a single
+/// unreadable file must not cost the repair of all the others (the rule the
+/// search index's reconciliation already follows).
+fn scan_missing_attachments(storage: &Storage) -> Vec<MissingIndex> {
+    let files = match storage.json().chat_files() {
+        Ok(files) => files,
+        Err(err) => {
+            tracing::warn!(error = %format!("{err:#}"), "reindex: cannot list the chat files");
+            return Vec::new();
+        }
+    };
+    let mut missing = Vec::new();
+    for file in files {
+        let chat = match storage.json().load_chat(file.id) {
+            Ok(Some(chat)) => chat,
+            Ok(None) => continue,
+            Err(err) => {
+                tracing::warn!(chat = %file.id, error = %format!("{err:#}"),
+                    "reindex: skipped a chat whose file could not be read");
+                continue;
+            }
+        };
+        if chat.is_hidden || !chat.attachments.iter().any(is_by_reference) {
+            continue;
+        }
+        let known = match storage.db().attachment_known_ids(chat.id) {
+            Ok(ids) => ids,
+            Err(err) => {
+                tracing::warn!(chat = %chat.id, error = %err,
+                    "reindex: cannot read which attachments are indexed");
+                continue;
+            }
+        };
+        missing.extend(
+            chat.attachments
+                .iter()
+                .filter(|a| is_by_reference(a) && !known.contains(&a.id))
+                .map(|a| MissingIndex {
+                    chat_id: chat.id,
+                    attachment_id: a.id,
+                }),
+        );
+    }
+    missing
+}
+
+/// Whether this attachment is one the index is supposed to hold (fork F13 —
+/// see [`scan_missing_attachments`]).
+fn is_by_reference(attachment: &crate::entities::attachment::Attachment) -> bool {
+    attachment.mode == AttachMode::ByReference
+}
+
+/// Rebuilds the listed attachments from the text in their chat files, through
+/// the same [`index_attachment`] `/file attach` uses.
+///
+/// `missing` comes out of the scan in chat order, so one chat is loaded once and
+/// reused for its whole run of attachments. Loading here rather than carrying
+/// the text from the scan bounds the memory to a single chat — and re-reads the
+/// file, so an attachment removed since the scan is simply not found and not
+/// rebuilt.
+///
+/// A failure is fatal for the job, matching [`drain_store`]: both realistic
+/// causes — the embedder gone, or a vector dimensionality the database cannot
+/// take — will fail the next file identically, and grinding through fifty of
+/// them to say so fifty times helps nobody. What was written stays valid, and a
+/// rerun resumes from it.
+#[allow(clippy::too_many_arguments)] // cohesive job state, threaded from one call site
+async fn backfill_attachments(
+    missing: &[MissingIndex],
+    embedder: &Arc<dyn Embedder>,
+    storage: &Arc<Storage>,
+    params: ChunkParams,
+    cancel: &CancellationToken,
+    loc: &'static Locale,
+    total: usize,
+    counters: &mut Counters,
+    evt_tx: &UnboundedSender<AppEvent>,
+) -> Drained {
+    let mut loaded: Option<crate::entities::chat::Chat> = None;
+
+    for item in missing {
+        if cancel.is_cancelled() {
+            break;
+        }
+        if loaded.as_ref().is_none_or(|c| c.id != item.chat_id) {
+            loaded = storage
+                .json()
+                .load_chat(item.chat_id)
+                .unwrap_or_else(|err| {
+                    tracing::warn!(chat = %item.chat_id, error = %format!("{err:#}"),
+                    "reindex: cannot reread a chat to rebuild its attachment index");
+                    None
+                });
+        }
+        // The chat or the attachment is gone since the scan (removed, or the
+        // chat deleted). Not an error — there is simply nothing to rebuild, and
+        // the unit is still spent so the banner reaches its total.
+        let Some((chat, attachment)) = loaded.as_ref().and_then(|chat| {
+            chat.attachments
+                .iter()
+                .find(|a| a.id == item.attachment_id)
+                .map(|a| (chat, a))
+        }) else {
+            counters.done += 1;
+            continue;
+        };
+
+        let index = AttachIndex {
+            chat_id: item.chat_id,
+            attachment_id: attachment.id,
+            name: attachment.name.clone(),
+            source: attachment.source.clone(),
+            text: attachment.text.clone(),
+        };
+        // The banner names the file and the conversation it belongs to: after a
+        // move there may be many, and "which chat" is what tells them apart.
+        let title = chat.title.clone();
+        let name = index.name.clone();
+        let at = counters.done;
+        let outcome = index_attachment(
+            embedder,
+            storage,
+            params,
+            &index,
+            loc,
+            cancel,
+            |chunks_done, chunks_total| {
+                let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
+                    index: at,
+                    total,
+                    name: name.clone(),
+                    dir: title.clone(),
+                    chunks_done,
+                    chunks_total,
+                }));
+            },
+        )
+        .await;
+
+        counters.done += 1;
+        match outcome {
+            Ok(rows) => counters.rows += rows,
+            Err(reason) => {
+                tracing::warn!(chat = %item.chat_id, attachment = %index.name, reason = %reason,
+                    "reindex: failed to rebuild an attachment index");
+                return Drained {
+                    errors: 1,
+                    fatal: Some(reason),
+                };
+            }
+        }
+    }
+
+    Drained {
+        errors: 0,
+        fatal: None,
+    }
+}
+
 /// Writes one batch's vectors back (each row: vector, then generation stamp —
 /// `Store::write` delegates to the DB primitives that keep that order).
 /// Returns `(written, errors)`: a failed row is counted and logged, never
@@ -322,7 +590,7 @@ fn write_batch(
     storage: &Arc<Storage>,
     rows: &[ReembedRow],
     embeddings: Vec<Vec<f32>>,
-    done: &mut usize,
+    counters: &mut Counters,
 ) -> (usize, usize) {
     let mut written = 0usize;
     let mut errors = 0usize;
@@ -330,7 +598,9 @@ fn write_batch(
         match store.write(storage.db(), row, &embedding) {
             Ok(()) => {
                 written += 1;
-                *done += 1;
+                // One row re-embedded is one unit of work and one vector.
+                counters.done += 1;
+                counters.rows += 1;
             }
             Err(err) => {
                 errors += 1;
@@ -344,7 +614,10 @@ fn write_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::attachment::{AttachMode, Attachment, AttachmentChunk};
+    use crate::entities::chat::Chat;
     use crate::entities::note::Note;
+    use crate::entities::profile::Profile;
     use crate::entities::rag::RagDocument;
     use crate::shared::api::mock::MockEmbedder;
     use crate::shared::i18n::{Lang, locale};
@@ -366,6 +639,7 @@ mod tests {
         spawn_reembed(Reembed {
             embedder,
             storage: storage.clone(),
+            params: ChunkParams::default(),
             cancel,
             loc: locale(Lang::Ru),
             evt_tx: tx,
@@ -374,16 +648,26 @@ mod tests {
     }
 
     /// Drains the channel and returns the terminal event.
-    async fn finish(mut rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> RagProgress {
-        let mut last = None;
+    async fn finish(rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> RagProgress {
+        collect(rx)
+            .await
+            .pop()
+            .expect("the job must report an outcome")
+    }
+
+    /// Every progress event the job sent, in order, up to and including the
+    /// terminal one — for the tests that are about the banner rather than the
+    /// outcome.
+    async fn collect(mut rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> Vec<RagProgress> {
+        let mut seen = Vec::new();
         while let Some(AppEvent::RagProgress(p)) = rx.recv().await {
             let terminal = matches!(p, RagProgress::Reembedded { .. } | RagProgress::Failed(_));
-            last = Some(p);
+            seen.push(p);
             if terminal {
                 break;
             }
         }
-        last.expect("the job must report an outcome")
+        seen
     }
 
     /// Seeds one note and one knowledge-base chunk, then retires them.
@@ -437,6 +721,276 @@ mod tests {
         assert!(
             !storage.db().rag_is_stale(profile).unwrap(),
             "a fully re-embedded base is no longer stale"
+        );
+    }
+
+    /// Writes a chat file with one attachment in the given mode, as the app
+    /// would have saved it — the state a data directory arrives in when it was
+    /// copied without `data.db`.
+    fn seed_chat_with_attachment(
+        storage: &Arc<Storage>,
+        text: &str,
+        mode: AttachMode,
+        hidden: bool,
+    ) -> (Chat, Attachment) {
+        let profile = Profile::new("A", "sys");
+        storage.json().upsert_profile(&profile).unwrap();
+        let mut chat = Chat::from_profile(&profile, "a chat with a file");
+        let attachment = Attachment::new("report.md", "/old/report.md", text.to_string(), 42, mode);
+        chat.attachments.push(attachment.clone());
+        chat.is_hidden = hidden;
+        storage.json().save_chat(&chat).unwrap();
+        (chat, attachment)
+    }
+
+    /// The case the whole stage exists for: the chat file holds the text, the
+    /// database holds nothing, and `/reindex` rebuilds the index without the
+    /// user re-attaching a file that is on the other machine.
+    #[tokio::test]
+    async fn an_attachment_with_no_rows_is_rebuilt_from_the_chat_file() {
+        let (_d, storage) = deps();
+        // Long enough to span several chunks (the default target is 800
+        // characters): one file is one step of the banner and many vectors, and
+        // that difference is what the job's two counters exist for.
+        let text = format!(
+            "лунная база строится в 2031 году. {}",
+            "ещё текст. ".repeat(300)
+        );
+        let (chat, attachment) =
+            seed_chat_with_attachment(&storage, &text, AttachMode::ByReference, false);
+        assert!(
+            storage
+                .db()
+                .attachment_indexed_ids(chat.id)
+                .unwrap()
+                .is_empty()
+        );
+
+        let rx = run(
+            &storage,
+            Arc::new(MockEmbedder::new(16)),
+            CancellationToken::new(),
+        );
+        let seen = collect(rx).await;
+        assert!(
+            matches!(seen.first(), Some(RagProgress::Started { total: 1 })),
+            "one file is one unit of work: {seen:?}"
+        );
+        match seen.last() {
+            Some(RagProgress::Reembedded {
+                rows,
+                errors,
+                cancelled,
+            }) => {
+                assert!(
+                    *rows > 1,
+                    "and many vectors — the closing note counts those, not the units: {rows}"
+                );
+                assert_eq!(*errors, 0);
+                assert!(!cancelled);
+            }
+            other => panic!("expected Reembedded, got {other:?}"),
+        }
+
+        assert_eq!(
+            storage.db().attachment_indexed_ids(chat.id).unwrap(),
+            vec![attachment.id],
+            "the file is searchable again"
+        );
+        let query = Arc::new(MockEmbedder::new(16))
+            .embed(vec!["лунная база".into()], EmbedRole::Query)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let hits = storage.db().attachment_search(chat.id, &query, 3).unwrap();
+        assert!(
+            hits.iter().any(|h| h.text.contains("лунная база")),
+            "and the text really is in the index: {hits:?}"
+        );
+    }
+
+    /// Scope. An inline file is deliberately never indexed (its text is in every
+    /// request already), and a hidden chat must not have work done for it — the
+    /// repair must not resurrect a soft-deleted conversation's index.
+    #[tokio::test]
+    async fn inline_attachments_and_hidden_chats_are_left_alone() {
+        for (mode, hidden) in [(AttachMode::Inline, false), (AttachMode::ByReference, true)] {
+            let (_d, storage) = deps();
+            let (chat, _) = seed_chat_with_attachment(&storage, "какой-то текст", mode, hidden);
+
+            let rx = run(
+                &storage,
+                Arc::new(MockEmbedder::new(16)),
+                CancellationToken::new(),
+            );
+            assert_eq!(
+                finish(rx).await,
+                RagProgress::Reembedded {
+                    rows: 0,
+                    errors: 0,
+                    cancelled: false
+                },
+                "{mode:?}, hidden={hidden}: nothing to do"
+            );
+            assert!(
+                storage
+                    .db()
+                    .attachment_known_ids(chat.id)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    /// A chat can hold both kinds, and then "does this chat have anything to do?"
+    /// is not the same question as "is this file one to index". Only the
+    /// by-reference half is rebuilt; the inline one stays out of the index, as
+    /// it would have if it were attached today.
+    #[tokio::test]
+    async fn only_the_by_reference_half_of_a_mixed_chat_is_rebuilt() {
+        let (_d, storage) = deps();
+        let profile = Profile::new("A", "sys");
+        storage.json().upsert_profile(&profile).unwrap();
+        let mut chat = Chat::from_profile(&profile, "a chat with two files");
+        let inline = Attachment::new(
+            "small.txt",
+            "/old/small.txt",
+            "короткий текст целиком в запросе".to_string(),
+            10,
+            AttachMode::Inline,
+        );
+        let by_ref = Attachment::new(
+            "big.md",
+            "/old/big.md",
+            "длинный текст, который читают по ссылке".to_string(),
+            99,
+            AttachMode::ByReference,
+        );
+        chat.attachments.push(inline.clone());
+        chat.attachments.push(by_ref.clone());
+        storage.json().save_chat(&chat).unwrap();
+
+        let rx = run(
+            &storage,
+            Arc::new(MockEmbedder::new(16)),
+            CancellationToken::new(),
+        );
+        assert!(matches!(
+            finish(rx).await,
+            RagProgress::Reembedded { errors: 0, .. }
+        ));
+
+        assert_eq!(
+            storage.db().attachment_known_ids(chat.id).unwrap(),
+            vec![by_ref.id],
+            "the inline file must not have been indexed alongside it"
+        );
+    }
+
+    /// The two halves of the job must not overlap. A file whose rows are merely
+    /// from an older model is the re-embed queue's work: it keeps its rows (and
+    /// their text), gets fresh vectors, and is **not** re-chunked from the chat
+    /// file. If the backfill asked "is it searchable?" instead of "does it have
+    /// rows?", this file would be done twice and the queue it was counted into
+    /// would come up short.
+    #[tokio::test]
+    async fn a_file_whose_rows_are_only_stale_stays_with_the_re_embed_queue() {
+        let (_d, storage) = deps();
+        let (chat, attachment) = seed_chat_with_attachment(
+            &storage,
+            "первый фрагмент. второй фрагмент.",
+            AttachMode::ByReference,
+            false,
+        );
+        // One hand-written row, then retire it: rows exist, none is searchable.
+        storage
+            .db()
+            .attachment_insert(&AttachmentChunk::new(
+                chat.id,
+                attachment.id,
+                &attachment.name,
+                "первый фрагмент",
+                vec![1.0; 16],
+            ))
+            .unwrap();
+        storage.db().bump_embed_generation().unwrap();
+        assert!(
+            storage
+                .db()
+                .attachment_indexed_ids(chat.id)
+                .unwrap()
+                .is_empty(),
+            "not searchable"
+        );
+        assert!(
+            scan_missing_attachments(&storage).is_empty(),
+            "but not missing either — the re-embed queue owns it"
+        );
+
+        let rx = run(
+            &storage,
+            Arc::new(MockEmbedder::new(16)),
+            CancellationToken::new(),
+        );
+        match finish(rx).await {
+            RagProgress::Reembedded { rows, errors, .. } => {
+                assert_eq!(rows, 1, "the one existing row, re-embedded once");
+                assert_eq!(errors, 0);
+            }
+            other => panic!("expected Reembedded, got {other:?}"),
+        }
+        // Re-chunking would have replaced the hand-written row with the chunker's
+        // own; the text surviving verbatim is what proves it did not happen.
+        let query = Arc::new(MockEmbedder::new(16))
+            .embed(vec!["первый фрагмент".into()], EmbedRole::Query)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let hits = storage.db().attachment_search(chat.id, &query, 5).unwrap();
+        assert_eq!(hits.len(), 1, "still exactly one row: {hits:?}");
+        assert_eq!(hits[0].text, "первый фрагмент");
+    }
+
+    /// An attachment removed between the scan and the work is not an error and
+    /// not a rebuild — the second read of the chat file is what notices.
+    #[tokio::test]
+    async fn an_attachment_gone_since_the_scan_is_simply_skipped() {
+        let (_d, storage) = deps();
+        let (mut chat, _) = seed_chat_with_attachment(
+            &storage,
+            "текст, который сейчас исчезнет",
+            AttachMode::ByReference,
+            false,
+        );
+        let missing = scan_missing_attachments(&storage);
+        assert_eq!(missing.len(), 1);
+
+        chat.attachments.clear();
+        storage.json().save_chat(&chat).unwrap();
+
+        let mut counters = Counters::default();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let drained = backfill_attachments(
+            &missing,
+            &(Arc::new(MockEmbedder::new(16)) as Arc<dyn Embedder>),
+            &storage,
+            ChunkParams::default(),
+            &CancellationToken::new(),
+            locale(Lang::Ru),
+            1,
+            &mut counters,
+            &tx,
+        )
+        .await;
+
+        assert_eq!(drained.errors, 0);
+        assert!(drained.fatal.is_none());
+        assert_eq!(counters.rows, 0, "nothing was rebuilt");
+        assert_eq!(
+            counters.done, 1,
+            "but the unit is spent, so the banner still reaches its total"
         );
     }
 

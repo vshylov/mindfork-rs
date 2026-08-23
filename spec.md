@@ -825,6 +825,20 @@ banner as `/rag add`, and can be cancelled.
   attachment indexes back without the user re-attaching each file; and it keeps
   chunk ids stable, so nothing downstream is invalidated. `/rag rebuild` keeps
   its own meaning — re-chunk one profile after a chunking-parameter change.
+- **And it rebuilds what has no vectors at all** (the backfill stage, which runs
+  first). Re-embedding assumes rows to re-embed, and a chat attachment can be
+  missing them entirely — most plainly after a data directory is carried to
+  another machine without `data.db` ([§5.2](#52-data-storage)): the chats arrive,
+  and with them every attachment's snapshot text, but no index over it. The text
+  is in the chat file, so this needs no re-attaching either: the stage walks the
+  chat files and rebuilds every by-reference attachment the index holds **no**
+  rows for, through the same code path `/file attach` uses. Inline attachments
+  are skipped (they are never indexed — their whole text is in the request), and
+  so are hidden chats. The two halves are disjoint by construction: rows from an
+  older model are the re-embed queue's work, no rows at all are the backfill's,
+  so nothing is done twice. One file is one step of the progress banner and many
+  vectors in the database, so the banner counts files and the closing note counts
+  vectors.
 - **Top-level, not a `/rag` subcommand**, because it spans notes, chat
   attachments and every profile's knowledge base: filing it under the
   knowledge-base family would misdescribe its scope. That scope is not a breach
