@@ -3073,6 +3073,52 @@ fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
     );
 }
 
+/// The sub-agent chip (spec §9.3.2): worded from the raw progress, the tool
+/// named when inside one, composing with the background tasks, cleared by
+/// the run's end and by the turn's end, and dropped for a stale generation.
+#[test]
+fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
+    use crate::app::events::SubagentProgress;
+    let mut s = ChatScreen::new();
+    let gen_id = Uuid::new_v4();
+    s.begin_generation(gen_id, None);
+    let at = |round: u32, tool: Option<&str>| {
+        Some(SubagentProgress {
+            name: "Критик".into(),
+            round,
+            tool: tool.map(str::to_string),
+        })
+    };
+
+    s.set_subagent_progress(gen_id, at(1, None));
+    let hint = s.background_hint().expect("the chip must be shown");
+    assert!(hint.contains("Критик") && hint.contains('1'), "{hint}");
+    s.set_subagent_progress(gen_id, at(2, Some("web_search")));
+    let hint = s.background_hint().unwrap();
+    assert!(hint.contains("web_search") && hint.contains('2'), "{hint}");
+
+    s.set_reflecting(true);
+    let hint = s.background_hint().unwrap();
+    assert!(
+        hint.contains(s.loc().t("ui.chat.bg.reflect")) && hint.contains("Критик"),
+        "{hint}"
+    );
+
+    // The run ended; the turn goes on.
+    s.set_subagent_progress(gen_id, None);
+    assert!(!s.background_hint().unwrap().contains("Критик"));
+
+    // The turn ends with a run still reported — the chip goes with it.
+    s.set_subagent_progress(gen_id, at(3, None));
+    s.finish_generation(gen_id, FinishReason::Cancelled);
+    assert!(!s.background_hint().unwrap().contains("Критик"));
+
+    // A stale generation's chip is dropped.
+    s.begin_generation(Uuid::new_v4(), None);
+    s.set_subagent_progress(gen_id, at(1, None));
+    assert!(!s.background_hint().unwrap().contains("Критик"));
+}
+
 /// A chip from a turn the user has already cancelled must not appear on the next
 /// one — the same staleness rule every streamed event follows (spec §4.4).
 #[test]

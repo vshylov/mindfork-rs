@@ -535,6 +535,17 @@ impl Orchestrator {
         // Read before the apply below — afterwards the reply is part of the
         // history and the question can no longer be asked.
         let first_reply = self.is_first_reply(&res);
+        // Sub-agent runs that landed with this turn and have a reply to name
+        // themselves by — titled below, once they are part of the chat
+        // (docs/research/subagent-chats.md §3.10).
+        let landed_runs: Vec<Uuid> = res
+            .messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .filter_map(|r| r.subagent.as_deref())
+            .filter(|run| run.final_reply().is_some())
+            .map(|run| run.id)
+            .collect();
         // Attachments a tool produced this turn (spec §9.9) — applied below,
         // outside the `chat` borrow.
         let mut attached: Vec<crate::entities::attachment::Attachment> = Vec::new();
@@ -570,6 +581,11 @@ impl Orchestrator {
                 res.chat_id,
                 crate::shared::config::AutoTitleMode::AfterAssistantReply,
             );
+        }
+        // A sub-agent transcript's whole life lands at once, so both trigger
+        // points are now — one request per landed run (spec §9.3.2, §11.2).
+        for run in landed_runs {
+            self.maybe_auto_title_run(run);
         }
         // After a successful reply — maybe it's time for background auto-reflection
         // (Tier 3), notes auto-consolidation ("sleep", Tier 3), and/or self-model
@@ -910,6 +926,7 @@ fn spawn_generation(spawn: GenSpawn) {
             live: true,
             token_base: 0,
             ended_by_limit: None,
+            persona: None,
         };
         let reason = turn.run().await;
 
@@ -1016,6 +1033,10 @@ struct TurnLoop<'a> {
     /// Which budget ended this loop, when one did — the parent reads it to
     /// record a sub-agent's outcome as `RoundLimit` rather than `Completed`.
     ended_by_limit: Option<RoundLimit>,
+    /// A sub-agent's display name for the status-bar chip
+    /// (`AppEvent::SubagentProgress`); `None` on the turn's own loop, which
+    /// reports nothing of the kind.
+    persona: Option<String>,
 }
 
 /// The limits of one sub-agent run, snapshotted from `config.tools` with the
@@ -1077,6 +1098,28 @@ impl TurnLoop<'_> {
         self.allowed.iter().any(|t| t == name)
     }
 
+    /// Tells the status bar where a sub-agent run stands (spec §9.3.2): the
+    /// round about to start, or the tool it is entering. Sent **around** the
+    /// muted sink — this is the one event of a child's that is meant for the
+    /// parent's screen. A no-op on the turn's own loop.
+    fn report_progress(&self, tool: Option<&str>) {
+        let Some(name) = &self.persona else {
+            return;
+        };
+        // `tool_round` counts the round before it executes the calls, so a
+        // tool belongs to the round already counted; a stream opens the next.
+        let counted = self.round + self.workspace_rounds;
+        let round = if tool.is_some() { counted } else { counted + 1 };
+        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
+            generation_id: self.shared.id,
+            progress: Some(crate::app::events::SubagentProgress {
+                name: name.clone(),
+                round,
+                tool: tool.map(str::to_string),
+            }),
+        });
+    }
+
     /// This loop's event sink (see [`RoundSink`]).
     fn sink(&self) -> RoundSink<'_> {
         RoundSink {
@@ -1118,6 +1161,7 @@ impl TurnLoop<'_> {
 
     async fn run(&mut self) -> FinishReason {
         loop {
+            self.report_progress(None);
             let out = self.stream().await;
             self.total_tokens += out.tokens;
             self.total_reasoning += out.reasoning_tokens;
@@ -1364,6 +1408,7 @@ impl TurnLoop<'_> {
         let args: serde_json::Value =
             serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
         let is_control = control::is_control_tool(&call.name);
+        self.report_progress(Some(&call.name));
         let CallResult {
             text: result,
             images,
@@ -1613,6 +1658,7 @@ impl TurnLoop<'_> {
             live: false,
             token_base,
             ended_by_limit: None,
+            persona: Some(parsed.initial_title()),
         };
         // Boxed: `run` → `tool_round` → `execute_call` → here → `run` is a
         // recursive async chain, and the compiler needs one indirection in it.
@@ -1636,6 +1682,11 @@ impl TurnLoop<'_> {
         let child_tokens = child.total_tokens;
         let child_reasoning = child.total_reasoning;
         drop(child);
+        // The chip goes with the run; the parent's turn is still generating.
+        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
+            generation_id: self.shared.id,
+            progress: None,
+        });
 
         // Effects go to the chat they describe (research §3.4): identity to the
         // run, environment to the parent — which also mirrors an attachment into

@@ -637,7 +637,10 @@ feed's headers — sent on activation and after a profile edit, §10 of the spec
 attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`,
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
 screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
-status-bar indicator for background reflection/consolidation/compression), `TtsActive`
+status-bar indicator for background reflection/consolidation/compression),
+`SubagentProgress{generation_id, progress}` (where a sub-agent run stands —
+name, round, tool — for the status-bar chip while the parent's turn is inside
+`call_subagent`; `None` clears it; spec §9.3.2), `TtsActive`
 (speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
 `Error`, `Notice` (a plain informational note in the feed — the
 counterpart of `Error` for an outcome that is not a failure) and `Compacted`
@@ -824,7 +827,14 @@ Details:
   takes the persona, the messages and a `RequestEnv` (attachments, project,
   compaction view) separately — a sub-agent's request is its own persona over
   its parent's environment. The sub-agent run itself is §8's `call_subagent`
-  note and [ADR 0010](decisions/0010-subagent-nested-turn.md).
+  note and [ADR 0010](decisions/0010-subagent-nested-turn.md). A child loop
+  carries a `persona` and reports `AppEvent::SubagentProgress` **around** its
+  muted `RoundSink` (`report_progress`, at each round's start and each tool's
+  entry; the parent sends the clearing `None` after the run) — the one event
+  of a child's meant for the parent's screen. At landing, `handle_done`
+  collects the runs that arrived with the turn and `maybe_auto_title_run`
+  starts the title task for each (both `auto_title` points; `renamed_manually`
+  wins), through the same `view()`-resolved task a transcript's `Ctrl+R` uses.
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server

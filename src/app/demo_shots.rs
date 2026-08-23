@@ -32,7 +32,8 @@ pub const SHOT_W: u16 = 116;
 pub const HERO_H: u16 = 44;
 /// One height for every gallery panel. 30 is not arbitrary: the settings
 /// Tools section — the richest capture — fills its parameter area exactly at
-/// this height, and the fixture stocks the other screens (22 chats, the
+/// this height, and the fixture stocks the other screens (21 chats and a
+/// sub-agent transcript, the
 /// grown self-model) so none of them drags half a frame of empty rows.
 pub const PANEL_H: u16 = 30;
 

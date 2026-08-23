@@ -591,6 +591,10 @@ pub struct ChatScreen {
     /// a string rather than a flag, because the chip carries the numbers; it is
     /// cleared by content or by the turn finishing, so it cannot outlive the wait.
     retrying: Option<String>,
+    /// The composed "sub-agent «name» · round N · tool" label while the turn
+    /// is inside `call_subagent` (`AppEvent::SubagentProgress`); `None` —
+    /// no run in flight. Spec §9.3.2.
+    subagent: Option<String>,
     /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
     /// status bar.
     speaking: bool,
@@ -677,6 +681,7 @@ impl ChatScreen {
             self_consolidating: false,
             compacting: false,
             retrying: None,
+            subagent: None,
             speaking: false,
             esc_target: EscTarget::default(),
             rag: None,
@@ -831,6 +836,11 @@ impl ChatScreen {
         }
         if self.compacting {
             parts.push(self.loc.t("ui.chat.bg.compact"));
+        }
+        // The sub-agent chip after the background tasks: it belongs to the
+        // turn in flight, like the retry — the two read together at the end.
+        if let Some(subagent) = &self.subagent {
+            parts.push(subagent);
         }
         // Last, so a retry the user is waiting on reads at the end of the strip
         // next to the generation indicator rather than in the middle of the

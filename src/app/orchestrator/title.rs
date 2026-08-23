@@ -74,6 +74,23 @@ impl Orchestrator {
         self.start_title_task(id, TitleOrigin::Auto);
     }
 
+    /// The automatic titling of a sub-agent transcript that has just landed
+    /// (spec §9.3.2, docs/research/subagent-chats.md §3.10). A transcript's
+    /// user message and reply arrive together, so **both** trigger points of
+    /// `interface.auto_title` fire here — only `Off` fires nothing — and the
+    /// hand-named one (`renamed_manually`, which a migrated or re-opened run
+    /// can carry) is left alone, as for a chat.
+    pub(super) fn maybe_auto_title_run(&mut self, id: Uuid) {
+        if self.config.interface.auto_title == AutoTitleMode::Off {
+            return;
+        }
+        match self.view(id) {
+            Some(super::ChatView::Child { run, .. }) if !run.renamed_manually => {}
+            _ => return,
+        }
+        self.start_title_task(id, TitleOrigin::Auto);
+    }
+
     /// Reports a titling failure where its origin belongs: the chat-list
     /// overlay for a requested run, the log for an automatic one.
     fn report_title_error(&self, origin: TitleOrigin, msg: String) {
