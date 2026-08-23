@@ -254,7 +254,7 @@ mod tests {
         assert!(!failed);
         assert_ne!(sent, plain, "sending to the terminal is not the same claim");
         // It must not promise arrival — the protocol says nothing back.
-        assert!(sent.contains("does not confirm"), "{sent}");
+        assert!(sent.contains("never confirms"), "{sent}");
 
         // Too large, with and without a local clipboard to fall back on: two
         // different next steps, so two different sentences.
@@ -275,6 +275,44 @@ mod tests {
         let (err, failed) = msg(Err("no clipboard".into()), TerminalCopy::NotTried);
         assert!(failed);
         assert_ne!(err, big_none);
+    }
+
+    /// Every outcome where the clipboard may not have delivered names the route
+    /// that always works (`/export`) — in every bundled locale.
+    ///
+    /// This is the project's most-repeated defect, caught live *inside* this
+    /// feature: the OSC 52 note told a JupyterLab user their terminal "may not
+    /// support the sequence" and stopped there, which is a description of the
+    /// situation with no way out of it (docs/lessons.md §4). JupyterLab is named
+    /// too — it is the one host we know drops the escape, and being told which
+    /// terminal you are fighting is worth a clause.
+    #[test]
+    fn every_clipboard_dead_end_names_the_export_route() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for (local, terminal) in [
+                (Ok(()), TerminalCopy::Sent),
+                (Ok(()), TerminalCopy::TooLarge { bytes: 90_000 }),
+                (
+                    Err("x".to_string()),
+                    TerminalCopy::TooLarge { bytes: 90_000 },
+                ),
+            ] {
+                let (msg, _) = CopyReport { local, terminal }.message(loc);
+                assert!(
+                    msg.contains("/export"),
+                    "{lang:?} leaves the user without a route: {msg}"
+                );
+            }
+            // The control: an ordinary local copy worked, so it has nothing to
+            // send anyone to — a route there would be noise on every `F5`.
+            let (plain, _) = CopyReport {
+                local: Ok(()),
+                terminal: TerminalCopy::NotTried,
+            }
+            .message(loc);
+            assert!(!plain.contains("/export"), "{lang:?}: {plain}");
+        }
     }
 
     /// Per-locale gate (docs/history/i18n-ui.md §3.5): every outcome renders in

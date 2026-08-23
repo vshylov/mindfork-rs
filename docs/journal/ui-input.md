@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -37,6 +37,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: command-only control — stage 2 (`/profile`, `/self clear`) (done)
 - Post-M9: OSC 52 — copying to the client's clipboard (done)
 - Post-M9: `/project` is highlighted while it is typed (done)
+- Post-M9: OSC 52 — the note that did not close the door (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1363,3 +1364,34 @@ has watched fail is only a guard by assertion.
 
 **A live model run is not required** (AGENTS.md §3): no engine, memory or tool
 path is touched, and the change is a pure predicate over text the user typed.
+
+### Post-M9: OSC 52 — the note that did not close the door (done)
+
+- **Found live, in the host the feature was researched against.** A `/copy` in
+  JupyterLab's terminal produced the honest note — *"sent to your terminal's
+  clipboard (OSC 52). The terminal does not confirm it — if nothing pasted, your
+  terminal may not support the sequence."* — and nothing was on the clipboard,
+  exactly as the research said would happen there (xterm.js without
+  `@xterm/addon-clipboard`, journal entry above). The behaviour was correct; the
+  **message** was not, because it stopped at describing the dead end.
+- **The fix is one clause, and the lesson is the fifth instance of §4.** Every
+  message where the clipboard may not have delivered — the sent-to-terminal note
+  and both too-large notes — now names `/export`, which writes the conversation
+  to a file and depends on no terminal at all. JupyterLab is named outright: it
+  is the one host known to drop the escape, and being told which terminal you
+  are fighting is worth a clause. What makes this instance sharper than the
+  earlier four is that the note was *carefully hedged and entirely true* — "may
+  not support" is accurate, and useless. Hedging is not a route.
+- **The irony worth recording**: `/export` was built one track later precisely
+  for this host, and the note that most needed to point at it was written before
+  it existed and never revisited. When a later feature answers an earlier
+  feature's dead end, the earlier feature's messages are part of the change.
+
+**Tests** (+1). A gate over every bundled locale: each of the three outcomes
+where the clipboard may not have delivered names `/export`, with the ordinary
+local copy as the control — it worked, so a route there would be noise on every
+`F5`. The existing wording test's phrase assertion moved with the text.
+
+**A live model run is not required** (AGENTS.md §3) — locale text and one test.
+The live evidence is the screenshot that started this: the terminal that dropped
+the escape now gets told what to do instead.

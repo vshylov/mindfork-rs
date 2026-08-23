@@ -576,7 +576,7 @@ for one is part of designing the measurement, not a fallback.
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
-next.** This is the project's most-repeated defect — **four separate instances**, each
+next.** This is the project's most-repeated defect — **five separate instances**, each
 found live, each costing a user a wasted turn:
 
 - A **by-reference attachment block** stated the situation without stating the route,
@@ -591,6 +591,14 @@ found live, each costing a user a wasted turn:
   `/tmp` vanished between calls with no explanation.
 - An **MCP status row** read `ready · tools: 1` while the assistant said it had no such
   tool — the double opt-in working as designed, with nothing on screen saying so.
+- The **OSC 52 copy note** told a JupyterLab user their terminal "may not support the
+  sequence" and stopped there. Every word of it was true and carefully hedged — the
+  protocol really does not acknowledge, and the research really had established that
+  JupyterLab drops the escape — but the message named no way forward, and `/export`,
+  built in the very next track for exactly that host, went unmentioned. The lesson has
+  a sharper edge than the earlier four: **an honest description of a dead end is still
+  a dead end**, and hedging ("may not") is not a substitute for a route. Watch for it
+  in the messages of a feature whose *whole point* is that it can fail invisibly.
 
 The fix is always the same: name the routes that do *not* work, and the one that does.
 Two corollaries. **Only advertise what exists** — an attachment entry names the search
@@ -599,7 +607,8 @@ tool only for a file that really has an index. And **distinguish "nothing here" 
 that would refuse is the same bug in politer clothing.
 — *chat file attachments — stage 2 (`attachment_read`)*, *`youtube_watch` — a degraded
 answer has to close the door*, *page fidelity for `fetch_url`*, *MCP servers in the
-settings window*, *history compression — stage 2*.
+settings window*, *history compression — stage 2*, *OSC 52 — the note that did not
+close the door*.
 
 **`let x = thing?` inside a handler that owes the user an answer turns a refusal
 into silence.** `/rename` began `let id = self.active_chat?` — with no chat open
