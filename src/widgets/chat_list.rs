@@ -14,11 +14,11 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
-use crate::features::rename_chat::sanitize_title;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
+use crate::shared::title::sanitize_title;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 use crate::widgets::input_box::{InputBox, RenderOpts};

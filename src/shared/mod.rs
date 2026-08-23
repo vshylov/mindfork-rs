@@ -25,6 +25,7 @@ pub mod server;
 pub mod shot;
 pub mod storage;
 pub mod theme;
+pub mod title;
 pub mod tokens;
 pub mod tts;
 pub mod ui;

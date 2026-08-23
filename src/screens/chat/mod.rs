@@ -26,7 +26,6 @@ use crate::entities::message::Message;
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
-use crate::features::rename_chat;
 use crate::features::spellcheck::SpellChecker;
 use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::FinishReason;
