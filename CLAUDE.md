@@ -166,7 +166,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-23, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2505 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2506 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -186,8 +186,8 @@ being recent is dropped, not shortened.
   opens read-only, is a conversation of its own to every search surface
   (`cache.db` `sub_id`, `CACHE_SCHEMA` 2) and to `chat_search`/`chat_read`,
   is auto-titled at landing, and — through the turn's progress channel and an
-  in-flight mirror — is listed, openable and growing while it runs, with the
-  parent ↔ transcript switch not cancelling the turn; `CHAT_SCHEMA` 2
+  in-flight mirror — is listed, openable and streaming while it runs, with
+  the parent ↔ transcript switch not cancelling the turn; `CHAT_SCHEMA` 2
   synthesizes one for every old record, and a tool call's card opens the
   moment the call starts. Go on Gemma 4 31B, 5/5; the track is complete
   ([docs/history/subagent-live.md](docs/history/subagent-live.md))
