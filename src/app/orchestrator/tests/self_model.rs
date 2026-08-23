@@ -398,6 +398,7 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
         name: "update_self_model".into(),
         arguments: serde_json::json!({}),
         result: Some("ok".into()),
+        subagent: None,
     }];
     orch.handle_done(super::super::generation::GenResult {
         usage: None,

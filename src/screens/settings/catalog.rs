@@ -621,7 +621,7 @@ impl SettingsScreen {
                 row(
                     FieldId::TSubTimeout,
                     loc.t("ui.settings.field.sub_timeout"),
-                    FieldKind::Text(t.subagent_timeout_secs.to_string()),
+                    FieldKind::Text(t.subagent_run_timeout_secs.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.sub_timeout")),
             ],

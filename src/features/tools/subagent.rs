@@ -1,58 +1,111 @@
-//! `call_subagent` tool (spec §9.3.2): get an **alternative opinion**.
+//! `call_subagent` (spec §9.3.2): delegate a task to a **sub-agent** — the same
+//! model under a system message the main agent composes, with the main agent's
+//! own tools (minus `call_subagent` itself, the history read-back pair and the
+//! self-model family), no history of this chat, and its own round and time
+//! budgets. The run's transcript is kept on the call's record
+//! ([`crate::entities::subagent::SubagentRun`]) and shows in the chat list as a
+//! child of this chat (docs/research/subagent-chats.md).
 //!
-//! The main agent sets the subagent's system message and single user message
-//! itself. The subagent is an **independent single-turn** request to the same
-//! model via `ctx.engine`: **no chat history, no tools, no nesting** (a
-//! recursion ban — the subagent isn't given any tool at all, including
-//! `call_subagent`). Subject to token and time limits.
-
-use std::time::Duration;
+//! Like the conversation-control tools (`control.rs`), this is a **loop-executed
+//! tool**: the agentic loop (`app/orchestrator/generation.rs`) recognises the
+//! name and runs a nested loop itself — the registry, the confirmation channel
+//! and the UI sender a tool-using sub-agent needs live there, not in
+//! [`ToolContext`]. The `Tool` impl below exists for the schema, the catalog and
+//! the profile toggle; its `invoke` is what a caller *outside* the loop gets
+//! (the silent background loops never offer it), and it says so rather than
+//! running anything.
 
 use anyhow::Result;
-use futures_util::StreamExt;
-use tokio_util::sync::CancellationToken;
 
 use crate::entities::profile::ToolId;
-use crate::entities::sampling::SamplingConfig;
-use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Default token limit for the subagent's reply (protection against long/looping ones).
-const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
-/// Default time limit for a single subagent call.
-const DEFAULT_SUBAGENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// The tool's name — what the loop recognises.
+pub const CALL_SUBAGENT_ID: &str = "call_subagent";
 
-/// `call_subagent` — an independent single-turn request for an alternative opinion.
-/// Token/time limits are configurable (`config.tools`, spec §11.6).
-pub struct CallSubagent {
-    max_tokens: usize,
-    timeout: Duration,
+/// Whether a tool of the turn is **withheld** from a sub-agent
+/// (docs/research/subagent-chats.md §3.3): the tool itself (no nesting), the
+/// read-back pair over the *parent's* folded history, and the self-model
+/// family — the profile persona's identity, which a persona the parent
+/// composed must not write into. Everything else the turn offers, the
+/// sub-agent gets.
+pub fn withheld_from_subagent(id: &str) -> bool {
+    id == CALL_SUBAGENT_ID
+        || id == super::history::HISTORY_READ_ID
+        || id == super::history::HISTORY_SEARCH_ID
+        || super::self_model::is_self_model_tool(id)
 }
 
-impl Default for CallSubagent {
-    fn default() -> Self {
-        Self {
-            max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
-            timeout: DEFAULT_SUBAGENT_TIMEOUT,
-        }
+/// The parsed arguments of one call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentArgs {
+    /// The persona's display name, when the caller gave one.
+    pub name: Option<String>,
+    /// The sub-agent's system message (may be empty — then the persona is the
+    /// instruction alone).
+    pub system_message: String,
+    /// The one user message the sub-agent is asked.
+    pub message: String,
+}
+
+impl SubagentArgs {
+    /// Reads the call's arguments. An empty `message` is a usage error rather
+    /// than an empty run: the tool was called wrong, and saying so is what lets
+    /// the next call succeed.
+    pub fn parse(args: &serde_json::Value, loc: &crate::shared::i18n::Locale) -> Result<Self> {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let system_message = args
+            .get("system_message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let message = args
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(loc.t("tool.call_subagent.err.message_empty").to_string())
+            })?
+            .to_string();
+        Ok(Self {
+            name,
+            system_message,
+            message,
+        })
+    }
+
+    /// The run's initial title: the persona's name, else the first line of the
+    /// instruction (spec §11.2) — something to stand on before a person or the
+    /// model names it.
+    pub fn initial_title(&self) -> String {
+        self.name
+            .as_deref()
+            .and_then(crate::shared::title::sanitize_title)
+            .or_else(|| {
+                self.message
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .and_then(crate::shared::title::sanitize_title)
+            })
+            .unwrap_or_else(|| CALL_SUBAGENT_ID.to_string())
     }
 }
 
-impl CallSubagent {
-    /// Creates the tool with the given token/time limits.
-    pub fn new(max_tokens: usize, timeout: Duration) -> Self {
-        Self {
-            max_tokens,
-            timeout,
-        }
-    }
-}
+/// `call_subagent` — see the module doc.
+pub struct CallSubagent;
 
 #[async_trait::async_trait]
 impl Tool for CallSubagent {
     fn id(&self) -> ToolId {
-        "call_subagent".into()
+        CALL_SUBAGENT_ID.into()
     }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Subagent
@@ -67,6 +120,10 @@ impl Tool for CallSubagent {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "name": {
+                    "type": "string",
+                    "description": loc.t("tool.call_subagent.param.name")
+                },
                 "system_message": {
                     "type": "string",
                     "description": loc.t("tool.call_subagent.param.system_message")
@@ -79,165 +136,87 @@ impl Tool for CallSubagent {
             "required": ["system_message", "message"]
         })
     }
+    /// Never the executor — see the module doc. Validates the arguments (so a
+    /// malformed call is refused the same way everywhere) and then says the run
+    /// is only available inside a chat turn.
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let system_message = args
-            .get("system_message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let message = args
-            .get("message")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.call_subagent.err.message_empty")))?
-            .to_string();
-
-        // A token limit on top of the effective sampling; NO tools and no history.
-        let sampling = SamplingConfig {
-            max_tokens: Some(
-                ctx.effective_sampling
-                    .max_tokens
-                    .map_or(self.max_tokens, |m| m.min(self.max_tokens)),
-            ),
-            ..ctx.effective_sampling.clone()
-        };
-        let request = ChatRequest {
-            system: (!system_message.is_empty()).then(|| system_message.clone()),
-            messages: vec![ApiMessage::user(message)],
-            sampling,
-            tools: Vec::new(), // a nesting ban: no tools at all
-        };
-
-        let cancel = CancellationToken::new();
-        let engine = ctx.engine.clone();
-        let collect = async {
-            let mut stream = engine.chat_stream(request, cancel.clone()).await?;
-            let mut text = String::new();
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    ChatChunk::Text(t) => text.push_str(&t),
-                    ChatChunk::Finished(_) => break,
-                    // "Thoughts", tool deltas, and the subagent's token counter are ignored.
-                    // A background turn: the retry is worth a log line (a flaky provider is
-                    // otherwise invisible here) but has nothing to show — these turns have no
-                    // chip of their own.
-                    ChatChunk::Retry {
-                        attempt,
-                        max,
-                        delay,
-                    } => {
-                        tracing::info!(attempt, max, ?delay, "retrying a a sub-agent turn");
-                    }
-                    ChatChunk::Error { message, .. } => {
-                        tracing::warn!(error = %message, "engine error in a sub-agent call");
-                    }
-                    ChatChunk::Thoughts(_)
-                    | ChatChunk::ThoughtsSignature(_)
-                    | ChatChunk::ToolCall(_)
-                    | ChatChunk::Usage(_) => {}
-                }
-            }
-            Ok::<String, anyhow::Error>(text)
-        };
-
-        match tokio::time::timeout(self.timeout, collect).await {
-            Ok(Ok(text)) if !text.trim().is_empty() => Ok(ToolOutcome::text(text)),
-            Ok(Ok(_)) => Ok(ToolOutcome::text(
-                ctx.loc.t("tool.call_subagent.result.empty"),
-            )),
-            Ok(Err(err)) => Ok(ToolOutcome::text(ctx.loc.tf(
-                "tool.call_subagent.result.error",
-                &[("err", &err.to_string())],
-            ))),
-            Err(_) => {
-                cancel.cancel();
-                Ok(ToolOutcome::text(
-                    ctx.loc.t("tool.call_subagent.result.timeout"),
-                ))
-            }
-        }
+        SubagentArgs::parse(&args, ctx.loc)?;
+        Ok(ToolOutcome::text(
+            ctx.loc.t("tool.call_subagent.result.loop_only"),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::api::contract::{ChatStream, EngineBackend, FinishReason};
-    use crate::shared::api::{Embedder, mock::MockEmbedder};
-    use std::sync::{Arc, Mutex};
-    use uuid::Uuid;
+    use crate::shared::i18n::{Lang, locale};
 
-    /// An engine that remembers the last request and returns a fixed reply.
-    struct CapturingBackend {
-        last: Mutex<Option<ChatRequest>>,
-        reply: String,
+    fn en() -> &'static crate::shared::i18n::Locale {
+        locale(Lang::En)
     }
 
-    #[async_trait::async_trait]
-    impl EngineBackend for CapturingBackend {
-        async fn chat_stream(
-            &self,
-            req: ChatRequest,
-            _cancel: CancellationToken,
-        ) -> Result<ChatStream> {
-            *self.last.lock().unwrap() = Some(req);
-            let reply = self.reply.clone();
-            let s = async_stream::stream! {
-                yield ChatChunk::Text(reply);
-                yield ChatChunk::Finished(FinishReason::Stop);
-            };
-            Ok(Box::pin(s))
-        }
+    #[test]
+    fn args_parse_trims_and_reads_the_optional_name() {
+        let a = SubagentArgs::parse(
+            &serde_json::json!({"name": " Critic ", "system_message": " be harsh ", "message": " rate X "}),
+            en(),
+        )
+        .unwrap();
+        assert_eq!(a.name.as_deref(), Some("Critic"));
+        assert_eq!(a.system_message, "be harsh");
+        assert_eq!(a.message, "rate X");
+        let b = SubagentArgs::parse(&serde_json::json!({"message": "x"}), en()).unwrap();
+        assert_eq!(b.name, None);
+        assert_eq!(b.system_message, "");
     }
 
-    fn ctx_with_engine(engine: Arc<dyn EngineBackend>) -> (tempfile::TempDir, ToolContext) {
-        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(16));
-        let (dir, _storage, ctx) =
-            super::super::testkit::ctx_with_backends(Uuid::new_v4(), engine, embedder);
-        (dir, ctx)
+    #[test]
+    fn args_reject_an_empty_message() {
+        assert!(
+            SubagentArgs::parse(
+                &serde_json::json!({"system_message": "x", "message": "  "}),
+                en()
+            )
+            .is_err()
+        );
+        assert!(SubagentArgs::parse(&serde_json::json!({"system_message": "x"}), en()).is_err());
     }
 
+    #[test]
+    fn initial_title_prefers_the_name_then_the_first_line() {
+        let named = SubagentArgs {
+            name: Some("Critic".into()),
+            system_message: String::new(),
+            message: "rate X\nin detail".into(),
+        };
+        assert_eq!(named.initial_title(), "Critic");
+        let unnamed = SubagentArgs {
+            name: None,
+            ..named
+        };
+        assert_eq!(unnamed.initial_title(), "rate X");
+    }
+
+    /// Outside the loop the tool runs nothing and says so; a malformed call is
+    /// still a hard error, as for every tool.
     #[tokio::test]
-    async fn subagent_runs_without_tools_history_and_returns_text() {
-        let backend = Arc::new(CapturingBackend {
-            last: Mutex::new(None),
-            reply: "альтернативное мнение".into(),
-        });
-        let (_d, ctx) = ctx_with_engine(backend.clone());
-
-        let out = CallSubagent::default()
+    async fn invoke_outside_the_loop_refuses_without_running() {
+        let (_dir, _storage, ctx) = super::super::testkit::ctx_with_storage(uuid::Uuid::new_v4());
+        let out = CallSubagent
             .invoke(
                 &ctx,
-                serde_json::json!({
-                    "system_message": "Ты — критик.",
-                    "message": "Оцени идею X."
-                }),
+                serde_json::json!({"system_message": "x", "message": "y"}),
             )
             .await
             .unwrap();
-        assert_eq!(out.result, "альтернативное мнение");
+        assert_eq!(out.result, ctx.loc.t("tool.call_subagent.result.loop_only"));
         assert!(out.effects.is_empty());
-
-        // The subagent's request: the given system, a single user message, no tools.
-        let req = backend.last.lock().unwrap().take().unwrap();
-        assert_eq!(req.system.as_deref(), Some("Ты — критик."));
-        assert_eq!(req.messages.len(), 1);
-        assert!(req.tools.is_empty(), "the subagent must not be given tools");
-        assert!(req.sampling.max_tokens.unwrap() <= DEFAULT_SUBAGENT_MAX_TOKENS);
-    }
-
-    #[tokio::test]
-    async fn subagent_rejects_empty_message() {
-        let backend = Arc::new(CapturingBackend {
-            last: Mutex::new(None),
-            reply: String::new(),
-        });
-        let (_d, ctx) = ctx_with_engine(backend);
         assert!(
-            CallSubagent::default()
+            CallSubagent
                 .invoke(
                     &ctx,
-                    serde_json::json!({"system_message": "x", "message": "  "})
+                    serde_json::json!({"system_message": "x", "message": " "})
                 )
                 .await
                 .is_err()

@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Added
 
+- **The sub-agent has the assistant's tools.** `call_subagent` no longer asks
+  one tool-less question: the sub-agent runs as a nested turn with the same
+  tools the assistant has in this chat (except creating sub-agents, reading
+  the folded history and the self-model), over the same attached files and
+  project, under the persona the assistant composes — with an optional `name`
+  for it. A dangerous call inside the run asks you exactly as outside. Its
+  whole transcript is kept on the call inside this chat (the list, a read-only
+  view and search follow in the next stages), and the assistant gets the
+  sub-agent's final reply plus the transcript's `chat://` address.
+
 - **The licence and the disclaimer in Russian** — with the interface language
   set to Russian, the `F1` → "Licence"/"Disclaimer" tabs and the Windows
   installer's two legal pages show a Russian text instead of an English one.
@@ -58,6 +68,10 @@ split by subsystem.
 
 ### Changed
 
+- **The sub-agent's limits.** The whole run — every model round and tool call —
+  is bounded by a new *Subagent: run time limit* (600 s by default), replacing
+  the one-request timeout; the per-reply token cap's default rises to 4096;
+  the round budget is `max_tool_rounds`, as for the assistant itself.
 - **An expanded tool card lists the call's arguments in the tool's own order.**
   Before, they were sorted alphabetically, which read as scrambled: a subagent
   call showed the request above the instruction it was sent with, and a file
@@ -75,6 +89,17 @@ split by subsystem.
   leaders bridging the gap — the layout the "Components" tab already uses —
   instead of hugging the left half of the window. Two rows joined them: the
   app's license and the build target (operating system and CPU architecture).
+
+### Data
+
+- **`settings.json` schema 1 → 2** (migrated automatically on the first start,
+  after a pre-migration backup): `tools.subagent_timeout_secs` becomes
+  `tools.subagent_run_timeout_secs`. A value left at the old default (60)
+  takes the new default (600); a value you changed is carried over. A
+  `subagent_max_tokens` left at the old default (1024) takes the new one
+  (4096). Chat files are unchanged: a sub-agent's transcript is a new,
+  optional field on the tool call that made it, and older files read as
+  before.
 
 ### Fixed
 

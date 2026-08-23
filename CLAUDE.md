@@ -66,7 +66,7 @@ embedding server · 0003 own markdown renderer · 0004 engine contract and
 multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 0006 data schema versioning and migrations · 0007 plugins — MCP tool host and a
 neutral import format · 0008 API keys with machine-bound encryption · 0009
-message speech (TTS).
+message speech (TTS) · 0010 the sub-agent as a nested turn.
 
 ## Key architectural decisions
 
@@ -166,8 +166,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-23, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2447 unit tests
-green, 106 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2460 unit tests
+green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -178,6 +178,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Sub-agent chats, PR 2 of 7 — the sub-agent with the agent's tools** —
+  `call_subagent` runs as a nested turn with the turn's tools (minus itself,
+  `history_*`, the self-model), and its transcript lives on the call's record;
+  the settings step 1→2 is the scaffold's first real migration. Go on Gemma 4
+  31B, 5/5 ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
+  [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).
 - **Inno Setup 7 for the Windows installer** — a 64-bit setup, and a pinned,
   hash-verified compiler in CI instead of a chocolatey package frozen at 6.7.1
   ([docs/research/inno-setup-7.md](docs/research/inno-setup-7.md)).

@@ -112,6 +112,7 @@ fn live_stream_with_tool_matches_reload() {
         name: "web_search".into(),
         arguments: serde_json::json!({"q": "погода"}),
         result: Some("ясно".into()),
+        subagent: None,
     }];
     let tool_msg = {
         let mut m = Message::new(MessageRole::Tool, "ясно");
@@ -161,6 +162,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
         name: "send_followup_message".into(),
         arguments: serde_json::json!({}),
         result: Some("ок".into()),
+        subagent: None,
     }];
     let tool_msg = {
         let mut m = Message::new(MessageRole::Tool, "ок");

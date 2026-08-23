@@ -20,7 +20,9 @@ sources of truth:
   [0008](decisions/0008-api-key-storage.md) — API key entry in settings with
   machine-bound encryption in the config; and
   [0009](decisions/0009-tts-speech-synthesis.md) — speech synthesis (TTS): cloud
-  provider, our own speakable-text extractor, in-process `rodio` player;
+  provider, our own speakable-text extractor, in-process `rodio` player; and
+  [0010](decisions/0010-subagent-nested-turn.md) — the sub-agent as a nested
+  turn with the turn's tools, its transcript on the call's record;
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
@@ -346,7 +348,7 @@ src/
 │  │  │                     decided (profile, not this chat, nothing hidden);
 │  │  │                     search over `cache.db` scoped in SQL, reads via the
 │  │  │                     history renderer — spec §9.11
-│  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
+│  │  └─ subagent.rs        call_subagent — schema + args; the loop runs it (ADR 0010)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
@@ -815,7 +817,8 @@ Details:
   the call. Likewise `build_request` is a wrapper over `build_request_in`, which
   takes the persona, the messages and a `RequestEnv` (attachments, project,
   compaction view) separately — a sub-agent's request is its own persona over
-  its parent's environment.
+  its parent's environment. The sub-agent run itself is §8's `call_subagent`
+  note and [ADR 0010](decisions/0010-subagent-nested-turn.md).
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server
@@ -1352,7 +1355,8 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; all are currently 1). Ownership map:
+different rates; `settings.json` is at **2** since the sub-agent track's settings
+step, the rest at 1). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
   constants `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`,
@@ -1384,8 +1388,13 @@ Invariants:
 - **hardened reads**: a corrupt `settings.json`/`profiles.json` → refuse to
   start; a corrupt `chats/<id>.json` → skipped with a `warn`, the file is left
   untouched (`json.rs::load_chats`);
-- while all schemas are 1 the plan is always empty (a dormant path, covered
-  by a test against a synthetic `current = 2` artifact).
+- the first real step is `settings_to_v2` (`schema.rs`): `tools.subagent_timeout_secs`
+  → `subagent_run_timeout_secs`, dropping a value left at the old default and
+  carrying a changed one over, and dropping a `subagent_max_tokens` left at
+  1024 so the new default applies. The old defaults are frozen in the step as
+  literals — a step describes the past and must not follow `config.rs`. Pinned
+  by golden-shape tests; the synthetic `current = 2` artifact still covers the
+  runner independently of the registry.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
@@ -1496,7 +1505,7 @@ by `ToolGroup` (`Ord`).
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
-| Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
+| Awareness      | `call_subagent` — a **loop-executed** tool (ADR 0010): the loop runs a nested `TurnLoop` with the turn's tools minus itself, `history_*` and the self-model family, over the parent's environment; no history, no nesting; the transcript lives on the call's record (`SubagentRun`) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |
@@ -1519,9 +1528,19 @@ Implementation notes:
   `name(k=v, …)`. Tool-specific knowledge lives here (the tools layer); the
   `message_feed` widget stays generic and renders the blocks, reusing
   `markdown::highlight_code`. See spec §11.3–11.4.
-- **`call_subagent`** — an independent single-turn request through
-  `ctx.engine`: a given `system`, a single `user` message, `tools: []`
-  (nesting forbidden), a token limit and a timeout.
+- **`call_subagent`** (`TurnLoop::run_subagent`, ADR 0010) — recognised by
+  name in `resolve_call_result` after the disabled and confirmation gates; a
+  child `TurnLoop` over `&mut *self.shared` with a cloned context (persona and
+  sampling replaced, `history: None`, a child cancellation token), the turn's
+  allowed set filtered by `subagent::withheld_from_subagent`, a request from
+  `build_request_in` over the parent's `RequestEnv` (attachments, project, no
+  compaction) and a muted `RoundSink` (only the re-based token counter
+  passes). Bounded by `tokio::time::timeout(subagent_run_timeout)`; the
+  outcome maps from the finish reason and `ended_by_limit`. Effects route by
+  kind — identity to the run, `AddAttachment` to the parent's `effects`. The
+  result text = the final reply + a `chat://` trailer (and why, when not
+  completed); the run rides in `CallResult.subagent` onto the `ToolCallRecord`.
+  The `Tool` impl's `invoke` only validates and refuses ("loop only").
 - **Conversation control tools** (`send_followup_message` /
   `rewrite_current_message`, `features/tools/control.rs`) — not ordinary
   tools but **control flow**: recognized by the agentic loop itself

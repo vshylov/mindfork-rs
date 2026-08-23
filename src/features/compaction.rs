@@ -381,6 +381,7 @@ mod tests {
             result: result.map(str::to_string),
             thought_signature: None,
             images: 0,
+            subagent: None,
         }];
         m
     }

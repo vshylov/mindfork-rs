@@ -867,8 +867,14 @@ mod tests {
     fn enable_python_is_a_no_op_when_already_enabled() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(tmp.path());
-        let minimal = br#"{"schema_version":1,"tools":{"python_enabled":true}}"#;
-        std::fs::write(paths.settings_file(), minimal).unwrap();
+        // At the current schema: an older file is legitimately rewritten by the
+        // migration that runs first, and that is not the rewrite this test is about.
+        let minimal = format!(
+            r#"{{"schema_version":{},"tools":{{"python_enabled":true}}}}"#,
+            crate::shared::config::SCHEMA_VERSION
+        )
+        .into_bytes();
+        std::fs::write(paths.settings_file(), &minimal).unwrap();
 
         enable_python_tool(&paths, i18n::locale(Lang::Ru)).unwrap();
 

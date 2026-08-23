@@ -13,8 +13,9 @@
 //! with a `warn`; `< current` — into the plan. A non-empty plan → **one** backup before any write
 //! (a failure → the migration doesn't start) → run the steps + control-parse + an atomic write.
 //!
-//! Today all schemas = 1, so the plan is always empty: `run` effectively only validates
-//! (the downgrade/corruption gates), while the migration engine is covered by tests on a synthetic artifact.
+//! `settings.json` is at schema 2 (the sub-agent track's step, `schema::settings_to_v2`);
+//! `profiles.json` and the chat files are still at 1. The engine is additionally covered
+//! by tests on a synthetic artifact, independently of the real registry.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -404,8 +405,12 @@ mod tests {
     fn run_with_migrates_file_and_creates_backup() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        // v1 settings (a valid AppConfig, schema_version=1).
-        write(&paths.settings_file(), &valid_settings_json());
+        // v1 settings: a valid AppConfig, pinned at `schema_version = 1` so the
+        // synthetic 1→2 artifact below has something to migrate whatever the real
+        // settings schema is today.
+        let mut v1: Value = serde_json::from_str(&valid_settings_json()).unwrap();
+        v1["schema_version"] = json!(1);
+        write(&paths.settings_file(), &v1.to_string());
 
         let synth_settings = JsonArtifact {
             name: "settings.json",

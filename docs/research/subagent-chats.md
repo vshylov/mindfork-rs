@@ -1,9 +1,11 @@
 # Sub-agent chats: a sub-agent with the agent's own tools, kept inside the parent conversation
 
-Status: **research — revised after the user's clarification of 2026-08-23**
-(the child is part of the parent's file, never a file of its own). The forks in
-§5 carry the decisions taken so far; the remaining ones are marked. Date:
-2026-08-23.
+Status: **accepted 2026-08-23** — every fork in §5 decided (the user's
+clarification of the same day: the child is part of the parent's file, never a
+file of its own). In progress, PR by PR (§7): PR 1 merged (#356), PR 2 —
+`feat/subagent-run` (the engine, the record-borne run, the settings step;
+live go on Gemma 4 31B, 5/5). [ADR 0010](../decisions/0010-subagent-nested-turn.md)
+records the decision. Date: 2026-08-23.
 
 ## 1. What and why
 

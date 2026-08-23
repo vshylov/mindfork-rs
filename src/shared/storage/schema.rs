@@ -22,7 +22,7 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 1;
+pub const SETTINGS_SCHEMA: u32 = 2;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
@@ -35,9 +35,7 @@ pub const DB_SCHEMA: u32 = 1;
 pub struct Step {
     /// The target version this step produces.
     pub to: u32,
-    /// A short description for the migration log (not user-facing text). Consumer —
-    /// authoring the first real migration (there are no steps yet).
-    #[allow(dead_code)]
+    /// A short description for the migration log (not user-facing text).
     pub summary: &'static str,
     /// The value transformation. Must be pure (no I/O).
     pub apply: fn(Value) -> Result<Value>,
@@ -86,6 +84,12 @@ impl JsonArtifact {
     /// parse — the orchestrator does that (control-parse before writing).
     pub fn apply_steps(&self, mut v: Value, from: u32) -> Result<Value> {
         for step in self.steps.iter().filter(|s| s.to > from) {
+            tracing::info!(
+                artifact = self.name,
+                to = step.to,
+                "migration step: {}",
+                step.summary
+            );
             v = (step.apply)(v)
                 .with_context(|| format!("migration step {} → v{}", self.name, step.to))?;
         }
@@ -114,13 +118,50 @@ fn detect_chat(v: &Value) -> u32 {
     v.get("v").and_then(Value::as_u64).unwrap_or(1) as u32
 }
 
-/// The registry of artifacts (real, all `current = 1`, `steps` empty).
+/// The values `settings.json` v1 wrote for the sub-agent knobs by default —
+/// frozen here, because a migration step describes the past and must not follow
+/// the constants in `config.rs` when those move again.
+const V1_SUBAGENT_TIMEOUT_SECS: u64 = 60;
+const V1_SUBAGENT_MAX_TOKENS: u64 = 1024;
+
+/// `settings.json` 1→2: the sub-agent gained tools (spec §9.3.2,
+/// docs/research/subagent-chats.md §3.12), so its one-request timeout
+/// `tools.subagent_timeout_secs` became the whole-run `subagent_run_timeout_secs`
+/// with a default ten times larger, and its per-round reply cap's default rose.
+/// A value the user left at the old default is **dropped** (the new default
+/// applies on read — `ToolSettings` is `#[serde(default)]`); a value the user
+/// changed is carried over under the new name, because a number somebody typed
+/// is a decision. Nothing else in the file is touched.
+fn settings_to_v2(mut v: Value) -> Result<Value> {
+    if let Some(tools) = v.get_mut("tools").and_then(Value::as_object_mut) {
+        if let Some(old) = tools.remove("subagent_timeout_secs")
+            && old.as_u64() != Some(V1_SUBAGENT_TIMEOUT_SECS)
+        {
+            tools.insert("subagent_run_timeout_secs".into(), old);
+        }
+        if tools.get("subagent_max_tokens").and_then(Value::as_u64) == Some(V1_SUBAGENT_MAX_TOKENS)
+        {
+            tools.remove("subagent_max_tokens");
+        }
+    }
+    v["schema_version"] = Value::from(2);
+    Ok(v)
+}
+
+const SETTINGS_STEPS: &[Step] = &[Step {
+    to: 2,
+    summary: "the sub-agent's one-request timeout becomes a whole-run limit",
+    apply: settings_to_v2,
+}];
+
+/// The registry of artifacts. `settings.json` is at 2 (one step); the rest are
+/// still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
         current: SETTINGS_SCHEMA,
         detect: detect_settings,
-        steps: &[],
+        steps: SETTINGS_STEPS,
     }
 }
 
@@ -234,10 +275,79 @@ mod tests {
     }
 
     #[test]
-    fn real_registry_is_all_current_v1() {
-        for a in [settings_artifact(), profiles_artifact(), chat_artifact()] {
+    fn real_registry_versions_and_steps() {
+        // Settings took the first real step; the other two are still dormant.
+        let settings = settings_artifact();
+        assert_eq!(settings.current, 2);
+        assert_eq!(settings.steps.len(), 1);
+        assert_eq!(settings.steps[0].to, 2);
+        for a in [profiles_artifact(), chat_artifact()] {
             assert_eq!(a.current, 1);
             assert!(a.steps.is_empty(), "{}: no steps yet", a.name);
         }
+    }
+
+    /// The golden v1 shape: the two sub-agent knobs under the names and
+    /// defaults `settings.json` carried before the step, beside fields the step
+    /// must leave alone.
+    fn v1_settings(timeout: u64, max_tokens: u64) -> Value {
+        json!({
+            "schema_version": 1,
+            "max_tool_rounds": 8,
+            "tools": {
+                "web_enabled": true,
+                "subagent_max_tokens": max_tokens,
+                "subagent_timeout_secs": timeout,
+                "confirm_dangerous": false
+            }
+        })
+    }
+
+    #[test]
+    fn settings_step_drops_old_defaults_so_the_new_ones_apply() {
+        let out = settings_artifact()
+            .apply_steps(v1_settings(60, 1024), 1)
+            .unwrap();
+        assert_eq!(out["schema_version"], json!(2));
+        let tools = out["tools"].as_object().unwrap();
+        assert!(!tools.contains_key("subagent_timeout_secs"));
+        assert!(!tools.contains_key("subagent_run_timeout_secs"));
+        assert!(!tools.contains_key("subagent_max_tokens"));
+        // Untouched neighbours.
+        assert_eq!(tools["web_enabled"], json!(true));
+        assert_eq!(tools["confirm_dangerous"], json!(false));
+        assert_eq!(out["max_tool_rounds"], json!(8));
+        // And the migrated value parses into today's config with today's defaults.
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(out).unwrap();
+        assert_eq!(
+            cfg.tools.subagent_run_timeout_secs,
+            crate::shared::config::DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS
+        );
+        assert_eq!(
+            cfg.tools.subagent_max_tokens,
+            crate::shared::config::DEFAULT_SUBAGENT_MAX_TOKENS
+        );
+    }
+
+    #[test]
+    fn settings_step_carries_a_changed_value_under_the_new_name() {
+        let out = settings_artifact()
+            .apply_steps(v1_settings(120, 2048), 1)
+            .unwrap();
+        let tools = out["tools"].as_object().unwrap();
+        assert!(!tools.contains_key("subagent_timeout_secs"));
+        assert_eq!(tools["subagent_run_timeout_secs"], json!(120));
+        assert_eq!(tools["subagent_max_tokens"], json!(2048));
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(out).unwrap();
+        assert_eq!(cfg.tools.subagent_run_timeout_secs, 120);
+        assert_eq!(cfg.tools.subagent_max_tokens, 2048);
+    }
+
+    #[test]
+    fn settings_step_tolerates_a_file_without_the_tools_section() {
+        let out = settings_artifact()
+            .apply_steps(json!({"schema_version": 1}), 1)
+            .unwrap();
+        assert_eq!(out["schema_version"], json!(2));
     }
 }

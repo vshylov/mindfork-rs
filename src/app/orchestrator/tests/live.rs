@@ -3695,3 +3695,146 @@ async fn code_edit_ambiguity_e2e_live() {
         "the read timeout had to be left alone — a blind replace_all would take both: {after}"
     );
 }
+
+/// The sub-agent track's **go/no-go** (docs/research/subagent-chats.md §6):
+/// the main agent delegates a question only a tool can answer, the sub-agent
+/// actually *uses* the tool, and the answer comes back through the delegation.
+/// The planted token is nonsense the model cannot know, and the parent is told
+/// not to read the file itself — a parent that shortcuts fails the
+/// `call_subagent` assertion, which is the no-go signal this smoke exists for.
+/// `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn subagent_with_tools_e2e_live() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let file = sandbox.path().join("facts.txt");
+    std::fs::write(
+        &file,
+        "Internal note.\nThe project's secret codename is ZARNOVIK-7741.\nDo not share outside the team.\n",
+    )
+    .unwrap();
+    let mut cfg = AppConfig::default();
+    cfg.tools.fs_enabled = true;
+    cfg.tools.fs_root = Some(sandbox.path().to_string_lossy().to_string());
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You are a coordinator. Reply in English. You never read files \
+                 yourself: whenever a file has to be read, you delegate the whole task to a \
+                 sub-agent with the call_subagent tool, giving it the exact file path and \
+                 telling it to use fs_read, then you report what the sub-agent found."
+                .into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                // The delegation and the one tool the delegate needs — nothing
+                // else can be reached for. `fs_read` has to be in the parent's
+                // set because the child's set is derived from it (research §3.3).
+                enabled_tools: Some(vec!["call_subagent".to_string(), "fs_read".to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+
+    let ask = format!(
+        "What is the project's secret codename? It is written in the file {}. \
+         Do not read it yourself — delegate to a sub-agent (call_subagent) and \
+         tell it to read that file with fs_read. Then answer with the codename.",
+        file.display()
+    );
+    let (reply, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, &ask).await;
+    eprintln!("reply: {reply}");
+    for (n, a, r) in &calls {
+        eprintln!(
+            "call {n}({}) -> {}",
+            a.chars().take(160).collect::<String>(),
+            r.chars().take(200).collect::<String>()
+        );
+    }
+    // Let the debounced save land before reading the file back.
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // GO: the parent delegated (the feed card is the parent's only call)...
+    let delegated = calls
+        .iter()
+        .filter(|(n, _, _)| n == "call_subagent")
+        .count();
+    assert!(delegated >= 1, "the parent never delegated: {calls:?}");
+    assert!(
+        !calls.iter().any(|(n, _, _)| n == "fs_read"),
+        "the parent read the file itself instead of delegating"
+    );
+    // ...the sub-agent used the tool (its calls are on the run, not in the feed)...
+    let chat = Storage::open(Paths::with_root(_d.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let run = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .find_map(|r| r.subagent.as_deref())
+        .expect("a run on the call's record");
+    eprintln!(
+        "run «{}»: {} messages, outcome {:?}, {} tokens",
+        run.title,
+        run.messages.len(),
+        run.outcome,
+        run.tokens
+    );
+    let child_reads = run
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .filter(|r| r.name == "fs_read")
+        .count();
+    assert!(
+        child_reads >= 1,
+        "the sub-agent did not use fs_read: {:?}",
+        run.messages
+    );
+    assert_eq!(
+        run.outcome,
+        Some(crate::entities::subagent::RunOutcome::Completed)
+    );
+    // ...and the token came through the delegation into the parent's answer.
+    assert!(
+        reply.contains("ZARNOVIK-7741") || reply.contains("ZARNOVIK"),
+        "the codename did not reach the parent's reply: {reply}"
+    );
+}

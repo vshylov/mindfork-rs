@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace — stage 5, the semantic index, measured and rejected (done)
 - Post-M9: the change journal followed the chat, not the project (done)
 - Post-M9: the code workspace's loose ends (done)
+- Post-M9: sub-agent chats, PR 2 — the sub-agent with the agent's tools (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2422,3 +2423,66 @@ the probe lives on `spike/code-search-probe`, unmerged.
   failed** in 846 s, the seven `code_*` smokes among them. No CHANGELOG entry:
   the sort is invisible (push order already gave it), the serde tolerance
   guards a file no release ever wrote, and the deletion is inert.
+
+### Post-M9: sub-agent chats, PR 2 — the sub-agent with the agent's tools (done)
+- **What**: PR 2 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §7,
+  [ADR 0010](../decisions/0010-subagent-nested-turn.md)). `call_subagent` grew
+  from one tool-less request into a **nested turn**: a child `TurnLoop` over the
+  turn's `TurnShared` (PR 1's seam), with the turn's effective tools minus
+  `call_subagent`, `history_read`/`history_search` and the self-model family
+  (`subagent::withheld_from_subagent`), the parent's environment (a cloned
+  `ToolContext` under the sub-agent's persona and sampling, `history: None`, a
+  child cancellation token; a request from `build_request_in` over the parent's
+  `RequestEnv`), and a **muted** event sink — only the token counter passes,
+  re-based on the parent's total. The transcript — `User(message)` and the
+  run's rounds exactly as any chat stores them, plus persona, title, `name`,
+  outcome, tokens, an id for `chat://` — lands on the call's `ToolCallRecord`
+  (`entities/subagent.rs::SubagentRun`, additive) and reaches `Chat` with the
+  turn. The result text is the final reply plus a `chat://` trailer, and why
+  when the run did not complete (cancel / timeout / engine failure / round
+  budget). New optional `name` argument (the persona's display name → the
+  initial title, else the first line of the message).
+- **Key decisions** (the research's forks, all decided 2026-08-23): a
+  loop-executed tool (the control-tool precedent) rather than a runner trait
+  or a second `start_generation` — a `Tool` cannot reach the registry, the
+  confirmation channel or the UI sender, and the main loop's behaviours
+  (confirmation, signatures, control tools, effects, images) are exactly what
+  a tool-using sub-agent needs; the transcript **on the record, inside the
+  parent's file** (the user's clarification: inseparable, removed only by
+  `Ctrl+E`/`Ctrl+R` of the spawning exchange — which the record's placement
+  gives by construction, no cascade code); the child lands with the turn, no
+  mid-turn channel (stage 1); effects by kind — identity to the run,
+  `AddAttachment` to the parent; the self-model excluded whole; one time knob
+  for the whole run.
+- **Two things the implementation found that the plan did not say.** The
+  async chain `run → tool_round → execute_call → resolve_call_result →
+  run_subagent → run` is recursive and needs one `Box::pin` (at the child's
+  `run()`); and `stream_round` had to stop taking `evt_tx` directly — every
+  event the loop emits now goes through `RoundSink`, which is what makes
+  muting one line rather than a flag threaded through nine sends. The
+  `Tool` impl's `invoke` stays reachable by the background loops in principle;
+  it validates the arguments and answers "loop only" instead of running a
+  tool-less request that would now be a second, different behaviour.
+- **Settings**: `tools.subagent_timeout_secs` (one request) → `subagent_run_timeout_secs`
+  (600 s, the whole run); `subagent_max_tokens` 1024 → 4096 by default;
+  `ToolConfig` lost its two sub-agent fields (the loop reads the limits from
+  `config.tools` through `GenSpawn`). `SETTINGS_SCHEMA` 1→2 is the scaffold's
+  **first real step** — see the storage journal.
+- **Live run — GO.** `subagent_with_tools_e2e_live` (external Gemma 4 31B
+  Q4_0, `llama-server` at the LAN host): the parent is told to delegate
+  reading a sandboxed file with a planted nonsense token; the sub-agent must
+  use `fs_read`. **5/5**: every run the parent delegated once, the sub-agent
+  (which named itself «File Reader» every time) made exactly one `fs_read`
+  call and answered, and the token reached the parent's reply; 120–188 tokens
+  per run. Qwen 3.6 27B was not run — the only GPU was serving the Gemma
+  instance — and is the first thing to run before PR 3's migration lands on
+  real chats.
+- **Tests**: 2460 green (+13: the entity's additive round trip and
+  `final_reply`; the argument parser, the initial title and the loop-only
+  refusal; six orchestrator tests over a recording, scripted engine — the run
+  on the record with the child's request inspected, no nesting, identity
+  effects on the run, a 1-second run timeout landing a partial run,
+  `Esc` landing `Cancelled`, an empty `message` refused without a run; the
+  three settings-step shapes), 107 `#[ignore]` (+1, the live smoke). The
+  settings screenshots were regenerated for the renamed field.

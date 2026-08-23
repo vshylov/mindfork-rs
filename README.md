@@ -22,8 +22,8 @@ it runs on **Windows** and **Linux**.
 > local Gemma or Qwen becomes **more self-aware and more interesting to talk
 > to** once it is given room to reflect: it keeps notes about you, maintains a
 > self-model it can revisit, reads and adjusts its own system message and
-> sampling mid-conversation, and can summon a short-lived sub-agent for a
-> second opinion. The full story is in [spec.md](spec.md); the original idea,
+> sampling mid-conversation, and can delegate work to a sub-agent that has
+> its own tools. The full story is in [spec.md](spec.md); the original idea,
 > in [docs/history/request.md](docs/history/request.md).
 
 <p align="center">
@@ -195,8 +195,10 @@ build the moment they drift from what the app actually renders
   command). A local-interpreter mode exists for those who want it.
 - **Files** — `fs_read` / `fs_write` / `fs_list`, optionally jailed to one
   directory (escaping via `..` is blocked).
-- **`call_subagent`** — a clean-room second opinion: one turn, no history, no
-  tools, no recursion.
+- **`call_subagent`** — delegate a task to a sub-agent: the same model under a
+  persona the assistant composes, with the assistant's own tools (minus
+  sub-agents, history read-back and the self-model), no history of the chat,
+  no recursion; its transcript is kept on the call and shows as a child chat.
 - **MCP plugins** — tools from any
   [Model Context Protocol](https://modelcontextprotocol.io) stdio server (git,
   GitHub, databases, browser, …), configured in settings or imported from

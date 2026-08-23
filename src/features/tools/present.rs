@@ -33,7 +33,7 @@ const HEADER_MAX_CHARS: usize = 100;
 /// the result (verified against the real renderer). Since `chunk_markdown`
 /// deliberately prepends a section heading to every `*.md` chunk, that was the
 /// common case, not a corner one. File fragments render verbatim.
-const PROSE_RESULT_TOOLS: &[&str] = &["web_search", "fetch_url", "note_recall"];
+const PROSE_RESULT_TOOLS: &[&str] = &["web_search", "fetch_url", "note_recall", "call_subagent"];
 
 /// A content block of a tool card (an argument or a result).
 #[derive(Debug, Clone, PartialEq)]
@@ -316,7 +316,7 @@ fn full_args(name: &str, raw: &str, val: Option<&Value>) -> Vec<ToolBlock> {
 /// of this module matches them that way — they are a stable wire protocol; a
 /// typo or a rename is caught by `field_order_matches_the_registry_schemas`.
 const FIELD_ORDER: &[(&str, &[&str])] = &[
-    ("call_subagent", &["system_message", "message"]),
+    ("call_subagent", &["name", "system_message", "message"]),
     (
         "code_edit",
         &["path", "old_string", "new_string", "replace_all"],

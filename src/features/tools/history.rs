@@ -244,6 +244,7 @@ mod tests {
             result: Some(result.into()),
             thought_signature: None,
             images: 0,
+            subagent: None,
         }];
         m
     }

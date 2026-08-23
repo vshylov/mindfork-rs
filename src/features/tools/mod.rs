@@ -64,7 +64,7 @@ pub struct ToolContext {
     /// Timestamp of the last user message (if any).
     pub last_user_message_at: Option<DateTime<Utc>>,
     pub storage: Arc<Storage>,
-    /// Chat engine (for `call_subagent`, M6).
+    /// Chat engine (for `fetch_url`'s summarizer and the like).
     pub engine: Arc<dyn EngineBackend>,
     /// Embedding source (RAG); a dedicated server — see ADR 0002.
     pub embedder: Arc<dyn Embedder>,
@@ -646,10 +646,6 @@ pub struct ToolConfig {
     /// Sandbox directory (`data/sandbox/`) with the `wasmer` binary and assets
     /// (`None` — no directory, sandbox only via the env override).
     pub sandbox_dir: Option<PathBuf>,
-    /// Response token limit for `call_subagent`.
-    pub subagent_max_tokens: usize,
-    /// Time limit for a `call_subagent` call.
-    pub subagent_timeout: Duration,
     /// Default for `web_search.fetch_content` (fetching/reranking pages,
     /// `config.tools.web_fetch_content`). The call argument overrides it.
     pub web_fetch_content: bool,
@@ -679,10 +675,6 @@ impl Default for ToolConfig {
             ),
             python_wasm_memory_mb: None,
             sandbox_dir: None,
-            subagent_max_tokens: crate::shared::config::DEFAULT_SUBAGENT_MAX_TOKENS,
-            subagent_timeout: Duration::from_secs(
-                crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
-            ),
             web_fetch_content: true,
             web_allow_private: false,
             fs_root: None,
@@ -717,10 +709,10 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(notes::NoteCiteSource));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
-    reg.register(Arc::new(subagent::CallSubagent::new(
-        cfg.subagent_max_tokens,
-        cfg.subagent_timeout,
-    )));
+    // A loop-executed tool (spec §9.3.2): registered for its schema and the
+    // profile toggle; the agentic loop runs it, with the limits it reads from
+    // `config.tools` itself — so nothing here to parameterize.
+    reg.register(Arc::new(subagent::CallSubagent));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);

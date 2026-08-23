@@ -13,6 +13,8 @@ use crate::app::events::{AppEvent, ToolDecision};
 use crate::entities::chat::DeletedCause;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
+use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
+use crate::features::tools::subagent::{CALL_SUBAGENT_ID, SubagentArgs, withheld_from_subagent};
 use crate::features::tools::{
     ChatEffect, ToolContext, ToolParams, ToolRegistry, TurnInfo, control, effective_tool_ids,
 };
@@ -24,7 +26,9 @@ use crate::shared::config::ServerMode;
 use crate::shared::tokens::estimate_prompt;
 
 use super::Orchestrator;
-use super::request::{PromptContext, build_request, last_user_message_at};
+use super::request::{
+    PromptContext, RequestEnv, build_request, build_request_in, last_user_message_at,
+};
 
 /// Result of a completed generation task (internal channel).
 pub(super) struct GenResult {
@@ -457,6 +461,7 @@ impl Orchestrator {
             chat_id: active_id,
             max_rounds: self.config.max_tool_rounds,
             workspace_max_rounds: self.config.workspace.max_rounds,
+            subagent: SubagentLimits::from_config(&self.config.tools),
             allowed,
             self_model,
             self_model_params,
@@ -643,6 +648,8 @@ struct GenSpawn {
     /// `max_rounds` because the `code_*` family is exempt from that one, and
     /// "exempt" is not "unbounded" (spec §9.12).
     workspace_max_rounds: u32,
+    /// A sub-agent run's limits (`config.tools`, spec §9.3.2).
+    subagent: SubagentLimits,
     /// Effectively allowed tools (protection against calling a disabled one).
     allowed: Vec<ToolId>,
     /// The profile's "self-model" (a snapshot at the start of the turn) + injection
@@ -807,6 +814,7 @@ fn spawn_generation(spawn: GenSpawn) {
         chat_id,
         max_rounds,
         workspace_max_rounds,
+        subagent,
         allowed,
         self_model,
         self_model_params,
@@ -866,6 +874,7 @@ fn spawn_generation(spawn: GenSpawn) {
             id,
             max_rounds,
             workspace_max_rounds,
+            subagent,
             engine_mode,
             model_name,
             ui_loc,
@@ -889,6 +898,9 @@ fn spawn_generation(spawn: GenSpawn) {
             last_usage: None,
             pending_new_bubble: false,
             depth: 0,
+            live: true,
+            token_base: 0,
+            ended_by_limit: None,
         };
         let reason = turn.run().await;
 
@@ -927,6 +939,8 @@ struct TurnShared {
     id: Uuid,
     max_rounds: u32,
     workspace_max_rounds: u32,
+    /// A sub-agent run's limits (spec §9.3.2).
+    subagent: SubagentLimits,
     engine_mode: ServerMode,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -978,10 +992,73 @@ struct TurnLoop<'a> {
     /// `send_followup_message`). See spec §9.3.
     pending_new_bubble: bool,
     /// Nesting level: `0` for the turn's own loop, `1` for a sub-agent's run.
-    /// The sub-agent track reads it to refuse `call_subagent` below the top —
-    /// the belt under the braces of a schema set that never offers it there.
-    #[allow(dead_code)] // ahead-of-consumer: read by the sub-agent run (PR 2 of the track)
+    /// [`Self::run_subagent`] refuses below the top — the belt under the braces
+    /// of an allowed set that never offers `call_subagent` there.
     depth: u8,
+    /// Whether this loop's stream reaches the feed. The turn's own loop is
+    /// live; a sub-agent's is **muted** — its text would land in the parent's
+    /// bubble — and only its token counter passes, re-based on
+    /// [`Self::token_base`] (see [`RoundSink`]).
+    live: bool,
+    /// What the turn had already cost when this loop started: a sub-agent's
+    /// counter continues the parent's rather than restarting at zero, because
+    /// the user pays for both.
+    token_base: u64,
+    /// Which budget ended this loop, when one did — the parent reads it to
+    /// record a sub-agent's outcome as `RoundLimit` rather than `Completed`.
+    ended_by_limit: Option<RoundLimit>,
+}
+
+/// The limits of one sub-agent run, snapshotted from `config.tools` with the
+/// rest of the turn's configuration (spec §9.3.2, docs/research/subagent-chats.md §3.12).
+#[derive(Debug, Clone, Copy)]
+struct SubagentLimits {
+    /// The per-round reply cap, min'ed with the effective `max_tokens`.
+    max_tokens: usize,
+    /// The whole run — every round and tool call of it.
+    run_timeout: std::time::Duration,
+}
+
+impl SubagentLimits {
+    fn from_config(tools: &crate::shared::config::ToolSettings) -> Self {
+        Self {
+            max_tokens: tools.subagent_max_tokens,
+            run_timeout: std::time::Duration::from_secs(tools.subagent_run_timeout_secs),
+        }
+    }
+}
+
+/// Where one loop's events go. The turn's own loop sends everything; a
+/// sub-agent's loop is muted except for the token counter, whose `context`
+/// half is dropped too — the child's prompt size is not the conversation's,
+/// and the status bar shows one number (research §3.5).
+struct RoundSink<'a> {
+    evt_tx: &'a UnboundedSender<AppEvent>,
+    live: bool,
+}
+
+impl RoundSink<'_> {
+    fn send(&self, event: AppEvent) {
+        if self.live {
+            let _ = self.evt_tx.send(event);
+            return;
+        }
+        if let AppEvent::TokenUsage {
+            generation_id,
+            completion,
+            reasoning,
+            ..
+        } = event
+        {
+            let _ = self.evt_tx.send(AppEvent::TokenUsage {
+                generation_id,
+                completion,
+                context: None,
+                context_exact: false,
+                reasoning,
+            });
+        }
+    }
 }
 
 impl TurnLoop<'_> {
@@ -989,6 +1066,14 @@ impl TurnLoop<'_> {
     /// switches)?
     fn allowed_has(&self, name: &str) -> bool {
         self.allowed.iter().any(|t| t == name)
+    }
+
+    /// This loop's event sink (see [`RoundSink`]).
+    fn sink(&self) -> RoundSink<'_> {
+        RoundSink {
+            evt_tx: &self.shared.evt_tx,
+            live: self.live,
+        }
     }
 
     /// The agentic loop itself: stream → on `finish_reason=ToolCalls` execute
@@ -1006,8 +1091,8 @@ impl TurnLoop<'_> {
             self.request.clone(),
             &self.cancel,
             self.shared.id,
-            &self.shared.evt_tx,
-            self.total_tokens,
+            &self.sink(),
+            self.token_base + self.total_tokens,
             self.total_reasoning,
             self.shared.ui_loc,
             self.shared.compaction_enabled,
@@ -1105,9 +1190,10 @@ impl TurnLoop<'_> {
                 self.shared.workspace_max_rounds,
             ),
         };
-        let _ = self.shared.evt_tx.send(AppEvent::Error(
+        self.sink().send(AppEvent::Error(
             self.ctx.loc.tf(key, &[("max_rounds", &n.to_string())]),
         ));
+        self.ended_by_limit = Some(limit);
         self.request.tools.clear();
         // The final round's token counter is emitted by `stream_round` itself
         // (from `base = total_*`); after that the turn ends, no need to accumulate.
@@ -1140,7 +1226,7 @@ impl TurnLoop<'_> {
             // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
             self.deleted.push(am);
             self.deleted.extend(tool_msgs);
-            let _ = self.shared.evt_tx.send(AppEvent::AssistantRewrite {
+            self.sink().send(AppEvent::AssistantRewrite {
                 generation_id: self.shared.id,
             });
             return;
@@ -1152,7 +1238,7 @@ impl TurnLoop<'_> {
         if followup {
             // The next assistant message — as a separate bubble.
             self.pending_new_bubble = true;
-            let _ = self.shared.evt_tx.send(AppEvent::AssistantContinue {
+            self.sink().send(AppEvent::AssistantContinue {
                 generation_id: self.shared.id,
             });
         }
@@ -1272,6 +1358,7 @@ impl TurnLoop<'_> {
         let CallResult {
             text: result,
             images,
+            subagent,
         } = self
             .resolve_call_result(call, &args, is_control, rewrite)
             .await;
@@ -1282,7 +1369,7 @@ impl TurnLoop<'_> {
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
         if !is_control && !rewrite {
-            let _ = self.shared.evt_tx.send(AppEvent::ToolCall {
+            self.sink().send(AppEvent::ToolCall {
                 generation_id: self.shared.id,
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
@@ -1316,6 +1403,7 @@ impl TurnLoop<'_> {
             // The thought signature (Gemini 3) is persisted — needed on history replay.
             thought_signature: call.thought_signature.clone(),
             images: images.len(),
+            subagent,
         });
         tool_msgs.push(tool_message(call, result).with_images(images));
     }
@@ -1365,6 +1453,10 @@ impl TurnLoop<'_> {
             // told (fork F5) — ending the turn here would throw away
             // the text already streamed.
             refusal.into()
+        } else if call.name == CALL_SUBAGENT_ID {
+            // A loop-executed tool (spec §9.3.2): the sub-agent is a nested
+            // loop over this turn's shared part, not a registry call.
+            self.run_subagent(args).await
         } else {
             // Execution under a `select!` with the cancellation token: Esc
             // doesn't wait for a long-running tool (MCP/network) to finish.
@@ -1382,6 +1474,7 @@ impl TurnLoop<'_> {
                     CallResult {
                         text: outcome.result,
                         images: outcome.images,
+                        subagent: None,
                     }
                 }
                 Some(Err(err)) => self
@@ -1397,12 +1490,222 @@ impl TurnLoop<'_> {
     }
 }
 
-/// What one tool call produced for the model: its result text, and any images it
-/// returned (spec §9.10). Every gate and refusal path yields text alone — only a real
-/// invocation can produce pixels, which is what `From<String>` keeps cheap to express.
+impl TurnLoop<'_> {
+    /// Runs a sub-agent (spec §9.3.2, docs/research/subagent-chats.md §3.2–§3.4):
+    /// a child loop of the same type over this turn's shared part, with this
+    /// turn's tools minus the withheld ones, this turn's environment, and a
+    /// persona and a single message of its own. Returns the model's result text
+    /// and the run for the record.
+    ///
+    /// The child borrows `self.shared` for the duration of the call — sound,
+    /// because this loop is suspended here until it returns — so everything the
+    /// parent needs afterwards is read into locals first.
+    async fn run_subagent(&mut self, args: &serde_json::Value) -> CallResult {
+        let loc = self.ctx.loc;
+        let parsed = match SubagentArgs::parse(args, loc) {
+            Ok(a) => a,
+            Err(err) => {
+                return loc
+                    .tf(
+                        "loop.tool_error",
+                        &[("name", CALL_SUBAGENT_ID), ("err", &err.to_string())],
+                    )
+                    .into();
+            }
+        };
+        // No nesting, whatever the allowed set says (it never offers the tool
+        // below the top, so this is the second lock on the same door).
+        if self.depth > 0 {
+            return loc
+                .tf("loop.tool_disabled", &[("name", CALL_SUBAGENT_ID)])
+                .into();
+        }
+        let started = chrono::Utc::now();
+        let limits = self.shared.subagent;
+        let max_rounds = self.shared.max_rounds;
+
+        // The turn's tools minus the withheld (research §3.3), in the turn's
+        // order; the schemas follow, so the model never sees what it may not call.
+        let allowed: Vec<ToolId> = self
+            .allowed
+            .iter()
+            .filter(|t| !withheld_from_subagent(t))
+            .cloned()
+            .collect();
+        let schemas = self.shared.registry.schemas_for(&allowed, loc);
+        // The reply cap on top of the effective sampling, as the tool-less
+        // version applied it.
+        let mut sampling = self.ctx.effective_sampling.clone();
+        sampling.max_tokens = Some(
+            sampling
+                .max_tokens
+                .map_or(limits.max_tokens, |m| m.min(limits.max_tokens)),
+        );
+        // The child's context is the parent's — environment, scope, journal —
+        // under its own persona and knobs, with no folded history to read back
+        // and a token of its own that the parent's cancels with it.
+        let cancel = self.cancel.child_token();
+        let mut ctx = self.ctx.clone();
+        ctx.system_message = parsed.system_message.clone();
+        ctx.effective_sampling = sampling.clone();
+        ctx.last_user_message_at = Some(started);
+        ctx.history = None;
+        ctx.cancel = cancel.clone();
+        // Which attached files have an index — the attachment block names
+        // `attachment_search` only for those (spec §9.7), same as the parent.
+        let indexed: Vec<Uuid> = if ctx.attachments.is_empty() {
+            Vec::new()
+        } else {
+            ctx.storage
+                .db()
+                .attachment_indexed_ids(ctx.chat_id)
+                .unwrap_or_default()
+        };
+        let user = Message::user(parsed.message.clone());
+        let request = build_request_in(
+            &parsed.system_message,
+            std::slice::from_ref(&user),
+            &RequestEnv {
+                attachments: &ctx.attachments,
+                workspace: ctx.workspace.as_ref(),
+                compaction: None,
+            },
+            sampling,
+            schemas,
+            &PromptContext {
+                attachments: &ctx.attachment_cfg,
+                // Only `enabled` is read, and only by the `&Chat` wrapper a
+                // sub-agent does not go through: its compaction is `None` above.
+                compaction: &crate::shared::config::CompactionSettings::default(),
+                indexed: &indexed,
+                history_tools: false,
+                offered_tools: &allowed,
+                loc,
+            },
+        );
+
+        let token_base = self.token_base + self.total_tokens;
+        let mut child = TurnLoop {
+            shared: &mut *self.shared,
+            ctx,
+            request,
+            cancel: cancel.clone(),
+            allowed,
+            messages: Vec::new(),
+            effects: Vec::new(),
+            deleted: Vec::new(),
+            round: 0,
+            workspace_rounds: 0,
+            total_tokens: 0,
+            total_reasoning: 0,
+            last_usage: None,
+            pending_new_bubble: false,
+            depth: self.depth + 1,
+            live: false,
+            token_base,
+            ended_by_limit: None,
+        };
+        // Boxed: `run` → `tool_round` → `execute_call` → here → `run` is a
+        // recursive async chain, and the compiler needs one indirection in it.
+        let finished = tokio::time::timeout(limits.run_timeout, Box::pin(child.run())).await;
+        let outcome = match finished {
+            Err(_) => {
+                // The run's own token, so the parent's turn goes on.
+                cancel.cancel();
+                RunOutcome::TimedOut
+            }
+            Ok(FinishReason::Cancelled) => RunOutcome::Cancelled,
+            Ok(FinishReason::Error) => RunOutcome::Failed,
+            Ok(_) if child.ended_by_limit.is_some() => RunOutcome::RoundLimit,
+            Ok(_) => RunOutcome::Completed,
+        };
+        // Everything the parent keeps, out of the child before its borrow ends.
+        // Its own discarded drafts (`rewrite_current_message`) are dropped: the
+        // archive's promise is recovering what the *user* lost (research §3.6).
+        let child_messages = std::mem::take(&mut child.messages);
+        let child_effects = std::mem::take(&mut child.effects);
+        let child_tokens = child.total_tokens;
+        let child_reasoning = child.total_reasoning;
+        drop(child);
+
+        // Effects go to the chat they describe (research §3.4): identity to the
+        // run, environment to the parent — which also mirrors an attachment into
+        // this loop's snapshot at the round's end, as for any tool.
+        let mut run = SubagentRun {
+            id: Uuid::new_v4(),
+            kind: RunKind::Subagent,
+            title: parsed.initial_title(),
+            renamed_manually: false,
+            name: parsed.name.clone(),
+            created_at: started,
+            finished_at: Some(chrono::Utc::now()),
+            system_message: parsed.system_message.clone(),
+            sampling_override: None,
+            messages: std::iter::once(user).chain(child_messages).collect(),
+            outcome: Some(outcome),
+            tokens: child_tokens,
+        };
+        for effect in child_effects {
+            match effect {
+                ChatEffect::SetSystemMessage(s) => run.system_message = s,
+                ChatEffect::SetSamplingOverride(s) => run.sampling_override = Some(*s),
+                a @ ChatEffect::AddAttachment(_) => self.effects.push(a),
+            }
+        }
+        self.total_tokens += child_tokens;
+        self.total_reasoning += child_reasoning;
+
+        // The model's result: the final reply and one line naming the transcript —
+        // and, when the run did not complete, why (docs/lessons.md §4: a result
+        // that says only "cannot" costs the next three turns).
+        let address = crate::features::chat_links::uri(run.id);
+        let body = run
+            .final_reply()
+            .map(str::to_string)
+            .unwrap_or_else(|| loc.t("tool.call_subagent.result.empty").to_string());
+        let status = match outcome {
+            RunOutcome::Completed => loc.tf(
+                "tool.call_subagent.result.transcript",
+                &[("address", &address)],
+            ),
+            RunOutcome::Cancelled => loc.tf(
+                "tool.call_subagent.result.cancelled",
+                &[("address", &address)],
+            ),
+            RunOutcome::TimedOut => loc.tf(
+                "tool.call_subagent.result.timeout",
+                &[
+                    ("address", &address),
+                    ("secs", &limits.run_timeout.as_secs().to_string()),
+                ],
+            ),
+            RunOutcome::Failed => {
+                loc.tf("tool.call_subagent.result.failed", &[("address", &address)])
+            }
+            RunOutcome::RoundLimit => loc.tf(
+                "tool.call_subagent.result.round_limit",
+                &[
+                    ("address", &address),
+                    ("max_rounds", &max_rounds.to_string()),
+                ],
+            ),
+        };
+        CallResult {
+            text: format!("{body}\n\n{status}"),
+            images: Vec::new(),
+            subagent: Some(Box::new(run)),
+        }
+    }
+}
+
+/// What one tool call produced for the model: its result text, any images it
+/// returned (spec §9.10), and — for `call_subagent` — the run for the record.
+/// Every gate and refusal path yields text alone — only a real invocation can
+/// produce pixels or a transcript, which is what `From<String>` keeps cheap to express.
 struct CallResult {
     text: String,
     images: Vec<crate::features::tools::ToolImage>,
+    subagent: Option<Box<SubagentRun>>,
 }
 
 impl From<String> for CallResult {
@@ -1410,6 +1713,7 @@ impl From<String> for CallResult {
         Self {
             text,
             images: Vec::new(),
+            subagent: None,
         }
     }
 }
@@ -1547,7 +1851,7 @@ async fn stream_round(
     request: ChatRequest,
     cancel: &CancellationToken,
     id: Uuid,
-    evt_tx: &UnboundedSender<AppEvent>,
+    sink: &RoundSink<'_>,
     base_tokens: u64,
     base_reasoning: u32,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -1572,7 +1876,7 @@ async fn stream_round(
     // The reply counter: `context: None` leaves the prior conversation estimate
     // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
     let emit_completion = |completion: u64| {
-        let _ = evt_tx.send(AppEvent::TokenUsage {
+        sink.send(AppEvent::TokenUsage {
             generation_id: id,
             completion,
             context: None,
@@ -1588,7 +1892,7 @@ async fn stream_round(
                     ChatChunk::Text(t) => {
                         text.push_str(&t);
                         streamed += 1;
-                        let _ = evt_tx.send(AppEvent::Chunk {
+                        sink.send(AppEvent::Chunk {
                             generation_id: id,
                             text: t,
                         });
@@ -1597,7 +1901,7 @@ async fn stream_round(
                     ChatChunk::Thoughts(t) => {
                         thoughts.push_str(&t);
                         streamed += 1;
-                        let _ = evt_tx.send(AppEvent::Thoughts {
+                        sink.send(AppEvent::Thoughts {
                             generation_id: id,
                             text: t,
                         });
@@ -1624,7 +1928,7 @@ async fn stream_round(
                         usage_tokens = Some(u.completion_tokens as u64);
                         usage_prompt = Some(u.prompt_tokens);
                         round_reasoning = u.reasoning_tokens;
-                        let _ = evt_tx.send(AppEvent::TokenUsage {
+                        sink.send(AppEvent::TokenUsage {
                             generation_id: id,
                             completion: base_tokens + u.completion_tokens as u64,
                             context: Some(u.prompt_tokens as u64),
@@ -1640,7 +1944,7 @@ async fn stream_round(
                         max,
                         delay,
                     } => {
-                        let _ = evt_tx.send(AppEvent::Retrying {
+                        sink.send(AppEvent::Retrying {
                             generation_id: id,
                             attempt,
                             max,
@@ -1656,7 +1960,7 @@ async fn stream_round(
                     // (docs/research/cloud-retry-backoff.md §1.2).
                     ChatChunk::Error { message, .. } => {
                         let partial = !text.is_empty() || !thoughts.is_empty();
-                        let _ = evt_tx.send(AppEvent::Error(engine_error_note(
+                        sink.send(AppEvent::Error(engine_error_note(
                             &message,
                             compaction_enabled,
                             partial,
@@ -1675,7 +1979,7 @@ async fn stream_round(
         }
         Err(err) => {
             let err = err.to_string();
-            let _ = evt_tx.send(AppEvent::Error(engine_error_note(
+            sink.send(AppEvent::Error(engine_error_note(
                 &err,
                 compaction_enabled,
                 false,
