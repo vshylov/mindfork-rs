@@ -645,6 +645,12 @@ fn restore_input_sets_when_empty_and_prepends_when_not() {
     type_str(&mut s, "хвост");
     s.restore_input("голова ".into());
     assert_eq!(s.input.text(), "голова хвост");
+    // Neither boundary has whitespace of its own → one space is inserted, or
+    // the restored message would fuse with the typed text mid-word.
+    s.input.clear();
+    type_str(&mut s, "хвост");
+    s.restore_input("голова".into());
+    assert_eq!(s.input.text(), "голова хвост");
 }
 
 #[test]
@@ -4603,5 +4609,361 @@ mod read_only_transcript {
         assert_eq!(card.title, "Критик");
         assert_eq!(card.profile_id, Uuid::from_u128(2));
         assert!(c.s.feed_view.known_chats().contains(&child_id));
+    }
+}
+
+/// Stage 3 of the command-only track (docs/history/commands-stage3.md): `/autotitle`,
+/// the `/profile` text subcommands, and the `/impersonation` family.
+mod stage3_commands {
+    use super::*;
+    use crate::features::profiles::ProfileEdit;
+    use crate::shared::config::ImpersonationProfile;
+
+    /// [`Cmd::new`] plus the state the stage-3 commands read: the open chat is
+    /// in the list and belongs to a full profile the settings snapshot
+    /// carries, and the config holds two personas — the first one linked.
+    fn staffed() -> Cmd {
+        let mut c = Cmd::new();
+        let mut gaia = Profile::new("Гайя", "Ты — Гайя.");
+        gaia.id = Uuid::from_u128(2);
+        gaia.greeting = Some("Привет!".into());
+        gaia.impersonation_profile_id = Some(Uuid::from_u128(10));
+        let mut helios = Profile::new("Гелиос", "");
+        helios.id = Uuid::from_u128(3);
+        let cfg = AppConfig {
+            impersonation_profiles: vec![
+                ImpersonationProfile {
+                    id: Uuid::from_u128(10),
+                    name: "Владимир".into(),
+                    system_message: "Ты — Владимир.".into(),
+                },
+                ImpersonationProfile {
+                    id: Uuid::from_u128(11),
+                    name: "Вера".into(),
+                    system_message: String::new(),
+                },
+            ],
+            ..Default::default()
+        };
+        c.s.set_settings(
+            cfg,
+            vec![gaia, helios],
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+        );
+        c.s.set_chat_list(vec![ChatSummary {
+            id: c.chat,
+            profile_id: Uuid::from_u128(2),
+            title: "Про космос".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 1,
+            children: Vec::new(),
+        }]);
+        c
+    }
+
+    /// The same screen with the chat on the *other* profile — no greeting, an
+    /// empty system message, no persona linked.
+    fn staffed_on_helios() -> Cmd {
+        let mut c = staffed();
+        let chat = Uuid::from_u128(5);
+        c.s.set_chat_list(vec![ChatSummary {
+            id: chat,
+            profile_id: Uuid::from_u128(3),
+            title: "Второй".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 0,
+            children: Vec::new(),
+        }]);
+        c.s.activate_chat(
+            chat,
+            "Второй".into(),
+            &[],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        c.chat = chat;
+        c
+    }
+
+    #[test]
+    fn autotitle_asks_the_model_and_answers_without_a_chat() {
+        let mut c = Cmd::new();
+        let chat = c.chat;
+        assert_eq!(c.run("/autotitle"), Some(ChatIntent::AutoTitleChat(chat)));
+        // The task takes seconds; a silent wait would read as a refusal.
+        assert!(!c.last_note().is_empty(), "/autotitle said nothing");
+
+        let mut c = Cmd::bare();
+        assert_eq!(c.run("/autotitle"), None);
+        assert!(!c.last_note().is_empty(), "no-chat /autotitle said nothing");
+    }
+
+    #[test]
+    fn profile_text_commands_edit_the_active_profile() {
+        // Set / clear, both fields; the intent goes to the chat's profile and
+        // the note names it.
+        let cases: [(&str, ProfileEdit); 4] = [
+            (
+                "/profile system Ты — Гея 2.0.",
+                ProfileEdit {
+                    system_message: Some("Ты — Гея 2.0.".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "/profile system clear",
+                ProfileEdit {
+                    system_message: Some(String::new()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "/profile greeting Здравствуй!",
+                ProfileEdit {
+                    greeting: Some(Some("Здравствуй!".into())),
+                    ..Default::default()
+                },
+            ),
+            (
+                "/profile greeting clear",
+                ProfileEdit {
+                    greeting: Some(None),
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (line, expected) in cases {
+            let mut c = staffed();
+            let Some(ChatIntent::UpdateProfile { id, edit }) = c.run(line) else {
+                panic!("{line}: expected an UpdateProfile intent");
+            };
+            assert_eq!(id, Uuid::from_u128(2), "{line}: the chat's profile");
+            assert_eq!(*edit, expected, "{line}");
+            assert!(c.last_note().contains("Гайя"), "{line}: {}", c.last_note());
+            assert!(c.s.input.is_empty(), "{line} left text in the box");
+        }
+    }
+
+    #[test]
+    fn bare_profile_text_prefills_the_current_value_or_teaches() {
+        let mut c = staffed();
+        assert_eq!(c.run("/profile system"), None);
+        assert_eq!(c.s.input.text(), "/profile system Ты — Гайя.");
+
+        let mut c = staffed();
+        assert_eq!(c.run("/profile greeting"), None);
+        assert_eq!(c.s.input.text(), "/profile greeting Привет!");
+
+        // Nothing set: an empty prefill would teach nothing — the note names
+        // the syntax that sets one instead.
+        let mut c = staffed_on_helios();
+        assert_eq!(c.run("/profile system"), None);
+        let note = c.last_note();
+        assert!(note.contains("/profile system"), "{note}");
+        assert!(c.s.input.is_empty());
+
+        let mut c = staffed_on_helios();
+        assert_eq!(c.run("/profile greeting"), None);
+        assert!(c.last_note().contains("/profile greeting"));
+    }
+
+    #[test]
+    fn profile_text_without_a_chat_or_snapshot_answers() {
+        let mut c = Cmd::bare();
+        assert_eq!(c.run("/profile system Текст"), None);
+        assert!(!c.last_note().is_empty(), "no-chat edit said nothing");
+
+        // `Cmd::new` has no chat-list snapshot, so the profile is unknowable.
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/profile greeting Текст"), None);
+        assert!(!c.last_note().is_empty());
+    }
+
+    #[test]
+    fn impersonation_list_marks_the_used_persona() {
+        let mut c = staffed();
+        assert_eq!(c.run("/impersonation list"), None);
+        let note = c.last_note();
+        let marker = c.s.palette.glyphs().title_marker;
+        assert!(
+            note.contains(&format!("{marker} Владимир")),
+            "the linked persona is marked: {note}"
+        );
+        assert!(note.contains("Вера"), "{note}");
+
+        // No personas at all → the route that creates one, not an empty list.
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/impersonation list"), None);
+        assert!(
+            c.last_note().contains("/impersonation new"),
+            "{}",
+            c.last_note()
+        );
+    }
+
+    #[test]
+    fn impersonation_new_creates_and_names_the_next_steps() {
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateConfig(config)) = c.run("/impersonation new Тень") else {
+            panic!("expected an UpdateConfig intent");
+        };
+        let created = config.impersonation_profiles.last().unwrap();
+        assert_eq!(config.impersonation_profiles.len(), 3);
+        assert_eq!(created.name, "Тень");
+        assert!(created.system_message.is_empty());
+        let note = c.last_note();
+        assert!(note.contains("/impersonation use"), "the next step: {note}");
+        assert!(
+            note.contains("/impersonation system"),
+            "the next step: {note}"
+        );
+
+        // The default name — the settings screen's `Ctrl+N` one.
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateConfig(config)) = c.run("/impersonation new") else {
+            panic!("expected an UpdateConfig intent");
+        };
+        let name = &config.impersonation_profiles.last().unwrap().name;
+        assert_eq!(name, c.s.loc.t("ui.settings.new_profile_name"));
+
+        // Before the snapshot arrives, the command answers instead of acting.
+        let mut c = Cmd::bare();
+        assert_eq!(c.run("/impersonation new Тень"), None);
+        assert!(!c.last_note().is_empty());
+    }
+
+    #[test]
+    fn impersonation_delete_always_confirms_and_enter_commits() {
+        let mut c = staffed();
+        assert_eq!(c.run("/impersonation delete Влад"), None);
+        assert!(
+            matches!(
+                &c.s.confirm,
+                Some(ConfirmAction::DeleteImpersonation { id, name })
+                    if *id == Uuid::from_u128(10) && name == "Владимир"
+            ),
+            "the prefix resolves and the popup opens"
+        );
+        let Some(ChatIntent::UpdateConfig(config)) = c.key(KeyCode::Enter) else {
+            panic!("Enter must commit the deletion");
+        };
+        let left: Vec<&str> = config
+            .impersonation_profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(left, ["Вера"]);
+        assert!(c.last_note().contains("Владимир"), "{}", c.last_note());
+
+        // Esc declines — nothing changes and nothing is sent.
+        let mut c = staffed();
+        assert_eq!(c.run("/impersonation delete Вера"), None);
+        assert_eq!(c.key(KeyCode::Esc), None);
+        assert!(c.s.confirm.is_none());
+    }
+
+    #[test]
+    fn impersonation_use_links_and_default_unlinks() {
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateProfile { id, edit }) = c.run("/impersonation use Вера")
+        else {
+            panic!("expected an UpdateProfile intent");
+        };
+        assert_eq!(id, Uuid::from_u128(2));
+        assert_eq!(
+            edit.impersonation_profile_id,
+            Some(Some(Uuid::from_u128(11)))
+        );
+
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateProfile { edit, .. }) = c.run("/impersonation use default")
+        else {
+            panic!("expected an UpdateProfile intent");
+        };
+        assert_eq!(edit.impersonation_profile_id, Some(None));
+
+        // A miss lists what there is and the route that shows it.
+        let mut c = staffed();
+        assert_eq!(c.run("/impersonation use Прометей"), None);
+        let note = c.last_note();
+        assert!(note.contains("Владимир") && note.contains("Вера"), "{note}");
+        assert!(note.contains("/impersonation list"), "{note}");
+    }
+
+    #[test]
+    fn impersonation_system_edits_the_linked_persona() {
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateConfig(config)) = c.run("/impersonation system Новый текст")
+        else {
+            panic!("expected an UpdateConfig intent");
+        };
+        assert_eq!(
+            config.impersonation_profiles[0].system_message,
+            "Новый текст"
+        );
+        assert!(c.last_note().contains("Владимир"), "{}", c.last_note());
+
+        // Bare — the current text comes back as an editable command line.
+        let mut c = staffed();
+        assert_eq!(c.run("/impersonation system"), None);
+        assert_eq!(c.s.input.text(), "/impersonation system Ты — Владимир.");
+
+        // `clear` empties it — impersonation falls back to the default text.
+        let mut c = staffed();
+        let Some(ChatIntent::UpdateConfig(config)) = c.run("/impersonation system clear") else {
+            panic!("expected an UpdateConfig intent");
+        };
+        assert!(config.impersonation_profiles[0].system_message.is_empty());
+
+        // No persona linked: the note names both routes that give the profile
+        // one, instead of editing something invisible.
+        let mut c = staffed_on_helios();
+        assert_eq!(c.run("/impersonation system Текст"), None);
+        let note = c.last_note();
+        assert!(note.contains("/impersonation use"), "{note}");
+        assert!(note.contains("/impersonation new"), "{note}");
+    }
+
+    /// The box and the highlighting: the family clears the box like every other
+    /// command, and is colored as a command while typed — including malformed
+    /// spellings, which are commands and not prose.
+    #[test]
+    fn impersonation_commands_clear_the_box_and_highlight() {
+        for line in [
+            "/impersonation list",
+            "/impersonation new Тень",
+            "/impersonation use Вера",
+            "/impersonation system Текст",
+            "/profile system Текст",
+            "/profile greeting Текст",
+        ] {
+            let mut c = staffed();
+            c.run(line);
+            assert!(c.s.input.is_empty(), "{line} left text in the box");
+            assert!(
+                c.s.take_dirty_draft().is_some_and(|d| d.is_empty()),
+                "{line} must hand an empty draft back"
+            );
+        }
+        for text in [
+            "/impersonation list",
+            "/impersonation renam x",
+            "/profile system",
+            "/profile greeting clear",
+        ] {
+            let mut c = staffed();
+            type_str(&mut c.s, text);
+            assert!(c.s.input_is_command(), "{text} is not highlighted");
+        }
+        // Near-words stay prose, exactly as they are on Enter.
+        let mut c = staffed();
+        type_str(&mut c.s, "/impersonations list");
+        assert!(!c.s.input_is_command());
     }
 }

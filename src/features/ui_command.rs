@@ -45,6 +45,9 @@ pub enum UiCommand {
     NewChat,
     /// Rename the open chat; bare, it offers the current title for editing (`F2`).
     Rename,
+    /// Ask the model to title the open chat (`Ctrl+R` in the chat list —
+    /// browser-taken, which is what earned it a typed route; spec §11.2).
+    AutoTitle,
     /// Clone the open chat (`Ctrl+D` in the chat list).
     Clone,
     /// Copy the whole conversation to the clipboard (`F5`).
@@ -161,6 +164,7 @@ pub const COMMANDS: &[Spec] = &[
     // The conversation.
     row(&["/new"], UiCommand::NewChat, Arity::Optional, "ui.help.k.new", "ui.help.cmd_new"),
     row(&["/rename"], UiCommand::Rename, Arity::Optional, "ui.help.k.rename", "ui.help.cmd_rename"),
+    row(&["/autotitle"], UiCommand::AutoTitle, Arity::None, "/autotitle", "ui.help.cmd_autotitle"),
     row(&["/clone"], UiCommand::Clone, Arity::None, "/clone", "ui.help.cmd_clone"),
     row(&["/copy"], UiCommand::Copy, Arity::None, "/copy", "ui.help.cmd_copy"),
     // Two spellings, on the `/exit`·`/quit` rule: both words are pre-trained

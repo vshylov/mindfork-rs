@@ -21,6 +21,7 @@ pub mod file_command;
 pub mod image_command;
 pub mod image_fetch;
 pub mod image_prepare;
+pub mod impersonation_command;
 pub mod import;
 pub mod mcp_import;
 pub mod profile_command;

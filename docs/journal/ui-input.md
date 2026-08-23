@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -38,6 +38,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: OSC 52 — copying to the client's clipboard (done)
 - Post-M9: `/project` is highlighted while it is typed (done)
 - Post-M9: OSC 52 — the note that did not close the door (done)
+- Post-M9: the draft flush lags the intent — a spent command resurfaces in the box (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1395,3 +1396,47 @@ local copy as the control — it worked, so a route there would be noise on ever
 **A live model run is not required** (AGENTS.md §3) — locale text and one test.
 The live evidence is the screenshot that started this: the terminal that dropped
 the escape now gets told what to do instead.
+
+### Post-M9: the draft flush lags the intent — a spent command resurfaces in the box (done)
+
+- **Found live, in the JupyterLab pass that opened the stage-3 track**
+  (docs/history/commands-stage3.md): after a `/takeback` the box read
+  `Please tell me about OpenAI./takeback` — the restored message with the spent
+  command glued on. Deterministic under default settings, and one mechanism
+  covered four commands. Every keystroke marks the draft dirty; the loop
+  flushes it as `SetDraft` at the **top of the next iteration**, while a key's
+  intent is dispatched at the **bottom of this one** (`handle_input_tick`). So
+  the channel order was always `SetDraft("/takeback")` → the intent →
+  `SetDraft("")`, and every handler reading `chat.draft` between the last two
+  saw the spent command: `handle_delete_last` recorded it as the recovery
+  draft and re-loaded it into the box via `activate()`'s `ChatActivated`
+  (then `RestoreInput` prepended the deleted message — the screenshot);
+  `handle_regenerate` re-loaded it the same way; `handle_clone` copied it
+  into the clone; `handle_new_chat` left it as the old chat's saved draft
+  forever, the late `SetDraft("")` landing on the newly active chat.
+- **Why the popup hid it**: with `confirm_destructive_keys` on, the
+  confirmation round trip gives the flush time to land — which is why the
+  defect survived the stage-1 tests, whose confirmation case was the one that
+  passed. The setting is off by default.
+- **The fix is one seam**: `runtime`'s key and mouse paths flush the pending
+  draft **before** dispatching the intent the screen returned
+  (`flush_draft` in `input.rs`). The orchestrator then applies `SetDraft("")`
+  first, and every reader above sees the truth; the same seam repairs the
+  chord-path edge (keystrokes and `Ctrl+E` in one batch recorded a stale
+  recovery draft) and puts a chat-switch draft on the chat it belongs to.
+  Rejected alternative — clearing `chat.draft` inside `handle_delete_last` —
+  fixes one reader and leaves `/regen`, `/clone` and `/new` wrong.
+- **One adjacent nit**: `RestoreInput` prepended with no separator
+  (`{text}{existing}`), so on the chord path the restored message fused with
+  half-typed text mid-word. One space is inserted when neither boundary has
+  its own; the existing trailing-space fixture stays byte-identical.
+
+**Tests** (+2, and one extended). A runtime test drives `/takeback` through
+`process_input_batch` key by key and pins the **order** — the empty `SetDraft`
+must immediately precede `DeleteLastExchange` (re-ordering the flush after the
+dispatch goes red); the `restore_input` test gains the no-boundary-whitespace
+case. The registry-wide "clears the box and hands an empty draft back" test
+already covered the screen half.
+
+**A live model run is not required** (AGENTS.md §3) — pure UI/runtime routing.
+The live evidence is the screenshot that started it.

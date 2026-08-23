@@ -151,14 +151,24 @@ impl ChatScreen {
     }
 
     /// Returns the text for the input box after deleting the last exchange. If the field
-    /// isn't empty, the text is prepended to its start (existing input isn't lost).
+    /// isn't empty, the text is prepended to its start (existing input isn't lost),
+    /// with one space between the halves when neither boundary has its own —
+    /// the restored message must not fuse with the typed text mid-word.
     /// See spec §11.7.
     pub fn restore_input(&mut self, text: String) {
         let existing = self.input.text();
         let combined = if existing.is_empty() {
             text
         } else {
-            format!("{text}{existing}")
+            let glue = if text.is_empty()
+                || text.ends_with(char::is_whitespace)
+                || existing.starts_with(char::is_whitespace)
+            {
+                ""
+            } else {
+                " "
+            };
+            format!("{text}{glue}{existing}")
         };
         self.input.set_text(&combined);
         self.mark_input_changed();

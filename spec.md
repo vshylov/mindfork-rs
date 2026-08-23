@@ -1864,12 +1864,16 @@ A direct requirement from the task:
   (`Ctrl+←/→`, `Ctrl+Backspace/Delete`), `Ctrl+Home/End`, clear/restore (`Ctrl+K`),
   clipboard paste, and horizontal scrolling of a long title. The spellchecker lives in
   the chat screen; `app` lends it to the list screen for highlighting.
-- **A model-written title** (`Ctrl+R` in the list): the model reads a digest of the
+- **A model-written title** (`Ctrl+R` in the list; `/autotitle` in the chat for the
+  open conversation — the key is browser-taken, `Ctrl+R` reloads the tab, which is
+  what earned the action a typed route, [§11.7](#117-keybindings-preliminary)): the
+  model reads a digest of the
   conversation (roles tagged, start+end when long — `features/rename_chat.rs`) and
   answers with a short title in the conversation's language: one single-turn background
   request with no history/tools and reasoning muted (`orchestrator/title.rs`), cleaned
   (`clean_generated_title`) and applied via `ChatRenamed`; failures report into the
-  list overlay. **The same task also runs by itself** — `interface.auto_title`
+  list overlay when it is open, and fall back to a note in the chat feed — the typed
+  route's errors must land where the user is. **The same task also runs by itself** — `interface.auto_title`
   (the "Interface" section's Behavior group, a tri-state) fires it once per
   conversation: *after the assistant's first reply* (the **default** — the reply is
   what disambiguates a terse opening, so the name is measurably better, and the
@@ -2744,11 +2748,11 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Nineteen commands:
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty commands:
 `/settings` `/self` `/chats` `/help` · `/new [profile]` `/rename [title]`
-`/clone` `/copy` `/regen`·`/retry` `/takeback` `/impersonate [text]` `/stop` ·
-`/find [text]` `/search <text>` `/links` · `/thoughts` `/toolcalls` `/mouse`
-`/emoji`. Load-bearing properties:
+`/autotitle` `/clone` `/copy` `/regen`·`/retry` `/takeback`
+`/impersonate [text]` `/stop` · `/find [text]` `/search <text>` `/links` ·
+`/thoughts` `/toolcalls` `/mouse` `/emoji`. Load-bearing properties:
 
 - **A command is its key.** Each one reaches the action through the *same*
   handler the chord uses (`handle_ctrl_shortcut`, or the chord's own intent), so
@@ -2803,6 +2807,48 @@ terminal is often driven from. Hence `/profile list · /profile new [name] ·
 - `/profile delete` refuses the **last** profile before asking, rather than
   posing a question the orchestrator would then decline; `/self clear` refuses
   with no chat open, the model belonging to the active profile.
+
+**Stage 3 — the texts, the personas, and the title**
+([docs/history/commands-stage3.md](docs/history/commands-stage3.md)). A live
+pass in a JupyterLab terminal found the next layer of chord-only actions:
+`Ctrl+R` (browser: reload) guarded the model-written title, the settings
+screen's `Ctrl+N`/`Ctrl+D` guarded the impersonation-profile list exactly as
+they had guarded the assistant profiles, and the three free-text fields (the
+profile's system message and greeting, the persona's system message) had no
+route but the settings editors. Hence `/autotitle` (a registry row —
+[§11.2](#112-the-chat-list-an-overlay)), `/profile system [text|clear]` ·
+`/profile greeting [text|clear]`, and the persona family
+`/impersonation list · new [name] · delete <name> · use <name|default> ·
+system [text|clear]` (`features/impersonation_command.rs`, on the `/profile`
+module's shape — [§11.8](#118-impersonation-writing-a-message-as-the-user)).
+The stage's own decisions:
+
+- **A bare text subcommand hands the current value back** as an editable
+  command line (`/profile system` → `/profile system <current…>`) — the
+  `/rename` pattern, multi-line values included (the parser keeps internal
+  newlines); an *empty* value answers with the syntax that sets one instead,
+  since an empty prefill teaches nothing. The reserved word **`clear`**
+  removes a value (fork F3; a literal text "clear" stays settable in
+  settings), and **`default`** on `/impersonation use` unlinks — the settings
+  choice's "not set" option.
+- **The notes state each edit's scope honestly**: the profile's system
+  message and greeting are copied into a chat at creation, so those two say
+  "applies to new conversations"; a persona edit is resolved live at `Ctrl+U`
+  time, so its note says the *next* impersonation writes as it.
+- **The commands commit through the settings screen's own paths** —
+  `UpdateProfile` for the profile fields and the persona link,
+  `UpdateConfig` (a working copy of the settings snapshot) for the persona
+  list — so validation, persistence and the re-emitted snapshots are shared,
+  and the screen answers `settings loading` until the first snapshot arrives.
+  The outcome note is the command's own and is worded as fact; a failed save
+  still reports through the orchestrator's error path, which is the same
+  order the settings screen's editors show.
+- `/impersonation delete` **always confirms**, the `/profile delete` rule: a
+  typed prefix can resolve to a persona the user did not picture, and its
+  system message is unrecoverable. `/impersonation new` deliberately does
+  **not** link what it created (fork F4 — several assistant profiles can
+  share one persona); the note names `/impersonation use <name>` as the next
+  step.
 
 **`/export [md|json] [path]` writes the conversation to a file**
 (`features/export_command.rs`, `chat_export::to_import_json`;
@@ -2961,6 +3007,18 @@ edit **different lists**: "Assistant" — the AI-interlocutor profiles (plus the
 "Impersonation profile" field choosing the persona), "Impersonation" — the personas
 themselves (selector, name, system message; no tools). `Ctrl+N`/`Ctrl+D` create/delete
 in whichever list the active subsection shows.
+
+**The typed routes** ([§11.7](#117-keybindings-preliminary), stage 3): the
+persona list and the link are also operable from the chat's input box —
+`/impersonation list` (the active profile's persona marked),
+`/impersonation new [name]` (created unlinked, the settings `Ctrl+N` parity),
+`/impersonation delete <name>` (always confirmed; referencing profiles fall
+back to the default text), `/impersonation use <name|default>` (the link on
+the active chat's profile; `default` — unset), and
+`/impersonation system [text|clear]` (the linked persona's text; bare hands
+the current text back for editing, `clear` falls back to the shared default).
+Every edit commits through the settings screen's own save paths and applies to
+the **next** impersonation — the persona is resolved live at `Ctrl+U` time.
 
 ---
 

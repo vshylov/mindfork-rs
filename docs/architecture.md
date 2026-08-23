@@ -2374,6 +2374,29 @@ The commands reach `AppCommand::CreateProfile`/`DeleteProfile`/`UpdateSelfModel`
 profile CRUD is now announced by the orchestrator (`AppEvent::Notice`), so the
 claim is made where the write happens and both routes answer alike.
 
+Stage 3 (docs/history/commands-stage3.md, spec §11.7) added `/autotitle` (a
+registry row onto the list's `AppCommand::AutoRenameChat`), the `/profile
+system|greeting` text subcommands, and
+`features/impersonation_command.rs` (`/impersonation
+list|new|delete|use|system` over `AppConfig.impersonation_profiles`) — the
+`/profile` module's shape, sharing its prologue (`subcommand_of`), its
+name-argument normalization and the three-way `TextEdit`
+(`Show`/`Clear`/`Set`; `Show` prefills the box, the `/rename` pattern, and
+the parser keeps a text argument's internal newlines). The screen commits
+through two intents new to `ChatIntent` but not to the contract —
+`UpdateProfile` (the profile texts, the persona link) and `UpdateConfig` (a
+working copy of the settings snapshot for the persona list) — and
+`ConfirmAction::DeleteImpersonation` builds its intent **at confirm time**
+from the current snapshot (`ChatScreen::confirmed_intent`), since a config
+edit has no fixed intent to carry. The name matching generalized into
+`resolve_named` over `(id, name)` pairs, worded per family. The same track
+fixed the **draft-flush order**: `runtime`'s key and mouse paths flush the
+pending draft (`input.rs::flush_draft`) *before* dispatching an intent, so a
+handler reading `chat.draft` — takeback's recovery record and `RestoreInput`,
+regenerate's re-activation, clone's copy, new-chat's switch — never sees the
+spent command the loop's own top-of-iteration flush would have delivered one
+step late.
+
 **A sub-agent transcript as a chat of the list** (spec §9.3.2, §11.2,
 docs/research/subagent-chats.md §3.7–§3.8). `ChatSummary.children` carries the
 transcripts' cards, built by `Chat::summary()` from the records; the list widget
