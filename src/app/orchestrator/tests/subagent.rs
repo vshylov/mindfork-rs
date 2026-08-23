@@ -213,7 +213,33 @@ async fn subagent_runs_with_tools_and_lands_on_the_record() {
         .filter(|e| matches!(e, AppEvent::ToolCall { .. }))
         .collect();
     assert_eq!(cards.len(), 1);
-    assert!(matches!(cards[0], AppEvent::ToolCall { name, .. } if name == "call_subagent"));
+    assert!(
+        matches!(cards[0], AppEvent::ToolCall { name, call_id, .. } if name == "call_subagent" && call_id == "c1")
+    );
+    // …and the card opened before the run, under the same call id — the
+    // child's own `current_time` opened nothing in the parent's feed.
+    let started: Vec<(String, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::ToolCallStarted { call_id, name, .. } => {
+                Some((call_id.clone(), name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        started,
+        vec![("c1".to_string(), "call_subagent".to_string())]
+    );
+    let first_started = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::ToolCallStarted { .. }))
+        .unwrap();
+    let first_card = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::ToolCall { .. }))
+        .unwrap();
+    assert!(first_started < first_card);
     assert!(
         !events
             .iter()

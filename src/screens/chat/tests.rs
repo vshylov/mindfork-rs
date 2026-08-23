@@ -37,7 +37,14 @@ fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
     s.push_user_message("собери отзывы".into());
     s.begin_generation(id, None);
     // The assistant called a tool (the assistant bubble is text-empty)...
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into(), 0);
+    s.push_tool_call(
+        id,
+        "c1".into(),
+        "web_search".into(),
+        "{}".into(),
+        "результаты".into(),
+        0,
+    );
     // ...the limit is reached — a note goes into the feed.
     s.push_error("Достигнут лимит раундов инструментов (8) — свожу итог.");
     // The forced synthesis streams the final reply.
@@ -90,6 +97,7 @@ fn live_stream_with_tool_matches_reload() {
     s.push_chunk(id, "Ищу погоду.");
     s.push_tool_call(
         id,
+        "c1".into(),
         "web_search".into(),
         "{\"q\":\"погода\"}".into(),
         "ясно".into(),
@@ -439,7 +447,14 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
     assert!(!s.feed_view.is_following());
 
     // Arrives on its own — the position is kept.
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into(), 0);
+    s.push_tool_call(
+        id,
+        "c1".into(),
+        "web_search".into(),
+        "{}".into(),
+        "ок".into(),
+        0,
+    );
     assert!(!s.feed_view.is_following(), "a tool card must not yank");
     s.push_note("заметка");
     assert!(!s.feed_view.is_following(), "a note must not yank");
@@ -456,7 +471,14 @@ fn arriving_content_does_not_yank_a_scrolled_away_reader() {
     let id2 = gen_id();
     s.begin_generation(id2, None);
     assert!(s.feed_view.is_following());
-    s.push_tool_call(id2, "web_search".into(), "{}".into(), "ок".into(), 0);
+    s.push_tool_call(
+        id2,
+        "c1".into(),
+        "web_search".into(),
+        "{}".into(),
+        "ок".into(),
+        0,
+    );
     s.push_note("ещё заметка");
     assert!(s.feed_view.is_following());
 }
@@ -1756,7 +1778,14 @@ fn every_feed_mutator_marks_content_change() {
     s.push_thoughts(id, "мысль");
     assert!(s.take_full_redraw(), "push_thoughts");
 
-    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into(), 0);
+    s.push_tool_call(
+        id,
+        "c1".into(),
+        "web_search".into(),
+        "{}".into(),
+        "ок".into(),
+        0,
+    );
     assert!(s.take_full_redraw(), "push_tool_call");
 
     s.continue_assistant(id);
@@ -3071,6 +3100,80 @@ fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
         !hint.contains('3'),
         "a finished turn must not leave a chip behind: {hint}"
     );
+}
+
+/// The running card (spec §11.3, docs/subagent-live.md §3.7): a started call
+/// is a card at once, saying *running…* where the result goes; the result
+/// completes that card in place rather than adding a second; a result with
+/// no started card still gets one; and a turn that ends with a card still
+/// running clears the mark.
+#[test]
+fn a_started_call_is_a_running_card_completed_in_place() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    s.push_chunk(id, "Делегирую.");
+    s.push_tool_call_started(
+        id,
+        "c1".into(),
+        "call_subagent".into(),
+        "{\"name\":\"Критик\",\"message\":\"оцени\"}".into(),
+    );
+    let card = &s.feed.last().unwrap().tools;
+    assert_eq!(card.len(), 1);
+    assert!(card[0].running && card[0].result.is_empty());
+    let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let dumped = format!("{:?}", term.backend().buffer());
+    assert!(
+        dumped.contains(s.loc().t("ui.feed.tool_running")),
+        "{dumped}"
+    );
+
+    s.push_tool_call(
+        id,
+        "c1".into(),
+        "call_subagent".into(),
+        "{}".into(),
+        "слабо".into(),
+        0,
+    );
+    let card = &s.feed.last().unwrap().tools;
+    assert_eq!(card.len(), 1, "completed in place, not added");
+    assert!(!card[0].running);
+    assert_eq!(card[0].result, "слабо");
+
+    // No started card for this id — a plain push, as before.
+    s.push_tool_call(
+        id,
+        "c2".into(),
+        "web_search".into(),
+        "{}".into(),
+        "ок".into(),
+        0,
+    );
+    assert_eq!(s.feed.last().unwrap().tools.len(), 2);
+
+    // The turn ends mid-call: nothing stays running.
+    s.push_tool_call_started(id, "c3".into(), "python_exec".into(), "{}".into());
+    assert!(s.feed.last().unwrap().tools[2].running);
+    s.finish_generation(id, FinishReason::Cancelled);
+    let bubble = |s: &ChatScreen| {
+        s.feed
+            .iter()
+            .rev()
+            .find(|m| m.role == FeedRole::Assistant)
+            .unwrap()
+            .tools
+            .clone()
+    };
+    assert!(bubble(&s).iter().all(|t| !t.running));
+
+    // A stale generation opens nothing.
+    s.push_tool_call_started(gen_id(), "c9".into(), "web_search".into(), "{}".into());
+    assert_eq!(bubble(&s).len(), 3);
 }
 
 /// The running transcript on screen (docs/subagent-live.md §3.4): a filed

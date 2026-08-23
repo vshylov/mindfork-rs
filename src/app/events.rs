@@ -543,10 +543,23 @@ pub enum AppEvent {
         name: String,
         arguments: String,
     },
+    /// A tool call is about to execute (spec §11.3): the feed draws its card
+    /// at once, marked *running*, so a long call — a sub-agent run, a build, a
+    /// `python_exec` — is visible where it happens rather than only as a
+    /// status-bar chip, and the turn never looks idle (docs/lessons.md §4).
+    /// [`AppEvent::ToolCall`] with the same `call_id` completes the card.
+    ToolCallStarted {
+        generation_id: Uuid,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
     /// A tool was called and executed (for the tool block in the feed). See spec §6.3,
-    /// §11.3.
+    /// §11.3. Completes the card [`AppEvent::ToolCallStarted`] opened for the
+    /// same `call_id`, or adds one when none was opened.
     ToolCall {
         generation_id: Uuid,
+        call_id: String,
         name: String,
         arguments: String,
         result: String,

@@ -48,6 +48,11 @@ split by subsystem.
   delegation the status bar shows a quiet chip — the sub-agent's name, the
   round it is on and the tool it is using — instead of a bare "generating"
   for minutes.
+- **A tool call shows up the moment it starts.** The card for a tool call
+  appears in the reply as soon as the assistant makes the call, marked
+  *running…* where the result will go, and fills in when the result arrives —
+  so a long call (a sub-agent run, a project build, a Python script) is
+  visible where it happens rather than only as a status-bar chip.
 - **A sub-agent's transcript is there while it runs.** The moment the
   assistant delegates, the transcript appears in the chat list under the chat,
   marked *running*, its message count growing round by round. Open it to read

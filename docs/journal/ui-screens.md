@@ -2064,7 +2064,7 @@ Branch `feat/code-workspace-changes`.
 ### Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
 
 - **What**: stage 2 of the sub-agent track, by the plan
-  [docs/subagent-live.md](../subagent-live.md) (forks F1–F8 by
+  [docs/history/subagent-live.md](../history/subagent-live.md) (forks F1–F8 by
   recommendation, user's go 2026-08-23). A running sub-agent is a row of the
   list, opens read-only and grows by rounds, and the parent ↔ transcript
   switch does not cancel the turn. Spec §9.3.2, §11.2, §11.3; architecture

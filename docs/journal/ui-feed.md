@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the model's name on the assistant's header (done)
 - Post-M9: the indexing banner fits its row, the collapsed pill wraps whole (done)
 - Post-M9: a tool card lists its arguments in the tool's own order (done)
+- Post-M9: a tool call's card opens when the call starts (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1952,3 +1953,40 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   kept after the listed ones, an unlisted tool still alphabetical, the registry
   drift guard). Suite **2443 → 2447**. **No live run** (AGENTS.md §3): pure UI,
   the presenter is a pure layer and no engine, memory or tool path is touched.
+
+### Post-M9: a tool call's card opens when the call starts (done)
+
+- **What**: the last item of the sub-agent track's stage 2
+  ([docs/history/subagent-live.md](../history/subagent-live.md) §3.7, fork
+  F7 — its own PR, because it is a general tool-card feature). A tool call's
+  card goes into the bubble **before** the call runs, marked *running…*, and
+  the result completes that card in place. Spec §11.3; architecture §6.
+- **How**: `AppEvent::ToolCallStarted { generation_id, call_id, name,
+  arguments }` from `execute_call` right before `resolve_call_result`, under
+  the same `!is_control && !rewrite` gate as the card itself and through the
+  loop's sink — so a sub-agent's calls stay out of the parent's feed, like
+  the rest of its stream. `AppEvent::ToolCall` gained `call_id`;
+  `FeedToolCall` gained `call_id: Option<String>` and `running: bool`
+  (`None`/`false` for a card built from a stored message — nothing will
+  complete it). `push_tool_call_started` pushes the running card (making the
+  streaming bubble if the round has no text yet); `push_tool_call` completes
+  the running card with that id, else pushes as before. The render adds a
+  muted italic `busy running…` chip under the header in both modes (the
+  images chip's shape); `running` is in the block cache's hash, so the
+  completion repaints. `finish_generation` clears any card still running —
+  a cancel mid-call must not read *running…* forever.
+- **Not done**: the plan's idea of the sub-agent card showing the run's title
+  and `chat://` address while running — the screen has no run to read them
+  from until the call returns, and the arguments (`name`, `message`) already
+  say what is running. The address becomes a link when the card completes.
+- **Tests**: 2505 green (+1, and two asserts added): the screen's card
+  lifecycle (started → running chip rendered → completed in place, a result
+  with no started card pushed, a turn ending mid-call clearing the mark, a
+  stale generation opening nothing); the delegation test pins one
+  `ToolCallStarted` for the parent's `call_subagent` under the same call id,
+  before its `ToolCall`, and none for the child's `current_time`. **No live
+  run** (AGENTS.md §3): a feed-side change — the event rides the path every
+  tool call already takes, and the live sub-agent smoke of #362 covers it.
+- **Track closed**: the stage-2 plan moved to `docs/history/`, its links
+  re-pointed (`link_check.py`), CLAUDE.md's track line and the roadmap
+  updated.

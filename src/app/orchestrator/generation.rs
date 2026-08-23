@@ -1503,6 +1503,16 @@ impl TurnLoop<'_> {
             serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
         let is_control = control::is_control_tool(&call.name);
         self.report_progress(Some(&call.name));
+        // The card opens before the call runs (spec §11.3); a control call and
+        // a call skipped by a rewrite never get one, as below.
+        if !is_control && !rewrite {
+            self.sink().send(AppEvent::ToolCallStarted {
+                generation_id: self.shared.id,
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            });
+        }
         let CallResult {
             text: result,
             images,
@@ -1519,6 +1529,7 @@ impl TurnLoop<'_> {
         if !is_control && !rewrite {
             self.sink().send(AppEvent::ToolCall {
                 generation_id: self.shared.id,
+                call_id: call.id.clone(),
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
                 result: result.clone(),

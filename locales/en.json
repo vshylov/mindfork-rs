@@ -537,6 +537,7 @@
   "ui.feed.role.subagent": "SUB-AGENT",
   "ui.feed.thoughts": "thinking",
   "ui.feed.thoughts_lines": " · {n} lines · ",
+  "ui.feed.tool_running": "running…",
   "ui.feed.tool_details": "details",
   "ui.feed.exit_code": "exit code:",
   "ui.settings.desc.embed_convention": "How the model expects its input marked: none — no markers (bge-m3 and most others), e5 — \"query: \"/\"passage: \", e5-instruct — an instruction on the query and a bare passage. A wrong value makes retrieval worse, hence none by default. Changing it changes the vector space: /reindex is needed.",

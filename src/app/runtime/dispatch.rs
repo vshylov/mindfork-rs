@@ -134,13 +134,20 @@ pub(super) fn apply_event(
             name,
             arguments,
         } => screen.request_tool_confirm(generation_id, call_id, name, arguments),
+        AppEvent::ToolCallStarted {
+            generation_id,
+            call_id,
+            name,
+            arguments,
+        } => screen.push_tool_call_started(generation_id, call_id, name, arguments),
         AppEvent::ToolCall {
             generation_id,
+            call_id,
             name,
             arguments,
             result,
             images,
-        } => screen.push_tool_call(generation_id, name, arguments, result, images),
+        } => screen.push_tool_call(generation_id, call_id, name, arguments, result, images),
         AppEvent::AssistantContinue { generation_id } => screen.continue_assistant(generation_id),
         AppEvent::AssistantRewrite { generation_id } => screen.rewrite_assistant(generation_id),
         AppEvent::Finished {

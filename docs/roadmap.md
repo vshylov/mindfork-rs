@@ -432,6 +432,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Sub-agent chats** (complete, 8 PRs): `call_subagent` as a nested turn with
+  the agent's tools (ADR 0010), the transcript on the call's record, the
+  migration of old calls, the transcript in the list, in search, titled at
+  landing, visible while it runs, and a tool call's card that opens when the
+  call starts. Design: [docs/research/subagent-chats.md](research/subagent-chats.md),
+  stage 2: [docs/history/subagent-live.md](history/subagent-live.md). What
+  stays open: the two-agent dialogue (research §3.14 — its own research
+  document when wanted), the sub-agent's text streaming token by token into
+  its transcript (rounds are the unit today), and a parent's JSON export not
+  carrying its transcripts (the v1 import document has no place for tool
+  calls).
 - **Model-compliance probes vs the gate** (complete): opened when
   `rewrite_tool_e2e_live` took down a Gemma dispatch of the live gate, and
   expected to need a split — a deterministic mechanism test for the gate, the
