@@ -486,7 +486,17 @@ pub enum AppEvent {
         /// another chat (spec §9.3.2, §11.2): the screen opens it read-only,
         /// with the persona as a system bubble at the top. `None` for a chat.
         child: Option<ChildView>,
+        /// The generation in flight **on this conversation** — the running
+        /// turn's chat, or the sub-agent transcript that turn is inside
+        /// (docs/subagent-live.md §3.4–§3.5). The screen keeps the
+        /// generation state (a chat) or the sub-agent chip (a transcript)
+        /// across the switch instead of resetting them. `None` otherwise.
+        live_turn: Option<Uuid>,
     },
+    /// A running sub-agent transcript filed a round while it is the open
+    /// conversation (docs/subagent-live.md §3.4): the messages to append to
+    /// the feed. Guarded by `id` — a round for another conversation is dropped.
+    TranscriptGrew { id: Uuid, messages: Vec<Message> },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),
     /// Restore text into the input box (after deleting the last exchange). A non-empty

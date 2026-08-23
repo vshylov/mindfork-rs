@@ -687,6 +687,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
         focus: None,
         compaction: None,
         child: None,
+        live_turn: None,
     }
 }
 

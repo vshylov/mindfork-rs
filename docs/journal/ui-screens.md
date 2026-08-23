@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 4 — the transcript in the list, opened read-only (done)
 - Post-M9: sub-agent chats, PR 5 — transcripts in search and the cross-chat tools (done)
 - Post-M9: sub-agent chats, PR 6 — auto-title at landing, the run chip, the demo transcript (done)
+- Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2059,3 +2060,62 @@ Branch `feat/code-workspace-changes`.
   v1 import document has no place for tool calls). Next: PR 7
   `feat/subagent-live` — the in-flight side table and the child's stream in
   its own feed, once a live run argues for it.
+
+### Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
+
+- **What**: stage 2 of the sub-agent track, by the plan
+  [docs/subagent-live.md](../subagent-live.md) (forks F1–F8 by
+  recommendation, user's go 2026-08-23). A running sub-agent is a row of the
+  list, opens read-only and grows by rounds, and the parent ↔ transcript
+  switch does not cancel the turn. Spec §9.3.2, §11.2, §11.3; architecture
+  §5, §10.
+- **The channel** — `done_tx` carries `GenMessage::{Progress, Done}`; the
+  progress is `TurnProgress::{RoundFiled, ChildStarted, ChildRoundFiled,
+  ChildEnded}`, sent from `file_round` (by `depth`) and around the child in
+  `run_subagent`, whose run id is now minted **before** the run so the list
+  and the landed record agree. One channel was the whole point (F1): every
+  progress message precedes the result, so the mirror can be dropped at
+  landing with no race and no sequence numbers.
+- **The mirror** — `InflightTurn { generation, chat, rounds, child,
+  parent_needs_refresh }` on the orchestrator (F2). `view()`/`with_child_mut`
+  gained a third arm over it, which is what made the rest small: opening,
+  naming, copying, exporting and renaming a running transcript are the PR 4
+  paths unchanged; `first_match_in_chat` answers `None` (nothing indexed).
+  `emit_chat_list` appends the card with `ChildSummary.running` (additive);
+  the widget draws *running* where an outcome goes.
+- **Growth by rounds (F3)** — `TranscriptGrew { id, messages }` for the open
+  transcript only; the screen keeps a `transcript: Vec<Message>` copy while a
+  transcript is open and rebuilds the feed from all of it, so rounds stitch
+  into one bubble exactly as a landed transcript renders, and the scroll
+  follows the tail only if it already did.
+- **The switch (F4, F6)** — `switch_within_turn`: the parent and its
+  in-flight child, either direction, skip `request_cancel`; everything else
+  cancels as before (`Ctrl+N` never did — it activates without switching,
+  which the test had to respect). `ChatActivated.live_turn` carries the
+  running generation: on the parent the screen resumes `generating`/
+  `current_gen` and its feed is built from `chat.messages + inflight.rounds`;
+  on the transcript only the chip's guard is set — `current_gen` stays
+  `None`, because the parent's final-round chunks would otherwise land in the
+  transcript's feed (found while designing the screen side; the plan's
+  §3.4 already had the rule, the field split is the implementation of it).
+  A return to the parent marks `parent_needs_refresh`, and `handle_done`
+  re-activates it whole — the text of the round in progress is the one thing
+  the mirror cannot hold.
+- **Rename while running (F5)** — edits the mirror; `handle_done` copies
+  `title`/`renamed_manually` onto the landed run before the titling step.
+- **Tests**: 2504 green (+6): the running row with its count, opening with
+  the rounds so far and `live_turn`, the parent ↔ child switch leaving the
+  engine waiting, `Esc` landing the cancelled run under the same id with the
+  list un-marked and the parent refreshed; a switch to a third chat
+  cancelling; the rename landing; the bare `handle_progress` (growth only
+  for the open transcript, a foreign generation dropped); the screen growing
+  by rounds with the chip kept and the parent's chunk refused, and resuming
+  the generation on the chat. **Smoke — GO**: `subagent_with_tools_e2e_live`
+  against Gemma 4 31B (`llama-server`, 192.168.1.20) — the progress path is on
+  every delegation now; the nested `fs_read` run completed (4 messages).
+- **Traps met**: `gen` is a reserved identifier in edition 2024
+  (`generation`); a `wait_for` on an event the orchestrator emits *before*
+  the one already consumed hangs the test forever (lessons §1, again) — the
+  landed `ChatList` precedes the parent's refresh, so the test reads them in
+  that order. Next: the running card (`ToolCallStarted`, plan §3.7) as its
+  own PR, then the plan moves to `docs/history/`.

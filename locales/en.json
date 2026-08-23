@@ -869,6 +869,7 @@
   "ui.chatlist.run.timed_out": "timed out",
   "ui.chatlist.run.failed": "failed",
   "ui.chatlist.run.round_limit": "round limit",
+  "ui.chatlist.run.running": "running",
   "ui.chatlist.run.interrupted": "interrupted",
   "ui.chatlist.hk.back": "back",
   "ui.chatlist.hk.quit": "quit",

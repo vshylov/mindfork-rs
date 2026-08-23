@@ -129,8 +129,12 @@ impl Orchestrator {
             self.stop_tts();
         }
         // If generation is running — cancel it (the partial reply is saved for
-        // the original chat when the GenResult arrives).
-        if let Some(token) = self.gen_state.request_cancel() {
+        // the original chat when the GenResult arrives). The one exception:
+        // moving between the running turn's chat and its sub-agent transcript
+        // (docs/subagent-live.md §3.5) — looking at the run is not leaving it.
+        if !self.switch_within_turn(id)
+            && let Some(token) = self.gen_state.request_cancel()
+        {
             token.cancel();
         }
         if self.view(id).is_some() {

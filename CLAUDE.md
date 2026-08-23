@@ -166,7 +166,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-23, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2498 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2504 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -178,15 +178,19 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
-- **Sub-agent chats, PRs 2–6 of 7 — the sub-agent with the agent's tools,
-  the migration of old calls, the transcript in the list, in search, titled
-  and visible in flight** — `call_subagent` runs as a nested turn with the
+- **Sub-agent chats, PRs 2–7 of 7 — the sub-agent with the agent's tools,
+  the migration of old calls, the transcript in the list, in search, titled,
+  and live while it runs** — `call_subagent` runs as a nested turn with the
   turn's tools (minus itself, `history_*`, the self-model), its transcript
   lives on the call's record, shows nested under the parent in the list,
   opens read-only, is a conversation of its own to every search surface
   (`cache.db` `sub_id`, `CACHE_SCHEMA` 2) and to `chat_search`/`chat_read`,
-  is auto-titled at landing, and reports a status-bar chip while it runs;
-  `CHAT_SCHEMA` 2 synthesizes one for every old record. Go on Gemma 4 31B, 5/5
+  is auto-titled at landing, and — through the turn's progress channel and an
+  in-flight mirror — is listed, openable and growing while it runs, with the
+  parent ↔ transcript switch not cancelling the turn; `CHAT_SCHEMA` 2
+  synthesizes one for every old record. Go on Gemma 4 31B, 5/5
+  ([docs/subagent-live.md](docs/subagent-live.md) — the running card is the
+  one open item)
   ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).
 - **Inno Setup 7 for the Windows installer** — a 64-bit setup, and a pinned,

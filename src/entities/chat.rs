@@ -406,6 +406,11 @@ pub struct ChildSummary {
     /// How the run ended; `None` — interrupted before it could say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<RunOutcome>,
+    /// The run is in progress right now (docs/subagent-live.md §3.3): the
+    /// card comes from the orchestrator's in-flight mirror, not from a chat
+    /// file — `Chat::summary()` never sets it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub running: bool,
 }
 
 impl ChildSummary {
@@ -417,6 +422,7 @@ impl ChildSummary {
             finished_at: run.finished_at,
             message_count: run.messages.len(),
             outcome: run.outcome,
+            running: false,
         }
     }
 }
