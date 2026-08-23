@@ -3187,6 +3187,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
     let mut s = ChatScreen::new();
     let run_id = Uuid::new_v4();
     let generation = Uuid::new_v4();
+    let stream = Uuid::new_v4();
     s.set_child_view(Some(ChildView {
         parent: Uuid::new_v4(),
         parent_title: "Родитель".into(),
@@ -3201,8 +3202,19 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         None,
         None,
     );
-    s.set_live_turn(Some(generation));
-    assert!(!s.generating, "a transcript view never streams");
+    s.set_live_turn(Some(crate::app::events::LiveTurn {
+        turn: generation,
+        stream,
+        partial: Some(crate::app::events::LivePartial {
+            text: "начало".into(),
+            thoughts: String::new(),
+        }),
+    }));
+    assert!(s.generating, "a transcript streams its own run");
+    assert!(
+        s.feed.last().unwrap().streaming && s.feed.last().unwrap().text == "начало",
+        "seeded with the round so far"
+    );
 
     s.set_subagent_progress(
         generation,
@@ -3214,9 +3226,11 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
     );
     assert!(s.background_hint().unwrap().contains("Критик"));
 
-    // The parent's chunk is not for this feed.
+    // The parent's chunk is not for this feed; the run's own is.
     s.push_chunk(generation, "текст родителя");
     assert!(!s.feed.iter().any(|m| m.text.contains("текст родителя")));
+    s.push_chunk(stream, " и дальше");
+    assert_eq!(s.feed.last().unwrap().text, "начало и дальше");
 
     // A filed round: assistant + tool, then the next assistant — one bubble.
     let mut a = Message::assistant("");
@@ -3236,8 +3250,10 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
     s.grow_transcript(Uuid::new_v4(), &[Message::assistant("чужое")]);
     assert!(!s.feed.iter().any(|m| m.text.contains("чужое")));
 
-    // The turn ends: the chip goes, the feed is untouched.
-    s.finish_generation(generation, FinishReason::Cancelled);
+    // The run's stream ends: its bubble closes and the chip goes (the run is
+    // over — the turn's own clearing event usually precedes this anyway).
+    s.finish_generation(stream, FinishReason::Stop);
+    assert!(!s.generating);
     assert!(s.background_hint().is_none());
     assert!(!s.feed.iter().any(|m| m.role == FeedRole::Note));
 }
@@ -3259,7 +3275,11 @@ fn returning_to_the_running_chat_resumes_its_generation() {
         None,
         None,
     );
-    s.set_live_turn(Some(generation));
+    s.set_live_turn(Some(crate::app::events::LiveTurn {
+        turn: generation,
+        stream: generation,
+        partial: None,
+    }));
     assert!(s.generating);
     s.push_chunk(generation, "продолжение");
     assert!(s.feed.iter().any(|m| m.text.contains("продолжение")));

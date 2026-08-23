@@ -875,20 +875,35 @@ impl ChatScreen {
     }
 
     /// The generation in flight on the conversation just activated
-    /// (docs/subagent-live.md §3.4–§3.5). On the running turn's **chat**: the
-    /// screen is generating again — the stream and the chip resume into this
-    /// feed. On the turn's **transcript**: only the chip resumes; the feed
-    /// grows by `TranscriptGrew`, never by the parent's chunks.
-    pub fn set_live_turn(&mut self, live_turn: Option<Uuid>) {
-        self.live_turn = live_turn;
-        if let Some(id) = live_turn
-            && self.child.is_none()
-        {
-            self.current_gen = Some(id);
-            self.generating = true;
-        }
-        if live_turn.is_none() {
+    /// (docs/history/subagent-live.md §3.4–§3.5, §8). On the running turn's
+    /// **chat**: the screen is generating again — the stream and the chip
+    /// resume into this feed. On the turn's **transcript**: the sub-agent's
+    /// own stream resumes into it, seeded with the round so far; the chip is
+    /// keyed on the turn, so it stays too.
+    pub fn set_live_turn(&mut self, live_turn: Option<crate::app::events::LiveTurn>) {
+        let Some(live) = live_turn else {
+            self.live_turn = None;
             self.subagent = None;
+            return;
+        };
+        self.live_turn = Some(live.turn);
+        if self.child.is_none() {
+            // The turn's own chat: the next chunk continues into a bubble
+            // the stream creates; the rounds so far are in the feed already.
+            self.current_gen = Some(live.stream);
+            self.generating = true;
+            return;
+        }
+        // A running transcript (docs/history/subagent-live.md §8): its own
+        // stream, into a bubble seeded with the round so far.
+        self.begin_generation(live.stream, None);
+        if let Some(partial) = live.partial {
+            if !partial.thoughts.is_empty() {
+                self.push_thoughts(live.stream, &partial.thoughts);
+            }
+            if !partial.text.is_empty() {
+                self.push_chunk(live.stream, &partial.text);
+            }
         }
     }
 

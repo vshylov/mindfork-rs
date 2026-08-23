@@ -370,6 +370,27 @@ pub struct ChildView {
 }
 
 /// Event from the orchestrator to UI. This is the only way UI updates its read-only
+/// The generation running on the conversation being activated
+/// ([`AppEvent::ChatActivated::live_turn`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveTurn {
+    /// The turn's generation id — what the sub-agent chip is keyed on.
+    pub turn: Uuid,
+    /// The stream this conversation's feed accepts: the turn's own on its
+    /// chat, the sub-agent's own on its transcript (docs/history/subagent-live.md §8).
+    pub stream: Uuid,
+    /// The round in progress so far — text and thoughts — so a feed opened
+    /// mid-round starts with what has already streamed.
+    pub partial: Option<LivePartial>,
+}
+
+/// The text of a round in progress (see [`LiveTurn::partial`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LivePartial {
+    pub text: String,
+    pub thoughts: String,
+}
+
 /// One sub-agent run's position, for the status-bar chip
 /// ([`AppEvent::SubagentProgress`]): the persona's name (the `name` argument,
 /// else the run's title), the round it is on, and the tool it is inside, if
@@ -488,10 +509,10 @@ pub enum AppEvent {
         child: Option<ChildView>,
         /// The generation in flight **on this conversation** — the running
         /// turn's chat, or the sub-agent transcript that turn is inside
-        /// (docs/subagent-live.md §3.4–§3.5). The screen keeps the
-        /// generation state (a chat) or the sub-agent chip (a transcript)
-        /// across the switch instead of resetting them. `None` otherwise.
-        live_turn: Option<Uuid>,
+        /// (docs/history/subagent-live.md §3.4–§3.5, §8): which turn (the
+        /// chip's guard), which stream this feed accepts, and the text of the
+        /// round in progress. `None` otherwise.
+        live_turn: Option<LiveTurn>,
     },
     /// A running sub-agent transcript filed a round while it is the open
     /// conversation (docs/subagent-live.md §3.4): the messages to append to
