@@ -55,7 +55,11 @@ $Sha256  = '0362A383ED217D4C4239B5933866DD96D3EB2102737DA92F80F6057A4B40DF2F'
 
 $iscc = Join-Path $env:ProgramFiles 'Inno Setup 7\ISCC.exe'
 
-function Write-Step([string]$Message) {
+# Progress goes to the console host on purpose: stdout is this script's return
+# value (the ISCC path, last line), so a pipeline-bound cmdlet would corrupt
+# it. The `Show-` verb is how PowerShell spells "display-only" (SonarQube
+# S8677).
+function Show-Step([string]$Message) {
     if (-not $Quiet) { Write-Host $Message }
 }
 
@@ -67,10 +71,10 @@ function Get-IsccVersion([string]$Path) {
 }
 
 if ((Get-IsccVersion $iscc) -eq $Version) {
-    Write-Step "Inno Setup $Version is already installed."
+    Show-Step "Inno Setup $Version is already installed."
 } else {
     $installer = Join-Path ([IO.Path]::GetTempPath()) "innosetup-$Version-x64.exe"
-    Write-Step "Downloading Inno Setup $Version..."
+    Show-Step "Downloading Inno Setup $Version..."
     # Invoke-WebRequest's progress rendering costs more than the download on a
     # runner; the variable is restored so the script leaves no trace in a shell.
     $previousProgress = $ProgressPreference
@@ -82,7 +86,7 @@ if ((Get-IsccVersion $iscc) -eq $Version) {
     if ($actual -ne $Sha256) {
         throw "Inno Setup $Version SHA-256 mismatch: expected $Sha256, got $actual"
     }
-    Write-Step 'SHA-256 verified. Installing...'
+    Show-Step 'SHA-256 verified. Installing...'
 
     # /SP- suppresses the "This will install..." prompt that /VERYSILENT alone
     # leaves in place; /NORESTART because nothing here needs one.
@@ -98,7 +102,7 @@ $installed = Get-IsccVersion $iscc
 if ($installed -ne $Version) {
     throw "Expected ISCC $Version at '$iscc', found '$installed'"
 }
-Write-Step "ISCC $installed at $iscc"
+Show-Step "ISCC $installed at $iscc"
 
 if ($env:GITHUB_ENV) { "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
 $iscc

@@ -2349,7 +2349,8 @@ differently, and the wording never claims an arrival the protocol cannot confirm
 **Typed routes for the chords** (`features/ui_command.rs` +
 `screens/chat/commands.rs`, spec §11.7). One declarative registry (`COMMANDS`:
 aliases, `UiCommand`, arity, help label, description key) parsed by one function;
-`ChatScreen::try_ui_command` sits in `handle_enter`'s chain **before** the
+`ChatScreen::try_ui_command` sits in `handle_enter`'s parser table
+(`COMMAND_PARSERS`, whose order is the precedence) **before** the
 `generating` gate, and `run_ui_command` is an exhaustive match on `UiCommand`, so
 a new row cannot ship undecided. Each arm reaches its action through the
 **same** handler the chord uses — `handle_ctrl_shortcut` (made `pub(super)` for

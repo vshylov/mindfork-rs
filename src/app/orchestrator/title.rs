@@ -170,49 +170,53 @@ impl Orchestrator {
     /// Applies the result of background auto-title generation: cleans up/normalizes
     /// the title and renames the chat (or reports the failure per its origin).
     pub(super) fn handle_title_result(&mut self, res: TitleResult) {
-        match res.text {
-            Ok(raw) => {
-                let Some(title) = crate::features::rename_chat::clean_generated_title(&raw) else {
-                    self.report_title_error(
-                        res.origin,
-                        self.ui_locale().t("ui.err.title_empty").into(),
-                    );
-                    return;
-                };
-                if let Some(chat) = self.chat_mut(res.chat_id) {
-                    // The user renamed while the automatic task ran: their
-                    // choice wins (docs/history/auto-chat-title.md D1). A
-                    // requested result keeps last-write-wins — the user asked
-                    // for this title moments ago.
-                    if res.origin == TitleOrigin::Auto && chat.renamed_manually {
-                        tracing::debug!(chat = %res.chat_id,
-                            "automatic title dropped: the chat was renamed manually meanwhile");
-                        return;
-                    }
-                    chat.title = title.clone();
-                    self.mark_dirty(res.chat_id);
-                } else {
-                    // A sub-agent transcript, under the same rule.
-                    let mut dropped = false;
-                    let found = self.with_child_mut(res.chat_id, |run| {
-                        if res.origin == TitleOrigin::Auto && run.renamed_manually {
-                            dropped = true;
-                        } else {
-                            run.title = title.clone();
-                        }
-                    });
-                    if !found || dropped {
-                        return;
-                    }
-                }
-                self.emit_chat_list();
-                let _ = self.evt_tx.send(AppEvent::ChatRenamed {
-                    id: res.chat_id,
-                    title,
-                });
+        let raw = match res.text {
+            Ok(raw) => raw,
+            Err(msg) => {
+                self.report_title_error(res.origin, msg);
+                return;
             }
-            Err(msg) => self.report_title_error(res.origin, msg),
+        };
+        let Some(title) = crate::features::rename_chat::clean_generated_title(&raw) else {
+            self.report_title_error(res.origin, self.ui_locale().t("ui.err.title_empty").into());
+            return;
+        };
+        if !self.apply_title(res.chat_id, res.origin, &title) {
+            return;
         }
+        self.emit_chat_list();
+        let _ = self.evt_tx.send(AppEvent::ChatRenamed {
+            id: res.chat_id,
+            title,
+        });
+    }
+
+    /// Writes a generated title onto the chat — or onto the sub-agent
+    /// transcript, under the same rule — and says whether it landed. `false`
+    /// when the conversation is gone, or when an **automatic** result lost to
+    /// a rename the user made while the task ran: their choice wins
+    /// (docs/history/auto-chat-title.md D1). A requested result keeps
+    /// last-write-wins — the user asked for this title moments ago.
+    fn apply_title(&mut self, chat_id: Uuid, origin: TitleOrigin, title: &str) -> bool {
+        if let Some(chat) = self.chat_mut(chat_id) {
+            if origin == TitleOrigin::Auto && chat.renamed_manually {
+                tracing::debug!(chat = %chat_id,
+                    "automatic title dropped: the chat was renamed manually meanwhile");
+                return false;
+            }
+            chat.title = title.to_string();
+            self.mark_dirty(chat_id);
+            return true;
+        }
+        let mut dropped = false;
+        let found = self.with_child_mut(chat_id, |run| {
+            if origin == TitleOrigin::Auto && run.renamed_manually {
+                dropped = true;
+            } else {
+                run.title = title.to_string();
+            }
+        });
+        found && !dropped
     }
 }
 
