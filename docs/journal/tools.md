@@ -2475,9 +2475,15 @@ the probe lives on `spike/code-search-probe`, unmerged.
   use `fs_read`. **5/5**: every run the parent delegated once, the sub-agent
   (which named itself «File Reader» every time) made exactly one `fs_read`
   call and answered, and the token reached the parent's reply; 120–188 tokens
-  per run. Qwen 3.6 27B was not run — the only GPU was serving the Gemma
-  instance — and is the first thing to run before PR 3's migration lands on
-  real chats.
+  per run. Qwen 3.6 27B was not run then — the only GPU was serving the Gemma
+  instance. **Run after the track closed (2026-08-23, Qwen3.6-27B Q4_K_M on
+  the same `llama-server`, the code of #363): GO** — one delegation, one
+  `fs_read`, the token in the parent's reply, 271 tokens, 25 s; the
+  cross-chat smoke (`cross_chat_search_answers_from_another_chat_live`) GO
+  too, 45 s. One behavioural difference from Gemma: Qwen passed **no `name`**,
+  so the transcript's initial title fell back to the instruction's first line
+  (F13) — which is exactly the case the landing auto-title (PR 6) exists
+  for; the smoke runs with titling off, so the long title is what it shows.
 - **Tests**: 2460 green (+13: the entity's additive round trip and
   `final_reply`; the argument parser, the initial title and the loop-only
   refusal; six orchestrator tests over a recording, scripted engine — the run
