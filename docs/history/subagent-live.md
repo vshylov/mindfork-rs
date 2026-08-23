@@ -284,3 +284,41 @@ architecture §5 (the channel, the table), §10 (the resolver's third arm, the
 screen's `live_turn`); journal `ui-screens.md`; CHANGELOG Added; this plan →
 `docs/history/` when the running-card PR closes the track, with
 `docs/roadmap.md` updated.
+
+## 8. Addendum: the sub-agent's text streams into its transcript
+
+Decided 2026-08-23, after the track closed (forks by recommendation, user's
+go). Fork F3 above chose rounds as the unit because token-level streaming
+seemed to need a second stream in the screen and lost the partial text on
+every switch anyway. Both objections fall once the child's stream is treated
+as **progress rather than UI events**.
+
+- **Transport.** The child's `RoundSink` no longer mutes: it turns `Chunk`,
+  `Thoughts`, `ToolCallStarted`, `ToolCall`, `AssistantContinue`/`Rewrite`
+  and the token counter into `TurnProgress::Child{Chunk, Thoughts,
+  ToolStarted, ToolCall, Continue, Rewrite, Tokens}` on `done_tx` — the same
+  channel as `ChildRoundFiled`, so a round's chunks always precede its filing
+  and the feed rebuild of §3.4 can never erase a bubble that belongs to the
+  next round. The parent's rebased `TokenUsage` keeps going straight to the
+  status bar as before.
+- **The mirror keeps the partial round.** `InflightTurn.child` gains a
+  **stream id** of its own (`generation`, minted with the run id) and
+  `partial: (text, thoughts)`, appended by chunks and reset by
+  `ChildRoundFiled`/`ChildRewrite`. When the transcript is the open
+  conversation the orchestrator forwards each step to the screen as the
+  ordinary `Chunk`/`Thoughts`/`ToolCallStarted`/`ToolCall`/… under the child's
+  stream id; `ChildEnded` forwards `Finished`. The parent's screen drops all
+  of it by the existing generation-id guard — no new rule.
+- **A late opening loses nothing.** `ChatActivated.live_turn` becomes
+  `LiveTurn { turn, stream, partial }`: `turn` is the parent's generation (the
+  sub-agent chip's guard), `stream` the generation the feed accepts (the
+  parent's on the chat, the child's on the transcript), `partial` the text of
+  the round in progress. The screen begins a streaming bubble seeded with it.
+- **The transcript view is "generating"** now, with its own token counter
+  (the run's completion tokens), the running card of #363 for the sub-agent's
+  own calls, and `Finished`'s cancellation note; read-only stays read-only,
+  and `Esc` stays navigation.
+- **Next, separately**: the parent's own in-progress text the same way
+  (`RoundText`), which retires `parent_needs_refresh` and the landing
+  re-activation of §3.5.
+
