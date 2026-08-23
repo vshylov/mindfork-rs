@@ -1943,6 +1943,7 @@
   "tool.chat_search.unavailable": "Поиск по другим разговорам сейчас недоступен. Если знаешь, где искать, chat_read всё ещё может прочитать разговор по названию.",
   "tool.chat_search.empty": "Ни один другой разговор этого профиля не содержит такого. Попробуй другие слова; текущий разговор этим поиском не охвачен.",
   "tool.chat_search.header": "Найдено фрагментов в других разговорах: {n} (всего совпадений: {total}).",
+  "tool.chat_search.child": "{title} — транскрипт саб-агента из разговора „{parent}“",
   "tool.chat_search.chat": "Разговор «{title}» {id}, последняя активность {date}:",
   "tool.chat_search.hit": "{n}. [{role} · {date} · страница {page}]",
   "tool.chat_search.hit_unpaged": "{n}. [{role} · {date}]",

@@ -109,7 +109,13 @@ pub struct SearchHit {
 /// trigram's `bm25` is a weak proxy for relevance (research §5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchGroup {
+    /// The conversation's id — a chat's, or a sub-agent transcript's (then
+    /// `parent` is set). Either opens through `AppCommand::OpenChatAt`.
     pub chat_id: Uuid,
+    /// The chat holding this transcript; `None` for a chat of the list. A
+    /// transcript's group always follows its parent's (spec §11.2.1).
+    #[doc(alias = "sub_id")]
+    pub parent: Option<Uuid>,
     pub title: String,
     /// In chat order (the orchestrator, which owns the chats, resolves it).
     pub hits: Vec<SearchHit>,

@@ -191,19 +191,26 @@ impl SearchScreen {
     }
 
     /// Builds the logical rows: a chat header per group, then its hits, with a
-    /// blank line between groups.
+    /// blank line between groups. A sub-agent transcript's group sits right
+    /// under its parent's, its header indented with a `└` — the chat list's
+    /// tree, in the results (spec §11.2.1); a parent with no hits of its own
+    /// is a header saying "0 matches" that navigation never lands on.
     fn rows(&self) -> Vec<(Line<'static>, Row)> {
         let p = &self.palette;
         let loc = self.loc;
         let mut rows: Vec<(Line<'static>, Row)> = Vec::new();
         let mut hit_index = 0usize;
         for (i, group) in self.groups.iter().enumerate() {
-            if i > 0 {
+            if i > 0 && group.parent.is_none() {
                 rows.push((Line::from(String::new()), Row::Decoration));
             }
+            let marker = match group.parent {
+                Some(_) => "  └ ".to_string(),
+                None => format!("{} ", p.glyphs().title_marker),
+            };
             rows.push((
                 Line::from(vec![
-                    Span::styled(format!("{} ", p.glyphs().title_marker), p.accent_style()),
+                    Span::styled(marker, p.accent_style()),
                     Span::styled(
                         group.title.clone(),
                         Style::new().fg(p.text).add_modifier(Modifier::BOLD),
@@ -502,6 +509,7 @@ mod tests {
     fn screen() -> SearchScreen {
         let groups = vec![
             SearchGroup {
+                parent: None,
                 chat_id: Uuid::new_v4(),
                 title: "Первый чат".into(),
                 hits: vec![
@@ -510,6 +518,7 @@ mod tests {
                 ],
             },
             SearchGroup {
+                parent: None,
                 chat_id: Uuid::new_v4(),
                 title: "Второй чат".into(),
                 hits: vec![hit("третье сообщение про МАРКЕР", "маркер")],
@@ -522,6 +531,64 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         format!("{:?}", term.backend().buffer())
+    }
+
+    /// A transcript's group is drawn as the list draws it: under its parent,
+    /// no blank line between, the header branched with `└`; a parent that
+    /// matched nothing of its own is a "0 matches" header navigation steps
+    /// over, and `Enter` on the transcript's hit opens the *transcript*
+    /// (spec §11.2.1).
+    #[test]
+    fn a_transcript_group_sits_under_its_parent() {
+        let parent = Uuid::new_v4();
+        let child = Uuid::new_v4();
+        let groups = vec![
+            SearchGroup {
+                parent: None,
+                chat_id: parent,
+                title: "Родитель".into(),
+                hits: vec![],
+            },
+            SearchGroup {
+                parent: Some(parent),
+                chat_id: child,
+                title: "Критик".into(),
+                hits: vec![hit("сообщение про МАРКЕР внутри", "маркер")],
+            },
+        ];
+        let mut s = SearchScreen::new("маркер".into(), groups, 1, Palette::default(), ru());
+        let lines: Vec<String> = s
+            .rows()
+            .iter()
+            .map(|(l, _)| {
+                l.spans
+                    .iter()
+                    .map(|sp| sp.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(
+            lines[0].contains("Родитель") && lines[0].contains("совпадений: 0"),
+            "{lines:?}"
+        );
+        assert!(lines[1].starts_with("  └ Критик"), "{lines:?}");
+        assert_eq!(
+            lines.len(),
+            3,
+            "no spacer between a parent and its transcript: {lines:?}"
+        );
+
+        assert_eq!(s.selected(), 0);
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter)),
+            Some(SearchIntent::OpenHit {
+                chat: child,
+                message: s.groups[1].hits[0].message_id,
+                query: "маркер".into(),
+            })
+        );
+        let dumped = dump(&mut s, 60, 12);
+        assert!(dumped.contains("└ Критик"), "{dumped}");
     }
 
     /// Navigation is over hits, so a chat header between two hits is stepped

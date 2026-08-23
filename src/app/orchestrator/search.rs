@@ -28,13 +28,13 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
-use crate::entities::message::MessageRole;
+use crate::entities::message::{Message, MessageRole};
 use crate::features::chat_search::{self, SearchGroup, SearchHit};
 use crate::features::chat_search_sort::SortMode;
 use crate::shared::storage::Storage;
-use crate::shared::storage::cache::{IndexedMessage, MessageHit};
+use crate::shared::storage::cache::{IndexScope, IndexedMessage, MessageHit};
 
-use super::Orchestrator;
+use super::{ChatView, Orchestrator};
 
 impl Orchestrator {
     /// Answers a content query from the chat list (`Ctrl+F`).
@@ -109,24 +109,41 @@ impl Orchestrator {
         (self.group_hits(hits, query, sort), total)
     }
 
-    /// Buckets hits into chats **in the order the chat list is currently showing
-    /// them** (fork S2 — the list's `Tab` toggle carries over, rather than the
-    /// results quietly using a different order), and orders each chat's hits by their real
-    /// position in the conversation.
+    /// Buckets hits into conversations **in the order the chat list is
+    /// currently showing them** (fork S2 — the list's `Tab` toggle carries
+    /// over, rather than the results quietly using a different order), and
+    /// orders each conversation's hits by their real position in it.
+    ///
+    /// A conversation is a chat or one of its sub-agent transcripts, keyed by
+    /// `(chat_id, sub_id)` (spec §11.2.1): a chat's group comes first, then
+    /// one group per matched transcript in call order — the list's tree, in
+    /// the results. A parent none of whose *own* messages match still gets a
+    /// group, with no hits, so a transcript is never shown orphaned; the
+    /// screen draws that header as "0 matches" and navigation skips it.
     ///
     /// A hit whose chat we do not have — deleted or hidden since it was indexed
     /// — is dropped: the index is derived data and may lag by a moment, and
     /// showing a result that cannot be opened is worse than showing one fewer.
+    /// The same goes for a transcript the file no longer holds (its exchange
+    /// was taken back).
     fn group_hits(&self, hits: Vec<MessageHit>, query: &str, sort: SortMode) -> Vec<SearchGroup> {
-        let mut by_chat: HashMap<Uuid, Vec<MessageHit>> = HashMap::new();
+        let mut by_scope: HashMap<(Uuid, Option<Uuid>), Vec<MessageHit>> = HashMap::new();
         for hit in hits {
-            by_chat.entry(hit.chat_id).or_default().push(hit);
+            by_scope
+                .entry((hit.chat_id, hit.sub_id))
+                .or_default()
+                .push(hit);
         }
 
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
-            .filter(|c| !c.is_hidden && by_chat.contains_key(&c.id))
+            .filter(|c| !c.is_hidden)
+            .filter(|c| {
+                by_scope.contains_key(&(c.id, None))
+                    || c.children()
+                        .any(|r| by_scope.contains_key(&(c.id, Some(r.id))))
+            })
             .collect();
         chats.sort_by_key(|c| {
             std::cmp::Reverse(match sort {
@@ -135,50 +152,55 @@ impl Orchestrator {
             })
         });
 
-        chats
-            .into_iter()
-            .map(|chat| {
-                let order = message_order(chat);
-                let mut hits = by_chat.remove(&chat.id).unwrap_or_default();
-                hits.sort_by_key(|h| order.get(&h.message_id).copied().unwrap_or(usize::MAX));
-                SearchGroup {
-                    chat_id: chat.id,
-                    title: chat.title.clone(),
-                    hits: hits
-                        .into_iter()
-                        .map(|h| SearchHit {
-                            message_id: h.message_id,
-                            role: h.role,
-                            ts: h.ts,
-                            snippet: chat_search::build_snippet(
-                                &h.text,
-                                query,
-                                chat_search::SNIPPET_BUDGET_CHARS,
-                            ),
-                        })
-                        .collect(),
+        let mut groups = Vec::new();
+        for chat in chats {
+            let own = by_scope.remove(&(chat.id, None)).unwrap_or_default();
+            groups.push(make_group(
+                chat.id,
+                None,
+                &chat.title,
+                &chat.messages,
+                own,
+                query,
+            ));
+            for run in chat.children() {
+                if let Some(hits) = by_scope.remove(&(chat.id, Some(run.id))) {
+                    groups.push(make_group(
+                        run.id,
+                        Some(chat.id),
+                        &run.title,
+                        &run.messages,
+                        hits,
+                        query,
+                    ));
                 }
-            })
-            .collect()
+            }
+        }
+        groups
     }
 
-    /// The earliest message of `chat` matching `query`, in real chat order —
-    /// what `Enter` in the chat list's content mode opens the chat at. `None`
-    /// when the query is unsearchable, the search fails, or nothing in this
-    /// chat matches (then the chat opens at its tail, as a plain switch does).
-    pub(super) fn first_match_in_chat(&self, chat_id: Uuid, query: &str) -> Option<Uuid> {
+    /// The earliest message of the conversation `id` matching `query`, in real
+    /// order — what `Enter` in the chat list's content mode opens it at. `id`
+    /// may name a chat (its own messages — the transcripts are separate rows
+    /// with their own first match) or a sub-agent transcript. `None` when the
+    /// query is unsearchable, the search fails, or nothing in this
+    /// conversation matches (then it opens at its tail, as a plain switch does).
+    pub(super) fn first_match_in_chat(&self, id: Uuid, query: &str) -> Option<Uuid> {
         let fts = chat_search::to_fts_query(query)?;
+        let (scope, messages) = match self.view(id)? {
+            ChatView::Top(chat) => (IndexScope::Chat(id), &chat.messages),
+            ChatView::Child { run, .. } => (IndexScope::Transcript(id), &run.messages),
+        };
         let ids = self
             .storage
             .cache()
-            .matching_messages_in_chat(&fts, chat_id)
+            .matching_messages_in_chat(&fts, scope)
             .inspect_err(|err| {
-                tracing::warn!(chat = %chat_id, error = %format!("{err:#}"),
+                tracing::warn!(chat = %id, error = %format!("{err:#}"),
                     "resolving the first match in a chat failed");
             })
             .ok()?;
-        let chat = self.chats.iter().find(|c| c.id == chat_id)?;
-        let order = message_order(chat);
+        let order = message_order(messages);
         ids.into_iter()
             .filter_map(|id| order.get(&id).map(|pos| (*pos, id)))
             .min()
@@ -219,18 +241,57 @@ impl Orchestrator {
     }
 }
 
-/// The messages of a chat as the index stores them.
+/// One results group: the conversation's hits in its real message order,
+/// snippets built. `id` is the chat's or the transcript's; `parent` is set for
+/// a transcript.
+fn make_group(
+    id: Uuid,
+    parent: Option<Uuid>,
+    title: &str,
+    messages: &[Message],
+    mut hits: Vec<MessageHit>,
+    query: &str,
+) -> SearchGroup {
+    let order = message_order(messages);
+    hits.sort_by_key(|h| order.get(&h.message_id).copied().unwrap_or(usize::MAX));
+    SearchGroup {
+        chat_id: id,
+        parent,
+        title: title.to_string(),
+        hits: hits
+            .into_iter()
+            .map(|h| SearchHit {
+                message_id: h.message_id,
+                role: h.role,
+                ts: h.ts,
+                snippet: chat_search::build_snippet(
+                    &h.text,
+                    query,
+                    chat_search::SNIPPET_BUDGET_CHARS,
+                ),
+            })
+            .collect(),
+    }
+}
+
+/// The messages of a chat as the index stores them: the chat's own with no
+/// `sub_id`, then every sub-agent transcript's with its run id — all under
+/// the parent's `chat_id`, since they share its file (spec §9.3.2, §11.2.1).
 ///
 /// Stage 1 indexes `message.text` only (fork F3): `thoughts` and tool-call
 /// JSON would inflate the index and match on words the user never wrote.
 /// Messages with nothing to index are skipped — a whitespace-only message
 /// (a cancelled stream, a tool turn) carries no searchable content.
 fn indexed_messages(chat: &Chat) -> Vec<IndexedMessage> {
-    chat.messages
-        .iter()
-        .filter(|m| !m.text.trim().is_empty())
-        .map(|m| IndexedMessage {
+    let own = chat.messages.iter().map(|m| (None, m));
+    let runs = chat
+        .children()
+        .flat_map(|run| run.messages.iter().map(move |m| (Some(run.id), m)));
+    own.chain(runs)
+        .filter(|(_, m)| !m.text.trim().is_empty())
+        .map(|(sub_id, m)| IndexedMessage {
             id: m.id,
+            sub_id,
             role: role_str(m.role).to_string(),
             ts: m.timestamp.to_rfc3339(),
             text: m.text.clone(),
@@ -241,8 +302,8 @@ fn indexed_messages(chat: &Chat) -> Vec<IndexedMessage> {
 /// `message_id → position in the conversation`, the only authority on the order
 /// hits are shown in: the index's rowids only approximate it, since a message
 /// whose text changed is deleted and re-inserted with a fresh one.
-fn message_order(chat: &Chat) -> HashMap<Uuid, usize> {
-    chat.messages
+fn message_order(messages: &[Message]) -> HashMap<Uuid, usize> {
+    messages
         .iter()
         .enumerate()
         .map(|(i, m)| (m.id, i))
@@ -412,7 +473,6 @@ fn forget(storage: &Storage, id: Uuid) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::message::Message;
     use crate::entities::profile::Profile;
     use crate::shared::paths::Paths;
 

@@ -46,7 +46,7 @@ use uuid::Uuid;
 /// mismatch in either direction is answered by wiping the file — unlike
 /// `data.db` there is nothing here worth migrating, so this constant is bumped
 /// freely whenever the schema changes.
-pub const CACHE_SCHEMA: u32 = 1;
+pub const CACHE_SCHEMA: u32 = 2;
 
 /// One message as it goes into the index. `role`/`ts` are unused by stage 1's
 /// chat-list filter; they are stored because stage 2's message-level screen
@@ -55,6 +55,12 @@ pub const CACHE_SCHEMA: u32 = 1;
 pub struct IndexedMessage {
     /// The message's own id (stable across saves — the diff key).
     pub id: Uuid,
+    /// The sub-agent transcript this message belongs to, or `None` for the
+    /// chat's own messages (spec §9.3.2). A transcript lives inside its
+    /// parent's file, so it is indexed *under the parent's `chat_id`* — the
+    /// per-file bookkeeping, the guarded re-index and `forget_chat` never see
+    /// it — and this is what tells the two levels apart at query time.
+    pub sub_id: Option<Uuid>,
     /// `user` / `assistant` / ….
     pub role: String,
     /// Timestamp, RFC 3339 (stored as text — the index never sorts by it).
@@ -68,13 +74,40 @@ pub struct IndexedMessage {
 /// themselves are not read — that is the point of the cache).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageHit {
+    /// The chat whose **file** holds the message — a transcript's parent.
     pub chat_id: Uuid,
+    /// The sub-agent transcript the message belongs to; `None` — the chat's
+    /// own message. [`Self::scope_id`] folds the two into one id.
+    pub sub_id: Option<Uuid>,
     pub message_id: Uuid,
     pub role: String,
     /// Timestamp, RFC 3339 — as stored (see [`IndexedMessage::ts`]).
     pub ts: String,
     /// The message's full text; the snippet is built from it in `features`.
     pub text: String,
+}
+
+impl MessageHit {
+    /// The id of the conversation the hit is shown under: the transcript's
+    /// when it has one, otherwise the chat's. A transcript's id stands for
+    /// itself everywhere the UI and the tools address conversations
+    /// (spec §11.2.1), so this is the grouping key on every consumer.
+    pub fn scope_id(&self) -> Uuid {
+        self.sub_id.unwrap_or(self.chat_id)
+    }
+}
+
+/// Which level of a chat file a single-conversation query reads
+/// (spec §11.2.1): the chat's own messages, or one sub-agent transcript's.
+/// A transcript's messages are never part of its parent's scope — "the first
+/// match in this chat" on a parent row lands on the parent's own text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexScope {
+    /// A chat of the list: `chat_id = ? AND sub_id IS NULL`.
+    Chat(Uuid),
+    /// A sub-agent transcript: `sub_id = ?` (transcript ids are unique on
+    /// their own, so the parent's id is not needed).
+    Transcript(Uuid),
 }
 
 /// SQLite full-text index over chat content. Disposable — see the module doc.
@@ -251,9 +284,17 @@ impl CacheDb {
                 None => {}
             }
             tx.execute(
-                "INSERT INTO messages(chat_id, message_id, text_hash, role, ts, text)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![chat, message_id, hash, msg.role, msg.ts, msg.text],
+                "INSERT INTO messages(chat_id, sub_id, message_id, text_hash, role, ts, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    chat,
+                    msg.sub_id.map(|id| id.to_string()),
+                    message_id,
+                    hash,
+                    msg.role,
+                    msg.ts,
+                    msg.text
+                ],
             )?;
         }
 
@@ -289,11 +330,17 @@ impl CacheDb {
         Ok(())
     }
 
-    /// Chats having at least one message matching an **already-escaped** FTS5
-    /// query (built by `features::chat_search::to_fts_query` — see the module
-    /// doc on FSD). Order is unspecified: stage 1 *filters* the chat list and
-    /// the user's existing sort orders it, because trigram's `bm25` is weak
-    /// (research §5).
+    /// Conversations having at least one message matching an
+    /// **already-escaped** FTS5 query (built by
+    /// `features::chat_search::to_fts_query` — see the module doc on FSD).
+    /// Order is unspecified: stage 1 *filters* the chat list and the user's
+    /// existing sort orders it, because trigram's `bm25` is weak (research §5).
+    ///
+    /// A "conversation" here is a chat **or a sub-agent transcript**: the id
+    /// set is `COALESCE(sub_id, chat_id)`, so a transcript's id stands for
+    /// itself and a parent whose only matches are inside a transcript is *not*
+    /// in the set — the list's membership rule then shows the transcript under
+    /// a dimmed parent (spec §11.2.1, docs/research/subagent-chats.md §3.9).
     ///
     /// A malformed query surfaces as an `Err` (FTS5 reports a syntax error)
     /// rather than a panic; the caller is expected to have escaped it, and to
@@ -301,7 +348,7 @@ impl CacheDb {
     pub fn search_chats(&self, fts_query: &str) -> Result<Vec<Uuid>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT m.chat_id
+            "SELECT DISTINCT COALESCE(m.sub_id, m.chat_id)
              FROM messages_fts f
              JOIN messages m ON m.id = f.rowid
              WHERE messages_fts MATCH ?1",
@@ -341,7 +388,9 @@ impl CacheDb {
     /// The one body under [`Self::search_messages`] and
     /// [`Self::search_messages_in`]: a single SQL text and row mapping, so the
     /// scoped twin cannot drift from the original — the rule the FTS escaper
-    /// already lives by. `scope: None` searches every chat.
+    /// already lives by. `scope: None` searches every chat; `Some(ids)` are
+    /// conversation ids in the [`Self::search_chats`] sense — a chat's or a
+    /// transcript's, matched through [`SCOPE_ID`].
     fn search_messages_where(
         &self,
         fts_query: &str,
@@ -349,16 +398,16 @@ impl CacheDb {
         limit: usize,
     ) -> Result<Vec<MessageHit>> {
         let scope_clause = match scope {
-            Some(ids) => format!(" AND m.chat_id IN ({})", vec!["?"; ids.len()].join(", ")),
+            Some(ids) => format!(" AND {SCOPE_ID} IN ({})", vec!["?"; ids.len()].join(", ")),
             None => String::new(),
         };
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
-            "SELECT m.chat_id, m.message_id, m.role, m.ts, m.text
+            "SELECT m.chat_id, m.sub_id, m.message_id, m.role, m.ts, m.text
              FROM messages_fts f
              JOIN messages m ON m.id = f.rowid
              WHERE messages_fts MATCH ?{scope_clause}
-             ORDER BY m.chat_id, m.id
+             ORDER BY m.chat_id, m.sub_id, m.id
              LIMIT ?"
         ))?;
         let params = scoped_params(fts_query, scope.unwrap_or_default(), Some(limit));
@@ -366,10 +415,11 @@ impl CacheDb {
             stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
                 Ok(MessageHit {
                     chat_id: parse_uuid(r.get::<_, String>(0)?),
-                    message_id: parse_uuid(r.get::<_, String>(1)?),
-                    role: r.get(2)?,
-                    ts: r.get(3)?,
-                    text: r.get(4)?,
+                    sub_id: r.get::<_, Option<String>>(1)?.map(parse_uuid),
+                    message_id: parse_uuid(r.get::<_, String>(2)?),
+                    role: r.get(3)?,
+                    ts: r.get(4)?,
+                    text: r.get(5)?,
                 })
             })?
             .collect()
@@ -393,20 +443,30 @@ impl CacheDb {
         Ok(n as usize)
     }
 
-    /// The ids of one chat's matching messages — unlimited, because a single
-    /// chat is bounded. Used by "open this chat at its first match" (`Enter` in
-    /// the chat list's content mode): the caller picks the earliest by real
-    /// chat order, which only it can know.
-    pub fn matching_messages_in_chat(&self, fts_query: &str, chat_id: Uuid) -> Result<Vec<Uuid>> {
+    /// The ids of one conversation's matching messages — unlimited, because a
+    /// single conversation is bounded. Used by "open this chat at its first
+    /// match" (`Enter` in the chat list's content mode): the caller picks the
+    /// earliest by real chat order, which only it can know. The scope is one
+    /// level of one file (see [`IndexScope`]): a parent's own messages, or
+    /// one transcript's.
+    pub fn matching_messages_in_chat(
+        &self,
+        fts_query: &str,
+        scope: IndexScope,
+    ) -> Result<Vec<Uuid>> {
+        let (clause, id) = match scope {
+            IndexScope::Chat(id) => ("m.chat_id = ?2 AND m.sub_id IS NULL", id),
+            IndexScope::Transcript(id) => ("m.sub_id = ?2", id),
+        };
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT m.message_id
              FROM messages_fts f
              JOIN messages m ON m.id = f.rowid
-             WHERE messages_fts MATCH ?1 AND m.chat_id = ?2",
-        )?;
+             WHERE messages_fts MATCH ?1 AND {clause}"
+        ))?;
         let ids = (|| -> rusqlite::Result<Vec<Uuid>> {
-            stmt.query_map(params![fts_query, chat_id.to_string()], |r| {
+            stmt.query_map(params![fts_query, id.to_string()], |r| {
                 Ok(parse_uuid(r.get::<_, String>(0)?))
             })?
             .collect()
@@ -415,11 +475,14 @@ impl CacheDb {
         Ok(ids)
     }
 
-    /// Individual matching messages **within the given chats** — the scoped face
-    /// of [`Self::search_messages`], for the cross-chat tools (spec §9.11). The
-    /// index spans every chat of every profile, so a caller that filtered a
-    /// *global* `LIMIT`-ed result afterwards could have its own hits starved by
-    /// another profile's; scoping inside the query keeps the cap honest.
+    /// Individual matching messages **within the given conversations** — the
+    /// scoped face of [`Self::search_messages`], for the cross-chat tools
+    /// (spec §9.11). The index spans every chat of every profile, so a caller
+    /// that filtered a *global* `LIMIT`-ed result afterwards could have its own
+    /// hits starved by another profile's; scoping inside the query keeps the
+    /// cap honest. An id may name a chat or a sub-agent transcript; a chat's
+    /// id covers its own messages only (the transcripts are listed by their
+    /// own ids — the [`Self::search_chats`] rule).
     ///
     /// `chat_ids` becomes one placeholder each (SQLite's ceiling is 32766 —
     /// thousands of chats fit; the caller passes one profile's list). Empty
@@ -455,7 +518,7 @@ impl CacheDb {
                     "SELECT count(*)
                      FROM messages_fts f
                      JOIN messages m ON m.id = f.rowid
-                     WHERE messages_fts MATCH ? AND m.chat_id IN ({placeholders})"
+                     WHERE messages_fts MATCH ? AND {SCOPE_ID} IN ({placeholders})"
                 ),
                 rusqlite::params_from_iter(params.iter()),
                 |r| r.get(0),
@@ -475,6 +538,12 @@ impl CacheDb {
         Ok(n as usize)
     }
 }
+
+/// The conversation id of an indexed row, as SQL: the transcript's when the
+/// row belongs to one, else the chat's. One spelling for every scoped query, so
+/// the UI filter, the tools' scope and their count can never disagree on what
+/// an id means.
+const SCOPE_ID: &str = "COALESCE(m.sub_id, m.chat_id)";
 
 /// The parameter row for a chat-scoped query: the escaped query, then one id
 /// per `IN` placeholder, then the optional `LIMIT`. One heterogeneous list via
@@ -530,6 +599,7 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS messages (
              id         INTEGER PRIMARY KEY,
              chat_id    TEXT NOT NULL,
+             sub_id     TEXT,
              message_id TEXT NOT NULL,
              text_hash  INTEGER NOT NULL,
              role       TEXT NOT NULL,
@@ -537,6 +607,8 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
              text       TEXT NOT NULL,
              UNIQUE(chat_id, message_id)
          );
+
+         CREATE INDEX IF NOT EXISTS messages_sub_id ON messages(sub_id);
 
          CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
              text,
@@ -615,6 +687,7 @@ mod tests {
     fn msg(text: &str) -> IndexedMessage {
         IndexedMessage {
             id: Uuid::new_v4(),
+            sub_id: None,
             role: "user".into(),
             ts: "2026-07-29T10:00:00Z".into(),
             text: text.into(),
@@ -928,6 +1001,7 @@ mod tests {
         let (one, two) = (Uuid::new_v4(), Uuid::new_v4());
         let a = IndexedMessage {
             id: Uuid::new_v4(),
+            sub_id: None,
             role: "assistant".into(),
             ts: "2026-07-29T10:00:00+00:00".into(),
             text: "первое упоминание маркера".into(),
@@ -994,19 +1068,21 @@ mod tests {
         db.index_chat(two, 1, 1, &[msg("общее слово чужое")])
             .unwrap();
 
-        let mut ids = db.matching_messages_in_chat("\"общее\"", one).unwrap();
+        let mut ids = db
+            .matching_messages_in_chat("\"общее\"", IndexScope::Chat(one))
+            .unwrap();
         ids.sort();
         let mut want = vec![a.id, b.id];
         want.sort();
         assert_eq!(ids, want);
         assert_eq!(
-            db.matching_messages_in_chat("\"общее\"", two)
+            db.matching_messages_in_chat("\"общее\"", IndexScope::Chat(two))
                 .unwrap()
                 .len(),
             1
         );
         assert!(
-            db.matching_messages_in_chat("\"прочее\"", two)
+            db.matching_messages_in_chat("\"прочее\"", IndexScope::Chat(two))
                 .unwrap()
                 .is_empty()
         );
@@ -1020,9 +1096,99 @@ mod tests {
         assert!(db.search_messages("\"unterminated", 10).is_err());
         assert!(db.count_matching_messages("\"unterminated").is_err());
         assert!(
-            db.matching_messages_in_chat("\"unterminated", Uuid::new_v4())
+            db.matching_messages_in_chat("\"unterminated", IndexScope::Chat(Uuid::new_v4()))
                 .is_err()
         );
+    }
+
+    fn sub_msg(sub: Uuid, text: &str) -> IndexedMessage {
+        IndexedMessage {
+            sub_id: Some(sub),
+            ..msg(text)
+        }
+    }
+
+    /// The two-level contract (spec §11.2.1): a transcript's messages are
+    /// indexed under the parent's file, yet every query that names a
+    /// conversation sees the transcript as one of its own — its id stands for
+    /// itself in the id set, in the scoped search, and in the per-conversation
+    /// first-match lookup; and the parent's scope is its *own* messages only.
+    #[test]
+    fn a_transcript_is_its_own_conversation_in_every_query() {
+        let db = cache();
+        let (parent, run) = (Uuid::new_v4(), Uuid::new_v4());
+        let own = msg("родительское слово");
+        let inner = sub_msg(run, "дочернее слово");
+        db.index_chat(parent, 1, 1, &[own.clone(), inner.clone()])
+            .unwrap();
+
+        // The id set: the transcript for its match, the parent for its own.
+        assert_eq!(db.search_chats("\"дочернее\"").unwrap(), vec![run]);
+        assert_eq!(db.search_chats("\"родительское\"").unwrap(), vec![parent]);
+        let mut both = db.search_chats("\"слово\"").unwrap();
+        both.sort();
+        let mut want = vec![parent, run];
+        want.sort();
+        assert_eq!(both, want);
+
+        // Hits carry both ids, and the scope folds them.
+        let hits = db.search_messages("\"дочернее\"", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!((hits[0].chat_id, hits[0].sub_id), (parent, Some(run)));
+        assert_eq!(hits[0].scope_id(), run);
+
+        // The scoped search and its count address the transcript by its own
+        // id, and a parent's id does not reach inside its transcripts.
+        let scoped = db.search_messages_in("\"слово\"", &[run], 10).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].message_id, inner.id);
+        assert_eq!(
+            db.count_matching_messages_in("\"слово\"", &[run]).unwrap(),
+            1
+        );
+        let scoped = db.search_messages_in("\"слово\"", &[parent], 10).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].message_id, own.id);
+
+        // The first-match lookup, per level.
+        assert_eq!(
+            db.matching_messages_in_chat("\"слово\"", IndexScope::Chat(parent))
+                .unwrap(),
+            vec![own.id]
+        );
+        assert_eq!(
+            db.matching_messages_in_chat("\"слово\"", IndexScope::Transcript(run))
+                .unwrap(),
+            vec![inner.id]
+        );
+    }
+
+    /// The per-file bookkeeping is untouched by the second level: a re-index
+    /// diffs transcript rows like any other, and forgetting the parent takes
+    /// its transcripts with it.
+    #[test]
+    fn transcript_rows_live_and_die_with_the_parent_file() {
+        let db = cache();
+        let (parent, run) = (Uuid::new_v4(), Uuid::new_v4());
+        let inner = sub_msg(run, "дочернее слово");
+        db.index_chat(parent, 1, 1, &[msg("своё"), inner.clone()])
+            .unwrap();
+        let before = rowids(&db, parent);
+
+        // Unchanged text — the row is left alone (same rowid).
+        db.index_chat(parent, 2, 2, &[msg("своё"), inner.clone()])
+            .unwrap();
+        assert_eq!(rowids(&db, parent)[&inner.id], before[&inner.id]);
+
+        // The exchange was taken back — the transcript's rows go.
+        db.index_chat(parent, 3, 3, &[msg("своё")]).unwrap();
+        assert!(db.search_chats("\"дочернее\"").unwrap().is_empty());
+        assert_eq!(orphan_fts_rows(&db), 0);
+
+        db.index_chat(parent, 4, 4, &[inner]).unwrap();
+        db.forget_chat(parent).unwrap();
+        assert!(db.search_chats("\"дочернее\"").unwrap().is_empty());
+        assert_eq!(db.message_count().unwrap(), 0);
     }
 
     #[test]

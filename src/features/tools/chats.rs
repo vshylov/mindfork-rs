@@ -8,8 +8,12 @@
 //! [`ToolContext::other_chats`], built by [`snapshot_other_chats`]: the current
 //! profile's chats only (spec §9.5), the current chat excluded (its visible
 //! half is the model's own context; its folded half belongs to
-//! `history_search`), hidden chats dropped. Whatever is absent from the
-//! snapshot does not exist for either tool.
+//! `history_search`), hidden chats dropped. **Sub-agent transcripts are in**
+//! (docs/research/subagent-chats.md F4): each is a conversation of its own,
+//! labelled as the transcript of its parent, readable by its own `chat://`
+//! address — including the current chat's, whose transcripts are not in the
+//! model's context. Whatever is absent from the snapshot does not exist for
+//! either tool.
 //!
 //! - **`chat_search`** finds where something was said: hits grouped by
 //!   conversation (the UI's "group, don't rank" decision — trigram `bm25` is a
@@ -29,6 +33,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::entities::chat::Chat;
+use crate::entities::message::Message;
 use crate::entities::profile::ToolId;
 use crate::features::chat_links;
 use crate::features::chat_search::{HIT_CAP, SNIPPET_BUDGET_CHARS, build_snippet, to_fts_query};
@@ -62,32 +67,99 @@ const SCAN_CAP: usize = HIT_CAP;
 /// How many candidates an ambiguous `chat_read` reference lists at most.
 const AMBIGUOUS_CAP: usize = 6;
 
-/// One other chat of the profile, as the turn snapshot carries it. Also the
-/// address book: `chat_search` scopes its query by these ids, `chat_read`
-/// resolves references against them — so a conversation a result names is
-/// guaranteed readable by the companion tool.
+/// One other conversation of the profile, as the turn snapshot carries it —
+/// a chat, or a sub-agent transcript inside one. Also the address book:
+/// `chat_search` scopes its query by these ids, `chat_read` resolves
+/// references against them — so a conversation a result names is guaranteed
+/// readable by the companion tool.
 #[derive(Debug, Clone)]
 pub struct ChatRef {
     pub id: Uuid,
     pub title: String,
     /// Last activity, for recency ordering and display.
     pub modified_at: DateTime<Utc>,
+    /// For a sub-agent transcript: the chat whose file holds it (what
+    /// `chat_read` opens) and that chat's title (what the label names).
+    /// `None` for a chat of the list.
+    pub parent: Option<ParentRef>,
+}
+
+/// The parent of a transcript in the snapshot (see [`ChatRef::parent`]).
+#[derive(Debug, Clone)]
+pub struct ParentRef {
+    pub id: Uuid,
+    pub title: String,
+}
+
+impl ChatRef {
+    /// How the conversation is named in a result: its title, or — for a
+    /// transcript — "sub-agent transcript of «parent»", so the model knows
+    /// what kind of conversation it is citing.
+    fn label(&self, loc: &Locale) -> String {
+        match &self.parent {
+            Some(parent) => loc.tf(
+                "tool.chat_search.child",
+                &[
+                    ("title", self.title.as_str()),
+                    ("parent", parent.title.as_str()),
+                ],
+            ),
+            None => self.title.clone(),
+        }
+    }
 }
 
 /// Builds the turn's [`ChatRef`] snapshot from the orchestrator's chat list:
-/// this profile's chats, minus the current one, minus hidden ones. The single
-/// place the scope is decided (spec §9.5, §9.11) — the tools trust the
-/// snapshot blindly, so every boundary must hold here.
+/// this profile's chats, minus the current one, minus hidden ones — plus the
+/// sub-agent transcripts of every one of those chats *and* of the current
+/// one. The single place the scope is decided (spec §9.5, §9.11) — the tools
+/// trust the snapshot blindly, so every boundary must hold here.
 pub fn snapshot_other_chats(chats: &[Chat], profile_id: Uuid, current: Uuid) -> Vec<ChatRef> {
     chats
         .iter()
-        .filter(|c| c.profile_id == profile_id && c.id != current && !c.is_hidden)
-        .map(|c| ChatRef {
-            id: c.id,
-            title: c.title.clone(),
-            modified_at: c.modified_at,
+        .filter(|c| c.profile_id == profile_id && !c.is_hidden)
+        .flat_map(|c| {
+            let own = (c.id != current).then(|| ChatRef {
+                id: c.id,
+                title: c.title.clone(),
+                modified_at: c.modified_at,
+                parent: None,
+            });
+            let children = c.children().map(|run| ChatRef {
+                id: run.id,
+                title: run.title.clone(),
+                modified_at: run.finished_at.unwrap_or(run.created_at),
+                parent: Some(ParentRef {
+                    id: c.id,
+                    title: c.title.clone(),
+                }),
+            });
+            own.into_iter().chain(children)
         })
         .collect()
+}
+
+/// The messages of the conversation `chat_ref` names, read from disk: a
+/// chat's own, or — for a transcript — the run inside its parent's file.
+///
+/// Belt and braces under the snapshot: the scope is decided in
+/// [`snapshot_other_chats`], but a file that now says "different profile" or
+/// "hidden" must not be read on the strength of a stale snapshot — it reads
+/// as unloadable (`None`) rather than leak. A chat that has become the
+/// current one is refused the same way; a transcript of the current chat is
+/// fine (it is not in the model's context). A transcript the file no longer
+/// holds — its exchange was taken back — is `None` too.
+fn load_transcript(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Vec<Message>> {
+    let file_id = chat_ref.parent.as_ref().map_or(chat_ref.id, |p| p.id);
+    let chat = ctx.storage.json().load_chat(file_id).ok().flatten()?;
+    if chat.profile_id != ctx.profile_id || chat.is_hidden {
+        return None;
+    }
+    match &chat_ref.parent {
+        None if chat.id == ctx.chat_id => None,
+        None => Some(chat.messages),
+        Some(_) => chat.child(chat_ref.id).map(|run| run.messages.clone()),
+    }
 }
 
 /// The address shown next to a conversation — `chat://` plus a prefix of the
@@ -266,7 +338,7 @@ fn render_grouped_hits(
     let mut by_chat: std::collections::HashMap<Uuid, Vec<MessageHit>> =
         std::collections::HashMap::new();
     for hit in hits {
-        by_chat.entry(hit.chat_id).or_default().push(hit);
+        by_chat.entry(hit.scope_id()).or_default().push(hit);
     }
     let mut refs: Vec<&ChatRef> = ctx.other_chats.iter().collect();
     refs.sort_by_key(|r| std::cmp::Reverse(r.modified_at));
@@ -285,18 +357,13 @@ fn render_grouped_hits(
         // address — what makes the pair compose the way the history pair
         // does. Best-effort: a chat that fails to load still yields its
         // snippets, just without page numbers.
-        let view = ctx
-            .storage
-            .json()
-            .load_chat(chat_ref.id)
-            .ok()
-            .flatten()
-            .and_then(|c| HistoryView::render(&c.messages, ctx.loc));
+        let view = load_transcript(ctx, chat_ref)
+            .and_then(|messages| HistoryView::render(&messages, ctx.loc));
         body.push_str("\n\n");
         body.push_str(&ctx.loc.tf(
             "tool.chat_search.chat",
             &[
-                ("title", chat_ref.title.as_str()),
+                ("title", chat_ref.label(ctx.loc).as_str()),
                 ("id", &address(chat_ref.id)),
                 ("date", &chat_ref.modified_at.format("%Y-%m-%d").to_string()),
             ],
@@ -412,25 +479,19 @@ impl Tool for ChatRead {
                 ));
             }
         };
-        let loaded = ctx.storage.json().load_chat(chat_ref.id).ok().flatten();
-        // Belt and braces under the snapshot: the scope is decided in
-        // `snapshot_other_chats`, but a conversation whose file now says
-        // "different profile" or "hidden" must not be read on the strength of
-        // a stale snapshot — refuse as unloadable rather than leak.
-        let chat = match loaded {
-            Some(c) if c.profile_id == ctx.profile_id && c.id != ctx.chat_id && !c.is_hidden => c,
-            _ => {
-                return Ok(ToolOutcome::text(ctx.loc.tf(
-                    "tool.chat_read.unavailable",
-                    &[("title", chat_ref.title.as_str())],
-                )));
-            }
+        let title = chat_ref.label(ctx.loc);
+        // The guards live in `load_transcript` (profile, hidden, current).
+        let Some(messages) = load_transcript(ctx, chat_ref) else {
+            return Ok(ToolOutcome::text(
+                ctx.loc
+                    .tf("tool.chat_read.unavailable", &[("title", title.as_str())]),
+            ));
         };
-        let Some(view) = HistoryView::render(&chat.messages, ctx.loc) else {
-            return Ok(ToolOutcome::text(ctx.loc.tf(
-                "tool.chat_read.empty",
-                &[("title", chat_ref.title.as_str())],
-            )));
+        let Some(view) = HistoryView::render(&messages, ctx.loc) else {
+            return Ok(ToolOutcome::text(
+                ctx.loc
+                    .tf("tool.chat_read.empty", &[("title", title.as_str())]),
+            ));
         };
         let page_tokens = ctx.history_page_tokens;
         let total = view.page_count(page_tokens);
@@ -446,7 +507,7 @@ impl Tool for ChatRead {
                 "tool.chat_read.bad_page",
                 &[
                     ("page", &page.to_string()),
-                    ("title", chat_ref.title.as_str()),
+                    ("title", title.as_str()),
                     ("total", &total.to_string()),
                 ],
             )));
@@ -454,7 +515,7 @@ impl Tool for ChatRead {
         let header = ctx.loc.tf(
             "tool.chat_read.header",
             &[
-                ("title", chat_ref.title.as_str()),
+                ("title", title.as_str()),
                 ("id", &address(chat_ref.id)),
                 ("page", &page.to_string()),
                 ("total", &total.to_string()),
@@ -469,6 +530,7 @@ mod tests {
     use super::*;
     use crate::entities::message::Message;
     use crate::entities::profile::Profile;
+    use crate::entities::subagent::SubagentRun;
     use crate::features::chat_links::short_id;
     use crate::shared::i18n::{Lang, locale};
     use crate::shared::storage::Storage;
@@ -498,6 +560,7 @@ mod tests {
             .iter()
             .map(|m| IndexedMessage {
                 id: m.id,
+                sub_id: None,
                 role: "user".into(),
                 ts: m.timestamp.to_rfc3339(),
                 text: m.text.clone(),
@@ -508,6 +571,7 @@ mod tests {
             id: chat.id,
             title: chat.title.clone(),
             modified_at: chat.modified_at,
+            parent: None,
         };
         (chat_ref, chat)
     }
@@ -542,6 +606,124 @@ mod tests {
             vec![other.id],
             "only the profile's other visible chat may be in scope"
         );
+    }
+
+    /// F4 (docs/research/subagent-chats.md): a sub-agent transcript is a
+    /// conversation of the profile — the other chats' and the *current*
+    /// chat's alike (its transcripts are not in the model's context) — and
+    /// carries its parent; a hidden parent's transcripts are out with it.
+    #[test]
+    fn snapshot_includes_transcripts_with_their_parent() {
+        let profile = Uuid::new_v4();
+        let mut p = Profile::new("p", "");
+        p.id = profile;
+        let with_run = |title: &str, run: &str| {
+            let mut chat = Chat::from_profile(&p, title);
+            let mut carrier = Message::assistant("");
+            carrier.tool_calls = vec![SubagentRun::fixture(run, &["x"]).on_record()];
+            chat.push_message(carrier);
+            chat
+        };
+        let current = with_run("current", "current's critic");
+        let other = with_run("other", "other's critic");
+        let mut hidden = with_run("hidden", "hidden's critic");
+        hidden.is_hidden = true;
+
+        let chats = vec![current.clone(), other.clone(), hidden];
+        let refs = snapshot_other_chats(&chats, profile, current.id);
+        let names: Vec<(String, Option<String>)> = refs
+            .iter()
+            .map(|r| (r.title.clone(), r.parent.as_ref().map(|p| p.title.clone())))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("current's critic".to_string(), Some("current".to_string())),
+                ("other".to_string(), None),
+                ("other's critic".to_string(), Some("other".to_string())),
+            ]
+        );
+        assert_eq!(refs[0].parent.as_ref().unwrap().id, current.id);
+    }
+
+    /// The pair over a transcript: `chat_search` finds its text under its own
+    /// address and labels it as the transcript of its parent; `chat_read`
+    /// reads it by that address from the parent's file — a transcript of the
+    /// *current* chat included; and the parent's own pages never contain the
+    /// transcript's text.
+    #[tokio::test]
+    async fn search_and_read_reach_a_transcript_through_its_parent() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let mut p = Profile::new("p", "");
+        p.id = ctx.profile_id;
+        let mut parent = Chat::from_profile(&p, "о рыбалке");
+        parent.id = ctx.chat_id; // the current chat
+        parent.push_message(Message::user("щука на живца"));
+        let run = SubagentRun::fixture("Критик", &["оцени удочку", "удочка хороша"]);
+        let run_id = run.id;
+        let mut carrier = Message::assistant("");
+        carrier.tool_calls = vec![run.on_record()];
+        parent.push_message(carrier);
+        storage.json().save_chat(&parent).unwrap();
+        let indexed: Vec<IndexedMessage> = parent
+            .messages
+            .iter()
+            .map(|m| (None, m))
+            .chain(
+                parent
+                    .children()
+                    .flat_map(|r| r.messages.iter().map(move |m| (Some(r.id), m))),
+            )
+            .filter(|(_, m)| !m.text.is_empty())
+            .map(|(sub_id, m)| IndexedMessage {
+                id: m.id,
+                sub_id,
+                role: "user".into(),
+                ts: m.timestamp.to_rfc3339(),
+                text: m.text.clone(),
+            })
+            .collect();
+        storage
+            .cache()
+            .index_chat(parent.id, 0, 0, &indexed)
+            .unwrap();
+        ctx.other_chats = Arc::from(snapshot_other_chats(
+            std::slice::from_ref(&parent),
+            ctx.profile_id,
+            ctx.chat_id,
+        ));
+        assert_eq!(ctx.other_chats.len(), 1, "the transcript alone");
+
+        let out = ChatSearch
+            .invoke(&ctx, serde_json::json!({ "query": "удочка" }))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("удочка хороша"), "{out}");
+        assert!(out.contains(&short_id(run_id)), "{out}");
+        assert!(out.contains("Критик") && out.contains("о рыбалке"), "{out}");
+
+        let out = ChatRead
+            .invoke(&ctx, serde_json::json!({ "chat": chat_links::uri(run_id) }))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("оцени"), "{out}");
+        assert!(
+            !out.contains("щука"),
+            "the parent's text is not the transcript's: {out}"
+        );
+
+        // The run is taken back (Ctrl+E): the snapshot is stale, the read
+        // refuses rather than inventing a page.
+        parent.messages.pop();
+        storage.json().save_chat(&parent).unwrap();
+        let out = ChatRead
+            .invoke(&ctx, serde_json::json!({ "chat": chat_links::uri(run_id) }))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("сейчас прочитать не получается"), "{out}");
     }
 
     #[tokio::test]
