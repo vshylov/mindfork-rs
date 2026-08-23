@@ -387,6 +387,109 @@ async fn bootstrap_emits_chat_list_and_active_chat() {
     handle.await.unwrap();
 }
 
+/// Chat files carried to another machine without `data.db`: the launch says so
+/// once, in the feed. Without the note the situation is invisible — the chats
+/// are on screen and the assistant remembers nothing about them, with no
+/// explanation anywhere (docs/lessons.md §4).
+///
+/// Two things are asserted, and the second is the fragile one: the note must
+/// arrive **after** `ChatActivated`, because activation rebuilds the feed from
+/// the chat's messages and would wipe a note pushed before it.
+#[tokio::test]
+async fn a_missing_database_is_reported_once_in_the_feed_after_the_feed_is_built() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+
+    // A data root as a copy without `data.db` leaves it: a profile and a chat,
+    // no database.
+    let json = crate::shared::storage::JsonStore::new(Paths::with_root(&root));
+    let profile = Profile::new("A", "sys");
+    json.upsert_profile(&profile).unwrap();
+    json.save_chat(&Chat::from_profile(&profile, "перенесённый чат"))
+        .unwrap();
+    assert!(!Paths::with_root(&root).data_db().exists());
+
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, None, AppConfig::default());
+
+    // Everything up to `Settings`, which the loop emits right after the note.
+    let mut seen: Vec<AppEvent> = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        let done = matches!(ev, AppEvent::Settings { .. });
+        seen.push(ev);
+        if done {
+            break;
+        }
+    }
+
+    let note_at = seen
+        .iter()
+        .position(|e| matches!(e, AppEvent::Notice(_)))
+        .expect("the launch must say the database was missing");
+    let activated_at = seen
+        .iter()
+        .position(|e| matches!(e, AppEvent::ChatActivated { .. }))
+        .expect("the chat is activated at bootstrap");
+    assert!(
+        activated_at < note_at,
+        "a note before the feed rebuild would be wiped by it: {seen:?}"
+    );
+    match &seen[note_at] {
+        AppEvent::Notice(text) => assert_eq!(
+            text,
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::default())
+                .t("ui.startup.db_missing")
+        ),
+        _ => unreachable!(),
+    }
+    assert_eq!(
+        seen.iter()
+            .filter(|e| matches!(e, AppEvent::Notice(_)))
+            .count(),
+        1,
+        "said once, not per chat"
+    );
+
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
+/// The other half, and the one that keeps the test above from passing for the
+/// wrong reason: an ordinary restart on a root that has its database says
+/// nothing. Two phases on one root — the first launch creates `data.db`, the
+/// second must find it and stay quiet.
+#[tokio::test]
+async fn an_ordinary_restart_says_nothing_about_the_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+
+    {
+        let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, None, AppConfig::default());
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+            .await
+            .unwrap();
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+    assert!(Paths::with_root(&root).data_db().exists());
+
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, None, AppConfig::default());
+    let mut seen: Vec<AppEvent> = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        let done = matches!(ev, AppEvent::Settings { .. });
+        seen.push(ev);
+        if done {
+            break;
+        }
+    }
+    assert!(
+        !seen.iter().any(|e| matches!(e, AppEvent::Notice(_))),
+        "a database that is there is not news: {seen:?}"
+    );
+
+    drop(cmd_tx);
+    handle.await.unwrap();
+}
+
 /// The last-opened chat is remembered in settings and restored on the
 /// next launch — even if another chat was modified later (a plain fallback would
 /// pick the most recent one).

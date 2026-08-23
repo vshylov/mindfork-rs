@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (11)
+## Entries (12)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -23,6 +23,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the external server's API key, entered in settings (done)
 - Post-M9: the first real settings step — `SETTINGS_SCHEMA` 1→2 (done)
 - Post-M9: sub-agent chats, PR 3 — `CHAT_SCHEMA` 1→2, a transcript for every old call (done)
+- Post-M9: a launch that finds chats but no `data.db` says so (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -714,3 +715,63 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Not done here**: the list, the read-only view and search over the
   synthesized runs — PRs 4–6; until then an old call's transcript is on the
   record and nowhere on screen but the card's result text.
+
+
+### Post-M9: a launch that finds chats but no `data.db` says so (done)
+- **The gap.** An audit of "chat files moved to another machine without
+  `data.db`" found no crash and no corruption anywhere: `peek_user_version`
+  reads 0 for a missing file, every backup path is guarded by
+  `data_db().is_file()`, `Db::open` creates the file, `cache.db` rebuilds
+  itself from `chats/` through the startup reconcile, and each store degrades
+  the way ADR 0002 prescribes — `self_model_get` → `None`, `note_recall` →
+  "nothing found", `rag_search` behind its `table_exists` guard, and
+  `attachment_search` answering its `not_indexed` text while `attachment_read`
+  keeps working from the text in the chat file. What was missing was any
+  **signal**: `Db::open` logged nothing, so the conversations came up on screen
+  with an assistant that remembered nothing about them and no explanation
+  anywhere. That is the silent half of the case — the loud half (a database
+  from a newer version) has refused to start since ADR 0006.
+- **Where it is detected.** `Storage::open`, before `Db::open` creates the file
+  — the one moment the fact still exists. Two shapes were considered: peeking
+  in `main::launch_tui` (the `fresh_config` precedent) and threading a `bool`
+  through `OrchestratorDeps`, versus asking inside `Storage::open` and carrying
+  the verdict on the facade. The second won on both counts — the fact lives
+  next to the thing it is about, and it costs no new field in a struct that ten
+  test fixtures build by hand.
+- **What counts as "there are chats".** `JsonStore::chat_files` — the same
+  stat-only walk the search index reconciles against, so `*.json` whose stem is
+  a UUID, and a stray file in `chats/` cannot raise the alarm. An unreadable
+  directory reads as "no chats": this decides whether to *say* something, and
+  guessing on an I/O error is worse than staying quiet. A fresh install has no
+  chats either, which is what keeps the note off first launches.
+- **Said twice, at the right altitude.** `shared` writes the `warn` (naming the
+  root and what starts empty); `app` sends the one `AppEvent::Notice`. The note
+  goes out **after** `bootstrap`, whose `activate` rebuilds the feed from the
+  chat's messages — sent before it, it would be wiped by it. That ordering is
+  the fragile half and is pinned by an assertion on the event order, not just
+  on the note's presence (docs/lessons.md §4 gained the line).
+- **The text closes the door** (lessons §4): what is empty (notes, the
+  self-model, the knowledge base, the attachment index), what survived (the
+  conversations and their attachments' text — they *are* the files that were
+  copied) and the one route back (put `data.db` next to `chats/`, or
+  `mindfork restore` an archive), ending with "otherwise there is nothing to
+  bring back" so the user is not left hunting for a repair that does not exist.
+  Axis B — the interface language.
+- **Not done here, and deliberately.** The same audit found a second gap: the
+  chat file holds a by-reference attachment's full text, but `/reindex` rebuilds
+  only from `attachment_documents` rows, so after such a move the semantic index
+  over attachments is unrecoverable without re-attaching the original file —
+  which is usually on the other machine. Closing it means a backfill pass
+  (attachments in the chats whose ids are not in `attachment_indexed_ids`,
+  chunked and embedded from `Attachment.text` through the existing
+  `spawn_attachment_index`), and it belongs to the RAG/attachment track, not to
+  this note.
+- **Tests**: 2510 green (+3; 2503 on Linux, where the Windows-only tests do not
+  compile). The predicate in all four states — a fresh install, a stray
+  non-chat file, chats without the database, and quiet again once `Storage::open`
+  has created it; end to end through the real loop, that the note arrives once
+  and **after** `ChatActivated`; and the negative half, that an ordinary restart
+  on a root that has its database says nothing — without which the first test
+  would pass for the wrong reason. Both halves were mutation-checked (disabling
+  the emission, and moving it before `bootstrap`: each fails the test it should).
+  No live run: startup and UI, no engine, memory or tool path involved.
