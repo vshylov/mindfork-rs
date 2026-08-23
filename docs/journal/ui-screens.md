@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 6 — auto-title at landing, the run chip, the demo transcript (done)
 - Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
 - Post-M9: sub-agent chats — the sub-agent's text streams into its transcript (done)
+- Post-M9: sub-agent chats — the parent's round in progress is mirrored too (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2161,4 +2162,36 @@ Branch `feat/code-workspace-changes`.
   (`llama-server`, 192.168.1.20), 279 tokens, 28 s.
 - **Next**: the parent's own in-progress text the same way (`RoundText`),
   retiring `parent_needs_refresh` (plan §8, last bullet).
+### Post-M9: sub-agent chats — the parent's round in progress is mirrored too (done)
+
+- **What**: the last bullet of
+  [docs/history/subagent-live.md](../history/subagent-live.md) §8. Coming
+  back to the running turn's chat now shows the round in progress — its
+  text, thoughts and tool cards, running or answered — and the stream resumes
+  into that bubble; the one whole re-activation at landing that stage 2
+  used to close this gap (§3.5, fork F4) is gone with `parent_needs_refresh`.
+  Spec §11.2; architecture §5, §10.
+- **How**: the child's `Child*` progress variants became one `StreamStep`
+  shape used by both loops — `TurnProgress::OwnStep` from the live loop
+  (whose sink sends the screen its events exactly as before and the
+  orchestrator a mirror), `ChildStep` from the sub-agent's. One `apply_step`
+  feeds `InflightTurn.partial` or `child_partial`; `LivePartial` gained
+  `tools: Vec<LiveTool { call_id, name, arguments, result: Option<(String,
+  usize)> }>` — a `ToolCall` completes the matching started entry — and a
+  filed round or a rewrite resets it. `set_live_turn` seeds the bubble in
+  both cases (thoughts, text, then the cards via `push_tool_call_started`
+  / `push_tool_call`), so the return and the transcript opening are one
+  path. `ChatActivated.live_turn` is boxed: the variant had pushed the enum
+  past clippy's size bar.
+- **Tests**: 2507 green (+1): the bare mirror of the parent's round (text,
+  thoughts, an answered and a running call; nothing forwarded from here —
+  the live loop talks to the screen itself; the seed on a return; the reset
+  on a filed round and on a rewrite); the switch test now asserts the
+  return carries the running `call_subagent` card and that **no**
+  re-activation follows the landing; the screen test seeds a chat with a
+  partial holding two cards and checks the running one completes in place.
+  **Smoke — GO**: `subagent_with_tools_e2e_live` on Qwen 3.6 27B, 29 s.
+- **Closed with it**: the last structural item of the sub-agent track. What
+  remains open is product scope — the two-agent dialogue (research §3.14)
+  and a parent's JSON export without its transcripts.
 

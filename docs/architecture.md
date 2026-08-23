@@ -843,7 +843,7 @@ Details:
   runs (the run's id is minted there and kept by the landed record) and
   `ChildEnded` after. One channel, so progress precedes the result. The
   orchestrator keeps `inflight: Option<InflightTurn>` — the parent's filed
-  rounds, the running run, `parent_needs_refresh` — created by
+  rounds and its round in progress (`partial`), the running run — created by
   `start_generation`, fed by `handle_progress` (a step from another
   generation is dropped), read and dropped by `handle_done` (a title given
   while running is copied onto the landed run first). Never a source of
@@ -856,7 +856,12 @@ Details:
   round in progress, reset by `ChildRoundFiled`/`ChildRewrite`), and
   `forward_child` re-emits each step to the screen under `child_stream`
   while the transcript is the open conversation; `ChildEnded` emits its
-  `Finished`.
+  `Finished`. **The parent's round in progress is mirrored the same way**
+  (§8, last bullet): the live loop's sink sends the screen its events as
+  ever and the orchestrator `TurnProgress::OwnStep(StreamStep)` — one
+  `StreamStep` shape for both loops, applied by `apply_step` to `partial`
+  or `child_partial` (text, thoughts, the round's tool calls with their
+  results), reset by a filed round or a rewrite.
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server
@@ -2376,10 +2381,11 @@ move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
 from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
 — `LiveTurn { turn, stream, partial }` — which the screen's `set_live_turn`
 turns into a resumed generation on the chat, or, on a transcript, a
-`begin_generation(stream)` seeded with `partial` (the chip stays keyed on
-`turn`; the parent's chunks carry the turn's id and never land there); a
-return to the parent marks `parent_needs_refresh`, and `handle_done`
-re-activates it whole.
+`begin_generation(stream)`, in both cases seeded with `partial`: thoughts,
+text, and the round's tool calls replayed as running or completed cards,
+before the rest of the stream resumes into the same bubble (the chip stays
+keyed on `turn`; the parent's chunks carry the turn's id and never land in a
+transcript). Nothing is refreshed at landing any more.
 
 **Search over transcripts** (spec §11.2.1, research §3.9). The orchestrator's
 `indexed_messages(chat)` emits the chat's own messages with `sub_id = None`
