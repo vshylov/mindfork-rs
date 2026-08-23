@@ -3768,14 +3768,11 @@ fn rename_takes_a_title_or_offers_the_current_one() {
 #[test]
 fn a_renamed_title_obeys_the_length_ceiling() {
     let mut c = Cmd::new();
-    let long = "я".repeat(crate::features::rename_chat::MAX_TITLE_LEN + 40);
+    let long = "я".repeat(crate::shared::title::MAX_TITLE_LEN + 40);
     let Some(ChatIntent::RenameChat { title, .. }) = c.run(&format!("/rename {long}")) else {
         panic!("expected a rename");
     };
-    assert_eq!(
-        title.chars().count(),
-        crate::features::rename_chat::MAX_TITLE_LEN
-    );
+    assert_eq!(title.chars().count(), crate::shared::title::MAX_TITLE_LEN);
 }
 
 /// `/new <profile>`: an exact name, then an unambiguous prefix (fork F3). A miss

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - Post-M9: the orchestrator god object split by feature (done)
@@ -29,6 +29,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: SOLID refactor — stage 4: status-bar view-model + canonical runtime helpers (done)
 - Post-M9: SOLID refactor — stage 3, step 3.1: settings-field description in `FieldRow` (done)
 - Post-M9: SOLID refactor — stage 3, steps 3.2/3.3: a field-value access table (`field_spec`) (done)
+- Post-M9: the child-loop seam — `TurnShared`, `RequestEnv`, `sanitize_title` in `shared` (done)
 
 ### Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - **The generation state was moved** out of `app/orchestrator.rs` into a separate
@@ -592,3 +593,43 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   the previous six. **808 tests green** (count unchanged — a refactor), 26 `#[ignore]`,
   clippy `-D warnings`/fmt clean. Docs: architecture.md §3. **The targeted
   SOLID-improvements track (stages 1–4) is complete.**
+
+### Post-M9: the child-loop seam — `TurnShared`, `RequestEnv`, `sanitize_title` in `shared` (done)
+- **Why**: PR 1 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §7), cut as its
+  own branch so that the behaviour change that follows lands on a diff that is
+  only the behaviour change (AGENTS.md §2: a mechanical refactor and a behaviour
+  change don't mix). Three seams, no behaviour change, test count unchanged.
+- **`TurnLoop` → `TurnShared` + `TurnLoop<'a>`** (`app/orchestrator/generation.rs`).
+  What every loop of one turn shares — backend, registry, the UI sender, the
+  confirmation receiver and `allowed_for_turn`, the generation id, the image
+  limits, the round limits, engine mode/model name, the two locale/flag
+  snapshots — moved into `TurnShared`, owned by the generation task; the loop
+  keeps what is its own (request, context, cancellation token, allowed set,
+  accumulators, counters, `pending_new_bubble`) plus a `depth` (0; read by the
+  sub-agent run in PR 2, hence a pointwise `allow(dead_code)` with the reason).
+  A child loop will be the *same type* over `&mut *self.shared`, borrowed from
+  the parent for the duration of the call — sound because the parent is
+  suspended inside `execute_call` while the child runs. The alternative, a third
+  loop beside `tool_loop.rs`, was rejected in the research: every one of the
+  main loop's behaviours (confirmation, thinking signatures, control tools,
+  effects, images) is exactly what a tool-using sub-agent needs.
+- **`build_request` → `RequestEnv` + `build_request_in`** (`orchestrator/request.rs`).
+  The environment the system prompt is assembled around — attachments, the
+  attached project, the compaction view — is now a struct borrowed from the
+  chat (`RequestEnv::of`), and the assembly takes persona, messages and
+  environment separately. `build_request` keeps its signature and is a one-line
+  wrapper, so the two call sites and the request tests did not move. A
+  sub-agent's request is its own persona and messages over its **parent's**
+  environment (research §3.3), which the old `&Chat`-only signature could not
+  express without a fake `Chat`.
+- **`sanitize_title`/`MAX_TITLE_LEN` → `shared/title.rs`**, with their four tests.
+  The chat-file migration step of PR 3 names a synthesized transcript with the
+  same sanitizer the list uses, and `shared/storage/schema.rs` cannot reach
+  `features` (FSD). Call sites (`widgets/chat_list.rs`, `screens/chat/commands.rs`,
+  the chat-screen tests) point at `shared` directly — no re-export, no
+  indirection; `features/rename_chat.rs` keeps the digest and the generated-title
+  cleaner and imports the sanitizer.
+- **Live run**: not required — a pure refactor; `cargo fmt`/clippy `-D warnings`
+  clean, **2447 tests green, 106 `#[ignore]`** (four tests moved, none added or
+  removed).

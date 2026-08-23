@@ -180,7 +180,10 @@ impl ChatScreen {
             return None;
         }
         // The same ceiling the chat list's rename field enforces.
-        let title: String = title.chars().take(rename_chat::MAX_TITLE_LEN).collect();
+        let title: String = title
+            .chars()
+            .take(crate::shared::title::MAX_TITLE_LEN)
+            .collect();
         Some(ChatIntent::RenameChat { id, title })
     }
 

@@ -857,34 +857,38 @@ fn spawn_generation(spawn: GenSpawn) {
             reasoning: None,
         });
 
-        let mut turn = TurnLoop {
+        let mut shared = TurnShared {
             backend,
             registry,
-            ctx,
-            request,
-            cancel,
             confirm_dangerous,
             image_cfg,
             confirm_rx,
             id,
             max_rounds,
             workspace_max_rounds,
-            allowed,
             engine_mode,
             model_name,
             ui_loc,
             evt_tx: evt_tx.clone(),
+            allowed_for_turn: HashSet::new(),
+            compaction_enabled,
+        };
+        let mut turn = TurnLoop {
+            shared: &mut shared,
+            ctx,
+            request,
+            cancel,
+            allowed,
             messages: Vec::new(),
             effects: Vec::new(),
             deleted: Vec::new(),
             round: 0,
             workspace_rounds: 0,
-            allowed_for_turn: HashSet::new(),
             total_tokens: 0,
             total_reasoning: 0,
             last_usage: None,
-            compaction_enabled,
             pending_new_bubble: false,
+            depth: 0,
         };
         let reason = turn.run().await;
 
@@ -903,32 +907,58 @@ fn spawn_generation(spawn: GenSpawn) {
     });
 }
 
-/// The agentic-loop task's per-turn state. Moved verbatim out of
-/// [`spawn_generation`]'s async block (Sonar S3776): the loop itself is
-/// [`Self::run`], one tool round is [`Self::tool_round`], one call —
-/// [`Self::execute_call`] / [`Self::resolve_call_result`]. The struct follows
-/// the module's parameter-struct pattern ([`GenSpawn`], [`ConfirmGate`]); it
-/// still never touches `Chat` — results go back through [`GenResult`].
-struct TurnLoop {
+/// What every loop of one turn shares: the engine, the registry, the UI
+/// channel, the confirmation round trip and the limits. Owned by the generation
+/// task, one per turn; the turn's own loop borrows it, and a **child** loop — a
+/// sub-agent run (docs/research/subagent-chats.md §3.2) — borrows it from its
+/// parent for the duration of the call, which is sound because the parent is
+/// suspended inside `execute_call` while the child runs. Split out of
+/// [`TurnLoop`] so that a nested loop is the same type over the same shared
+/// part, not a second loop with its own copy of these behaviours.
+struct TurnShared {
     backend: Arc<dyn EngineBackend>,
     registry: Arc<ToolRegistry>,
-    ctx: ToolContext,
-    request: ChatRequest,
-    cancel: CancellationToken,
     confirm_dangerous: bool,
     image_cfg: crate::shared::config::ImageSettings,
     confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
+    /// The turn's generation id: every streamed event and every confirmation
+    /// request carries it, a child's included — the popup and the reply
+    /// routing know one turn, not one loop.
     id: Uuid,
     max_rounds: u32,
     workspace_max_rounds: u32,
-    allowed: Vec<ToolId>,
     engine_mode: ServerMode,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
-    /// New domain messages accumulated across the turn's rounds.
+    /// Tools the user approved "for the rest of this turn" (fork F4). The turn
+    /// is the natural unit — it is the scope of one user request and it ends by
+    /// itself, so nothing outlives it and no standing permission accumulates.
+    /// Shared by a child loop for the same reason: same turn, same request.
+    allowed_for_turn: HashSet<ToolId>,
+    /// `compaction.enabled` — picks which advice a context-overflow error gives
+    /// (see [`GenSpawn::compaction_enabled`]).
+    compaction_enabled: bool,
+}
+
+/// One agentic loop's state: the turn's own, or a sub-agent's run inside it.
+/// Moved verbatim out of [`spawn_generation`]'s async block (Sonar S3776): the
+/// loop itself is [`Self::run`], one tool round is [`Self::tool_round`], one call
+/// — [`Self::execute_call`] / [`Self::resolve_call_result`]. The struct follows
+/// the module's parameter-struct pattern ([`GenSpawn`], [`ConfirmGate`]); it
+/// still never touches `Chat` — results go back through [`GenResult`].
+struct TurnLoop<'a> {
+    shared: &'a mut TurnShared,
+    ctx: ToolContext,
+    request: ChatRequest,
+    /// This loop's cancellation: the turn's token for the turn's own loop; a
+    /// child token for a sub-agent, so a run timeout ends the child alone while
+    /// `Esc` on the turn ends both.
+    cancel: CancellationToken,
+    allowed: Vec<ToolId>,
+    /// New domain messages accumulated across the loop's rounds.
     messages: Vec<Message>,
-    /// Tool effects accumulated across the turn's rounds.
+    /// Tool effects accumulated across the loop's rounds.
     effects: Vec<ChatEffect>,
     /// Discarded by the "rewrite" tool (for the deleted archive).
     deleted: Vec<Message>,
@@ -936,10 +966,6 @@ struct TurnLoop {
     /// Rounds spent entirely on the attached project. Exempt from
     /// `max_tool_rounds`, bounded by `workspace.max_rounds`.
     workspace_rounds: u32,
-    /// Tools the user approved "for the rest of this turn" (fork F4). The turn
-    /// is the natural unit — it is the scope of one user request and it ends by
-    /// itself, so nothing outlives it and no standing permission accumulates.
-    allowed_for_turn: HashSet<ToolId>,
     /// Cumulative reply-token counter across all agentic-loop rounds — the
     /// live indicator keeps growing from round to round.
     total_tokens: u64,
@@ -948,15 +974,17 @@ struct TurnLoop {
     /// The exact size of the most recent round, when the server reported one.
     /// Written by [`Self::stream`], so neither call site can forget it.
     last_usage: Option<TurnUsage>,
-    /// `compaction.enabled` — picks which advice a context-overflow error gives
-    /// (see [`GenSpawn::compaction_enabled`]).
-    compaction_enabled: bool,
     /// The next domain assistant message starts a new bubble (after
     /// `send_followup_message`). See spec §9.3.
     pending_new_bubble: bool,
+    /// Nesting level: `0` for the turn's own loop, `1` for a sub-agent's run.
+    /// The sub-agent track reads it to refuse `call_subagent` below the top —
+    /// the belt under the braces of a schema set that never offers it there.
+    #[allow(dead_code)] // ahead-of-consumer: read by the sub-agent run (PR 2 of the track)
+    depth: u8,
 }
 
-impl TurnLoop {
+impl TurnLoop<'_> {
     /// Is the tool in the turn's effectively allowed set (profile ∩ global
     /// switches)?
     fn allowed_has(&self, name: &str) -> bool {
@@ -974,15 +1002,15 @@ impl TurnLoop {
     /// from.
     async fn stream(&mut self) -> RoundOutput {
         let out = stream_round(
-            &self.backend,
+            &self.shared.backend,
             self.request.clone(),
             &self.cancel,
-            self.id,
-            &self.evt_tx,
+            self.shared.id,
+            &self.shared.evt_tx,
             self.total_tokens,
             self.total_reasoning,
-            self.ui_loc,
-            self.compaction_enabled,
+            self.shared.ui_loc,
+            self.shared.compaction_enabled,
         )
         .await;
         if let Some(prompt_tokens) = out.prompt_tokens {
@@ -1009,9 +1037,12 @@ impl TurnLoop {
             }
 
             // The final round (Stop/Length/Cancelled/Error, or no calls).
-            if let Some(mut m) =
-                finalize_message(&out, &self.ctx, self.engine_mode, &self.model_name)
-            {
+            if let Some(mut m) = finalize_message(
+                &out,
+                &self.ctx,
+                self.shared.engine_mode,
+                &self.shared.model_name,
+            ) {
                 m.new_bubble = self.pending_new_bubble;
                 self.messages.push(m);
             }
@@ -1027,10 +1058,12 @@ impl TurnLoop {
     /// underneath it is `Esc`, the per-command timeout and the one-at-a-time
     /// gate (spec §9.12).
     fn budget_exhausted(&self) -> Option<RoundLimit> {
-        if self.round >= self.max_rounds {
+        if self.round >= self.shared.max_rounds {
             return Some(RoundLimit::Tools);
         }
-        if self.workspace_max_rounds > 0 && self.workspace_rounds >= self.workspace_max_rounds {
+        if self.shared.workspace_max_rounds > 0
+            && self.workspace_rounds >= self.shared.workspace_max_rounds
+        {
             return Some(RoundLimit::Workspace);
         }
         None
@@ -1042,7 +1075,8 @@ impl TurnLoop {
     /// An unknown name counts: it is about to become a "no such tool" result,
     /// and a model inventing tool names is exactly the loop the limit is for.
     fn counts_toward_round_limit(&self, name: &str) -> bool {
-        self.registry
+        self.shared
+            .registry
             .get(name)
             .is_none_or(|tool| tool.counts_toward_round_limit())
     }
@@ -1065,22 +1099,25 @@ impl TurnLoop {
         // someone whose turn was ended by the *project* budget points them
         // at the wrong setting (docs/lessons.md §4).
         let (key, n) = match limit {
-            RoundLimit::Tools => ("loop.round_limit_reached", self.max_rounds),
+            RoundLimit::Tools => ("loop.round_limit_reached", self.shared.max_rounds),
             RoundLimit::Workspace => (
                 "loop.workspace_round_limit_reached",
-                self.workspace_max_rounds,
+                self.shared.workspace_max_rounds,
             ),
         };
-        let _ = self.evt_tx.send(AppEvent::Error(
+        let _ = self.shared.evt_tx.send(AppEvent::Error(
             self.ctx.loc.tf(key, &[("max_rounds", &n.to_string())]),
         ));
         self.request.tools.clear();
         // The final round's token counter is emitted by `stream_round` itself
         // (from `base = total_*`); after that the turn ends, no need to accumulate.
         let final_out = self.stream().await;
-        if let Some(mut m) =
-            finalize_message(&final_out, &self.ctx, self.engine_mode, &self.model_name)
-        {
+        if let Some(mut m) = finalize_message(
+            &final_out,
+            &self.ctx,
+            self.shared.engine_mode,
+            &self.shared.model_name,
+        ) {
             m.new_bubble = self.pending_new_bubble;
             self.messages.push(m);
         }
@@ -1103,8 +1140,8 @@ impl TurnLoop {
             // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
             self.deleted.push(am);
             self.deleted.extend(tool_msgs);
-            let _ = self.evt_tx.send(AppEvent::AssistantRewrite {
-                generation_id: self.id,
+            let _ = self.shared.evt_tx.send(AppEvent::AssistantRewrite {
+                generation_id: self.shared.id,
             });
             return;
         }
@@ -1115,8 +1152,8 @@ impl TurnLoop {
         if followup {
             // The next assistant message — as a separate bubble.
             self.pending_new_bubble = true;
-            let _ = self.evt_tx.send(AppEvent::AssistantContinue {
-                generation_id: self.id,
+            let _ = self.shared.evt_tx.send(AppEvent::AssistantContinue {
+                generation_id: self.shared.id,
             });
         }
     }
@@ -1241,12 +1278,12 @@ impl TurnLoop {
         // Decoded and downscaled here, once, so the same prepared bytes go into the
         // request and into the stored message — the object the model sees and the object
         // the chat keeps must be one (spec §9.10).
-        let images = prepare_tool_images(images, self.image_cfg).await;
+        let images = prepare_tool_images(images, self.shared.image_cfg).await;
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
         if !is_control && !rewrite {
-            let _ = self.evt_tx.send(AppEvent::ToolCall {
-                generation_id: self.id,
+            let _ = self.shared.evt_tx.send(AppEvent::ToolCall {
+                generation_id: self.shared.id,
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
                 result: result.clone(),
@@ -1310,16 +1347,16 @@ impl TurnLoop {
             self.ctx.loc.t("loop.rewrite_skipped").to_string().into()
         } else if let Some(refusal) = confirm_call(
             ConfirmGate {
-                enabled: self.confirm_dangerous,
-                registry: &self.registry,
-                evt_tx: &self.evt_tx,
+                enabled: self.shared.confirm_dangerous,
+                registry: &self.shared.registry,
+                evt_tx: &self.shared.evt_tx,
                 cancel: &self.cancel,
-                id: self.id,
+                id: self.shared.id,
                 loc: self.ctx.loc,
             },
             call,
-            &mut self.allowed_for_turn,
-            &mut self.confirm_rx,
+            &mut self.shared.allowed_for_turn,
+            &mut self.shared.confirm_rx,
         )
         .await
         {
@@ -1336,7 +1373,7 @@ impl TurnLoop {
             // for the rest.
             let invoked = tokio::select! {
                 _ = self.cancel.cancelled() => None,
-                res = self.registry.invoke(&call.name, &self.ctx, args.clone()) => Some(res),
+                res = self.shared.registry.invoke(&call.name, &self.ctx, args.clone()) => Some(res),
             };
             match invoked {
                 None => self.ctx.loc.t("loop.tool_cancelled").to_string().into(),

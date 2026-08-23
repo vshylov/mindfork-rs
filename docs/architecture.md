@@ -804,6 +804,18 @@ sequenceDiagram
 Details:
 
 - `max_tool_rounds` (default **8**) — protects against looping forever.
+- **The loop is `TurnLoop<'a>` over a `TurnShared`** (`generation.rs`): what one
+  turn shares — backend, registry, the UI sender, the confirmation receiver and
+  the "approved for this turn" set, the generation id, the image and round
+  limits — is one struct owned by the generation task; the loop itself holds
+  only its own request, context, cancellation token, allowed set, accumulators
+  and a `depth`. A nested loop (a sub-agent run,
+  [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
+  same type borrowing the same shared part from its parent for the duration of
+  the call. Likewise `build_request` is a wrapper over `build_request_in`, which
+  takes the persona, the messages and a `RequestEnv` (attachments, project,
+  compaction view) separately — a sub-agent's request is its own persona over
+  its parent's environment.
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server

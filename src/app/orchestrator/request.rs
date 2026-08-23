@@ -103,37 +103,80 @@ pub(super) struct PromptContext<'a> {
     pub loc: &'a Locale,
 }
 
+/// The chat's **environment** — what the system prompt is assembled around
+/// besides the persona and the messages: the attached files, the attached
+/// project, the rolling summary. Borrowed from a [`Chat`] on an ordinary turn
+/// ([`RequestEnv::of`]); kept apart from the chat because a sub-agent's request
+/// is built from its **parent's** environment with a persona and messages of
+/// its own (docs/research/subagent-chats.md §3.3) — the environment is the
+/// turn's, the conversation is the loop's.
+pub(super) struct RequestEnv<'a> {
+    pub attachments: &'a [Attachment],
+    pub workspace: Option<&'a crate::entities::workspace::Workspace>,
+    /// The summary text and the index the verbatim messages start at, when a
+    /// summary is in force (see [`Chat::compaction_view`]).
+    pub compaction: Option<(&'a str, usize)>,
+}
+
+impl<'a> RequestEnv<'a> {
+    /// The environment of `chat` itself, with compression honoured per the
+    /// master switch (`config.compaction.enabled`).
+    pub(super) fn of(chat: &'a Chat, compaction_enabled: bool) -> Self {
+        Self {
+            attachments: &chat.attachments,
+            workspace: chat.workspace.as_ref(),
+            compaction: chat.compaction_view(compaction_enabled),
+        }
+    }
+}
+
 /// Builds a generation request from the chat's current state with a set of tool
 /// schemas. Attached files (`/file attach`) are injected into the system prompt
-/// — see [`inject_attachments`].
+/// — see [`inject_attachments`]. The chat's own persona, messages and
+/// environment; [`build_request_in`] is the same assembly over an environment
+/// that is not the conversation's own.
 pub(super) fn build_request(
     chat: &Chat,
     sampling: SamplingConfig,
     tools: Vec<crate::shared::api::ToolSchema>,
     cx: &PromptContext<'_>,
 ) -> ChatRequest {
-    let system = if chat.system_message.trim().is_empty() {
+    build_request_in(
+        &chat.system_message,
+        &chat.messages,
+        &RequestEnv::of(chat, cx.compaction.enabled),
+        sampling,
+        tools,
+        cx,
+    )
+}
+
+/// Assembles a request from a persona, a conversation and an environment
+/// given separately. The compacted-away prefix of `messages` is replaced by a
+/// summary block; the messages themselves are untouched, so this is the only
+/// place the two views diverge.
+pub(super) fn build_request_in(
+    system_message: &str,
+    messages: &[Message],
+    env: &RequestEnv<'_>,
+    sampling: SamplingConfig,
+    tools: Vec<crate::shared::api::ToolSchema>,
+    cx: &PromptContext<'_>,
+) -> ChatRequest {
+    let system = if system_message.trim().is_empty() {
         None
     } else {
-        Some(chat.system_message.clone())
+        Some(system_message.to_string())
     };
-    // The compacted-away prefix is replaced by a summary block; `chat.messages`
-    // is untouched, so this is the only place the two views diverge.
-    let (summary, upto) = match chat.compaction_view(cx.compaction.enabled) {
+    let (summary, upto) = match env.compaction {
         Some((s, i)) => (Some(s), i),
         None => (None, 0),
     };
     let system = inject_compaction(system, summary, cx.history_tools, cx.loc);
-    let system = inject_attachments(
-        system,
-        &chat.attachments,
-        cx.attachments,
-        cx.indexed,
-        cx.loc,
-    );
+    let system = inject_attachments(system, env.attachments, cx.attachments, cx.indexed, cx.loc);
     ChatRequest {
-        system: inject_workspace(system, chat.workspace.as_ref(), cx.offered_tools, cx.loc),
-        messages: chat.messages[upto..]
+        system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
+        messages: messages[upto..]
             .iter()
             .filter_map(|m| message_to_api(m, cx.loc))
             .collect(),
