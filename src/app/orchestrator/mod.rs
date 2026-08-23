@@ -218,6 +218,17 @@ pub async fn run(deps: OrchestratorDeps) {
                 .tf("ui.err.load_data_failed", &[("err", &err.to_string())]),
         ));
     }
+    // A database that was not there is otherwise indistinguishable from a first
+    // launch — the assistant simply has no memory of conversations that are on
+    // screen, and nothing says why. Sent **after** `bootstrap`, whose
+    // `activate` rebuilds the feed from the chat's messages: a note pushed
+    // before that rebuild would be wiped by it. The text names what is empty,
+    // what survived and the one route back, per docs/lessons.md §4.
+    if orch.storage.chats_without_db() {
+        let _ = orch.evt_tx.send(AppEvent::Notice(
+            orch.ui_locale().t("ui.startup.db_missing").into(),
+        ));
+    }
     orch.emit_settings();
     // Bring the search index in line with what is on disk — changes made
     // outside the app (import/restore/a hand-edited file/a deleted `cache.db`).

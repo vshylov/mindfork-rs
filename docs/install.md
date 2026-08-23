@@ -111,6 +111,15 @@ tooling/caches; in dev — `target/debug/data/`), the following are created:
 
 In a dev build this is `target/debug/data/` next to the binary.
 
+**`data.db` is not, and it travels with the rest.** Moving to another machine
+means moving the **whole** data directory, not just `chats/`: notes, the
+assistant's self-model, every profile's knowledge base and the semantic index
+over files attached to chats live in `data.db` alone. Copy only the chat files
+and the conversations arrive whole while the memory behind them does not — the
+app starts, says so once in the feed (and in the log), and creates an empty
+database. The way that cannot go wrong is §2.2: `mindfork backup` on the old
+machine, `mindfork restore` on the new one.
+
 **`cache.db` is disposable.** It holds the full-text index behind searching chats by
 content (`Ctrl+F` in the chat list) — everything in it is derived from `chats/*.json`,
 nothing is stored there and nowhere else. It fills in the background: the first launch

@@ -1328,6 +1328,14 @@ Storage invariants:
 - **A single writer** — the orchestrator. Chats are saved debounced (800ms,
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.
+- **A database created next to existing chats is news.** `Storage::open` asks
+  `db_missing_beside_chats` **before** `Db::open` creates the file — afterwards
+  the answer is `false` forever — and carries the verdict on the facade
+  (`Storage::chats_without_db`). `shared` logs it (`warn`); `app` turns it into
+  the one startup note (`orchestrator::run`, after `bootstrap`, whose `activate`
+  rebuilds the feed and would wipe an earlier note). This is the "chats copied
+  without `data.db`" case of spec §5.2: everything the database holds starts
+  empty while the conversations are whole.
 - **The search index is derived, never authoritative.** `cache.db` answers only
   *which conversations match* — a chat, or a sub-agent transcript inside one,
   told apart by `messages.sub_id` and addressed by `COALESCE(sub_id, chat_id)`

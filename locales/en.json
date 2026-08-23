@@ -1395,6 +1395,7 @@
   "ui.err.context_overflow": "The conversation no longer fits the model's context window. Run /compact to fold the older messages into a summary, or start a new chat. Server reply: {err}",
   "ui.err.context_overflow_off": "The conversation no longer fits the model's context window. History compression is off — turn it on in settings, section \"Memory\" -> \"Context\", and it will fold the older messages into a summary by itself. Server reply: {err}",
   "ui.err.load_data_failed": "Data load error: {err}",
+  "ui.startup.db_missing": "\"data.db\" was not found next to the chats, so the database has been started empty: notes, the self-model, the knowledge base and the semantic index over attached files are not in it. The conversations themselves are whole — they live in \"chats\", together with the text of the files attached to them. If \"data.db\" stayed on the previous machine, quit (Ctrl+Q), put it next to the \"chats\" folder — or unpack a backup with \"mindfork restore\" — and start the application again; otherwise there is nothing to bring back, and memory will fill up anew as you talk.",
   "ui.err.save_settings_failed": "Failed to save settings: {err}",
   "ui.err.api_key_save_failed": "Failed to save the API key: {err}",
   "ui.err.managed.model_not_found": "model file not found or inaccessible: {path}",

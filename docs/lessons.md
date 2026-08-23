@@ -599,6 +599,16 @@ the explanation has somewhere to live.
 with no arguments and no result gets no "expand me" pill.
 — *collapsible tool calls, and the collapse state per chat*.
 
+**A note the feed has not been built yet cannot say anything.** A startup message sent
+before `bootstrap` is wiped by the `activate` inside it, which rebuilds the feed from
+the chat's messages — the event is delivered, the note is gone, and the door the text
+was written to close is open again. Anything pushed into the feed at startup goes
+*after* the rebuild, and the test asserts the **order**, not just that the event was
+sent. The same shape one layer down: a fact about a file (was it there before we opened
+it?) has to be read before the code that creates it runs, or the answer is `false`
+forever.
+— *a launch that finds chats but no `data.db` says so*.
+
 ---
 
 **A tool the system prompt does not name does not get used — even with its

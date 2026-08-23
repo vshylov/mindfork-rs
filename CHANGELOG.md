@@ -112,6 +112,16 @@ split by subsystem.
   nothing changes about what the assistant can reach, and the tools are not
   even offered to it. Editing, build/run/test commands and a changes screen
   come in the following stages.
+- **The app says so when it starts without its database.** `data.db` holds the
+  notes, the self-model, the knowledge base and the search index over files
+  attached to chats — and copying a data folder to another machine without it
+  used to be silent: the conversations were all there and the assistant
+  remembered nothing about them, with no explanation. Now a launch that finds
+  chats but no `data.db` writes a warning to the log and opens with one note in
+  the feed saying what is empty, what survived (the conversations and the text
+  of their attachments) and how to get the rest back — put the file next to
+  `chats/`, or restore a backup. A first launch, having no chats either, stays
+  quiet as before.
 
 ### Changed
 
