@@ -188,6 +188,14 @@ split by subsystem.
 
 ### Fixed
 
+- **When a copy cannot reach your clipboard, the app now says what will.** In a
+  browser terminal such as JupyterLab's, the OSC 52 sequence a copy sends is
+  silently dropped — and the note said only that the terminal "may not support"
+  it, leaving nowhere to go. Every such message now points at `/export`, which
+  writes the conversation to a file and works everywhere; the JupyterLab case is
+  named outright, since that is the terminal known to drop it. The same applies
+  to a conversation too large for the sequence.
+
 - **`/project` commands are highlighted as you type them, like every other
   command.** A line starting with `/project` stayed the colour of an ordinary
   message right up to `Enter` — and was spellchecked as prose, so a path or a

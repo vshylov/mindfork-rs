@@ -2851,11 +2851,16 @@ text). What the protocol forces:
   the terminal supports the sequence — the query form of OSC 52 *is* the
   clipboard-read path terminals disable as a leak vector. So the note says the
   text was **sent**, never that it arrived, and names the possibility that the
-  terminal ignored it.
+  terminal ignored it — **and names `/export` as the route that does not depend
+  on the terminal at all**, JupyterLab's being the one known to drop the escape.
+  Found live: without that clause the note described the situation and left the
+  user nowhere to go, which is the defect class of docs/lessons.md §4 recurring
+  inside the feature that documented it.
 - **A ceiling of 74 994 bytes** (the 100 000-byte sequence limit, less the header
   and base64). Past it nothing is sent and the note says so: a silently truncated
   conversation looks complete, which is the worse failure. The local clipboard
-  still has the text when it worked, and the note says which.
+  still has the text when it worked, the note says which, and it points at
+  `/export` for the copy that was too big to send.
 - **tmux** gets DCS passthrough with the inner escapes doubled; **screen** is
   deliberately unsupported (a different wrapper plus 768-byte chunking, for a
   shrinking audience — it degrades to the previous behaviour).
