@@ -476,6 +476,321 @@ async fn subagent_with_an_empty_message_is_a_tool_error_without_a_run() {
     assert_eq!(backend.requests().len(), 2);
 }
 
+// ---- the transcript while it runs (PR 7, docs/subagent-live.md) ----
+
+/// Starts a delegation whose child does one tool round and then hangs, and
+/// waits until the list shows the transcript **running with that round
+/// filed** (3 messages). Returns everything the caller needs to go on.
+async fn running_delegation() -> (
+    tempfile::TempDir,
+    Arc<ScriptRecorder>,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    Uuid,
+    Uuid,
+    Uuid,
+) {
+    let backend = ScriptRecorder::new(vec![
+        call("c1", "call_subagent", DELEGATE),
+        call("c2", "current_time", "{}"),
+        hang("thinking…"),
+    ]);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated { id: chat_id, .. } = active else {
+        unreachable!()
+    };
+    // A second chat to switch *away* to (`Ctrl+N` itself never cancels a
+    // turn — it activates without switching), then back to the first.
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    let other = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated { id: other_id, .. } = other else {
+        unreachable!()
+    };
+    cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat_id),
+    )
+    .await
+    .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("delegate this".into()))
+        .unwrap();
+    let list = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ChatList(chats)
+            if chats.iter().any(|c| c.id == chat_id
+                && c.children.iter().any(|r| r.running && r.message_count == 3)))
+    })
+    .await
+    .expect("the running transcript with its first round on the list");
+    let AppEvent::ChatList(chats) = list else {
+        unreachable!()
+    };
+    let run_id = chats.iter().find(|c| c.id == chat_id).unwrap().children[0].id;
+    (
+        dir, backend, cmd_tx, evt_rx, handle, chat_id, run_id, other_id,
+    )
+}
+
+/// The running transcript is a row of the list (marked *running*, its count
+/// growing as rounds file), opens read-only with the rounds so far, and the
+/// parent ↔ child switch — both ways — does **not** cancel the turn: the
+/// turn ends only when `Esc` says so, the parent's feed is re-activated whole
+/// at landing, and the landed row is the same transcript, no longer running.
+#[tokio::test]
+async fn a_running_transcript_is_listed_opens_and_survives_the_switch() {
+    let (dir, backend, cmd_tx, mut evt_rx, handle, chat_id, run_id, _) = running_delegation().await;
+
+    // Open the running transcript: its persona, its two rounds so far, the
+    // turn named as live — and the engine is still waiting on the child.
+    cmd_tx.send(AppCommand::SwitchChat(run_id)).unwrap();
+    let opened = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated {
+        id,
+        messages,
+        child,
+        live_turn,
+        ..
+    } = opened
+    else {
+        unreachable!()
+    };
+    assert_eq!(id, run_id);
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    assert_eq!(messages[0].text, "what time is it");
+    assert_eq!(messages[1].tool_calls[0].name, "current_time");
+    assert!(child.is_some());
+    assert!(
+        live_turn.is_some(),
+        "the turn is in flight on this transcript"
+    );
+    assert_eq!(
+        backend.requests().len(),
+        3,
+        "parent, child, child (hanging)"
+    );
+
+    // Back to the parent: still generating, nothing cancelled.
+    cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+    let back = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    assert!(
+        matches!(back, AppEvent::ChatActivated { id, live_turn: Some(_), .. } if id == chat_id)
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !evt_rx_has_finished(&mut evt_rx),
+        "the switch must not have cancelled the turn"
+    );
+
+    // Now `Esc`: the turn lands as cancelled, and the parent's feed is
+    // re-activated whole because it was rebuilt mid-turn.
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    // The landed list comes first (no longer running), then the refresh.
+    let list = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ChatList(chats)
+            if chats.iter().any(|c| c.id == chat_id && c.children.len() == 1 && !c.children[0].running))
+    })
+    .await;
+    assert!(list.is_some(), "the landed row is no longer marked running");
+    let refreshed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .expect("the parent is re-activated at landing");
+    let AppEvent::ChatActivated {
+        id,
+        messages,
+        live_turn,
+        ..
+    } = refreshed
+    else {
+        unreachable!()
+    };
+    assert_eq!(id, chat_id);
+    assert!(live_turn.is_none());
+    // user → assistant(call) → tool; the cancelled final round writes nothing.
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    let landed = messages[1].tool_calls[0].subagent.as_deref().unwrap();
+    assert_eq!(landed.id, run_id, "the landed run keeps the running id");
+    assert_eq!(landed.outcome, Some(RunOutcome::Cancelled));
+    assert!(landed.messages.len() >= 3);
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    assert_eq!(load(dir.path(), chat_id).children().count(), 1);
+}
+
+/// Drains what is already queued and reports whether a `Finished` was among it.
+fn evt_rx_has_finished(rx: &mut UnboundedReceiver<AppEvent>) -> bool {
+    let mut seen = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, AppEvent::Finished { .. }) {
+            seen = true;
+        }
+    }
+    seen
+}
+
+/// A switch that leaves the turn — any other chat — cancels as it always did.
+#[tokio::test]
+async fn a_switch_to_a_third_chat_still_cancels_the_turn() {
+    let (_dir, _backend, cmd_tx, mut evt_rx, handle, _chat_id, _run_id, other) =
+        running_delegation().await;
+    cmd_tx.send(AppCommand::SwitchChat(other)).unwrap();
+    let finished = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .expect("leaving the turn cancels it");
+    assert!(matches!(
+        finished,
+        AppEvent::Finished {
+            reason: FinishReason::Cancelled,
+            ..
+        }
+    ));
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// Renaming the transcript while it runs edits the in-flight mirror, and the
+/// title is carried onto the landed run as a manual one (fork F5).
+#[tokio::test]
+async fn renaming_a_running_transcript_lands_on_the_record() {
+    let (dir, _backend, cmd_tx, mut evt_rx, handle, chat_id, run_id, _) =
+        running_delegation().await;
+    cmd_tx
+        .send(AppCommand::RenameChat {
+            id: run_id,
+            title: "Моё имя".into(),
+        })
+        .unwrap();
+    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap();
+    assert!(matches!(renamed, AppEvent::ChatRenamed { id, .. } if id == run_id));
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    let run = chat.child(run_id).unwrap();
+    assert_eq!(run.title, "Моё имя");
+    assert!(run.renamed_manually);
+}
+
+/// A filed round of the **open** running transcript reaches the screen as
+/// `TranscriptGrew`; one of a transcript that is not open only updates the
+/// mirror and the list. Driven on a bare orchestrator, because the moment a
+/// round files cannot be held still through the real loop.
+#[test]
+fn a_filed_round_grows_the_open_transcript() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let chat = Chat::from_profile(
+        &crate::entities::profile::Profile::new("P", "sys"),
+        "Родитель",
+    );
+    let parent = chat.id;
+    orch.chats.push(chat);
+    let generation = Uuid::new_v4();
+    orch.inflight = Some(super::super::InflightTurn {
+        generation,
+        chat: parent,
+        rounds: Vec::new(),
+        child: None,
+        parent_needs_refresh: false,
+    });
+    let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
+    run.outcome = None;
+    let run_id = run.id;
+    orch.handle_progress(
+        generation,
+        super::super::generation::TurnProgress::ChildStarted(Box::new(run)),
+    );
+    // The list carries it, running.
+    let listed = loop {
+        match rx.try_recv().unwrap() {
+            AppEvent::ChatList(chats) => break chats,
+            _ => continue,
+        }
+    };
+    let row = &listed.iter().find(|c| c.id == parent).unwrap().children[0];
+    assert!(row.running && row.id == run_id);
+
+    // Not open: no growth event.
+    orch.active_id = Some(parent);
+    orch.handle_progress(
+        generation,
+        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("раз")]),
+    );
+    let mut grew = false;
+    while let Ok(ev) = rx.try_recv() {
+        grew |= matches!(ev, AppEvent::TranscriptGrew { .. });
+    }
+    assert!(!grew);
+
+    // Open: the round arrives.
+    orch.active_id = Some(run_id);
+    orch.handle_progress(
+        generation,
+        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("два")]),
+    );
+    let grew = loop {
+        match rx.try_recv().unwrap() {
+            AppEvent::TranscriptGrew { id, messages } => break (id, messages),
+            _ => continue,
+        }
+    };
+    assert_eq!(grew.0, run_id);
+    assert_eq!(grew.1[0].text, "два");
+    assert_eq!(
+        orch.inflight
+            .as_ref()
+            .unwrap()
+            .child
+            .as_ref()
+            .unwrap()
+            .messages
+            .len(),
+        3
+    );
+
+    // A step from another generation is dropped.
+    orch.handle_progress(
+        Uuid::new_v4(),
+        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("чужое")]),
+    );
+    assert_eq!(
+        orch.inflight
+            .as_ref()
+            .unwrap()
+            .child
+            .as_ref()
+            .unwrap()
+            .messages
+            .len(),
+        3
+    );
+    // `view()` resolves the running transcript; the first match is none.
+    assert!(orch.parent_of(run_id) == Some(parent));
+    assert_eq!(orch.first_match_in_chat(run_id, "задание"), None);
+}
+
 // ---- the transcript as a chat of the list (PR 4, research §3.7–§3.8) ----
 
 /// Runs the standard delegation turn and returns the root and the ids of the

@@ -81,6 +81,9 @@ pub struct Row {
     pub parent: Option<Uuid>,
     /// How the run ended (transcripts only); `None` on a transcript — it never said.
     pub outcome: Option<RunOutcome>,
+    /// The run is in progress (`ChildSummary::running`): drawn as a *running*
+    /// mark where an outcome would go.
+    pub running: bool,
     /// A chat shown only because one of its transcripts matched the filter:
     /// drawn dimmed, so the match and its context read differently.
     pub dimmed: bool,
@@ -242,6 +245,7 @@ impl ChatListState {
                     message_count: c.message_count,
                     parent: Some(chat.id),
                     outcome: c.outcome,
+                    running: c.running,
                     dimmed: false,
                 })
                 .collect();
@@ -255,6 +259,7 @@ impl ChatListState {
                 message_count: chat.message_count,
                 parent: None,
                 outcome: None,
+                running: false,
                 dimmed: !own,
             });
             rows.extend(children);
@@ -791,6 +796,7 @@ impl ChatListState {
         // A transcript that did not complete says so beside its count.
         let outcome = match (row.is_child(), row.outcome) {
             (false, _) | (true, Some(RunOutcome::Completed)) => None,
+            (true, None) if row.running => Some("ui.chatlist.run.running"),
             (true, Some(RunOutcome::Cancelled)) => Some("ui.chatlist.run.cancelled"),
             (true, Some(RunOutcome::TimedOut)) => Some("ui.chatlist.run.timed_out"),
             (true, Some(RunOutcome::Failed)) => Some("ui.chatlist.run.failed"),
@@ -1615,6 +1621,7 @@ mod tree_tests {
             finished_at: None,
             message_count: 3,
             outcome,
+            running: false,
         }
     }
 

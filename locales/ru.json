@@ -870,6 +870,7 @@
   "ui.chatlist.run.timed_out": "таймаут",
   "ui.chatlist.run.failed": "сбой",
   "ui.chatlist.run.round_limit": "лимит раундов",
+  "ui.chatlist.run.running": "выполняется",
   "ui.chatlist.run.interrupted": "прерван",
   "ui.chatlist.hk.back": "назад",
   "ui.chatlist.hk.quit": "выход",

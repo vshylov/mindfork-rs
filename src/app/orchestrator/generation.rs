@@ -31,6 +31,38 @@ use super::request::{
 };
 
 /// Result of a completed generation task (internal channel).
+/// What the generation task sends the orchestrator on its one channel: the
+/// turn's progress while it runs, then its result. One channel, so every
+/// progress message of a turn is delivered **before** its result — which is
+/// what lets the orchestrator's in-flight table (docs/subagent-live.md §3.2)
+/// be dropped at landing without a race.
+pub(super) enum GenMessage {
+    Progress { id: Uuid, progress: TurnProgress },
+    Done(GenResult),
+}
+
+/// One step of a running turn, as the orchestrator's in-flight table needs
+/// it (docs/subagent-live.md §3.1): the parent's rounds as they file, and a
+/// sub-agent run's life — start, rounds, end — so the transcript is a row of
+/// the list and openable while it runs (spec §9.3.2).
+pub(super) enum TurnProgress {
+    /// The parent's loop filed a round: its assistant message, then the tool
+    /// messages — exactly what `file_round` pushed.
+    RoundFiled(Vec<Message>),
+    /// A sub-agent is about to run: the run as it will land — id, persona,
+    /// title, `name`, `created_at`, `User(message)` — with no rounds and no
+    /// outcome yet.
+    ChildStarted(Box<SubagentRun>),
+    /// The sub-agent's loop filed a round.
+    ChildRoundFiled(Vec<Message>),
+    /// The run returned; the landed run carries the same fields.
+    ChildEnded {
+        outcome: RunOutcome,
+        finished_at: chrono::DateTime<chrono::Utc>,
+        tokens: u64,
+    },
+}
+
 pub(super) struct GenResult {
     pub(super) id: Uuid,
     pub(super) chat_id: Uuid,
@@ -451,6 +483,13 @@ impl Orchestrator {
             model: model_name.clone(),
         });
         self.gen_state.begin(id, cancel.clone());
+        self.inflight = Some(super::InflightTurn {
+            generation: id,
+            chat: active_id,
+            rounds: Vec::new(),
+            child: None,
+            parent_needs_refresh: false,
+        });
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
         // pressed a key just as the turn was cancelled and a new one began — is
@@ -521,8 +560,30 @@ impl Orchestrator {
         // is gone with the task — but a field that outlives what it describes is
         // an invitation to reason wrongly about it later.
         self.confirm = None;
+        // The in-flight mirror has served (docs/subagent-live.md §3.6): every
+        // progress message preceded this result on the one channel. What it
+        // still knows — a title the user gave the running transcript, and
+        // whether the parent's feed lost the stream — is read here, then it goes.
+        let inflight = self.inflight.take().filter(|t| t.generation == res.id);
+        let mut res = res;
+        if let Some(edited) = inflight.as_ref().and_then(|t| t.child.as_ref())
+            && edited.renamed_manually
+            && let Some(run) = res
+                .messages
+                .iter_mut()
+                .flat_map(|m| m.tool_calls.iter_mut())
+                .filter_map(|r| r.subagent.as_deref_mut())
+                .find(|r| r.id == edited.id)
+        {
+            run.title = edited.title.clone();
+            run.renamed_manually = true;
+        }
+        let refresh_parent = inflight.is_some_and(|t| t.parent_needs_refresh);
 
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
+            if refresh_parent && self.active_id == Some(res.chat_id) {
+                self.activate_focused(res.chat_id, None);
+            }
             return;
         }
         // Did the model edit the "self-model" via its own tools this turn? If so —
@@ -568,6 +629,11 @@ impl Orchestrator {
         // here: the transcript was already paid for.
         for a in attached {
             self.insert_attachment(res.chat_id, a);
+        }
+        // The parent's feed was rebuilt mid-turn without the stream's text
+        // (§3.5): one whole re-activation, now that everything has landed.
+        if refresh_parent && self.active_id == Some(res.chat_id) {
+            self.activate_focused(res.chat_id, None);
         }
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
@@ -711,7 +777,7 @@ struct GenSpawn {
     /// dead end this project has closed three times.
     compaction_enabled: bool,
     evt_tx: UnboundedSender<AppEvent>,
-    done_tx: UnboundedSender<GenResult>,
+    done_tx: UnboundedSender<GenMessage>,
 }
 
 /// Everything [`confirm_call`] needs that does not change between calls.
@@ -904,6 +970,7 @@ fn spawn_generation(spawn: GenSpawn) {
             model_name,
             ui_loc,
             evt_tx: evt_tx.clone(),
+            done_tx: done_tx.clone(),
             allowed_for_turn: HashSet::new(),
             compaction_enabled,
         };
@@ -934,19 +1001,19 @@ fn spawn_generation(spawn: GenSpawn) {
             generation_id: id,
             reason,
         });
-        let _ = done_tx.send(GenResult {
+        let _ = done_tx.send(GenMessage::Done(GenResult {
             id,
             chat_id,
             messages: turn.messages,
             effects: turn.effects,
             deleted: turn.deleted,
             usage: turn.last_usage,
-        });
+        }));
     });
 }
 
 /// What every loop of one turn shares: the engine, the registry, the UI
-/// channel, the confirmation round trip and the limits. Owned by the generation
+/// channel, the progress channel, the confirmation round trip and the limits. Owned by the generation
 /// task, one per turn; the turn's own loop borrows it, and a **child** loop — a
 /// sub-agent run (docs/research/subagent-chats.md §3.2) — borrows it from its
 /// parent for the duration of the call, which is sound because the parent is
@@ -971,6 +1038,9 @@ struct TurnShared {
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
+    /// The progress channel to the orchestrator — the same one the result
+    /// goes on, so progress and result arrive in order ([`GenMessage`]).
+    done_tx: UnboundedSender<GenMessage>,
     /// Tools the user approved "for the rest of this turn" (fork F4). The turn
     /// is the natural unit — it is the scope of one user request and it ends by
     /// itself, so nothing outlives it and no standing permission accumulates.
@@ -1117,6 +1187,23 @@ impl TurnLoop<'_> {
                 round,
                 tool: tool.map(str::to_string),
             }),
+        });
+    }
+
+    /// Sends one step of the turn to the orchestrator (see [`TurnProgress`]).
+    fn progress(&self, progress: TurnProgress) {
+        let _ = self.shared.done_tx.send(GenMessage::Progress {
+            id: self.shared.id,
+            progress,
+        });
+    }
+
+    /// A filed round, reported as the parent's or the sub-agent's by depth.
+    fn report_progress_filed(&self, messages: Vec<Message>) {
+        self.progress(if self.depth == 0 {
+            TurnProgress::RoundFiled(messages)
+        } else {
+            TurnProgress::ChildRoundFiled(messages)
         });
     }
 
@@ -1286,6 +1373,13 @@ impl TurnLoop<'_> {
         }
         // assistant BEFORE this round's tool messages.
         am.new_bubble = std::mem::take(&mut self.pending_new_bubble);
+        // The orchestrator's in-flight mirror of this round
+        // (docs/subagent-live.md §3.1): the parent's rounds rebuild its feed
+        // after a switch back; a sub-agent's grow its open transcript.
+        let filed: Vec<Message> = std::iter::once(am.clone())
+            .chain(tool_msgs.iter().cloned())
+            .collect();
+        self.report_progress_filed(filed);
         self.messages.push(am);
         self.messages.extend(tool_msgs);
         if followup {
@@ -1616,6 +1710,24 @@ impl TurnLoop<'_> {
                 .unwrap_or_default()
         };
         let user = Message::user(parsed.message.clone());
+        // The run's identity, minted before it runs: the list shows the
+        // transcript under this id from the first round on, and the landed
+        // record keeps it (docs/subagent-live.md §3.1).
+        let run_id = Uuid::new_v4();
+        self.progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
+            id: run_id,
+            kind: RunKind::Subagent,
+            title: parsed.initial_title(),
+            renamed_manually: false,
+            name: parsed.name.clone(),
+            created_at: started,
+            finished_at: None,
+            system_message: parsed.system_message.clone(),
+            sampling_override: None,
+            messages: vec![user.clone()],
+            outcome: None,
+            tokens: 0,
+        })));
         let request = build_request_in(
             &parsed.system_message,
             std::slice::from_ref(&user),
@@ -1691,14 +1803,20 @@ impl TurnLoop<'_> {
         // Effects go to the chat they describe (research §3.4): identity to the
         // run, environment to the parent — which also mirrors an attachment into
         // this loop's snapshot at the round's end, as for any tool.
+        let finished_at = chrono::Utc::now();
+        self.progress(TurnProgress::ChildEnded {
+            outcome,
+            finished_at,
+            tokens: child_tokens,
+        });
         let mut run = SubagentRun {
-            id: Uuid::new_v4(),
+            id: run_id,
             kind: RunKind::Subagent,
             title: parsed.initial_title(),
             renamed_manually: false,
             name: parsed.name.clone(),
             created_at: started,
-            finished_at: Some(chrono::Utc::now()),
+            finished_at: Some(finished_at),
             system_message: parsed.system_message.clone(),
             sampling_override: None,
             messages: std::iter::once(user).chain(child_messages).collect(),

@@ -98,12 +98,15 @@ pub(super) fn apply_event(
             focus,
             compaction,
             child,
+            live_turn,
         } => {
             clear_back_if_left(back, id);
             close_or_mark_chat_list(active, id);
             screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
             screen.set_child_view(child);
+            screen.set_live_turn(live_turn);
         }
+        AppEvent::TranscriptGrew { id, messages } => screen.grow_transcript(id, &messages),
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted {

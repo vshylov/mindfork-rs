@@ -80,7 +80,7 @@ use self::attachments::AttachResult;
 use self::background::BgSlot;
 use self::compaction::{CompactResult, ContextDiscovery};
 use self::engines::EngineManager;
-use self::generation::GenResult;
+use self::generation::{GenMessage, TurnProgress};
 use self::images::{ImageAttachResult, StagedImages};
 use self::mcp::{McpEvent, McpManager};
 use self::restart_queue::RestartQueue;
@@ -131,7 +131,7 @@ pub async fn run(deps: OrchestratorDeps) {
         default_language,
     } = deps;
 
-    let (done_tx, mut done_rx) = unbounded_channel::<GenResult>();
+    let (done_tx, mut done_rx) = unbounded_channel::<GenMessage>();
     // Internal server-status channel: the supervisor's background probe posts
     // readiness (Ready/Disconnected) here, the loop translates it into AppEvent::ServerStatus.
     let (status_tx, mut status_rx) = unbounded_channel::<ServerStatus>();
@@ -185,6 +185,7 @@ pub async fn run(deps: OrchestratorDeps) {
         profiles: Vec::new(),
         chats: Vec::new(),
         confirm: None,
+        inflight: None,
         active_id: None,
         gen_state: GenState::Idle,
         done_tx,
@@ -237,8 +238,10 @@ pub async fn run(deps: OrchestratorDeps) {
                 }
             }
             done = done_rx.recv() => {
-                if let Some(res) = done {
-                    orch.handle_done(res);
+                match done {
+                    Some(GenMessage::Done(res)) => orch.handle_done(res),
+                    Some(GenMessage::Progress { id, progress }) => orch.handle_progress(id, progress),
+                    None => {}
                 }
             }
             status = status_rx.recv() => {
@@ -369,6 +372,26 @@ enum ChatView<'a> {
     },
 }
 
+/// The running turn as the orchestrator mirrors it (docs/subagent-live.md
+/// §3.2). See [`Orchestrator::inflight`].
+struct InflightTurn {
+    generation: Uuid,
+    chat: Uuid,
+    /// The parent's rounds filed so far — not yet in `Chat.messages`.
+    rounds: Vec<Message>,
+    /// The sub-agent run in progress, or just ended and not yet landed.
+    child: Option<crate::entities::subagent::SubagentRun>,
+    /// The parent was switched away from and back while the turn ran, so its
+    /// feed lost the stream: re-activate it whole at landing (§3.5).
+    parent_needs_refresh: bool,
+}
+
+impl InflightTurn {
+    fn child_id(&self) -> Option<Uuid> {
+        self.child.as_ref().map(|r| r.id)
+    }
+}
+
 /// Sleeps until `deadline`, or "hangs forever" if there's no deadline (an empty queue).
 async fn sleep_until_opt(deadline: Option<Instant>) {
     match deadline {
@@ -408,12 +431,18 @@ struct Orchestrator {
     /// sender the generation task is listening on (spec §9.8, fork F8 of
     /// docs/history/tool-confirmation.md). `None` between turns.
     confirm: Option<(Uuid, UnboundedSender<(String, ToolDecision)>)>,
+    /// The running turn's in-flight mirror (docs/subagent-live.md §3.2):
+    /// the parent's rounds filed so far and the sub-agent run in progress,
+    /// so a transcript is a row of the list and openable before the turn
+    /// lands. Created by `start_generation`, fed by [`Self::handle_progress`],
+    /// dropped by `handle_done`. Never a source of truth: `GenResult` is.
+    inflight: Option<InflightTurn>,
     /// Visible chats, entirely in memory (the orchestrator is the sole writer).
     chats: Vec<Chat>,
     active_id: Option<Uuid>,
     /// The lifecycle state machine for assistant-reply generation (see `gen_state`).
     gen_state: GenState,
-    done_tx: UnboundedSender<GenResult>,
+    done_tx: UnboundedSender<GenMessage>,
     /// Cancellation token for the current background RAG indexing (`/rag add`);
     /// `None` — not running. Replaced/cancelled on new indexing and on shutdown.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
@@ -865,9 +894,20 @@ impl Orchestrator {
         if let Some(chat) = self.chats.iter().find(|c| c.id == id) {
             return Some(ChatView::Top(chat));
         }
-        self.chats
+        if let Some(found) = self
+            .chats
             .iter()
             .find_map(|parent| parent.child(id).map(|run| ChatView::Child { parent, run }))
+        {
+            return Some(found);
+        }
+        // The sub-agent running right now (docs/subagent-live.md §3.3): not in
+        // any chat yet, reachable through the same resolver so opening,
+        // naming, copying and the `chat://` book need no second path.
+        let turn = self.inflight.as_ref()?;
+        let run = turn.child.as_ref().filter(|r| r.id == id)?;
+        let parent = self.chats.iter().find(|c| c.id == turn.chat)?;
+        Some(ChatView::Child { parent, run })
     }
 
     /// The chat that holds the transcript `id`, if `id` is one.
@@ -890,9 +930,80 @@ impl Orchestrator {
         };
         if let Some(run) = self.chat_mut(parent_id).and_then(|c| c.child_mut(id)) {
             edit(run);
+            self.mark_dirty(parent_id);
+            return true;
         }
-        self.mark_dirty(parent_id);
+        // A running transcript: the edit lands on the in-flight mirror, and
+        // `handle_done` carries the title onto the landed run (§3.3). Nothing
+        // is on disk yet, so nothing is dirty.
+        if let Some(run) = self
+            .inflight
+            .as_mut()
+            .and_then(|t| t.child.as_mut())
+            .filter(|r| r.id == id)
+        {
+            edit(run);
+        }
         true
+    }
+
+    /// Applies one step of the running turn to the in-flight mirror
+    /// (docs/subagent-live.md §3.1–§3.4): the parent's rounds accumulate; a
+    /// sub-agent's start and end redraw the list (the *running* row); its
+    /// rounds grow the transcript on screen when it is the open one. A step
+    /// from a turn that is not the one in flight is dropped — a cancelled
+    /// turn's task can still be filing while the next turn has begun.
+    pub(super) fn handle_progress(&mut self, id: Uuid, progress: TurnProgress) {
+        let Some(turn) = self.inflight.as_mut().filter(|t| t.generation == id) else {
+            return;
+        };
+        match progress {
+            TurnProgress::RoundFiled(messages) => turn.rounds.extend(messages),
+            TurnProgress::ChildStarted(run) => {
+                turn.child = Some(*run);
+                self.emit_chat_list();
+            }
+            TurnProgress::ChildRoundFiled(messages) => {
+                let Some(run) = turn.child.as_mut() else {
+                    return;
+                };
+                run.messages.extend(messages.iter().cloned());
+                if self.active_id == Some(run.id) {
+                    let _ = self.evt_tx.send(AppEvent::TranscriptGrew {
+                        id: run.id,
+                        messages,
+                    });
+                }
+                // The count on the row.
+                self.emit_chat_list();
+            }
+            TurnProgress::ChildEnded {
+                outcome,
+                finished_at,
+                tokens,
+            } => {
+                if let Some(run) = turn.child.as_mut() {
+                    run.outcome = Some(outcome);
+                    run.finished_at = Some(finished_at);
+                    run.tokens = tokens;
+                }
+                self.emit_chat_list();
+            }
+        }
+    }
+
+    /// Whether a switch from the active chat to `id` stays inside the running
+    /// turn — its chat and its in-flight sub-agent, either way round — and so
+    /// must not cancel it (docs/subagent-live.md §3.5, fork F6).
+    fn switch_within_turn(&self, id: Uuid) -> bool {
+        let Some(turn) = self.inflight.as_ref() else {
+            return false;
+        };
+        let Some(child) = turn.child_id() else {
+            return false;
+        };
+        let pair = [turn.chat, child];
+        pair.contains(&id) && self.active_id.is_some_and(|a| pair.contains(&a))
     }
 
     /// Rebuilds the tool registry: the standard set from config + live
@@ -987,19 +1098,33 @@ impl Orchestrator {
     /// [`AppCommand::OpenChatAt`]). The single activation funnel — everything
     /// else goes through `activate` and passes `None`.
     fn activate_focused(&mut self, id: Uuid, focus: Option<FeedFocus>) {
+        // The running turn's chat and sub-agent (docs/subagent-live.md §3.4,
+        // §3.5): the parent's feed gets the rounds filed so far and keeps its
+        // generation; the child keeps the status chip.
+        let turn = self.inflight.as_ref();
+        let live_turn = turn
+            .filter(|t| t.chat == id || t.child_id() == Some(id))
+            .map(|t| t.generation);
         let event = match self.view(id) {
-            Some(ChatView::Top(chat)) => AppEvent::ChatActivated {
-                id,
-                title: chat.title.clone(),
-                messages: chat.messages.clone(),
-                draft: chat.draft.clone(),
-                feed_view: chat.feed_view,
-                focus,
-                compaction: chat
-                    .compaction_view(self.config.compaction.enabled)
-                    .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
-                child: None,
-            },
+            Some(ChatView::Top(chat)) => {
+                let mut messages = chat.messages.clone();
+                if let Some(t) = turn.filter(|t| t.chat == id) {
+                    messages.extend(t.rounds.iter().cloned());
+                }
+                AppEvent::ChatActivated {
+                    id,
+                    title: chat.title.clone(),
+                    messages,
+                    draft: chat.draft.clone(),
+                    feed_view: chat.feed_view,
+                    focus,
+                    compaction: chat
+                        .compaction_view(self.config.compaction.enabled)
+                        .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
+                    child: None,
+                    live_turn,
+                }
+            }
             // A sub-agent transcript opens like a chat (spec §11.2): its own
             // messages and title, the **parent's** collapse state (it is part
             // of the parent), no draft, no summary, and the persona for the
@@ -1017,9 +1142,19 @@ impl Orchestrator {
                     parent_title: parent.title.clone(),
                     system_message: run.system_message.clone(),
                 }),
+                live_turn,
             },
             None => return,
         };
+        // Coming back to the running turn's chat: its feed was rebuilt from
+        // the rounds filed so far, and the text of the round in progress is
+        // not among them — one whole re-activation at landing closes the gap.
+        if live_turn.is_some()
+            && self.active_id != Some(id)
+            && let Some(t) = self.inflight.as_mut().filter(|t| t.chat == id)
+        {
+            t.parent_needs_refresh = true;
+        }
         self.active_id = Some(id);
         let _ = self.evt_tx.send(event);
         self.emit_character_names();
@@ -1096,6 +1231,16 @@ impl Orchestrator {
 
     fn emit_chat_list(&self) {
         let mut summaries: Vec<ChatSummary> = self.chats.iter().map(|c| c.summary()).collect();
+        // The sub-agent running right now, under its parent, marked running
+        // (docs/subagent-live.md §3.3); once landed it comes from the chat.
+        if let Some(turn) = &self.inflight
+            && let Some(run) = &turn.child
+            && let Some(parent) = summaries.iter_mut().find(|s| s.id == turn.chat)
+        {
+            let mut card = crate::entities::chat::ChildSummary::of(run);
+            card.running = run.outcome.is_none();
+            parent.children.push(card);
+        }
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
         let _ = self.evt_tx.send(AppEvent::ChatList(summaries));
     }

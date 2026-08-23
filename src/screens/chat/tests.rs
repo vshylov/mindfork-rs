@@ -3073,6 +3073,97 @@ fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
     );
 }
 
+/// The running transcript on screen (docs/subagent-live.md §3.4): a filed
+/// round rebuilds the feed stitched as a landed transcript would be, only for
+/// the open transcript; the chip survives on the transcript through
+/// `live_turn` while the parent's chunks do not land in it; and a finish of
+/// that turn clears the chip without touching the feed.
+#[test]
+fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() {
+    use crate::app::events::{ChildView, SubagentProgress};
+    let mut s = ChatScreen::new();
+    let run_id = Uuid::new_v4();
+    let generation = Uuid::new_v4();
+    s.set_child_view(Some(ChildView {
+        parent: Uuid::new_v4(),
+        parent_title: "Родитель".into(),
+        system_message: "persona".into(),
+    }));
+    s.activate_chat(
+        run_id,
+        "Критик".into(),
+        &[Message::user("задание")],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.set_live_turn(Some(generation));
+    assert!(!s.generating, "a transcript view never streams");
+
+    s.set_subagent_progress(
+        generation,
+        Some(SubagentProgress {
+            name: "Критик".into(),
+            round: 2,
+            tool: None,
+        }),
+    );
+    assert!(s.background_hint().unwrap().contains("Критик"));
+
+    // The parent's chunk is not for this feed.
+    s.push_chunk(generation, "текст родителя");
+    assert!(!s.feed.iter().any(|m| m.text.contains("текст родителя")));
+
+    // A filed round: assistant + tool, then the next assistant — one bubble.
+    let mut a = Message::assistant("");
+    a.tool_calls = vec![crate::entities::subagent::SubagentRun::fixture("x", &["y"]).on_record()];
+    s.grow_transcript(run_id, &[a, Message::assistant("вывод")]);
+    let bubbles: Vec<_> = s
+        .feed
+        .iter()
+        .filter(|m| m.role == FeedRole::Assistant)
+        .collect();
+    assert_eq!(bubbles.len(), 1, "rounds stitch into one bubble");
+    assert!(bubbles[0].text.contains("вывод"));
+    assert_eq!(bubbles[0].tools.len(), 1);
+    assert_eq!(s.feed[0].role, FeedRole::System, "the persona stays on top");
+
+    // Another conversation's round is ignored.
+    s.grow_transcript(Uuid::new_v4(), &[Message::assistant("чужое")]);
+    assert!(!s.feed.iter().any(|m| m.text.contains("чужое")));
+
+    // The turn ends: the chip goes, the feed is untouched.
+    s.finish_generation(generation, FinishReason::Cancelled);
+    assert!(s.background_hint().is_none());
+    assert!(!s.feed.iter().any(|m| m.role == FeedRole::Note));
+}
+
+/// Back on the running turn's chat (docs/subagent-live.md §3.5): `live_turn`
+/// restores the generation, so the stream and the chip resume into its feed.
+#[test]
+fn returning_to_the_running_chat_resumes_its_generation() {
+    let mut s = ChatScreen::new();
+    let chat = Uuid::new_v4();
+    let generation = Uuid::new_v4();
+    s.set_child_view(None);
+    s.activate_chat(
+        chat,
+        "Чат".into(),
+        &[Message::user("вопрос")],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.set_live_turn(Some(generation));
+    assert!(s.generating);
+    s.push_chunk(generation, "продолжение");
+    assert!(s.feed.iter().any(|m| m.text.contains("продолжение")));
+    s.finish_generation(generation, FinishReason::Stop);
+    assert!(!s.generating);
+}
+
 /// The sub-agent chip (spec §9.3.2): worded from the raw progress, the tool
 /// named when inside one, composing with the background tasks, cleared by
 /// the run's end and by the turn's end, and dropped for a stale generation.
@@ -4344,6 +4435,7 @@ mod read_only_transcript {
                 finished_at: None,
                 message_count: 2,
                 outcome: None,
+                running: false,
             }],
         }]);
         let card = c.s.summary_card(child_id).expect("the transcript's card");

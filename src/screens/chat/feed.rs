@@ -70,6 +70,14 @@ impl ChatScreen {
         self.title = title;
         self.current_gen = None;
         self.generating = false;
+        self.live_turn = None;
+        // Only a transcript can grow in place (see `grow_transcript`); a
+        // chat's feed is rebuilt by activation alone.
+        self.transcript = if self.child.is_some() {
+            messages.to_vec()
+        } else {
+            Vec::new()
+        };
         // The token counter belongs to the previous chat — clear it so it doesn't linger
         // in the status line after switching (the status bar hides the counter when
         // `tokens == 0 && context == None`).
@@ -338,7 +346,7 @@ impl ChatScreen {
         generation_id: Uuid,
         progress: Option<crate::app::events::SubagentProgress>,
     ) {
-        if self.current_gen != Some(generation_id) {
+        if self.current_gen != Some(generation_id) && self.live_turn != Some(generation_id) {
             return;
         }
         self.subagent = progress.map(|p| {
@@ -419,9 +427,17 @@ impl ChatScreen {
     }
 
     pub fn finish_generation(&mut self, generation_id: Uuid, reason: FinishReason) {
+        // A transcript view of the turn that just ended: the chip goes, the
+        // feed is not the turn's (docs/subagent-live.md §3.4).
+        if self.live_turn == Some(generation_id) && self.current_gen.is_none() {
+            self.live_turn = None;
+            self.subagent = None;
+            return;
+        }
         if self.current_gen != Some(generation_id) {
             return;
         }
+        self.live_turn = None;
         if let Some(last) = self.feed.last_mut() {
             last.streaming = false;
         }

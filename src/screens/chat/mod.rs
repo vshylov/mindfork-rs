@@ -595,6 +595,15 @@ pub struct ChatScreen {
     /// is inside `call_subagent` (`AppEvent::SubagentProgress`); `None` —
     /// no run in flight. Spec §9.3.2.
     subagent: Option<String>,
+    /// The generation running on the open conversation when it is a sub-agent
+    /// transcript (`ChatActivated::live_turn`, docs/subagent-live.md §3.4):
+    /// the chip's guard while `current_gen` stays `None` — the parent's
+    /// stream must not land in the transcript's feed.
+    live_turn: Option<Uuid>,
+    /// The open sub-agent transcript's messages, kept only while one is open
+    /// and running, so a filed round rebuilds the feed stitched exactly as a
+    /// landed transcript would be (`TranscriptGrew`).
+    transcript: Vec<Message>,
     /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
     /// status bar.
     speaking: bool,
@@ -682,6 +691,8 @@ impl ChatScreen {
             compacting: false,
             retrying: None,
             subagent: None,
+            live_turn: None,
+            transcript: Vec::new(),
             speaking: false,
             esc_target: EscTarget::default(),
             rag: None,
@@ -861,6 +872,43 @@ impl ChatScreen {
     /// builds the feed, because the feed is what differs.
     pub fn set_child_view(&mut self, child: Option<ChildView>) {
         self.child = child;
+    }
+
+    /// The generation in flight on the conversation just activated
+    /// (docs/subagent-live.md §3.4–§3.5). On the running turn's **chat**: the
+    /// screen is generating again — the stream and the chip resume into this
+    /// feed. On the turn's **transcript**: only the chip resumes; the feed
+    /// grows by `TranscriptGrew`, never by the parent's chunks.
+    pub fn set_live_turn(&mut self, live_turn: Option<Uuid>) {
+        self.live_turn = live_turn;
+        if let Some(id) = live_turn
+            && self.child.is_none()
+        {
+            self.current_gen = Some(id);
+            self.generating = true;
+        }
+        if live_turn.is_none() {
+            self.subagent = None;
+        }
+    }
+
+    /// A running transcript filed a round (`AppEvent::TranscriptGrew`): the
+    /// feed is rebuilt from every message so far, so the rounds stitch into
+    /// one bubble exactly as they will once the run lands; the scroll follows
+    /// the tail only if it already did.
+    pub fn grow_transcript(&mut self, id: Uuid, messages: &[Message]) {
+        if self.active_chat != Some(id) || self.child.is_none() {
+            return;
+        }
+        self.transcript.extend(messages.iter().cloned());
+        self.feed = FeedMessage::from_messages(&self.transcript);
+        if let Some(child) = &self.child {
+            self.feed
+                .insert(0, FeedMessage::system(child.system_message.clone()));
+        }
+        self.feed_has_risky = self.feed.iter().any(feed::feed_msg_has_risky_glyph);
+        self.mark_feed_changed();
+        self.feed_view.scroll_to_bottom_if_following();
     }
 
     /// Whether the open "chat" is a read-only sub-agent transcript.
