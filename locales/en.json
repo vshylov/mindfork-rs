@@ -1401,6 +1401,8 @@
   "ui.err.managed.model_not_found": "model file not found or inaccessible: {path}",
   "ui.err.managed.draft_not_found": "draft model file not found or inaccessible: {path}",
   "ui.err.managed.mmproj_not_found": "vision projector file not found or inaccessible: {path}",
+  "ui.err.managed.shard_missing": "part of the multi-file model is missing: {path}",
+  "ui.err.managed.shard_not_first": "a multi-file model is loaded from its first part: {path}",
   "ui.err.managed.spawn": "spawning llama-server ({path})",
   "ui.err.managed.early_exit": "llama-server exited before becoming ready (corrupt GGUF or out of memory? — see logs)",
   "ui.err.managed.timeout": "the inference server did not become ready within {timeout}",

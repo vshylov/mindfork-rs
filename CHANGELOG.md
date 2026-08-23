@@ -125,6 +125,15 @@ split by subsystem.
 
 ### Changed
 
+- **A model split across several GGUF files.** Large models are published as
+  parts (`…-00001-of-00003.gguf`, `…-00002-of-00003.gguf`, …); point the GGUF
+  setting at the **first** part, with the rest beside it, and the server loads
+  them as one model — as it always could, but the two ways of getting it wrong
+  are now caught before launch instead of showing up as a server that quietly
+  exits. Pointing at a later part says which file to use, and a part missing
+  from the directory (an interrupted download) is named. Such a model is also
+  called by its own name in the interface — `gpt-oss-120b-Q8_0`, not
+  `gpt-oss-120b-Q8_0-00001-of-00003`.
 - **The sub-agent's limits.** The whole run — every model round and tool call —
   is bounded by a new *Subagent: run time limit* (600 s by default), replacing
   the one-request timeout; the per-reply token cap's default rises to 4096;

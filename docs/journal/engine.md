@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: images in a message — stage 1 (local + Grok) (done)
 - Post-M9: images in a message — stage 2 (the three cloud formats, track complete) (done)
 - Post-M9: images in a message — attach by URL (done)
+- Post-M9: a model split across several GGUF files (managed mode) (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1916,3 +1917,74 @@ The **whole** local live set was re-run rather than just this test, because the 
 `staged()` tail this change extracted now sits on the file and clipboard paths too, and
 `message_to_api` is on every turn: **32 passed / 0 failed, 782 s**, `image_attachment_e2e_live`
 included.
+### Post-M9: a model split across several GGUF files (managed mode) (done)
+
+**The question** (2026-08-23, asked of the code before anything was written): does
+managed mode work with a model published as several GGUF files — the case in point
+`unsloth/gpt-oss-120b-GGUF` `Q8_0/`, three `gguf-split` parts, because Hugging Face
+caps a single file at 50 GB. The answer was **yes, already**: `build_args` passes
+`model_path` into `-m` verbatim, and llama.cpp, handed the first part, reads the
+rest itself by name out of the same directory. Nothing in the app parses a GGUF, so
+there was nothing to teach it. What the reading did turn up is three smaller things,
+and this entry is those.
+
+**1. The preflight checked the path, not the model.** `ServerHandle::launch` asks
+`Path::is_file()` of the configured path — which passes for part 1 of a model whose
+other parts never finished downloading, and passes for part 2 of a model llama.cpp
+will refuse outright ("model must be loaded with the first split"). Both then land
+in the *early-exit* path: the server starts, dies while loading, and the status bar
+says the process exited before it was ready — true, and useless. The same shape as
+the `--mmproj` trap (lessons §3): a check that validates the string it was given
+while the format the string names implies files nobody looked at. `check_split_model`
+now runs after the existing `is_file()`: a name in the `-00001-of-00003.gguf` shape
+must be the first part (the error names the file to point at) and every sibling must
+be on disk (the error names the missing one). A name not in that shape means a
+single-file model and no check at all — the old behaviour, byte for byte.
+
+**2. The parsing lives in `shared/gguf.rs`, not in the launcher.** Two callers on
+opposite sides of the dependency graph need the same fact and do not import each
+other — the preflight, and `config.rs`'s `active_model_name`. The module is pure
+(no filesystem: `Shard::all()` returns the paths, the caller stats them), which is
+what makes the numbering rules cheap to test. Deliberately strict: exactly the
+fixed five-digit tail `gguf-split` writes, `1 <= index <= total`, a non-empty name
+in front of it. A false positive would be the worst outcome available here —
+inventing missing parts for a model that has none, and refusing a launch that would
+have worked.
+
+**3. The model was named after a file.** `active_model_name` cut the directory and
+`.gguf` and stopped there, so the assistant's header (`interface.show_model_name`)
+and every message's metadata snapshot recorded `gpt-oss-120b-Q8_0-00001-of-00003`.
+The part tail names a file; the model is `gpt-oss-120b-Q8_0`. Both copies of that
+derivation (engine and embeddings) now call `gguf::display_name`, which also
+retires a duplicated four-liner.
+
+**Rejected: silently loading the first part when a later one is configured.** It
+is one `Shard::first()` call away, and it would be the app quietly deciding the
+user meant a different file than the one they typed — invisible until it is the
+wrong model. The error costs one edit and says exactly which path to write
+(lessons §4).
+
+**Not built: raw arguments for the managed server.** Fitting a 120B MoE on a
+consumer GPU is `--n-cpu-moe`/`-ot` work, and managed mode has no field for either:
+`ManagedConfig::extra_args` exists and `build_args` appends it, but the supervisor
+passes it empty. Out of scope here (it is a settings track of its own, and external
+mode is the working escape hatch) — recorded in roadmap.md, "Engine and
+reliability".
+
+**Tests.** +8 unit (2518 green, 107 `#[ignore]`; 2511 on Linux). Five on the parser
+— a split path parsed and rebuilt, a Windows path, a non-ASCII name (the tail check
+walks bytes, so a multi-byte name is where a naive `split_at` would panic), the
+display name in all its shapes, and one table of near-misses that must **not** parse
+(`-1-of-3`, `_of_`, `00000`, an out-of-range index, a bare tail, a non-`.gguf`
+extension) — that last one being the actual risk, per §2 above. Three on the
+launcher, over a `tempfile` directory: a missing part is named; with every part
+present the launch gets past the preflight and fails on `spawn` instead (a negative
+control — without it the test would pass with the whole check deleted, lessons §2);
+and a later part points at the first.
+
+**No live run.** Nothing here touches a request, a protocol or the server contract:
+the checks fire before `spawn`, and the split loading they defer to is llama.cpp's
+own. A real multi-file model was not launched — this environment has neither a
+`llama-server` binary nor the ~100 GB of weights, and Hugging Face is unreachable
+from it — so what stands behind "llama.cpp refuses a non-first part" is its
+`llama_model_loader` source, not an observation of this stack.

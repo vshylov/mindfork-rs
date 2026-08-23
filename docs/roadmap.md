@@ -249,6 +249,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   settings yet; if a setup appears where they're wrong (a very slow link, a
   deliberately flaky server), they'd go in the "Model" section next to the
   engine fields.
+- **Raw `llama-server` arguments in managed settings.** `ManagedConfig` already
+  carries an `extra_args` tail and `build_args` appends it, but the supervisor
+  hands it an empty vector — there is no setting behind it, so managed mode can
+  send only the flags that have a field of their own. Where that bites is a
+  large MoE model: fitting one on a consumer GPU is `--n-cpu-moe`/`-ot` work,
+  and the only route to those flags today is to start `llama-server` by hand and
+  switch to external mode. The build is small (one text field, split by
+  `shared::cmdline::split`, a restart on change, hidden behind the existing
+  managed group); the cost is a field that can break a launch in ways no
+  preflight can check, and whose failures arrive as the server's exit code. Left
+  written down rather than built for that reason — the escape hatch exists and
+  nobody has hit the wall yet. Noted while checking that a multi-file GGUF loads
+  in managed mode (journal/engine.md, 2026-08-23).
 - **On-the-fly model switching** without a full settings-section restart (a
   quick model selector right in the chat).
 - **Multimodality — what the track left open** (both stages **done**, and

@@ -8,6 +8,7 @@ pub mod credits;
 pub mod embed_calibration;
 pub mod embed_identity;
 pub mod embed_prefix;
+pub mod gguf;
 pub mod i18n;
 pub mod instance;
 pub mod keys;

@@ -1670,6 +1670,8 @@
   "ui.err.managed.model_not_found": "файл модели не найден или недоступен: {path}",
   "ui.err.managed.draft_not_found": "файл черновой модели не найден или недоступен: {path}",
   "ui.err.managed.mmproj_not_found": "файл проектора зрения не найден или недоступен: {path}",
+  "ui.err.managed.shard_missing": "не хватает части многофайловой модели: {path}",
+  "ui.err.managed.shard_not_first": "многофайловая модель загружается с первой части: {path}",
   "ui.err.managed.spawn": "запуск llama-server ({path})",
   "ui.err.managed.early_exit": "llama-server завершился до готовности (битый GGUF или нехватка памяти? — см. логи)",
   "ui.err.managed.timeout": "сервер инференса не вышел в готовность за {timeout}",

@@ -477,6 +477,12 @@ src/
    │                       measurement fixture (include_str!, bilingual, DO NOT EDIT:
    │                       it defines the reference constants; allowlisted in
    │                       tools/cyrillic_scan.py). See spec §9.3.4
+   ├─ gguf.rs              what a GGUF path can say about the model: parse_shard/Shard
+   │                       (the gguf-split `-00001-of-00003.gguf` tail → index/total/stem,
+   │                       all() = the parts that must lie beside it) + display_name (a
+   │                       model's name for the UI: no directory, no extension, no part
+   │                       tail). Used by the managed preflight and by config.rs's
+   │                       active_model_name. See spec §3.4
    ├─ embed_prefix.rs      per-model input prefixes: EmbedConvention (none/e5/e5-instruct)
    │                       + PrefixedEmbedder, an Embedder decorator marking each text
    │                       by its EmbedRole. Installed INSIDE EmbedGuard, so the canary
@@ -1124,8 +1130,13 @@ its own — or named by `api_key_env`, resolved through the same
   `FlashAttn`/`SpecType` are enums in `shared/config`, arriving in
   `ManagedConfig` as primitives (like `reasoning_format`) — the supervisor
   converts the enum to a string.
-  **Preflight:** if `model_path` (or the draft `-md`) is set but the file
-  doesn't exist — `bail!` before `spawn`.
+  **Preflight:** if `model_path` (or the draft `-md`, or `--mmproj`) is set but
+  the file doesn't exist — `bail!` before `spawn`. For a **multi-file** model
+  (`check_split_model`, `shared/gguf.rs`) the path's own existence is not enough:
+  a name in the `-00001-of-00003.gguf` shape must be the *first* part (llama.cpp
+  refuses any other) and every sibling part must be on disk — otherwise the
+  server would start and die while loading, which reads as the generic early
+  exit below.
   **Early exit:** if the file is valid but the process dies *while* loading
   (a corrupt GGUF, OOM), the monitor raises `exited`, and
   `wait_until_ready(..., exited)` stops polling right away with a clear error —

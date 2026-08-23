@@ -634,6 +634,18 @@ actually offers) rather than to correct the sentence, because a sentence
 maintained by hand drifts again on the next stage.
 — *the code workspace — stage 3*.
 
+**A path check validates the string, not the thing the string names.**
+`is_file()` on the managed server's GGUF passes for part 1 of a three-part model
+whose other parts never finished downloading, and for part 2 of a model
+llama.cpp refuses to load at all — and both then surface as "the process exited
+before it was ready", the message that says something went wrong and nothing
+about what. Whenever a configured path *implies* other files — a split model's
+siblings, a projector beside the weights — the preflight owes their names: the
+file to point at, or the file to fetch. A generic exit message is what a check
+looks like when it stopped one step short of the format it was checking.
+— *a model split across several GGUF files*, *managed — preflight model-file
+check*.
+
 ## 5. Terminal and ratatui rendering
 
 **One wide label in an aligned table re-wraps every description in it.** The help
