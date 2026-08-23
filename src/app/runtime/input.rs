@@ -183,16 +183,31 @@ pub(super) fn process_input_batch(
             // `chat://` reference (spec §11.3). On the list/settings (which have their
             // own navigation) mouse events are ignored.
             Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => {
-                if let Some(intent) = screen.handle_mouse(mouse)
-                    && dispatch(intent, cmd_tx, screen, active, back)
-                {
-                    quit = true;
+                if let Some(intent) = screen.handle_mouse(mouse) {
+                    flush_draft(screen, cmd_tx);
+                    if dispatch(intent, cmd_tx, screen, active, back) {
+                        quit = true;
+                    }
                 }
             }
             Chunk::Event(_) => {}
         }
     }
     quit
+}
+
+/// Sends the chat input's pending draft **before** an intent is dispatched, so
+/// the orchestrator never reads a stale one. The loop's own flush runs at the
+/// top of the *next* iteration, one step after the intent — and every handler
+/// that reads `chat.draft` in between saw the previous text: `/takeback` glued
+/// the spent command onto the restored message, `/regen` re-loaded it into the
+/// box via `ChatActivated`, `/clone` copied it into the clone, and `/new` left
+/// it as the old chat's saved draft (the late `SetDraft` lands on the newly
+/// active chat). One seam closes the class; see docs/history/commands-stage3.md §2.
+fn flush_draft(screen: &mut ChatScreen, cmd_tx: &UnboundedSender<AppCommand>) {
+    if let Some(draft) = screen.take_dirty_draft() {
+        let _ = cmd_tx.send(AppCommand::SetDraft(draft));
+    }
 }
 
 /// Handles one key event: takes the intent off the active screen and dispatches
@@ -217,6 +232,9 @@ fn handle_key_event(
         ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
         ActiveScreen::Changes(changes) => changes.handle_key(key).map(AnyIntent::Changes),
     };
+    if intent.is_some() {
+        flush_draft(screen, cmd_tx);
+    }
     match intent {
         // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
         // a UI-layer side effect: we already have the text, no need to go to the orchestrator.

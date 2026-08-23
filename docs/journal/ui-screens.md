@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -53,6 +53,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
 - Post-M9: sub-agent chats — the sub-agent's text streams into its transcript (done)
 - Post-M9: sub-agent chats — the parent's round in progress is mirrored too (done)
+- Post-M9: command-only control — stage 3 (`/autotitle`, the profile texts, `/impersonation`) (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2195,3 +2196,66 @@ Branch `feat/code-workspace-changes`.
   remains open is product scope — the two-agent dialogue (research §3.14)
   and a parent's JSON export without its transcripts.
 
+
+### Post-M9: command-only control — stage 3 (`/autotitle`, the profile texts, `/impersonation`) (done)
+
+- **What and why**: a live pass in a JupyterLab terminal (2026-08-23) found the
+  next layer of chord-only actions after stages 1–2: the model-written title
+  lived only behind the list's `Ctrl+R` — which the user's browser spends on
+  reloading the tab (the 2026-08-14 host matrix had scored that cell "passes";
+  the matrix drifts, the class-closing answer stands) — the impersonation
+  profiles were editable only behind the settings screen's `Ctrl+N`/`Ctrl+D`
+  exactly as the assistant profiles had been before stage 2, and the three
+  free-text fields (profile system message, greeting, persona text) had no
+  route but the settings editors. Design and forks:
+  [docs/history/commands-stage3.md](../history/commands-stage3.md); the same
+  track fixed the command-residue defect (journal ui-input.md).
+- **Key decisions** (all confirmed 2026-08-23): `/autotitle` over `/autoname`
+  (the feature's name in spec §11.2 and the setting) and over a `/rename`
+  subcommand (a reserved word inside a free-text title makes the literal
+  title "auto" unreachable); **`/impersonation` over `/persona`** — the
+  user's call, against the recommendation: the settings subsection's own word
+  wins over brevity, the one-letter-group distance to `/impersonate` accepted
+  (exact-word matching keeps them apart); the reserved word **`clear`** on
+  the three text subcommands, symmetric with `/self clear`; `new` creates
+  **unlinked** (settings `Ctrl+N` parity — several assistant profiles can
+  share one persona), the note naming `/impersonation use <name>` as the next
+  step.
+- **The shape**: `/autotitle` is a registry row reaching the list's own
+  `AppCommand::AutoRenameChat` (its `ChatListError` failures already fell
+  back to a feed note when the list is closed — checked, not built);
+  `/profile` grew `system`/`greeting` subcommands and a shared `TextEdit`
+  (`Show`/`Clear`/`Set`) whose raw-remainder parsing keeps internal newlines
+  (a system message is a document; names still collapse whitespace and shed
+  quotes); `features/impersonation_command.rs` is the `/profile` module's
+  shape over the personas, committing through the settings screen's own
+  paths — `UpdateProfile` for the link and the profile texts, `UpdateConfig`
+  over a working copy of the settings snapshot for the persona list. The
+  name resolver generalized to `resolve_named` over `(id, name)` pairs
+  rather than being copied (the budget-for-the-seam rule). Sub-decision D1,
+  recorded before implementing: the outcome notes are the command's own,
+  worded as fact — the settings paths have no success event, the settings
+  screen deliberately stays silent (the field itself is its answer), and a
+  failed save still reports through the orchestrator's error path.
+- **Doors closed**: bare text subcommands prefill the current value
+  (the `/rename` pattern) but an *empty* value answers with the syntax that
+  sets one — an empty prefill teaches nothing; `/impersonation system` with
+  no persona linked names both routes that give the profile one; the notes
+  state each edit's scope (profile texts — new conversations, the chat's
+  snapshot being creation-time; persona text — the next `Ctrl+U`, resolved
+  live); `/profile new`'s success note now names the typed route to a
+  persona, not only the settings screen.
+
+**Tests** (suite 2526 → 2543): parser tables for both modules
+(case/padding, newline-preserving text, `clear` only as the whole argument,
+near-words as prose, per-locale error gates), the stage-3 screen module
+(`staffed` fixture: intent equality, the prefill round trip, the
+always-confirm delete through `Enter`/`Esc`, the linked-persona marker in
+`list`, every precondition with its note), plus the registry-driven suites
+absorbing `/autotitle` for free. Sonar's offline duplication heuristic run
+before the PR: clean.
+
+**A live model run is not required** (AGENTS.md §3) — UI routing over
+existing orchestrator surface (`AutoRenameChat`, `UpdateProfile`,
+`UpdateConfig`, all already covered). The motivating host behaviour is the
+JupyterLab report this stage answers.

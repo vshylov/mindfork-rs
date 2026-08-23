@@ -352,6 +352,8 @@ impl ChatScreen {
         // `/profile …` has a subcommand plus a name, so it keeps a parser of its
         // own rather than a registry row (stage 2, fork F5).
         Self::try_profile_command,
+        // `/impersonation …` — the same shape over the personas (stage 3).
+        Self::try_impersonation_command,
         // `/export [md|json] [path]` — a format word and a path, so it too keeps
         // a parser of its own rather than a registry row.
         Self::try_export_command,
@@ -893,6 +895,7 @@ impl ChatScreen {
             || crate::features::tts_command::parse(&text).is_some()
             || crate::features::ui_command::parse(&text, self.loc).is_some()
             || crate::features::profile_command::parse(&text, self.loc).is_some()
+            || crate::features::impersonation_command::parse(&text, self.loc).is_some()
             || crate::features::export_command::parse(&text, self.loc).is_some()
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
@@ -909,7 +912,9 @@ impl ChatScreen {
             self.confirm = Some(action);
             None
         } else {
-            Some(action.intent())
+            // Only the two destructive keys come through here, and both have a
+            // fixed intent (the `None` arm is `DeleteImpersonation`'s alone).
+            action.intent()
         }
     }
 

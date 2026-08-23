@@ -404,6 +404,7 @@ confirmations included:
 | `/settings` · `/self` · `/help` · `/chats` | `Ctrl+P` · `F3` · `F1` · `Esc` | the screens |
 | `/new [profile]` | `Ctrl+N` | new chat; a name picks the profile (a prefix is enough) |
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename (bare — edit the current title), clone, copy the conversation |
+| `/autotitle` | `Ctrl+R` in the list | have the model title this chat — in a browser tab that key reloads the page |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/stop` | `Esc` | cancel the running generation (`/chats` is the other half of `Esc`, and always means the list) |
@@ -411,12 +412,16 @@ confirmations included:
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
+| `/profile system [text\|clear]` · `/profile greeting [text\|clear]` | the settings editors | this chat's profile: its system message and its greeting, applied to new conversations. Bare — the current text comes back for editing; `clear` removes it |
+| `/impersonation list` · `new [name]` · `delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | the impersonation profiles — the user personas `Ctrl+U` writes as: list (the open chat's is marked), add, remove (asks first) |
+| `/impersonation use <name\|default>` · `/impersonation system [text\|clear]` | the settings editors | which persona this chat's profile impersonates as (`default` — the shared text), and that persona's own text |
 | `/self clear` | `Ctrl+K` twice in the self-model screen | wipe what the assistant thinks about itself and about you |
 | `/export [md\|json] [path]` | — | save this conversation to a file: `md` is what `F5` copies, `json` can be imported back. Without a path it names the file itself, in the current directory |
 
-Deleting a profile and clearing the self-model always ask first, even though the
-keys they mirror do not: a command names its target by word, and a shortened
-name could match a profile you did not have in mind.
+Deleting a profile (an impersonation one included) and clearing the self-model
+always ask first, even though the keys they mirror do not: a command names its
+target by word, and a shortened name could match a profile you did not have in
+mind.
 
 Only text editing has no command — a command is typed *in* the input box, so it
 cannot act on the box's own contents. Everything editing needs (typing,

@@ -87,13 +87,30 @@ impl ChatScreen {
         match key.code {
             KeyCode::Enter => {
                 self.confirm = None;
-                (!self.generating).then(|| action.intent())
+                self.confirmed_intent(action)
             }
             KeyCode::Esc => {
                 self.confirm = None;
                 None
             }
             _ => None,
+        }
+    }
+
+    /// Turns a confirmed [`ConfirmAction`] into its intent. The four fixed
+    /// actions keep the long-standing `generating` gate (they mutate the turn's
+    /// conversation); an impersonation-profile deletion is a config edit built
+    /// from the **current** settings snapshot — the snapshot may have refreshed
+    /// while the popup was open — and is independent of the turn.
+    fn confirmed_intent(&mut self, action: ConfirmAction) -> Option<ChatIntent> {
+        match action {
+            ConfirmAction::DeleteImpersonation { id, name } => self.delete_impersonation(id, &name),
+            other => {
+                if self.generating {
+                    return None;
+                }
+                other.intent()
+            }
         }
     }
 
@@ -343,6 +360,18 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("/profile list", "ui.help.cmd_profile_list"),
     ("ui.help.k.profile_new", "ui.help.cmd_profile_new"),
     ("ui.help.k.profile_delete", "ui.help.cmd_profile_delete"),
+    // The profile's two text fields (stage 3) — editable without the settings
+    // screen, the reserved word `clear` removing a value.
+    ("ui.help.k.profile_system", "ui.help.cmd_profile_system"),
+    ("ui.help.k.profile_greeting", "ui.help.cmd_profile_greeting"),
+    // The impersonation profiles (the user personas, spec §11.8) — the same
+    // family one list over, `/impersonation use` being the link the assistant
+    // profile keeps (docs/history/commands-stage3.md §3.3).
+    ("/impersonation list", "ui.help.cmd_imp_list"),
+    ("ui.help.k.imp_new", "ui.help.cmd_imp_new"),
+    ("ui.help.k.imp_delete", "ui.help.cmd_imp_delete"),
+    ("ui.help.k.imp_use", "ui.help.cmd_imp_use"),
+    ("ui.help.k.imp_system", "ui.help.cmd_imp_system"),
 ];
 
 /// The way out closes the tab, whatever stands in front of it: this is the typed
@@ -391,7 +420,7 @@ pub(super) const KEY_GROUP_OPENERS: &[&str] =
 
 /// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
 /// files · images · the code project · the knowledge base · housekeeping ·
-/// speech · the screens ·
+/// speech · the profiles · the impersonation profiles · the screens ·
 /// the conversation · finding things · the feed · the way out. The last four
 /// groups before the exit row are the typed routes ([`command_rows`]), grouped
 /// the way the registry orders them.
@@ -403,6 +432,7 @@ const COMMAND_GROUP_OPENERS: &[&str] = &[
     "ui.help.k.tts",
     "ui.help.k.export",
     "/profile list",
+    "/impersonation list",
     "/settings",
     "ui.help.k.new",
     "ui.help.k.find",

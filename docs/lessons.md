@@ -634,6 +634,19 @@ it?) has to be read before the code that creates it runs, or the answer is `fals
 forever.
 — *a launch that finds chats but no `data.db` says so*.
 
+**A lazily-synced state trails every intent dispatched in the same loop iteration.**
+The input draft flushes at the *top* of the next tick while a key's intent goes out at
+the *bottom* of this one, so four handlers reading `chat.draft` saw the spent command:
+`/takeback` glued it onto the restored message, `/regen` re-loaded it into the box,
+`/clone` copied it into the clone, `/new` left it on the old chat forever. One
+mechanism, four symptoms — and the confirmation-popup path hid it, because its round
+trip gave the flush time to land, which is exactly the arm the stage-1 tests had
+covered. Flush before dispatching (one seam at the dispatch site), and pin the
+**channel order** in a test, not the UI state. When a handler reads state the UI syncs
+lazily, ask when that sync last ran — and mistrust the answer that came from the
+gated path.
+— *commands — stage 3 (the residue fix)*.
+
 ---
 
 **A tool the system prompt does not name does not get used — even with its

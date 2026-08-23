@@ -1229,6 +1229,60 @@ fn reading_and_looking_keep_the_way_back() {
     }
 }
 
+/// A typed command's intent must reach the orchestrator **after** the draft
+/// flush that empties the box. The loop's own flush runs at the top of the
+/// *next* iteration — one step behind the intent — and every handler that read
+/// `chat.draft` in between saw the spent command: `/takeback` glued it onto the
+/// restored message, `/regen` re-loaded it into the box via `ChatActivated`,
+/// `/clone` copied it into the clone, and `/new` left it as the old chat's
+/// saved draft. The pre-dispatch flush in `handle_key_event` is the one seam
+/// that closes the class (docs/history/commands-stage3.md §2); this test pins the
+/// order, so re-ordering the flush after the dispatch goes red.
+#[test]
+fn a_command_intent_is_preceded_by_the_empty_draft_flush() {
+    let mut h = Harness::new();
+    h.apply(chat_activated(uuid::Uuid::new_v4()));
+    h.drain_commands();
+
+    // One event per batch: a burst of key events in a single batch is taken
+    // for a paste and coalesced into text, which never sends.
+    for c in "/takeback".chars() {
+        process_input_batch(
+            vec![Event::Key(KeyEvent::new(
+                KeyCode::Char(c),
+                KeyModifiers::NONE,
+            ))],
+            &mut h.screen,
+            &mut h.active,
+            &mut h.back,
+            &h.cmd_tx,
+            &mut h.clip,
+        );
+    }
+    process_input_batch(
+        vec![key(KeyCode::Enter)],
+        &mut h.screen,
+        &mut h.active,
+        &mut h.back,
+        &h.cmd_tx,
+        &mut h.clip,
+    );
+
+    let mut got = Vec::new();
+    while let Some(cmd) = h.next_command() {
+        got.push(cmd);
+    }
+    let delete = got
+        .iter()
+        .position(|c| matches!(c, AppCommand::DeleteLastExchange))
+        .expect("the takeback command was dispatched");
+    assert!(delete > 0, "nothing preceded the intent: {got:?}");
+    assert!(
+        matches!(&got[delete - 1], AppCommand::SetDraft(d) if d.is_empty()),
+        "the empty draft flush must land right before the intent: {got:?}"
+    );
+}
+
 /// The same rule holds for the search half — one back-stack, one meaning of
 /// "you have arrived", so the results are not restored under someone who has
 /// started working in the chat a hit opened.

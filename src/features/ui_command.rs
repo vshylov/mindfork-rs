@@ -11,7 +11,7 @@
 //! next to `Ctrl+V` (spec §9.10) and `/exit` next to `Ctrl+Q`/`F10`
 //! (spec §11.7). See [docs/history/command-only-control.md](../../docs/history/command-only-control.md).
 //!
-//! **Why a registry and not nineteen parser modules.** Every command here is a
+//! **Why a registry and not twenty parser modules.** Every command here is a
 //! sibling of the last: an exact word, optionally one free-text argument. Copied
 //! parsers would be the sliding self-duplication the duplication gate keeps
 //! catching (docs/lessons.md §2 — "budget for the seam at design time"), and the
@@ -45,6 +45,9 @@ pub enum UiCommand {
     NewChat,
     /// Rename the open chat; bare, it offers the current title for editing (`F2`).
     Rename,
+    /// Ask the model to title the open chat (`Ctrl+R` in the chat list —
+    /// browser-taken, which is what earned it a typed route; spec §11.2).
+    AutoTitle,
     /// Clone the open chat (`Ctrl+D` in the chat list).
     Clone,
     /// Copy the whole conversation to the clipboard (`F5`).
@@ -146,7 +149,7 @@ const fn row(
 /// `screens::chat::popups` names the row that opens each).
 ///
 /// The table is hand-aligned: `rustfmt` would explode each row into a five-line
-/// call, and 19 identically shaped blocks is the duplication density the gate
+/// call, and twenty identically shaped blocks is the duplication density the gate
 /// measures (docs/lessons.md §2). A table reads as a table.
 #[rustfmt::skip]
 pub const COMMANDS: &[Spec] = &[
@@ -161,6 +164,7 @@ pub const COMMANDS: &[Spec] = &[
     // The conversation.
     row(&["/new"], UiCommand::NewChat, Arity::Optional, "ui.help.k.new", "ui.help.cmd_new"),
     row(&["/rename"], UiCommand::Rename, Arity::Optional, "ui.help.k.rename", "ui.help.cmd_rename"),
+    row(&["/autotitle"], UiCommand::AutoTitle, Arity::None, "/autotitle", "ui.help.cmd_autotitle"),
     row(&["/clone"], UiCommand::Clone, Arity::None, "/clone", "ui.help.cmd_clone"),
     row(&["/copy"], UiCommand::Copy, Arity::None, "/copy", "ui.help.cmd_copy"),
     // Two spellings, on the `/exit`·`/quit` rule: both words are pre-trained

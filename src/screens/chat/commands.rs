@@ -13,7 +13,48 @@
 //! §4.3 and spec §11.7.
 
 use super::*;
+use crate::features::profile_command::TextEdit;
+use crate::features::profiles::ProfileEdit;
 use crate::features::ui_command::{self, UiCommand};
+
+/// Which of the assistant profile's two free-text fields a `/profile` text
+/// subcommand edits. Both fields are copied into a chat at creation, so both
+/// edits apply to new conversations — the notes say so.
+#[derive(Clone, Copy, PartialEq)]
+enum ProfileText {
+    System,
+    Greeting,
+}
+
+/// Case-insensitive exact match first, then an unambiguous prefix, over
+/// `(id, name)` pairs — the one matching rule every command that names a
+/// profile or a persona uses (`/new`, `/profile delete`,
+/// `/impersonation delete|use`). `Err` carries the candidates that matched
+/// (empty — nothing did), for the caller's message.
+fn resolve_named(items: &[(Uuid, String)], wanted: &str) -> Result<(Uuid, String), Vec<String>> {
+    let wanted = wanted.to_lowercase();
+    let matching = |exact: bool| -> Vec<&(Uuid, String)> {
+        items
+            .iter()
+            .filter(|(_, name)| {
+                let name = name.to_lowercase();
+                if exact {
+                    name == wanted
+                } else {
+                    name.starts_with(&wanted)
+                }
+            })
+            .collect()
+    };
+    let mut hits = matching(true);
+    if hits.is_empty() {
+        hits = matching(false);
+    }
+    if let [hit] = hits.as_slice() {
+        return Ok((*hit).clone());
+    }
+    Err(hits.into_iter().map(|(_, name)| name.clone()).collect())
+}
 
 impl ChatScreen {
     /// The registry's commands (`/settings`, `/find`, `/regen`, …) — intercepted
@@ -43,7 +84,7 @@ impl ChatScreen {
     /// One line per command: an arm that needs a precondition checked delegates
     /// to a named method below rather than spelling the check out here. That
     /// keeps this readable as the dispatch *table* it is — and keeps its
-    /// cognitive complexity off the analyzer's bar, which a table of nineteen
+    /// cognitive complexity off the analyzer's bar, which a table of twenty
     /// arms reaches on the strength of a few `if`s alone.
     fn run_ui_command(
         &mut self,
@@ -71,6 +112,7 @@ impl ChatScreen {
             UiCommand::NewChat if argument.is_empty() => self.request_new_chat(),
             UiCommand::NewChat => self.new_chat_by_name(&argument),
             UiCommand::Rename => self.rename_active_chat(argument),
+            UiCommand::AutoTitle => self.typed_autotitle(),
             UiCommand::Clone => self.active_chat.map_or_else(
                 || self.note("ui.cmd.no_chat"),
                 |id| Some(ChatIntent::CloneChat(id)),
@@ -187,6 +229,20 @@ impl ChatScreen {
         Some(ChatIntent::RenameChat { id, title })
     }
 
+    /// `/autotitle` — the chat list's `Ctrl+R` for the open conversation: ask
+    /// the model to title it (spec §11.2). The key is browser-taken (`Ctrl+R`
+    /// reloads the tab), which is what earned this action a typed route. The
+    /// task takes seconds on a local model, so the command answers right away;
+    /// the result is the visible rename, and a failure falls back to a feed
+    /// note (`ChatListError` routing in `runtime::dispatch`).
+    fn typed_autotitle(&mut self) -> Option<ChatIntent> {
+        let Some(id) = self.active_chat else {
+            return self.note("ui.cmd.no_chat");
+        };
+        self.push_note(self.loc.t("ui.cmd.autotitle_started"));
+        Some(ChatIntent::AutoTitleChat(id))
+    }
+
     /// `/new <profile>`: the shared name resolver, then the same intent
     /// `Ctrl+N` produces once a profile is chosen.
     fn new_chat_by_name(&mut self, wanted: &str) -> Option<ChatIntent> {
@@ -201,56 +257,60 @@ impl ChatScreen {
     /// a note naming the candidates and the `route` that shows them, and returns
     /// `None`.
     ///
-    /// One resolver for both commands that name a profile (`/new <profile>` and
-    /// `/profile delete <name>`) — the pair's *contract* is shared, so its
+    /// One resolver for every command that names a profile (`/new <profile>`,
+    /// `/profile delete <name>`) — the family's *contract* is shared, so its
     /// wording and its prefix rule are shared too, rather than being written
     /// twice and drifting (docs/lessons.md §2). `route` is a whole bundle key,
-    /// never a built one: the two callers want different next steps.
+    /// never a built one: the callers want different next steps. The matching
+    /// itself is [`resolve_named`], which `/impersonation` reuses over the
+    /// personas.
     fn resolve_profile(&mut self, wanted: &str, route: &'static str) -> Option<(Uuid, String)> {
-        let wanted = wanted.to_lowercase();
-        let matching = |exact: bool| -> Vec<(Uuid, String)> {
-            self.profiles
-                .iter()
-                .filter(|p| {
-                    let name = p.name.to_lowercase();
-                    if exact {
-                        name == wanted
-                    } else {
-                        name.starts_with(&wanted)
-                    }
-                })
-                .map(|p| (p.id, p.name.clone()))
-                .collect()
-        };
-        let mut hits = matching(true);
-        if hits.is_empty() {
-            hits = matching(false);
+        let items: Vec<(Uuid, String)> = self
+            .profiles
+            .iter()
+            .map(|p| (p.id, p.name.clone()))
+            .collect();
+        match resolve_named(&items, wanted) {
+            Ok(hit) => Some(hit),
+            Err(hits) => {
+                let all = items.into_iter().map(|(_, name)| name).collect();
+                self.report_unresolved(
+                    wanted,
+                    hits,
+                    all,
+                    ("ui.cmd.no_profile", "ui.cmd.many_profiles"),
+                    route,
+                );
+                None
+            }
         }
-        if let [hit] = hits.as_slice() {
-            return Some(hit.clone());
-        }
-        // Nothing matched → list what there is; several matched → list those.
+    }
+
+    /// The note for a name [`resolve_named`] could not settle: nothing matched
+    /// (`keys.0`, listing everything there is) or several did (`keys.1`,
+    /// listing the contenders). Both name the `route` that shows the full list.
+    fn report_unresolved(
+        &mut self,
+        wanted: &str,
+        hits: Vec<String>,
+        all: Vec<String>,
+        keys: (&'static str, &'static str),
+        route: &'static str,
+    ) {
         let (key, names) = if hits.is_empty() {
-            ("ui.cmd.no_profile", self.profile_names())
+            (keys.0, all.join(", "))
         } else {
-            (
-                "ui.cmd.many_profiles",
-                hits.iter()
-                    .map(|(_, name)| name.clone())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
+            (keys.1, hits.join(", "))
         };
         let msg = self.loc.tf(
             key,
             &[
-                ("name", &wanted),
+                ("name", &wanted.to_lowercase()),
                 ("names", &names),
                 ("route", self.loc.t(route)),
             ],
         );
         self.push_note(&msg);
-        None
     }
 
     /// The profile commands (`/profile list|new|delete`) — the settings screen's
@@ -276,11 +336,62 @@ impl ChatScreen {
                     .unwrap_or_else(|| self.loc.t("ui.settings.new_profile_name").to_string()),
             }),
             Ok(ProfileCommand::Delete { name }) => self.confirm_delete_profile(&name),
+            // Stage 3 (docs/history/commands-stage3.md §3.2): the profile's two text
+            // fields, editable without the settings screen.
+            Ok(ProfileCommand::System(edit)) => {
+                self.profile_text_command(ProfileText::System, edit)
+            }
+            Ok(ProfileCommand::Greeting(edit)) => {
+                self.profile_text_command(ProfileText::Greeting, edit)
+            }
             Err(msg) => {
                 self.push_note(&msg);
                 None
             }
         })
+    }
+
+    /// `/impersonation …` — the impersonation profiles (the user personas,
+    /// spec §11.8), plus the active profile's link to one. Stage 3 of
+    /// docs/history/command-only-control.md (docs/history/commands-stage3.md §3.3):
+    /// their CRUD lives behind the settings screen's browser-taken
+    /// `Ctrl+N`/`Ctrl+D`, and the persona's text behind its editor. Returns
+    /// `None` when the text is not an `/impersonation` command.
+    pub(super) fn try_impersonation_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        let parsed = crate::features::impersonation_command::parse(text, self.loc)?;
+        self.input.clear();
+        self.mark_input_changed();
+        Some(match parsed {
+            Ok(cmd) => self.run_impersonation_command(cmd),
+            Err(msg) => {
+                self.push_note(&msg);
+                None
+            }
+        })
+    }
+
+    /// Dispatches a parsed `/impersonation` command. Every arm works over the
+    /// settings snapshot (the personas live in the config), so its absence is
+    /// answered once here — the `/settings` rule.
+    fn run_impersonation_command(
+        &mut self,
+        cmd: crate::features::impersonation_command::ImpersonationCommand,
+    ) -> Option<ChatIntent> {
+        use crate::features::impersonation_command::ImpersonationCommand as Cmd;
+        if self.settings_snapshot.is_none() {
+            return self.note("ui.cmd.settings_pending");
+        }
+        match cmd {
+            Cmd::List => {
+                self.list_impersonations();
+                None
+            }
+            Cmd::New { name } => self.create_impersonation(name),
+            Cmd::Delete { name } => self.confirm_delete_impersonation(&name),
+            Cmd::Use { name } => self.link_impersonation(&name),
+            Cmd::UseDefault => self.unlink_impersonation(),
+            Cmd::System(edit) => self.impersonation_text_command(edit),
+        }
     }
 
     /// The export command (`/export [md|json] [path]`) — the conversation to a
@@ -361,13 +472,339 @@ impl ChatScreen {
         None
     }
 
-    /// The profile names as one list for a note.
-    fn profile_names(&self) -> String {
-        self.profiles
+    /// The active chat's full profile, cloned out of the settings snapshot —
+    /// the working copy the text commands read and prefill from. `Err` is the
+    /// note key that says which precondition failed: no chat open (a sub-agent
+    /// transcript's id is not in the chat list, so it lands here too), or the
+    /// snapshot not yet arrived / not yet carrying the profile.
+    fn active_full_profile(&self) -> Result<Profile, &'static str> {
+        let Some(chat_id) = self.active_chat else {
+            return Err("ui.cmd.no_chat");
+        };
+        let Some(profile_id) = self
+            .chats
             .iter()
-            .map(|p| p.name.clone())
-            .collect::<Vec<_>>()
-            .join(", ")
+            .find(|c| c.id == chat_id)
+            .map(|c| c.profile_id)
+        else {
+            return Err("ui.cmd.no_chat");
+        };
+        let Some((_, profiles, ..)) = self.settings_snapshot.as_ref() else {
+            return Err("ui.cmd.settings_pending");
+        };
+        profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or("ui.cmd.settings_pending")
+    }
+
+    /// A working copy of the snapshot's config for a persona edit — the same
+    /// clone-and-commit the settings screen's persona editors do.
+    fn snapshot_config(&self) -> Option<AppConfig> {
+        self.settings_snapshot
+            .as_ref()
+            .map(|(config, ..)| config.clone())
+    }
+
+    /// The personas as `(id, name)` pairs, for listing and resolving.
+    fn personas(&self) -> Vec<(Uuid, String)> {
+        self.settings_snapshot
+            .as_ref()
+            .map(|(config, ..)| {
+                config
+                    .impersonation_profiles
+                    .iter()
+                    .map(|p| (p.id, p.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `/profile system|greeting [text|clear]` on the active chat's profile.
+    /// `Show` hands the current text back as an editable command line (the
+    /// `/rename` pattern); `Set`/`Clear` commit through the same
+    /// `UpdateProfile` the settings editors use, and the note states the
+    /// scope honestly: both fields are copied into a chat at creation, so the
+    /// edit reaches **new** conversations (spec §5.1, §10).
+    fn profile_text_command(&mut self, field: ProfileText, edit: TextEdit) -> Option<ChatIntent> {
+        let profile = match self.active_full_profile() {
+            Ok(p) => p,
+            Err(key) => return self.note(key),
+        };
+        if edit == TextEdit::Show {
+            return self.show_profile_text(field, &profile);
+        }
+        let text = match edit {
+            TextEdit::Set(t) => Some(t),
+            _ => None,
+        };
+        let (profile_edit, key) = match field {
+            ProfileText::System => (
+                ProfileEdit {
+                    system_message: Some(text.clone().unwrap_or_default()),
+                    ..Default::default()
+                },
+                if text.is_some() {
+                    "ui.profile.system_set"
+                } else {
+                    "ui.profile.system_cleared"
+                },
+            ),
+            ProfileText::Greeting => (
+                ProfileEdit {
+                    greeting: Some(text.clone()),
+                    ..Default::default()
+                },
+                if text.is_some() {
+                    "ui.profile.greeting_set"
+                } else {
+                    "ui.profile.greeting_cleared"
+                },
+            ),
+        };
+        let msg = self.loc.tf(key, &[("name", &profile.name)]);
+        self.push_note(&msg);
+        Some(ChatIntent::UpdateProfile {
+            id: profile.id,
+            edit: Box::new(profile_edit),
+        })
+    }
+
+    /// The bare (`Show`) half of a `/profile` text subcommand: prefill the
+    /// current value for editing, or say there is nothing yet — and what sets
+    /// one — when the field is empty (an empty prefill would teach nothing).
+    fn show_profile_text(&mut self, field: ProfileText, profile: &Profile) -> Option<ChatIntent> {
+        let (word, current, empty_key) = match field {
+            ProfileText::System => (
+                "system",
+                profile.default_system_message.clone(),
+                "ui.profile.system_empty",
+            ),
+            ProfileText::Greeting => (
+                "greeting",
+                profile.greeting.clone().unwrap_or_default(),
+                "ui.profile.greeting_empty",
+            ),
+        };
+        if current.is_empty() {
+            let msg = self.loc.tf(empty_key, &[("name", &profile.name)]);
+            self.push_note(&msg);
+        } else {
+            self.input.set_text(&format!("/profile {word} {current}"));
+            self.mark_input_changed();
+        }
+        None
+    }
+
+    /// `/impersonation list` — the personas, with the active chat's profile's
+    /// one marked (the `/profile list` shape).
+    fn list_impersonations(&mut self) {
+        let personas = self.personas();
+        if personas.is_empty() {
+            self.note("ui.imp.none");
+            return;
+        }
+        let used = self
+            .active_full_profile()
+            .ok()
+            .and_then(|p| p.impersonation_profile_id);
+        let marker = self.palette.glyphs().title_marker;
+        let names: Vec<String> = personas
+            .iter()
+            .map(|(id, name)| {
+                if Some(*id) == used {
+                    format!("{marker} {name}")
+                } else {
+                    format!("  {name}")
+                }
+            })
+            .collect();
+        let msg = self.loc.tf("ui.imp.list", &[("names", &names.join("\n"))]);
+        self.push_note(&msg);
+    }
+
+    /// `/impersonation new [name]` — create a persona with an empty system
+    /// message (the settings screen's `Ctrl+N`, same default name). Creating
+    /// does not link it (fork F4): the note names the two next steps instead.
+    fn create_impersonation(&mut self, name: Option<String>) -> Option<ChatIntent> {
+        let Some(mut config) = self.snapshot_config() else {
+            return self.note("ui.cmd.settings_pending");
+        };
+        let name = name.unwrap_or_else(|| self.loc.t("ui.settings.new_profile_name").to_string());
+        config
+            .impersonation_profiles
+            .push(crate::shared::config::ImpersonationProfile::new(
+                name.clone(),
+                String::new(),
+            ));
+        let msg = self.loc.tf("ui.imp.created", &[("name", &name)]);
+        self.push_note(&msg);
+        Some(ChatIntent::UpdateConfig(Box::new(config)))
+    }
+
+    /// `/impersonation delete <name>` — resolve the name, then **always** ask
+    /// (the `/profile delete` rule: a typed prefix can resolve to a persona the
+    /// user did not picture, and its system message is unrecoverable).
+    fn confirm_delete_impersonation(&mut self, wanted: &str) -> Option<ChatIntent> {
+        let (id, name) = self.resolve_impersonation(wanted)?;
+        self.confirm = Some(ConfirmAction::DeleteImpersonation { id, name });
+        None
+    }
+
+    /// The confirmed half of `/impersonation delete`: build the config without
+    /// the persona from the **current** snapshot (it may have refreshed while
+    /// the popup was open). Referencing profiles are left alone — a dangling
+    /// id reads as "not set" (spec §11.8), which the popup's question said.
+    pub(super) fn delete_impersonation(&mut self, id: Uuid, name: &str) -> Option<ChatIntent> {
+        let Some(mut config) = self.snapshot_config() else {
+            return self.note("ui.cmd.settings_pending");
+        };
+        let before = config.impersonation_profiles.len();
+        config.impersonation_profiles.retain(|p| p.id != id);
+        if config.impersonation_profiles.len() == before {
+            // Gone between the question and the answer — nothing to delete.
+            return self.note("ui.imp.none");
+        }
+        let msg = self.loc.tf("ui.imp.deleted", &[("name", name)]);
+        self.push_note(&msg);
+        Some(ChatIntent::UpdateConfig(Box::new(config)))
+    }
+
+    /// `/impersonation use <name>` — link the persona to the active chat's
+    /// profile, through the same `UpdateProfile` the settings field commits.
+    /// Applies live: the next impersonation resolves the link at `Ctrl+U` time.
+    fn link_impersonation(&mut self, wanted: &str) -> Option<ChatIntent> {
+        let profile = match self.active_full_profile() {
+            Ok(p) => p,
+            Err(key) => return self.note(key),
+        };
+        let (persona_id, persona_name) = self.resolve_impersonation(wanted)?;
+        let msg = self.loc.tf(
+            "ui.imp.linked",
+            &[("profile", &profile.name), ("name", &persona_name)],
+        );
+        self.push_note(&msg);
+        Some(ChatIntent::UpdateProfile {
+            id: profile.id,
+            edit: Box::new(ProfileEdit {
+                impersonation_profile_id: Some(Some(persona_id)),
+                ..Default::default()
+            }),
+        })
+    }
+
+    /// `/impersonation use default` — unlink: impersonation falls back to the
+    /// shared default text (the settings choice's "not set" option).
+    fn unlink_impersonation(&mut self) -> Option<ChatIntent> {
+        let profile = match self.active_full_profile() {
+            Ok(p) => p,
+            Err(key) => return self.note(key),
+        };
+        let msg = self
+            .loc
+            .tf("ui.imp.unlinked", &[("profile", &profile.name)]);
+        self.push_note(&msg);
+        Some(ChatIntent::UpdateProfile {
+            id: profile.id,
+            edit: Box::new(ProfileEdit {
+                impersonation_profile_id: Some(None),
+                ..Default::default()
+            }),
+        })
+    }
+
+    /// `/impersonation system [text|clear]` — the system message of the persona
+    /// the active profile is linked to, resolved the way impersonation itself
+    /// resolves it. No link (or a dangling one) answers with the two routes
+    /// that create one; an edit applies to the **next** impersonation
+    /// everywhere, unlike the profile texts, and the notes reflect that.
+    fn impersonation_text_command(&mut self, edit: TextEdit) -> Option<ChatIntent> {
+        let profile = match self.active_full_profile() {
+            Ok(p) => p,
+            Err(key) => return self.note(key),
+        };
+        let persona = profile.impersonation_profile_id.and_then(|id| {
+            self.settings_snapshot.as_ref().and_then(|(config, ..)| {
+                config
+                    .impersonation_profiles
+                    .iter()
+                    .find(|p| p.id == id)
+                    .cloned()
+            })
+        });
+        let Some(persona) = persona else {
+            let msg = self
+                .loc
+                .tf("ui.imp.not_linked", &[("profile", &profile.name)]);
+            self.push_note(&msg);
+            return None;
+        };
+        match edit {
+            TextEdit::Show => {
+                if persona.system_message.is_empty() {
+                    let msg = self
+                        .loc
+                        .tf("ui.imp.system_empty", &[("name", &persona.name)]);
+                    self.push_note(&msg);
+                } else {
+                    self.input
+                        .set_text(&format!("/impersonation system {}", persona.system_message));
+                    self.mark_input_changed();
+                }
+                None
+            }
+            TextEdit::Clear | TextEdit::Set(_) => {
+                let text = match edit {
+                    TextEdit::Set(t) => t,
+                    _ => String::new(),
+                };
+                let key = if text.is_empty() {
+                    "ui.imp.system_cleared"
+                } else {
+                    "ui.imp.system_set"
+                };
+                let Some(mut config) = self.snapshot_config() else {
+                    return self.note("ui.cmd.settings_pending");
+                };
+                let Some(p) = config
+                    .impersonation_profiles
+                    .iter_mut()
+                    .find(|p| p.id == persona.id)
+                else {
+                    return self.note("ui.cmd.settings_pending");
+                };
+                p.system_message = text;
+                let msg = self.loc.tf(key, &[("name", &persona.name)]);
+                self.push_note(&msg);
+                Some(ChatIntent::UpdateConfig(Box::new(config)))
+            }
+        }
+    }
+
+    /// Resolves a persona by name — [`resolve_named`], the profile resolver's
+    /// rule, over the snapshot's personas. An empty list answers with the
+    /// route that creates one instead of an empty "there is:" enumeration.
+    fn resolve_impersonation(&mut self, wanted: &str) -> Option<(Uuid, String)> {
+        let personas = self.personas();
+        if personas.is_empty() {
+            self.note("ui.imp.none");
+            return None;
+        }
+        match resolve_named(&personas, wanted) {
+            Ok(hit) => Some(hit),
+            Err(hits) => {
+                let all = personas.into_iter().map(|(_, name)| name).collect();
+                self.report_unresolved(
+                    wanted,
+                    hits,
+                    all,
+                    ("ui.imp.no_persona", "ui.imp.many_personas"),
+                    "ui.cmd.route_imp_list",
+                );
+                None
+            }
+        }
     }
 
     /// A localized note with no arguments, and no intent — the shape most

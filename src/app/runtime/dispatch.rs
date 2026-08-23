@@ -489,6 +489,10 @@ pub(super) fn dispatch(
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
+        // The chat list's `Ctrl+R` for the open chat; the result comes back as
+        // `ChatRenamed`, a failure as `ChatListError` (which falls back to a
+        // feed note when the list is closed). See spec §11.2.
+        ChatIntent::AutoTitleChat(id) => AppCommand::AutoRenameChat(id),
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
@@ -499,6 +503,11 @@ pub(super) fn dispatch(
             system_message: String::new(),
         },
         ChatIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
+        // Stage 3: the text subcommands (`/profile system|greeting`,
+        // `/impersonation …`) commit through the same two commands the settings
+        // screen's editors use (docs/history/commands-stage3.md §3.2–3.3).
+        ChatIntent::UpdateProfile { id, edit } => AppCommand::UpdateProfile { id, edit },
+        ChatIntent::UpdateConfig(config) => AppCommand::UpdateConfig(config),
         ChatIntent::ClearSelfModel => {
             AppCommand::UpdateSelfModel(crate::entities::self_model::SelfModelEdit::Clear)
         }

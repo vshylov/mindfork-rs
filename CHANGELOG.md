@@ -122,6 +122,21 @@ split by subsystem.
   of their attachments) and how to get the rest back — put the file next to
   `chats/`, or restore a backup. A first launch, having no chats either, stays
   quiet as before.
+- **`/autotitle` — the model-written title as a typed command.** The action
+  lived only behind `Ctrl+R` in the chat list, and in a browser tab that key
+  reloads the page. The command titles the open conversation; failures land as
+  a note in the chat when the list is not there to show them.
+- **The impersonation profiles are operable by commands.** `/impersonation
+  list · new [name] · delete <name> · use <name|default> · system
+  [text|clear]` — the user personas `Ctrl+U` writes as, until now editable
+  only in settings behind `Ctrl+N`/`Ctrl+D`, which a browser tab keeps for
+  itself. Deleting always asks first; `use default` returns the profile to
+  the shared text.
+- **The profile's texts are editable from the input box.** `/profile system
+  [text|clear]` and `/profile greeting [text|clear]` edit the open chat's
+  profile — bare, the current text comes back as an editable command line;
+  `clear` removes it. Both apply to new conversations with that profile, and
+  the notes say so.
 
 ### Changed
 
@@ -187,6 +202,15 @@ split by subsystem.
   before.
 
 ### Fixed
+
+- **A typed command no longer resurfaces in the input box after doing its
+  job.** `/takeback` glued itself onto the restored message ("your text/takeback"),
+  `/regen` came back into the box, a `/clone`'d chat opened holding `/clone`,
+  and the chat `/new` was typed in kept it as a saved draft — all one defect:
+  the box's cleared draft reached the orchestrator one step after the command
+  itself. The draft is now flushed first. The restored message also gets a
+  separating space when text was already in the box, instead of fusing with it
+  mid-word.
 
 - **When a copy cannot reach your clipboard, the app now says what will.** In a
   browser terminal such as JupyterLab's, the OSC 52 sequence a copy sends is

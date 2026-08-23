@@ -98,6 +98,11 @@ pub enum ChatIntent {
         id: Uuid,
         title: String,
     },
+    /// Ask the model to title the open chat (command `/autotitle`; `Ctrl+R` in
+    /// the chat list — browser-taken, which is what earned it a typed route).
+    /// The result arrives as `ChatRenamed`; failures fall back to a feed note
+    /// (`ChatListError` routing). See spec §11.2, docs/history/commands-stage3.md.
+    AutoTitleChat(Uuid),
     /// Clone the open chat (command `/clone`; `Ctrl+D` in the chat list).
     CloneChat(Uuid),
     /// Write the open chat to a file (command `/export [md|json] [path]`).
@@ -227,6 +232,20 @@ pub enum ChatIntent {
     /// `/profile delete <name>`, confirmed; `Ctrl+D` in the settings screen).
     /// The orchestrator refuses to delete the last one.
     DeleteProfile(Uuid),
+    /// Apply a profile edit (commands `/profile system|greeting`,
+    /// `/impersonation use`) — the same `AppCommand::UpdateProfile` the
+    /// settings editors commit through, so validation and persistence are
+    /// shared. `Box` — `ProfileEdit` carries large fields.
+    UpdateProfile {
+        id: Uuid,
+        edit: Box<crate::features::profiles::ProfileEdit>,
+    },
+    /// Replace the whole config (commands `/impersonation new|delete|system` —
+    /// the personas live in `AppConfig.impersonation_profiles` and are plain
+    /// config edits, exactly as the settings screen commits them). Built from
+    /// the screen's settings snapshot, which every config change re-emits.
+    /// `Box` — `AppConfig` is large.
+    UpdateConfig(Box<AppConfig>),
     /// Toggle terminal mouse capture for wheel scrolling (`Ctrl+W`). `true` —
     /// the wheel scrolls the feed (text selection — with Shift); `false` —
     /// native mouse selection. See spec §11.3.
@@ -280,16 +299,27 @@ enum ConfirmAction {
     /// Wipe the active profile's self-model (`/self clear`; `Ctrl+K` twice in
     /// the self-model screen, which is itself a confirmation).
     ClearSelfModel,
+    /// Delete an impersonation profile (`/impersonation delete <name>`;
+    /// `Ctrl+D` in the settings screen's "Impersonation" subsection). Always
+    /// confirmed, the `/profile delete` rule: a typed prefix can resolve to a
+    /// persona the user did not picture, and its system message is
+    /// unrecoverable. The intent is built **at confirm time** from the current
+    /// settings snapshot ([`ChatScreen::confirmed_intent`]) — a config edit,
+    /// not a fixed intent.
+    DeleteImpersonation { id: Uuid, name: String },
 }
 
 impl ConfirmAction {
-    /// The intent this operation confirms.
-    fn intent(&self) -> ChatIntent {
+    /// The intent this operation confirms. [`ConfirmAction::DeleteImpersonation`]
+    /// has none of its own — the screen builds a config edit at confirm time
+    /// ([`ChatScreen::confirmed_intent`]).
+    fn intent(&self) -> Option<ChatIntent> {
         match self {
-            ConfirmAction::Regenerate => ChatIntent::RegenerateLast,
-            ConfirmAction::DeleteExchange => ChatIntent::DeleteLastExchange,
-            ConfirmAction::DeleteProfile { id, .. } => ChatIntent::DeleteProfile(*id),
-            ConfirmAction::ClearSelfModel => ChatIntent::ClearSelfModel,
+            ConfirmAction::Regenerate => Some(ChatIntent::RegenerateLast),
+            ConfirmAction::DeleteExchange => Some(ChatIntent::DeleteLastExchange),
+            ConfirmAction::DeleteProfile { id, .. } => Some(ChatIntent::DeleteProfile(*id)),
+            ConfirmAction::ClearSelfModel => Some(ChatIntent::ClearSelfModel),
+            ConfirmAction::DeleteImpersonation { .. } => None,
         }
     }
 
@@ -303,6 +333,9 @@ impl ConfirmAction {
                 &[("name", name), ("chats", &chats.to_string())],
             ),
             ConfirmAction::ClearSelfModel => loc.t("ui.confirm.clear_self_model").to_string(),
+            ConfirmAction::DeleteImpersonation { name, .. } => {
+                loc.tf("ui.confirm.delete_impersonation", &[("name", name)])
+            }
         }
     }
 }

@@ -164,9 +164,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-23, version 0.9.7)
+## Status (2026-08-24, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2526 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2543 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -178,6 +178,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Commands — stage 3: `/autotitle`, the personas, the profile texts, and the
+  command residue** — the JupyterLab pass's gaps closed: the model-written
+  title, the impersonation profiles (`/impersonation list|new|delete|use|system`)
+  and the profile texts (`/profile system|greeting`, reserved word `clear`)
+  each got a typed route through the settings paths they mirror, and the
+  draft flush now precedes the intent, so a spent command no longer resurfaces
+  in the box ([docs/history/commands-stage3.md](docs/history/commands-stage3.md)).
 - **Sub-agent chats, PRs 2–7 of 7 — the sub-agent with the agent's tools,
   the migration of old calls, the transcript in the list, in search, titled,
   and live while it runs** — `call_subagent` runs as a nested turn with the
@@ -268,9 +275,6 @@ being recent is dropped, not shortened.
 - **History compression** — a rolling summary keeps a long chat inside the
   context window: `/compact`, an automatic trigger, read-back tools for the
   folded range ([docs/journal/engine.md](docs/journal/engine.md)).
-- **The documentation refactor** — this router, the per-area journal and
-  `docs/lessons.md`, with the gates that keep the structure from rotting
-  ([docs/journal/quality.md](docs/journal/quality.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

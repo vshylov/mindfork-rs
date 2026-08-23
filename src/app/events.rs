@@ -534,7 +534,8 @@ pub enum AppEvent {
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),
     /// Restore text into the input box (after deleting the last exchange). A non-empty
-    /// existing input isn't overwritten — the text is prepended to it (UI).
+    /// existing input isn't overwritten — the text is prepended to it (UI), with a
+    /// separating space when neither boundary has its own.
     RestoreInput(String),
     /// The assistant's reply generation has started. `model` — the model the
     /// turn is going to, so the live bubble's header can name it right away
