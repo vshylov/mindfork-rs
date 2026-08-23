@@ -53,27 +53,33 @@ impl Shard {
     }
 }
 
-/// Reads a `-NNNNN-of-NNNNN.gguf` tail off `path`; `None` — an ordinary
-/// single-file GGUF (or anything else), which is the safe answer: every caller
-/// then behaves exactly as it did before split models were understood.
+/// The one place the tail is recognized: `Some((head_len, index, total))` when
+/// `stem` (an extension-less name) ends in `-NNNNN-of-NNNNN`, where `head_len`
+/// is the byte length of the name in front of it.
 ///
-/// Deliberately strict — the fixed five-digit shape `gguf-split` produces, with
-/// a sane numbering (`1 <= index <= total`). A name that only looks similar is
-/// better treated as a plain file than misreported as a model with missing parts.
-pub fn parse_shard(path: &str) -> Option<Shard> {
-    let stem = path.strip_suffix(EXT)?;
+/// Deliberately strict — the fixed five-digit shape `gguf-split` produces, a
+/// sane numbering (`1 <= index <= total`) and a non-empty name before the tail.
+/// A name that only looks similar is better treated as a plain file than
+/// misreported as a model with missing parts, and both callers want the same
+/// answer to that question.
+fn split_tail(stem: &str) -> Option<(usize, u32, u32)> {
     let b = stem.as_bytes();
     let head_len = b.len().checked_sub(TAIL_LEN)?;
     let tail = &b[head_len..];
-    if tail[0] != b'-' || &tail[6..10] != b"-of-" {
+    if head_len == 0 || tail[0] != b'-' || &tail[6..10] != b"-of-" {
         return None;
     }
     let index = digits(&tail[1..6])?;
     let total = digits(&tail[10..15])?;
-    // `head_len == 0` — a tail and nothing else: not a model's name.
-    if head_len == 0 || index == 0 || index > total {
-        return None;
-    }
+    (index > 0 && index <= total).then_some((head_len, index, total))
+}
+
+/// Reads a `-NNNNN-of-NNNNN.gguf` tail off `path` ([`split_tail`]); `None` — an
+/// ordinary single-file GGUF (or anything else), which is the safe answer: every
+/// caller then behaves exactly as it did before split models were understood.
+pub fn parse_shard(path: &str) -> Option<Shard> {
+    let stem = path.strip_suffix(EXT)?;
+    let (head_len, index, total) = split_tail(stem)?;
     // The tail matched, so all of its bytes are ASCII and `head_len` is a char
     // boundary — slicing the `str` here cannot panic.
     Some(Shard {
@@ -89,28 +95,11 @@ pub fn parse_shard(path: &str) -> Option<Shard> {
 pub fn display_name(path: &str) -> Option<String> {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let name = name.trim_end_matches(EXT);
-    let name = strip_tail(name);
-    (!name.is_empty()).then(|| name.to_string())
-}
-
-/// Cuts the `-NNNNN-of-NNNNN` tail off an extension-less name; returns it
-/// unchanged when there is none.
-fn strip_tail(stem: &str) -> &str {
-    let b = stem.as_bytes();
-    let Some(head_len) = b.len().checked_sub(TAIL_LEN) else {
-        return stem;
+    let name = match split_tail(name) {
+        Some((head_len, _, _)) => &name[..head_len],
+        None => name,
     };
-    let tail = &b[head_len..];
-    if head_len > 0
-        && tail[0] == b'-'
-        && &tail[6..10] == b"-of-"
-        && digits(&tail[1..6]).is_some()
-        && digits(&tail[10..15]).is_some()
-    {
-        &stem[..head_len]
-    } else {
-        stem
-    }
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Parses a fixed-width run of ASCII digits; `None` if anything else is in there.

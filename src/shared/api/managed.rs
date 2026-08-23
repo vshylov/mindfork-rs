@@ -594,41 +594,62 @@ mod tests {
         assert!(err.to_string().contains("файл модели"), "{err}");
     }
 
-    /// A multi-file GGUF loads from its first part, and the parts beside it have
-    /// to be there. Both mistakes look the same from outside — the server exits
-    /// while loading — so the preflight names the actual file instead.
+    /// The three split-model tests below share one opening — write parts, point
+    /// the config at one of them, read back what `launch` refused with — so it is
+    /// a fixture, not a test (lessons §2: the third test that starts like the
+    /// first two is where sliding self-duplication comes from).
+    ///
+    /// The binary is a path inside the same directory that deliberately does not
+    /// exist: past the preflight the launch must fail at `spawn` and say so, and
+    /// a bare `llama-server` would make that depend on the developer's `PATH`.
+    fn preflight_error(dir: &std::path::Path, parts: &[&str], model: &str) -> String {
+        for part in parts {
+            std::fs::write(dir.join(part), b"gguf").expect("write a part");
+        }
+        let cfg = ManagedConfig {
+            binary: dir.join("no-such-llama-server"),
+            model_path: Some(dir.join(model).display().to_string()),
+            ..base_cfg()
+        };
+        match ServerHandle::launch(&cfg, ru()) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("launch cannot succeed: the binary does not exist"),
+        }
+    }
+
+    /// The localized preflight error for `key`, naming `file` inside `dir`.
+    fn expect_about(dir: &std::path::Path, key: &str, file: &str) -> String {
+        ru().tf(key, &[("path", &dir.join(file).display().to_string())])
+    }
+
+    /// What a launch that got *past* every preflight fails with: `spawn` of the
+    /// binary that isn't there. The negative control of the tests below.
+    fn expect_spawn(dir: &std::path::Path) -> String {
+        expect_about(dir, "ui.err.managed.spawn", "no-such-llama-server")
+    }
+
+    /// A multi-file GGUF needs the parts beside the one it is pointed at. Without
+    /// this check a half-downloaded model reaches `spawn` and dies while loading,
+    /// which reads as the generic early exit.
     #[test]
     fn launch_missing_split_part_errors_before_spawn() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let first = dir.path().join("model-00001-of-00003.gguf");
-        let second = dir.path().join("model-00002-of-00003.gguf");
-        std::fs::write(&first, b"gguf").expect("write part 1");
+        let (d, first) = (dir.path(), "model-00001-of-00003.gguf");
 
-        let cfg = ManagedConfig {
-            model_path: Some(first.display().to_string()),
-            ..base_cfg()
-        };
-        let err = match ServerHandle::launch(&cfg, ru()) {
-            Err(e) => e,
-            Ok(_) => panic!("expected an error about a missing part"),
-        };
-        let expected = ru().tf(
+        let err = preflight_error(d, &[first], first);
+        let missing = expect_about(
+            d,
             "ui.err.managed.shard_missing",
-            &[("path", &second.display().to_string())],
+            "model-00002-of-00003.gguf",
         );
-        assert!(err.to_string().contains(&expected), "{err}");
+        assert!(err.contains(&missing), "{err}");
 
-        // The negative control: with every part present the preflight passes and
-        // the launch gets as far as `spawn`, which fails on the fake binary. Without
-        // it this test would pass with the whole split check deleted (lessons §2).
-        std::fs::write(&second, b"gguf").expect("write part 2");
-        std::fs::write(dir.path().join("model-00003-of-00003.gguf"), b"gguf").expect("part 3");
-        let err = match ServerHandle::launch(&cfg, ru()) {
-            Err(e) => e,
-            Ok(_) => panic!("the fake binary cannot spawn"),
-        };
-        let spawn = ru().tf("ui.err.managed.spawn", &[("path", "llama-server")]);
-        assert!(err.to_string().contains(&spawn), "{err}");
+        // The negative control: with every part present the preflight passes and the
+        // launch gets as far as `spawn`. Without it the test would pass with the
+        // whole split check deleted (lessons §2).
+        let all = ["model-00002-of-00003.gguf", "model-00003-of-00003.gguf"];
+        let err = preflight_error(d, &all, first);
+        assert!(err.contains(&expect_spawn(d)), "{err}");
     }
 
     /// llama.cpp refuses any part but the first ("model must be loaded with the
@@ -636,23 +657,18 @@ mod tests {
     #[test]
     fn launch_from_a_later_split_part_points_at_the_first() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let second = dir.path().join("model-00002-of-00003.gguf");
-        std::fs::write(&second, b"gguf").expect("write part 2");
-
-        let cfg = ManagedConfig {
-            model_path: Some(second.display().to_string()),
-            ..base_cfg()
-        };
-        let err = match ServerHandle::launch(&cfg, ru()) {
-            Err(e) => e,
-            Ok(_) => panic!("expected an error about the first part"),
-        };
-        let first = dir.path().join("model-00001-of-00003.gguf");
-        let expected = ru().tf(
-            "ui.err.managed.shard_not_first",
-            &[("path", &first.display().to_string())],
+        let d = dir.path();
+        let err = preflight_error(
+            d,
+            &["model-00002-of-00003.gguf"],
+            "model-00002-of-00003.gguf",
         );
-        assert!(err.to_string().contains(&expected), "{err}");
+        let first = expect_about(
+            d,
+            "ui.err.managed.shard_not_first",
+            "model-00001-of-00003.gguf",
+        );
+        assert!(err.contains(&first), "{err}");
     }
 
     /// A single-file model keeps the preflight it always had: the split check must
@@ -660,19 +676,8 @@ mod tests {
     #[test]
     fn a_single_file_model_is_not_split_checked() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let model = dir.path().join("gemma-4-it.gguf");
-        std::fs::write(&model, b"gguf").expect("write the model");
-        let cfg = ManagedConfig {
-            model_path: Some(model.display().to_string()),
-            ..base_cfg()
-        };
-        let err = match ServerHandle::launch(&cfg, ru()) {
-            Err(e) => e,
-            Ok(_) => panic!("the fake binary cannot spawn"),
-        };
-        // Past the preflight: the failure is `spawn` of the nonexistent binary.
-        let spawn = ru().tf("ui.err.managed.spawn", &[("path", "llama-server")]);
-        assert!(err.to_string().contains(&spawn), "{err}");
+        let err = preflight_error(dir.path(), &["gemma-4-it.gguf"], "gemma-4-it.gguf");
+        assert!(err.contains(&expect_spawn(dir.path())), "{err}");
     }
 
     #[test]
