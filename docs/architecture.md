@@ -159,7 +159,10 @@ src/
 │  │  │                     nothing — see spec §9.3.4
 │  │  ├─ reembed.rs         `/reindex`: DB-global background job re-embedding every
 │  │  │                     foreign-generation vector in place from the text already
-│  │  │                     stored (batched, cancellable, resumable) — spec §9.3.4
+│  │  │                     stored (batched, cancellable, resumable), plus the
+│  │  │                     backfill stage that rebuilds by-reference attachments
+│  │  │                     the index has no rows for, from the text in the chat
+│  │  │                     files — spec §9.3.4
 │  │  ├─ save_queue.rs      SaveQueue: debounced queue for deferred chat saves
 │  │  ├─ restart_queue.rs   RestartQueue: debounces server (re)starts on engine
 │  │  │                     settings edits (a series of edits → one restart)
@@ -1405,7 +1408,11 @@ Storage invariants:
   stays available to re-embed from. A row is stamped by its writer under the
   lock it already holds, which makes an unstamped vector impossible to write;
   readers ignore foreign generations, and the re-embed job (`/reindex`) drains
-  them. `reset_vectors` deliberately leaves the counter alone — it is monotonic,
+  them. **Rows a chat attachment does not have at all are a different failure
+  with a different fix**, and `/reindex` runs that one first: `attachment_known_ids`
+  (any row, any generation) against `attachment_indexed_ids` (searchable now) is
+  what keeps the two queues disjoint, so nothing is rebuilt twice — see spec
+  §9.3.4 and `orchestrator::reembed::scan_missing_attachments`. `reset_vectors` deliberately leaves the counter alone — it is monotonic,
   and reusing a number would make a surviving old row read as current.
   The column is on the three **plain** tables only (`note_vectors`,
   `rag_documents`, `attachment_documents`): a `vec0` virtual table cannot take

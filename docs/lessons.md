@@ -955,6 +955,17 @@ double inner quotes, count the trigram floor in **characters** (a three-characte
 Cyrillic token is six bytes), and keep the rule in exactly one place.
 — *full-text search over chat content — stage 1*.
 
+**Two repair paths need two questions, not one predicate reused.** "Is this file
+searchable?" and "does this file have any rows at all?" read as the same question
+and are not: rows from a retired embedding generation answer no to the first and
+yes to the second, and each state has a different fix (re-embed the stored text
+versus rebuild from the source). Reusing the searchable predicate for both would
+have put every attachment through both paths after a model change — re-chunked by
+one, counted into the queue of the other, which then comes up short of the total
+its progress banner was promised. Before pointing a second consumer at an existing
+predicate, ask what it is *for*, not what it returns.
+— *`/reindex` rebuilds an attachment index that is missing entirely*.
+
 **Prefer best-effort to refusal on paths that protect data.** A `data.db` that cannot be
 read as a database is packed raw rather than failing the backup — a backup that
 *happens* for a corrupt database is worth more than a compact one. Same shape elsewhere:

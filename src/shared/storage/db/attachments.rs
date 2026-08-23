@@ -132,6 +132,31 @@ impl Db {
         Ok(ids)
     }
 
+    /// Every attachment of this chat that has **any** row in the index,
+    /// whatever generation it was written under — the complement of
+    /// [`Self::attachment_indexed_ids`], and deliberately a different question.
+    ///
+    /// "Searchable now" is what a turn needs; "indexed at all" is what the
+    /// repair job needs, because the two failures have different fixes. Rows
+    /// from a foreign generation are the re-embed queue's work (the text is
+    /// already stored, so they only need new vectors); an attachment with no
+    /// rows at all can only be rebuilt from the chat file, and that is the
+    /// backfill's work. Asking the searchable question here would make the two
+    /// overlap: the backfill would re-chunk files the re-embed pass is about to
+    /// handle, and the queue it was counted into would come up short.
+    pub fn attachment_known_ids(&self, chat_id: Uuid) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT attachment_id FROM attachment_documents WHERE chat_id = ?1",
+        )?;
+        let ids = stmt
+            .query_map(params![chat_id.to_string()], |r| {
+                Ok(parse_uuid(r.get::<_, String>(0)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
+
     /// Drops one attachment's chunks (re-indexing replaces them instead of
     /// duplicating — the same idempotency `/rag add` has). Returns the number
     /// deleted.
@@ -201,6 +226,36 @@ mod tests {
 
     fn chunk(chat: Uuid, att: Uuid, name: &str, text: &str, v: Vec<f32>) -> AttachmentChunk {
         AttachmentChunk::new(chat, att, name, text, v)
+    }
+
+    /// The two questions the repair paths ask, and why they are two: after a
+    /// model change the rows are still there (so the file is *known*) but none
+    /// is searchable (so it is not *indexed*). Answering the same for both would
+    /// send the `/reindex` backfill to re-chunk a file the re-embed queue is
+    /// already holding.
+    #[test]
+    fn known_and_indexed_diverge_once_a_generation_is_retired() {
+        let db = db();
+        let (chat, att) = (Uuid::new_v4(), Uuid::new_v4());
+        db.attachment_insert(&chunk(chat, att, "a.txt", "A", vec![1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.attachment_known_ids(chat).unwrap(), vec![att]);
+        assert_eq!(db.attachment_indexed_ids(chat).unwrap(), vec![att]);
+
+        db.bump_embed_generation().unwrap();
+        assert_eq!(
+            db.attachment_known_ids(chat).unwrap(),
+            vec![att],
+            "the rows and their text are still there"
+        );
+        assert!(
+            db.attachment_indexed_ids(chat).unwrap().is_empty(),
+            "but none of them can answer a query"
+        );
+
+        // A chat that never had an attachment answers empty to both.
+        let other = Uuid::new_v4();
+        assert!(db.attachment_known_ids(other).unwrap().is_empty());
     }
 
     #[test]

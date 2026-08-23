@@ -175,7 +175,9 @@ build the moment they drift from what the app actually renders
 - **Change your embedding model freely**: the switch is detected
   automatically, and `/reindex` re-embeds notes, attachments and every
   profile's knowledge base in one resumable background pass — even the
-  similarity thresholds are recalibrated to the new model's scale.
+  similarity thresholds are recalibrated to the new model's scale. The same
+  command rebuilds an attached file's search index when it is missing
+  altogether, from the text kept in the chat itself.
 
 ### Tools — a client-side agentic loop
 
@@ -384,7 +386,7 @@ Slash commands, typed straight into the input box:
 | `/changes` (`F4`) | what the assistant changed in the attached project, as a diff, with `r` to put one file back |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
-| `/reindex` | re-embed everything with the current embedding model |
+| `/reindex` | re-embed everything with the current embedding model, and rebuild attachment indexes that are missing |
 | `/compact` | fold the older part of the chat into a rolling summary |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | control playback |
