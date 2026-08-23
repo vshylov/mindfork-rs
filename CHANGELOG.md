@@ -48,6 +48,12 @@ split by subsystem.
   delegation the status bar shows a quiet chip — the sub-agent's name, the
   round it is on and the tool it is using — instead of a bare "generating"
   for minutes.
+- **A sub-agent's transcript is there while it runs.** The moment the
+  assistant delegates, the transcript appears in the chat list under the chat,
+  marked *running*, its message count growing round by round. Open it to read
+  what the sub-agent has done so far — it grows as you watch — and go back to
+  the chat: moving between the two no longer cancels the turn (any other chat
+  switch still does). Renaming it while it runs keeps your title.
 - **Sub-agent transcripts name themselves.** With automatic titling on
   (either setting), a finished delegation gets a model-written title the
   moment it lands, like a new chat does; a title you gave it by hand is

@@ -835,6 +835,18 @@ Details:
   collects the runs that arrived with the turn and `maybe_auto_title_run`
   starts the title task for each (both `auto_title` points; `renamed_manually`
   wins), through the same `view()`-resolved task a transcript's `Ctrl+R` uses.
+- **The turn's progress channel** ([docs/subagent-live.md](subagent-live.md)
+  §3.1–§3.2). `done_tx` carries `GenMessage::{Progress{id, TurnProgress},
+  Done(GenResult)}`: `file_round` sends `RoundFiled`/`ChildRoundFiled` by
+  depth, `run_subagent` sends `ChildStarted(SubagentRun)` before the child
+  runs (the run's id is minted there and kept by the landed record) and
+  `ChildEnded` after. One channel, so progress precedes the result. The
+  orchestrator keeps `inflight: Option<InflightTurn>` — the parent's filed
+  rounds, the running run, `parent_needs_refresh` — created by
+  `start_generation`, fed by `handle_progress` (a step from another
+  generation is dropped), read and dropped by `handle_done` (a title given
+  while running is copied onto the landed run first). Never a source of
+  truth: `GenResult` is.
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server
@@ -2342,6 +2354,20 @@ in `handle_ctrl_shortcut` for the three chords, in `try_read_only_refusal`
 ahead of every parser for the blocked commands, and at the send. The `chat://`
 address book (`refresh_known_chats`) and the link picker (`summary_card`) see
 transcripts through the same snapshot.
+
+**The transcript while it runs** (spec §9.3.2, §11.2; docs/subagent-live.md
+§3.3–§3.6). `view()` and `with_child_mut` have a third arm over the in-flight
+run, so every transcript path works on a running one; `emit_chat_list`
+appends its card with `ChildSummary.running`; `handle_progress` sends
+`AppEvent::TranscriptGrew` for a filed round of the *open* transcript, and
+the screen rebuilds its feed from the `transcript` copy it keeps while a
+transcript is open. `switch_within_turn` exempts the parent ↔ in-flight child
+move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
+from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
+which the screen's `set_live_turn` turns into a resumed generation (a chat)
+or a kept chip with `current_gen` left `None` (a transcript — the parent's
+chunks must not land there); a return to the parent marks
+`parent_needs_refresh`, and `handle_done` re-activates it whole.
 
 **Search over transcripts** (spec §11.2.1, research §3.9). The orchestrator's
 `indexed_messages(chat)` emits the chat's own messages with `sub_id = None`
