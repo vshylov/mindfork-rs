@@ -1674,6 +1674,7 @@
   "tool.chat_search.unavailable": "Search over other conversations is unavailable right now. If you know which conversation to look in, chat_read can still read it by title.",
   "tool.chat_search.empty": "No other conversation of this profile matches that query. Try different words; note the current conversation is not covered by this search.",
   "tool.chat_search.header": "Fragments found in other conversations: {n} (matches in total: {total}).",
+  "tool.chat_search.child": "{title} - a sub-agent transcript from the conversation '{parent}'",
   "tool.chat_search.chat": "Conversation \"{title}\" {id}, last active {date}:",
   "tool.chat_search.hit": "{n}. [{role} · {date} · page {page}]",
   "tool.chat_search.hit_unpaged": "{n}. [{role} · {date}]",

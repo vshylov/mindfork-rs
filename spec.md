@@ -1480,10 +1480,17 @@ this in another chat"). Design and the decided forks —
   place (`snapshot_other_chats`): the current profile's chats only (§9.5),
   the **current chat excluded** (its visible half is the model's own context;
   its folded half belongs to `history_search`, §6.7), hidden chats dropped.
-  `chat_read` re-checks the loaded file against the same boundary, so a stale
-  snapshot cannot leak across profiles. Only `message.text` is searchable —
-  thoughts and tool results are not in the index (roadmap: "widening what
-  chat search indexes").
+  **Sub-agent transcripts are in** ([§9.3.2](#932-call_subagent);
+  docs/research/subagent-chats.md F4): every transcript of those chats *and
+  of the current one* — its transcripts are not in the model's context — is
+  a conversation of its own in the snapshot, with its own `chat://` address
+  and a label naming it as a sub-agent transcript of its parent; the index
+  scopes a transcript by its own id (§11.2.1), and `chat_read` reads it out
+  of the parent's file. `chat_read` re-checks the loaded file against the
+  same boundary, so a stale snapshot cannot leak across profiles — and a
+  transcript whose exchange was taken back reads as unavailable. Only
+  `message.text` is searchable — thoughts and tool results are not in the
+  index (roadmap: "widening what chat search indexes").
 - **Off by default.** Both tools are optional (`enabled_by_default = false`):
   present in the per-profile Tools catalog, but no profile gets them without
   the user's hand — `reconcile_tools` never auto-enables optional tools — and
@@ -1875,9 +1882,12 @@ A direct requirement from the task:
   is additionally shown — dimmed — when any of its transcripts matches.** So a
   matched transcript never appears without its parent, an unmatched one never
   pads a matched parent, and text found only in the parent shows the parent
-  alone. (Content mode needs the index to name transcripts, which it does from
-  the next stage of the track on; until then transcripts only show there with
-  no result pending.) On a transcript `Enter` opens it, `F2` renames it,
+  alone. Content mode names transcripts from the index by their own ids
+  ([§11.2.1](#1121-the-message-level-search-screen)), so the rule is one
+  membership test there too — and `Enter` on a transcript row opens it on
+  *its* first match, on a chat row on the chat's own (a match inside a
+  transcript never drags the parent to a message it does not have). On a
+  transcript `Enter` opens it, `F2` renames it,
   `Ctrl+R` has the model title it, `F5` copies it; **`Del` and `Ctrl+D` refuse**
   with a note in the status area naming the way a transcript does go away —
   `Ctrl+E`/`Ctrl+R` of the spawning exchange in the parent, or the parent
@@ -1916,6 +1926,21 @@ this?"*; this screen answers *"where exactly, and take me there."*
   and it reads well when one chat holds many hits,
   which is the common case (a common word matched 163 messages across 50 chats on a
   real 171-chat corpus).
+- **Sub-agent transcripts are groups of their own, under their parent's**
+  ([§9.3.2](#932-call_subagent); docs/research/subagent-chats.md §3.9). The
+  index (`cache.db`, §5.2) marks a transcript's messages with the run's id
+  (`messages.sub_id`, `CACHE_SCHEMA` 2 — the file rebuilds itself), indexed
+  under the parent's file so the bookkeeping never sees a second level; every
+  query that names a conversation then treats a transcript as one —
+  `COALESCE(sub_id, chat_id)` is the conversation id in the `Ctrl+F` id set,
+  in the tools' scope (§9.11) and in the grouping here. Results are grouped
+  by `(chat, transcript)`: the chat's own hits first, then one group per
+  matched transcript **in call order** (the list's tree, in the results), its
+  header indented with a `└` and no blank line before it. A chat none of
+  whose *own* messages match still heads its transcripts' groups — as a
+  "0 matches" header navigation steps over — so a transcript is never shown
+  orphaned. `Enter` on a transcript's hit opens the **transcript** (read-only,
+  §11.3) on that message.
 - **One hit** = a muted `role · date` prefix plus a **snippet** — an excerpt of the
   message centred on the first match, with the matched spans drawn in the accent
   color. Snippets are built in Rust from the text the index already stores, not by

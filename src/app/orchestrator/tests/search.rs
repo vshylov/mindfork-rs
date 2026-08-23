@@ -163,6 +163,34 @@ fn indexed_chat(orch: &mut Orchestrator, title: &str, texts: &[&str]) -> (Uuid, 
     (id, ids)
 }
 
+/// Like [`indexed_chat`], with one sub-agent transcript hung on the last
+/// message's tool-call record. Returns the chat id, the transcript id and the
+/// transcript's message ids.
+fn indexed_chat_with_run(
+    orch: &mut Orchestrator,
+    title: &str,
+    own: &[&str],
+    run_title: &str,
+    run_texts: &[&str],
+) -> (Uuid, Uuid, Vec<Uuid>) {
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, title);
+    for t in own {
+        chat.push_message(Message::user(*t));
+    }
+    let run = crate::entities::subagent::SubagentRun::fixture(run_title, run_texts);
+    let run_id = run.id;
+    let run_msgs: Vec<Uuid> = run.messages.iter().map(|m| m.id).collect();
+    let mut carrier = Message::assistant("delegated");
+    carrier.tool_calls = vec![run.on_record()];
+    chat.push_message(carrier);
+    orch.storage.json().save_chat(&chat).unwrap();
+    orch.index_saved_chat(&chat);
+    let id = chat.id;
+    orch.chats.push(chat);
+    (id, run_id, run_msgs)
+}
+
 /// The reply to a message-level query, taken off the event channel.
 fn message_search(
     orch: &mut Orchestrator,
@@ -217,6 +245,7 @@ fn message_search_groups_by_chat_in_list_order_with_titles() {
             1,
             &[crate::shared::storage::cache::IndexedMessage {
                 id: Uuid::new_v4(),
+                sub_id: None,
                 role: "user".into(),
                 ts: "2026-07-29T10:00:00+00:00".into(),
                 text: "призрачный маркер".into(),
@@ -273,6 +302,85 @@ fn message_search_groups_by_chat_in_list_order_with_titles() {
     );
     // `total` counts the index, which still holds the ghost chat's hit.
     assert_eq!(total, 4);
+}
+
+/// Sub-agent transcripts in the results (spec §11.2.1, research §3.9): a
+/// transcript's hits form a group of their own right after its parent's,
+/// carrying `parent`; a parent none of whose own messages match still heads
+/// the group, with no hits; and the `Ctrl+F` id set names the transcript by
+/// its own id — and *not* the parent, so the list's membership rule can
+/// dim it.
+#[test]
+fn message_search_nests_a_transcripts_hits_under_its_parent() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let (parent, run, run_msgs) = indexed_chat_with_run(
+        &mut orch,
+        "Родитель",
+        &["свой маркер", "и тайна"],
+        "Критик",
+        &["маркер в задании", "маркер в ответе", "тайна внутри"],
+    );
+    let (_plain, _) = indexed_chat(&mut orch, "Обычный", &["маркер тут"]);
+
+    // Both levels match: the parent's group, then the transcript's.
+    let (groups, total) = message_search(&mut orch, &mut rx, "маркер");
+    assert_eq!(total, 4);
+    let shape: Vec<(Uuid, Option<Uuid>, usize)> = groups
+        .iter()
+        .map(|g| (g.chat_id, g.parent, g.hits.len()))
+        .collect();
+    let i = shape.iter().position(|g| g.0 == parent).unwrap();
+    assert_eq!(shape[i], (parent, None, 1));
+    assert_eq!(shape[i + 1], (run, Some(parent), 2), "{shape:?}");
+    assert_eq!(groups[i + 1].title, "Критик");
+    let hits: Vec<Uuid> = groups[i + 1].hits.iter().map(|h| h.message_id).collect();
+    assert_eq!(hits, vec![run_msgs[0], run_msgs[1]], "in the run's order");
+
+    // Only the transcript matches: the parent still heads it, with 0 hits.
+    let (groups, total) = message_search(&mut orch, &mut rx, "внутри");
+    assert_eq!(total, 1);
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!((groups[0].chat_id, groups[0].hits.len()), (parent, 0));
+    assert_eq!((groups[1].chat_id, groups[1].parent), (run, Some(parent)));
+
+    // The id set for the list filter.
+    let ids = |orch: &Orchestrator, rx: &mut UnboundedReceiver<AppEvent>, q: &str| {
+        orch.handle_search_chats(q.into());
+        loop {
+            if let AppEvent::ChatSearchResults { chat_ids, .. } = rx.try_recv().unwrap() {
+                return chat_ids.unwrap();
+            }
+        }
+    };
+    assert_eq!(
+        ids(&orch, &mut rx, "внутри"),
+        vec![run],
+        "the transcript stands for itself"
+    );
+    let mut both = ids(&orch, &mut rx, "тайна");
+    both.sort();
+    let mut want = vec![parent, run];
+    want.sort();
+    assert_eq!(both, want);
+}
+
+/// `Enter` on a row in content mode: a transcript row opens the transcript on
+/// *its* first match, a parent row on the parent's own — a match inside a
+/// transcript never drags the parent to a message it does not have.
+#[test]
+fn first_match_in_chat_resolves_each_level_separately() {
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let (parent, run, run_msgs) = indexed_chat_with_run(
+        &mut orch,
+        "Родитель",
+        &["без совпадения", "свой маркер"],
+        "Критик",
+        &["маркер в задании"],
+    );
+    let own_hit = orch.chats.iter().find(|c| c.id == parent).unwrap().messages[1].id;
+    assert_eq!(orch.first_match_in_chat(run, "маркер"), Some(run_msgs[0]));
+    assert_eq!(orch.first_match_in_chat(parent, "маркер"), Some(own_hit));
+    assert_eq!(orch.first_match_in_chat(parent, "задании"), None);
 }
 
 /// The cap truncates the hits, never the count — that is what lets the screen

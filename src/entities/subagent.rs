@@ -78,6 +78,48 @@ pub struct SubagentRun {
 }
 
 impl SubagentRun {
+    /// A finished run for tests: `User(texts[0])`, then the rest alternating
+    /// assistant/user, so the fixture has text at both roles to index and
+    /// render. Shared by the search, list and tool tests.
+    #[cfg(test)]
+    pub fn fixture(title: &str, texts: &[&str]) -> Self {
+        let messages = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if i % 2 == 0 {
+                    Message::user(*t)
+                } else {
+                    Message::assistant(*t)
+                }
+            })
+            .collect();
+        Self {
+            id: Uuid::new_v4(),
+            kind: RunKind::Subagent,
+            title: title.into(),
+            renamed_manually: false,
+            name: Some(title.into()),
+            created_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            system_message: "persona".into(),
+            sampling_override: None,
+            messages,
+            outcome: Some(RunOutcome::Completed),
+            tokens: 0,
+        }
+    }
+
+    /// A `call_subagent` record carrying this run — the shape a landed call
+    /// leaves on the parent's assistant message.
+    #[cfg(test)]
+    pub fn on_record(self) -> crate::entities::message::ToolCallRecord {
+        let bare = r#"{"id":"c1","name":"call_subagent","arguments":{"message":"x"},"result":"y"}"#;
+        let mut rec: crate::entities::message::ToolCallRecord = serde_json::from_str(bare).unwrap();
+        rec.subagent = Some(Box::new(self));
+        rec
+    }
+
     /// The sub-agent's final answer — the text of its last substantive
     /// assistant message — or `None` when it never wrote one.
     pub fn final_reply(&self) -> Option<&str> {

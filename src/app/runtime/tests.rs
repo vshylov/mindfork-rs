@@ -353,6 +353,7 @@ fn message_results() -> AppEvent {
     AppEvent::MessageSearchResults {
         query: "маркер".into(),
         groups: vec![SearchGroup {
+            parent: None,
             chat_id: uuid::Uuid::new_v4(),
             title: "Найденный чат".into(),
             hits: vec![SearchHit {
@@ -657,6 +658,7 @@ fn message_results_for(chat: uuid::Uuid, messages: &[uuid::Uuid]) -> AppEvent {
     AppEvent::MessageSearchResults {
         query: "маркер".into(),
         groups: vec![SearchGroup {
+            parent: None,
             chat_id: chat,
             title: "Найденный чат".into(),
             hits: messages

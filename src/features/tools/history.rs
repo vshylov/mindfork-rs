@@ -30,6 +30,7 @@ use anyhow::Result;
 use crate::entities::profile::ToolId;
 use crate::features::chat_search::{SNIPPET_BUDGET_CHARS, build_snippet, to_fts_query};
 use crate::shared::i18n::Locale;
+use crate::shared::storage::cache::IndexScope;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -160,7 +161,7 @@ impl Tool for HistorySearch {
         let hits = match ctx
             .storage
             .cache()
-            .matching_messages_in_chat(&fts, ctx.chat_id)
+            .matching_messages_in_chat(&fts, IndexScope::Chat(ctx.chat_id))
         {
             Ok(hits) => hits,
             // The index is disposable and self-healing (deleting `cache.db` is a
@@ -266,6 +267,7 @@ mod tests {
             .filter(|m| !m.text.trim().is_empty())
             .map(|m| IndexedMessage {
                 id: m.id,
+                sub_id: None,
                 role: format!("{:?}", m.role).to_lowercase(),
                 ts: m.timestamp.to_rfc3339(),
                 text: m.text.clone(),
