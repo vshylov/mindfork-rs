@@ -330,6 +330,32 @@ impl ChatScreen {
         self.retrying = None;
     }
 
+    /// The sub-agent chip (`AppEvent::SubagentProgress`, spec §9.3.2): worded
+    /// here in the interface language; `None` clears it. Guarded by the
+    /// generation id like every streaming event.
+    pub fn set_subagent_progress(
+        &mut self,
+        generation_id: Uuid,
+        progress: Option<crate::app::events::SubagentProgress>,
+    ) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        self.subagent = progress.map(|p| {
+            let round = p.round.to_string();
+            match p.tool {
+                Some(tool) => self.loc.tf(
+                    "ui.chat.bg.subagent_tool",
+                    &[("name", &p.name), ("round", &round), ("tool", &tool)],
+                ),
+                None => self.loc.tf(
+                    "ui.chat.bg.subagent",
+                    &[("name", &p.name), ("round", &round)],
+                ),
+            }
+        });
+    }
+
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {
         if self.current_gen != Some(generation_id) {
             return;
@@ -402,6 +428,7 @@ impl ChatScreen {
         self.generating = false;
         self.current_gen = None;
         self.clear_retrying();
+        self.subagent = None;
         if reason == FinishReason::Cancelled {
             self.push_note(self.loc.t("ui.chat.gen_cancelled"));
         }

@@ -1698,6 +1698,8 @@
   "ui.err.compact_timeout": "The model did not return a summary in time.",
   "ui.err.bg_compaction": "History compression",
   "ui.chat.bg.compact": "compressing",
+  "ui.chat.bg.subagent": "sub-agent \"{name}\" · round {round}",
+  "ui.chat.bg.subagent_tool": "sub-agent \"{name}\" · round {round} · {tool}",
   "ui.chat.bg.retry": "retrying {attempt}/{max} in {secs} s",
   "ui.help.compact": "compress the earlier part of the conversation into a summary",
   "ui.settings.group.context": "Context",

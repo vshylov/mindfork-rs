@@ -11,12 +11,13 @@
 use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 
-#[cfg(test)]
-use crate::entities::chat::ChatSummary;
 use crate::entities::chat::{Chat, FeedView};
+#[cfg(test)]
+use crate::entities::chat::{ChatSummary, ChildSummary};
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
 use crate::entities::profile::Profile;
 use crate::entities::self_model::{Goal, GoalStatus, NarrativeSegment, SelfModel, UserModel};
+use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::tools::default_tool_ids;
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
 #[cfg(test)]
@@ -223,7 +224,6 @@ const ROWS_RAW: &str = r#"
     07-18 16:20 | 07-18 16:58 |  7 | Backup dry run before the update
     07-17 08:50 | 07-17 12:19 | 23 | Regex or a real parser?
     07-15 13:00 | 07-16 10:27 | 11 | Mermaid diagrams in the terminal
-    07-15 18:44 | 07-15 20:05 | 12 | Wool or synthetic for autumn hikes?
     07-14 13:20 | 07-14 16:31 | 27 | Naming things: a short rant
     07-13 10:05 | 07-13 11:58 |  9 | Reading GGUF metadata in Python
     07-12 20:30 | 07-12 21:12 |  5 | First week with mindfork: impressions
@@ -311,9 +311,6 @@ The moment you reach for a lookbehind to balance brackets. Nesting means a gramm
 Can you draw a flowchart right in the chat?
 Yes — fence a ```mermaid block: flowcharts and sequence diagrams render as text graphics, and anything else falls back to the source.
 
-Base layer for wet cold — wool or synthetic?
-Merino for the long smell-proof days, synthetic for the wet ones: it dries in an hour where wool sulks. Drizzle above zero — synthetic; crisp and dry — merino.
-
 Why is `Manager` always a design smell?
 Because it names the absence of a decision — everything manages something. Name the responsibility (`Scheduler`, `Registry`, `Janitor`) and half the design questions answer themselves.
 
@@ -323,6 +320,77 @@ The header is plain: magic, version, then key-value pairs — the `gguf` package
 So, a week in — what stuck?
 The notes: answers that start from what we already established feel different. And `Ctrl+T` — reading the thinking taught me how to ask better questions.
 "#;
+
+/// The filler row (0-based, in [`ROWS_RAW`] order) whose assistant delegated
+/// a review to a sub-agent — the refactoring chat, where a second pair of
+/// eyes on a split is the natural ask.
+const REVIEWED_ROW: usize = 5;
+
+/// The sub-agent transcript under the refactoring chat (spec §9.3.2): one
+/// delegation, completed, titled the way the automatic titling would name
+/// it. Fixed ids and times like everything else here. Shown nested in the
+/// chat list capture, and openable read-only in the interactive demo.
+pub fn reviewer_run() -> SubagentRun {
+    let created = date(7, 27, 17, 40);
+    let finished = date(7, 27, 17, 44);
+    let mut ask = Message::user(
+        "Review the proposed split of `AppState` into `Session`, `Catalog`, \
+         `Scheduler` and `Janitor`: which methods still borrow across two of \
+         them, and what is the smallest change that makes each borrow local?",
+    );
+    ask.id = Uuid::from_u128(0x6d66_5f64_656d_6f5f_7375_6261_0000_0001);
+    ask.timestamp = created;
+    let mut verdict = Message::assistant(
+        "Two crossings survive the split. `retry_failed()` reads \
+         `Catalog.entries` while it mutates `Scheduler.queue` — pass the \
+         failed ids in as a `Vec` and the borrow ends at the call. \
+         `sweep()` holds `Janitor.expired` across a `Session.close()` — \
+         collect the ids first, then close in a second loop. Everything else \
+         stays inside one struct; the borrow checker will accept the rest as is.",
+    );
+    verdict.id = Uuid::from_u128(0x6d66_5f64_656d_6f5f_7375_6261_0000_0002);
+    verdict.timestamp = finished;
+    SubagentRun {
+        id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_7375_6261_0000_0000),
+        kind: RunKind::Subagent,
+        title: "Borrow-checker review of the split".into(),
+        renamed_manually: false,
+        name: Some("Reviewer".into()),
+        created_at: created,
+        finished_at: Some(finished),
+        system_message: "You are a meticulous Rust reviewer. Read the proposed \
+                         module split and report only what will not compile or \
+                         will fight the borrow checker, with the smallest fix."
+            .into(),
+        sampling_override: None,
+        messages: vec![ask, verdict],
+        outcome: Some(RunOutcome::Completed),
+        tokens: 412,
+    }
+}
+
+/// The `call_subagent` record that carries [`reviewer_run`] on the
+/// refactoring chat's answer.
+fn reviewer_record() -> ToolCallRecord {
+    let run = reviewer_run();
+    ToolCallRecord {
+        id: "call_demo_review".into(),
+        name: "call_subagent".into(),
+        arguments: serde_json::json!({
+            "name": "Reviewer",
+            "system_message": run.system_message,
+            "message": run.messages[0].text,
+        }),
+        result: Some(format!(
+            "{}\n\nTranscript: {}",
+            run.final_reply().unwrap_or_default(),
+            crate::features::chat_links::uri(run.id)
+        )),
+        thought_signature: None,
+        images: 0,
+        subagent: Some(Box::new(run)),
+    }
+}
 
 /// The `(question, answer)` pairs out of [`ROW_BODIES_RAW`].
 fn bodies() -> impl Iterator<Item = (&'static str, &'static str)> {
@@ -364,7 +432,11 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
                     created_at: created,
                     modified_at: modified,
                     message_count: count,
-                    children: Vec::new(),
+                    children: if i == REVIEWED_ROW {
+                        vec![ChildSummary::of(&reviewer_run())]
+                    } else {
+                        Vec::new()
+                    },
                 }
             }),
     );
@@ -519,6 +591,9 @@ pub fn filler_chats() -> Vec<Chat> {
             let mut a = Message::assistant(assistant);
             a.id = Uuid::from_u128(0x6d66_5f64_656d_6f5f_6d73_6700 + (i as u128) * 2 + 1);
             a.timestamp = modified;
+            if i == REVIEWED_ROW {
+                a.tool_calls = vec![reviewer_record()];
+            }
             chat.messages = vec![u, a];
             chat
         })
@@ -664,6 +739,27 @@ mod tests {
         );
     }
 
+    /// The list capture and the seeded chats describe one world: the row
+    /// that shows a transcript is the chat whose file holds it, and the
+    /// transcript is the same run in both.
+    #[test]
+    fn the_list_capture_and_the_seeded_chats_agree_on_the_transcript() {
+        let summaries = chat_summaries();
+        let with_child: Vec<&ChatSummary> = summaries
+            .iter()
+            .filter(|c| !c.children.is_empty())
+            .collect();
+        assert_eq!(with_child.len(), 1);
+        assert_eq!(with_child[0].title, "Refactoring a god object in Rust");
+        let run = reviewer_run();
+        assert_eq!(with_child[0].children[0].id, run.id);
+        assert_eq!(with_child[0].children[0].title, run.title);
+        let chat = &filler_chats()[REVIEWED_ROW];
+        assert_eq!(chat.id, with_child[0].id);
+        assert_eq!(chat.child(run.id).unwrap().final_reply(), run.final_reply());
+        assert_eq!(reviewer_run(), reviewer_run(), "frozen like the rest");
+    }
+
     /// Provisioning a fresh root seeds everything the demo needs, and doing
     /// it twice changes nothing — every id is fixed.
     #[test]
@@ -691,7 +787,14 @@ mod tests {
         );
 
         let files = storage.json().chat_files().unwrap();
-        assert_eq!(files.len(), 22, "the showcase chat + 21 fillers");
+        assert_eq!(files.len(), 21, "the showcase chat + 20 fillers");
+        let reviewed = filler_chats()[REVIEWED_ROW].id;
+        let reviewed = storage.json().load_chat(reviewed).unwrap().unwrap();
+        assert_eq!(
+            reviewed.children().map(|r| r.id).collect::<Vec<_>>(),
+            vec![reviewer_run().id],
+            "the sub-agent transcript is part of the seeded world"
+        );
         let showcase = storage.json().load_chat(chat_id()).unwrap().unwrap();
         assert_eq!(showcase.messages.len(), 4);
         assert!(

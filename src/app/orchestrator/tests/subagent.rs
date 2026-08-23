@@ -231,6 +231,97 @@ async fn subagent_runs_with_tools_and_lands_on_the_record() {
         .max()
         .unwrap_or(0);
     assert_eq!(max_completion, 2);
+
+    // The status-bar chip followed the run (spec §9.3.2): round 1, then the
+    // tool it entered, then round 2, then cleared — and the parent's own
+    // rounds reported nothing.
+    let chip: Vec<Option<(String, u32, Option<String>)>> = events
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::SubagentProgress { progress, .. } => Some(
+                progress
+                    .as_ref()
+                    .map(|p| (p.name.clone(), p.round, p.tool.clone())),
+            ),
+            _ => None,
+        })
+        .collect();
+    let critic = |round: u32, tool: Option<&str>| {
+        Some(("Critic".to_string(), round, tool.map(str::to_string)))
+    };
+    assert_eq!(
+        chip,
+        vec![
+            critic(1, None),
+            critic(1, Some("current_time")),
+            critic(2, None),
+            None
+        ]
+    );
+}
+
+/// A landed transcript is titled at landing under either trigger point
+/// (research §3.10): the run's whole exchange arrives at once, so the
+/// "after the user's message" and "after the reply" moments coincide. The
+/// parent is on its second exchange, so the parent's own trigger stays quiet
+/// and the one title request on the engine is the transcript's.
+#[tokio::test]
+async fn a_landed_transcript_is_auto_titled_under_both_modes() {
+    for mode in [
+        crate::shared::config::AutoTitleMode::AfterUserMessage,
+        crate::shared::config::AutoTitleMode::AfterAssistantReply,
+    ] {
+        let (dir, chat_id, _) = delegated().await;
+        let mut cfg = no_auto_cfg();
+        cfg.interface.auto_title = mode;
+        // A second delegation in the existing chat: the parent's first-reply
+        // trigger is spent; the title script answers the transcript's request.
+        let backend = ScriptRecorder::new(vec![
+            call("c2", "call_subagent", DELEGATE),
+            text("it is one"),
+            text("done: one"),
+            text("Second opinion"),
+        ]);
+        let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+            dir.path(),
+            Some(backend.clone() as Arc<dyn EngineBackend>),
+            cfg,
+        );
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        cmd_tx
+            .send(AppCommand::SendMessage("delegate again".into()))
+            .unwrap();
+        let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+            .await
+            .unwrap_or_else(|| panic!("no title landed under {mode:?}"));
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let chat = load(dir.path(), chat_id);
+        let new_run = chat.children().last().unwrap();
+        assert!(
+            matches!(&renamed, AppEvent::ChatRenamed { id, title } if *id == new_run.id && title == "Second opinion"),
+            "{renamed:?} under {mode:?}"
+        );
+        assert_eq!(new_run.title, "Second opinion");
+        assert!(
+            !new_run.renamed_manually,
+            "an automatic title is not a manual one"
+        );
+        assert_eq!(
+            chat.title, "Новый чат",
+            "the parent was not retitled: {mode:?}"
+        );
+        // The title request was the transcript's digest, not the parent's.
+        let title_req = backend.requests().last().unwrap().clone();
+        assert!(
+            title_req.messages[0].content.contains("it is one"),
+            "{:?}",
+            title_req.messages[0].content
+        );
+    }
 }
 
 #[tokio::test]

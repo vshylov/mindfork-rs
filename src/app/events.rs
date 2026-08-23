@@ -370,6 +370,17 @@ pub struct ChildView {
 }
 
 /// Event from the orchestrator to UI. This is the only way UI updates its read-only
+/// One sub-agent run's position, for the status-bar chip
+/// ([`AppEvent::SubagentProgress`]): the persona's name (the `name` argument,
+/// else the run's title), the round it is on, and the tool it is inside, if
+/// any. Raw data — the screen words it in the interface language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentProgress {
+    pub name: String,
+    pub round: u32,
+    pub tool: Option<String>,
+}
+
 /// projection.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -599,6 +610,16 @@ pub enum AppEvent {
     /// Background task activity (auto-reflection/consolidation) for the quiet indicator
     /// in the status bar: `active=true` at the start, `false` on completion. See stage 5.
     BackgroundTask { kind: BackgroundKind, active: bool },
+    /// Where a sub-agent run stands (spec §9.3.2): a quiet status-bar chip
+    /// while the parent's turn is inside `call_subagent`, whose own stream is
+    /// muted — without it the bar would read "generating" for minutes with
+    /// nothing moving (docs/lessons.md §4). `None` — the run ended (the
+    /// parent's turn goes on). Carries `generation_id` like every streaming
+    /// event, so a cancelled turn's chip cannot linger.
+    SubagentProgress {
+        generation_id: Uuid,
+        progress: Option<SubagentProgress>,
+    },
     /// A transient provider failure is being retried; the next attempt starts in
     /// `delay_secs`.
     ///
