@@ -47,6 +47,10 @@ pub struct GlyphSet {
     pub assistant_icon: &'static str,
     /// User icon ("❯") — reply header.
     pub user_icon: &'static str,
+    /// System-message icon ("§") — the bubble a sub-agent transcript opens
+    /// with (spec §11.3). WGL4 in both modes: it is one of the few glyphs that
+    /// already is.
+    pub system_icon: &'static str,
     /// Input-box prompt column ("❯ "; 2 columns wide in both sets, see
     /// `input_box::PROMPT_W`).
     pub prompt: &'static str,
@@ -99,6 +103,7 @@ pub static UNICODE_GLYPHS: GlyphSet = GlyphSet {
     border: BorderType::Rounded,
     assistant_icon: "✦",
     user_icon: "❯",
+    system_icon: "§",
     prompt: "❯ ",
     tool_head: "⚒  ",
     tool_cont: "   ",
@@ -126,6 +131,7 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     border: BorderType::Plain,
     assistant_icon: "*",
     user_icon: ">",
+    system_icon: "§",
     prompt: "> ",
     tool_head: "# ",
     tool_cont: "  ",
@@ -562,6 +568,7 @@ mod tests {
         let all = [
             g.assistant_icon,
             g.user_icon,
+            g.system_icon,
             g.prompt,
             g.tool_head,
             g.tool_cont,

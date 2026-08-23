@@ -13,6 +13,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
+use crate::entities::subagent::RunOutcome;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::i18n::Locale;
@@ -65,6 +66,30 @@ pub enum ChatListAction {
     /// orchestrator, which owns both the index and the chat — the widget just
     /// says which chat and what was searched for.
     OpenFirstMatch { chat: Uuid, query: String },
+}
+
+/// One row of the list: a chat, or a sub-agent transcript nested under the
+/// chat whose call made it (spec §11.2). The tree is two levels deep by
+/// construction — a transcript never has transcripts — so a flat row list
+/// with a parent link is the whole structure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub id: Uuid,
+    pub title: String,
+    pub message_count: usize,
+    /// The chat this transcript belongs to; `None` for a chat.
+    pub parent: Option<Uuid>,
+    /// How the run ended (transcripts only); `None` on a transcript — it never said.
+    pub outcome: Option<RunOutcome>,
+    /// A chat shown only because one of its transcripts matched the filter:
+    /// drawn dimmed, so the match and its context read differently.
+    pub dimmed: bool,
+}
+
+impl Row {
+    pub fn is_child(&self) -> bool {
+        self.parent.is_some()
+    }
 }
 
 /// What the search line searches. Title mode is the historical behaviour (a
@@ -183,18 +208,63 @@ impl ChatListState {
     /// title would hide the very chats the search just found. The user's sort
     /// still orders the result — stage 1 *filters* rather than ranks, because
     /// trigram's `bm25` is weak (docs/research/chat-content-search.md §7a).
-    fn visible(&self) -> Vec<ChatSummary> {
-        match self.scope {
-            SearchScope::Title => filter_and_sort(&self.all, &self.query, self.sort),
-            SearchScope::Content => {
-                let mut out = filter_and_sort(&self.all, "", self.sort);
-                if let Some(ids) = &self.results {
-                    let matched: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
-                    out.retain(|c| matched.contains(&c.id));
-                }
-                out
+    ///
+    /// **The tree rule** (spec §11.2, docs/research/subagent-chats.md §3.7): a
+    /// row is shown iff it matches; a chat is additionally shown — dimmed —
+    /// when any of its transcripts matches. So a matched transcript never
+    /// appears without its parent, an unmatched one never pads a matched
+    /// parent, and text found only in the parent shows the parent alone.
+    /// Chats keep the sort mode; a chat's transcripts follow it in call order.
+    fn visible(&self) -> Vec<Row> {
+        let needle = self.query.trim().to_lowercase();
+        let matched: Option<std::collections::HashSet<Uuid>> = match self.scope {
+            SearchScope::Title => None,
+            SearchScope::Content => self
+                .results
+                .as_ref()
+                .map(|ids| ids.iter().copied().collect()),
+        };
+        let matches = |id: Uuid, title: &str| match self.scope {
+            SearchScope::Title => needle.is_empty() || title.to_lowercase().contains(&needle),
+            // No result yet (or an unsearchable query) — everything shows, as
+            // an empty query does.
+            SearchScope::Content => matched.as_ref().is_none_or(|set| set.contains(&id)),
+        };
+        let mut rows = Vec::new();
+        for chat in filter_and_sort(&self.all, "", self.sort) {
+            let children: Vec<Row> = chat
+                .children
+                .iter()
+                .filter(|c| matches(c.id, &c.title))
+                .map(|c| Row {
+                    id: c.id,
+                    title: c.title.clone(),
+                    message_count: c.message_count,
+                    parent: Some(chat.id),
+                    outcome: c.outcome,
+                    dimmed: false,
+                })
+                .collect();
+            let own = matches(chat.id, &chat.title);
+            if !own && children.is_empty() {
+                continue;
             }
+            rows.push(Row {
+                id: chat.id,
+                title: chat.title.clone(),
+                message_count: chat.message_count,
+                parent: None,
+                outcome: None,
+                dimmed: !own,
+            });
+            rows.extend(children);
         }
+        rows
+    }
+
+    /// The selected row, if the list isn't empty.
+    fn selected_row(&self) -> Option<Row> {
+        self.visible().get(self.selected).cloned()
     }
 
     /// Applies a content-search result (`AppEvent::ChatSearchResults`).
@@ -688,15 +758,17 @@ impl ChatListState {
     /// of the list area). A long title is truncated with an ellipsis.
     fn item_line(
         &self,
-        chat: &ChatSummary,
+        row: &Row,
         is_selected: bool,
         active: Option<Uuid>,
         palette: &Palette,
         width: usize,
         loc: &'static Locale,
     ) -> Line<'static> {
-        let is_active = active == Some(chat.id);
-        // The selected row's rail (2 columns) + the dot (2 columns) = the prefix.
+        let is_active = active == Some(row.id);
+        // The selected row's rail (2 columns) + the dot (2 columns) = the prefix;
+        // a transcript is indented under its parent with a `└` instead of the
+        // dot (WGL4, one column — docs/lessons.md §5).
         let rail = if is_selected {
             Span::styled("▌ ", Style::new().fg(palette.success))
         } else {
@@ -709,27 +781,42 @@ impl ChatListState {
         };
         let title_style = if is_active {
             Style::new().fg(palette.text).bold()
+        } else if row.dimmed {
+            palette.muted_style()
         } else {
             Style::new().fg(palette.text)
         };
+        let marker = if row.is_child() { "  └ " } else { "● " };
 
-        let count = loc.tf(
+        // A transcript that did not complete says so beside its count.
+        let outcome = match (row.is_child(), row.outcome) {
+            (false, _) | (true, Some(RunOutcome::Completed)) => None,
+            (true, Some(RunOutcome::Cancelled)) => Some("ui.chatlist.run.cancelled"),
+            (true, Some(RunOutcome::TimedOut)) => Some("ui.chatlist.run.timed_out"),
+            (true, Some(RunOutcome::Failed)) => Some("ui.chatlist.run.failed"),
+            (true, Some(RunOutcome::RoundLimit)) => Some("ui.chatlist.run.round_limit"),
+            (true, None) => Some("ui.chatlist.run.interrupted"),
+        };
+        let mut count = loc.tf(
             "ui.chatlist.messages",
-            &[("n", &chat.message_count.to_string())],
+            &[("n", &row.message_count.to_string())],
         );
+        if let Some(key) = outcome {
+            count = format!("{} · {count}", loc.t(key));
+        }
         let count_w = display_width_str(&count);
-        const PREFIX_W: usize = 4; // rail (2) + the "● " dot (2)
+        let prefix_w = 2 + marker.chars().count(); // the rail + the marker
         const TRAIL: usize = 1; // right-hand margin
         // Available width for the title (a minimum 1-column gap before the counter).
-        let max_title = width.saturating_sub(PREFIX_W + count_w + TRAIL + 1);
-        let (title, title_w) = wrap::truncate_to_width(&chat.title, max_title);
+        let max_title = width.saturating_sub(prefix_w + count_w + TRAIL + 1);
+        let (title, title_w) = wrap::truncate_to_width(&row.title, max_title);
         let gap = width
-            .saturating_sub(PREFIX_W + title_w + count_w + TRAIL)
+            .saturating_sub(prefix_w + title_w + count_w + TRAIL)
             .max(1);
 
         Line::from(vec![
             rail,
-            Span::styled("● ", Style::new().fg(dot_color)),
+            Span::styled(marker.to_string(), Style::new().fg(dot_color)),
             Span::styled(title, title_style),
             Span::raw(" ".repeat(gap)),
             Span::styled(count, palette.muted_style()),
@@ -772,6 +859,10 @@ impl ChatListState {
             "ui.chatlist.search_mode",
             &[("mode", mode_label(self.scope, loc))],
         );
+        // On a transcript the two keys that refuse are not advertised
+        // (spec §11.2): an advertised key that is a no-op is worse than a
+        // missing hint, and the refusal itself still names the way out.
+        let on_child = self.selected_row().is_some_and(|r| r.is_child());
         let mut items: Vec<(&str, &str, bool)> = vec![
             ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
             ("Enter", loc.t("ui.chatlist.hk.open"), false),
@@ -779,13 +870,19 @@ impl ChatListState {
             ("F2", loc.t("ui.chatlist.hk.rename"), false),
             ("Ctrl+R", loc.t("ui.chatlist.hk.autoname"), false),
             ("Ctrl+N", loc.t("ui.chatlist.hk.new"), false),
-            ("Ctrl+D", loc.t("ui.chatlist.hk.clone"), false),
-            ("F5", loc.t("ui.chatlist.hk.copy"), false),
-            ("Del", loc.t("ui.chatlist.hk.delete"), true),
+        ];
+        if !on_child {
+            items.push(("Ctrl+D", loc.t("ui.chatlist.hk.clone"), false));
+        }
+        items.push(("F5", loc.t("ui.chatlist.hk.copy"), false));
+        if !on_child {
+            items.push(("Del", loc.t("ui.chatlist.hk.delete"), true));
+        }
+        items.extend([
             ("Esc", loc.t("ui.chatlist.hk.back"), false),
             ("Ctrl+Q", loc.t("ui.chatlist.hk.quit"), false),
             ("Tab", sort_desc.as_str(), false),
-        ];
+        ]);
         // Only in content mode, because that is the only mode it does anything
         // in — an advertised key that is a no-op is worse than a missing hint.
         if self.scope == SearchScope::Content {
@@ -841,6 +938,7 @@ mod tests {
             created_at: Utc::now(),
             modified_at: Utc::now(),
             message_count: 0,
+            children: Vec::new(),
         }
     }
 
@@ -1456,9 +1554,10 @@ mod tests {
         let next_id = s.visible()[2].id; // will end up under position 1 after deletion
 
         let remaining: Vec<ChatSummary> = s
-            .visible()
-            .into_iter()
+            .all
+            .iter()
             .filter(|c| c.id != victim_id)
+            .cloned()
             .collect();
         s.set_chats(remaining);
 
@@ -1482,13 +1581,194 @@ mod tests {
         let new_last_id = s.visible()[1].id; // will become the new last one
 
         let remaining: Vec<ChatSummary> = s
-            .visible()
-            .into_iter()
+            .all
+            .iter()
             .filter(|c| c.id != victim_id)
+            .cloned()
             .collect();
         s.set_chats(remaining);
 
         assert_eq!(s.selected, 1, "selection clamps to the new last one");
         assert_eq!(s.selected_id(), Some(new_last_id));
+    }
+}
+
+/// The two-level tree (spec §11.2, docs/research/subagent-chats.md §3.7): a
+/// chat's sub-agent transcripts nest under it, in call order; the filter rule
+/// shows a transcript only with its parent and a parent alone when only it
+/// matches; the refusing keys are not advertised on a transcript.
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+    use crate::entities::chat::ChildSummary;
+    use chrono::{Duration, Utc};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn child(title: &str, minutes: i64, outcome: Option<RunOutcome>) -> ChildSummary {
+        ChildSummary {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            created_at: Utc::now() + Duration::minutes(minutes),
+            finished_at: None,
+            message_count: 3,
+            outcome,
+        }
+    }
+
+    fn family() -> Vec<ChatSummary> {
+        vec![
+            ChatSummary {
+                id: Uuid::new_v4(),
+                profile_id: Uuid::nil(),
+                title: "Планы".into(),
+                created_at: Utc::now() - Duration::hours(1),
+                modified_at: Utc::now() - Duration::hours(1),
+                message_count: 6,
+                children: vec![
+                    child("Критик", 1, Some(RunOutcome::Completed)),
+                    child("Искатель", 2, Some(RunOutcome::TimedOut)),
+                ],
+            },
+            ChatSummary {
+                id: Uuid::new_v4(),
+                profile_id: Uuid::nil(),
+                title: "Рецепты".into(),
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                message_count: 2,
+                children: Vec::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn transcripts_follow_their_parent_in_call_order() {
+        let s = ChatListState::new(family(), None);
+        let titles: Vec<(String, bool)> = s
+            .visible()
+            .iter()
+            .map(|r| (r.title.clone(), r.is_child()))
+            .collect();
+        // Sorted by modified (the default): the newer chat first, then the
+        // older one with its two transcripts in the order the calls were made.
+        assert_eq!(
+            titles,
+            vec![
+                ("Рецепты".to_string(), false),
+                ("Планы".to_string(), false),
+                ("Критик".to_string(), true),
+                ("Искатель".to_string(), true),
+            ]
+        );
+        let rows = s.visible();
+        assert_eq!(rows[2].parent, Some(rows[1].id));
+        assert_eq!(rows[3].outcome, Some(RunOutcome::TimedOut));
+        assert!(!rows[1].dimmed);
+    }
+
+    #[test]
+    fn a_matching_transcript_brings_its_parent_dimmed_and_nothing_else() {
+        let mut s = ChatListState::new(family(), None);
+        for c in "Иска".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        let rows = s.visible();
+        let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Планы", "Искатель"]);
+        assert!(rows[0].dimmed, "the parent is context, not a match");
+        assert!(!rows[1].dimmed);
+    }
+
+    #[test]
+    fn a_matching_parent_alone_shows_no_transcripts() {
+        let mut s = ChatListState::new(family(), None);
+        for c in "План".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        let titles: Vec<String> = s.visible().iter().map(|r| r.title.clone()).collect();
+        assert_eq!(titles, vec!["Планы".to_string()]);
+    }
+
+    #[test]
+    fn content_results_name_transcripts_directly() {
+        // The index answers with ids; a transcript's id stands for itself
+        // (the same membership test as a chat's).
+        let chats = family();
+        let critic = chats[0].children[0].id;
+        let recipes = chats[1].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        s.set_search_results("x".into(), Some(vec![critic, recipes]));
+        let rows = s.visible();
+        let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Рецепты", "Планы", "Критик"]);
+        assert!(rows[1].dimmed);
+    }
+
+    #[test]
+    fn keys_on_a_transcript_open_rename_and_copy_it() {
+        let chats = family();
+        let critic = chats[0].children[0].id;
+        let mut s = ChatListState::new(chats, Some(critic));
+        assert_eq!(
+            s.selected_id(),
+            Some(critic),
+            "opens selected on the active transcript"
+        );
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Switch(critic)
+        );
+        assert_eq!(s.on_key(key(KeyCode::F(5))), ChatListAction::Copy(critic));
+        assert_eq!(
+            s.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            ChatListAction::AutoRename(critic)
+        );
+        s.on_key(key(KeyCode::F(2)));
+        assert!(matches!(&s.mode, Mode::Rename { id, .. } if *id == critic));
+    }
+
+    #[test]
+    fn the_hotkey_grid_drops_delete_and_clone_on_a_transcript() {
+        let chats = family();
+        let critic = chats[0].children[0].id;
+        let parent = chats[0].id;
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let palette = Palette::default();
+        let text_of = |s: &ChatListState| -> String {
+            s.status_lines(&palette, 200, loc)
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
+                .collect()
+        };
+        let on_parent = ChatListState::new(chats.clone(), Some(parent));
+        assert!(text_of(&on_parent).contains("Del"));
+        assert!(text_of(&on_parent).contains("Ctrl+D"));
+        let on_child = ChatListState::new(chats, Some(critic));
+        assert!(!text_of(&on_child).contains("Del"));
+        assert!(!text_of(&on_child).contains("Ctrl+D"));
+    }
+
+    #[test]
+    fn a_transcript_row_is_indented_and_names_its_outcome() {
+        let chats = family();
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let palette = Palette::default();
+        let s = ChatListState::new(chats, None);
+        let rows = s.visible();
+        let text = |r: &Row| -> String {
+            s.item_line(r, false, None, &palette, 60, loc)
+                .spans
+                .iter()
+                .map(|sp| sp.content.to_string())
+                .collect()
+        };
+        assert!(text(&rows[1]).starts_with("  ● Планы"));
+        assert!(text(&rows[2]).starts_with("    └ Критик"));
+        assert!(!text(&rows[2]).contains(loc.t("ui.chatlist.run.cancelled")));
+        assert!(text(&rows[3]).contains(loc.t("ui.chatlist.run.timed_out")));
     }
 }

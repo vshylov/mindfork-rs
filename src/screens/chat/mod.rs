@@ -20,6 +20,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
+use crate::app::events::ChildView;
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
@@ -467,6 +468,11 @@ pub struct ChatScreen {
     feed: Vec<FeedMessage>,
     feed_view: MessageFeed,
     active_chat: Option<Uuid>,
+    /// `Some` while the open "chat" is a sub-agent transcript (spec §11.2):
+    /// the screen is read-only — sending and every chat-changing chord and
+    /// command refuse with a note — and the feed opens with the persona as a
+    /// system bubble. Set by `app` right before `activate_chat`.
+    child: Option<ChildView>,
     title: String,
     chats: Vec<ChatSummary>,
     /// A profile snapshot (for the picker overlay when creating a chat).
@@ -627,6 +633,7 @@ impl ChatScreen {
             feed: Vec::new(),
             feed_view: MessageFeed::new(),
             active_chat: None,
+            child: None,
             title: String::new(),
             chats: Vec::new(),
             profiles: Vec::new(),
@@ -839,6 +846,47 @@ impl ChatScreen {
         self.refresh_known_chats();
     }
 
+    /// Whose transcript the screen is showing, when it is one
+    /// (`AppEvent::ChatActivated::child`). Applied **before** `activate_chat`
+    /// builds the feed, because the feed is what differs.
+    pub fn set_child_view(&mut self, child: Option<ChildView>) {
+        self.child = child;
+    }
+
+    /// Whether the open "chat" is a read-only sub-agent transcript.
+    pub fn read_only(&self) -> bool {
+        self.child.is_some()
+    }
+
+    /// A chat-changing action on a read-only transcript: the note that says
+    /// so and names the way that works — the parent chat (lessons §4).
+    /// `true` when the action was refused.
+    pub(super) fn refuse_read_only(&mut self, what: &str) -> bool {
+        let Some(child) = &self.child else {
+            return false;
+        };
+        let msg = self.loc.tf(
+            "ui.chat.read_only",
+            &[("what", what), ("parent", &child.parent_title)],
+        );
+        self.push_note(&msg);
+        true
+    }
+
+    /// The card for `id` from the list snapshot — a chat's own, or a
+    /// sub-agent transcript's, shaped like one (spec §11.2).
+    pub(super) fn summary_card(&self, id: Uuid) -> Option<ChatSummary> {
+        if let Some(chat) = self.chats.iter().find(|c| c.id == id) {
+            return Some(chat.clone());
+        }
+        self.chats.iter().find_map(|chat| {
+            chat.children
+                .iter()
+                .find(|c| c.id == id)
+                .map(|c| chat.child_card(c))
+        })
+    }
+
     /// Refreshes the feed's `chat://` address book: this profile's
     /// conversations, the open one included (spec §11.3).
     ///
@@ -851,16 +899,19 @@ impl ChatScreen {
     /// Called from both sides of the race: the list can arrive before the chat
     /// is activated or after it.
     pub(super) fn refresh_known_chats(&mut self) {
+        // The open chat may itself be a transcript; its card names the profile.
         let profile = self
             .active_chat
-            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .and_then(|id| self.summary_card(id))
             .map(|c| c.profile_id);
+        // The profile's chats and their transcripts alike: a `chat://` address
+        // a sub-agent's result carries resolves like any other (spec §9.3.2).
         let ids = profile
             .map(|p| {
                 self.chats
                     .iter()
                     .filter(|c| c.profile_id == p)
-                    .map(|c| c.id)
+                    .flat_map(|c| std::iter::once(c.id).chain(c.child_ids()))
                     .collect()
             })
             .unwrap_or_default();

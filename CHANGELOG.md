@@ -25,6 +25,16 @@ split by subsystem.
   whole transcript is kept on the call inside this chat (the list, a read-only
   view and search follow in the next stages), and the assistant gets the
   sub-agent's final reply plus the transcript's `chat://` address.
+- **Sub-agent transcripts in the chat list.** Each delegation shows as a row
+  nested under the chat that made it (`└`), in call order, with a mark when the
+  run did not complete. It opens like a chat — the sub-agent's persona on top as
+  a system message, the instruction headed by your assistant's name, the replies
+  by the sub-agent's — but read-only: sending and anything that would change a
+  conversation refuse and point you to the parent chat; renaming (`F2`,
+  `/rename`, `Ctrl+R` for a model-written title), copying, exporting, searching
+  and speaking work. `Del` and `Ctrl+D` refuse on a transcript — it goes away
+  with the exchange that made it (`Ctrl+E`/`Ctrl+R` in the parent) or with the
+  parent. The `chat://` address a sub-agent's result carries is now a link.
 
 - **The licence and the disclaimer in Russian** — with the interface language
   set to Russian, the `F1` → "Licence"/"Disclaimer" tabs and the Windows

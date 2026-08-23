@@ -183,6 +183,9 @@ impl ChatScreen {
             'n' => Some(self.request_new_chat()),
             // Regenerate / delete the last exchange (only while not
             // generating). See spec §11.7.
+            'r' if self.refuse_read_only("Ctrl+R") => Some(None),
+            'e' if self.refuse_read_only("Ctrl+E") => Some(None),
+            'u' if self.refuse_read_only("Ctrl+U") => Some(None),
             'r' => Some(self.trigger_destructive(ConfirmAction::Regenerate)),
             'e' => Some(self.trigger_destructive(ConfirmAction::DeleteExchange)),
             // Impersonation: write a message on the user's behalf (spec
@@ -331,6 +334,11 @@ impl ChatScreen {
         if text.trim().is_empty() {
             return None;
         }
+        // A read-only transcript refuses what would change it, before any
+        // parser gets the line (spec §11.2); the rest of the commands work.
+        if let Some(intent) = self.try_read_only_refusal(&text) {
+            return intent;
+        }
         if let Some(intent) = self.try_rag_command(&text) {
             return intent;
         }
@@ -372,6 +380,11 @@ impl ChatScreen {
         if let Some(intent) = self.try_exit_command(&text) {
             return intent;
         }
+        if self.read_only() {
+            // Said, not swallowed: the box is still there for commands.
+            self.refuse_read_only(self.loc.t("ui.chat.read_only.sending"));
+            return None;
+        }
         if !self.generating {
             self.input.clear();
             self.mark_input_changed();
@@ -379,6 +392,35 @@ impl ChatScreen {
         } else {
             None
         }
+    }
+
+    /// The commands a sub-agent transcript cannot take — the ones that would
+    /// change the conversation or its environment — refused with the note that
+    /// names the parent (spec §11.2). `None` when the line is not one of them.
+    fn try_read_only_refusal(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        if !self.read_only() {
+            return None;
+        }
+        const BLOCKED: &[&str] = &[
+            "/compact",
+            "/file",
+            "/image",
+            "/project",
+            "/regen",
+            "/retry",
+            "/takeback",
+            "/impersonate",
+            "/clone",
+        ];
+        let head = text.split_whitespace().next()?;
+        let head = head.to_ascii_lowercase();
+        if !BLOCKED.contains(&head.as_str()) {
+            return None;
+        }
+        self.input.clear();
+        self.mark_input_changed();
+        self.refuse_read_only(&head);
+        Some(None)
     }
 
     /// A RAG slash command (`/rag add …`) — isn't sent as a message and

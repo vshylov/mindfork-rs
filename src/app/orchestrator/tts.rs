@@ -49,29 +49,29 @@ impl Orchestrator {
     pub(super) fn handle_tts(&mut self, scope: TtsScope) {
         // A new command always interrupts the previous playback.
         self.stop_tts();
-        let Some(chat) = self
-            .active_id
-            .and_then(|id| self.chats.iter().find(|c| c.id == id))
-        else {
+        // A chat, or a sub-agent transcript — spoken like the chat it looks
+        // like, in its parent's profile language.
+        let Some((profile_id, messages)) = self.active_id.and_then(|id| match self.view(id)? {
+            super::ChatView::Top(chat) => Some((chat.profile_id, chat.messages.clone())),
+            super::ChatView::Child { parent, run } => {
+                Some((parent.profile_id, run.messages.clone()))
+            }
+        }) else {
             self.fail_tts(self.ui_locale().t("ui.err.tts_no_active_chat"));
             return;
         };
         // Markers and role prefixes are speech content, so they're in the
         // **profile's** language (axis A, docs/history/i18n.md), not the
         // interface's.
-        let speech_loc = self.profile_locale(chat.profile_id);
-        let chunks = match build_utterances(
-            &chat.messages,
-            scope,
-            self.config.tts.speak_roles,
-            speech_loc,
-        ) {
-            Some(text) => text,
-            None => {
-                self.fail_tts(self.ui_locale().t("ui.err.tts_nothing_to_speak"));
-                return;
-            }
-        };
+        let speech_loc = self.profile_locale(profile_id);
+        let chunks =
+            match build_utterances(&messages, scope, self.config.tts.speak_roles, speech_loc) {
+                Some(text) => text,
+                None => {
+                    self.fail_tts(self.ui_locale().t("ui.err.tts_nothing_to_speak"));
+                    return;
+                }
+            };
 
         // Build the client from a settings snapshot: in a cloud mode the stored
         // provider key is shared with chat (ADR 0008) — no need to enter it again;

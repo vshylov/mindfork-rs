@@ -91,6 +91,15 @@ impl Orchestrator {
             ));
             return;
         };
+        // A sub-agent transcript is read-only (spec §11.2): the screen refuses
+        // first; this is the route-independent answer, with the text returned.
+        if self.parent_of(active_id).is_some() {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.read_only_chat").into(),
+            ));
+            let _ = self.evt_tx.send(AppEvent::RestoreInput(text));
+            return;
+        }
         let Some(backend) = self.ready_backend() else {
             // Server not ready: the UI already cleared the input box — return the
             // text so the user doesn't lose the message (the error is shown separately).

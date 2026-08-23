@@ -55,6 +55,7 @@ mod tests {
             created_at: Utc.timestamp_opt(created_min * 60, 0).unwrap(),
             modified_at: Utc.timestamp_opt(modified_min * 60, 0).unwrap(),
             message_count: 0,
+            children: Vec::new(),
         }
     }
 

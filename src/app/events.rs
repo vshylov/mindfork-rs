@@ -357,6 +357,18 @@ impl AppCommand {
     }
 }
 
+/// What the chat screen needs to know about a sub-agent transcript it shows
+/// (spec §11.2, docs/research/subagent-chats.md §3.8): whose it is, and the
+/// persona to draw as its first bubble.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChildView {
+    /// The chat whose call made the transcript.
+    pub parent: Uuid,
+    pub parent_title: String,
+    /// The sub-agent's system message — the persona the parent composed.
+    pub system_message: String,
+}
+
 /// Event from the orchestrator to UI. This is the only way UI updates its read-only
 /// projection.
 #[derive(Debug, Clone)]
@@ -459,6 +471,10 @@ pub enum AppEvent {
         /// there is no summary or the master switch is off, so turning the
         /// switch off also removes the divider.
         compaction: Option<(Uuid, String)>,
+        /// `Some` when the activated "chat" is a **sub-agent transcript** inside
+        /// another chat (spec §9.3.2, §11.2): the screen opens it read-only,
+        /// with the persona as a system bubble at the top. `None` for a chat.
+        child: Option<ChildView>,
     },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),

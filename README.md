@@ -84,7 +84,10 @@ build the moment they drift from what the app actually renders
   by full message text, down to the individual message opened right at the
   match (`Ctrl+G` from the chat list).
 - A full-screen **chat list** (`Esc`): search, two sort orders; `F2` rename ·
-  `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. New conversations
+  `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. A sub-agent's
+  transcript sits **nested under the chat that delegated to it** (`└`), opens
+  read-only with its persona on top, can be renamed and copied, and goes away
+  only with the exchange that made it. New conversations
   **title themselves** after the first reply (model-written — and by then the
   model knows what the chat is actually about; configurable to fire on your
   first message instead, or off), a chat you renamed yourself is never

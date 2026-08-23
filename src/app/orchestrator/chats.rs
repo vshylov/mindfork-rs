@@ -41,6 +41,7 @@ impl Orchestrator {
         let Some(active_id) = self.active_id else {
             return;
         };
+        // A transcript has no draft: its input box is not for typing.
         if let Some(chat) = self.chat_mut(active_id) {
             if chat.draft == text {
                 return;
@@ -57,6 +58,9 @@ impl Orchestrator {
         let Some(active_id) = self.active_id else {
             return;
         };
+        // A transcript shares its parent's collapse state — it is part of the
+        // parent (spec §11.2), so `Ctrl+T`/`Ctrl+O` there fold the parent's blocks too.
+        let active_id = self.parent_of(active_id).unwrap_or(active_id);
         if let Some(chat) = self.chat_mut(active_id) {
             if chat.feed_view == view {
                 return;
@@ -108,7 +112,8 @@ impl Orchestrator {
     }
 
     /// The shared switch path. `focus` — a message to put the feed on, plus the
-    /// query to highlight inside it.
+    /// query to highlight inside it. `id` may name a sub-agent transcript, which
+    /// opens read-only (spec §11.2).
     fn switch_to(&mut self, id: Uuid, focus: Option<FeedFocus>) {
         if self.active_id == Some(id) {
             // A plain switch to the open chat is a no-op, but a jump still has
@@ -128,7 +133,7 @@ impl Orchestrator {
         if let Some(token) = self.gen_state.request_cancel() {
             token.cancel();
         }
-        if self.chats.iter().any(|c| c.id == id) {
+        if self.view(id).is_some() {
             self.activate_focused(id, focus);
         }
     }
@@ -145,18 +150,45 @@ impl Orchestrator {
             // alone (spec §11.2). Model-written titles never set this.
             chat.renamed_manually = true;
             self.mark_dirty(id);
-            self.emit_chat_list();
-            let _ = self.evt_tx.send(AppEvent::ChatRenamed { id, title });
+        } else if !self.with_child_mut(id, |run| {
+            // A transcript is renamed by the same two routes, with the same
+            // consequence; the parent's `modified_at` is left alone — a rename
+            // is not a conversation change (the draft's rule).
+            run.title = title.clone();
+            run.renamed_manually = true;
+        }) {
+            return;
         }
+        self.emit_chat_list();
+        let _ = self.evt_tx.send(AppEvent::ChatRenamed { id, title });
+    }
+
+    /// A list operation a sub-agent transcript cannot take (delete, clone):
+    /// says so in the list's status area and names the routes that do
+    /// remove one (spec §11.2, docs/lessons.md §4).
+    fn refuse_on_child(&self, id: Uuid) -> bool {
+        if self.parent_of(id).is_none() {
+            return false;
+        }
+        let _ = self.evt_tx.send(AppEvent::ChatListError(
+            self.ui_locale().t("ui.chatlist.err.child_locked").into(),
+        ));
+        true
     }
 
     pub(super) fn handle_clone(&mut self, id: Uuid) {
+        if self.refuse_on_child(id) {
+            return;
+        }
         let Some(src) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
         let now = chrono::Utc::now();
         let mut clone = src.clone();
         clone.id = Uuid::new_v4();
+        // The copied messages carry the transcripts along; each needs an id of
+        // its own or two chats answer to one `chat://` prefix.
+        clone.reid_children();
         clone.title = self
             .ui_locale()
             .tf("ui.chat.clone_suffix", &[("orig", &src.title)]);
@@ -179,15 +211,20 @@ impl Orchestrator {
     /// (the owner of `Chat`) builds the text and emits `CopyToClipboard` — writing to the
     /// clipboard and the confirmation are done by the UI layer (`runtime`). An empty chat → a clear error.
     pub(super) fn handle_copy_chat(&mut self, id: Uuid) {
-        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+        let Some(view) = self.view(id) else {
             return;
         };
+        let (title, messages) = match view {
+            super::ChatView::Top(chat) => (chat.title.clone(), chat.messages.clone()),
+            super::ChatView::Child { run, .. } => (run.title.clone(), run.messages.clone()),
+        };
         // Role labels come from the chat's profile (spec §5.1): a custom name replaces
-        // the localized "User:"/"Assistant:".
-        let names = self.active_character_names(chat);
+        // the localized "User:"/"Assistant:"; a transcript's are the parent persona
+        // and the sub-agent (see `names_of`).
+        let names = self.names_of(id);
         match crate::features::chat_export::format_conversation(
-            &chat.title,
-            &chat.messages,
+            &title,
+            &messages,
             &self.config.copy,
             &names,
             self.ui_locale(),
@@ -217,12 +254,33 @@ impl Orchestrator {
         path: Option<&str>,
     ) {
         let ui = self.ui_locale();
-        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+        // A transcript exports as the chat it looks like: a copy of its
+        // messages under its own title, in its parent's profile — the point of
+        // an export is a copy (docs/research/subagent-chats.md §3.6).
+        let transcript: Option<crate::entities::chat::Chat> = match self.view(id) {
+            Some(super::ChatView::Child { parent, run }) => {
+                let mut chat = crate::entities::chat::Chat::from_profile(
+                    &crate::entities::profile::Profile::new("", &run.system_message),
+                    run.title.clone(),
+                );
+                chat.id = run.id;
+                chat.profile_id = parent.profile_id;
+                chat.created_at = run.created_at;
+                chat.modified_at = run.finished_at.unwrap_or(run.created_at);
+                chat.messages = run.messages.clone();
+                Some(chat)
+            }
+            _ => None,
+        };
+        let Some(chat) = transcript
+            .as_ref()
+            .or_else(|| self.chats.iter().find(|c| c.id == id))
+        else {
             return;
         };
         let content = match format {
             ExportFormat::Markdown => {
-                let names = self.active_character_names(chat);
+                let names = self.names_of(id);
                 match crate::features::chat_export::format_conversation(
                     &chat.title,
                     &chat.messages,
@@ -298,6 +356,9 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_delete(&mut self, id: Uuid) {
+        if self.refuse_on_child(id) {
+            return;
+        }
         // Unconditional (not a setting): the chat being spoken is about to disappear.
         if self.active_id == Some(id) {
             self.stop_tts();

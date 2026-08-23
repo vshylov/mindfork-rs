@@ -207,6 +207,7 @@ mod tests {
             created_at: Utc::now(),
             modified_at: Utc::now(),
             message_count: 0,
+            children: Vec::new(),
         }
     }
 

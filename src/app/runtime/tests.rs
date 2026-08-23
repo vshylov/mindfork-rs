@@ -274,6 +274,7 @@ fn summary(title: &str) -> crate::entities::chat::ChatSummary {
         created_at: chrono::Utc::now(),
         modified_at: chrono::Utc::now(),
         message_count: 0,
+        children: Vec::new(),
     }
 }
 
@@ -683,6 +684,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
         feed_view: FeedView::default(),
         focus: None,
         compaction: None,
+        child: None,
     }
 }
 

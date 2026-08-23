@@ -9,6 +9,7 @@ use crate::entities::attachment::Attachment;
 use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
+use crate::entities::subagent::{RunOutcome, SubagentRun};
 
 /// A chat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -290,7 +291,9 @@ impl Chat {
         (upto > 0).then_some((c.summary.as_str(), upto))
     }
 
-    /// A short chat card (for the list/overlay, without copying messages).
+    /// A short chat card (for the list/overlay, without copying messages),
+    /// with its sub-agent transcripts as child cards in the order the calls
+    /// were made (spec §11.2).
     pub fn summary(&self) -> ChatSummary {
         ChatSummary {
             id: self.id,
@@ -299,6 +302,48 @@ impl Chat {
             created_at: self.created_at,
             modified_at: self.modified_at,
             message_count: self.messages.len(),
+            children: self.children().map(ChildSummary::of).collect(),
+        }
+    }
+
+    /// The sub-agent transcripts this chat holds, in the order the calls were
+    /// made — the live messages only: a transcript in the `deleted` archive is
+    /// as gone as the exchange it belonged to (spec §9.3.2).
+    pub fn children(&self) -> impl Iterator<Item = &SubagentRun> {
+        self.messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .filter_map(|r| r.subagent.as_deref())
+    }
+
+    /// The sub-agent transcript with this id, if it is one of this chat's.
+    pub fn child(&self, id: Uuid) -> Option<&SubagentRun> {
+        self.children().find(|r| r.id == id)
+    }
+
+    /// Mutable access to the sub-agent transcript with this id.
+    pub fn child_mut(&mut self, id: Uuid) -> Option<&mut SubagentRun> {
+        self.messages
+            .iter_mut()
+            .flat_map(|m| m.tool_calls.iter_mut())
+            .filter_map(|r| r.subagent.as_deref_mut())
+            .find(|r| r.id == id)
+    }
+
+    /// Gives every sub-agent transcript a fresh id — what a **clone** must do,
+    /// since the copied messages carry the transcripts along and two chats
+    /// answering to one `chat://` prefix would make the reference ambiguous
+    /// (docs/research/subagent-chats.md §3.6). The archive's are re-id'd too;
+    /// they are copied with the rest.
+    pub fn reid_children(&mut self) {
+        let runs = self
+            .messages
+            .iter_mut()
+            .chain(self.deleted.iter_mut().flat_map(|d| d.messages.iter_mut()))
+            .flat_map(|m| m.tool_calls.iter_mut())
+            .filter_map(|r| r.subagent.as_deref_mut());
+        for run in runs {
+            run.id = Uuid::new_v4();
         }
     }
 }
@@ -319,6 +364,61 @@ pub struct ChatSummary {
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
     pub message_count: usize,
+    /// The chat's sub-agent transcripts, in call order — the list draws them
+    /// nested under this row (spec §11.2). Additive: a snapshot without the
+    /// key reads as a chat with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<ChildSummary>,
+}
+
+impl ChatSummary {
+    /// A card for one of this chat's transcripts, shaped like a chat card so
+    /// the surfaces that take one — the reference picker, the list's rows —
+    /// need no second type. It belongs to the same profile; it has no children.
+    pub fn child_card(&self, child: &ChildSummary) -> ChatSummary {
+        ChatSummary {
+            id: child.id,
+            profile_id: self.profile_id,
+            title: child.title.clone(),
+            created_at: child.created_at,
+            modified_at: child.finished_at.unwrap_or(child.created_at),
+            message_count: child.message_count,
+            children: Vec::new(),
+        }
+    }
+
+    /// This chat's transcripts plus itself, as cards (the `chat://` address
+    /// book is built from it).
+    pub fn child_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.children.iter().map(|c| c.id)
+    }
+}
+
+/// A sub-agent transcript's card under its parent (spec §11.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChildSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+    pub message_count: usize,
+    /// How the run ended; `None` — interrupted before it could say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<RunOutcome>,
+}
+
+impl ChildSummary {
+    pub fn of(run: &SubagentRun) -> Self {
+        Self {
+            id: run.id,
+            title: run.title.clone(),
+            created_at: run.created_at,
+            finished_at: run.finished_at,
+            message_count: run.messages.len(),
+            outcome: run.outcome,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -90,6 +90,12 @@ impl ChatScreen {
         self.chat_links = None;
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
+        // A sub-agent transcript opens with its persona (spec §11.3) — the one
+        // thing a reader of one wants first, and a chat never shows.
+        if let Some(child) = &self.child {
+            self.feed
+                .insert(0, FeedMessage::system(child.system_message.clone()));
+        }
         // The feed was replaced wholesale — recompute "is there a risk" from scratch (from
         // here on the flag only accumulates based on the last block).
         self.feed_has_risky = self.feed.iter().any(feed_msg_has_risky_glyph);
