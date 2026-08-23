@@ -1982,6 +1982,22 @@ present the launch gets past the preflight and fails on `spawn` instead (a negat
 control — without it the test would pass with the whole check deleted, lessons §2);
 and a later part points at the first.
 
+**The duplication gate, one round.** The PR opened red at 4.6% new-code duplication
+(bar 3%) with everything else green, and both causes were already in lessons §2: the
+three launcher tests shared an opening (a fixture, not a test), and — the half worth
+remembering — rewriting the five-line `Managed` arm inside the two identical
+`active_model_name` copies wrote new lines into a range `cloud()`/`cloud_mut()` had
+already flagged. Extracting a shared helper for those two made it *worse*, both call
+sites becoming the same six lines; what passed was the smallest edit, one changed line
+in each copy with the rest byte-identical to `main`. Final: **2.1% duplication, 0 new
+issues, 0 security hotspots, 98.8% coverage on new code**. The test fixture also closed
+a latent flake it made visible — these are the first tests here to reach `spawn`, so
+with a real `llama-server` on `PATH` the launch would have *succeeded* and the test
+panicked; the binary is now a path inside the temp directory that cannot exist.
+Recorded in lessons §2 as the eighth instance, with the offline scan that reproduces the
+gate closely enough to iterate before pushing (1.2% where Sonar read 2.1% — right
+blocks, low density).
+
 **No live run.** Nothing here touches a request, a protocol or the server contract:
 the checks fire before `spawn`, and the split loading they defer to is llama.cpp's
 own. A real multi-file model was not launched — this environment has neither a
