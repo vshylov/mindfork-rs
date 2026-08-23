@@ -181,13 +181,14 @@ impl ServerHandle {
         // waits pointlessly until the timeout (minutes), leaving the UI at "connecting…". So
         // catch the most common cause here and immediately return a clear error
         // (the supervisor turns it into `ServerStatus::Disconnected`).
-        if let Some(model) = &cfg.model_path
-            && !std::path::Path::new(model).is_file()
-        {
-            bail!(
-                "{}",
-                loc.tf("ui.err.managed.model_not_found", &[("path", model)])
-            );
+        if let Some(model) = &cfg.model_path {
+            if !std::path::Path::new(model).is_file() {
+                bail!(
+                    "{}",
+                    loc.tf("ui.err.managed.model_not_found", &[("path", model)])
+                );
+            }
+            check_split_model(model, loc)?;
         }
         // The same preflight check for the speculative-decoding draft
         // model (`-md`): otherwise `llama-server` would just as silently crash while
@@ -251,6 +252,45 @@ impl ServerHandle {
             base_url: cfg.base_url(),
         })
     }
+}
+
+/// The preflight for a **multi-file** GGUF (`shared/gguf.rs`, spec §3.4): the
+/// weights of a large model are split across `-00001-of-0000N.gguf` parts, and
+/// llama.cpp is given the first one and finds the rest itself, by name, in the
+/// same directory. Two ways that goes wrong are worth catching before `spawn`,
+/// because both look identical from outside — the server exits during loading and
+/// the status bar shows the same "the process exited before it was ready":
+///
+/// - the path points at a part that is not the first (llama.cpp refuses it
+///   outright: "model must be loaded with the first split");
+/// - a part is missing — downloaded halfway, or one file copied out of the
+///   directory. `is_file()` on the configured path passes, since *that* file is
+///   there; the model still cannot load.
+///
+/// A name that isn't in the split shape means a single-file model and no check.
+fn check_split_model(model: &str, loc: &'static Locale) -> Result<()> {
+    let Some(shard) = crate::shared::gguf::parse_shard(model) else {
+        return Ok(());
+    };
+    if shard.index != 1 {
+        bail!(
+            "{}",
+            loc.tf(
+                "ui.err.managed.shard_not_first",
+                &[("path", &shard.first())]
+            )
+        );
+    }
+    // Part 1 is the configured path, already checked by the caller.
+    for part in shard.all().iter().skip(1) {
+        if !std::path::Path::new(part).is_file() {
+            bail!(
+                "{}",
+                loc.tf("ui.err.managed.shard_missing", &[("path", part)])
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The child process's monitor task: waits for it to exit (arms `exited`) or for a
@@ -552,6 +592,92 @@ mod tests {
             Ok(_) => panic!("expected an error about a missing model file"),
         };
         assert!(err.to_string().contains("файл модели"), "{err}");
+    }
+
+    /// The three split-model tests below share one opening — write parts, point
+    /// the config at one of them, read back what `launch` refused with — so it is
+    /// a fixture, not a test (lessons §2: the third test that starts like the
+    /// first two is where sliding self-duplication comes from).
+    ///
+    /// The binary is a path inside the same directory that deliberately does not
+    /// exist: past the preflight the launch must fail at `spawn` and say so, and
+    /// a bare `llama-server` would make that depend on the developer's `PATH`.
+    fn preflight_error(dir: &std::path::Path, parts: &[&str], model: &str) -> String {
+        for part in parts {
+            std::fs::write(dir.join(part), b"gguf").expect("write a part");
+        }
+        let cfg = ManagedConfig {
+            binary: dir.join("no-such-llama-server"),
+            model_path: Some(dir.join(model).display().to_string()),
+            ..base_cfg()
+        };
+        match ServerHandle::launch(&cfg, ru()) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("launch cannot succeed: the binary does not exist"),
+        }
+    }
+
+    /// The localized preflight error for `key`, naming `file` inside `dir`.
+    fn expect_about(dir: &std::path::Path, key: &str, file: &str) -> String {
+        ru().tf(key, &[("path", &dir.join(file).display().to_string())])
+    }
+
+    /// What a launch that got *past* every preflight fails with: `spawn` of the
+    /// binary that isn't there. The negative control of the tests below.
+    fn expect_spawn(dir: &std::path::Path) -> String {
+        expect_about(dir, "ui.err.managed.spawn", "no-such-llama-server")
+    }
+
+    /// A multi-file GGUF needs the parts beside the one it is pointed at. Without
+    /// this check a half-downloaded model reaches `spawn` and dies while loading,
+    /// which reads as the generic early exit.
+    #[test]
+    fn launch_missing_split_part_errors_before_spawn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (d, first) = (dir.path(), "model-00001-of-00003.gguf");
+
+        let err = preflight_error(d, &[first], first);
+        let missing = expect_about(
+            d,
+            "ui.err.managed.shard_missing",
+            "model-00002-of-00003.gguf",
+        );
+        assert!(err.contains(&missing), "{err}");
+
+        // The negative control: with every part present the preflight passes and the
+        // launch gets as far as `spawn`. Without it the test would pass with the
+        // whole split check deleted (lessons §2).
+        let all = ["model-00002-of-00003.gguf", "model-00003-of-00003.gguf"];
+        let err = preflight_error(d, &all, first);
+        assert!(err.contains(&expect_spawn(d)), "{err}");
+    }
+
+    /// llama.cpp refuses any part but the first ("model must be loaded with the
+    /// first split"), so the preflight says which file to point at.
+    #[test]
+    fn launch_from_a_later_split_part_points_at_the_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path();
+        let err = preflight_error(
+            d,
+            &["model-00002-of-00003.gguf"],
+            "model-00002-of-00003.gguf",
+        );
+        let first = expect_about(
+            d,
+            "ui.err.managed.shard_not_first",
+            "model-00001-of-00003.gguf",
+        );
+        assert!(err.contains(&first), "{err}");
+    }
+
+    /// A single-file model keeps the preflight it always had: the split check must
+    /// not invent parts for a name that has no tail.
+    #[test]
+    fn a_single_file_model_is_not_split_checked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = preflight_error(dir.path(), &["gemma-4-it.gguf"], "gemma-4-it.gguf");
+        assert!(err.contains(&expect_spawn(dir.path())), "{err}");
     }
 
     #[test]

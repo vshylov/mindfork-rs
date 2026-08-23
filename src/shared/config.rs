@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::embed_prefix::EmbedConvention;
+use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
@@ -383,14 +384,12 @@ impl EngineSettings {
 
     /// Active model name for the current mode (for the `Message.metadata` snapshot
     /// and the feed caption). Managed — the GGUF's base name without the path/`.gguf`
-    /// extension; external/cloud — the configured `model_name`. `None` if unset.
+    /// extension and, for a multi-file model, without its `-00001-of-00003` part
+    /// tail ([`display_name`]); external/cloud — the configured `model_name`.
+    /// `None` if unset.
     pub fn active_model_name(&self) -> Option<String> {
         match self.mode {
-            ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
-                let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
-                let name = name.trim_end_matches(".gguf");
-                (!name.is_empty()).then(|| name.to_string())
-            }),
+            ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
                 .cloud()
@@ -660,18 +659,15 @@ impl EmbedSettings {
     /// for the "the embedding model changed" message (see
     /// [`crate::shared::embed_identity`]). Mirrors
     /// [`EngineSettings::active_model_name`]; managed embeddings have no
-    /// `model_name` field, so the name comes from the GGUF path.
+    /// `model_name` field, so the name comes from the GGUF path (same
+    /// [`display_name`], part tail and all).
     ///
     /// Never used to *decide* whether the model changed — the canary vector does
     /// that. A name is too easy to leave stale: an external server picks the
     /// model itself, and the same path can come to point at a different file.
     pub fn active_model_name(&self) -> Option<String> {
         match self.mode {
-            ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
-                let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
-                let name = name.trim_end_matches(".gguf");
-                (!name.is_empty()).then(|| name.to_string())
-            }),
+            ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
                 .cloud()

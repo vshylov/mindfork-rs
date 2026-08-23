@@ -303,6 +303,17 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   checked: if the GGUF isn't found or isn't accessible, the status bar immediately
   shows a clear error ("model file not found or inaccessible …") instead of hanging
   in "connecting…".
+  - **A multi-file (split) GGUF.** A model too large for one file ships as
+    several parts — `<name>-00001-of-00003.gguf`, `<name>-00002-of-00003.gguf`, …
+    (Hugging Face caps a single file at 50 GB). Download **all** of them into one
+    directory, leave the names alone, and put the **first** part in the GGUF
+    field: `llama-server` finds the rest itself. Pointing at any other part is
+    refused by llama.cpp outright, and a part left behind by an interrupted
+    download would let the server start and then die while loading — the
+    preflight catches both before launch and names the file to point at or the
+    part that is missing. In the interface such a model is called by its name
+    without the tail (`gpt-oss-120b-Q8_0`, not
+    `gpt-oss-120b-Q8_0-00001-of-00003`).
   - **FlashAttention** (`--flash-attn`): `auto`/`on`/`off` (default `auto` — llama.cpp
     decides). Speeds up attention and saves VRAM on supported GPUs.
   - **Speculative decoding** (`--spec-type`): speeds up generation with a "draft"

@@ -407,11 +407,27 @@ e2e prologues in one new test file — a `MockBackend::sequence` of same-shape
 files. Collapsed the same way: a one-line `script()` and one spawn fixture. The gate
 fired **after** the PR was opened, so check the Sonar analysis before calling a PR
 done, not after the reviewer does.
+The **eighth** hit both known mechanisms in one small PR (4.6%) and adds the tool for
+seeing them before the push. Half was the fifth again — three launcher tests written
+minutes apart sharing a write-parts/launch/assert opening, collapsed into one fixture.
+The other half was the sixth **from the other side**: what lands in an already-flagged
+range need not be new code at all. Two identical `active_model_name` copies sit inside a
+range `cloud()`/`cloud_mut()` already have flagged, so *rewriting* their five-line arm
+wrote six new lines into it — and extracting a shared helper made it worse, both call
+sites becoming the same six lines. What passed was the smallest edit: one changed line
+inside each copy, the rest byte-identical to `main` (an import is what kept the arm on
+one line). **When the flagged pair is old code and not your PR's subject, minimize the
+lines you touch instead of fixing it.** The tool: a ~40-line throwaway script that
+normalizes literals away, hashes every 10-line window across `sonar.sources` and reports
+the windows containing changed lines — it read **1.2%** where Sonar then read **2.1%** on
+the same tree, so it finds the right blocks and under-reports the density. Iterate on it
+offline, but leave margin against the 3% bar rather than stopping at the first number
+under it.
 — *demo screenshots — a uniform gallery and a richer hero*, *pasting an image from the
 clipboard*, *images in a message — attach by URL*, *the help dialog sizes itself, and
 its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a followed
 `chat://` reference*, *the external server's API key, entered in settings*, *automatic
-chat titling on the first exchange*.
+chat titling on the first exchange*, *a model split across several GGUF files*.
 
 ---
 
@@ -633,6 +649,18 @@ text from the state it describes (which limit fired; which tools this turn
 actually offers) rather than to correct the sentence, because a sentence
 maintained by hand drifts again on the next stage.
 — *the code workspace — stage 3*.
+
+**A path check validates the string, not the thing the string names.**
+`is_file()` on the managed server's GGUF passes for part 1 of a three-part model
+whose other parts never finished downloading, and for part 2 of a model
+llama.cpp refuses to load at all — and both then surface as "the process exited
+before it was ready", the message that says something went wrong and nothing
+about what. Whenever a configured path *implies* other files — a split model's
+siblings, a projector beside the weights — the preflight owes their names: the
+file to point at, or the file to fetch. A generic exit message is what a check
+looks like when it stopped one step short of the format it was checking.
+— *a model split across several GGUF files*, *managed — preflight model-file
+check*.
 
 ## 5. Terminal and ratatui rendering
 
