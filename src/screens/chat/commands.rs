@@ -84,7 +84,7 @@ impl ChatScreen {
     /// One line per command: an arm that needs a precondition checked delegates
     /// to a named method below rather than spelling the check out here. That
     /// keeps this readable as the dispatch *table* it is — and keeps its
-    /// cognitive complexity off the analyzer's bar, which a table of nineteen
+    /// cognitive complexity off the analyzer's bar, which a table of twenty
     /// arms reaches on the strength of a few `if`s alone.
     fn run_ui_command(
         &mut self,

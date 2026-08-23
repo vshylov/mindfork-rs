@@ -11,7 +11,7 @@
 //! next to `Ctrl+V` (spec §9.10) and `/exit` next to `Ctrl+Q`/`F10`
 //! (spec §11.7). See [docs/history/command-only-control.md](../../docs/history/command-only-control.md).
 //!
-//! **Why a registry and not nineteen parser modules.** Every command here is a
+//! **Why a registry and not twenty parser modules.** Every command here is a
 //! sibling of the last: an exact word, optionally one free-text argument. Copied
 //! parsers would be the sliding self-duplication the duplication gate keeps
 //! catching (docs/lessons.md §2 — "budget for the seam at design time"), and the
@@ -149,7 +149,7 @@ const fn row(
 /// `screens::chat::popups` names the row that opens each).
 ///
 /// The table is hand-aligned: `rustfmt` would explode each row into a five-line
-/// call, and 19 identically shaped blocks is the duplication density the gate
+/// call, and twenty identically shaped blocks is the duplication density the gate
 /// measures (docs/lessons.md §2). A table reads as a table.
 #[rustfmt::skip]
 pub const COMMANDS: &[Spec] = &[
