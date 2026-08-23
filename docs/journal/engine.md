@@ -1998,9 +1998,23 @@ Recorded in lessons §2 as the eighth instance, with the offline scan that repro
 gate closely enough to iterate before pushing (1.2% where Sonar read 2.1% — right
 blocks, low density).
 
-**No live run.** Nothing here touches a request, a protocol or the server contract:
-the checks fire before `spawn`, and the split loading they defer to is llama.cpp's
-own. A real multi-file model was not launched — this environment has neither a
-`llama-server` binary nor the ~100 GB of weights, and Hugging Face is unreachable
-from it — so what stands behind "llama.cpp refuses a non-first part" is its
-`llama_model_loader` source, not an observation of this stack.
+**Smoke — GO** (2026-08-23, both halves, on a rented GPU box — the development
+container has neither a `llama-server` binary nor the ~100 GB of weights). Stack:
+`unsloth/gpt-oss-120b-GGUF` `Q8_0`, **two** parts, managed mode against
+`/workspace/llama.cpp/build/bin/llama-server`, `-ngl 99`, `-c 131072`, `--jinja`.
+
+- *The model loads and answers.* `-m` pointed at
+  `…/gpt-oss-120b-Q8_0-00001-of-00002.gguf`; the server came up, the chat answered
+  two turns, and `thinking` arrived on both — so llama.cpp's harmony handling
+  reaches the app as `reasoning_content` through the path already in place. The
+  header reads **`gpt-oss-120b-Q8_0 · 128k ctx`**: `display_name` doing its job,
+  the model named rather than its first file.
+- *A part removed is named.* With the second file gone the status bar reads
+  `chat: no connection: part of the multi-file model is missing:
+  /workspace/gpt-oss-120b-GGUF/Q8_0/gpt-oss-120b-Q8_0-00002-of-00002.gguf` —
+  refused before `spawn`, which is the whole point of the check: without it this is
+  a server that starts, dies while loading, and says only that it exited.
+
+What is still taken from llama.cpp's `llama_model_loader` source rather than
+observed here is the third case, "a non-first part is refused" — the preflight
+stops that one before the server can have an opinion.
