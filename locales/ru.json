@@ -538,6 +538,7 @@
   "ui.feed.role.subagent": "САБ-АГЕНТ",
   "ui.feed.thoughts": "мысли",
   "ui.feed.thoughts_lines": " · {n} стр. · ",
+  "ui.feed.tool_running": "выполняется…",
   "ui.feed.tool_details": "детали",
   "ui.feed.exit_code": "код возврата:",
   "ui.settings.desc.embed_convention": "Как модель ожидает разметку входа: none — без маркеров (bge-m3 и большинство), e5 — «query: »/«passage: », e5-instruct — инструкция в запросе и голый фрагмент. Неверное значение ухудшает поиск, поэтому по умолчанию none. Смена — это смена векторного пространства: потребуется /reindex.",

@@ -57,6 +57,14 @@ pub struct FeedToolCall {
     /// than the picture — rendering pixels in a terminal is its own roadmap item, and
     /// the count is what makes an otherwise invisible cost visible.
     pub images: usize,
+    /// The call's id on the wire, so a live card started by
+    /// `AppEvent::ToolCallStarted` is the one `AppEvent::ToolCall` completes
+    /// (spec §11.3). `None` for a card built from a stored message — nothing
+    /// will complete it.
+    pub call_id: Option<String>,
+    /// The call is executing right now: the result area shows *running…*
+    /// instead of a result. Only a live card is ever running.
+    pub running: bool,
 }
 
 /// An item of the message feed.
@@ -152,6 +160,8 @@ impl FeedMessage {
                 result: tc.result.clone().unwrap_or_default(),
                 text_offset: off,
                 images: tc.images,
+                call_id: None,
+                running: false,
             })
             .collect();
         Some(Self {
@@ -1455,6 +1465,7 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
         tc.arguments.hash(&mut h);
         tc.result.hash(&mut h);
         tc.text_offset.hash(&mut h);
+        tc.running.hash(&mut h);
     }
     h.finish()
 }
@@ -1750,6 +1761,16 @@ fn push_tool(
     // whatever the tool happened to say. Shown in both modes — it is not a detail that
     // `Ctrl+O` reveals, it is part of what the call did.
     let muted = palette.muted_style();
+    // The call has not returned yet (`AppEvent::ToolCallStarted`, spec §11.3):
+    // say so where the result will go, in both modes — a card with arguments
+    // and no result would otherwise read as a call that answered nothing.
+    if tool.running {
+        let chip = Span::styled(
+            format!("{} {}", glyphs.busy, loc.t("ui.feed.tool_running")),
+            muted.add_modifier(Modifier::ITALIC),
+        );
+        push_trailing(lines, vec![chip], glyphs.tool_cont, width);
+    }
     if tool.images > 0 {
         let chip = Span::styled(
             loc.tf("ui.feed.tool_images", &[("n", &tool.images.to_string())]),
@@ -2056,6 +2077,8 @@ mod tests {
             result: "Заметка сохранена".into(),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let joined: String = lines
@@ -2090,6 +2113,8 @@ mod tests {
             result: "stdout:\n1".into(),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
         assert!(out.contains("python_exec"), "the header stays: {out}");
@@ -2123,6 +2148,8 @@ mod tests {
             result: "results".into(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         m
     }
@@ -2228,6 +2255,8 @@ mod tests {
             result: "Заметка сохранена".into(),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         feed.toggle_tools();
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
@@ -2258,6 +2287,8 @@ mod tests {
             result: "ok".into(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let collapsed = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 100, ru()));
         assert!(collapsed.contains('…'), "collapsed truncates: {collapsed}");
@@ -2317,6 +2348,8 @@ mod tests {
             result: "12:00".into(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 60, ru()));
         let i_head = rows
@@ -2343,6 +2376,8 @@ mod tests {
             result: String::new(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         assert!(out.contains("current_time"), "the header stays: {out}");
@@ -2364,6 +2399,8 @@ mod tests {
                 result: "saved".into(),
                 text_offset: m.text.len(),
                 images: 0,
+                call_id: None,
+                running: false,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, loc));
             assert!(
@@ -2391,6 +2428,8 @@ mod tests {
                 result: format!("stderr:\nboom\n\n{} 3", loc.t("python.console.exit")),
                 text_offset: m.text.len(),
                 images: 0,
+                call_id: None,
+                running: false,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
             // Rendered under `ru()` above on purpose: the labels must follow the
@@ -2413,6 +2452,8 @@ mod tests {
             result: format!("stdout:\nhi\n\n{} 3", en.t("python.console.exit")),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, en));
         assert!(
@@ -2769,6 +2810,8 @@ mod tests {
             result: "ок".into(),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let user = msg(FeedRole::User, "привет", "");
         let compat = Palette::default().with_compat(true);
@@ -2800,6 +2843,8 @@ mod tests {
             result: "stdout:\n42".into(),
             text_offset: m.text.len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let palette = Palette::for_theme(crate::shared::config::Theme::Dark);
         let lines = feed.build_lines(&[m], &palette, 80, ru());
@@ -2834,6 +2879,8 @@ mod tests {
             result: "stderr:\nTraceback here\n\nкод возврата: 1".into(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let lines = feed.build_lines(&[m], &palette, 80, ru());
         // The line with the stderr text is colored the error color.
@@ -2867,6 +2914,8 @@ mod tests {
             result: "ясно".into(),
             text_offset: off,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let rows: Vec<String> = lines
@@ -2907,6 +2956,8 @@ mod tests {
             result: String::new(),
             text_offset: "до".len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
@@ -2941,6 +2992,8 @@ mod tests {
             result: "stdout:\n1".into(),
             text_offset: "Считаю.".len(),
             images: 0,
+            call_id: None,
+            running: false,
         });
         let next = msg(FeedRole::User, "дальше", "");
         let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
@@ -2971,6 +3024,8 @@ mod tests {
                 result: String::new(),
                 text_offset: 0,
                 images: 0,
+                call_id: None,
+                running: false,
             });
         }
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
@@ -2992,6 +3047,8 @@ mod tests {
             result: long.trim_end().into(),
             text_offset: 0,
             images: 0,
+            call_id: None,
+            running: false,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 30, ru());
         // The result isn't truncated (no "…") and is laid out across several rows (rail + gutter
@@ -4091,6 +4148,8 @@ mod tests {
                 result: "ок".into(),
                 text_offset: m.text.len(),
                 images: 0,
+                call_id: None,
+                running: false,
             });
             m
         };

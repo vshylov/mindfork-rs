@@ -210,9 +210,40 @@ impl ChatScreen {
     }
 
     /// Appends a tool block to the current assistant message (live, during the turn).
+    /// A tool call is about to run (`AppEvent::ToolCallStarted`, spec §11.3):
+    /// its card goes into the bubble at once, marked *running*, and
+    /// [`Self::push_tool_call`] with the same `call_id` completes it.
+    pub fn push_tool_call_started(
+        &mut self,
+        generation_id: Uuid,
+        call_id: String,
+        name: String,
+        arguments: String,
+    ) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        self.ensure_streaming_bubble();
+        if let Some(last) = self.feed.last_mut() {
+            let text_offset = last.text.len();
+            last.tools.push(crate::widgets::message_feed::FeedToolCall {
+                name,
+                arguments,
+                result: String::new(),
+                text_offset,
+                images: 0,
+                call_id: Some(call_id),
+                running: true,
+            });
+            self.mark_feed_changed();
+            self.feed_view.scroll_to_bottom_if_following();
+        }
+    }
+
     pub fn push_tool_call(
         &mut self,
         generation_id: Uuid,
+        call_id: String,
         name: String,
         arguments: String,
         result: String,
@@ -221,16 +252,30 @@ impl ChatScreen {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
         {
-            // The call happened after response text had already accumulated — record the
-            // position, so the tool block lands at the call site, not in the "header".
-            let text_offset = last.text.len();
-            last.tools.push(crate::widgets::message_feed::FeedToolCall {
-                name,
-                arguments,
-                result,
-                text_offset,
-                images,
-            });
+            // The card this call opened, if it did — completed in place, so
+            // the result lands where the *running…* was.
+            if let Some(card) = last
+                .tools
+                .iter_mut()
+                .find(|t| t.running && t.call_id.as_deref() == Some(call_id.as_str()))
+            {
+                card.result = result;
+                card.images = images;
+                card.running = false;
+            } else {
+                // The call happened after response text had already accumulated — record the
+                // position, so the tool block lands at the call site, not in the "header".
+                let text_offset = last.text.len();
+                last.tools.push(crate::widgets::message_feed::FeedToolCall {
+                    name,
+                    arguments,
+                    result,
+                    text_offset,
+                    images,
+                    call_id: Some(call_id),
+                    running: false,
+                });
+            }
             // Separate the next round's text/thoughts with a separator (matching a reload).
             self.pending_text_sep = true;
             self.pending_thoughts_sep = true;
@@ -440,6 +485,11 @@ impl ChatScreen {
         self.live_turn = None;
         if let Some(last) = self.feed.last_mut() {
             last.streaming = false;
+            // A card still running when the turn ended (cancelled, timed out
+            // mid-call) must not say *running…* forever.
+            for card in last.tools.iter_mut().filter(|t| t.running) {
+                card.running = false;
+            }
         }
         self.generating = false;
         self.current_gen = None;
