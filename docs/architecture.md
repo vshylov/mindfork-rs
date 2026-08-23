@@ -630,7 +630,8 @@ put the feed on; `None` for every activation but a jump — and `child: Option<C
 set when the activated "chat" is a sub-agent transcript, §10), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
-`Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
+`Thoughts`, `TokenUsage`, `ToolCallStarted`/`ToolCall` (a call's card opens
+running and is completed in place by `call_id` — spec §11.3), `AssistantContinue`/`AssistantRewrite`
 (conversation control tools — §8), `Finished`,
 `Impersonation{Started,Chunk,Finished}`, `RagProgress`, `FileProgress`
 (the outcome of a `/file` command) and `Attachments` (the active chat's
@@ -835,7 +836,7 @@ Details:
   collects the runs that arrived with the turn and `maybe_auto_title_run`
   starts the title task for each (both `auto_title` points; `renamed_manually`
   wins), through the same `view()`-resolved task a transcript's `Ctrl+R` uses.
-- **The turn's progress channel** ([docs/subagent-live.md](subagent-live.md)
+- **The turn's progress channel** ([docs/history/subagent-live.md](history/subagent-live.md)
   §3.1–§3.2). `done_tx` carries `GenMessage::{Progress{id, TurnProgress},
   Done(GenResult)}`: `file_round` sends `RoundFiled`/`ChildRoundFiled` by
   depth, `run_subagent` sends `ChildStarted(SubagentRun)` before the child
@@ -2355,7 +2356,7 @@ ahead of every parser for the blocked commands, and at the send. The `chat://`
 address book (`refresh_known_chats`) and the link picker (`summary_card`) see
 transcripts through the same snapshot.
 
-**The transcript while it runs** (spec §9.3.2, §11.2; docs/subagent-live.md
+**The transcript while it runs** (spec §9.3.2, §11.2; docs/history/subagent-live.md
 §3.3–§3.6). `view()` and `with_child_mut` have a third arm over the in-flight
 run, so every transcript path works on a running one; `emit_chat_list`
 appends its card with `ChildSummary.running`; `handle_progress` sends

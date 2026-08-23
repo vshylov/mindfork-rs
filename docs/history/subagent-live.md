@@ -1,8 +1,14 @@
 # Sub-agent chats, stage 2: the transcript while it runs
 
+> **Status: done** (2026-08-23). §3.1–§3.6 shipped as PR 7 of the track
+> (#362), the running card of §3.7 as the follow-up `feat/tool-call-started`
+> (spec §11.3); forks F1–F8 were taken by recommendation. Kept here as the
+> record of the design; the current state is in spec §9.3.2/§11.2/§11.3 and
+> architecture §5/§10.
+
 Design plan for PR 7 of the sub-agent track
-([research](research/subagent-chats.md) §3.5 "stage 2", §7 stage 7;
-[ADR 0010](decisions/0010-subagent-nested-turn.md)). Stages 1–6 are merged
+([research](../research/subagent-chats.md) §3.5 "stage 2", §7 stage 7;
+[ADR 0010](../decisions/0010-subagent-nested-turn.md)). Stages 1–6 are merged
 (#356–#361). This document decides how a running sub-agent becomes visible
 *before* its turn lands — the one thing stage 1 deliberately left out
 (research §4 item 2). Forks in §5 need the user's confirmation before

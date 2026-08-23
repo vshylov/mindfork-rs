@@ -166,7 +166,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-23, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2504 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2505 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -188,9 +188,9 @@ being recent is dropped, not shortened.
   is auto-titled at landing, and — through the turn's progress channel and an
   in-flight mirror — is listed, openable and growing while it runs, with the
   parent ↔ transcript switch not cancelling the turn; `CHAT_SCHEMA` 2
-  synthesizes one for every old record. Go on Gemma 4 31B, 5/5
-  ([docs/subagent-live.md](docs/subagent-live.md) — the running card is the
-  one open item)
+  synthesizes one for every old record, and a tool call's card opens the
+  moment the call starts. Go on Gemma 4 31B, 5/5; the track is complete
+  ([docs/history/subagent-live.md](docs/history/subagent-live.md))
   ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).
 - **Inno Setup 7 for the Windows installer** — a 64-bit setup, and a pinned,
