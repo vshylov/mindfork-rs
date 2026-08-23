@@ -1900,9 +1900,10 @@ A direct requirement from the task:
   count that grows as its rounds file, openable, renameable. **Switching chats
   cancels a running turn** — except between the running turn's chat and that
   transcript, in either direction: looking at the run is not leaving it. Back
-  on the parent, its feed holds the rounds the turn has filed so far and keeps
-  generating; the text of the round in progress reappears when the turn lands,
-  with one whole refresh of the feed.
+  on the parent, its feed holds the rounds the turn has filed so far **and
+  the round in progress** — its text, thoughts and tool cards, running or
+  answered — and keeps generating into the same bubble; nothing waits for
+  the landing.
 - **Copying the entire conversation** of the selected chat to the system clipboard (`F5`):
   the overlay only sees a summary, so the text is built by the orchestrator (the owner of `Chat`),
   while writing to the clipboard is a UI-layer concern (`arboard`). Confirmation/error is shown in the

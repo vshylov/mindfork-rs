@@ -55,28 +55,18 @@ pub(super) enum TurnProgress {
     ChildStarted(Box<SubagentRun>),
     /// The sub-agent's loop filed a round.
     ChildRoundFiled(Vec<Message>),
-    /// The sub-agent's stream, step by step (docs/history/subagent-live.md
-    /// §8): the same events its loop would send a feed, carried as progress
-    /// so they stay in order with `ChildRoundFiled` on the one channel. The
-    /// orchestrator keeps the round's partial text and forwards the steps to
-    /// the screen while the transcript is the open conversation.
-    ChildChunk(String),
-    ChildThoughts(String),
-    ChildToolStarted {
-        call_id: String,
-        name: String,
-        arguments: String,
-    },
-    ChildToolCall {
-        call_id: String,
-        name: String,
-        arguments: String,
-        result: String,
-        images: usize,
-    },
-    ChildContinue,
-    ChildRewrite,
-    /// The run's own token count so far (completion, reasoning).
+    /// One step of the turn's own stream (docs/history/subagent-live.md §8,
+    /// last bullet): the orchestrator mirrors the round in progress, so the
+    /// chat's feed can be rebuilt whole when the user comes back to it
+    /// mid-turn. The screen gets the same step directly, as it always did.
+    OwnStep(StreamStep),
+    /// One step of the sub-agent's stream (§8): the same events its loop
+    /// would send a feed, carried as progress so they stay in order with
+    /// `ChildRoundFiled` on the one channel. The orchestrator keeps the
+    /// round's partial and forwards the step to the screen while the
+    /// transcript is the open conversation.
+    ChildStep(StreamStep),
+    /// The sub-agent run's own token count so far (completion, reasoning).
     ChildTokens {
         completion: u64,
         reasoning: Option<u32>,
@@ -87,6 +77,27 @@ pub(super) enum TurnProgress {
         finished_at: chrono::DateTime<chrono::Utc>,
         tokens: u64,
     },
+}
+
+/// One step of a loop's stream, as the orchestrator mirrors it (see
+/// [`TurnProgress::OwnStep`] / [`TurnProgress::ChildStep`]).
+pub(super) enum StreamStep {
+    Chunk(String),
+    Thoughts(String),
+    ToolStarted {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    ToolCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+        result: String,
+        images: usize,
+    },
+    Continue,
+    Rewrite,
 }
 
 pub(super) struct GenResult {
@@ -513,10 +524,10 @@ impl Orchestrator {
             generation: id,
             chat: active_id,
             rounds: Vec::new(),
+            partial: Default::default(),
             child: None,
             child_stream: Uuid::nil(),
             child_partial: Default::default(),
-            parent_needs_refresh: false,
         });
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
@@ -588,10 +599,10 @@ impl Orchestrator {
         // is gone with the task — but a field that outlives what it describes is
         // an invitation to reason wrongly about it later.
         self.confirm = None;
-        // The in-flight mirror has served (docs/subagent-live.md §3.6): every
-        // progress message preceded this result on the one channel. What it
-        // still knows — a title the user gave the running transcript, and
-        // whether the parent's feed lost the stream — is read here, then it goes.
+        // The in-flight mirror has served (docs/history/subagent-live.md
+        // §3.6): every progress message preceded this result on the one
+        // channel. What it still knows — a title the user gave the running
+        // transcript — is read here, then it goes.
         let inflight = self.inflight.take().filter(|t| t.generation == res.id);
         let mut res = res;
         if let Some(edited) = inflight.as_ref().and_then(|t| t.child.as_ref())
@@ -606,12 +617,7 @@ impl Orchestrator {
             run.title = edited.title.clone();
             run.renamed_manually = true;
         }
-        let refresh_parent = inflight.is_some_and(|t| t.parent_needs_refresh);
-
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
-            if refresh_parent && self.active_id == Some(res.chat_id) {
-                self.activate_focused(res.chat_id, None);
-            }
             return;
         }
         // Did the model edit the "self-model" via its own tools this turn? If so —
@@ -657,11 +663,6 @@ impl Orchestrator {
         // here: the transcript was already paid for.
         for a in attached {
             self.insert_attachment(res.chat_id, a);
-        }
-        // The parent's feed was rebuilt mid-turn without the stream's text
-        // (§3.5): one whole re-activation, now that everything has landed.
-        if refresh_parent && self.active_id == Some(res.chat_id) {
-            self.activate_focused(res.chat_id, None);
         }
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
@@ -1165,81 +1166,95 @@ impl SubagentLimits {
 /// shows one number (research §3.5).
 struct RoundSink<'a> {
     evt_tx: &'a UnboundedSender<AppEvent>,
-    /// `None` on the turn's own loop; the progress route of a sub-agent's.
-    child: Option<ChildRoute<'a>>,
-}
-
-/// How a sub-agent's loop reaches the orchestrator (see [`RoundSink`]).
-struct ChildRoute<'a> {
     done_tx: &'a UnboundedSender<GenMessage>,
     turn: Uuid,
-    /// What the turn had cost when the run began — subtracted from the
-    /// re-based counter to get the run's own.
-    token_base: u64,
+    /// `None` on the turn's own loop, whose stream goes to the screen
+    /// directly and to the orchestrator as a mirror; `Some(token_base)` on a
+    /// sub-agent's, whose stream goes to the orchestrator only (the base is
+    /// subtracted from the re-based counter to get the run's own).
+    child: Option<u64>,
 }
 
 impl RoundSink<'_> {
     fn send(&self, event: AppEvent) {
-        let Some(route) = &self.child else {
-            let _ = self.evt_tx.send(event);
-            return;
-        };
-        let progress = match event {
-            AppEvent::TokenUsage {
-                generation_id,
-                completion,
-                reasoning,
-                ..
-            } => {
-                let _ = self.evt_tx.send(AppEvent::TokenUsage {
-                    generation_id,
-                    completion,
-                    context: None,
-                    context_exact: false,
-                    reasoning,
-                });
-                TurnProgress::ChildTokens {
-                    completion: completion.saturating_sub(route.token_base),
-                    reasoning,
+        let progress = match self.child {
+            None => {
+                // The turn's own loop: the screen gets every event as it
+                // always did; the orchestrator mirrors the round's steps.
+                let step = stream_step(&event);
+                let _ = self.evt_tx.send(event);
+                match step {
+                    Some(step) => TurnProgress::OwnStep(step),
+                    None => return,
                 }
             }
-            AppEvent::Chunk { text, .. } => TurnProgress::ChildChunk(text),
-            AppEvent::Thoughts { text, .. } => TurnProgress::ChildThoughts(text),
-            AppEvent::ToolCallStarted {
-                call_id,
-                name,
-                arguments,
-                ..
-            } => TurnProgress::ChildToolStarted {
-                call_id,
-                name,
-                arguments,
+            Some(token_base) => match event {
+                AppEvent::TokenUsage {
+                    generation_id,
+                    completion,
+                    reasoning,
+                    ..
+                } => {
+                    let _ = self.evt_tx.send(AppEvent::TokenUsage {
+                        generation_id,
+                        completion,
+                        context: None,
+                        context_exact: false,
+                        reasoning,
+                    });
+                    TurnProgress::ChildTokens {
+                        completion: completion.saturating_sub(token_base),
+                        reasoning,
+                    }
+                }
+                // A retry or an error inside the run: the parent's result
+                // text says how the run ended; nothing to draw meanwhile.
+                other => match stream_step(&other) {
+                    Some(step) => TurnProgress::ChildStep(step),
+                    None => return,
+                },
             },
-            AppEvent::ToolCall {
-                call_id,
-                name,
-                arguments,
-                result,
-                images,
-                ..
-            } => TurnProgress::ChildToolCall {
-                call_id,
-                name,
-                arguments,
-                result,
-                images,
-            },
-            AppEvent::AssistantContinue { .. } => TurnProgress::ChildContinue,
-            AppEvent::AssistantRewrite { .. } => TurnProgress::ChildRewrite,
-            // A retry or an error inside the run: the parent's result text
-            // says how the run ended; nothing to draw meanwhile.
-            _ => return,
         };
-        let _ = route.done_tx.send(GenMessage::Progress {
-            id: route.turn,
+        let _ = self.done_tx.send(GenMessage::Progress {
+            id: self.turn,
             progress,
         });
     }
+}
+
+/// The mirrored shape of a feed event, when it is one of the round's steps.
+fn stream_step(event: &AppEvent) -> Option<StreamStep> {
+    Some(match event {
+        AppEvent::Chunk { text, .. } => StreamStep::Chunk(text.clone()),
+        AppEvent::Thoughts { text, .. } => StreamStep::Thoughts(text.clone()),
+        AppEvent::ToolCallStarted {
+            call_id,
+            name,
+            arguments,
+            ..
+        } => StreamStep::ToolStarted {
+            call_id: call_id.clone(),
+            name: name.clone(),
+            arguments: arguments.clone(),
+        },
+        AppEvent::ToolCall {
+            call_id,
+            name,
+            arguments,
+            result,
+            images,
+            ..
+        } => StreamStep::ToolCall {
+            call_id: call_id.clone(),
+            name: name.clone(),
+            arguments: arguments.clone(),
+            result: result.clone(),
+            images: *images,
+        },
+        AppEvent::AssistantContinue { .. } => StreamStep::Continue,
+        AppEvent::AssistantRewrite { .. } => StreamStep::Rewrite,
+        _ => return None,
+    })
 }
 
 impl TurnLoop<'_> {
@@ -1292,11 +1307,9 @@ impl TurnLoop<'_> {
     fn sink(&self) -> RoundSink<'_> {
         RoundSink {
             evt_tx: &self.shared.evt_tx,
-            child: (!self.live).then_some(ChildRoute {
-                done_tx: &self.shared.done_tx,
-                turn: self.shared.id,
-                token_base: self.token_base,
-            }),
+            done_tx: &self.shared.done_tx,
+            turn: self.shared.id,
+            child: (!self.live).then_some(self.token_base),
         }
     }
 

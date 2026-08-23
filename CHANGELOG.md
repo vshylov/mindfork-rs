@@ -48,6 +48,11 @@ split by subsystem.
   delegation the status bar shows a quiet chip — the sub-agent's name, the
   round it is on and the tool it is using — instead of a bare "generating"
   for minutes.
+- **Coming back to a chat mid-reply shows the reply so far.** Step into a
+  running sub-agent's transcript and back, and the chat shows everything the
+  assistant has written in the current round — text, thoughts, the tool calls
+  it opened — and keeps streaming into it, instead of catching up only when
+  the reply lands.
 - **A sub-agent's transcript streams while you watch.** Open a running
   delegation and the sub-agent's reply arrives word by word, its thoughts and
   tool calls included, with its own token counter — and opening it mid-reply

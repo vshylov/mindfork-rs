@@ -384,11 +384,24 @@ pub struct LiveTurn {
     pub partial: Option<LivePartial>,
 }
 
-/// The text of a round in progress (see [`LiveTurn::partial`]).
+/// A round in progress (see [`LiveTurn::partial`]): its text and thoughts
+/// so far, and the tool calls it has opened — running or already answered —
+/// which are not in any filed message yet.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LivePartial {
     pub text: String,
     pub thoughts: String,
+    pub tools: Vec<LiveTool>,
+}
+
+/// One tool call of a round in progress (see [`LivePartial::tools`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveTool {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
+    /// `None` while the call is running.
+    pub result: Option<(String, usize)>,
 }
 
 /// One sub-agent run's position, for the status-bar chip
@@ -512,7 +525,7 @@ pub enum AppEvent {
         /// (docs/history/subagent-live.md §3.4–§3.5, §8): which turn (the
         /// chip's guard), which stream this feed accepts, and the text of the
         /// round in progress. `None` otherwise.
-        live_turn: Option<LiveTurn>,
+        live_turn: Option<Box<LiveTurn>>,
     },
     /// A running sub-agent transcript filed a round while it is the open
     /// conversation (docs/subagent-live.md §3.4): the messages to append to

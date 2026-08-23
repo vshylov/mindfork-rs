@@ -3202,14 +3202,15 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         None,
         None,
     );
-    s.set_live_turn(Some(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
         turn: generation,
         stream,
         partial: Some(crate::app::events::LivePartial {
             text: "начало".into(),
             thoughts: String::new(),
+            tools: Vec::new(),
         }),
-    }));
+    })));
     assert!(s.generating, "a transcript streams its own run");
     assert!(
         s.feed.last().unwrap().streaming && s.feed.last().unwrap().text == "начало",
@@ -3275,12 +3276,49 @@ fn returning_to_the_running_chat_resumes_its_generation() {
         None,
         None,
     );
-    s.set_live_turn(Some(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
         turn: generation,
         stream: generation,
-        partial: None,
-    }));
+        partial: Some(crate::app::events::LivePartial {
+            text: "Смотрю".into(),
+            thoughts: "план".into(),
+            tools: vec![
+                crate::app::events::LiveTool {
+                    call_id: "c1".into(),
+                    name: "web_search".into(),
+                    arguments: "{}".into(),
+                    result: Some(("ок".into(), 0)),
+                },
+                crate::app::events::LiveTool {
+                    call_id: "c2".into(),
+                    name: "call_subagent".into(),
+                    arguments: "{}".into(),
+                    result: None,
+                },
+            ],
+        }),
+    })));
     assert!(s.generating);
+    // The seed: one streaming bubble with the text, the thoughts and both
+    // cards — the answered one complete, the other still running.
+    let bubble = s.feed.last().unwrap();
+    assert!(bubble.streaming);
+    assert_eq!(bubble.text, "Смотрю");
+    assert_eq!(bubble.thoughts, "план");
+    assert_eq!(bubble.tools.len(), 2);
+    assert!(!bubble.tools[0].running && bubble.tools[0].result == "ок");
+    assert!(bubble.tools[1].running);
+    // …and the rest of the stream continues into it: the card completes in
+    // place, the text goes on.
+    s.push_tool_call(
+        generation,
+        "c2".into(),
+        "call_subagent".into(),
+        "{}".into(),
+        "итог".into(),
+        0,
+    );
+    assert!(!s.feed.last().unwrap().tools[1].running);
     s.push_chunk(generation, "продолжение");
     assert!(s.feed.iter().any(|m| m.text.contains("продолжение")));
     s.finish_generation(generation, FinishReason::Stop);

@@ -380,6 +380,10 @@ struct InflightTurn {
     chat: Uuid,
     /// The parent's rounds filed so far — not yet in `Chat.messages`.
     rounds: Vec<Message>,
+    /// The parent's round in progress — text, thoughts and the calls it has
+    /// opened — so its feed is rebuilt whole on a return mid-turn
+    /// (docs/history/subagent-live.md §8, last bullet).
+    partial: crate::app::events::LivePartial,
     /// The sub-agent run in progress, or just ended and not yet landed.
     child: Option<crate::entities::subagent::SubagentRun>,
     /// The run's own stream id — what its transcript's feed accepts
@@ -388,9 +392,45 @@ struct InflightTurn {
     /// The sub-agent's round in progress: text and thoughts streamed since
     /// the last filed round, so a transcript opened mid-round starts whole.
     child_partial: crate::app::events::LivePartial,
-    /// The parent was switched away from and back while the turn ran, so its
-    /// feed lost the stream: re-activate it whole at landing (§3.5).
-    parent_needs_refresh: bool,
+}
+
+/// Applies one mirrored step to a round in progress (see
+/// [`TurnProgress::OwnStep`] / [`TurnProgress::ChildStep`]).
+fn apply_step(partial: &mut crate::app::events::LivePartial, step: &generation::StreamStep) {
+    use generation::StreamStep;
+    match step {
+        StreamStep::Chunk(text) => partial.text.push_str(text),
+        StreamStep::Thoughts(text) => partial.thoughts.push_str(text),
+        StreamStep::ToolStarted {
+            call_id,
+            name,
+            arguments,
+        } => partial.tools.push(crate::app::events::LiveTool {
+            call_id: call_id.clone(),
+            name: name.clone(),
+            arguments: arguments.clone(),
+            result: None,
+        }),
+        StreamStep::ToolCall {
+            call_id,
+            name,
+            arguments,
+            result,
+            images,
+        } => match partial.tools.iter_mut().find(|t| t.call_id == *call_id) {
+            Some(tool) => tool.result = Some((result.clone(), *images)),
+            None => partial.tools.push(crate::app::events::LiveTool {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                arguments: arguments.clone(),
+                result: Some((result.clone(), *images)),
+            }),
+        },
+        // A follow-up starts a new bubble: the mirror keeps only the round
+        // in progress, and the filed round carries the earlier bubble.
+        StreamStep::Continue => {}
+        StreamStep::Rewrite => *partial = Default::default(),
+    }
 }
 
 impl InflightTurn {
@@ -965,7 +1005,11 @@ impl Orchestrator {
             return;
         };
         match progress {
-            TurnProgress::RoundFiled(messages) => turn.rounds.extend(messages),
+            TurnProgress::RoundFiled(messages) => {
+                turn.rounds.extend(messages);
+                turn.partial = Default::default();
+            }
+            TurnProgress::OwnStep(step) => apply_step(&mut turn.partial, &step),
             TurnProgress::ChildStarted(run) => {
                 turn.child = Some(*run);
                 turn.child_stream = Uuid::new_v4();
@@ -1012,57 +1056,54 @@ impl Orchestrator {
                 self.emit_chat_list();
             }
             // The sub-agent's stream (docs/history/subagent-live.md §8): the
-            // round's partial text is kept for a late opening; the step goes
-            // to the screen, under the run's own stream id, only while the
+            // round's partial is kept for a late opening; the step goes to
+            // the screen, under the run's own stream id, only while the
             // transcript is the open conversation.
-            TurnProgress::ChildChunk(text) => {
-                turn.child_partial.text.push_str(&text);
-                self.forward_child(|stream| AppEvent::Chunk {
-                    generation_id: stream,
-                    text,
+            TurnProgress::ChildStep(step) => {
+                apply_step(&mut turn.child_partial, &step);
+                self.forward_child(|stream| {
+                    use generation::StreamStep;
+                    match step {
+                        StreamStep::Chunk(text) => AppEvent::Chunk {
+                            generation_id: stream,
+                            text,
+                        },
+                        StreamStep::Thoughts(text) => AppEvent::Thoughts {
+                            generation_id: stream,
+                            text,
+                        },
+                        StreamStep::ToolStarted {
+                            call_id,
+                            name,
+                            arguments,
+                        } => AppEvent::ToolCallStarted {
+                            generation_id: stream,
+                            call_id,
+                            name,
+                            arguments,
+                        },
+                        StreamStep::ToolCall {
+                            call_id,
+                            name,
+                            arguments,
+                            result,
+                            images,
+                        } => AppEvent::ToolCall {
+                            generation_id: stream,
+                            call_id,
+                            name,
+                            arguments,
+                            result,
+                            images,
+                        },
+                        StreamStep::Continue => AppEvent::AssistantContinue {
+                            generation_id: stream,
+                        },
+                        StreamStep::Rewrite => AppEvent::AssistantRewrite {
+                            generation_id: stream,
+                        },
+                    }
                 });
-            }
-            TurnProgress::ChildThoughts(text) => {
-                turn.child_partial.thoughts.push_str(&text);
-                self.forward_child(|stream| AppEvent::Thoughts {
-                    generation_id: stream,
-                    text,
-                });
-            }
-            TurnProgress::ChildToolStarted {
-                call_id,
-                name,
-                arguments,
-            } => self.forward_child(|stream| AppEvent::ToolCallStarted {
-                generation_id: stream,
-                call_id,
-                name,
-                arguments,
-            }),
-            TurnProgress::ChildToolCall {
-                call_id,
-                name,
-                arguments,
-                result,
-                images,
-            } => self.forward_child(|stream| AppEvent::ToolCall {
-                generation_id: stream,
-                call_id,
-                name,
-                arguments,
-                result,
-                images,
-            }),
-            TurnProgress::ChildContinue => {
-                self.forward_child(|stream| AppEvent::AssistantContinue {
-                    generation_id: stream,
-                })
-            }
-            TurnProgress::ChildRewrite => {
-                turn.child_partial = Default::default();
-                self.forward_child(|stream| AppEvent::AssistantRewrite {
-                    generation_id: stream,
-                })
             }
             TurnProgress::ChildTokens {
                 completion,
@@ -1200,17 +1241,17 @@ impl Orchestrator {
         let turn = self.inflight.as_ref();
         let live_turn = turn.and_then(|t| {
             if t.chat == id {
-                Some(crate::app::events::LiveTurn {
+                Some(Box::new(crate::app::events::LiveTurn {
                     turn: t.generation,
                     stream: t.generation,
-                    partial: None,
-                })
+                    partial: Some(t.partial.clone()),
+                }))
             } else if t.child_id() == Some(id) {
-                Some(crate::app::events::LiveTurn {
+                Some(Box::new(crate::app::events::LiveTurn {
                     turn: t.generation,
                     stream: t.child_stream,
                     partial: Some(t.child_partial.clone()),
-                })
+                }))
             } else {
                 None
             }
@@ -1256,15 +1297,6 @@ impl Orchestrator {
             },
             None => return,
         };
-        // Coming back to the running turn's chat: its feed was rebuilt from
-        // the rounds filed so far, and the text of the round in progress is
-        // not among them — one whole re-activation at landing closes the gap.
-        if live_turn.is_some()
-            && self.active_id != Some(id)
-            && let Some(t) = self.inflight.as_mut().filter(|t| t.chat == id)
-        {
-            t.parent_needs_refresh = true;
-        }
         self.active_id = Some(id);
         let _ = self.evt_tx.send(event);
         self.emit_character_names();
