@@ -445,7 +445,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         TSubTimeout => int(|c, t| {
             if let Ok(v) = t.parse() {
-                c.tools.subagent_timeout_secs = v;
+                c.tools.subagent_run_timeout_secs = v;
             }
         }),
         RagTarget => int(|c, t| {

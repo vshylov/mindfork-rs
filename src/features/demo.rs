@@ -139,6 +139,7 @@ pub fn showcase_messages() -> Vec<Message> {
         result: Some("Note saved: \"Hardware budget\".".into()),
         thought_signature: None,
         images: 0,
+        subagent: None,
     }];
 
     vec![m1, m2, m3, m4]

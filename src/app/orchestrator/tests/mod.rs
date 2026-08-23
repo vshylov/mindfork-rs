@@ -547,5 +547,6 @@ mod search;
 mod self_consolidation;
 mod self_model;
 mod settings;
+mod subagent;
 mod title;
 mod tts;

@@ -405,6 +405,7 @@ mod tests {
             name: "note_save".into(),
             arguments: serde_json::json!({"text": "заметка"}),
             result: Some("сохранено".into()),
+            subagent: None,
         }];
         m
     }
@@ -524,6 +525,7 @@ mod tests {
             name: "calculate".into(),
             arguments: serde_json::json!({"expr": "2+2"}),
             result: Some("4".into()),
+            subagent: None,
         }];
         let opts = CopySettings {
             copy_tool_results: true,
@@ -540,6 +542,7 @@ mod tests {
             name: "calculate".into(),
             arguments: serde_json::json!({}),
             result: Some("4".into()),
+            subagent: None,
         }];
         assert!(format_conversation("", &[m2], &plain(), &no_names(), ru()).is_none());
     }

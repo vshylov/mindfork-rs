@@ -9,4 +9,5 @@ pub mod profile;
 pub mod rag;
 pub mod sampling;
 pub mod self_model;
+pub mod subagent;
 pub mod workspace;

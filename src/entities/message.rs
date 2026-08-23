@@ -39,10 +39,22 @@ pub struct ToolCallRecord {
     /// message to find out. Additive — old records read as `0`.
     #[serde(default, skip_serializing_if = "crate::entities::message::is_zero")]
     pub images: usize,
+    /// The sub-agent run a `call_subagent` call produced — its whole transcript,
+    /// kept on the record so it lives and dies with the exchange that made it
+    /// (spec §9.3.2, docs/research/subagent-chats.md §3.1). Boxed: a run holds
+    /// messages, which hold records, and the type is recursive. Additive — old
+    /// records read `None` and render as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<Box<crate::entities::subagent::SubagentRun>>,
 }
 
 /// `skip_serializing_if` for a count that is almost always zero.
 pub(crate) fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// The same, for a `u64` counter.
+pub(crate) fn is_zero_u64(n: &u64) -> bool {
     *n == 0
 }
 
@@ -218,6 +230,7 @@ mod tests {
             result: None,
             thought_signature: Some("SIG".into()),
             images: 0,
+            subagent: None,
         };
         let json = serde_json::to_string(&with_sig).unwrap();
         assert!(json.contains("thought_signature"));
@@ -231,6 +244,7 @@ mod tests {
             result: None,
             thought_signature: None,
             images: 0,
+            subagent: None,
         };
         assert!(
             !serde_json::to_string(&no_sig)

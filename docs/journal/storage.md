@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -21,6 +21,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: password-protected backups (done)
 - Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
 - Post-M9: the external server's API key, entered in settings (done)
+- Post-M9: the first real settings step — `SETTINGS_SCHEMA` 1→2 (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -636,3 +637,33 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   smoke could not have been: the orchestrator's live e2e set builds its backend
   through `MockSupervisor` (lessons.md §9), so it never runs `external_chat_setup`
   at all — the supervisor had to be driven directly.
+
+### Post-M9: the first real settings step — `SETTINGS_SCHEMA` 1→2 (done)
+- **What**: the dormant migration scaffold (ADR 0006) ran its first real step.
+  The sub-agent track ([docs/research/subagent-chats.md](../research/subagent-chats.md)
+  §3.12, PR 2) replaced `tools.subagent_timeout_secs` (one request, 60 s) with
+  `tools.subagent_run_timeout_secs` (a whole run, 600 s) and lifted the
+  default of `subagent_max_tokens` from 1024 to 4096. A rename is breaking by
+  F12, so: `SETTINGS_SCHEMA = 2`, `config::SCHEMA_VERSION = 2` (the invariant
+  test ties them), and `schema::settings_to_v2` — a pure `Value → Value` step.
+- **The step's rule**: a value left at the old default is **dropped** so the
+  new default applies on read (`ToolSettings` is `#[serde(default)]`); a value
+  the user changed is carried over under the new name, because a number
+  somebody typed is a decision; a `subagent_max_tokens` left at 1024 is dropped
+  for the same reason; nothing else in the file is touched. The old defaults
+  are **frozen in the step as literals**, not read from `config.rs` — a step
+  describes the past and must not follow the constants when those move again.
+- **What the bump touched besides the step**: `real_registry_is_all_current_v1`
+  became `real_registry_versions_and_steps` (settings at 2 with one step, the
+  other two dormant); `Step.summary` lost its `allow(dead_code)` — the runner
+  now logs it; two tests whose premise was "every file is v1" had to say which
+  version they meant (`data_migration`'s synthetic-step test pins its fixture
+  at 1, `main.rs`'s "enable_python is a no-op" fixture at the current version —
+  the rewrite it guards against is the *needless* one, and a migration is not
+  that). Three golden-shape tests pin the step: old defaults dropped and the
+  migrated value parsing into today's defaults, changed values carried, a file
+  without a `tools` section.
+- **Not done here, deliberately**: the chat-file step that synthesizes a
+  sub-agent transcript for old `call_subagent` records (`CHAT_SCHEMA` 2) is the
+  track's PR 3 — a separate bump, a separate golden fixture, its own journal
+  entry.

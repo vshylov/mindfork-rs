@@ -2988,6 +2988,7 @@ mod tests {
             name: "send_followup_message".into(),
             arguments: serde_json::json!({}),
             result: Some("ок".into()),
+            subagent: None,
         }];
         let tool_msg = {
             let mut m = Message::new(MessageRole::Tool, "ок");
@@ -3022,6 +3023,7 @@ mod tests {
             name: "note_save".into(),
             arguments: serde_json::json!({}),
             result: Some("ok".into()),
+            subagent: None,
         }];
         let tool_msg = {
             let mut m = Message::new(MessageRole::Tool, "ok");
@@ -3284,6 +3286,7 @@ mod tests {
             result: Some("ок".into()),
             thought_signature: None,
             images: 0,
+            subagent: None,
         }];
         let tool = {
             let mut m = Message::new(MessageRole::Tool, "ок");
@@ -3392,6 +3395,7 @@ mod tests {
             name: "note_save".into(),
             arguments: serde_json::json!({}),
             result: Some("ok".into()),
+            subagent: None,
         }];
         let tool = {
             let mut m = Message::new(MessageRole::Tool, "ok");

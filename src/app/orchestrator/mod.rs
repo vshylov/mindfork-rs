@@ -342,8 +342,6 @@ fn build_registry(
         python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
         python_wasm_memory_mb: config.tools.python_wasm_memory_mb,
         sandbox_dir: Some(sandbox_dir),
-        subagent_max_tokens: config.tools.subagent_max_tokens,
-        subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
         web_allow_private: config.tools.web_allow_private,
         fs_root: config.tools.fs_root.clone(),

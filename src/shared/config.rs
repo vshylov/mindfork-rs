@@ -8,7 +8,7 @@ use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -681,10 +681,14 @@ impl EmbedSettings {
     }
 }
 
-/// Default sub-agent response token limit (`call_subagent`, spec §9.3.2).
-pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
-/// Default time limit for one sub-agent call (seconds).
-pub const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 60;
+/// Default per-round reply token limit of a sub-agent (`call_subagent`, spec
+/// §9.3.2). A sub-agent that has just done three searches writes a longer
+/// answer than a one-shot opinion, hence wider than the 1024 of the tool-less
+/// version; the settings step 1→2 lifts a stored old default to this.
+pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 4096;
+/// Default time limit for a **whole** sub-agent run (seconds) — every round and
+/// every tool call of it. One knob, since the run is unattended inside a turn.
+pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
 /// Default code-execution timeout in the Wasmer sandbox (seconds). More generous
 /// than the local interpreter's (10s): WASM interpretation is ~2–5× slower than native.
 /// See docs/research/python-wasmer-sandbox.md.
@@ -772,10 +776,13 @@ pub struct ToolSettings {
     /// "Sandbox" directory for file tools (`None` → no restriction).
     /// If set, all paths must lie inside it (protection against `..` escape).
     pub fs_root: Option<String>,
-    /// Sub-agent response token limit (`call_subagent`).
+    /// A sub-agent's per-round reply token limit (`call_subagent`), min'ed
+    /// with the effective `max_tokens`.
     pub subagent_max_tokens: usize,
-    /// Time limit for a sub-agent call (seconds).
-    pub subagent_timeout_secs: u64,
+    /// Time limit for a whole sub-agent run (seconds): rounds and tool calls
+    /// together. Replaced `subagent_timeout_secs` (one request) when the
+    /// sub-agent gained tools — settings step 1→2 carries a changed value over.
+    pub subagent_run_timeout_secs: u64,
     /// Ask the user before the agentic loop runs a tool marked dangerous
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
@@ -806,7 +813,7 @@ impl Default for ToolSettings {
             fs_enabled: false,
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
-            subagent_timeout_secs: DEFAULT_SUBAGENT_TIMEOUT_SECS,
+            subagent_run_timeout_secs: DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS,
             confirm_dangerous: false,
             mcp_images: true,
         }
@@ -1946,7 +1953,10 @@ mod tests {
         // New sections get filled with defaults when absent from the file.
         assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
-        assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
+        assert_eq!(
+            c.tools.subagent_run_timeout_secs,
+            DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS
+        );
         // Confirmation of dangerous tool calls is opt-in: off until turned on.
         assert!(!c.tools.confirm_dangerous);
         // History compression: on where it can act at all (fork F10), and the
@@ -2288,7 +2298,7 @@ mod tests {
             tools: ToolSettings {
                 python_enabled: true,
                 subagent_max_tokens: 512,
-                subagent_timeout_secs: 30,
+                subagent_run_timeout_secs: 30,
                 confirm_dangerous: true,
                 ..Default::default()
             },
