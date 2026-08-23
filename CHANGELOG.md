@@ -44,6 +44,14 @@ split by subsystem.
   assistant can search and read sub-agent transcripts of this profile's
   conversations too — including this chat's own — each labelled as the
   transcript of its conversation and reachable by its `chat://` address.
+- **You can see a sub-agent working.** While the assistant waits on a
+  delegation the status bar shows a quiet chip — the sub-agent's name, the
+  round it is on and the tool it is using — instead of a bare "generating"
+  for minutes.
+- **Sub-agent transcripts name themselves.** With automatic titling on
+  (either setting), a finished delegation gets a model-written title the
+  moment it lands, like a new chat does; a title you gave it by hand is
+  kept. The demo (`mindfork demo`) now includes one such transcript.
 
 - **The licence and the disclaimer in Russian** — with the interface language
   set to Russian, the `F1` → "Licence"/"Disclaimer" tabs and the Windows

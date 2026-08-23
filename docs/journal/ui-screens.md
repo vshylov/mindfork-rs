@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the licence and the disclaimer in Russian (done)
 - Post-M9: sub-agent chats, PR 4 — the transcript in the list, opened read-only (done)
 - Post-M9: sub-agent chats, PR 5 — transcripts in search and the cross-chat tools (done)
+- Post-M9: sub-agent chats, PR 6 — auto-title at landing, the run chip, the demo transcript (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1999,3 +2000,62 @@ Branch `feat/code-workspace-changes`.
   quotes («…«…»…»); the search screen uses the literal `└` the list uses
   rather than a new glyph (box-drawing is allowed in both glyph sets). Next:
   PR 6 — auto-title at landing and the status-bar chip.
+
+### Post-M9: sub-agent chats, PR 6 — auto-title at landing, the run chip, the demo transcript (done)
+
+- **What**: PR 6 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §3.5,
+  §3.10, §7 stage 6). Three small things the earlier stages left: a landed
+  transcript names itself, the user sees the run while it is in flight, and
+  the demo world has a transcript to show. Spec §9.3.2, §11.7; architecture
+  §5, §6.
+- **Auto-title at landing** — `handle_done` collects the runs that landed
+  with the turn (any record's `subagent` with a substantive `final_reply`)
+  and, after the chat borrow, calls `maybe_auto_title_run` for each: both
+  `interface.auto_title` points fire there, since a transcript's question and
+  reply arrive together (fork F8, resolved by construction); only `Off` is
+  quiet, and `renamed_manually` (a migrated or hand-named run) is left alone.
+  The title task itself is PR 4's `view()`-based one (`Ctrl+R` on a
+  transcript), so there is one digest, one sampling recipe and one "manual
+  wins" apply rule for chats and transcripts alike. Pinned by a test that
+  runs a second delegation in an existing chat under each mode and checks
+  the one title request on the engine is the transcript's digest and the
+  parent keeps its title.
+- **The run chip** — `AppEvent::SubagentProgress { generation_id, progress:
+  Option<SubagentProgress { name, round, tool }> }`. The child loop carries
+  a `persona` (`name`, else the initial title) and `report_progress` sends
+  the event **around** its muted `RoundSink` at each round's start and each
+  tool's entry — the one child event meant for the parent's screen; the
+  parent sends the clearing `None` after the run, while its own turn goes
+  on. `tool_round` counts the round before executing the calls, so a tool
+  is reported in the round already counted and a stream opens the next —
+  the test pins `1 · 1+tool · 2 · None` for the standard delegation. The
+  screen words it (`ui.chat.bg.subagent[_tool]`, "sub-agent «name» · round
+  N · tool") into `background_hint` between the background tasks and the
+  retry chip, guarded by the generation id and cleared by `Finished`.
+- **The demo transcript** — `demo::reviewer_run()`: a completed "Reviewer"
+  run (fixed ids and times, titled as the automatic titling would) on the
+  refactoring chat's answer, through `reviewer_record()`; `chat_summaries()`
+  nests its `ChildSummary` under that row and `filler_chats()` seeds the
+  record, with a test that the capture and the seeded world agree. The list
+  frame fills `PANEL_H` exactly, so one filler row went ("Wool or
+  synthetic") rather than pushing the last row off — 21 dialogs and a
+  transcript. Dumps and the four chat-list images regenerated; JetBrains
+  Mono came from the site's woff2 via `fontTools` (the JBR bundle on this
+  machine lacks Regular/Bold), and the old PNGs were re-rendered
+  byte-identical first, as lessons §1 asks. `tools/screenshots.py`'s path
+  guard refuses a dump directory outside the repo — the check went through
+  `target/`.
+- **Tests**: 2498 green (+3): the chip sequence in the standard delegation
+  test, the landing title under both modes, the screen's chip (worded,
+  composed, cleared by the run's end and the turn's end, stale-dropped), the
+  demo agreement test; the drift gate re-pinned on the new dumps.
+  **Smoke — GO**: `subagent_with_tools_e2e_live` against Gemma 4 31B
+  (`llama-server`, 192.168.1.20) — the nested run with `fs_read` completed
+  (4 messages, 121 tokens); the chip and the title task are exercised by the
+  scripted engine, which is where their sequence can be asserted.
+- **Decided on the way**: `/copy`/`/export` of a parent do not carry its
+  transcripts — stated in spec §11.7 rather than solved (research §3.6: the
+  v1 import document has no place for tool calls). Next: PR 7
+  `feat/subagent-live` — the in-flight side table and the child's stream in
+  its own feed, once a live run argues for it.
