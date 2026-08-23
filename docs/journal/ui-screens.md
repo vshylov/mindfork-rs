@@ -1991,9 +1991,10 @@ Branch `feat/code-workspace-changes`.
   itself), `first_match_in_chat` per level, the screen's child header and
   `Enter`, the snapshot's transcripts (the current chat's in, a hidden
   parent's out) and the pair reaching a transcript through its parent.
-  **No live run**: an index and UI change; `cross_chat_search_answers_from_another_chat_live`
-  still passes on its own chats (a transcript only adds rows to the same
-  scope).
+  **Smoke — GO**: an index and UI change needs no live run of its own;
+  `cross_chat_search_answers_from_another_chat_live` was re-run against
+  Gemma 4 31B (`llama-server`, 192.168.1.20) — the pair still answers from
+  another chat with the new scope (a transcript only adds rows to it).
 - **Decided on the way**: the label wording avoids nesting the header's
   quotes («…«…»…»); the search screen uses the literal `└` the list uses
   rather than a new glyph (box-drawing is allowed in both glyph sets). Next:
