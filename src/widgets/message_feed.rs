@@ -28,11 +28,15 @@ use crate::shared::wrap;
 /// a space (redesign: "Role rails — colored ▌ in the gutter"). Width — 2 columns.
 const RAIL: &str = "▌ ";
 
-/// Role of a feed item (a UI projection; system messages aren't shown).
+/// Role of a feed item (a UI projection). A chat's own system message is
+/// never shown; `System` is the bubble a **sub-agent transcript** opens with —
+/// the persona its parent composed is the point of reading one (spec §11.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedRole {
     User,
     Assistant,
+    /// The persona of a sub-agent transcript, drawn first.
+    System,
     /// A service note (errors, "generation cancelled").
     Note,
 }
@@ -95,6 +99,21 @@ pub struct FeedMessage {
 }
 
 impl FeedMessage {
+    /// The system bubble a sub-agent transcript opens with (spec §11.3): the
+    /// persona, as the parent composed it. Not a domain message — the
+    /// transcript keeps it as a field, like any chat — so it has no id.
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            role: FeedRole::System,
+            text: text.into(),
+            thoughts: String::new(),
+            tools: Vec::new(),
+            streaming: false,
+            message_ids: Vec::new(),
+            model: None,
+        }
+    }
+
     /// A service note for the feed.
     pub fn note(text: impl Into<String>) -> Self {
         Self {
@@ -490,6 +509,12 @@ impl MessageFeed {
     /// current profile's non-hidden chats, the open one included (spec §11.3).
     /// Changing it invalidates the render cache via [`CacheKey`], because which
     /// references are drawn as links is baked into every block.
+    /// The address book as set — what `chat://` references resolve against.
+    #[cfg(test)]
+    pub fn known_chats(&self) -> &[Uuid] {
+        &self.known_chats
+    }
+
     pub fn set_known_chats(&mut self, ids: Vec<Uuid>) {
         self.known_chats = ids;
     }
@@ -1098,7 +1123,7 @@ fn build_message_block(
         match item.role {
             FeedRole::User => palette.user,
             FeedRole::Assistant => palette.assistant,
-            FeedRole::Note => palette.muted,
+            FeedRole::System | FeedRole::Note => palette.muted,
         }
     };
     // Build the message body without a rail, at width `inner`.
@@ -1138,6 +1163,22 @@ fn build_message_block(
             content_from = body.len();
             push_thoughts(&mut body, &item.thoughts, view.thoughts, palette, loc);
             push_assistant_body(&mut body, item, palette, inner, view.tools, opts, loc);
+        }
+        // The persona of a sub-agent transcript: headed like a role, body as
+        // prose, on the muted rail a note uses — it is context, not a turn.
+        FeedRole::System => {
+            body.push(role_header(
+                &format!(
+                    "{} {}",
+                    glyphs.system_icon,
+                    role_name(names.system_name(), "ui.feed.role.system", loc)
+                ),
+                palette.muted,
+                None,
+                palette,
+            ));
+            content_from = body.len();
+            push_body(&mut body, item, palette, inner, opts);
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
     }
@@ -1399,6 +1440,7 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
         FeedRole::User => 0,
         FeedRole::Assistant => 1,
         FeedRole::Note => 2,
+        FeedRole::System => 3,
     };
     role_tag.hash(&mut h);
     item.text.hash(&mut h);

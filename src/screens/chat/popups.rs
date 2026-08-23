@@ -163,7 +163,7 @@ impl ChatScreen {
         let linked = self.feed_view.chat_links();
         let cards: Vec<ChatSummary> = linked
             .iter()
-            .filter_map(|id| self.chats.iter().find(|c| c.id == *id).cloned())
+            .filter_map(|id| self.summary_card(*id))
             .collect();
         if cards.is_empty() {
             self.push_note(self.loc.t("ui.chat.links_none"));

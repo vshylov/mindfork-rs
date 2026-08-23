@@ -1865,6 +1865,27 @@ A direct requirement from the task:
   at ([§6.8](#68-transient-engine-failures-and-what-the-user-is-told)). See
   [docs/history/auto-chat-title.md](docs/history/auto-chat-title.md).
 - Contextual actions: create (with a profile picker), clone, delete (soft).
+- **Sub-agent transcripts are rows of the list, nested under the chat whose
+  call made them** ([§9.3.2](#932-call_subagent); docs/research/subagent-chats.md
+  §3.7): indented with a `└` in place of the dot, in **call order** under their
+  parent (they are the steps of its work, so "newest first" would read them
+  backwards), with a muted mark beside the count when the run did not complete
+  (*cancelled* / *timed out* / *failed* / *round limit* / *interrupted*). The
+  filter rule, in both search scopes: **a row is shown iff it matches; a chat
+  is additionally shown — dimmed — when any of its transcripts matches.** So a
+  matched transcript never appears without its parent, an unmatched one never
+  pads a matched parent, and text found only in the parent shows the parent
+  alone. (Content mode needs the index to name transcripts, which it does from
+  the next stage of the track on; until then transcripts only show there with
+  no result pending.) On a transcript `Enter` opens it, `F2` renames it,
+  `Ctrl+R` has the model title it, `F5` copies it; **`Del` and `Ctrl+D` refuse**
+  with a note in the status area naming the way a transcript does go away —
+  `Ctrl+E`/`Ctrl+R` of the spawning exchange in the parent, or the parent
+  itself — and the hotkey grid does not advertise the two on such a row. The
+  orchestrator refuses `DeleteChat`/`CloneChat` for a transcript's id as well,
+  whatever route sent them; cloning a **parent** copies its transcripts along
+  under fresh ids (two chats answering to one `chat://` prefix would make the
+  reference ambiguous).
 - **Copying the entire conversation** of the selected chat to the system clipboard (`F5`):
   the overlay only sees a summary, so the text is built by the orchestrator (the owner of `Chat`),
   while writing to the clipboard is a UI-layer concern (`arboard`). Confirmation/error is shown in the
@@ -2048,9 +2069,29 @@ this?"*; this screen answers *"where exactly, and take me there."*
   (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
   — returns the view to the message rather than to a stale row. A message the feed
   doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
+- **A sub-agent transcript opened from the list is read-only** ([§9.3.2](#932-call_subagent),
+  docs/research/subagent-chats.md §3.8). It looks like a chat with a system
+  message: the persona the parent composed is drawn **first, as a system bubble**
+  (headed by the profile's system name, else `SYSTEM`; muted rail) — the one
+  thing a reader of a transcript wants first, and a chat never shows; the
+  instruction's header is the **parent persona** (the profile's assistant name,
+  else the assistant label — it wrote the instruction), the replies' header the
+  sub-agent's `name`, else `SUB-AGENT`; both resolved at activation, so a profile
+  rename shows at once. The input box is titled *read-only · commands only* and a
+  quiet status-bar chip says *transcript*. **Sending refuses with a note** that
+  names the parent and the way a transcript goes away (and leaves the line in
+  the box); so do `Ctrl+R`/`/regen`, `Ctrl+E`/`/takeback`, `Ctrl+U`/`/impersonate`,
+  `/compact`, `/file`, `/image`, `/project` and `/clone`. What works is what
+  makes sense in a transcript: `/copy` and `F5`, `/rename`, `/export`, `/search`,
+  `/find`, `/links` and `Ctrl+L`, `/tts`, `/chats` and `Esc`, `Ctrl+T`/`Ctrl+O`
+  (the collapse state is the **parent's** — the transcript is part of it),
+  `/new`, `/settings`, `/help`. The orchestrator fails closed by construction
+  on everything else: the active id is the transcript's, and no chat of the
+  list has it. The transcript is remembered as the last open one and restored
+  at the next start like a chat.
 - **`chat://` references** ([§9.11](#911-cross-chat-search-chat_search-and-chat_read)).
-  An address for a conversation of the **current profile** is drawn in the link
-  style wherever it appears in the feed — an assistant's answer, a user's
+  An address for a conversation of the **current profile** — a chat or one of
+  its sub-agent transcripts — is drawn in the link style wherever it appears in the feed — an assistant's answer, a user's
   message, a tool card, "thoughts" — and **`Ctrl+L`** opens a picker of the
   ones this chat holds (newest first, deduplicated, title + date), `Enter`
   follows the chosen one. **With mouse capture on (`Ctrl+W`), a left click on

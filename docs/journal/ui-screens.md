@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the "About" tab became a leader table (done)
 - Post-M9: the code workspace — stage 4, the changes screen (done)
 - Post-M9: the licence and the disclaimer in Russian (done)
+- Post-M9: sub-agent chats, PR 4 — the transcript in the list, opened read-only (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1874,3 +1875,67 @@ Branch `feat/code-workspace-changes`.
   and a tab's argument list; no engine, memory, tool or provider path is touched.
   The tabs were still rendered in both languages through the whole screen (the
   new test does it, and the layout was eyeballed from a 100×44 dump).
+
+### Post-M9: sub-agent chats, PR 4 — the transcript in the list, opened read-only (done)
+
+- **What**: PR 4 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §3.7–§3.8).
+  A sub-agent transcript (the run on the call's record, PR 2) is now a row of
+  the chat list nested under its parent, and opens as a read-only chat with the
+  persona on top. Spec §11.2/§11.3; architecture §10.
+- **The list** — `ChatSummary.children` (cards built by `Chat::summary()` from
+  the records, in call order); the widget's `visible()` now returns `Row`s
+  (chat or transcript: `parent`, `outcome`, `dimmed`) and is where the tree
+  rule lives: *a row is shown iff it matches; a chat is also shown, dimmed,
+  when a transcript of it matches*. Chats keep the sort mode, transcripts
+  follow their parent in call order — "newest first" reads the steps of a
+  delegation backwards. The row is `  └ title`, with a muted outcome word
+  beside the count when the run did not complete. `Del`/`Ctrl+D` on a
+  transcript are not advertised in the hotkey grid; the widget still sends the
+  action and **the orchestrator refuses** (`refuse_on_child` →
+  `ChatListError`) — one authority, whatever route sent the command.
+- **Opening** — the ordinary `SwitchChat` with a transcript's id: the
+  orchestrator's single resolver `view(id) → Top | Child{parent, run}` finds
+  it; `activate_focused` emits `ChatActivated { child: Some(ChildView) }` with
+  the transcript's messages and the **parent's** `feed_view`. **`active_id`
+  holds the transcript's id** — the read-only mechanism by construction: every
+  handler that looks the active id up in `self.chats` fails closed, and the
+  few that must work on a transcript opt in through `view()`/`with_child_mut`:
+  rename (manual, sets `renamed_manually`), the title task (`Ctrl+R` — digest
+  from the run's messages, result onto the run, the same "manual wins" rule),
+  copy, export (a transient `Chat` from the run — an export is a copy),
+  speech, `SetFeedView` (routed to the parent), `SetDraft` (ignored), the
+  startup restore of `last_active_chat`. `handle_send` additionally answers a
+  send into a transcript with an error **and the text returned** — the
+  route-independent belt under the screen's braces. Names come from `names_of`
+  at activation (the parent persona as `user`, the run's `name` as
+  `assistant`) so a profile rename never goes stale.
+- **The screen** — `child: Option<ChildView>` set by `app` right before
+  `activate_chat` (the one production caller) so the 28 test call sites kept
+  their signature; a new `FeedRole::System` bubble (muted rail, `§` icon,
+  headed by `CharacterNames.system` — its first use) prepended to the feed;
+  `refuse_read_only(what)` — one note naming the parent and the way a
+  transcript goes away (lessons §4) — from the three chords, from
+  `try_read_only_refusal` ahead of every parser for the nine blocked commands
+  (the line is cleared), and at the send (the line is **kept**: the box is
+  still there for commands). The input title says *read-only · commands
+  only*, the status bar a quiet `≡ transcript` chip. The `chat://` address
+  book and the link picker resolve transcripts through `summary_card` —
+  a sub-agent's result address is a link from this PR on.
+- **Clone** re-ids the copied transcripts (`Chat::reid_children`, the archive's
+  too) — two chats answering to one `chat://` prefix would refuse the link.
+- **Decided on the way**: the widget does not refuse by itself — it has no
+  locale at key time, and the orchestrator already answers through
+  `ChatListError`; content mode cannot name transcripts until PR 5's `sub_id`
+  reaches the index, so a transcript shows there only while no result is
+  pending (the rule's membership test is already in place).
+- **Tests**: 2488 green (+20): the widget's tree (order, both filter cases,
+  content ids, keys on a transcript, the hotkey grid, the rendered row);
+  the screen's read-only mode (the system bubble, the refused send with the
+  text kept, every blocked chord and command with its note, the commands that
+  still work, the status model, a transcript's address in the book); the
+  orchestrator (the nested list snapshot, activation with `ChildView` and
+  names and the refused send, the startup restore of a remembered transcript,
+  rename, delete/clone refusals and a clone's re-id, copy, a requested title).
+  No live run — UI and orchestration over a scripted engine; the engine path
+  is PR 2's.

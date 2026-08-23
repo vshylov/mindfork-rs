@@ -620,8 +620,9 @@ hits carried, since they are capped at `HIT_CAP`; the screen shows "showing N of
 M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ProfileList`, `Settings`,
 `ChatActivated` (which carries `feed_view` — the chat's stored collapse state,
-the counterpart of `draft` for the view — and an optional `focus: Option<Uuid>` — the message to
-put the feed on; `None` for every activation but a jump), `CharacterNames` (the active chat profile's role names for the
+the counterpart of `draft` for the view — an optional `focus: Option<Uuid>` — the message to
+put the feed on; `None` for every activation but a jump — and `child: Option<ChildView>`,
+set when the activated "chat" is a sub-agent transcript, §10), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
@@ -2293,6 +2294,29 @@ The commands reach `AppCommand::CreateProfile`/`DeleteProfile`/`UpdateSelfModel`
 — the same three the settings and self-model screens send — and the *outcome* of
 profile CRUD is now announced by the orchestrator (`AppEvent::Notice`), so the
 claim is made where the write happens and both routes answer alike.
+
+**A sub-agent transcript as a chat of the list** (spec §9.3.2, §11.2,
+docs/research/subagent-chats.md §3.7–§3.8). `ChatSummary.children` carries the
+transcripts' cards, built by `Chat::summary()` from the records; the list widget
+flattens the snapshot into `Row`s (a chat, or a transcript with `parent`,
+`outcome`, a `dimmed` flag) in `visible()`, which is where the tree rule lives.
+Opening one goes through the ordinary `SwitchChat`: the orchestrator's single
+resolver `view(id) → ChatView::{Top, Child}` finds a transcript inside its
+parent, `activate_focused` emits `ChatActivated` with `child: Some(ChildView
+{parent, parent_title, system_message})`, the transcript's messages and the
+**parent's** `feed_view`, and `active_id` holds the transcript's id. That last
+choice is the read-only mechanism: every orchestrator path that looks the
+active id up in `self.chats` fails closed, and the few that must work on a
+transcript — rename (`with_child_mut`), the title task, copy, export, speech,
+`SetFeedView` (routed to the parent), the startup restore — opt in through
+`view()`. Role names are resolved at activation by `names_of` (the parent
+persona as `user`, the run's `name` as `assistant`). The screen keeps
+`child: Option<ChildView>` (set by `app` right before `activate_chat`), prepends
+a `FeedRole::System` bubble, and refuses through one `refuse_read_only` note —
+in `handle_ctrl_shortcut` for the three chords, in `try_read_only_refusal`
+ahead of every parser for the blocked commands, and at the send. The `chat://`
+address book (`refresh_known_chats`) and the link picker (`summary_card`) see
+transcripts through the same snapshot.
 
 **"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it

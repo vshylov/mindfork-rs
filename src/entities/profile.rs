@@ -18,8 +18,8 @@ pub type ToolId = String;
 pub struct CharacterNames {
     pub user: String,
     pub assistant: String,
-    /// Not displayed anywhere yet (system messages don't appear in the feed or the
-    /// export); kept for the import format's completeness and future use.
+    /// Heads the system bubble a sub-agent transcript opens with (spec §11.3);
+    /// ordinary chats still never draw their system message.
     pub system: String,
 }
 
@@ -33,6 +33,12 @@ impl CharacterNames {
     /// The assistant's display name, or `None` when not set.
     pub fn assistant_name(&self) -> Option<&str> {
         non_empty(&self.assistant)
+    }
+
+    /// The system role's display name, or `None` when not set. Drawn on the
+    /// system bubble a sub-agent transcript opens with (spec §11.3).
+    pub fn system_name(&self) -> Option<&str> {
+        non_empty(&self.system)
     }
 }
 

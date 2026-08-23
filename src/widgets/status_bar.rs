@@ -99,6 +99,9 @@ pub struct StatusModel<'a> {
     pub staged_images: Option<&'a str>,
     /// Where `Esc` goes from here — it decides the `Esc` hint's wording.
     pub esc_target: EscTarget,
+    /// The open "chat" is a sub-agent transcript, read-only (spec §11.2): a
+    /// quiet chip says so, next to the input box's title that says the same.
+    pub read_only: bool,
 }
 
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
@@ -115,6 +118,10 @@ const ATTACH_GLYPH: char = '§';
 /// `#` reads as "a picture" next to `§` "a document" without borrowing either
 /// glyph's meaning.
 const IMAGE_GLYPH: char = '#';
+
+/// The read-only-transcript glyph. WGL4, one column, like the three above;
+/// `≡` reads as "a document" without borrowing a neighbour's meaning.
+const TRANSCRIPT_GLYPH: char = '≡';
 
 /// Draws the status line in `area`. When hotkeys don't fit by width, they
 /// wrap onto the next lines as a neat grid (like in the chat-list overlay);
@@ -302,6 +309,15 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
     if let Some(images) = model.staged_images {
         state.push(sep());
         state.push(Span::styled(format!("{IMAGE_GLYPH} {images}"), muted));
+    }
+    // A sub-agent transcript is read-only: the chip is the standing reminder,
+    // the refusals say it again when a key is pressed.
+    if model.read_only {
+        state.push(sep());
+        state.push(Span::styled(
+            format!("{TRANSCRIPT_GLYPH} {}", loc.t("ui.status.read_only")),
+            muted,
+        ));
     }
     state
 }
@@ -586,6 +602,7 @@ mod tests {
             attachments: None,
             staged_images: None,
             esc_target: EscTarget::default(),
+            read_only: false,
         }
     }
 
@@ -693,6 +710,7 @@ mod tests {
                 attachments: None,
                 staged_images: None,
                 esc_target: EscTarget::default(),
+                read_only: false,
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -799,6 +817,7 @@ mod tests {
                 attachments: None,
                 staged_images: None,
                 esc_target: EscTarget::default(),
+                read_only: false,
             };
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -953,6 +972,7 @@ mod tests {
             attachments: Some("файлы: 2 (~3.1k)"),
             staged_images: Some("изображения: 1 (~1.2k)"),
             esc_target: EscTarget::SearchResults,
+            read_only: false,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();

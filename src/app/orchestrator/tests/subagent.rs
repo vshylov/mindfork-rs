@@ -384,3 +384,250 @@ async fn subagent_with_an_empty_message_is_a_tool_error_without_a_run() {
     // No child round was ever sent.
     assert_eq!(backend.requests().len(), 2);
 }
+
+// ---- the transcript as a chat of the list (PR 4, research §3.7–§3.8) ----
+
+/// Runs the standard delegation turn and returns the root and the ids of the
+/// parent and the landed transcript.
+async fn delegated() -> (tempfile::TempDir, Uuid, Uuid) {
+    let (dir, _backend, _events, chat_id) = run_turn(
+        vec![
+            call("c1", "call_subagent", DELEGATE),
+            text("it is noon"),
+            text("done: noon"),
+        ],
+        no_auto_cfg(),
+    )
+    .await;
+    let chat = load(dir.path(), chat_id);
+    let run_id = chat.messages[1].tool_calls[0]
+        .subagent
+        .as_deref()
+        .unwrap()
+        .id;
+    (dir, chat_id, run_id)
+}
+
+/// Reopens the orchestrator on `root` with a silent engine and waits out the
+/// bootstrap; returns the channels, the list snapshot the bootstrap emitted
+/// (it precedes the activation, so it must be caught here) and the first
+/// activation event.
+async fn reopen(
+    root: &std::path::Path,
+) -> (
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    Vec<crate::entities::chat::ChatSummary>,
+    AppEvent,
+) {
+    let backend = ScriptRecorder::new(Vec::new()) as Arc<dyn EngineBackend>;
+    // The config as the previous session left it on disk (the remembered
+    // chat lives there), with the automatic titling off as every test here.
+    let mut cfg = Storage::open(Paths::with_root(root))
+        .unwrap()
+        .json()
+        .load_config()
+        .unwrap_or_default();
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(root, Some(backend), cfg);
+    let mut list = Vec::new();
+    let first = loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(10), evt_rx.recv())
+            .await
+            .expect("the bootstrap activation")
+            .expect("the event channel");
+        match ev {
+            AppEvent::ChatList(chats) => list = chats,
+            AppEvent::ChatActivated { .. } => break ev,
+            _ => {}
+        }
+    };
+    (cmd_tx, evt_rx, handle, list, first)
+}
+
+#[tokio::test]
+async fn the_list_nests_the_transcript_under_its_parent() {
+    let (dir, chat_id, run_id) = delegated().await;
+    let (cmd_tx, _evt_rx, handle, chats, _) = reopen(dir.path()).await;
+    let parent = chats.iter().find(|c| c.id == chat_id).unwrap();
+    assert_eq!(parent.children.len(), 1);
+    assert_eq!(parent.children[0].id, run_id);
+    assert_eq!(parent.children[0].title, "Critic");
+    assert_eq!(parent.children[0].outcome, Some(RunOutcome::Completed));
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn opening_a_transcript_activates_it_read_only_with_its_names() {
+    let (dir, chat_id, run_id) = delegated().await;
+    let (cmd_tx, mut evt_rx, handle, _, _) = reopen(dir.path()).await;
+    cmd_tx.send(AppCommand::SwitchChat(run_id)).unwrap();
+    let ev = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == run_id),
+    )
+    .await
+    .unwrap();
+    let AppEvent::ChatActivated {
+        title,
+        messages,
+        draft,
+        child,
+        compaction,
+        ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    assert_eq!(title, "Critic");
+    assert_eq!(messages.len(), 2);
+    assert!(draft.is_empty());
+    assert!(compaction.is_none());
+    let child = child.expect("a transcript announces its parent");
+    assert_eq!(child.parent, chat_id);
+    assert_eq!(child.system_message, "be harsh");
+    // The names: the parent persona writes the instruction, the sub-agent answers.
+    let names = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::CharacterNames(_)))
+        .await
+        .unwrap();
+    let AppEvent::CharacterNames(names) = names else {
+        unreachable!()
+    };
+    assert_eq!(names.assistant, "Critic");
+    assert!(!names.user.is_empty());
+
+    // Sending into it is refused with the text returned.
+    cmd_tx
+        .send(AppCommand::SendMessage("hello?".into()))
+        .unwrap();
+    let restored = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::RestoreInput(_)))
+        .await
+        .unwrap();
+    assert!(matches!(restored, AppEvent::RestoreInput(t) if t == "hello?"));
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // The parent is untouched and the transcript was remembered as the last open.
+    let chat = load(dir.path(), chat_id);
+    assert_eq!(chat.messages.len(), 4);
+    let cfg = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_config()
+        .unwrap();
+    assert_eq!(cfg.last_active_chat, Some(run_id));
+}
+
+#[tokio::test]
+async fn a_remembered_transcript_is_restored_at_startup() {
+    let (dir, _chat_id, run_id) = delegated().await;
+    let (cmd_tx, _evt_rx, handle, _, _) = reopen(dir.path()).await;
+    cmd_tx.send(AppCommand::SwitchChat(run_id)).unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let (cmd_tx, _evt_rx, handle, _, first) = reopen(dir.path()).await;
+    assert!(matches!(first, AppEvent::ChatActivated { id, child: Some(_), .. } if id == run_id));
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn renaming_a_transcript_sticks_and_is_manual() {
+    let (dir, chat_id, run_id) = delegated().await;
+    let (cmd_tx, mut evt_rx, handle, _, _) = reopen(dir.path()).await;
+    cmd_tx
+        .send(AppCommand::RenameChat {
+            id: run_id,
+            title: "Harsh critic".into(),
+        })
+        .unwrap();
+    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap();
+    assert!(
+        matches!(renamed, AppEvent::ChatRenamed { id, title } if id == run_id && title == "Harsh critic")
+    );
+    // The parent's own title is untouched; the flush happens on quit.
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    let run = chat.child(run_id).unwrap();
+    assert_eq!(run.title, "Harsh critic");
+    assert!(run.renamed_manually);
+    assert_ne!(chat.title, "Harsh critic");
+}
+
+#[tokio::test]
+async fn delete_and_clone_refuse_a_transcript_and_a_cloned_parent_reids_its_runs() {
+    let (dir, chat_id, run_id) = delegated().await;
+    let (cmd_tx, mut evt_rx, handle, _, _) = reopen(dir.path()).await;
+    for cmd in [
+        AppCommand::DeleteChat(run_id),
+        AppCommand::CloneChat(run_id),
+    ] {
+        cmd_tx.send(cmd).unwrap();
+        let err = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatListError(_)))
+            .await
+            .unwrap();
+        assert!(matches!(err, AppEvent::ChatListError(_)));
+    }
+    cmd_tx.send(AppCommand::CloneChat(chat_id)).unwrap();
+    let list = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatList(c) if c.len() == 2),
+    )
+    .await
+    .unwrap();
+    let AppEvent::ChatList(chats) = list else {
+        unreachable!()
+    };
+    let clone = chats.iter().find(|c| c.id != chat_id).unwrap();
+    assert_eq!(clone.children.len(), 1, "the transcript was copied along");
+    assert_ne!(clone.children[0].id, run_id, "under an id of its own");
+    // The original's transcript is still there, untouched.
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    assert!(chat.child(run_id).is_some());
+}
+
+#[tokio::test]
+async fn copying_a_transcript_labels_the_roles_as_its_own() {
+    let (dir, _chat_id, run_id) = delegated().await;
+    let (cmd_tx, mut evt_rx, handle, _, _) = reopen(dir.path()).await;
+    cmd_tx.send(AppCommand::CopyChat(run_id)).unwrap();
+    let copied = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::CopyToClipboard(_)))
+        .await
+        .unwrap();
+    let AppEvent::CopyToClipboard(text) = copied else {
+        unreachable!()
+    };
+    assert!(text.contains("Critic"), "{text}");
+    assert!(text.contains("it is noon"), "{text}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_requested_title_for_a_transcript_lands_on_it() {
+    let (dir, chat_id, run_id) = delegated().await;
+    let backend = ScriptRecorder::new(vec![text("Noon check")]) as Arc<dyn EngineBackend>;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), no_auto_cfg());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::AutoRenameChat(run_id)).unwrap();
+    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap();
+    assert!(
+        matches!(renamed, AppEvent::ChatRenamed { id, title } if id == run_id && title == "Noon check")
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    assert_eq!(chat.child(run_id).unwrap().title, "Noon check");
+    assert!(!chat.child(run_id).unwrap().renamed_manually);
+}

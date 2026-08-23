@@ -35,7 +35,7 @@ impl ChatScreen {
     /// signatures. `background` is passed separately (the owning `String` at the
     /// call site outlives the borrow) — and so are the two attachment chips, for
     /// the same reason.
-    fn status_model<'a>(
+    pub(super) fn status_model<'a>(
         &'a self,
         background: Option<&'a str>,
         attachments: Option<&'a str>,
@@ -54,6 +54,7 @@ impl ChatScreen {
             attachments,
             staged_images,
             esc_target: self.esc_target,
+            read_only: self.read_only(),
         }
     }
 
@@ -196,7 +197,9 @@ impl ChatScreen {
                 &self.palette,
             );
         } else {
-            let input_title = if self.generating {
+            let input_title = if self.read_only() {
+                self.loc.t("ui.chat.input.read_only")
+            } else if self.generating {
                 self.loc.t("ui.chat.input.generating")
             } else {
                 self.loc.t("ui.chat.input.idle")

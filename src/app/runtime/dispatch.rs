@@ -97,10 +97,12 @@ pub(super) fn apply_event(
             feed_view,
             focus,
             compaction,
+            child,
         } => {
             clear_back_if_left(back, id);
             close_or_mark_chat_list(active, id);
             screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
+            screen.set_child_view(child);
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),

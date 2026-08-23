@@ -90,16 +90,21 @@ impl Orchestrator {
     /// background task; the result arrives at [`Orchestrator::handle_title_result`].
     /// The chat server must be ready (`Ready`) — otherwise a clear error.
     fn start_title_task(&mut self, id: Uuid, origin: TitleOrigin) {
-        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
-            return;
+        // A chat, or a sub-agent transcript — the digest is the transcript's
+        // own exchange, the language its parent's profile's.
+        let (profile_id, messages) = match self.view(id) {
+            Some(super::ChatView::Top(chat)) => (chat.profile_id, chat.messages.clone()),
+            Some(super::ChatView::Child { parent, run }) => {
+                (parent.profile_id, run.messages.clone())
+            }
+            None => return,
         };
         // The agent-scaffold language — from the chat's profile (axis A): the digest and the
         // system message for auto-title are localized with it (the title is still requested "in
         // the conversation's language", see `prompt.title.system`). Errors — for the human,
         // in the interface language (axis B, `self.ui_locale()`).
-        let loc = self.profile_locale(chat.profile_id);
-        let Some(digest) =
-            crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
+        let loc = self.profile_locale(profile_id);
+        let Some(digest) = crate::features::rename_chat::build_conversation_digest(&messages, loc)
         else {
             self.report_title_error(origin, self.ui_locale().t("ui.err.title_not_enough").into());
             return;
@@ -169,12 +174,25 @@ impl Orchestrator {
                     }
                     chat.title = title.clone();
                     self.mark_dirty(res.chat_id);
-                    self.emit_chat_list();
-                    let _ = self.evt_tx.send(AppEvent::ChatRenamed {
-                        id: res.chat_id,
-                        title,
+                } else {
+                    // A sub-agent transcript, under the same rule.
+                    let mut dropped = false;
+                    let found = self.with_child_mut(res.chat_id, |run| {
+                        if res.origin == TitleOrigin::Auto && run.renamed_manually {
+                            dropped = true;
+                        } else {
+                            run.title = title.clone();
+                        }
                     });
+                    if !found || dropped {
+                        return;
+                    }
                 }
+                self.emit_chat_list();
+                let _ = self.evt_tx.send(AppEvent::ChatRenamed {
+                    id: res.chat_id,
+                    title,
+                });
             }
             Err(msg) => self.report_title_error(res.origin, msg),
         }

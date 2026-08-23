@@ -360,6 +360,15 @@ fn build_registry(
     })
 }
 
+/// What an id the UI hands over resolves to (see [`Orchestrator::view`]).
+enum ChatView<'a> {
+    Top(&'a Chat),
+    Child {
+        parent: &'a Chat,
+        run: &'a crate::entities::subagent::SubagentRun,
+    },
+}
+
 /// Sleeps until `deadline`, or "hangs forever" if there's no deadline (an empty queue).
 async fn sleep_until_opt(deadline: Option<Instant>) {
     match deadline {
@@ -506,12 +515,12 @@ impl Orchestrator {
         }
         self.chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
 
-        // Restore the last-open chat if it's still visible; otherwise — the
-        // most recently modified one (the previous behavior).
+        // Restore the last-open chat — or transcript — if it's still visible;
+        // otherwise the most recently modified chat (the previous behavior).
         let active = self
             .config
             .last_active_chat
-            .filter(|id| self.chats.iter().any(|c| c.id == *id))
+            .filter(|id| self.view(*id).is_some())
             .or_else(|| self.chats.first().map(|c| c.id));
         self.emit_profile_list();
         self.emit_chat_list();
@@ -846,6 +855,46 @@ impl Orchestrator {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
+    /// What an id names: a chat of the list, or a sub-agent transcript inside
+    /// one (spec §9.3.2). The single resolver for the paths that work on
+    /// either — opening, renaming, titling, copying, exporting, speaking.
+    /// Everything that looks the id up in `self.chats` directly fails closed
+    /// on a transcript, which is the read-only behaviour by construction
+    /// (docs/research/subagent-chats.md §3.8).
+    fn view(&self, id: Uuid) -> Option<ChatView<'_>> {
+        if let Some(chat) = self.chats.iter().find(|c| c.id == id) {
+            return Some(ChatView::Top(chat));
+        }
+        self.chats
+            .iter()
+            .find_map(|parent| parent.child(id).map(|run| ChatView::Child { parent, run }))
+    }
+
+    /// The chat that holds the transcript `id`, if `id` is one.
+    fn parent_of(&self, id: Uuid) -> Option<Uuid> {
+        match self.view(id) {
+            Some(ChatView::Child { parent, .. }) => Some(parent.id),
+            _ => None,
+        }
+    }
+
+    /// Edits the transcript `id` in place and marks its parent dirty. `false`
+    /// when there is no such transcript.
+    fn with_child_mut(
+        &mut self,
+        id: Uuid,
+        edit: impl FnOnce(&mut crate::entities::subagent::SubagentRun),
+    ) -> bool {
+        let Some(parent_id) = self.parent_of(id) else {
+            return false;
+        };
+        if let Some(run) = self.chat_mut(parent_id).and_then(|c| c.child_mut(id)) {
+            edit(run);
+        }
+        self.mark_dirty(parent_id);
+        true
+    }
+
     /// Rebuilds the tool registry: the standard set from config + live
     /// wrappers for MCP-server tools (dynamic — taken from [`McpManager`]).
     /// The single rebuild path: any call site (a settings edit, an MCP event)
@@ -938,21 +987,41 @@ impl Orchestrator {
     /// [`AppCommand::OpenChatAt`]). The single activation funnel — everything
     /// else goes through `activate` and passes `None`.
     fn activate_focused(&mut self, id: Uuid, focus: Option<FeedFocus>) {
-        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
-            return;
+        let event = match self.view(id) {
+            Some(ChatView::Top(chat)) => AppEvent::ChatActivated {
+                id,
+                title: chat.title.clone(),
+                messages: chat.messages.clone(),
+                draft: chat.draft.clone(),
+                feed_view: chat.feed_view,
+                focus,
+                compaction: chat
+                    .compaction_view(self.config.compaction.enabled)
+                    .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
+                child: None,
+            },
+            // A sub-agent transcript opens like a chat (spec §11.2): its own
+            // messages and title, the **parent's** collapse state (it is part
+            // of the parent), no draft, no summary, and the persona for the
+            // screen to draw first.
+            Some(ChatView::Child { parent, run }) => AppEvent::ChatActivated {
+                id,
+                title: run.title.clone(),
+                messages: run.messages.clone(),
+                draft: String::new(),
+                feed_view: parent.feed_view,
+                focus,
+                compaction: None,
+                child: Some(crate::app::events::ChildView {
+                    parent: parent.id,
+                    parent_title: parent.title.clone(),
+                    system_message: run.system_message.clone(),
+                }),
+            },
+            None => return,
         };
         self.active_id = Some(id);
-        let _ = self.evt_tx.send(AppEvent::ChatActivated {
-            id,
-            title: chat.title.clone(),
-            messages: chat.messages.clone(),
-            draft: chat.draft.clone(),
-            feed_view: chat.feed_view,
-            focus,
-            compaction: chat
-                .compaction_view(self.config.compaction.enabled)
-                .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
-        });
+        let _ = self.evt_tx.send(event);
         self.emit_character_names();
         self.emit_attachments();
         self.emit_staged_images();
@@ -966,21 +1035,47 @@ impl Orchestrator {
     pub(super) fn emit_character_names(&self) {
         let names = self
             .active_id
-            .and_then(|id| self.chats.iter().find(|c| c.id == id))
-            .and_then(|chat| self.profiles.iter().find(|p| p.id == chat.profile_id))
-            .map(|p| p.character_names.clone())
+            .map(|id| self.names_of(id))
             .unwrap_or_default();
         let _ = self.evt_tx.send(AppEvent::CharacterNames(names));
     }
 
-    /// The active chat's profile role names (for the `F5` export). Default (empty
-    /// = the localized labels) when there's no active chat or the profile is gone.
-    pub(super) fn active_character_names(&self, chat: &Chat) -> CharacterNames {
-        self.profiles
+    /// The role names to draw for `id`: a chat's are its profile's. A sub-agent
+    /// transcript's are resolved **at activation** so they never go stale
+    /// (docs/research/subagent-chats.md §3.1): its `User` header is the parent
+    /// persona — the profile's assistant name, else the localized assistant
+    /// label — because that is who wrote the instruction; its `Assistant`
+    /// header is the run's `name`, else the localized "Sub-agent"; the system
+    /// name is the profile's.
+    pub(super) fn names_of(&self, id: Uuid) -> CharacterNames {
+        let Some(view) = self.view(id) else {
+            return CharacterNames::default();
+        };
+        let (chat, run) = match view {
+            ChatView::Top(chat) => (chat, None),
+            ChatView::Child { parent, run } => (parent, Some(run)),
+        };
+        let profile_names = self
+            .profiles
             .iter()
             .find(|p| p.id == chat.profile_id)
             .map(|p| p.character_names.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let Some(run) = run else {
+            return profile_names;
+        };
+        let loc = self.ui_locale();
+        CharacterNames {
+            user: profile_names
+                .assistant_name()
+                .map(str::to_string)
+                .unwrap_or_else(|| loc.t("ui.feed.role.assistant").to_string()),
+            assistant: run
+                .name
+                .clone()
+                .unwrap_or_else(|| loc.t("ui.feed.role.subagent").to_string()),
+            system: profile_names.system,
+        }
     }
 
     /// Remembers the last-open chat in `settings.json` so it can be restored

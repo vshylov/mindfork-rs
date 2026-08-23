@@ -350,6 +350,7 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
         created_at: date(8, 1, 10, 0),
         modified_at: date(8, 1, 10, 3),
         message_count: 4,
+        children: Vec::new(),
     }];
     chats.extend(
         rows()
@@ -363,6 +364,7 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
                     created_at: created,
                     modified_at: modified,
                     message_count: count,
+                    children: Vec::new(),
                 }
             }),
     );

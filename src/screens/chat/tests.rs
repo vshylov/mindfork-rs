@@ -3185,6 +3185,7 @@ fn card(id: Uuid, profile: Uuid, title: &str) -> ChatSummary {
         created_at: chrono::Utc::now(),
         modified_at: chrono::Utc::now(),
         message_count: 1,
+        children: Vec::new(),
     }
 }
 
@@ -3905,6 +3906,7 @@ fn profile_list_names_them_and_marks_the_active_one() {
         created_at: chrono::Utc::now(),
         modified_at: chrono::Utc::now(),
         message_count: 1,
+        children: Vec::new(),
     }]);
     assert_eq!(c.run("/profile list"), None);
     let note = c.last_note();
@@ -3957,6 +3959,7 @@ fn profile_delete_always_confirms_and_names_what_goes() {
             created_at: chrono::Utc::now(),
             modified_at: chrono::Utc::now(),
             message_count: 1,
+            children: Vec::new(),
         },
         ChatSummary {
             id: Uuid::from_u128(9),
@@ -3965,6 +3968,7 @@ fn profile_delete_always_confirms_and_names_what_goes() {
             created_at: chrono::Utc::now(),
             modified_at: chrono::Utc::now(),
             message_count: 1,
+            children: Vec::new(),
         },
     ]);
     // The setting that gates the two chat-level keys is OFF here — this popup
@@ -4160,4 +4164,145 @@ fn confirm_popup_text(s: &mut ChatScreen) -> String {
         out.push('\n');
     }
     out
+}
+
+/// A sub-agent transcript opens read-only (spec §11.2, docs/research/subagent-chats.md
+/// §3.8): the persona heads the feed as a system bubble, sending and every
+/// chat-changing chord and command refuse with a note that names the parent,
+/// the commands that make sense in a transcript still work, and a transcript's
+/// `chat://` address resolves.
+mod read_only_transcript {
+    use super::*;
+    use crate::app::events::ChildView;
+    use crate::entities::chat::{ChatSummary, ChildSummary};
+
+    fn transcript() -> Cmd {
+        let mut c = Cmd::new();
+        let child = Uuid::from_u128(77);
+        c.s.set_child_view(Some(ChildView {
+            parent: c.chat,
+            parent_title: "Про космос".into(),
+            system_message: "Ты — критик.".into(),
+        }));
+        c.s.activate_chat(
+            child,
+            "Критик".into(),
+            &[Message::user("Оцени X."), Message::assistant("X слаб.")],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        c.chat = child;
+        c
+    }
+
+    #[test]
+    fn opens_with_the_persona_as_a_system_bubble() {
+        let c = transcript();
+        assert!(c.s.read_only());
+        assert_eq!(c.s.feed[0].role, FeedRole::System);
+        assert_eq!(c.s.feed[0].text, "Ты — критик.");
+        assert_eq!(c.s.feed[1].role, FeedRole::User);
+        assert_eq!(c.s.feed.len(), 3);
+        // A chat, by contrast, never shows its system message.
+        let plain = Cmd::new();
+        assert!(!plain.s.read_only());
+        assert!(plain.s.feed.iter().all(|m| m.role != FeedRole::System));
+    }
+
+    #[test]
+    fn sending_is_refused_with_a_note_and_the_text_stays() {
+        let mut c = transcript();
+        assert_eq!(c.run("привет"), None);
+        let note = c.last_note();
+        assert!(note.contains("Про космос"), "{note}");
+        assert_eq!(c.s.input.text(), "привет", "the line is not swallowed");
+    }
+
+    #[test]
+    fn chat_changing_chords_and_commands_refuse_with_the_note() {
+        for ch in ['r', 'e', 'u'] {
+            let mut c = transcript();
+            assert_eq!(c.ctrl(ch), None, "Ctrl+{ch}");
+            assert!(
+                c.last_note().contains("Про космос"),
+                "Ctrl+{ch} said nothing"
+            );
+            assert!(
+                c.s.confirm.is_none(),
+                "Ctrl+{ch} must not open a confirmation"
+            );
+        }
+        for line in [
+            "/regen",
+            "/takeback",
+            "/impersonate",
+            "/clone",
+            "/compact",
+            "/file attach x.txt",
+            "/image attach x.png",
+            "/project attach .",
+        ] {
+            let mut c = transcript();
+            assert_eq!(c.run(line), None, "{line}");
+            assert!(c.last_note().contains("Про космос"), "{line} said nothing");
+            assert!(c.s.input.is_empty(), "{line} stays in the box");
+        }
+    }
+
+    #[test]
+    fn the_transcript_commands_still_work() {
+        let mut c = transcript();
+        let id = c.chat;
+        assert_eq!(c.run("/copy"), Some(ChatIntent::CopyChat(id)));
+        assert!(matches!(
+            c.run("/rename Критик X"),
+            Some(ChatIntent::RenameChat { id: r, title }) if r == id && title == "Критик X"
+        ));
+        assert!(matches!(
+            c.run("/export md"),
+            Some(ChatIntent::ExportChat { id: e, .. }) if e == id
+        ));
+        assert!(matches!(
+            c.run("/search слаб"),
+            Some(ChatIntent::SearchMessages { .. })
+        ));
+        assert_eq!(c.run("/chats"), Some(ChatIntent::OpenChatList));
+        assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::OpenChatList));
+    }
+
+    #[test]
+    fn status_and_input_title_say_read_only() {
+        let c = transcript();
+        let model = c.s.status_model(None, None, None);
+        assert!(model.read_only);
+        assert!(!Cmd::new().s.status_model(None, None, None).read_only);
+    }
+
+    #[test]
+    fn a_transcript_address_resolves_from_the_list_snapshot() {
+        let mut c = Cmd::new();
+        let child_id = Uuid::from_u128(77);
+        c.s.set_chat_list(vec![ChatSummary {
+            id: c.chat,
+            profile_id: Uuid::from_u128(2),
+            title: "Про космос".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 1,
+            children: vec![ChildSummary {
+                id: child_id,
+                title: "Критик".into(),
+                created_at: chrono::Utc::now(),
+                finished_at: None,
+                message_count: 2,
+                outcome: None,
+            }],
+        }]);
+        let card = c.s.summary_card(child_id).expect("the transcript's card");
+        assert_eq!(card.title, "Критик");
+        assert_eq!(card.profile_id, Uuid::from_u128(2));
+        assert!(c.s.feed_view.known_chats().contains(&child_id));
+    }
 }
