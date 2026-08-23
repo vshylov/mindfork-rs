@@ -615,56 +615,73 @@ async fn a_running_transcript_is_listed_opens_and_survives_the_switch() {
         "parent, child, child (hanging)"
     );
 
-    // Back to the parent: still generating, nothing cancelled.
+    // Back to the parent: still generating, nothing cancelled — and the
+    // round in progress comes along: the `call_subagent` card, still running
+    // (docs/history/subagent-live.md §8, last bullet).
     cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
     let back = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
         .unwrap();
-    assert!(
-        matches!(back, AppEvent::ChatActivated { id, live_turn: Some(_), .. } if id == chat_id)
-    );
+    let AppEvent::ChatActivated {
+        id,
+        messages,
+        live_turn,
+        ..
+    } = back
+    else {
+        unreachable!()
+    };
+    assert_eq!(id, chat_id);
+    assert_eq!(messages.len(), 1, "no round of the parent has filed yet");
+    let live = live_turn.expect("the turn is in flight on its chat");
+    assert_eq!(live.stream, live.turn);
+    let partial = live.partial.expect("the round in progress");
+    assert_eq!(partial.tools.len(), 1, "{partial:?}");
+    assert_eq!(partial.tools[0].name, "call_subagent");
+    assert!(partial.tools[0].result.is_none(), "still running");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         !evt_rx_has_finished(&mut evt_rx),
         "the switch must not have cancelled the turn"
     );
 
-    // Now `Esc`: the turn lands as cancelled, and the parent's feed is
-    // re-activated whole because it was rebuilt mid-turn.
+    // Now `Esc`: the turn lands as cancelled; the feed needs no refresh —
+    // the stream it resumed into carries the rest.
     cmd_tx.send(AppCommand::Cancel).unwrap();
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    // The landed list comes first (no longer running), then the refresh.
     let list = wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::ChatList(chats)
             if chats.iter().any(|c| c.id == chat_id && c.children.len() == 1 && !c.children[0].running))
     })
     .await;
     assert!(list.is_some(), "the landed row is no longer marked running");
-    let refreshed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .expect("the parent is re-activated at landing");
-    let AppEvent::ChatActivated {
-        id,
-        messages,
-        live_turn,
-        ..
-    } = refreshed
-    else {
-        unreachable!()
-    };
-    assert_eq!(id, chat_id);
-    assert!(live_turn.is_none());
-    // user → assistant(call) → tool; the cancelled final round writes nothing.
-    assert_eq!(messages.len(), 3, "{messages:?}");
-    let landed = messages[1].tool_calls[0].subagent.as_deref().unwrap();
-    assert_eq!(landed.id, run_id, "the landed run keeps the running id");
-    assert_eq!(landed.outcome, Some(RunOutcome::Cancelled));
-    assert!(landed.messages.len() >= 3);
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
-    assert_eq!(load(dir.path(), chat_id).children().count(), 1);
+    assert!(
+        !evt_rx_has_activation(&mut evt_rx),
+        "no re-activation at landing any more"
+    );
+    let chat = load(dir.path(), chat_id);
+    // user → assistant(call) → tool; the cancelled final round writes nothing.
+    assert_eq!(chat.messages.len(), 3, "{:?}", chat.messages);
+    let landed = chat
+        .child(run_id)
+        .expect("the landed run keeps the running id");
+    assert_eq!(landed.outcome, Some(RunOutcome::Cancelled));
+    assert!(landed.messages.len() >= 3);
+}
+
+/// Drains what is already queued and reports whether a `ChatActivated` was among it.
+fn evt_rx_has_activation(rx: &mut UnboundedReceiver<AppEvent>) -> bool {
+    let mut seen = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, AppEvent::ChatActivated { .. }) {
+            seen = true;
+        }
+    }
+    seen
 }
 
 /// Drains what is already queued and reports whether a `Finished` was among it.
@@ -744,10 +761,10 @@ fn a_filed_round_grows_the_open_transcript() {
         generation,
         chat: parent,
         rounds: Vec::new(),
+        partial: Default::default(),
         child: None,
         child_stream: Uuid::nil(),
         child_partial: Default::default(),
-        parent_needs_refresh: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
     run.outcome = None;
@@ -825,13 +842,111 @@ fn a_filed_round_grows_the_open_transcript() {
     assert_eq!(orch.first_match_in_chat(run_id, "задание"), None);
 }
 
+/// The turn's own round in progress is mirrored the same way (plan §8, last
+/// bullet): chunks, thoughts and the calls it opened — running or answered —
+/// accumulate in `partial`, are handed to a return to the chat as the seed of
+/// its feed, and are reset by a filed round or a rewrite.
+#[test]
+fn the_parents_round_in_progress_is_mirrored_for_a_return() {
+    use super::super::generation::{StreamStep, TurnProgress};
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let chat = Chat::from_profile(&crate::entities::profile::Profile::new("P", "sys"), "Чат");
+    let chat_id = chat.id;
+    orch.chats.push(chat);
+    let generation = Uuid::new_v4();
+    orch.inflight = Some(super::super::InflightTurn {
+        generation,
+        chat: chat_id,
+        rounds: Vec::new(),
+        partial: Default::default(),
+        child: None,
+        child_stream: Uuid::nil(),
+        child_partial: Default::default(),
+    });
+    let step = |s: StreamStep| TurnProgress::OwnStep(s);
+    orch.handle_progress(generation, step(StreamStep::Thoughts("план".into())));
+    orch.handle_progress(generation, step(StreamStep::Chunk("Смотрю".into())));
+    orch.handle_progress(
+        generation,
+        step(StreamStep::ToolStarted {
+            call_id: "c1".into(),
+            name: "web_search".into(),
+            arguments: "{}".into(),
+        }),
+    );
+    orch.handle_progress(
+        generation,
+        step(StreamStep::ToolCall {
+            call_id: "c1".into(),
+            name: "web_search".into(),
+            arguments: "{}".into(),
+            result: "ок".into(),
+            images: 0,
+        }),
+    );
+    orch.handle_progress(
+        generation,
+        step(StreamStep::ToolStarted {
+            call_id: "c2".into(),
+            name: "call_subagent".into(),
+            arguments: "{}".into(),
+        }),
+    );
+    // Nothing of it goes to the screen from here — the live loop sends the
+    // screen its events itself.
+    while let Ok(ev) = rx.try_recv() {
+        assert!(
+            !matches!(
+                ev,
+                AppEvent::Chunk { .. } | AppEvent::ToolCallStarted { .. }
+            ),
+            "{ev:?}"
+        );
+    }
+
+    // A return to the chat carries the round so far.
+    orch.active_id = None;
+    orch.activate_focused(chat_id, None);
+    let live = loop {
+        match rx.try_recv().unwrap() {
+            AppEvent::ChatActivated { live_turn, .. } => break live_turn.unwrap(),
+            _ => continue,
+        }
+    };
+    let partial = live.partial.unwrap();
+    assert_eq!(
+        (partial.text.as_str(), partial.thoughts.as_str()),
+        ("Смотрю", "план")
+    );
+    assert_eq!(partial.tools.len(), 2);
+    assert_eq!(
+        partial.tools[0].result.as_ref().map(|r| r.0.as_str()),
+        Some("ок")
+    );
+    assert!(partial.tools[1].result.is_none());
+
+    // The round files: the mirror of it is spent.
+    orch.handle_progress(
+        generation,
+        TurnProgress::RoundFiled(vec![Message::assistant("Смотрю")]),
+    );
+    let t = orch.inflight.as_ref().unwrap();
+    assert_eq!(t.rounds.len(), 1);
+    assert!(t.partial.text.is_empty() && t.partial.tools.is_empty());
+
+    // A rewrite drops the round in progress.
+    orch.handle_progress(generation, step(StreamStep::Chunk("черновик".into())));
+    orch.handle_progress(generation, step(StreamStep::Rewrite));
+    assert!(orch.inflight.as_ref().unwrap().partial.text.is_empty());
+}
+
 /// The sub-agent's stream (docs/history/subagent-live.md §8): chunks are
 /// kept as the round's partial text and forwarded — under the run's own
 /// stream id — only while the transcript is open; a filed round resets the
 /// partial; the run's end closes the open transcript's bubble.
 #[test]
 fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
-    use super::super::generation::TurnProgress;
+    use super::super::generation::{StreamStep, TurnProgress};
     let (_d, mut orch, mut rx) = bare_orch_rx();
     let chat = Chat::from_profile(
         &crate::entities::profile::Profile::new("P", "sys"),
@@ -844,10 +959,10 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
         generation,
         chat: parent,
         rounds: Vec::new(),
+        partial: Default::default(),
         child: None,
         child_stream: Uuid::nil(),
         child_partial: Default::default(),
-        parent_needs_refresh: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
     run.outcome = None;
@@ -859,8 +974,14 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
 
     // Not open: kept, not forwarded.
     orch.active_id = Some(parent);
-    orch.handle_progress(generation, TurnProgress::ChildThoughts("думаю".into()));
-    orch.handle_progress(generation, TurnProgress::ChildChunk("нача".into()));
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildStep(StreamStep::Thoughts("думаю".into())),
+    );
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildStep(StreamStep::Chunk("нача".into())),
+    );
     while let Ok(ev) = rx.try_recv() {
         assert!(
             !matches!(ev, AppEvent::Chunk { .. } | AppEvent::Thoughts { .. }),
@@ -885,14 +1006,17 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
     assert_eq!(activated.partial.unwrap().text, "нача");
 
     // Open: forwarded under the stream id.
-    orch.handle_progress(generation, TurnProgress::ChildChunk("ло".into()));
     orch.handle_progress(
         generation,
-        TurnProgress::ChildToolStarted {
+        TurnProgress::ChildStep(StreamStep::Chunk("ло".into())),
+    );
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildStep(StreamStep::ToolStarted {
             call_id: "c9".into(),
             name: "web_search".into(),
             arguments: "{}".into(),
-        },
+        }),
     );
     let mut seen = Vec::new();
     while let Ok(ev) = rx.try_recv() {
