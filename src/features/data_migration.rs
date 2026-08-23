@@ -331,6 +331,70 @@ mod tests {
         );
     }
 
+    /// The first real chat-file step, end to end through the real registry: a
+    /// v1 chat with an old `call_subagent` record is backed up, migrated (the
+    /// run synthesized, `v = 2` written) and left alone on the next start.
+    #[test]
+    fn run_migrates_a_v1_chat_with_an_old_subagent_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        write(&paths.settings_file(), &valid_settings_json());
+        write(&paths.profiles_file(), "[]");
+        let id = "4b2c5e1a-7d3f-4e2b-9a1c-0f6e8d7c5b4a";
+        write(
+            &paths.chat_file(id),
+            include_str!("../shared/storage/fixtures/chat_v1_call_subagent.json"),
+        );
+
+        run(&paths, ru()).unwrap();
+
+        let after: Chat =
+            serde_json::from_str(&fs::read_to_string(paths.chat_file(id)).unwrap()).unwrap();
+        assert_eq!(after.v, schema::CHAT_SCHEMA);
+        let run_ = after.messages[1].tool_calls[0]
+            .subagent
+            .as_deref()
+            .expect("a synthesized run");
+        assert_eq!(run_.final_reply(), Some("Идея X слаба: …"));
+        let backups = || {
+            fs::read_dir(paths.backups_dir())
+                .map(|d| {
+                    d.filter(|e| {
+                        e.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .contains("pre-migrate")
+                    })
+                    .count()
+                })
+                .unwrap_or(0)
+        };
+        assert_eq!(backups(), 1, "one pre-migrate backup");
+
+        // The next start finds the file current: no step, no second backup.
+        run(&paths, ru()).unwrap();
+        assert_eq!(backups(), 1);
+        let again: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(paths.chat_file(id)).unwrap()).unwrap();
+        assert_eq!(
+            schema::chat_artifact().assess(&again),
+            schema::Assessment::UpToDate
+        );
+    }
+
+    /// A chat this binary writes carries `v` and reads as current — so a file
+    /// saved after the step is never handed to the step again.
+    #[test]
+    fn a_freshly_saved_chat_is_current() {
+        let v: serde_json::Value = serde_json::from_str(&valid_chat_json()).unwrap();
+        assert_eq!(v["v"], json!(schema::CHAT_SCHEMA));
+        assert_eq!(
+            schema::chat_artifact().assess(&v),
+            schema::Assessment::UpToDate
+        );
+    }
+
     #[test]
     fn run_refuses_downgrade() {
         let dir = tempfile::tempdir().unwrap();

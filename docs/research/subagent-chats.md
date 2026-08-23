@@ -2,9 +2,9 @@
 
 Status: **accepted 2026-08-23** — every fork in §5 decided (the user's
 clarification of the same day: the child is part of the parent's file, never a
-file of its own). In progress, PR by PR (§7): PR 1 merged (#356), PR 2 —
-`feat/subagent-run` (the engine, the record-borne run, the settings step;
-live go on Gemma 4 31B, 5/5). [ADR 0010](../decisions/0010-subagent-nested-turn.md)
+file of its own). In progress, PR by PR (§7): PR 1 merged (#356), PR 2 merged (#357 — the
+engine, the record-borne run, the settings step; live go on Gemma 4 31B, 5/5),
+PR 3 — `feat/subagent-migration` (`CHAT_SCHEMA` 2, the synthesized runs). [ADR 0010](../decisions/0010-subagent-nested-turn.md)
 records the decision. Date: 2026-08-23.
 
 ## 1. What and why

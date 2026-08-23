@@ -3,6 +3,7 @@
 //! soft delete. See spec §5.2, §4.4.2.
 
 pub mod cache;
+mod chat_steps;
 pub mod db;
 pub mod json;
 pub mod schema;

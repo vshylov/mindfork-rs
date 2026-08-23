@@ -1355,14 +1355,17 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; `settings.json` is at **2** since the sub-agent track's settings
-step, the rest at 1). Ownership map:
+different rates; `settings.json` and the chat files are at **2** since the
+sub-agent track's two steps, `profiles.json` at 1). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
   constants `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`,
   `Step` (`fn(Value)->Result<Value>`), `JsonArtifact` (`current` + structural
   `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
   `Downgrade`), a registry.
+- **`shared/storage/chat_steps.rs`** — the chat-file steps themselves
+  (`chat_to_v2`), kept out of the registry file because a step is a page of
+  logic with a golden fixture (`storage/fixtures/`), not a line in a table.
 - **`features/data_migration.rs`** — orchestration: file I/O, gates,
   pre-migration backup, control-parse. `run(paths, loc)` is called from
   `main.rs` **before** opening storage (for both the TUI and the CLI
@@ -1377,7 +1380,8 @@ Invariants:
 - **version detection is structural** (format doesn't change, zero churn):
   `settings.json` — the `schema_version` field; `profiles.json` — a bare
   array → 1, otherwise `schema_version`; `chats/<id>.json` — the `v` field
-  (not written while the schema is 1);
+  (absent in pre-2 files → 1; written by every save since `CHAT_SCHEMA` 2 —
+  `Chat::v`, kept as loaded, so it states what the content conforms to);
 - **eager at startup**: the plan = files with a version `< current`;
   non-empty → **one** pre-migration backup (`backups/pre-migrate-<date>.zip`)
   before any write → steps → control-parse (the migrated result fails to
@@ -1394,7 +1398,15 @@ Invariants:
   1024 so the new default applies. The old defaults are frozen in the step as
   literals — a step describes the past and must not follow `config.rs`. Pinned
   by golden-shape tests; the synthetic `current = 2` artifact still covers the
-  runner independently of the registry.
+  runner independently of the registry;
+- the second is `chat_to_v2` (`chat_steps.rs`): a transcript synthesized on
+  every old `call_subagent` record (`messages` and `deleted[].messages`) —
+  persona and message from `arguments`, the reply from `result`, the reply's
+  time from the answering `Tool` message, a deterministic id
+  (`Uuid::new_v5(SUBAGENT_NS, "<chat>/<call>")`) — then `v = 2`. Idempotent
+  (a record with a run is skipped), additive in content, pinned by a golden
+  v1 fixture and an end-to-end `data_migration` test (one backup, a second
+  start finds the file current).
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for

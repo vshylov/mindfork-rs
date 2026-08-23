@@ -13,6 +13,14 @@ use crate::entities::sampling::SamplingConfig;
 /// A chat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chat {
+    /// The schema version of this file's shape (ADR 0006; `CHAT_SCHEMA`).
+    /// Absent in files written before the first chat-file step — those read as
+    /// 1 and are migrated at startup before any load; every save since writes
+    /// it, so a migrated file is never mistaken for an old one. A value loaded
+    /// from a file is kept as loaded: the field states what the content
+    /// conforms to, not which binary last touched it.
+    #[serde(default = "chat_schema_v1")]
+    pub v: u32,
     pub id: Uuid,
     pub profile_id: Uuid,
     pub title: String,
@@ -92,6 +100,12 @@ pub struct Chat {
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
+}
+
+/// The version a chat file without a `v` field is: the shape before the first
+/// chat-file migration step.
+fn chat_schema_v1() -> u32 {
+    1
 }
 
 /// A rolling summary covering `messages[..upto]`.
@@ -194,6 +208,7 @@ impl Chat {
     pub fn from_profile(profile: &Profile, title: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
+            v: crate::shared::storage::schema::CHAT_SCHEMA,
             id: Uuid::new_v4(),
             profile_id: profile.id,
             title: title.into(),
