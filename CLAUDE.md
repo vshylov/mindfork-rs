@@ -166,7 +166,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-23, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2488 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2495 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -178,11 +178,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
-- **Sub-agent chats, PRs 2–4 of 7 — the sub-agent with the agent's tools,
-  the migration of old calls, the transcript in the list** — `call_subagent`
-  runs as a nested turn with the turn's tools (minus itself, `history_*`, the
-  self-model), its transcript lives on the call's record and shows nested
-  under the parent in the list, opening read-only; `CHAT_SCHEMA` 2
+- **Sub-agent chats, PRs 2–5 of 7 — the sub-agent with the agent's tools,
+  the migration of old calls, the transcript in the list and in search** —
+  `call_subagent` runs as a nested turn with the turn's tools (minus itself,
+  `history_*`, the self-model), its transcript lives on the call's record,
+  shows nested under the parent in the list, opens read-only, and is a
+  conversation of its own to every search surface (`cache.db` `sub_id`,
+  `CACHE_SCHEMA` 2) and to `chat_search`/`chat_read`; `CHAT_SCHEMA` 2
   synthesizes one for every old record. Go on Gemma 4 31B, 5/5
   ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace — stage 4, the changes screen (done)
 - Post-M9: the licence and the disclaimer in Russian (done)
 - Post-M9: sub-agent chats, PR 4 — the transcript in the list, opened read-only (done)
+- Post-M9: sub-agent chats, PR 5 — transcripts in search and the cross-chat tools (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -1939,3 +1940,61 @@ Branch `feat/code-workspace-changes`.
   rename, delete/clone refusals and a clone's re-id, copy, a requested title).
   No live run — UI and orchestration over a scripted engine; the engine path
   is PR 2's.
+
+### Post-M9: sub-agent chats, PR 5 — transcripts in search and the cross-chat tools (done)
+
+- **What**: PR 5 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §3.9).
+  A sub-agent transcript is now a conversation for every search surface:
+  the chat list's content filter (`Ctrl+F`), the message-level results
+  (`Ctrl+G`), `Enter` on a row in content mode, and the model's
+  `chat_search`/`chat_read` pair (fork F4, taken). Spec §9.11, §11.2,
+  §11.2.1; architecture §7, §8, §10.
+- **The index** — `messages.sub_id` (nullable; `CACHE_SCHEMA` 1→2, a free
+  bump: the file is wiped and rebuilt by the startup pass, ~350 ms on the
+  real corpus). `indexed_messages(chat)` walks the file's records and emits
+  each run's messages under the **parent's** `chat_id` with `sub_id =
+  run.id`, so the per-file bookkeeping, the guarded re-index and
+  `forget_chat` are untouched — the diff key `(message_id, text_hash)` holds
+  because message ids are uuids on both levels. One spelling of the
+  conversation id for every scoped query, `COALESCE(m.sub_id, m.chat_id)`
+  (`SCOPE_ID`): `search_chats` returns the distinct set of it, the tools'
+  `search_messages_in`/`count_matching_messages_in` filter on it, and
+  `MessageHit::scope_id()` is the grouping key on the consumers.
+  `matching_messages_in_chat` takes an `IndexScope` — `Chat(id)` is `chat_id
+  = ? AND sub_id IS NULL`, `Transcript(id)` is `sub_id = ?` — so a parent's
+  first match is among its *own* messages.
+- **The list rule cost nothing**: `visible()` already did one membership test
+  per row, and a transcript's id now stands for itself in the id set. A
+  parent whose only matches are inside a transcript is *not* in the set, so
+  it shows dimmed under F16 exactly as in title mode.
+- **`Ctrl+G`** — `SearchGroup.parent`; `group_hits` buckets by `(chat_id,
+  sub_id)`, orders chats by the list's sort, and emits a chat's group before
+  its matched transcripts' in call order — the chat's group **even with no
+  hits**, so the screen heads the transcripts with "0 matches" rather than
+  orphaning them; navigation is over hits by construction, so the extra header
+  is free. Child headers are `  └ title` with no spacer; `OpenHit` carries
+  the transcript's id and `switch_to` opens it read-only on the message.
+- **The tools** — `ChatRef.parent: Option<ParentRef {id, title}>`;
+  `snapshot_other_chats` adds the transcripts of the profile's chats *and of
+  the current chat* (they are not in the model's context — the reason the
+  current chat itself is excluded does not apply). Results label a transcript
+  as "«title» — a sub-agent transcript from the conversation „parent“"
+  (`tool.chat_search.child`), and one guarded `load_transcript` serves both
+  tools: the profile/hidden/current checks, then the chat's own messages or
+  the run found in the parent's file — a run the file no longer holds (its
+  exchange taken back) reads as unavailable.
+- **Tests**: 2495 green (+7): the two-level contract in the cache (id set,
+  scoped search and count, both `IndexScope`s; transcript rows diffed and
+  dropped with the parent), the orchestrator's grouping and the id set
+  (parent-then-child, the "0 matches" parent, the transcript standing for
+  itself), `first_match_in_chat` per level, the screen's child header and
+  `Enter`, the snapshot's transcripts (the current chat's in, a hidden
+  parent's out) and the pair reaching a transcript through its parent.
+  **No live run**: an index and UI change; `cross_chat_search_answers_from_another_chat_live`
+  still passes on its own chats (a transcript only adds rows to the same
+  scope).
+- **Decided on the way**: the label wording avoids nesting the header's
+  quotes («…«…»…»); the search screen uses the literal `└` the list uses
+  rather than a new glyph (box-drawing is allowed in both glyph sets). Next:
+  PR 6 — auto-title at landing and the status-bar chip.

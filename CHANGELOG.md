@@ -35,6 +35,15 @@ split by subsystem.
   and speaking work. `Del` and `Ctrl+D` refuse on a transcript — it goes away
   with the exchange that made it (`Ctrl+E`/`Ctrl+R` in the parent) or with the
   parent. The `chat://` address a sub-agent's result carries is now a link.
+- **Sub-agent transcripts are searchable.** The chat list's content search
+  (`Ctrl+F`) finds text said inside a delegation and shows the transcript's
+  row under its chat; `Enter` on that row opens the transcript on its first
+  match. The message-level results (`Ctrl+G`) group a transcript's hits
+  under its chat's header with a `└`, and `Enter` opens the transcript on the
+  message. With the optional `chat_search`/`chat_read` tools on, the
+  assistant can search and read sub-agent transcripts of this profile's
+  conversations too — including this chat's own — each labelled as the
+  transcript of its conversation and reachable by its `chat://` address.
 
 - **The licence and the disclaimer in Russian** — with the interface language
   set to Russian, the `F1` → "Licence"/"Disclaimer" tabs and the Windows

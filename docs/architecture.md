@@ -458,9 +458,14 @@ src/
    │  ├─ cache/             CacheDb (`cache.db`) — the disposable full-text index over
    │  │                     chat message text: external-content FTS5, tokenize='trigram',
    │  │                     diffed per message (a streaming save rewrites one row) +
-   │  │                     `indexed_chats` bookkeeping for the startup pass. Derived
-   │  │                     data, so open() self-heals: a corrupt file or a foreign
-   │  │                     schema is deleted and started empty, never migrated
+   │  │                     `indexed_chats` bookkeeping for the startup pass. A
+   │  │                     nullable `sub_id` marks a sub-agent transcript's rows
+   │  │                     (indexed under the parent's chat_id); every query that
+   │  │                     names a conversation folds it through
+   │  │                     COALESCE(sub_id, chat_id), and `IndexScope` picks one
+   │  │                     level of one file. Derived data, so open() self-heals: a
+   │  │                     corrupt file or a foreign schema is deleted and started
+   │  │                     empty, never migrated
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ embed_identity.rs    identity of the embedding model that produced the stored
    │                       vectors: CANARY_TEXT/CANARY_MATCH + EmbedFingerprint
@@ -1287,8 +1292,13 @@ Storage invariants:
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.
 - **The search index is derived, never authoritative.** `cache.db` answers only
-  *which chats match*; the chats themselves are always read from `chats/*.json`,
-  and nothing is ever recovered from the index. So every failure on its path is
+  *which conversations match* — a chat, or a sub-agent transcript inside one,
+  told apart by `messages.sub_id` and addressed by `COALESCE(sub_id, chat_id)`
+  (spec §11.2.1); the chats themselves are always read from `chats/*.json`,
+  and nothing is ever recovered from the index. A transcript's rows are
+  indexed **under the parent's `chat_id`** (`indexed_messages` walks the file's
+  records), so the per-file bookkeeping, the guarded re-index and
+  `forget_chat` know nothing of the second level. So every failure on its path is
   logged and swallowed (best effort): a search that misses a chat is a nuisance, a
   save that failed because of the index would be a bug. Sync rests on the
   single-writer invariant above — the orchestrator indexes a chat right after
@@ -1654,10 +1664,15 @@ Implementation notes:
   and includes the current chat, so the scope lives in a turn snapshot
   (`ToolContext::other_chats`, built by `snapshot_other_chats` in
   `start_generation` only when the pair is in the turn's tool set): current
-  profile, current chat excluded, hidden dropped. The query is scoped **in
-  SQL** (`CacheDb::search_messages_in` — a post-filtered global `LIMIT`
-  could be starved by another profile's rows), and `chat_read` re-checks the
-  loaded file against the same boundary before reading. Pages come from the
+  profile, current chat excluded, hidden dropped — plus the sub-agent
+  transcripts of all of those *and* of the current chat, as `ChatRef`s
+  carrying a `ParentRef` (id and title: what `chat_read` opens and what the
+  label names). The query is scoped **in SQL** (`CacheDb::search_messages_in`
+  — a post-filtered global `LIMIT` could be starved by another profile's
+  rows; a transcript's id stands for itself in the scope), and one guarded
+  `load_transcript` re-checks the loaded file against the same boundary
+  before either tool reads — a chat's own messages, or the run found in the
+  parent's file. Pages come from the
   same `HistoryView` renderer and `compaction.page_tokens` as
   `history_read`, so a search hit's page address is exactly what a read
   returns — spec §9.11.
@@ -2317,6 +2332,18 @@ in `handle_ctrl_shortcut` for the three chords, in `try_read_only_refusal`
 ahead of every parser for the blocked commands, and at the send. The `chat://`
 address book (`refresh_known_chats`) and the link picker (`summary_card`) see
 transcripts through the same snapshot.
+
+**Search over transcripts** (spec §11.2.1, research §3.9). The orchestrator's
+`indexed_messages(chat)` emits the chat's own messages with `sub_id = None`
+and each run's with `Some(run.id)`; `group_hits` buckets by
+`(chat_id, sub_id)` and emits a chat's `SearchGroup` (`parent: None`) before
+one per matched transcript (`parent: Some(chat)`) in call order — the chat's
+group is emitted even with no hits, so the screen can head the transcripts
+with a "0 matches" row. `first_match_in_chat(id)` resolves `id` through
+`view()` into an `IndexScope` (`Chat` — own messages only, `Transcript`) and
+orders against that level's messages. The search screen draws a child
+header as `  └ title` with no spacer, and its `OpenHit` carries the
+transcript's id, which `switch_to` already opens read-only.
 
 **"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
