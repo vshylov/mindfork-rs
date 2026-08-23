@@ -141,6 +141,34 @@ struct Drained {
     fatal: Option<String>,
 }
 
+impl Drained {
+    /// Folds a stage's outcome into the job's error count, and stops the job
+    /// (`Err`, carrying the message) when the stage was fatal. The errors are
+    /// counted either way: what failed before the fatal one is still a failure.
+    fn absorb(self, errors: &mut usize) -> Result<(), String> {
+        *errors += self.errors;
+        match self.fatal {
+            Some(message) => Err(message),
+            None => Ok(()),
+        }
+    }
+}
+
+/// What [`plan_reembed`] found: the rows stamped by another model, and the
+/// attachments with no rows at all.
+struct Plan {
+    pending: ReembedPending,
+    missing: Vec<MissingIndex>,
+}
+
+impl Plan {
+    /// Units of work, the banner's total: one per row to re-embed, one per
+    /// attachment to rebuild (see [`Counters`]).
+    fn total(&self) -> usize {
+        self.pending.notes + self.pending.attachments + self.pending.rag + self.missing.len()
+    }
+}
+
 /// The job's two running totals, which are **not** the same number.
 ///
 /// A re-embed stage writes one vector per unit of work, so for it they move
@@ -173,6 +201,20 @@ struct MissingIndex {
 }
 
 fn spawn_reembed(task: Reembed) {
+    let evt_tx = task.evt_tx.clone();
+    tokio::spawn(async move {
+        let outcome = match run_reembed(task).await {
+            Ok(done) => done,
+            Err(message) => RagProgress::Failed(message),
+        };
+        let _ = evt_tx.send(AppEvent::RagProgress(outcome));
+    });
+}
+
+/// The job itself: plan, backfill, drain each store, lift the stale marks.
+/// `Err` carries the message of the [`RagProgress::Failed`] the caller sends
+/// — the one terminal event a run must not end without (docs/lessons.md §4).
+async fn run_reembed(task: Reembed) -> Result<RagProgress, String> {
     let Reembed {
         embedder,
         storage,
@@ -182,150 +224,137 @@ fn spawn_reembed(task: Reembed) {
         evt_tx,
     } = task;
 
-    tokio::spawn(async move {
-        let send = |p: RagProgress| {
-            let _ = evt_tx.send(AppEvent::RagProgress(p));
-        };
-
-        // 1. Embedder precheck — also tells us the dimensionality we are moving to.
-        let dim = match embedder
-            .embed(vec!["ping".into()], EmbedRole::Passage)
-            .await
-        {
-            Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
-            Err(err) => {
-                send(RagProgress::Failed(loc.tf(
-                    "ui.err.rag_embedder_unavailable",
-                    &[("err", &err.to_string())],
-                )));
-                return;
-            }
-        };
-        if dim == 0 {
-            send(RagProgress::Failed(loc.t("ui.err.rag_empty_vector").into()));
-            return;
-        }
-
-        // 2. A `vec0` table is fixed-width, so a different dimensionality cannot
-        //    reuse it. Dropping both leaves every row without a vector — exactly
-        //    the state a foreign generation already describes, so the loop below
-        //    needs no special case (research §8.1, S5). Document rows, the
-        //    fingerprint and the stale marks are kept.
-        let current_dim = storage.db().rag_dimension().unwrap_or(None);
-        if matches!(current_dim, Some(d) if d != dim)
-            && let Err(err) = storage.db().drop_vector_tables()
-        {
-            send(RagProgress::Failed(loc.tf(
-                "ui.err.rag_reset_vectors",
-                &[("err", &err.to_string())],
-            )));
-            return;
-        }
-
-        // 3. How much there is to do.
-        let pending = match storage.db().count_rows_to_reembed() {
-            Ok(p) => p,
-            Err(err) => {
-                send(RagProgress::Failed(
-                    loc.tf("ui.err.rag_read_kb", &[("err", &err.to_string())]),
-                ));
-                return;
-            }
-        };
-        // Attachments with no rows at all — disjoint from `pending` above, which
-        // only ever counts rows that exist. A blocking walk of the chat files:
-        // it parses JSON off the async runtime, exactly as the search index's
-        // reconciliation pass does.
-        let missing = {
-            let storage = storage.clone();
-            match tokio::task::spawn_blocking(move || scan_missing_attachments(&storage)).await {
-                Ok(found) => found,
-                Err(err) => {
-                    tracing::warn!(error = %err, "reindex: the attachment scan panicked");
-                    Vec::new()
-                }
-            }
-        };
-        let total = pending.notes + pending.attachments + pending.rag + missing.len();
-        if total == 0 {
-            // Everything already matches the current model — say so plainly
-            // rather than pretending work happened.
-            send(RagProgress::Reembedded {
-                rows: 0,
-                errors: 0,
-                cancelled: false,
-            });
-            return;
-        }
-        send(RagProgress::Started { total });
-
-        let mut counters = Counters::default();
-        let mut errors = 0usize;
-
-        // First: the files that have no index at all. Cheapest to reason about
-        // (nothing downstream depends on it) and, after a data move, the only
-        // work there is.
-        if !missing.is_empty() {
-            let drained = backfill_attachments(
-                &missing,
-                &embedder,
-                &storage,
-                params,
-                &cancel,
-                loc,
-                total,
-                &mut counters,
-                &evt_tx,
-            )
-            .await;
-            errors += drained.errors;
-            if let Some(err) = drained.fatal {
-                send(RagProgress::Failed(err));
-                return;
-            }
-        }
-
-        for store in Store::ALL {
-            if cancel.is_cancelled() || store.pending(&pending) == 0 {
-                continue;
-            }
-            let drained = drain_store(
-                store,
-                &embedder,
-                &storage,
-                &cancel,
-                loc,
-                total,
-                &mut counters,
-                &evt_tx,
-            )
-            .await;
-            errors += drained.errors;
-            if let Some(err) = drained.fatal {
-                send(RagProgress::Failed(err));
-                return;
-            }
-        }
-
-        // 4. Lift the stale marks once the knowledge base holds no old-model
-        //    vectors at all. Derived from the queue rather than from "the loop
-        //    ran", so a cancelled or partly failed run correctly leaves them.
-        if storage
-            .db()
-            .count_rows_to_reembed()
-            .map(|p| p.rag == 0)
-            .unwrap_or(false)
-            && let Err(err) = storage.db().set_rag_stale_profiles(&[])
-        {
-            tracing::warn!(error = %err, "failed to clear the stale knowledge-base marks");
-        }
-
-        send(RagProgress::Reembedded {
-            rows: counters.rows,
-            errors,
-            cancelled: cancel.is_cancelled(),
+    let plan = plan_reembed(&embedder, &storage, loc).await?;
+    let total = plan.total();
+    if total == 0 {
+        // Everything already matches the current model — say so plainly
+        // rather than pretending work happened.
+        return Ok(RagProgress::Reembedded {
+            rows: 0,
+            errors: 0,
+            cancelled: false,
         });
-    });
+    }
+    let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Started { total }));
+
+    let mut counters = Counters::default();
+    let mut errors = 0usize;
+
+    // First: the files that have no index at all. Cheapest to reason about
+    // (nothing downstream depends on it) and, after a data move, the only
+    // work there is.
+    if !plan.missing.is_empty() {
+        backfill_attachments(
+            &plan.missing,
+            &embedder,
+            &storage,
+            params,
+            &cancel,
+            loc,
+            total,
+            &mut counters,
+            &evt_tx,
+        )
+        .await
+        .absorb(&mut errors)?;
+    }
+
+    for store in Store::ALL {
+        if cancel.is_cancelled() || store.pending(&plan.pending) == 0 {
+            continue;
+        }
+        drain_store(
+            store,
+            &embedder,
+            &storage,
+            &cancel,
+            loc,
+            total,
+            &mut counters,
+            &evt_tx,
+        )
+        .await
+        .absorb(&mut errors)?;
+    }
+
+    lift_stale_marks(&storage);
+
+    Ok(RagProgress::Reembedded {
+        rows: counters.rows,
+        errors,
+        cancelled: cancel.is_cancelled(),
+    })
+}
+
+/// What a run found before touching anything. `Err` is the failure message.
+///
+/// 1. Embedder precheck — also tells us the dimensionality we are moving to.
+/// 2. A `vec0` table is fixed-width, so a different dimensionality cannot
+///    reuse it. Dropping both leaves every row without a vector — exactly the
+///    state a foreign generation already describes, so the loop needs no
+///    special case (research §8.1, S5). Document rows, the fingerprint and the
+///    stale marks are kept.
+/// 3. How much there is to do: the rows stamped by another model, plus the
+///    attachments with no rows at all — disjoint from the former by
+///    construction, which only ever counts rows that exist.
+async fn plan_reembed(
+    embedder: &Arc<dyn Embedder>,
+    storage: &Arc<Storage>,
+    loc: &'static Locale,
+) -> Result<Plan, String> {
+    let dim = embedder
+        .embed(vec!["ping".into()], EmbedRole::Passage)
+        .await
+        .map_err(|err| {
+            loc.tf(
+                "ui.err.rag_embedder_unavailable",
+                &[("err", &err.to_string())],
+            )
+        })?
+        .first()
+        .map_or(0, Vec::len);
+    if dim == 0 {
+        return Err(loc.t("ui.err.rag_empty_vector").into());
+    }
+
+    let current_dim = storage.db().rag_dimension().unwrap_or(None);
+    if matches!(current_dim, Some(d) if d != dim) {
+        storage
+            .db()
+            .drop_vector_tables()
+            .map_err(|err| loc.tf("ui.err.rag_reset_vectors", &[("err", &err.to_string())]))?;
+    }
+
+    let pending = storage
+        .db()
+        .count_rows_to_reembed()
+        .map_err(|err| loc.tf("ui.err.rag_read_kb", &[("err", &err.to_string())]))?;
+    // A blocking walk of the chat files: it parses JSON off the async runtime,
+    // exactly as the search index's reconciliation pass does.
+    let missing = {
+        let storage = storage.clone();
+        tokio::task::spawn_blocking(move || scan_missing_attachments(&storage))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "reindex: the attachment scan panicked");
+                Vec::new()
+            })
+    };
+    Ok(Plan { pending, missing })
+}
+
+/// Lifts the stale marks once the knowledge base holds no old-model vectors
+/// at all. Derived from the queue rather than from "the loop ran", so a
+/// cancelled or partly failed run correctly leaves them.
+fn lift_stale_marks(storage: &Storage) {
+    let drained = storage
+        .db()
+        .count_rows_to_reembed()
+        .map(|p| p.rag == 0)
+        .unwrap_or(false);
+    if drained && let Err(err) = storage.db().set_rag_stale_profiles(&[]) {
+        tracing::warn!(error = %err, "failed to clear the stale knowledge-base marks");
+    }
 }
 
 /// Re-embeds one store batch by batch until its queue is empty, cancelled, or
@@ -1002,14 +1031,35 @@ mod tests {
             Arc::new(MockEmbedder::new(16)),
             CancellationToken::new(),
         );
+        // The outcome is the only event: no `Started` banner for a job that
+        // has nothing to do, which would flash "0/0" and look like work.
         assert_eq!(
-            finish(rx).await,
-            RagProgress::Reembedded {
+            collect(rx).await,
+            vec![RagProgress::Reembedded {
                 rows: 0,
                 errors: 0,
                 cancelled: false
-            }
+            }]
         );
+    }
+
+    /// A stage's errors are counted whether or not it was also fatal; only
+    /// the fatal message stops the job.
+    #[test]
+    fn absorb_counts_errors_and_stops_on_fatal() {
+        let mut errors = 0;
+        let quiet = Drained {
+            errors: 2,
+            fatal: None,
+        };
+        assert_eq!(quiet.absorb(&mut errors), Ok(()));
+        assert_eq!(errors, 2);
+        let fatal = Drained {
+            errors: 1,
+            fatal: Some("embedder gone".into()),
+        };
+        assert_eq!(fatal.absorb(&mut errors), Err("embedder gone".into()));
+        assert_eq!(errors, 3);
     }
 
     #[tokio::test]

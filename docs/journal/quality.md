@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (13)
+## Entries (14)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -25,6 +25,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the screenshots SVG writer (done)
 - Post-M9: SonarQube follow-up — `chat_search`'s renderer (done)
 - Post-M9: SonarQube follow-up — two new lint families, and eight complexity findings (done)
+- Post-M9: SonarQube follow-up — four findings from the week's merges (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -849,4 +850,88 @@ three findings are invisible from the workflow's own status):
   `code_build`, `code_command_gate`) among them, plus the round-limit,
   rewrite/followup and auto-title paths that `tool_round` and `handle_done`
   carry. No CHANGELOG entry — internal refactor with no user-visible effect
+  (§4).
+
+### Post-M9: SonarQube follow-up — four findings from the week's merges (done)
+
+- **Four open issues on `main`, no hotspots** (the Sonar MCP server,
+  2026-08-23). Branch `fix/sonar-followup-four-findings`. Three `rust:S3776`
+  — `orchestrator/reembed.rs::spawn_reembed` (**18**, the attachment
+  backfill of #369), `orchestrator/title.rs::handle_title_result` (**18**,
+  the transcript titling of the sub-agent track) and
+  `screens/chat/input.rs::handle_enter` (**16**, the read-only refusal
+  added one more link to its chain) — plus one `powershelldre:S8677` on
+  `tools/install_inno.ps1` (the Inno Setup 7 track): a function named
+  `Write-Step` that calls `Write-Host`. Every one of them passed the PR
+  gate that introduced it, as this genre always does: the gate *rates* new
+  code, it does not count its smells, so a handful of complexity findings
+  inside a large PR never moves the rating off A. The follow-up round is
+  the mechanism, and this is the fifth.
+- **All three complexity findings closed by extraction, none by Accept** —
+  the same verdict the four burn-down stages and the previous follow-up
+  reached, and for the same reason: each had a natural seam.
+  - `spawn_reembed` → a `run_reembed` that returns
+    `Result<RagProgress, String>`, so the spawn does one thing: send the one
+    terminal event (the lessons §4 invariant now lives in one line rather
+    than in seven `send(Failed); return` arms). The three prechecks became
+    `plan_reembed` (four `match`-and-return arms → `?`), the stale-mark
+    lift `lift_stale_marks`, and the pair of "count the stage's errors,
+    stop if it was fatal" blocks — written out identically after the
+    backfill and after each store — became `Drained::absorb`. `Plan::total`
+    names the banner's total.
+  - `handle_title_result` → `apply_title(chat_id, origin, title) -> bool`:
+    the chat-or-transcript write with the D1 rule
+    (docs/history/auto-chat-title.md) in one place, the `Result` unwrapping
+    and the `ChatRenamed` emission around it.
+  - `handle_enter` → a `COMMAND_PARSERS` table (`&[fn(&mut ChatScreen,
+    &str) -> Option<Option<ChatIntent>>]`) walked by `find_map`. Twelve
+    `if let Some(intent) = self.try_x(&text) { return intent; }` were one
+    point of complexity each and said nothing a list does not; the order
+    *is* the precedence, and the comments that justified a position (the
+    refusal first, `try_ui_command` before the `generating` gate, the two
+    parsers that keep their own grammar) moved onto the rows they explain.
+- **S8677 was a rename, deliberately not the rule's other fix.** The
+  script's stdout is its return value — the ISCC path, captured by both
+  workflows — so `Write-Output` for the progress lines would corrupt it;
+  `Write-Host` is correct there. PowerShell's way of saying "this function
+  is display-only" is the `Show-` verb, so `Write-Step` became `Show-Step`,
+  with a comment stating why the host is the right sink. Run on the
+  development machine (Inno 7.1.0 present, so the idempotent path): the
+  progress lines reach the console and `$out = ./tools/install_inno.ps1`
+  captures the path alone, with and without `-Quiet`.
+- **Mutation-tested, as lessons §2 asks — eight mutations, and the
+  survivors earned the round its tests.** Four were killed by existing
+  tests (the chat-side D1 rule, the refusal-first order, the stale-mark
+  lift, the backfill's share of the total). One was a null mutation: it
+  *added* a second `try_read_only_refusal` at the end of the table without
+  removing the first, and indicted itself rather than the test (the
+  lesson's "read a surviving mutation twice"). Three were real gaps, all
+  older than this change:
+  - `found && !dropped` → `found` survived: the **transcript** half of D1 —
+    an automatic title arriving after a sub-agent transcript was renamed by
+    hand — had never been tested, only the chat half. Now
+    `manual_rename_outranks_the_automatic_title_on_a_transcript`, the
+    mirror of the chat test down to the requested-origin positive control.
+  - `*errors += self.errors` removed survived: no input the job harness can
+    provoke makes a row write fail without being fatal (it needs a broken
+    database). `absorb` is pure, so its one claim — errors are counted
+    whether or not the stage was fatal — is pinned directly
+    (`absorb_counts_errors_and_stops_on_fatal`) instead of claimed in a
+    comment nothing checks.
+  - `if total == 0` disabled survived: the nothing-to-do test asserted the
+    terminal event and nothing about the `Started { total: 0 }` banner the
+    mutant flashes first. It now asserts the event list is *exactly* the
+    terminal event — which is the behaviour the comment promises ("say so
+    plainly rather than pretending work happened").
+- **Verification**: **2526 unit tests green** (0 failed, 107 `#[ignore]` —
+  the 2524 baseline plus the two above), clippy `-D warnings`/fmt/
+  `cyrillic_scan`/`link_check`/`doc_index_check`/`wizard_rtf --check` clean;
+  the PowerShell script parses (`Parser::ParseFile`, zero errors) and ran as
+  above. **No live run**, stated per AGENTS.md §3: the Rust side is a pure
+  extraction — no protocol, request or storage call changed — and the
+  re-embed job's whole path (every store, the dimension change, the
+  backfill, a dead embedder, cancellation) runs under `MockEmbedder` in its
+  thirteen unit tests; the LAN stand was also down at the time, so
+  `reindex_restores_retrieval_after_a_model_swap_live` stays with the next
+  change that touches the job's behaviour. No CHANGELOG entry — internal
   (§4).

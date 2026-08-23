@@ -277,6 +277,45 @@ fn manual_rename_outranks_the_automatic_title() {
     ));
 }
 
+/// The same rule for a sub-agent transcript (spec §11.2, D1): an automatic
+/// result arriving after the transcript was renamed by hand is dropped —
+/// silently, so the list is not told of a title that never landed — while a
+/// requested one still applies, the positive control.
+#[test]
+fn manual_rename_outranks_the_automatic_title_on_a_transcript() {
+    let run = crate::entities::subagent::SubagentRun::fixture("Критик", &["x", "y"]);
+    let run_id = run.id;
+    let mut carrier = Message::assistant("делегировал");
+    carrier.tool_calls = vec![run.on_record()];
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![Message::user("привет"), carrier]);
+
+    orch.handle_rename(run_id, "Моё имя".into());
+    assert!(orch.chats[0].child(run_id).unwrap().renamed_manually);
+    while rx.try_recv().is_ok() {} // drop the rename's own events
+
+    orch.handle_title_result(title_result(
+        run_id,
+        Ok("«Модельное имя»"),
+        TitleOrigin::Auto,
+    ));
+    assert_eq!(orch.chats[0].child(run_id).unwrap().title, "Моё имя");
+    assert!(rx.try_recv().is_err(), "an automatic result must be silent");
+
+    orch.handle_title_result(title_result(
+        run_id,
+        Ok("«Модельное имя»"),
+        TitleOrigin::Requested,
+    ));
+    assert_eq!(orch.chats[0].child(run_id).unwrap().title, "Модельное имя");
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        AppEvent::ChatList(_) | AppEvent::ChatRenamed { .. }
+    ));
+    // The parent keeps its own title throughout.
+    assert_eq!(orch.chats[0].title, "Новый чат");
+    assert_eq!(orch.chats[0].id, chat_id);
+}
+
 /// Failures are reported where their origin belongs (design D4): an automatic
 /// run logs and stays out of the UI, a requested one lands in the chat-list
 /// overlay — the loud arm proving the quiet arm's silence is deliberate.

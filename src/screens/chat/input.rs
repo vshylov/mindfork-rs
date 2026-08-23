@@ -5,6 +5,10 @@
 use super::feed::feed_msg_has_risky_glyph;
 use super::*;
 
+/// One slash-command parser of [`ChatScreen::COMMAND_PARSERS`]: `Some` when it
+/// claimed the line (carrying what `Enter` then yields), `None` to pass.
+type CommandParser = fn(&mut ChatScreen, &str) -> Option<Option<ChatIntent>>;
+
 impl ChatScreen {
     // ---------- input ----------
 
@@ -325,6 +329,35 @@ impl ChatScreen {
         }
     }
 
+    /// The slash-command parsers, in dispatch order. Each claims the line by
+    /// answering `Some` (the inner value being what `Enter` yields) and passes
+    /// on it with `None`; the first to claim it wins, so the order *is* the
+    /// precedence. A claimed line never goes out as a message.
+    const COMMAND_PARSERS: &[CommandParser] = &[
+        // A read-only transcript refuses what would change it, before any
+        // parser gets the line (spec §11.2); the rest of the commands work.
+        Self::try_read_only_refusal,
+        Self::try_rag_command,
+        Self::try_reindex_command,
+        Self::try_compact_command,
+        Self::try_project_command,
+        Self::try_file_command,
+        Self::try_image_command,
+        Self::try_tts_command,
+        // The registry of typed routes (`/settings`, `/find`, `/regen`, …).
+        // Like the commands above it runs before the `generating` gate — some of
+        // its own arms are the ones that answer during a turn (`/stop`), and the
+        // rest report why they cannot.
+        Self::try_ui_command,
+        // `/profile …` has a subcommand plus a name, so it keeps a parser of its
+        // own rather than a registry row (stage 2, fork F5).
+        Self::try_profile_command,
+        // `/export [md|json] [path]` — a format word and a path, so it too keeps
+        // a parser of its own rather than a registry row.
+        Self::try_export_command,
+        Self::try_exit_command,
+    ];
+
     /// `Enter` on the input box: slash commands (`/rag`, `/reindex`,
     /// `/compact`, `/file`, `/image`, `/tts`, `/exit`) are intercepted and never
     /// go out as messages; anything else is sent (unless a turn is already
@@ -334,50 +367,7 @@ impl ChatScreen {
         if text.trim().is_empty() {
             return None;
         }
-        // A read-only transcript refuses what would change it, before any
-        // parser gets the line (spec §11.2); the rest of the commands work.
-        if let Some(intent) = self.try_read_only_refusal(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_rag_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_reindex_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_compact_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_project_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_file_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_image_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_tts_command(&text) {
-            return intent;
-        }
-        // The registry of typed routes (`/settings`, `/find`, `/regen`, …).
-        // Like the commands above it runs before the `generating` gate — some of
-        // its own arms are the ones that answer during a turn (`/stop`), and the
-        // rest report why they cannot.
-        if let Some(intent) = self.try_ui_command(&text) {
-            return intent;
-        }
-        // `/profile …` has a subcommand plus a name, so it keeps a parser of its
-        // own rather than a registry row (stage 2, fork F5).
-        if let Some(intent) = self.try_profile_command(&text) {
-            return intent;
-        }
-        // `/export [md|json] [path]` — a format word and a path, so it too keeps
-        // a parser of its own rather than a registry row.
-        if let Some(intent) = self.try_export_command(&text) {
-            return intent;
-        }
-        if let Some(intent) = self.try_exit_command(&text) {
+        if let Some(intent) = self.try_command(&text) {
             return intent;
         }
         if self.read_only() {
@@ -385,13 +375,20 @@ impl ChatScreen {
             self.refuse_read_only(self.loc.t("ui.chat.read_only.sending"));
             return None;
         }
-        if !self.generating {
-            self.input.clear();
-            self.mark_input_changed();
-            Some(ChatIntent::Send(text))
-        } else {
-            None
+        if self.generating {
+            return None;
         }
+        self.input.clear();
+        self.mark_input_changed();
+        Some(ChatIntent::Send(text))
+    }
+
+    /// Offers the line to every parser of [`Self::COMMAND_PARSERS`] in turn;
+    /// `None` when no command claimed it and it is a message to send.
+    fn try_command(&mut self, text: &str) -> Option<Option<ChatIntent>> {
+        Self::COMMAND_PARSERS
+            .iter()
+            .find_map(|parse| parse(self, text))
     }
 
     /// The commands a sub-agent transcript cannot take — the ones that would
