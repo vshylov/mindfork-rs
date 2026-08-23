@@ -482,7 +482,11 @@ impl ChatScreen {
         if self.current_gen != Some(generation_id) {
             return;
         }
-        self.live_turn = None;
+        // A transcript's own stream ending leaves the turn's chip guard alone:
+        // the turn goes on, and its chip is cleared by its own events.
+        if self.live_turn == Some(generation_id) {
+            self.live_turn = None;
+        }
         if let Some(last) = self.feed.last_mut() {
             last.streaming = false;
             // A card still running when the turn ended (cancelled, timed out

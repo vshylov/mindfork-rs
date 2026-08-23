@@ -847,7 +847,16 @@ Details:
   `start_generation`, fed by `handle_progress` (a step from another
   generation is dropped), read and dropped by `handle_done` (a title given
   while running is copied onto the landed run first). Never a source of
-  truth: `GenResult` is.
+  truth: `GenResult` is. **The child's stream is progress too** (history plan
+  §8): its `RoundSink` carries a `ChildRoute` instead of muting, turning
+  `Chunk`/`Thoughts`/`ToolCallStarted`/`ToolCall`/`AssistantContinue`/
+  `AssistantRewrite`/`TokenUsage` into `TurnProgress::Child*` (the token
+  counter still also goes to the bar re-based on the parent's); the mirror
+  keeps `child_stream` (the run's own stream id) and `child_partial` (the
+  round in progress, reset by `ChildRoundFiled`/`ChildRewrite`), and
+  `forward_child` re-emits each step to the screen under `child_stream`
+  while the transcript is the open conversation; `ChildEnded` emits its
+  `Finished`.
 - **Server readiness gate.** Sending/regenerating/impersonating only start in
   `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
   ready, `503 Loading model` — still loading (not ready), `404` — a server
@@ -2365,10 +2374,12 @@ the screen rebuilds its feed from the `transcript` copy it keeps while a
 transcript is open. `switch_within_turn` exempts the parent ↔ in-flight child
 move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
 from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
-which the screen's `set_live_turn` turns into a resumed generation (a chat)
-or a kept chip with `current_gen` left `None` (a transcript — the parent's
-chunks must not land there); a return to the parent marks
-`parent_needs_refresh`, and `handle_done` re-activates it whole.
+— `LiveTurn { turn, stream, partial }` — which the screen's `set_live_turn`
+turns into a resumed generation on the chat, or, on a transcript, a
+`begin_generation(stream)` seeded with `partial` (the chip stays keyed on
+`turn`; the parent's chunks carry the turn's id and never land there); a
+return to the parent marks `parent_needs_refresh`, and `handle_done`
+re-activates it whole.
 
 **Search over transcripts** (spec §11.2.1, research §3.9). The orchestrator's
 `indexed_messages(chat)` emits the chat's own messages with `sub_id = None`

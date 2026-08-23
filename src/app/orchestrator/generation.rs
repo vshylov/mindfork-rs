@@ -55,6 +55,32 @@ pub(super) enum TurnProgress {
     ChildStarted(Box<SubagentRun>),
     /// The sub-agent's loop filed a round.
     ChildRoundFiled(Vec<Message>),
+    /// The sub-agent's stream, step by step (docs/history/subagent-live.md
+    /// §8): the same events its loop would send a feed, carried as progress
+    /// so they stay in order with `ChildRoundFiled` on the one channel. The
+    /// orchestrator keeps the round's partial text and forwards the steps to
+    /// the screen while the transcript is the open conversation.
+    ChildChunk(String),
+    ChildThoughts(String),
+    ChildToolStarted {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    ChildToolCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+        result: String,
+        images: usize,
+    },
+    ChildContinue,
+    ChildRewrite,
+    /// The run's own token count so far (completion, reasoning).
+    ChildTokens {
+        completion: u64,
+        reasoning: Option<u32>,
+    },
     /// The run returned; the landed run carries the same fields.
     ChildEnded {
         outcome: RunOutcome,
@@ -488,6 +514,8 @@ impl Orchestrator {
             chat: active_id,
             rounds: Vec::new(),
             child: None,
+            child_stream: Uuid::nil(),
+            child_partial: Default::default(),
             parent_needs_refresh: false,
         });
         // The confirmation channel for this turn (fork F8). The sender is kept
@@ -1128,36 +1156,89 @@ impl SubagentLimits {
     }
 }
 
-/// Where one loop's events go. The turn's own loop sends everything; a
-/// sub-agent's loop is muted except for the token counter, whose `context`
-/// half is dropped too — the child's prompt size is not the conversation's,
-/// and the status bar shows one number (research §3.5).
+/// Where one loop's events go. The turn's own loop sends everything to the
+/// screen; a sub-agent's loop sends its stream to the **orchestrator** as
+/// progress (docs/history/subagent-live.md §8) — it is the transcript's
+/// stream, not the parent's — except the token counter, which also goes on
+/// to the status bar re-based on the parent's, with its `context` half
+/// dropped: the child's prompt size is not the conversation's, and the bar
+/// shows one number (research §3.5).
 struct RoundSink<'a> {
     evt_tx: &'a UnboundedSender<AppEvent>,
-    live: bool,
+    /// `None` on the turn's own loop; the progress route of a sub-agent's.
+    child: Option<ChildRoute<'a>>,
+}
+
+/// How a sub-agent's loop reaches the orchestrator (see [`RoundSink`]).
+struct ChildRoute<'a> {
+    done_tx: &'a UnboundedSender<GenMessage>,
+    turn: Uuid,
+    /// What the turn had cost when the run began — subtracted from the
+    /// re-based counter to get the run's own.
+    token_base: u64,
 }
 
 impl RoundSink<'_> {
     fn send(&self, event: AppEvent) {
-        if self.live {
+        let Some(route) = &self.child else {
             let _ = self.evt_tx.send(event);
             return;
-        }
-        if let AppEvent::TokenUsage {
-            generation_id,
-            completion,
-            reasoning,
-            ..
-        } = event
-        {
-            let _ = self.evt_tx.send(AppEvent::TokenUsage {
+        };
+        let progress = match event {
+            AppEvent::TokenUsage {
                 generation_id,
                 completion,
-                context: None,
-                context_exact: false,
                 reasoning,
-            });
-        }
+                ..
+            } => {
+                let _ = self.evt_tx.send(AppEvent::TokenUsage {
+                    generation_id,
+                    completion,
+                    context: None,
+                    context_exact: false,
+                    reasoning,
+                });
+                TurnProgress::ChildTokens {
+                    completion: completion.saturating_sub(route.token_base),
+                    reasoning,
+                }
+            }
+            AppEvent::Chunk { text, .. } => TurnProgress::ChildChunk(text),
+            AppEvent::Thoughts { text, .. } => TurnProgress::ChildThoughts(text),
+            AppEvent::ToolCallStarted {
+                call_id,
+                name,
+                arguments,
+                ..
+            } => TurnProgress::ChildToolStarted {
+                call_id,
+                name,
+                arguments,
+            },
+            AppEvent::ToolCall {
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+                ..
+            } => TurnProgress::ChildToolCall {
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+            },
+            AppEvent::AssistantContinue { .. } => TurnProgress::ChildContinue,
+            AppEvent::AssistantRewrite { .. } => TurnProgress::ChildRewrite,
+            // A retry or an error inside the run: the parent's result text
+            // says how the run ended; nothing to draw meanwhile.
+            _ => return,
+        };
+        let _ = route.done_tx.send(GenMessage::Progress {
+            id: route.turn,
+            progress,
+        });
     }
 }
 
@@ -1211,7 +1292,11 @@ impl TurnLoop<'_> {
     fn sink(&self) -> RoundSink<'_> {
         RoundSink {
             evt_tx: &self.shared.evt_tx,
-            live: self.live,
+            child: (!self.live).then_some(ChildRoute {
+                done_tx: &self.shared.done_tx,
+                turn: self.shared.id,
+                token_base: self.token_base,
+            }),
         }
     }
 

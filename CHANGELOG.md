@@ -48,6 +48,10 @@ split by subsystem.
   delegation the status bar shows a quiet chip — the sub-agent's name, the
   round it is on and the tool it is using — instead of a bare "generating"
   for minutes.
+- **A sub-agent's transcript streams while you watch.** Open a running
+  delegation and the sub-agent's reply arrives word by word, its thoughts and
+  tool calls included, with its own token counter — and opening it mid-reply
+  shows what it has written so far rather than starting from the next round.
 - **A tool call shows up the moment it starts.** The card for a tool call
   appears in the reply as soon as the assistant makes the call, marked
   *running…* where the result will go, and fills in when the result arrives —

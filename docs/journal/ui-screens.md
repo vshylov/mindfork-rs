@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 5 — transcripts in search and the cross-chat tools (done)
 - Post-M9: sub-agent chats, PR 6 — auto-title at landing, the run chip, the demo transcript (done)
 - Post-M9: sub-agent chats, PR 7 — the transcript while it runs (done)
+- Post-M9: sub-agent chats — the sub-agent's text streams into its transcript (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2119,3 +2120,45 @@ Branch `feat/code-workspace-changes`.
   landed `ChatList` precedes the parent's refresh, so the test reads them in
   that order. Next: the running card (`ToolCallStarted`, plan §3.7) as its
   own PR, then the plan moves to `docs/history/`.
+### Post-M9: sub-agent chats — the sub-agent's text streams into its transcript (done)
+
+- **What**: the first of the track's open items
+  ([docs/history/subagent-live.md](../history/subagent-live.md) §8, forks by
+  recommendation, user's go 2026-08-23). A running transcript no longer
+  grows only by rounds: the sub-agent's text, thoughts and tool cards stream
+  into it, and a transcript opened mid-round starts with what has already
+  streamed. Spec §9.3.2, §11.3; architecture §5, §10.
+- **Why it became cheap**: stage 2's fork F3 chose rounds because token
+  streaming seemed to need a second stream on the screen and lost the partial
+  text on every switch. Treating the child's stream as **progress** — the
+  child's `RoundSink` routes `Chunk`/`Thoughts`/`ToolCallStarted`/`ToolCall`/
+  `AssistantContinue`/`AssistantRewrite`/`TokenUsage` to `done_tx` as
+  `TurnProgress::Child*` instead of muting — answers both: one channel with
+  `ChildRoundFiled` means a round's chunks always precede its filing (the
+  feed rebuild cannot erase the next round's bubble), and the orchestrator
+  holding `child_partial` means a late opening is seeded whole.
+- **The stream id**: `InflightTurn.child_stream`, minted at `ChildStarted`.
+  The screen's guard is the existing one — events under the run's stream
+  land only where `current_gen` is that stream, i.e. the transcript view; the
+  parent's screen drops them with no new rule. `ChatActivated.live_turn`
+  became `LiveTurn { turn, stream, partial }`: the chip stays keyed on
+  `turn`, the feed accepts `stream`. On a transcript `set_live_turn` now
+  does `begin_generation(stream)` + the partial as chunks; the `current_gen =
+  None` rule of PR 7 is gone with its reason.
+- **The transcript view is generating**: its own token counter
+  (`ChildTokens` = the re-based counter minus the run's `token_base`), the
+  running card of #363 for the run's own calls, `Finished` from `ChildEnded`
+  (outcome → reason: completed/round-limit → `Stop`, cancelled/timed-out →
+  `Cancelled`, failed → `Error`) closing the bubble and clearing the chip.
+- **Tests**: 2506 green (+1, two reworked): the bare `handle_progress`
+  (a stream id of its own; chunks kept and not forwarded while the parent is
+  open; the activation seeding the partial; forwarding under the stream id
+  once open; the reset on a filed round; `Finished` on the run's end), the
+  loop test now asserting the hanging round's `thinking…` in the opened
+  transcript's `live_turn.partial`, the screen test reworked for a seeded,
+  generating transcript that accepts its own chunks and refuses the
+  parent's. **Smoke — GO**: `subagent_with_tools_e2e_live` on Qwen 3.6 27B
+  (`llama-server`, 192.168.1.20), 279 tokens, 28 s.
+- **Next**: the parent's own in-progress text the same way (`RoundText`),
+  retiring `parent_needs_refresh` (plan §8, last bullet).
+

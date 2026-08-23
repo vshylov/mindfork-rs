@@ -599,9 +599,15 @@ async fn a_running_transcript_is_listed_opens_and_survives_the_switch() {
     assert_eq!(messages[0].text, "what time is it");
     assert_eq!(messages[1].tool_calls[0].name, "current_time");
     assert!(child.is_some());
-    assert!(
-        live_turn.is_some(),
-        "the turn is in flight on this transcript"
+    // The turn is in flight on this transcript, under the run's own stream,
+    // and the text the hanging round has streamed so far comes along
+    // (docs/history/subagent-live.md §8).
+    let live = live_turn.expect("the turn is in flight on this transcript");
+    assert_ne!(live.stream, live.turn);
+    assert_eq!(
+        live.partial.as_ref().map(|p| p.text.as_str()),
+        Some("thinking…"),
+        "{live:?}"
     );
     assert_eq!(
         backend.requests().len(),
@@ -739,6 +745,8 @@ fn a_filed_round_grows_the_open_transcript() {
         chat: parent,
         rounds: Vec::new(),
         child: None,
+        child_stream: Uuid::nil(),
+        child_partial: Default::default(),
         parent_needs_refresh: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
@@ -815,6 +823,132 @@ fn a_filed_round_grows_the_open_transcript() {
     // `view()` resolves the running transcript; the first match is none.
     assert!(orch.parent_of(run_id) == Some(parent));
     assert_eq!(orch.first_match_in_chat(run_id, "задание"), None);
+}
+
+/// The sub-agent's stream (docs/history/subagent-live.md §8): chunks are
+/// kept as the round's partial text and forwarded — under the run's own
+/// stream id — only while the transcript is open; a filed round resets the
+/// partial; the run's end closes the open transcript's bubble.
+#[test]
+fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
+    use super::super::generation::TurnProgress;
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let chat = Chat::from_profile(
+        &crate::entities::profile::Profile::new("P", "sys"),
+        "Родитель",
+    );
+    let parent = chat.id;
+    orch.chats.push(chat);
+    let generation = Uuid::new_v4();
+    orch.inflight = Some(super::super::InflightTurn {
+        generation,
+        chat: parent,
+        rounds: Vec::new(),
+        child: None,
+        child_stream: Uuid::nil(),
+        child_partial: Default::default(),
+        parent_needs_refresh: false,
+    });
+    let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
+    run.outcome = None;
+    let run_id = run.id;
+    orch.handle_progress(generation, TurnProgress::ChildStarted(Box::new(run)));
+    let stream = orch.inflight.as_ref().unwrap().child_stream;
+    assert_ne!(stream, Uuid::nil(), "a stream id of its own");
+    assert_ne!(stream, generation);
+
+    // Not open: kept, not forwarded.
+    orch.active_id = Some(parent);
+    orch.handle_progress(generation, TurnProgress::ChildThoughts("думаю".into()));
+    orch.handle_progress(generation, TurnProgress::ChildChunk("нача".into()));
+    while let Ok(ev) = rx.try_recv() {
+        assert!(
+            !matches!(ev, AppEvent::Chunk { .. } | AppEvent::Thoughts { .. }),
+            "not forwarded while the parent is open: {ev:?}"
+        );
+    }
+    let partial = orch.inflight.as_ref().unwrap().child_partial.clone();
+    assert_eq!(
+        (partial.text.as_str(), partial.thoughts.as_str()),
+        ("нача", "думаю")
+    );
+
+    // Opening the transcript seeds the round so far under the stream id.
+    orch.activate_focused(run_id, None);
+    let activated = loop {
+        match rx.try_recv().unwrap() {
+            AppEvent::ChatActivated { live_turn, .. } => break live_turn.unwrap(),
+            _ => continue,
+        }
+    };
+    assert_eq!((activated.turn, activated.stream), (generation, stream));
+    assert_eq!(activated.partial.unwrap().text, "нача");
+
+    // Open: forwarded under the stream id.
+    orch.handle_progress(generation, TurnProgress::ChildChunk("ло".into()));
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildToolStarted {
+            call_id: "c9".into(),
+            name: "web_search".into(),
+            arguments: "{}".into(),
+        },
+    );
+    let mut seen = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        match ev {
+            AppEvent::Chunk {
+                generation_id,
+                text,
+            } => seen.push(("chunk", generation_id, text)),
+            AppEvent::ToolCallStarted {
+                generation_id,
+                name,
+                ..
+            } => seen.push(("started", generation_id, name)),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            ("chunk", stream, "ло".to_string()),
+            ("started", stream, "web_search".to_string())
+        ]
+    );
+    assert_eq!(orch.inflight.as_ref().unwrap().child_partial.text, "начало");
+
+    // A filed round resets the partial; the run's end closes the bubble.
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildRoundFiled(vec![Message::assistant("начало")]),
+    );
+    assert!(
+        orch.inflight
+            .as_ref()
+            .unwrap()
+            .child_partial
+            .text
+            .is_empty()
+    );
+    orch.handle_progress(
+        generation,
+        TurnProgress::ChildEnded {
+            outcome: RunOutcome::Completed,
+            finished_at: chrono::Utc::now(),
+            tokens: 3,
+        },
+    );
+    let finished = loop {
+        match rx.try_recv().unwrap() {
+            AppEvent::Finished {
+                generation_id,
+                reason,
+            } => break (generation_id, reason),
+            _ => continue,
+        }
+    };
+    assert_eq!(finished, (stream, FinishReason::Stop));
 }
 
 // ---- the transcript as a chat of the list (PR 4, research §3.7–§3.8) ----

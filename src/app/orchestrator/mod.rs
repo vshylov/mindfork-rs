@@ -86,6 +86,7 @@ use self::mcp::{McpEvent, McpManager};
 use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
 use self::title::TitleResult;
+use crate::entities::subagent::RunOutcome;
 
 /// Default profile in language `lang` (bootstrap on empty storage / a
 /// protective fallback). Name and system message — from the agent-scaffold
@@ -381,6 +382,12 @@ struct InflightTurn {
     rounds: Vec<Message>,
     /// The sub-agent run in progress, or just ended and not yet landed.
     child: Option<crate::entities::subagent::SubagentRun>,
+    /// The run's own stream id — what its transcript's feed accepts
+    /// (docs/history/subagent-live.md §8). Minted with the run.
+    child_stream: Uuid,
+    /// The sub-agent's round in progress: text and thoughts streamed since
+    /// the last filed round, so a transcript opened mid-round starts whole.
+    child_partial: crate::app::events::LivePartial,
     /// The parent was switched away from and back while the turn ran, so its
     /// feed lost the stream: re-activate it whole at landing (§3.5).
     parent_needs_refresh: bool,
@@ -961,6 +968,8 @@ impl Orchestrator {
             TurnProgress::RoundFiled(messages) => turn.rounds.extend(messages),
             TurnProgress::ChildStarted(run) => {
                 turn.child = Some(*run);
+                turn.child_stream = Uuid::new_v4();
+                turn.child_partial = Default::default();
                 self.emit_chat_list();
             }
             TurnProgress::ChildRoundFiled(messages) => {
@@ -968,6 +977,7 @@ impl Orchestrator {
                     return;
                 };
                 run.messages.extend(messages.iter().cloned());
+                turn.child_partial = Default::default();
                 if self.active_id == Some(run.id) {
                     let _ = self.evt_tx.send(AppEvent::TranscriptGrew {
                         id: run.id,
@@ -982,13 +992,99 @@ impl Orchestrator {
                 finished_at,
                 tokens,
             } => {
-                if let Some(run) = turn.child.as_mut() {
-                    run.outcome = Some(outcome);
-                    run.finished_at = Some(finished_at);
-                    run.tokens = tokens;
+                let Some(run) = turn.child.as_mut() else {
+                    return;
+                };
+                run.outcome = Some(outcome);
+                run.finished_at = Some(finished_at);
+                run.tokens = tokens;
+                if self.active_id == Some(run.id) {
+                    let reason = match outcome {
+                        RunOutcome::Completed | RunOutcome::RoundLimit => FinishReason::Stop,
+                        RunOutcome::Cancelled | RunOutcome::TimedOut => FinishReason::Cancelled,
+                        RunOutcome::Failed => FinishReason::Error,
+                    };
+                    let _ = self.evt_tx.send(AppEvent::Finished {
+                        generation_id: turn.child_stream,
+                        reason,
+                    });
                 }
                 self.emit_chat_list();
             }
+            // The sub-agent's stream (docs/history/subagent-live.md §8): the
+            // round's partial text is kept for a late opening; the step goes
+            // to the screen, under the run's own stream id, only while the
+            // transcript is the open conversation.
+            TurnProgress::ChildChunk(text) => {
+                turn.child_partial.text.push_str(&text);
+                self.forward_child(|stream| AppEvent::Chunk {
+                    generation_id: stream,
+                    text,
+                });
+            }
+            TurnProgress::ChildThoughts(text) => {
+                turn.child_partial.thoughts.push_str(&text);
+                self.forward_child(|stream| AppEvent::Thoughts {
+                    generation_id: stream,
+                    text,
+                });
+            }
+            TurnProgress::ChildToolStarted {
+                call_id,
+                name,
+                arguments,
+            } => self.forward_child(|stream| AppEvent::ToolCallStarted {
+                generation_id: stream,
+                call_id,
+                name,
+                arguments,
+            }),
+            TurnProgress::ChildToolCall {
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+            } => self.forward_child(|stream| AppEvent::ToolCall {
+                generation_id: stream,
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+            }),
+            TurnProgress::ChildContinue => {
+                self.forward_child(|stream| AppEvent::AssistantContinue {
+                    generation_id: stream,
+                })
+            }
+            TurnProgress::ChildRewrite => {
+                turn.child_partial = Default::default();
+                self.forward_child(|stream| AppEvent::AssistantRewrite {
+                    generation_id: stream,
+                })
+            }
+            TurnProgress::ChildTokens {
+                completion,
+                reasoning,
+            } => self.forward_child(|stream| AppEvent::TokenUsage {
+                generation_id: stream,
+                completion,
+                context: None,
+                context_exact: false,
+                reasoning,
+            }),
+        }
+    }
+
+    /// Sends one step of the running sub-agent's stream to the screen, under
+    /// the run's stream id, when its transcript is the open conversation.
+    fn forward_child(&self, event: impl FnOnce(Uuid) -> AppEvent) {
+        let Some(turn) = self.inflight.as_ref() else {
+            return;
+        };
+        if turn.child_id().is_some_and(|id| self.active_id == Some(id)) {
+            let _ = self.evt_tx.send(event(turn.child_stream));
         }
     }
 
@@ -1102,9 +1198,23 @@ impl Orchestrator {
         // §3.5): the parent's feed gets the rounds filed so far and keeps its
         // generation; the child keeps the status chip.
         let turn = self.inflight.as_ref();
-        let live_turn = turn
-            .filter(|t| t.chat == id || t.child_id() == Some(id))
-            .map(|t| t.generation);
+        let live_turn = turn.and_then(|t| {
+            if t.chat == id {
+                Some(crate::app::events::LiveTurn {
+                    turn: t.generation,
+                    stream: t.generation,
+                    partial: None,
+                })
+            } else if t.child_id() == Some(id) {
+                Some(crate::app::events::LiveTurn {
+                    turn: t.generation,
+                    stream: t.child_stream,
+                    partial: Some(t.child_partial.clone()),
+                })
+            } else {
+                None
+            }
+        });
         let event = match self.view(id) {
             Some(ChatView::Top(chat)) => {
                 let mut messages = chat.messages.clone();
@@ -1122,7 +1232,7 @@ impl Orchestrator {
                         .compaction_view(self.config.compaction.enabled)
                         .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
                     child: None,
-                    live_turn,
+                    live_turn: live_turn.clone(),
                 }
             }
             // A sub-agent transcript opens like a chat (spec §11.2): its own
@@ -1142,7 +1252,7 @@ impl Orchestrator {
                     parent_title: parent.title.clone(),
                     system_message: run.system_message.clone(),
                 }),
-                live_turn,
+                live_turn: live_turn.clone(),
             },
             None => return,
         };
