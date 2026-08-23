@@ -338,6 +338,8 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         // inventing a root would point the code tools at a directory the
         // importing user never chose.
         workspace: None,
+        // Built by this binary, so it has this binary's shape.
+        v: crate::shared::storage::schema::CHAT_SCHEMA,
         is_hidden: false,
     })
 }

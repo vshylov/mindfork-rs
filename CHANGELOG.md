@@ -92,6 +92,14 @@ split by subsystem.
 
 ### Data
 
+- **Chat files schema 1 → 2** (migrated automatically on the first start, after
+  the same pre-migration backup): every sub-agent call made by the old
+  tool-less `call_subagent` gets a transcript reconstructed from what the call
+  already stored — the persona, the question and the reply — so old
+  delegations appear as child chats like new ones. Nothing is removed: a
+  migrated file is the old file plus the transcripts, and it now records its
+  schema version. An older build refuses to open migrated data rather than
+  misread it — restore the pre-migration backup to go back.
 - **`settings.json` schema 1 → 2** (migrated automatically on the first start,
   after a pre-migration backup): `tools.subagent_timeout_secs` becomes
   `tools.subagent_run_timeout_secs`. A value left at the old default (60)

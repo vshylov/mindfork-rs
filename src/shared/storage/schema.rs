@@ -26,7 +26,7 @@ pub const SETTINGS_SCHEMA: u32 = 2;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 1;
+pub const CHAT_SCHEMA: u32 = 2;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -112,8 +112,9 @@ fn detect_profiles(v: &Value) -> u32 {
     }
 }
 
-/// Chat-file version — by the `v` field (absent → 1). The field is **not** written
-/// while the schema stays at 1 (zero churn in existing files).
+/// Chat-file version — by the `v` field (absent → 1). The field was not written
+/// while the schema stayed at 1; since 2 every save writes it (`Chat::v`), so a
+/// migrated file is never detected as 1 again.
 fn detect_chat(v: &Value) -> u32 {
     v.get("v").and_then(Value::as_u64).unwrap_or(1) as u32
 }
@@ -154,8 +155,8 @@ const SETTINGS_STEPS: &[Step] = &[Step {
     apply: settings_to_v2,
 }];
 
-/// The registry of artifacts. `settings.json` is at 2 (one step); the rest are
-/// still at 1 with no steps.
+/// The registry of artifacts. `settings.json` and the chat files are at 2 (one
+/// step each); `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -174,12 +175,18 @@ pub fn profiles_artifact() -> JsonArtifact {
     }
 }
 
+const CHAT_STEPS: &[Step] = &[Step {
+    to: 2,
+    summary: "a transcript is synthesized for every old call_subagent record",
+    apply: super::chat_steps::chat_to_v2,
+}];
+
 pub fn chat_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "chats/<id>.json",
         current: CHAT_SCHEMA,
         detect: detect_chat,
-        steps: &[],
+        steps: CHAT_STEPS,
     }
 }
 
@@ -276,15 +283,15 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings took the first real step; the other two are still dormant.
-        let settings = settings_artifact();
-        assert_eq!(settings.current, 2);
-        assert_eq!(settings.steps.len(), 1);
-        assert_eq!(settings.steps[0].to, 2);
-        for a in [profiles_artifact(), chat_artifact()] {
-            assert_eq!(a.current, 1);
-            assert!(a.steps.is_empty(), "{}: no steps yet", a.name);
+        // Settings and chats took their first real step; profiles are still dormant.
+        for a in [settings_artifact(), chat_artifact()] {
+            assert_eq!(a.current, 2, "{}", a.name);
+            assert_eq!(a.steps.len(), 1, "{}", a.name);
+            assert_eq!(a.steps[0].to, 2);
         }
+        let profiles = profiles_artifact();
+        assert_eq!(profiles.current, 1);
+        assert!(profiles.steps.is_empty());
     }
 
     /// The golden v1 shape: the two sub-agent knobs under the names and

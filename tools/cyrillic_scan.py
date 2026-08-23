@@ -172,6 +172,11 @@ SKIP_FILES = {
     # character, so those files are pure ASCII.
     "docs/legal/LICENSE.ru.txt",
     "docs/legal/DISCLAIMER.ru.md",
+    # A golden chat file as a Russian-locale install wrote it before the first
+    # chat-file migration step (ADR 0006): the step's fixture, pinned by tests
+    # that assert on its Cyrillic titles and replies. Translating it would test a
+    # file nobody ever had.
+    "src/shared/storage/fixtures/chat_v1_call_subagent.json",
 }
 
 # Opt-in markers for content that must stay Cyrillic because the text *is* the

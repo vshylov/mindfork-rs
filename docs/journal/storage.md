@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -22,6 +22,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `backup`/`restore` narrate their work, and give back the keyboard (done)
 - Post-M9: the external server's API key, entered in settings (done)
 - Post-M9: the first real settings step — `SETTINGS_SCHEMA` 1→2 (done)
+- Post-M9: sub-agent chats, PR 3 — `CHAT_SCHEMA` 1→2, a transcript for every old call (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -667,3 +668,49 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   sub-agent transcript for old `call_subagent` records (`CHAT_SCHEMA` 2) is the
   track's PR 3 — a separate bump, a separate golden fixture, its own journal
   entry.
+
+### Post-M9: sub-agent chats, PR 3 — `CHAT_SCHEMA` 1→2, a transcript for every old call (done)
+
+- **What**: PR 3 of the sub-agent track
+  ([docs/research/subagent-chats.md](../research/subagent-chats.md) §3.13, F10 —
+  the user's decision to migrate rather than leave old calls as they were). The
+  first chat-file step, `chat_steps::chat_to_v2`: every `call_subagent` record
+  without a run — in `messages` **and** in `deleted[].messages` — gets one
+  synthesized from what it already holds: `system_message`/`message` (and a
+  `name`, if a post-PR-2 record somehow lacks a run) from `arguments`, the
+  reply from `result`, `created_at` from the assistant message, `finished_at`
+  from the `Tool` message that answered the call (else the call's own time), a
+  title by the same rule the live run uses (`shared::title::sanitize_title` —
+  the reason PR 1 moved it), `outcome: completed` when there is a result and
+  **no outcome** when there is none (a call that never came back reads like an
+  interrupted run today). Then `v = 2`.
+- **Determinism and idempotence**: run ids are `Uuid::new_v5(SUBAGENT_NS,
+  "<chat id>/<call id>")`, message ids derive from the run id — a restored
+  backup migrates to the same `chat://` addresses, and a record that already
+  has a run is skipped, so running the step twice is a no-op (pinned).
+- **`Chat.v`**: the file now carries its schema version on every save
+  (`#[serde(default = 1)]`, set to `CHAT_SCHEMA` by `from_profile` and the
+  importer, kept as loaded otherwise — it states what the content conforms
+  to, not which binary touched it). Without it a migrated file re-saved by the
+  app would detect as 1 on the next start and be handed to the step again
+  (harmlessly, but forever). `detect_chat`'s "not written while 1" note is
+  history now.
+- **Shape decisions**: the step lives in its own module, `chat_steps.rs`, with
+  the golden fixture beside it (`storage/fixtures/chat_v1_call_subagent.json`
+  — a v1 file as a Russian-locale install wrote it: a live call with its
+  `Tool` answer, an archived call with none, an ordinary `current_time` call
+  that must be left alone); the fixture is allowlisted in
+  `tools/cyrillic_scan.py` because its Cyrillic *is* its content. The
+  `call_subagent` name is a literal in the step: a step describes the past,
+  and `shared` cannot reach `features` anyway.
+- **Tests**: 2468 green (+8): the fixture parses as v1 today; the synthesized
+  run's every field, the untouched neighbour record, the rest of the file
+  intact; the deleted archive; control-parse into `Chat` and `final_reply`;
+  determinism + idempotence; a run already present / arguments missing; and
+  end to end through the real registry in `data_migration` — one pre-migrate
+  backup, `v = 2` on disk, the second start finds the file current — plus "a
+  freshly saved chat is current". No live run: a pure storage step, covered by
+  the fixture.
+- **Not done here**: the list, the read-only view and search over the
+  synthesized runs — PRs 4–6; until then an old call's transcript is on the
+  record and nowhere on screen but the card's result text.
