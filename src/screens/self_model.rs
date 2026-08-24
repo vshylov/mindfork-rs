@@ -22,7 +22,26 @@ use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
 use crate::shared::wrap::wrap_line;
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
+
+/// The self-model screen's "Shortcuts" section (`F1`): one row per key
+/// `handle_key` matches — a new arm gets a row here (AGENTS.md §3). The app
+/// layer composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.self_model",
+    context: Some(HelpContext::SelfModel),
+    rows: &[
+        ("↑/↓", "ui.help.sm_select"),
+        ("Enter", "ui.help.sm_edit"),
+        ("Space", "ui.help.sm_goal"),
+        ("Del", "ui.help.sm_delete"),
+        ("Ctrl+K Ctrl+K", "ui.help.sm_clear"),
+        ("Esc", "ui.help.sm_close"),
+    ],
+    openers: &[],
+};
 
 /// Intent from the "self-model" screen (translated by `app`). A counterpart to
 /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent).

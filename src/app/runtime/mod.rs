@@ -41,7 +41,7 @@ use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
 use crate::widgets::help_dialog::{
-    self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpState, HelpTab,
+    self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
 };
 use crate::widgets::status_bar::EscTarget;
 
@@ -219,6 +219,22 @@ impl HelpOverlay {
         }
     }
 }
+
+/// The "Shortcuts" tab's sections in display order: "Everywhere", then the
+/// screens by how often the user is on them. Composed here — the app layer is
+/// the one place that knows every screen exists — from tables owned by the
+/// code they document (proximity to the `match` is the anti-drift force;
+/// docs/help-hotkeys-context.md §6). `help_sections_cover_every_context`
+/// closes the loop [`help_context`] opens: one section per screen.
+pub(super) static HELP_SECTIONS: [&HelpSection; 7] = [
+    &help_dialog::EVERYWHERE,
+    &crate::screens::chat::HELP_SECTION,
+    &crate::widgets::chat_list::HELP_SECTION,
+    &crate::screens::settings::HELP_SECTION,
+    &crate::screens::self_model::HELP_SECTION,
+    &crate::screens::changes::HELP_SECTION,
+    &crate::screens::search::HELP_SECTION,
+];
 
 /// The active screen's help context — the section the dialog marks "you are
 /// here" and anchors to. An exhaustive match on purpose: a new screen cannot
@@ -663,7 +679,7 @@ fn draw_frame(
         }
         if let Some(state) = help.open.as_mut() {
             dim_background(frame, &palette);
-            help_dialog::render_help(frame, state, &palette, loc);
+            help_dialog::render_help(frame, state, &HELP_SECTIONS, &palette, loc);
         }
     });
     let _ = execute!(stdout(), EndSynchronizedUpdate);

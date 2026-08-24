@@ -226,140 +226,21 @@ pub struct HelpSection {
     pub openers: &'static [&'static str],
 }
 
-/// The "Shortcuts" tab as per-screen sections (spec §11.7,
-/// docs/help-hotkeys-context.md): "Everywhere" first, then the screens by how
-/// often the user is on them. Rows follow each screen's actual key handler —
-/// completeness against the `match` arms is the point, and AGENTS.md §3 sends
-/// every new key here.
-pub const HELP_SECTIONS: &[HelpSection] = &[
-    HelpSection {
-        title: "ui.help.sec.everywhere",
-        context: None,
-        // `F1` is routed at the runtime level, above every screen; `?` is the
-        // chat's convenience alias (typing owns it elsewhere).
-        rows: &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
-        openers: &[],
-    },
-    // The chat's groups: composing · selection/clipboard · the conversation ·
-    // editing · panels and toggles (with the way out at the end).
-    HelpSection {
-        title: "ui.help.sec.chat",
-        context: Some(HelpContext::Chat),
-        rows: &[
-            ("Enter", "ui.help.send"),
-            ("Shift+Enter / Alt+Enter", "ui.help.newline"),
-            ("Shift+←/→/↑/↓", "ui.help.select"),
-            ("Ctrl+A", "ui.help.select_all"),
-            ("Ctrl+C", "ui.help.copy"),
-            ("Ctrl+X", "ui.help.cut"),
-            ("Ctrl+V", "ui.help.paste"),
-            ("Esc", "ui.help.esc"),
-            ("Ctrl+N", "ui.help.new_chat"),
-            ("F2", "ui.help.rename_chat"),
-            ("F5", "ui.help.copy_chat"),
-            ("Ctrl+R", "ui.help.regenerate"),
-            ("Ctrl+E", "ui.help.delete_exchange"),
-            ("Ctrl+U", "ui.help.impersonate"),
-            ("Ctrl+K", "ui.help.clear_input"),
-            ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
-            ("Ctrl+←/→", "ui.help.word_move"),
-            ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
-            ("Home", "ui.help.line_home"),
-            ("End", "ui.help.line_end"),
-            ("Ctrl+Home/End", "ui.help.doc_move"),
-            ("Ctrl+G", "ui.help.spell"),
-            ("Ctrl+P", "ui.help.settings"),
-            ("F3", "ui.help.self_model"),
-            ("F4", "ui.help.changes"),
-            ("Ctrl+F", "ui.help.find_in_chat"),
-            ("Ctrl+T", "ui.help.thoughts"),
-            ("Ctrl+O", "ui.help.tool_calls"),
-            ("Ctrl+B", "ui.help.emoji"),
-            ("Ctrl+L", "ui.help.chat_links"),
-            ("Ctrl+W", "ui.help.mouse_toggle"),
-            ("ui.help.k.mouse", "ui.help.mouse_action"),
-            ("PageUp/PageDown", "ui.help.scroll"),
-        ],
-        openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
-    },
-    // The list's groups: searching · acting on the selection · managing chats.
-    HelpSection {
-        title: "ui.help.sec.chat_list",
-        context: Some(HelpContext::ChatList),
-        rows: &[
-            ("ui.help.k.type", "ui.help.list_type"),
-            ("Ctrl+F", "ui.help.list_scope"),
-            ("Ctrl+G", "ui.help.list_messages"),
-            ("Enter", "ui.help.list_open"),
-            ("↑/↓", "ui.help.list_select"),
-            ("Tab", "ui.help.list_sort"),
-            ("Esc", "ui.help.list_close"),
-            ("F2", "ui.help.list_rename"),
-            ("F5", "ui.help.list_copy"),
-            ("Ctrl+R", "ui.help.list_autotitle"),
-            ("Ctrl+N", "ui.help.new_chat"),
-            ("Ctrl+D", "ui.help.list_clone"),
-            ("Del", "ui.help.list_delete"),
-            ("Ctrl+O", "ui.help.subagents_fold"),
-        ],
-        openers: &["Enter", "F2"],
-    },
-    // The settings' groups: moving through sections and fields · the tools
-    // over them (search, undo, the two list sections' CRUD).
-    HelpSection {
-        title: "ui.help.sec.settings",
-        context: Some(HelpContext::Settings),
-        rows: &[
-            ("Tab / Shift+Tab", "ui.help.set_sections"),
-            ("↑/↓", "ui.help.set_rows"),
-            ("Enter", "ui.help.set_enter"),
-            ("←/→", "ui.help.set_cycle"),
-            ("Space", "ui.help.set_toggle"),
-            ("Del", "ui.help.set_reset"),
-            ("Esc", "ui.help.set_back"),
-            ("/", "ui.help.set_search"),
-            ("Ctrl+Z / Ctrl+Y", "ui.help.set_undo"),
-            ("Ctrl+N", "ui.help.set_new"),
-            ("Ctrl+D", "ui.help.set_delete"),
-        ],
-        openers: &["/"],
-    },
-    HelpSection {
-        title: "ui.help.sec.self_model",
-        context: Some(HelpContext::SelfModel),
-        rows: &[
-            ("↑/↓", "ui.help.sm_select"),
-            ("Enter", "ui.help.sm_edit"),
-            ("Space", "ui.help.sm_goal"),
-            ("Del", "ui.help.sm_delete"),
-            ("Ctrl+K Ctrl+K", "ui.help.sm_clear"),
-            ("Esc", "ui.help.sm_close"),
-        ],
-        openers: &[],
-    },
-    HelpSection {
-        title: "ui.help.sec.changes",
-        context: Some(HelpContext::Changes),
-        rows: &[
-            ("Tab", "ui.help.ch_pane"),
-            ("↑/↓", "ui.help.ch_select"),
-            ("PageUp/PageDown", "ui.help.ch_scroll"),
-            ("R", "ui.help.ch_revert"),
-            ("Esc", "ui.help.ch_close"),
-        ],
-        openers: &[],
-    },
-    HelpSection {
-        title: "ui.help.sec.search",
-        context: Some(HelpContext::Search),
-        rows: &[
-            ("↑/↓", "ui.help.sr_select"),
-            ("Enter", "ui.help.sr_open"),
-            ("Esc", "ui.help.sr_back"),
-        ],
-        openers: &[],
-    },
-];
+/// The "Everywhere" rows — the keys that mean the same thing on every
+/// screen. The other sections live **next to the key handlers they document**
+/// (the chat's in `screens/chat`, the list's in `widgets/chat_list`, …), and
+/// the app layer composes the display order — the one place that knows every
+/// screen exists (docs/help-hotkeys-context.md §6). Proximity of a table to
+/// its `match` is the anti-drift force, and AGENTS.md §3 sends every new key
+/// to its owner's table.
+pub static EVERYWHERE: HelpSection = HelpSection {
+    title: "ui.help.sec.everywhere",
+    context: None,
+    // `F1` is routed at the runtime level, above every screen; `?` is the
+    // chat's convenience alias (typing owns it elsewhere).
+    rows: &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
+    openers: &[],
+};
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
 /// [`HELP_KEYS`], with the display groups likewise encoded outside the table
@@ -520,6 +401,7 @@ pub fn help_size(cols: u16, rows: u16) -> (u16, u16) {
 pub fn render_help(
     frame: &mut Frame,
     help: &mut HelpState,
+    sections: &[&HelpSection],
     palette: &Palette,
     loc: &'static Locale,
 ) {
@@ -583,7 +465,7 @@ pub fn render_help(
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc, inner_w),
         HelpTab::Hotkeys => {
-            let (lines, anchor) = hotkeys_tab(help.context, palette, loc, inner_w);
+            let (lines, anchor) = hotkeys_tab(sections, help.context, palette, loc, inner_w);
             // A non-chat opener lands with its section's header on top (fork
             // F2); consumed here, where the wrapped rows above are known.
             if help.pending_anchor {
@@ -737,18 +619,20 @@ struct TabSection<'a> {
     openers: &'a [&'a str],
 }
 
-/// The "Shortcuts" tab: [`HELP_SECTIONS`] under their headers, the section for
-/// `context` marked "you are here" (fork F1), plus that section's header row —
-/// the anchor a non-chat opener scrolls to (fork F2). The anchor is computed
-/// rather than stored, because the rows above the section wrap by `width`, so
-/// it is only knowable where the width is. See docs/help-hotkeys-context.md.
+/// The "Shortcuts" tab: the composed `sections` under their headers, the
+/// section for `context` marked "you are here" (fork F1), plus that section's
+/// header row — the anchor a non-chat opener scrolls to (fork F2). The anchor
+/// is computed rather than stored, because the rows above the section wrap by
+/// `width`, so it is only knowable where the width is. The caller (the app
+/// layer) owns the composed list. See docs/help-hotkeys-context.md.
 pub fn hotkeys_tab(
+    sections: &[&HelpSection],
     context: HelpContext,
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> (Vec<Line<'static>>, usize) {
-    let sections: Vec<TabSection<'_>> = HELP_SECTIONS
+    let sections: Vec<TabSection<'_>> = sections
         .iter()
         .map(|s| TabSection {
             header: Some((s.title, s.context == Some(context))),
@@ -757,8 +641,9 @@ pub fn hotkeys_tab(
         })
         .collect();
     let (lines, marked) = table_lines(&sections, false, palette, loc, width);
-    // Every context has a section, so the fallback never fires in practice —
-    // but a missing anchor must degrade to the top, not panic mid-render.
+    // Every context has a section (`help_sections_cover_every_context`), so
+    // the fallback never fires in practice — but a missing anchor must
+    // degrade to the top, not panic mid-render.
     (lines, marked.unwrap_or(0))
 }
 
@@ -1155,12 +1040,19 @@ mod tests {
         line.spans.iter().map(span_width).sum()
     }
 
-    /// The gate behind the wrapping in [`key_lines`]: no row of either tab may
-    /// run past the dialog, in ANY bundled locale. The hazard is one-sided —
-    /// a row that fits in the language you happen to be reading can overflow in
-    /// the other, and what disappears is the tail of a sentence (docs/lessons.md
-    /// §7). The tabs are plain `Paragraph`s with no wrapping of their own, so
-    /// "too wide" means "silently clipped".
+    /// The widget's own tests exercise the tabs that read no sections; the
+    /// sectioned "Shortcuts" tab is tested where the real composed list
+    /// lives — `app::runtime::tests` (docs/help-hotkeys-context.md §6).
+    const NO_SECTIONS: &[&HelpSection] = &[];
+
+    /// The gate behind the wrapping in [`key_lines`]: no row of the commands
+    /// tab may run past the dialog, in ANY bundled locale. The hazard is
+    /// one-sided — a row that fits in the language you happen to be reading
+    /// can overflow in the other, and what disappears is the tail of a
+    /// sentence (docs/lessons.md §7). The tabs are plain `Paragraph`s with no
+    /// wrapping of their own, so "too wide" means "silently clipped". The
+    /// hotkeys tab's twin runs where the composed sections live —
+    /// `app::runtime::tests`.
     #[test]
     fn help_rows_fit_the_dialog_in_every_locale() {
         let palette = Palette::default();
@@ -1170,27 +1062,16 @@ mod tests {
         for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             for &lang in crate::shared::i18n::Lang::ALL {
                 let loc = crate::shared::i18n::locale(lang);
-                for (name, lines) in [
-                    (
-                        "hotkeys tab",
-                        hotkeys_tab(HelpContext::Chat, &palette, loc, w).0,
-                    ),
-                    (
-                        "commands tab",
-                        key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w),
-                    ),
-                ] {
-                    for line in lines {
-                        let width = line_width(&line);
-                        assert!(
-                            width <= w,
-                            "{name} row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
-                            line.spans
-                                .iter()
-                                .map(|s| s.content.as_ref())
-                                .collect::<String>()
-                        );
-                    }
+                for line in key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w) {
+                    let width = line_width(&line);
+                    assert!(
+                        width <= w,
+                        "commands-tab row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
+                        line.spans
+                            .iter()
+                            .map(|s| s.content.as_ref())
+                            .collect::<String>()
+                    );
                 }
             }
         }
@@ -1198,8 +1079,9 @@ mod tests {
 
     /// The neatness the tabs are built around: every description — and every
     /// wrapped continuation — starts in the same column, whatever the width of
-    /// the label in front of it. Per tab and per locale, since the column is
-    /// measured from the localized labels.
+    /// the label in front of it. Per locale, since the column is measured from
+    /// the localized labels. The hotkeys tab's twin runs in
+    /// `app::runtime::tests`, over the composed sections.
     #[test]
     fn descriptions_share_one_column_per_tab() {
         let palette = Palette::default();
@@ -1207,40 +1089,28 @@ mod tests {
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             let w = HELP_MAX_WIDTH as usize;
-            for (name, lines) in [
-                (
-                    "hotkeys tab",
-                    hotkeys_tab(HelpContext::Chat, &palette, loc, w).0,
-                ),
-                (
-                    "commands tab",
-                    key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w),
-                ),
-            ] {
-                // The description is always the last span; everything before it
-                // (indent, label, gap — or the hanging indent) is its column.
-                // Section headers end in a rule, not a description — skip them.
-                let starts: Vec<usize> = lines
-                    .iter()
-                    .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
-                    .filter(|l| !l.spans.iter().any(|s| s.content.contains('─')))
-                    .map(|l| {
-                        l.spans[..l.spans.len() - 1]
-                            .iter()
-                            .map(span_width)
-                            .sum::<usize>()
-                    })
-                    .collect();
-                assert!(!starts.is_empty(), "{name} rendered no rows ({lang:?})");
-                assert!(
-                    starts.iter().all(|s| s == &starts[0]),
-                    "{name} descriptions start at {starts:?} ({lang:?}) — not one column"
-                );
-                assert!(
-                    starts[0] > HELP_PAD.chars().count(),
-                    "{name} description column collapsed onto the margin ({lang:?})"
-                );
-            }
+            let lines = key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w);
+            // The description is always the last span; everything before it
+            // (indent, label, gap — or the hanging indent) is its column.
+            let starts: Vec<usize> = lines
+                .iter()
+                .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+                .map(|l| {
+                    l.spans[..l.spans.len() - 1]
+                        .iter()
+                        .map(span_width)
+                        .sum::<usize>()
+                })
+                .collect();
+            assert!(!starts.is_empty(), "no rows rendered ({lang:?})");
+            assert!(
+                starts.iter().all(|s| s == &starts[0]),
+                "descriptions start at {starts:?} ({lang:?}) — not one column"
+            );
+            assert!(
+                starts[0] > HELP_PAD.chars().count(),
+                "the description column collapsed onto the margin ({lang:?})"
+            );
         }
     }
 
@@ -1311,7 +1181,8 @@ mod tests {
         use ratatui::backend::TestBackend;
         let palette = Palette::default();
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render_help(f, help, &palette, loc)).unwrap();
+        term.draw(|f| render_help(f, help, NO_SECTIONS, &palette, loc))
+            .unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
         for y in buf.area.top()..buf.area.bottom() {
@@ -1340,75 +1211,13 @@ mod tests {
     /// row (the header — or the leading spacer — already separates), and each
     /// draws as exactly one blank line: a tab's blank rows are the leading
     /// spacer, the section breaks and the openers, nothing else.
+    /// The sections' half of this contract runs in `app::runtime::tests`.
     #[test]
     fn group_openers_open_real_rows() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
         let is_blank =
             |l: &Line<'_>| -> bool { l.spans.iter().all(|s| s.content.trim().is_empty()) };
-
-        // The per-section contract of the "Shortcuts" tab.
-        for section in HELP_SECTIONS {
-            assert!(
-                !section.rows.is_empty(),
-                "{}: an empty section",
-                section.title
-            );
-            for opener in section.openers {
-                assert_eq!(
-                    section.rows.iter().filter(|(k, _)| k == opener).count(),
-                    1,
-                    "{}: opener {opener:?} must name exactly one row",
-                    section.title
-                );
-            }
-            assert!(
-                !section.openers.contains(&section.rows[0].0),
-                "{}: the first row cannot open a group",
-                section.title
-            );
-        }
-
-        // Rendered blanks: the leading spacer, one break before every section
-        // after the first, one per opener — headers are rule rows, not blanks.
-        let lines = hotkeys_tab(HelpContext::Chat, &palette, loc, HELP_MIN_WIDTH as usize).0;
-        let openers_total: usize = HELP_SECTIONS.iter().map(|s| s.openers.len()).sum();
-        assert_eq!(
-            lines.iter().filter(|l| is_blank(l)).count(),
-            1 + (HELP_SECTIONS.len() - 1) + openers_total,
-            "hotkeys tab: the leading spacer + section breaks + openers"
-        );
-
-        // …and each break sits immediately BEFORE its opener's row. Key labels
-        // repeat across sections ("Esc", "Enter"), so each opener is looked up
-        // inside its own section's slice, delimited by the (unique) headers.
-        let header_at: Vec<usize> = HELP_SECTIONS
-            .iter()
-            .map(|s| {
-                lines
-                    .iter()
-                    .position(|l| l.spans.iter().any(|sp| sp.content.trim() == loc.t(s.title)))
-                    .unwrap_or_else(|| panic!("{}: header is not rendered", s.title))
-            })
-            .collect();
-        for (i, section) in HELP_SECTIONS.iter().enumerate() {
-            let end = header_at.get(i + 1).copied().unwrap_or(lines.len());
-            for opener in section.openers {
-                let label = loc.t(opener);
-                let at = lines[header_at[i]..end]
-                    .iter()
-                    .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
-                    .map(|p| header_at[i] + p)
-                    .unwrap_or_else(|| {
-                        panic!("{}: opener {opener:?} is not rendered", section.title)
-                    });
-                assert!(
-                    is_blank(&lines[at - 1]),
-                    "{}: no blank line before opener {opener:?}",
-                    section.title
-                );
-            }
-        }
 
         // The commands tab keeps the headerless contract.
         let commands = command_rows();
@@ -1449,42 +1258,6 @@ mod tests {
                 is_blank(&lines[at - 1]),
                 "commands tab: no blank line before opener {opener:?}"
             );
-        }
-    }
-
-    /// Fork F1 of docs/help-hotkeys-context.md: the section for the screen the
-    /// dialog was opened from — and only it — carries the "you are here"
-    /// marker, next to its own title. Pinned for two contexts so the marker
-    /// provably follows the context rather than sticking to the chat.
-    #[test]
-    fn the_invoking_screens_section_is_marked() {
-        let palette = Palette::default();
-        for &lang in crate::shared::i18n::Lang::ALL {
-            let loc = crate::shared::i18n::locale(lang);
-            let here = loc.t("ui.help.here");
-            for (context, title) in [
-                (HelpContext::Chat, "ui.help.sec.chat"),
-                (HelpContext::Settings, "ui.help.sec.settings"),
-            ] {
-                let lines = hotkeys_tab(context, &palette, loc, HELP_MIN_WIDTH as usize).0;
-                let marked: Vec<&Line<'_>> = lines
-                    .iter()
-                    .filter(|l| {
-                        l.spans
-                            .iter()
-                            .any(|s| s.content.contains(here) && s.content != here)
-                    })
-                    .collect();
-                assert_eq!(marked.len(), 1, "one marker per dialog ({lang:?})");
-                assert!(
-                    marked[0]
-                        .spans
-                        .iter()
-                        .any(|s| s.content.trim() == loc.t(title)),
-                    "the marker must sit on the {title} header ({lang:?}): {:?}",
-                    marked[0]
-                );
-            }
         }
     }
 
@@ -1791,35 +1564,6 @@ mod tests {
         );
     }
 
-    /// Fork F2 of docs/help-hotkeys-context.md: opened anywhere but the chat,
-    /// the dialog lands on "Shortcuts" scrolled so the opener's section header
-    /// — with its "you are here" marker — is the first content row; the anchor
-    /// is consumed once, so the user's own scrolling then sticks.
-    #[test]
-    fn a_non_chat_open_lands_on_its_section() {
-        let loc = ru();
-        let mut help = HelpState::open_at(HelpContext::Settings);
-        assert_eq!(help.tab, HelpTab::Hotkeys, "a non-chat open forces the tab");
-        let text = dialog_text(&mut help, loc, 90, 40);
-        assert!(help.scroll > 0, "the anchor scrolled the tab");
-        assert!(
-            text.contains(loc.t("ui.help.sec.settings")),
-            "the settings header is not visible: {text}"
-        );
-        assert!(
-            text.contains(loc.t("ui.help.here")),
-            "the marker is not visible: {text}"
-        );
-        assert!(
-            !text.contains(loc.t("ui.help.sec.everywhere")),
-            "the sections above the anchor must be scrolled past: {text}"
-        );
-        // One-shot: the user's scroll survives the next frame.
-        help.scroll = 3;
-        let _ = dialog_text(&mut help, loc, 90, 40);
-        assert_eq!(help.scroll, 3, "the anchor re-fired on a later render");
-    }
-
     /// An over-scrolled state clamps at render time, and a short terminal —
     /// where the tab is taller than the view — draws the scrollbar thumb.
     #[test]
@@ -1827,12 +1571,20 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let palette = Palette::default();
-        let mut help = HelpState::open(DEFAULT_HELP_TAB);
+        let mut help = HelpState::open(HelpTab::Commands);
         help.scroll = 10_000; // "over-scrolled" — the render clamps it
         let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
-        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
             .unwrap();
-        let (lines, _) = hotkeys_tab(HelpContext::Chat, &palette, ru(), HELP_MAX_WIDTH as usize);
+        // The bound is measured at the MINIMUM width — the most wraps the tab
+        // can ever have, so an upper estimate whatever width the render used.
+        let lines = key_lines(
+            &command_rows(),
+            COMMAND_GROUP_OPENERS,
+            &palette,
+            ru(),
+            HELP_MIN_WIDTH as usize,
+        );
         assert!(help.scroll < lines.len(), "scroll clamps to the maximum");
         let buf = term.backend().buffer();
         let mut thumb = false;
@@ -1861,7 +1613,7 @@ mod tests {
         // border + air) — the sectioned key list is taller than any dialog, so
         // the lockup condition is about the dialog's own height.
         let mut term = Terminal::new(TestBackend::new(90, 52)).unwrap();
-        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();
@@ -1918,7 +1670,7 @@ mod tests {
         // A dialog height of 13 (11 rows inside) doesn't fit the lockup with
         // breathing room → it isn't drawn, the tabs don't shift down.
         let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
-        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();
@@ -2017,7 +1769,7 @@ mod tests {
         let palette = Palette::default();
         let mut help = HelpState::open(HelpTab::Disclaimer);
         let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
-        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();
@@ -2087,17 +1839,6 @@ mod tests {
         assert!(
             about.contains("https://crates.io/crates/mindfork"),
             "missing the crate link"
-        );
-
-        // "Hotkeys": a key description, but NOT commands (their own tab).
-        let hotkeys = text_for(HelpTab::Hotkeys);
-        assert!(
-            hotkeys.contains("отправить сообщение"),
-            "missing a key description"
-        );
-        assert!(
-            !hotkeys.contains("/rag add"),
-            "commands must not be on the hotkeys tab"
         );
 
         // "Commands": input-box commands, read at both scroll extremes.

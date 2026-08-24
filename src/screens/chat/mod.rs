@@ -38,11 +38,60 @@ use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, dim_background};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
+
+/// The chat's "Shortcuts" section (`F1`): one row per key this screen's
+/// handlers match (`input.rs` — the chords, the plain keys, the input box) —
+/// a new arm gets a row here, next door (AGENTS.md §3). The app layer
+/// composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.chat",
+    context: Some(HelpContext::Chat),
+    // The groups: composing · selection/clipboard · the conversation ·
+    // editing · panels and toggles.
+    rows: &[
+        ("Enter", "ui.help.send"),
+        ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+        ("Shift+←/→/↑/↓", "ui.help.select"),
+        ("Ctrl+A", "ui.help.select_all"),
+        ("Ctrl+C", "ui.help.copy"),
+        ("Ctrl+X", "ui.help.cut"),
+        ("Ctrl+V", "ui.help.paste"),
+        ("Esc", "ui.help.esc"),
+        ("Ctrl+N", "ui.help.new_chat"),
+        ("F2", "ui.help.rename_chat"),
+        ("F5", "ui.help.copy_chat"),
+        ("Ctrl+R", "ui.help.regenerate"),
+        ("Ctrl+E", "ui.help.delete_exchange"),
+        ("Ctrl+U", "ui.help.impersonate"),
+        ("Ctrl+K", "ui.help.clear_input"),
+        ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+        ("Ctrl+←/→", "ui.help.word_move"),
+        ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+        ("Home", "ui.help.line_home"),
+        ("End", "ui.help.line_end"),
+        ("Ctrl+Home/End", "ui.help.doc_move"),
+        ("Ctrl+G", "ui.help.spell"),
+        ("Ctrl+P", "ui.help.settings"),
+        ("F3", "ui.help.self_model"),
+        ("F4", "ui.help.changes"),
+        ("Ctrl+F", "ui.help.find_in_chat"),
+        ("Ctrl+T", "ui.help.thoughts"),
+        ("Ctrl+O", "ui.help.tool_calls"),
+        ("Ctrl+B", "ui.help.emoji"),
+        ("Ctrl+L", "ui.help.chat_links"),
+        ("Ctrl+W", "ui.help.mouse_toggle"),
+        ("ui.help.k.mouse", "ui.help.mouse_action"),
+        ("PageUp/PageDown", "ui.help.scroll"),
+    ],
+    openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
+};
 
 /// Feed scroll height per PageUp/PageDown press (rows).
 const PAGE_SCROLL: usize = 8;

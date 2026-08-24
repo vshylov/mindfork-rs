@@ -1459,3 +1459,287 @@ fn a_paste_is_inert_under_the_open_help() {
         "the paste leaked into the input box under the dialog"
     );
 }
+
+// ---- the composed "Shortcuts" sections (docs/help-hotkeys-context.md §6) ----
+//
+// The section tables live next to the key handlers they document; the app
+// composes them, so the whole-tab gates live here — the one layer that can
+// see every screen's table at once. The commands tab's twin gates stay in
+// `widgets::help_dialog`, next to its own data.
+
+use crate::widgets::help_dialog::{HELP_MIN_WIDTH, hotkeys_tab, render_help};
+
+/// The `ru` locale — what the ported gates ran under while the chat owned the
+/// dialog.
+fn ru() -> &'static crate::shared::i18n::Locale {
+    crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+}
+
+/// Every screen owns exactly one section, and exactly one section is the
+/// context-free "Everywhere" block. [`help_context`]'s exhaustive match makes
+/// the compiler ask about a new screen; this closes the loop to the table.
+#[test]
+fn help_sections_cover_every_context() {
+    for context in [
+        HelpContext::Chat,
+        HelpContext::ChatList,
+        HelpContext::Settings,
+        HelpContext::SelfModel,
+        HelpContext::Changes,
+        HelpContext::Search,
+    ] {
+        assert_eq!(
+            HELP_SECTIONS
+                .iter()
+                .filter(|s| s.context == Some(context))
+                .count(),
+            1,
+            "{context:?} must own exactly one section"
+        );
+    }
+    assert_eq!(
+        HELP_SECTIONS.iter().filter(|s| s.context.is_none()).count(),
+        1,
+        "one \"Everywhere\" section"
+    );
+}
+
+/// The hotkeys half of `widgets::help_dialog`'s width gate: no row of the
+/// sectioned tab — headers included — may run past the dialog in ANY bundled
+/// locale at either bound of the adaptive width range (docs/lessons.md §7).
+#[test]
+fn the_hotkeys_sections_fit_the_dialog_in_every_locale() {
+    use crate::widgets::help_dialog::HELP_MAX_WIDTH;
+    let palette = Palette::default();
+    for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let (lines, _) = hotkeys_tab(&HELP_SECTIONS, HelpContext::Chat, &palette, loc, w);
+            for line in lines {
+                let width: usize = line.spans.iter().map(|s| span_cols(s)).sum();
+                assert!(
+                    width <= w,
+                    "hotkeys row is {width} columns wide, the dialog is {w} ({lang:?}): {}",
+                    line.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                );
+            }
+        }
+    }
+}
+
+/// A span's width in terminal columns (the widget's private helper, restated
+/// for the gates that moved up here with the composed sections).
+fn span_cols(span: &ratatui::text::Span<'_>) -> usize {
+    crate::shared::wrap::display_width(&span.content.chars().collect::<Vec<_>>())
+}
+
+/// The hotkeys half of the one-column gate: every description — and every
+/// wrapped continuation — starts in the same column across ALL sections;
+/// headers end in a rule, not a description, and are skipped.
+#[test]
+fn hotkeys_descriptions_share_one_column() {
+    use crate::widgets::help_dialog::HELP_MAX_WIDTH;
+    let palette = Palette::default();
+    for &lang in crate::shared::i18n::Lang::ALL {
+        let loc = crate::shared::i18n::locale(lang);
+        let (lines, _) = hotkeys_tab(
+            &HELP_SECTIONS,
+            HelpContext::Chat,
+            &palette,
+            loc,
+            HELP_MAX_WIDTH as usize,
+        );
+        let starts: Vec<usize> = lines
+            .iter()
+            .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+            .filter(|l| !l.spans.iter().any(|s| s.content.contains('─')))
+            .map(|l| l.spans[..l.spans.len() - 1].iter().map(span_cols).sum())
+            .collect();
+        assert!(!starts.is_empty(), "no rows rendered ({lang:?})");
+        assert!(
+            starts.iter().all(|s| s == &starts[0]),
+            "descriptions start at {starts:?} ({lang:?}) — not one column"
+        );
+    }
+}
+
+/// The sections' half of the opener contract (the commands tab's half lives
+/// in `widgets::help_dialog`): every opener names exactly one row of its own
+/// section, never the first; rendered, the tab's blanks are the leading
+/// spacer, one break per later section and one per opener — and each opener's
+/// break sits immediately before its row, looked up inside its own section's
+/// slice, since key labels repeat across sections ("Esc", "Enter") while
+/// headers do not.
+#[test]
+fn section_openers_open_real_rows() {
+    let palette = Palette::default();
+    let loc = ru();
+    let is_blank = |l: &ratatui::text::Line<'_>| -> bool {
+        l.spans.iter().all(|s| s.content.trim().is_empty())
+    };
+
+    for section in HELP_SECTIONS {
+        assert!(
+            !section.rows.is_empty(),
+            "{}: an empty section",
+            section.title
+        );
+        for opener in section.openers {
+            assert_eq!(
+                section.rows.iter().filter(|(k, _)| k == opener).count(),
+                1,
+                "{}: opener {opener:?} must name exactly one row",
+                section.title
+            );
+        }
+        assert!(
+            !section.openers.contains(&section.rows[0].0),
+            "{}: the first row cannot open a group",
+            section.title
+        );
+    }
+
+    let (lines, _) = hotkeys_tab(
+        &HELP_SECTIONS,
+        HelpContext::Chat,
+        &palette,
+        loc,
+        HELP_MIN_WIDTH as usize,
+    );
+    let openers_total: usize = HELP_SECTIONS.iter().map(|s| s.openers.len()).sum();
+    assert_eq!(
+        lines.iter().filter(|l| is_blank(l)).count(),
+        1 + (HELP_SECTIONS.len() - 1) + openers_total,
+        "the leading spacer + section breaks + openers"
+    );
+
+    let header_at: Vec<usize> = HELP_SECTIONS
+        .iter()
+        .map(|s| {
+            lines
+                .iter()
+                .position(|l| l.spans.iter().any(|sp| sp.content.trim() == loc.t(s.title)))
+                .unwrap_or_else(|| panic!("{}: header is not rendered", s.title))
+        })
+        .collect();
+    for (i, section) in HELP_SECTIONS.iter().enumerate() {
+        let end = header_at.get(i + 1).copied().unwrap_or(lines.len());
+        for opener in section.openers {
+            let label = loc.t(opener);
+            let at = lines[header_at[i]..end]
+                .iter()
+                .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
+                .map(|p| header_at[i] + p)
+                .unwrap_or_else(|| panic!("{}: opener {opener:?} is not rendered", section.title));
+            assert!(
+                is_blank(&lines[at - 1]),
+                "{}: no blank line before opener {opener:?}",
+                section.title
+            );
+        }
+    }
+}
+
+/// Fork F1: the section for the screen the dialog was opened from — and only
+/// it — carries the "you are here" marker, next to its own title. Pinned for
+/// two contexts so the marker provably follows the context.
+#[test]
+fn the_invoking_screens_section_is_marked() {
+    let palette = Palette::default();
+    for &lang in crate::shared::i18n::Lang::ALL {
+        let loc = crate::shared::i18n::locale(lang);
+        let here = loc.t("ui.help.here");
+        for (context, title) in [
+            (HelpContext::Chat, "ui.help.sec.chat"),
+            (HelpContext::Settings, "ui.help.sec.settings"),
+        ] {
+            let (lines, anchor) = hotkeys_tab(
+                &HELP_SECTIONS,
+                context,
+                &palette,
+                loc,
+                HELP_MIN_WIDTH as usize,
+            );
+            let marked: Vec<&ratatui::text::Line<'_>> = lines
+                .iter()
+                .filter(|l| l.spans.iter().any(|s| s.content.contains(here)))
+                .collect();
+            assert_eq!(marked.len(), 1, "one marker per dialog ({lang:?})");
+            assert!(
+                marked[0]
+                    .spans
+                    .iter()
+                    .any(|s| s.content.trim() == loc.t(title)),
+                "the marker must sit on the {title} header ({lang:?}): {:?}",
+                marked[0]
+            );
+            // …and the anchor points exactly at that header row.
+            assert!(
+                std::ptr::eq(&lines[anchor], marked[0]),
+                "the anchor must be the marked header's row"
+            );
+        }
+    }
+}
+
+/// Fork F2, rendered end to end over the real sections: opened from a
+/// non-chat screen the dialog lands on "Shortcuts" with that section's marked
+/// header as the top content row, and the anchor is consumed once — the
+/// user's own scrolling then sticks.
+#[test]
+fn a_non_chat_open_lands_on_its_section() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let loc = ru();
+    let palette = Palette::default();
+    let mut state = HelpState::open_at(HelpContext::Settings);
+    let render = |state: &mut HelpState| -> String {
+        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        term.draw(|f| render_help(f, state, &HELP_SECTIONS, &palette, loc))
+            .unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    };
+    let text = render(&mut state);
+    assert!(state.scroll > 0, "the anchor scrolled the tab");
+    assert!(
+        text.contains(loc.t("ui.help.sec.settings")),
+        "the settings header is not visible: {text}"
+    );
+    assert!(
+        text.contains(loc.t("ui.help.here")),
+        "the marker is not visible: {text}"
+    );
+    assert!(
+        !text.contains(loc.t("ui.help.sec.everywhere")),
+        "the sections above the anchor must be scrolled past: {text}"
+    );
+    // One-shot: the user's scroll survives the next frame.
+    state.scroll = 3;
+    let _ = render(&mut state);
+    assert_eq!(state.scroll, 3, "the anchor re-fired on a later render");
+
+    // The tab shows the real sections' content — a chat row — while the
+    // commands stay on their own tab (their gate lives with the widget).
+    let mut top = HelpState::open(HelpTab::Hotkeys);
+    let hotkeys = render(&mut top);
+    assert!(
+        hotkeys.contains("отправить сообщение"),
+        "missing a key description: {hotkeys}"
+    );
+    assert!(
+        !hotkeys.contains("/rag add"),
+        "commands must not be on the hotkeys tab"
+    );
+}
