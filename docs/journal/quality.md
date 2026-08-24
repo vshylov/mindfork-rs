@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -26,6 +26,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — `chat_search`'s renderer (done)
 - Post-M9: SonarQube follow-up — two new lint families, and eight complexity findings (done)
 - Post-M9: SonarQube follow-up — four findings from the week's merges (done)
+- Post-M9: a gate for the one implementation of a list's scroll state (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -935,3 +936,45 @@ three findings are invisible from the workflow's own status):
   `reindex_restores_retrieval_after_a_model_swap_live` stays with the next
   change that touches the job's behaviour. No CHANGELOG entry — internal
   (§4).
+### Post-M9: a gate for the one implementation of a list's scroll state (done)
+
+The two preceding PRs fixed a scrolling defect in eight lists and consolidated
+the rule into `shared::ui::ListScroll`. What was left holding it there was a
+paragraph in [lessons.md](../lessons.md) §5 — and a convention is precisely what
+let the defect spread in the first place: every one of the eight lists was
+written by copying a neighbour that already had it. The user asked for the gate
+next.
+
+**What it checks** (`tools/list_scroll_check.py`, CI's `lint` job, no toolchain
+needed): a `ListState` — or a `TableState`, which carries the identical
+offset-plus-selection semantics and would reproduce the defect the day someone
+adds a table — may be named only in `src/shared/ui.rs`. Mentions inside `//`
+comments pass, because the doc comments and journal entries that explain the trap
+have to be able to name it; the word match is exact, so our own
+`ChatListState`/`ProfileListState` are not swept up. Two further checks exist so
+the gate cannot go quiet on a missing subject (`doc_index_check.py`'s rule): it
+fails if `src/` holds no Rust files, and if `pub struct ListScroll` is no longer
+defined where the gate points — a helper deleted or renamed means every list has
+lost the rule, which is the loudest thing this script can be asked to notice.
+
+**Deliberately not checked**: whether a caller passes a `view_h` that matches its
+block's borders, or a `len` that matches its items. Those are values only the
+caller knows, and the tests next to each list cover them; a gate that guesses at
+them would be a gate that gets edited to shut it up.
+
+**Verified against planted violations** rather than only against a clean tree — a
+gate nobody has seen fail is a gate nobody knows works: a `ListState::default()`
+added to the profile picker, a `use ratatui::widgets::TableState`, and the helper
+renamed out from under it each produce the expected failure and exit code 1, and
+the tree is clean at 250 files scanned.
+
+**The gate went through the gate**: `tools/` is in `sonar.sources`, and the
+first analysis of the PR returned two `python:S6353` — the explicit
+`[A-Za-z0-9_]` lookarounds that keep `ChatListState` from matching should be
+plain `` word boundaries. They are the same assertion (between the `t` of
+`Chat` and the `L` of `List` there is no boundary), so the rewrite is
+behaviour-identical — re-checked against the planted violations rather than
+assumed.
+
+**No live run and no new Rust tests** — a Python gate over the repository's own
+structure (AGENTS.md §3).
