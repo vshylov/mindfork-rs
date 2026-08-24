@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -20,7 +20,7 @@ use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
-use crate::shared::ui::render_scrollbar;
+use crate::shared::ui::{ListScroll, render_scrollbar};
 use crate::shared::wrap;
 use crate::widgets::input_box::{InputBox, RenderOpts};
 
@@ -155,9 +155,9 @@ pub struct ChatListState {
     results_query: String,
     /// Selection index within the currently filtered list.
     selected: usize,
-    /// The list's scroll offset — the index of the first visible row. Lives
-    /// here rather than in a per-frame `ListState`, see [`Self::render`].
-    offset: usize,
+    /// The list's scroll position. Lives here rather than in a per-frame
+    /// `ListState` — see [`ListScroll`].
+    scroll: ListScroll,
     mode: Mode,
     /// The current operation error (auto-title/delete/clone) for the dedicated area.
     /// Reset on the next key press.
@@ -178,7 +178,7 @@ impl ChatListState {
             results: None,
             results_query: String::new(),
             selected: 0,
-            offset: 0,
+            scroll: ListScroll::default(),
             mode: Mode::Search,
             error: None,
             notice: None,
@@ -664,23 +664,18 @@ impl ChatListState {
         // Selection — a soft backdrop (like the tint in the mockup), not inverting the whole line;
         // the selected row's green rail is added in `item_line`.
         let list = List::new(items).highlight_style(Style::new().bg(palette.keycap_bg));
-        // The scroll offset is carried over from the previous frame. ratatui
-        // moves the offset only as far as it must to bring the selection back
-        // into view, so a `ListState` rebuilt from zero every frame recomputes
-        // it from the top each time: `↓` looked right (the selection stops at
-        // the bottom row and the list follows), but `↑` scrolled the list on
-        // every press instead of first walking the selection up to the top
-        // row. Keeping the offset makes both directions symmetric (spec §11.2).
-        // Clamped first: the filter or a deletion can have shortened the list
-        // under an offset that scrolled past its new tail.
-        let max_offset = visible.len().saturating_sub(list_area.height as usize);
-        self.offset = self.offset.min(max_offset);
-        let mut list_state = ListState::default().with_offset(self.offset);
-        if !visible.is_empty() {
-            list_state.select(Some(self.selected.min(visible.len() - 1)));
-        }
-        frame.render_stateful_widget(list, list_area, &mut list_state);
-        self.offset = list_state.offset();
+        // The scroll position is carried over from the previous frame, which is
+        // what makes `↑` walk the selection up to the top row before the list
+        // starts scrolling — the mirror of `↓` (spec §11.2, [`ListScroll`]).
+        // The list has no block, so its whole height is drawn into.
+        self.scroll.render(
+            frame,
+            list,
+            list_area,
+            visible.len(),
+            list_area.height as usize,
+            (!visible.is_empty()).then_some(self.selected),
+        );
 
         // The scrollbar on the "Chats" panel's right border — when there are more
         // chats than the list's visible height. The bar occupies only the list's rows
@@ -695,7 +690,7 @@ impl ChatListState {
             },
             visible.len(),
             list_area.height as usize,
-            list_state.offset(),
+            self.scroll.offset(),
             true, // the panel border — in the focused color (panel(_, true))
             palette,
         );

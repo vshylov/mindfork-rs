@@ -157,7 +157,7 @@ impl SettingsScreen {
     }
 
     /// Draws the Choice-field picker popup: the option list, the current one marked.
-    pub(super) fn render_choice(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+    pub(super) fn render_choice(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
         let st = self.choice.as_ref().unwrap();
         // Height = the number of options + a border, but no taller than the screen;
         // width by the longest label (with margin), centered.
@@ -190,9 +190,17 @@ impl SettingsScreen {
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::new().reversed());
-        let mut state = ListState::default();
-        state.select(Some(st.selected.min(st.options.len().saturating_sub(1))));
-        frame.render_stateful_widget(list, popup, &mut state);
+        // The popup is sized to its options but capped at the screen, so a long
+        // option set scrolls — and the position has to survive the frame.
+        let (len, selected) = (st.options.len(), st.selected);
+        self.choice.as_mut().unwrap().scroll.render(
+            frame,
+            list,
+            popup,
+            len,
+            popup.height.saturating_sub(2) as usize, // the panel's borders
+            Some(selected),
+        );
     }
 
     /// Draws the search overlay: the query line + the filtered results.
@@ -263,14 +271,22 @@ impl SettingsScreen {
         let block = palette
             .panel(loc.t("ui.settings.ui.search_footer"), false)
             .border_style(palette.border_style(true));
+        let rows = items.len();
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::new().reversed());
-        let mut state = ListState::default();
-        if !results.is_empty() {
-            state.select(Some(selected.min(results.len() - 1)));
-        }
-        frame.render_stateful_widget(list, list_area, &mut state);
+        // The whole settings index can be in this list, so it scrolls in earnest.
+        let view_h = list_area.height.saturating_sub(2) as usize; // the panel's borders
+        let st = self.search.as_mut().unwrap();
+        st.scroll.render(
+            frame,
+            list,
+            list_area,
+            rows,
+            view_h,
+            (!results.is_empty()).then_some(selected),
+        );
+        let offset = st.scroll.offset();
 
         // A scrollbar on the panel's right border, when there are more results than the visible height.
         if list_area.height > 2 {
@@ -285,7 +301,7 @@ impl SettingsScreen {
                 bar,
                 results.len(),
                 bar.height as usize,
-                state.offset(),
+                offset,
                 true,
                 palette,
             );
@@ -326,7 +342,7 @@ impl SettingsScreen {
         counts
     }
 
-    pub(super) fn render_menu(&self, frame: &mut Frame, area: Rect, counts: &[usize]) {
+    pub(super) fn render_menu(&mut self, frame: &mut Frame, area: Rect, counts: &[usize]) {
         let palette = self.palette();
         let loc = self.loc();
         let focused = self.focus == Focus::Menu;
@@ -388,9 +404,10 @@ impl SettingsScreen {
             Style::new()
         };
         let list = List::new(items).block(block).highlight_style(hl);
-        let mut state = ListState::default();
-        state.select(Some(self.section_idx));
-        frame.render_stateful_widget(list, area, &mut state);
+        // Only the right border is drawn, so the menu owns every row of `area`.
+        let (len, selected) = (SECTIONS.len(), self.section_idx);
+        self.menu_scroll
+            .render(frame, list, area, len, area.height as usize, Some(selected));
     }
 
     /// The server-status chip for the "Model" section's active subsection (assistant →
@@ -423,7 +440,7 @@ impl SettingsScreen {
         }
     }
 
-    pub(super) fn render_fields(&self, frame: &mut Frame, area: Rect) {
+    pub(super) fn render_fields(&mut self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
@@ -461,12 +478,21 @@ impl SettingsScreen {
         };
         let list = List::new(items)
             .block(Block::default().borders(Borders::NONE))
+            // A group header is a row the selection skips over, so without a row
+            // of context the header of the group you are standing in scrolls out
+            // — including at the very top of the pane, where the window would
+            // then stop one row short of the beginning.
+            .scroll_padding(1)
             .highlight_style(hl);
-        let mut state = ListState::default();
-        if let Some(sel) = select {
-            state.select(Some(sel));
-        }
-        frame.render_stateful_widget(list, list_area, &mut state);
+        // The pane's own list — no block, so it draws into every row of its area.
+        self.fields_scroll.render(
+            frame,
+            list,
+            list_area,
+            total,
+            list_area.height as usize,
+            select,
+        );
 
         // A scrollbar when there are more elements than the visible height. Drawn over
         // the settings screen's right border: `fields_area` reaches exactly to it (the
@@ -484,7 +510,7 @@ impl SettingsScreen {
                 bar,
                 total,
                 list_area.height as usize,
-                state.offset(),
+                self.fields_scroll.offset(),
                 true, // the settings screen's border is drawn in the focus color
                 &palette,
             );

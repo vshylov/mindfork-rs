@@ -4043,3 +4043,45 @@ fn mcp_status_says_how_many_tools_the_profile_enabled() {
     s.profiles[0].enabled_tools.push("mcp__other__x".into());
     assert!(matches!(&row(&s).kind, FieldKind::Text(v) if v.contains("1")));
 }
+
+/// The field pane scrolls like every other list here: `↓` walks the selection
+/// down the visible rows and only then moves the window, and `↑` is its mirror.
+/// It used to build a fresh `ListState` per frame, which pinned the selection to
+/// an edge row and scrolled the pane on every `↑` (docs/lessons.md §5).
+#[test]
+fn the_field_pane_scrolls_only_once_the_selection_leaves_the_window() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    let mut s = screen();
+    goto_section(&mut s, Section::Sampling); // the longest field set
+    s.handle_key(key(KeyCode::Enter)); // into the pane
+    let mut draw = |s: &mut SettingsScreen| {
+        term.draw(|f| s.render(f)).unwrap();
+    };
+
+    // Walk to the last field: the window has followed and is off its top.
+    draw(&mut s);
+    for _ in 0..60 {
+        s.handle_key(key(KeyCode::Down));
+        draw(&mut s);
+    }
+    let bottom = s.fields_scroll.offset();
+    assert!(bottom > 0, "the section must be longer than the pane");
+
+    // One step back up moves the selection inside the window, not the window.
+    s.handle_key(key(KeyCode::Up));
+    draw(&mut s);
+    assert_eq!(
+        s.fields_scroll.offset(),
+        bottom,
+        "the rows must stay put while the selection can still move inside them"
+    );
+
+    // All the way back: the window ends where it started.
+    for _ in 0..60 {
+        s.handle_key(key(KeyCode::Up));
+        draw(&mut s);
+    }
+    assert_eq!(s.fields_scroll.offset(), 0);
+}

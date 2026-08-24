@@ -96,6 +96,7 @@ impl SettingsScreen {
                 field: id,
                 options,
                 selected,
+                scroll: ListScroll::default(),
             });
         }
     }

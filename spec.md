@@ -1862,9 +1862,12 @@ A direct requirement from the task:
   moves inside the visible rows until it reaches the top or the bottom one, and
   only then does the list scroll — symmetrically in both directions. This is a
   property of the *state*, not of the drawing: the scroll offset is kept between
-  frames (`ChatListState::offset`), because a `ListState` rebuilt per frame makes
-  ratatui recompute the offset around the selection each time, which pinned the
-  selection to an edge row and scrolled the list on every `↑`.
+  frames, because a `ListState` rebuilt per frame makes ratatui recompute the
+  offset around the selection each time, which pinned the selection to an edge
+  row and scrolled the list on every `↑`. The rule belongs to **every** list in
+  the interface — this one, the settings screen's two panes and its search, and
+  the profile / reference / suggestion popups — and has one implementation,
+  `shared::ui::ListScroll`, which is the only place a `ListState` is built.
 - **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
   (`set_single_line`, see [11.5](#115-input-and-editing-spellcheck)/[11.6](#116-the-settings-screen)),
   which gives spellcheck (error underlining), word-wise navigation/deletion
@@ -3392,6 +3395,11 @@ for viewing and **manual editing**:
   (`Ctrl+K` twice — with confirmation; **`/self clear`** from the chat is the
   same wipe behind the same confirmation, §11.7);
 - navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
+  Both panes scroll by the rule in [§11.2](#112-the-chat-list-an-overlay) (the window follows the
+  selection, it is not dragged by it). The field pane additionally keeps **one
+  row of context** around the selection: its group headers are rows the
+  selection skips over, so without it the header of the group you are standing
+  in scrolls out of sight.
 
 The list is drawn manually by visual rows (not with the `List` widget): a long
 multiline value wraps by word, and an item that doesn't fully fit in the

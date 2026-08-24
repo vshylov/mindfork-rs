@@ -537,6 +537,8 @@ src/
    │                       opens them; /image attach <url> is NOT affected (the
    │                       user types that one). See spec §9.3
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
+   │                       ListScroll (a list's scroll offset kept between frames —
+   │                       the ONLY place a ListState is built; see spec §11.2),
    │                       prime_full_redraw (full-redraw sentinel — space +
    │                       marker modifier, doesn't touch wide-glyph tail cells)
    ├─ wrap.rs              word wrap by column (unicode-width) + width-aware truncation

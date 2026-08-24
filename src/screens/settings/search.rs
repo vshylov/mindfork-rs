@@ -84,6 +84,7 @@ impl SettingsScreen {
             all,
             results,
             selected: 0,
+            scroll: ListScroll::default(),
         });
     }
 

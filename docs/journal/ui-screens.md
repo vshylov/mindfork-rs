@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -55,6 +55,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats — the parent's round in progress is mirrored too (done)
 - Post-M9: command-only control — stage 3 (`/autotitle`, the profile texts, `/impersonation`) (done)
 - Post-M9: the chat list scrolls symmetrically (done)
+- Post-M9: the same scrolling rule for every other list (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2297,6 +2298,54 @@ reviewable. Left as a note here.
 sort order is not at the mercy of the clock's resolution), `End`, then one `↑`
 that must leave the rows where they are, then enough presses to reach the top
 and scroll. It fails on the old `ListState::default()` line, which is the point.
+
+**A live model run is not required** (AGENTS.md §3) — pure UI, no engine,
+storage or tool surface is touched.
+### Post-M9: the same scrolling rule for every other list (done)
+
+The chat list's fix noted that the same per-frame `ListState` shape lived in
+five other places and left them alone, on the grounds that folding unreported
+changes into a reported one-line fix stops it being reviewable. The user asked
+for the sweep next, so this is that PR.
+
+**The inventory first**, because "every list" is a claim that has to be checked
+rather than assumed. Eight sites built a `ListState` inside `render`: the chat
+list (fixed in the previous PR), the settings screen's section menu, field pane,
+field search overlay (`/`) and Choice popup, the profile picker, the reference
+picker (`Ctrl+L`) and the spellcheck suggestions. Three more screens scroll lists and
+were already **correct** — the message search, the `F3` self-model viewer and
+the changes screen each keep their own `scroll` and adjust it minimally
+(`adjust_scroll`/`keep_visible`); they are the precedent the rest should have
+followed. The emoji picker draws a fixed grid with no scroll model at all.
+
+**One implementation instead of eight.** The rule moved into
+`shared::ui::ListScroll` — a stored offset, seeded with `with_offset`, read back
+after the draw, and clamped to `len - view_h` before it (the caller passes the
+rows the list actually draws into, since a bordered block eats two of them).
+It is now the **only** place in the codebase that builds a `ListState`, which is
+the point: eight copies of four subtle lines is how one defect became eight. The
+chat list was moved onto it in the same PR — keeping its inline version would
+have meant two implementations of the rule on the day the helper was written.
+
+**What the sweep turned up.** The settings field pane inserts **group headers**
+as rows the selection skips over. Keeping the offset alone left the pane one row
+short of its top: with the selection on the first field (row 1) ratatui has no
+reason to show row 0, so the group's header stayed scrolled out and the
+scrollbar read "not at the top" while the user was. `scroll_padding(1)` on that
+list is the fix — one row of context, which at the top edge means the header,
+and mid-list means you can see what group you are entering.
+
+**Doors closed**: the popups whose height is their item count (Choice,
+suggestions, both pickers) are capped at the screen's height, so they *do*
+scroll on a short terminal or a long list — they got the same treatment rather
+than an argument about whether anyone would notice.
+
+**Tests** (suite 2544 → 2548): the rule itself is tested where it now lives —
+`ListScroll` walking a selection through a window in both directions, and a list
+shrinking under a stored offset (the clamp). On top of that, one behavioural
+test per shape that a caller can get wrong: the settings field pane (through
+`handle_key` + `render`, so the group headers and the padding are in it) and the
+reference picker (a popup capped at the screen height).
 
 **A live model run is not required** (AGENTS.md §3) — pure UI, no engine,
 storage or tool surface is touched.

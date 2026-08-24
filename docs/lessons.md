@@ -774,11 +774,17 @@ every frame.** ratatui moves a list's offset only far enough to bring the
 selection into view, so starting from `0` on every draw means "scroll until the
 selection is the *last* visible row": downward it looks like a correctly
 following window, upward the list scrolls on every press and the selection never
-climbs to the top row. The offset is state, not decoration — keep it on the
-widget, seed it with `with_offset`, read it back after the draw, and clamp it to
-`len - height` there (the one place the height is known) so a shortened list
-cannot leave the window past its tail.
-— *the chat list scrolls symmetrically*.
+climbs to the top row. The offset is state, not decoration. It now has exactly
+one implementation — `shared::ui::ListScroll`, the only place a `ListState` is
+built: the widget owns one, and the clamp to `len - height` lives there too, so
+a list shortened by a filter or a deletion cannot leave the window past its
+tail. **The shape repeats itself**: eight lists carried the same four lines with
+the same defect, because each was written by copying a neighbour rather than a
+helper. A rule that must hold in eight places is one function, not eight.
+The sibling trap: a list whose rows are **not all selectable** (group headers)
+needs `scroll_padding(1)`, or the header of the group the selection stands in
+scrolls out — the selection is the only thing ratatui keeps in view.
+— *the chat list scrolls symmetrically*, *the same for every other list*.
 
 ---
 
