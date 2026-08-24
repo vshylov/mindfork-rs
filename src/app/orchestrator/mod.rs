@@ -874,16 +874,20 @@ impl Orchestrator {
     }
 
     /// Whether the profile has data "binding" it to the current scaffold
-    /// language (axis A, docs/history/i18n.md): visible chats, a non-empty
-    /// "self-model", or notes (including `@self` observations). RAG documents
-    /// are deliberately not counted — the knowledge base's file language is
-    /// set by the user, not the agent. While `false`, the profile's language
-    /// is editable.
+    /// language (axis A, docs/history/i18n.md): visible chats **with
+    /// conversation content** ([`Chat::is_pristine`]), a non-empty
+    /// "self-model", or notes (including `@self` observations). A pristine
+    /// chat — the first-launch default one included — binds nothing: its
+    /// localized artifacts are re-derived on a language switch
+    /// ([`Self::rederive_pristine_chats`]), so a fresh install's language
+    /// stays editable. RAG documents are deliberately not counted — the
+    /// knowledge base's file language is set by the user, not the agent.
+    /// While `false`, the profile's language is editable.
     pub(super) fn profile_has_data(&self, profile_id: Uuid) -> bool {
         if self
             .chats
             .iter()
-            .any(|c| !c.is_hidden && c.profile_id == profile_id)
+            .any(|c| !c.is_hidden && c.profile_id == profile_id && !c.is_pristine())
         {
             return true;
         }

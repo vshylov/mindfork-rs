@@ -105,6 +105,32 @@ pub fn clear_seed_character_names(profile: &mut Profile) -> bool {
     changed
 }
 
+/// Re-seeds the localized defaults after a scaffold-language switch (axis A,
+/// spec §10) on a data-free profile: a name still byte-equal to the old
+/// locale's `defaults.profile_name` and a system message still byte-equal to
+/// the old locale's `defaults.system_message` follow the new language
+/// (`profile.language`, already switched by `apply_edit`). User-edited text
+/// never matches the old default and is left alone — the rule the i18n plan
+/// fixed for this switch (docs/history/i18n.md §4 p.6). Returns `true` if the
+/// profile changed.
+pub fn reseed_language_defaults(
+    profile: &mut Profile,
+    old_lang: crate::shared::i18n::Lang,
+) -> bool {
+    let old = crate::shared::i18n::locale(old_lang);
+    let new = crate::shared::i18n::locale(profile.language);
+    let mut changed = false;
+    if profile.name == old.t("defaults.profile_name") {
+        profile.name = new.t("defaults.profile_name").to_string();
+        changed = true;
+    }
+    if profile.default_system_message == old.t("defaults.system_message") {
+        profile.default_system_message = new.t("defaults.system_message").to_string();
+        changed = true;
+    }
+    changed
+}
+
 /// A set of profile edits (any field — optional). Applied to an existing
 /// profile; doesn't affect already-created chats (they hold their own copies, spec §10).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -248,6 +274,35 @@ mod tests {
             },
         );
         assert_eq!(p.greeting, None);
+    }
+
+    /// After a language switch (`profile.language` already holds the new value,
+    /// as `apply_edit` leaves it) the untouched localized defaults follow it.
+    #[test]
+    fn reseed_replaces_untouched_defaults() {
+        use crate::shared::i18n::{Lang, locale};
+        let ru = locale(Lang::Ru);
+        let mut p = Profile::new(
+            ru.t("defaults.profile_name"),
+            ru.t("defaults.system_message"),
+        );
+        p.language = Lang::En;
+        assert!(reseed_language_defaults(&mut p, Lang::Ru));
+        let en = locale(Lang::En);
+        assert_eq!(p.name, en.t("defaults.profile_name"));
+        assert_eq!(p.default_system_message, en.t("defaults.system_message"));
+    }
+
+    /// User-edited text never matches the old locale's default byte-for-byte —
+    /// the switch leaves it alone.
+    #[test]
+    fn reseed_keeps_user_edited_texts() {
+        use crate::shared::i18n::Lang;
+        let mut p = Profile::new("Гея", "Ты — Гея.");
+        p.language = Lang::En;
+        assert!(!reseed_language_defaults(&mut p, Lang::Ru));
+        assert_eq!(p.name, "Гея");
+        assert_eq!(p.default_system_message, "Ты — Гея.");
     }
 
     #[test]

@@ -323,3 +323,181 @@ async fn bootstrap_clears_legacy_seed_character_names() {
         "a chosen name stays"
     );
 }
+
+/// A fresh install: bootstrap makes one profile and one empty chat, and the
+/// scaffold language stays **editable** — the pristine chat binds nothing
+/// (spec §10). Switching it re-derives the untouched localized defaults: the
+/// profile's name and system message, the chat's title and system-message
+/// copy — in memory, in the emitted events, and on disk.
+#[tokio::test]
+async fn fresh_install_language_is_editable_and_rederives_defaults() {
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+
+    // Bootstrap: one ru profile, one empty chat — and no locked language.
+    let list = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 1),
+    )
+    .await
+    .unwrap();
+    let profile_id = match list {
+        AppEvent::ProfileList(profiles) => {
+            assert_eq!(profiles[0].name, ru.t("defaults.profile_name"));
+            profiles[0].id
+        }
+        _ => unreachable!(),
+    };
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { language_locked, .. } if language_locked.is_empty()),
+    )
+    .await
+    .expect("the bootstrap chat is pristine — the language must not be locked");
+
+    // The settings screen sends a full snapshot; the untouched defaults ride
+    // along byte-equal to the ru bundle and must follow the language.
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile_id,
+            edit: Box::new(ProfileEdit {
+                name: Some(ru.t("defaults.profile_name").into()),
+                system_message: Some(ru.t("defaults.system_message").into()),
+                language: Some(crate::shared::i18n::Lang::En),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+
+    // The pristine chat's default title follows — through the same event a
+    // manual rename sends, so an open chat's header updates too.
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatRenamed { title, .. } if title == en.t("defaults.chat_title")),
+    )
+    .await
+    .expect("the pristine chat is re-derived in the new language");
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(p) if p[0].name == en.t("defaults.profile_name")),
+    )
+    .await
+    .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { language_locked, .. } if language_locked.is_empty()),
+    )
+    .await
+    .expect("still no data — the language stays editable");
+
+    drop(cmd_tx);
+    handle.await.unwrap();
+
+    // What reached disk (the deferred chat save flushes on exit).
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let profiles = storage.json().load_profiles().unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].language, crate::shared::i18n::Lang::En);
+    assert_eq!(profiles[0].name, en.t("defaults.profile_name"));
+    assert_eq!(
+        profiles[0].default_system_message,
+        en.t("defaults.system_message")
+    );
+    let chats = storage.json().load_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].title, en.t("defaults.chat_title"));
+    assert_eq!(chats[0].system_message, en.t("defaults.system_message"));
+}
+
+/// What locks the scaffold language is conversation content, not the chat's
+/// existence: messages (a greeting copy included), deleted-exchange tombstones
+/// and a compaction summary each lock; a pristine chat doesn't (spec §10).
+#[test]
+fn conversation_content_locks_profile_language() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    orch.profiles.push(profile);
+    orch.chats
+        .push(Chat::from_profile(&orch.profiles[0], "Новый чат"));
+    assert!(!orch.profile_has_data(pid), "a pristine chat binds nothing");
+
+    // A greeting-only chat already holds an assistant message — it locks.
+    orch.chats[0].push_message(Message::assistant("Здравствуйте!"));
+    assert!(orch.profile_has_data(pid));
+
+    // The authoritative gate: the switch is dropped and reported.
+    orch.handle_update_profile(
+        pid,
+        ProfileEdit {
+            language: Some(crate::shared::i18n::Lang::En),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        orch.profiles[0].language,
+        crate::shared::i18n::Lang::default(),
+        "the locked language must not change"
+    );
+    let mut saw_error = false;
+    while let Ok(ev) = rx.try_recv() {
+        saw_error |= matches!(ev, AppEvent::Error(_));
+    }
+    assert!(saw_error, "the rejected switch is reported");
+
+    // Tombstones are restorable conversation content — they lock on their own.
+    orch.chats[0].messages.clear();
+    assert!(!orch.profile_has_data(pid));
+    orch.chats[0].record_deleted(
+        vec![Message::user("привет")],
+        String::new(),
+        crate::entities::chat::DeletedCause::DeleteExchange,
+    );
+    assert!(orch.profile_has_data(pid));
+
+    // So is a compaction summary.
+    orch.chats[0].deleted.clear();
+    orch.chats[0].compaction = Some(crate::entities::chat::Compaction {
+        summary: "сводка".into(),
+        upto: 0,
+        boundary_id: Uuid::new_v4(),
+        compacted_at: chrono::Utc::now(),
+        rolls: 1,
+    });
+    assert!(orch.profile_has_data(pid));
+}
+
+/// The re-derivation respects the user's text: a custom profile name/system
+/// message and a manually chosen chat title survive the switch untouched; the
+/// pristine chat's system-message copy tracks the profile (as if created now).
+#[test]
+fn language_switch_keeps_user_edited_texts() {
+    let (_d, mut orch) = bare_orch();
+    let mut profile = Profile::new("Гея", "Ты — Гея.");
+    profile.language = crate::shared::i18n::Lang::Ru;
+    let pid = profile.id;
+    orch.profiles.push(profile);
+    let mut chat = Chat::from_profile(&orch.profiles[0], "Мой чат");
+    chat.renamed_manually = true;
+    let cid = chat.id;
+    orch.chats.push(chat);
+
+    orch.handle_update_profile(
+        pid,
+        ProfileEdit {
+            language: Some(crate::shared::i18n::Lang::En),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(orch.profiles[0].language, crate::shared::i18n::Lang::En);
+    assert_eq!(orch.profiles[0].name, "Гея");
+    assert_eq!(orch.profiles[0].default_system_message, "Ты — Гея.");
+    let chat = orch.chats.iter().find(|c| c.id == cid).unwrap();
+    assert_eq!(
+        chat.title, "Мой чат",
+        "a manual rename outranks re-derivation"
+    );
+    assert_eq!(chat.system_message, "Ты — Гея.");
+}
