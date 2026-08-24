@@ -769,6 +769,17 @@ A row whose middle varies in length needs a width-aware fit that decides which p
 gives way (`RagBanner::fit`), not a truncation from the end.
 — *the indexing banner fits its row, the collapsed pill wraps whole*.
 
+**A `ListState` built inside `render` is a scroll position that is recomputed
+every frame.** ratatui moves a list's offset only far enough to bring the
+selection into view, so starting from `0` on every draw means "scroll until the
+selection is the *last* visible row": downward it looks like a correctly
+following window, upward the list scrolls on every press and the selection never
+climbs to the top row. The offset is state, not decoration — keep it on the
+widget, seed it with `with_offset`, read it back after the draw, and clamp it to
+`len - height` there (the one place the height is known) so a shortened list
+cannot leave the window past its tail.
+— *the chat list scrolls symmetrically*.
+
 ---
 
 ## 6. Windows and cross-platform

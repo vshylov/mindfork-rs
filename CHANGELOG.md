@@ -203,6 +203,12 @@ split by subsystem.
 
 ### Fixed
 
+- **The chat list scrolls the same way up as it does down.** Moving the
+  selection up with `↑` scrolled the whole list on every press, keeping the
+  selected chat pinned to the bottom row; now the selection walks up to the top
+  visible row first, and only then does the list scroll — the mirror image of
+  `↓`.
+
 - **A typed command no longer resurfaces in the input box after doing its
   job.** `/takeback` glued itself onto the restored message ("your text/takeback"),
   `/regen` came back into the box, a `/clone`'d chat opened holding `/clone`,
