@@ -968,5 +968,13 @@ added to the profile picker, a `use ratatui::widgets::TableState`, and the helpe
 renamed out from under it each produce the expected failure and exit code 1, and
 the tree is clean at 250 files scanned.
 
+**The gate went through the gate**: `tools/` is in `sonar.sources`, and the
+first analysis of the PR returned two `python:S6353` — the explicit
+`[A-Za-z0-9_]` lookarounds that keep `ChatListState` from matching should be
+plain `` word boundaries. They are the same assertion (between the `t` of
+`Chat` and the `L` of `List` there is no boundary), so the rewrite is
+behaviour-identical — re-checked against the planted violations rather than
+assumed.
+
 **No live run and no new Rust tests** — a Python gate over the repository's own
 structure (AGENTS.md §3).

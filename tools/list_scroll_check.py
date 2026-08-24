@@ -51,12 +51,12 @@ SRC_DIR = "src"
 HOME = "src/shared/ui.rs"
 HELPER = "ListScroll"
 
-# Word-exact, so our own `ChatListState`/`ProfileListState` (widget state, not
-# ratatui's) do not match: the lookbehind rejects a preceding identifier
-# character, the lookahead a trailing one.
-GUARDED = re.compile(r"(?<![A-Za-z0-9_])(ListState|TableState)(?![A-Za-z0-9_])")
+# Word-exact (`\b` at both edges), so our own `ChatListState`/`ProfileListState`
+# (widget state, not ratatui's) do not match: between the `t` of `Chat` and the
+# `L` of `List` there is no word boundary, while `widgets::ListState` has one.
+GUARDED = re.compile(r"\b(ListState|TableState)\b")
 HELPER_DEF = re.compile(rf"^\s*pub struct {HELPER}\b")
-HELPER_USE = re.compile(rf"(?<![A-Za-z0-9_]){HELPER}(?![A-Za-z0-9_])")
+HELPER_USE = re.compile(rf"\b{HELPER}\b")
 
 
 def repo_root() -> Path:
