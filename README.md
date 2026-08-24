@@ -87,7 +87,10 @@ build the moment they drift from what the app actually renders
   `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. A sub-agent's
   transcript sits **nested under the chat that delegated to it** (`└`), opens
   read-only with its persona on top, can be renamed and copied, and goes away
-  only with the exchange that made it. New conversations
+  only with the exchange that made it. The transcripts are **folded away by
+  default** — a muted `▸ n` marks how many a chat hides; `Ctrl+O` unfolds the
+  selected chat's (`/subagents` typed in the chat does the same), remembered
+  per chat, and a search still surfaces a matching transcript. New conversations
   **title themselves** after the first reply (model-written — and by then the
   model knows what the chat is actually about; configurable to fire on your
   first message instead, or off), a chat you renamed yourself is never
@@ -345,7 +348,7 @@ highlights:
 | `F5` | copy the conversation to the clipboard (over SSH it also goes to your *own* machine's clipboard — see below) |
 | `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
 | `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
-| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls |
+| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's sub-agent transcripts |
 | `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
 | `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
@@ -411,6 +414,7 @@ confirmations included:
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
+| `/subagents [expand\|collapse]` | `Ctrl+O` in the list | this chat's sub-agent transcripts in the chat list: bare — toggle, a word sets it outright (remembered per chat) |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
 | `/profile system [text\|clear]` · `/profile greeting [text\|clear]` | the settings editors | this chat's profile: its system message and its greeting, applied to new conversations. Bare — the current text comes back for editing; `clear` removes it |
 | `/impersonation list` · `new [name]` · `delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | the impersonation profiles — the user personas `Ctrl+U` writes as: list (the open chat's is marked), add, remove (asks first) |

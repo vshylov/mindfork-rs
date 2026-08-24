@@ -70,6 +70,25 @@ impl Orchestrator {
         }
     }
 
+    /// Stores whether the list shows a chat's sub-agent transcripts
+    /// (`Ctrl+O` in the list, `/subagents` in the chat; spec §11.2).
+    /// Like [`Self::handle_set_feed_view`]: the save is debounced and
+    /// `modified_at` is left alone — folding rows away is not a change to the
+    /// conversation. Unlike it, the target comes by id (the list toggles any
+    /// row's chat); a transcript's id folds its parent's list, and the updated
+    /// summaries go straight back out so an open list redraws.
+    pub(super) fn handle_set_children_expanded(&mut self, id: Uuid, expanded: bool) {
+        let id = self.parent_of(id).unwrap_or(id);
+        if let Some(chat) = self.chat_mut(id) {
+            if chat.children_expanded == expanded {
+                return;
+            }
+            chat.children_expanded = expanded;
+            self.mark_dirty(id);
+            self.emit_chat_list();
+        }
+    }
+
     pub(super) fn handle_new_chat(&mut self, profile_id: Option<Uuid>) {
         let chat = self.new_chat_value(profile_id);
         let id = chat.id;

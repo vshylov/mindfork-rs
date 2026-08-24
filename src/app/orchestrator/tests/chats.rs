@@ -137,6 +137,56 @@ fn set_feed_view_persists_to_active_chat_without_bumping_modified() {
     assert!(!orch.saves.is_dirty(id));
 }
 
+#[test]
+fn set_children_expanded_persists_by_id_and_reemits_the_list() {
+    // The chat-list fold (spec §11.2): the feed view's rules — stored on the
+    // chat, flagged for the debounced save, `modified_at` left alone — plus
+    // two of its own: the target comes by id (any row's chat, not the active
+    // one), and the updated summaries go straight back out so an open list
+    // redraws.
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    let modified = chat.modified_at;
+    orch.chats.push(chat);
+    orch.active_id = None; // deliberately not the active chat
+
+    orch.handle_set_children_expanded(id, true);
+    let c = orch.chats.iter().find(|c| c.id == id).unwrap();
+    assert!(c.children_expanded);
+    assert_eq!(
+        c.modified_at, modified,
+        "folding must not bump the chat up the list"
+    );
+    assert!(orch.saves.is_dirty(id), "the chat is flagged for saving");
+    match rx.try_recv().unwrap() {
+        AppEvent::ChatList(list) => {
+            assert!(list.iter().find(|s| s.id == id).unwrap().children_expanded);
+        }
+        other => panic!("expected the updated list, got {other:?}"),
+    }
+
+    // The same value again — a no-op: no re-flagging, no list chatter.
+    orch.saves.take();
+    orch.handle_set_children_expanded(id, true);
+    assert!(!orch.saves.is_dirty(id));
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn set_children_expanded_resolves_a_transcript_to_its_parent() {
+    // A transcript's id folds its parent's list — the state is the parent's,
+    // like the feed view's sharing above (`/subagents` typed on an open
+    // transcript sends the transcript's id).
+    let (carrier, run_id) = carrier_with_run("Критик", &["x"]);
+    let (_d, mut orch, _rx, chat_id) = bare_with_chat(vec![Message::user("привет"), carrier]);
+
+    orch.handle_set_children_expanded(run_id, true);
+    assert_eq!(orch.chats[0].id, chat_id);
+    assert!(orch.chats[0].children_expanded, "the parent holds the fold");
+}
+
 #[tokio::test]
 async fn feed_view_is_per_chat_and_survives_a_reopen() {
     // The point of storing it on the chat: expanding in one chat leaves another

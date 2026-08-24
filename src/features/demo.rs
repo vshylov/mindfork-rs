@@ -419,6 +419,7 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
         modified_at: date(8, 1, 10, 3),
         message_count: 4,
         children: Vec::new(),
+        children_expanded: false,
     }];
     chats.extend(
         rows()
@@ -437,6 +438,10 @@ pub fn chat_summaries() -> Vec<ChatSummary> {
                     } else {
                         Vec::new()
                     },
+                    // Expanded, so the gallery frame keeps showing the nested
+                    // transcript row (and stays byte-identical to the committed
+                    // dumps); the fold itself is pinned by the widget's tests.
+                    children_expanded: i == REVIEWED_ROW,
                 }
             }),
     );

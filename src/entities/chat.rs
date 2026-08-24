@@ -50,6 +50,14 @@ pub struct Chat {
     /// and a chat nobody expanded writes no new key. See spec §11.3.
     #[serde(default, skip_serializing_if = "FeedView::is_default")]
     pub feed_view: FeedView,
+    /// Whether the chat list shows this chat's sub-agent transcripts as rows
+    /// nested under it (`Ctrl+O` in the list, `/subagents` in the chat).
+    /// `false` = **collapsed**, the default: like [`Chat::feed_view`]'s blocks,
+    /// the transcripts are detail you ask for. Additive field — old chat files
+    /// read without migration, and a chat nobody expanded writes no new key
+    /// (ADR 0006 F12). See spec §11.2.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub children_expanded: bool,
     /// Files attached to the chat (`/file attach`). Their text is injected into
     /// the request's system prompt on every turn, so `/file remove` genuinely
     /// removes them from what the model sees. Additive field — old chat files
@@ -221,6 +229,7 @@ impl Chat {
             sampling_override: None,
             draft: String::new(),
             feed_view: FeedView::default(),
+            children_expanded: false,
             attachments: Vec::new(),
             deleted: Vec::new(),
             compaction: None,
@@ -315,6 +324,7 @@ impl Chat {
             modified_at: self.modified_at,
             message_count: self.messages.len(),
             children: self.children().map(ChildSummary::of).collect(),
+            children_expanded: self.children_expanded,
         }
     }
 
@@ -381,9 +391,33 @@ pub struct ChatSummary {
     /// key reads as a chat with none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<ChildSummary>,
+    /// Whether the list shows the `children` rows — the stored per-chat fold,
+    /// [`Chat::children_expanded`]. A search that matches a transcript outranks
+    /// it (the widget's tree rule, spec §11.2).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub children_expanded: bool,
 }
 
 impl ChatSummary {
+    /// A bare card for tests: fresh id, nil profile, now-timestamps, no
+    /// messages, no transcripts, collapsed. Shared by the list, picker and
+    /// screen tests — each keeping a copy of this literal is the sliding
+    /// self-duplication the gate measures (docs/lessons.md §2); tests mutate
+    /// the fields they are about.
+    #[cfg(test)]
+    pub fn fixture(title: &str) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            profile_id: Uuid::nil(),
+            title: title.to_string(),
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            message_count: 0,
+            children: Vec::new(),
+            children_expanded: false,
+        }
+    }
+
     /// A card for one of this chat's transcripts, shaped like a chat card so
     /// the surfaces that take one — the reference picker, the list's rows —
     /// need no second type. It belongs to the same profile; it has no children.
@@ -396,6 +430,7 @@ impl ChatSummary {
             modified_at: child.finished_at.unwrap_or(child.created_at),
             message_count: child.message_count,
             children: Vec::new(),
+            children_expanded: false,
         }
     }
 
@@ -465,6 +500,37 @@ mod tests {
         assert!(json.contains("workspace"), "{json}");
         let back: Chat = serde_json::from_str(&json).unwrap();
         assert_eq!(back.workspace.unwrap().root, "D:/proj");
+    }
+
+    /// The additive contract for `children_expanded` (spec §11.2), mirroring
+    /// `feed_view`'s: a chat file from before the field loads collapsed, a chat
+    /// nobody expanded writes no new key, and the expanded state round-trips —
+    /// on the chat and on its summary alike.
+    #[test]
+    fn children_expanded_is_additive_and_round_trips() {
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "t");
+        let json = serde_json::to_value(&chat).unwrap();
+        assert!(
+            json.get("children_expanded").is_none(),
+            "a chat nobody expanded writes no new key: {json}"
+        );
+        let old: Chat = serde_json::from_value(json).unwrap();
+        assert!(!old.children_expanded, "old files load collapsed");
+
+        let mut expanded = chat;
+        expanded.children_expanded = true;
+        let json = serde_json::to_value(&expanded).unwrap();
+        assert_eq!(json.get("children_expanded"), Some(&true.into()));
+        let back: Chat = serde_json::from_value(json).unwrap();
+        assert!(back.children_expanded);
+        assert!(
+            back.summary().children_expanded,
+            "the card carries the fold"
+        );
+        let summary_json = serde_json::to_value(back.summary()).unwrap();
+        let summary: ChatSummary = serde_json::from_value(summary_json).unwrap();
+        assert!(summary.children_expanded);
     }
 
     use super::*;

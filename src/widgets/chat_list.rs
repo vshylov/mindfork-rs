@@ -66,6 +66,12 @@ pub enum ChatListAction {
     /// orchestrator, which owns both the index and the chat — the widget just
     /// says which chat and what was searched for.
     OpenFirstMatch { chat: Uuid, query: String },
+    /// Fold or unfold a chat's sub-agent transcripts in the list (`Ctrl+O`).
+    /// The absolute value, computed here from the summary the widget already
+    /// renders from: the orchestrator stores it on the chat (spec §11.2) and
+    /// the updated set comes back via the `ChatList` event — the list stays
+    /// open, like a rename.
+    SetChildrenExpanded { id: Uuid, expanded: bool },
 }
 
 /// One row of the list: a chat, or a sub-agent transcript nested under the
@@ -87,6 +93,10 @@ pub struct Row {
     /// A chat shown only because one of its transcripts matched the filter:
     /// drawn dimmed, so the match and its context read differently.
     pub dimmed: bool,
+    /// How many transcripts the stored fold is hiding under this row (chats
+    /// only; `0` — none). Drawn as a `▸ n` mark beside the count, so a folded
+    /// chat with transcripts doesn't look like a chat without any.
+    pub collapsed_children: usize,
 }
 
 impl Row {
@@ -185,7 +195,16 @@ impl ChatListState {
         };
         if let Some(active) = active {
             let visible = state.visible();
-            if let Some(idx) = visible.iter().position(|c| c.id == active) {
+            let idx = visible.iter().position(|c| c.id == active).or_else(|| {
+                // The active "chat" is a transcript its parent's fold is hiding
+                // (spec §11.2) — land on the parent rather than on the first row.
+                let parent = state
+                    .all
+                    .iter()
+                    .find(|c| c.child_ids().any(|k| k == active))?;
+                visible.iter().position(|r| r.id == parent.id)
+            });
+            if let Some(idx) = idx {
                 state.selected = idx;
             }
         }
@@ -222,6 +241,13 @@ impl ChatListState {
     /// appears without its parent, an unmatched one never pads a matched
     /// parent, and text found only in the parent shows the parent alone.
     /// Chats keep the sort mode; a chat's transcripts follow it in call order.
+    ///
+    /// **The fold** ([`ChatSummary::children_expanded`], `Ctrl+O`): a chat's
+    /// transcripts are hidden while it is collapsed — but only when nothing is
+    /// being searched for. An explicit match is the user asking where something
+    /// is, so it outranks the fold and surfaces the transcript with its parent;
+    /// the blanket "everything matches" of an empty query (or a content search
+    /// with no answer yet) is exactly the context the fold exists to hide.
     fn visible(&self) -> Vec<Row> {
         let needle = self.query.trim().to_lowercase();
         let matched: Option<std::collections::HashSet<Uuid>> = match self.scope {
@@ -237,6 +263,12 @@ impl ChatListState {
             // an empty query does.
             SearchScope::Content => matched.as_ref().is_none_or(|set| set.contains(&id)),
         };
+        // "Everything matches" — no effective filter, so what shows under a
+        // chat is decided by its stored fold rather than by the search.
+        let blanket = match self.scope {
+            SearchScope::Title => needle.is_empty(),
+            SearchScope::Content => matched.is_none(),
+        };
         let mut rows = Vec::new();
         for chat in filter_and_sort(&self.all, "", self.sort) {
             let children: Vec<Row> = chat
@@ -251,12 +283,14 @@ impl ChatListState {
                     outcome: c.outcome,
                     running: c.running,
                     dimmed: false,
+                    collapsed_children: 0,
                 })
                 .collect();
             let own = matches(chat.id, &chat.title);
             if !own && children.is_empty() {
                 continue;
             }
+            let folded = blanket && !chat.children_expanded;
             rows.push(Row {
                 id: chat.id,
                 title: chat.title.clone(),
@@ -265,8 +299,11 @@ impl ChatListState {
                 outcome: None,
                 running: false,
                 dimmed: !own,
+                collapsed_children: if folded { children.len() } else { 0 },
             });
-            rows.extend(children);
+            if !folded {
+                rows.extend(children);
+            }
         }
         rows
     }
@@ -456,6 +493,9 @@ impl ChatListState {
                     SearchScope::Title => ChatListAction::None,
                 }
             }
+            // Fold/unfold the selected chat's sub-agent transcripts. On a
+            // transcript row the toggle folds the list it is part of.
+            'o' => self.toggle_children(),
             // Go from "which chats mention this" to "where exactly": the
             // message-level results screen. Content mode only — in title
             // mode the query is a title substring, which is not a thing to
@@ -470,6 +510,32 @@ impl ChatListState {
             },
             _ => ChatListAction::None,
         }
+    }
+
+    /// `Ctrl+O`: folds/unfolds the selected chat's sub-agent transcripts
+    /// (spec §11.2). On a transcript row the parent's list is what folds —
+    /// selection moves to the parent first, so it never rests on a row the
+    /// fold is about to hide. A chat with no transcripts is a no-op, and the
+    /// hint for the key is not advertised there either.
+    fn toggle_children(&mut self) -> ChatListAction {
+        let Some(row) = self.selected_row() else {
+            return ChatListAction::None;
+        };
+        let id = row.parent.unwrap_or(row.id);
+        let Some(chat) = self.all.iter().find(|c| c.id == id) else {
+            return ChatListAction::None;
+        };
+        if chat.children.is_empty() {
+            return ChatListAction::None;
+        }
+        let expanded = !chat.children_expanded;
+        if !expanded
+            && row.is_child()
+            && let Some(idx) = self.visible().iter().position(|r| r.id == id)
+        {
+            self.selected = idx;
+        }
+        ChatListAction::SetChildrenExpanded { id, expanded }
     }
 
     /// `Enter`: opens the selected chat. In content mode the chat is opened
@@ -821,6 +887,15 @@ impl ChatListState {
         if let Some(key) = outcome {
             count = format!("{} · {count}", loc.t(key));
         }
+        // A folded chat says how many transcripts it is hiding — without the
+        // mark it would look like a chat that has none (docs/lessons.md §4).
+        if row.collapsed_children > 0 {
+            count = format!(
+                "{} {} · {count}",
+                palette.glyphs().collapsed,
+                row.collapsed_children
+            );
+        }
         let count_w = display_width_str(&count);
         let prefix_w = 2 + marker.chars().count(); // the rail + the marker
         const TRAIL: usize = 1; // right-hand margin
@@ -879,15 +954,35 @@ impl ChatListState {
         // On a transcript the two keys that refuse are not advertised
         // (spec §11.2): an advertised key that is a no-op is worse than a
         // missing hint, and the refusal itself still names the way out.
-        let on_child = self.selected_row().is_some_and(|r| r.is_child());
+        let selected = self.selected_row();
+        let on_child = selected.as_ref().is_some_and(|r| r.is_child());
+        // `Ctrl+O` folds/unfolds the selected chat's transcripts — advertised
+        // only when it has any, with the direction it would take (the way
+        // `Tab` carries the sort). On a transcript row it names the parent's.
+        let fold = selected.as_ref().and_then(|r| {
+            let id = r.parent.unwrap_or(r.id);
+            let chat = self.all.iter().find(|c| c.id == id)?;
+            (!chat.children.is_empty()).then(|| {
+                if chat.children_expanded {
+                    loc.t("ui.chatlist.hk.children_hide")
+                } else {
+                    loc.t("ui.chatlist.hk.children_show")
+                }
+            })
+        });
         let mut items: Vec<(&str, &str, bool)> = vec![
             ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
             ("Enter", loc.t("ui.chatlist.hk.open"), false),
+        ];
+        if let Some(desc) = fold {
+            items.push(("Ctrl+O", desc, false));
+        }
+        items.extend([
             ("Ctrl+F", search_desc.as_str(), false),
             ("F2", loc.t("ui.chatlist.hk.rename"), false),
             ("Ctrl+R", loc.t("ui.chatlist.hk.autoname"), false),
             ("Ctrl+N", loc.t("ui.chatlist.hk.new"), false),
-        ];
+        ]);
         if !on_child {
             items.push(("Ctrl+D", loc.t("ui.chatlist.hk.clone"), false));
         }
@@ -948,15 +1043,7 @@ mod tests {
     }
 
     fn chat(title: &str) -> ChatSummary {
-        ChatSummary {
-            id: Uuid::new_v4(),
-            profile_id: Uuid::nil(),
-            title: title.to_string(),
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            message_count: 0,
-            children: Vec::new(),
-        }
+        ChatSummary::fixture(title)
     }
 
     #[test]
@@ -1662,7 +1749,9 @@ mod tests {
 /// The two-level tree (spec §11.2, docs/research/subagent-chats.md §3.7): a
 /// chat's sub-agent transcripts nest under it, in call order; the filter rule
 /// shows a transcript only with its parent and a parent alone when only it
-/// matches; the refusing keys are not advertised on a transcript.
+/// matches; the refusing keys are not advertised on a transcript. The stored
+/// fold (`children_expanded`, `Ctrl+O`) hides the transcripts of a collapsed
+/// chat — the default — unless a search matches one.
 #[cfg(test)]
 mod tree_tests {
     use super::*;
@@ -1671,6 +1760,30 @@ mod tree_tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// The status grid's text at width 200 (`ru` locale) — what the hint
+    /// assertions read.
+    fn status_text(s: &ChatListState) -> String {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        s.status_lines(&Palette::default(), 200, loc)
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
+            .collect()
+    }
+
+    /// One row's rendered text (width 60, `ru` locale).
+    fn row_text(s: &ChatListState, r: &Row) -> String {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        s.item_line(r, false, None, &Palette::default(), 60, loc)
+            .spans
+            .iter()
+            .map(|sp| sp.content.to_string())
+            .collect()
     }
 
     fn child(title: &str, minutes: i64, outcome: Option<RunOutcome>) -> ChildSummary {
@@ -1685,30 +1798,28 @@ mod tree_tests {
         }
     }
 
+    /// The tree fixture, with the parent's transcripts **unfolded** — these
+    /// tests are about the tree's shape and the search rule; the fold's own
+    /// behaviour (collapsed is the default) lives in [`fold_tests`].
     fn family() -> Vec<ChatSummary> {
-        vec![
-            ChatSummary {
-                id: Uuid::new_v4(),
-                profile_id: Uuid::nil(),
-                title: "Планы".into(),
-                created_at: Utc::now() - Duration::hours(1),
-                modified_at: Utc::now() - Duration::hours(1),
-                message_count: 6,
-                children: vec![
-                    child("Критик", 1, Some(RunOutcome::Completed)),
-                    child("Искатель", 2, Some(RunOutcome::TimedOut)),
-                ],
-            },
-            ChatSummary {
-                id: Uuid::new_v4(),
-                profile_id: Uuid::nil(),
-                title: "Рецепты".into(),
-                created_at: Utc::now(),
-                modified_at: Utc::now(),
-                message_count: 2,
-                children: Vec::new(),
-            },
-        ]
+        let mut chats = collapsed_family();
+        chats[0].children_expanded = true;
+        chats
+    }
+
+    /// The same two chats with the stored default — a fold nobody has opened.
+    fn collapsed_family() -> Vec<ChatSummary> {
+        let mut plans = ChatSummary::fixture("Планы");
+        plans.created_at = Utc::now() - Duration::hours(1);
+        plans.modified_at = plans.created_at;
+        plans.message_count = 6;
+        plans.children = vec![
+            child("Критик", 1, Some(RunOutcome::Completed)),
+            child("Искатель", 2, Some(RunOutcome::TimedOut)),
+        ];
+        let mut recipes = ChatSummary::fixture("Рецепты");
+        recipes.message_count = 2;
+        vec![plans, recipes]
     }
 
     #[test]
@@ -1803,39 +1914,180 @@ mod tree_tests {
         let chats = family();
         let critic = chats[0].children[0].id;
         let parent = chats[0].id;
-        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let palette = Palette::default();
-        let text_of = |s: &ChatListState| -> String {
-            s.status_lines(&palette, 200, loc)
-                .iter()
-                .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
-                .collect()
-        };
         let on_parent = ChatListState::new(chats.clone(), Some(parent));
-        assert!(text_of(&on_parent).contains("Del"));
-        assert!(text_of(&on_parent).contains("Ctrl+D"));
+        assert!(status_text(&on_parent).contains("Del"));
+        assert!(status_text(&on_parent).contains("Ctrl+D"));
         let on_child = ChatListState::new(chats, Some(critic));
-        assert!(!text_of(&on_child).contains("Del"));
-        assert!(!text_of(&on_child).contains("Ctrl+D"));
+        assert!(!status_text(&on_child).contains("Del"));
+        assert!(!status_text(&on_child).contains("Ctrl+D"));
     }
 
     #[test]
     fn a_transcript_row_is_indented_and_names_its_outcome() {
         let chats = family();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let palette = Palette::default();
         let s = ChatListState::new(chats, None);
         let rows = s.visible();
-        let text = |r: &Row| -> String {
-            s.item_line(r, false, None, &palette, 60, loc)
-                .spans
-                .iter()
-                .map(|sp| sp.content.to_string())
-                .collect()
-        };
-        assert!(text(&rows[1]).starts_with("  ● Планы"));
-        assert!(text(&rows[2]).starts_with("    └ Критик"));
-        assert!(!text(&rows[2]).contains(loc.t("ui.chatlist.run.cancelled")));
-        assert!(text(&rows[3]).contains(loc.t("ui.chatlist.run.timed_out")));
+        assert!(row_text(&s, &rows[1]).starts_with("  ● Планы"));
+        assert!(row_text(&s, &rows[2]).starts_with("    └ Критик"));
+        assert!(!row_text(&s, &rows[2]).contains(loc.t("ui.chatlist.run.cancelled")));
+        assert!(row_text(&s, &rows[3]).contains(loc.t("ui.chatlist.run.timed_out")));
+    }
+
+    /// The stored fold (spec §11.2): a collapsed chat — the default — hides
+    /// its transcripts, and the row says how many it is hiding; without the
+    /// mark it would read as a chat that has none (docs/lessons.md §4).
+    #[test]
+    fn collapsed_by_default_hides_transcripts_and_marks_the_row() {
+        let s = ChatListState::new(collapsed_family(), None);
+        let rows = s.visible();
+        let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Рецепты", "Планы"]);
+        assert_eq!(rows[1].collapsed_children, 2);
+        assert_eq!(rows[0].collapsed_children, 0, "no transcripts — no mark");
+        let text = row_text(&s, &rows[1]);
+        assert!(text.contains("▸ 2 · "), "{text}");
+    }
+
+    /// `Ctrl+O` asks for the stored fold to flip — under any layout — and the
+    /// widget itself applies nothing: the updated summaries come back through
+    /// `set_chats`, the same round-trip a rename takes.
+    #[test]
+    fn ctrl_o_toggles_the_selected_chats_fold() {
+        let chats = collapsed_family();
+        let parent = chats[0].id;
+        let mut s = ChatListState::new(chats, Some(parent));
+        assert_eq!(
+            s.on_key(ctrl('o')),
+            ChatListAction::SetChildrenExpanded {
+                id: parent,
+                expanded: true
+            }
+        );
+        assert_eq!(s.visible().len(), 2, "nothing applied until the round-trip");
+
+        let mut chats = s.all.clone();
+        chats[0].children_expanded = true;
+        s.set_chats(chats);
+        let rows = s.visible();
+        assert_eq!(rows.len(), 4, "unfolded — the transcripts are rows again");
+        assert_eq!(rows[1].collapsed_children, 0, "an open fold needs no mark");
+
+        // Folding back — also under a Cyrillic layout (physical O = Ctrl+щ).
+        assert_eq!(
+            s.on_key(ctrl('щ')),
+            ChatListAction::SetChildrenExpanded {
+                id: parent,
+                expanded: false
+            }
+        );
+    }
+
+    /// On a transcript row `Ctrl+O` folds the parent's list, and the selection
+    /// parks on the parent — never on a row the fold is about to hide.
+    #[test]
+    fn ctrl_o_on_a_transcript_folds_the_parent_and_moves_selection() {
+        let chats = family();
+        let parent = chats[0].id;
+        let critic = chats[0].children[0].id;
+        let mut s = ChatListState::new(chats, Some(critic));
+        assert_eq!(s.selected_id(), Some(critic));
+        assert_eq!(
+            s.on_key(ctrl('o')),
+            ChatListAction::SetChildrenExpanded {
+                id: parent,
+                expanded: false
+            }
+        );
+        assert_eq!(s.selected_id(), Some(parent), "selection has moved up");
+    }
+
+    /// A chat with no transcripts has nothing to fold: the key is a quiet
+    /// no-op — and the hint for it is not advertised (see the hint test).
+    #[test]
+    fn ctrl_o_is_inert_on_a_chat_without_transcripts() {
+        let chats = collapsed_family();
+        let recipes = chats[1].id;
+        let mut s = ChatListState::new(chats, Some(recipes));
+        assert_eq!(s.on_key(ctrl('o')), ChatListAction::None);
+    }
+
+    /// A search outranks the fold: the user asked where something is, so a
+    /// matching transcript surfaces under a collapsed parent — and folds away
+    /// again when the query clears.
+    #[test]
+    fn a_search_surfaces_a_matching_transcript_despite_the_fold() {
+        let mut s = ChatListState::new(collapsed_family(), None);
+        for c in "Иска".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        let rows = s.visible();
+        let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Планы", "Искатель"]);
+        assert_eq!(
+            rows[0].collapsed_children, 0,
+            "while a search decides what shows, the fold has no mark to make"
+        );
+        for _ in 0.."Иска".chars().count() {
+            s.on_key(key(KeyCode::Backspace));
+        }
+        assert_eq!(s.visible().len(), 2, "an empty query folds them away again");
+    }
+
+    /// The same, from the index: a content result naming a transcript's id
+    /// surfaces it under its collapsed, dimmed parent.
+    #[test]
+    fn content_results_surface_a_transcript_despite_the_fold() {
+        let chats = collapsed_family();
+        let critic = chats[0].children[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(ctrl('f'));
+        s.set_search_results("x".into(), Some(vec![critic]));
+        let rows = s.visible();
+        let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Планы", "Критик"]);
+        assert!(rows[0].dimmed);
+    }
+
+    /// Opening the list while a fold-hidden transcript is the active
+    /// conversation cannot select its row — there is none — so the selection
+    /// lands on the parent rather than on the first row.
+    #[test]
+    fn opening_on_a_hidden_active_transcript_selects_the_parent() {
+        let chats = collapsed_family();
+        let parent = chats[0].id;
+        let critic = chats[0].children[0].id;
+        let s = ChatListState::new(chats, Some(critic));
+        assert_eq!(s.selected_id(), Some(parent));
+    }
+
+    /// The `Ctrl+O` hint carries the direction the key would take (the way
+    /// `Tab` carries the sort), follows the parent from a transcript row, and
+    /// is absent where the key would do nothing (docs/lessons.md §4).
+    #[test]
+    fn the_fold_hint_names_the_direction_and_skips_childless_chats() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let chats = collapsed_family();
+        let (parent, recipes) = (chats[0].id, chats[1].id);
+        let collapsed = ChatListState::new(chats.clone(), Some(parent));
+        let t = status_text(&collapsed);
+        assert!(t.contains("Ctrl+O"), "{t}");
+        assert!(t.contains(loc.t("ui.chatlist.hk.children_show")), "{t}");
+
+        let fam = family();
+        let critic = fam[0].children[0].id;
+        let expanded = ChatListState::new(fam, Some(critic));
+        let t = status_text(&expanded);
+        assert!(
+            t.contains(loc.t("ui.chatlist.hk.children_hide")),
+            "a transcript row names its parent's fold: {t}"
+        );
+
+        let childless = ChatListState::new(chats, Some(recipes));
+        let t = status_text(&childless);
+        assert!(
+            !t.contains("Ctrl+O"),
+            "an advertised key that does nothing is worse than no hint: {t}"
+        );
     }
 }

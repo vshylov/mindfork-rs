@@ -3488,15 +3488,11 @@ fn text_that_only_resembles_a_quit_command_is_sent() {
 
 /// A chat card for the address book the screen keeps.
 fn card(id: Uuid, profile: Uuid, title: &str) -> ChatSummary {
-    ChatSummary {
-        id,
-        profile_id: profile,
-        title: title.into(),
-        created_at: chrono::Utc::now(),
-        modified_at: chrono::Utc::now(),
-        message_count: 1,
-        children: Vec::new(),
-    }
+    let mut c = ChatSummary::fixture(title);
+    c.id = id;
+    c.profile_id = profile;
+    c.message_count = 1;
+    c
 }
 
 /// Puts `s` on `here` with `others` also in the list, all of one profile, and
@@ -4209,15 +4205,7 @@ fn every_ui_command_variant_has_exactly_one_row() {
 fn profile_list_names_them_and_marks_the_active_one() {
     let mut c = Cmd::new();
     // The open chat belongs to the first profile.
-    c.s.set_chat_list(vec![ChatSummary {
-        id: c.chat,
-        profile_id: Uuid::from_u128(2),
-        title: "Про космос".into(),
-        created_at: chrono::Utc::now(),
-        modified_at: chrono::Utc::now(),
-        message_count: 1,
-        children: Vec::new(),
-    }]);
+    c.s.set_chat_list(vec![card(c.chat, Uuid::from_u128(2), "Про космос")]);
     assert_eq!(c.run("/profile list"), None);
     let note = c.last_note();
     assert!(note.contains("Гайя") && note.contains("Гелиос"), "{note}");
@@ -4262,24 +4250,8 @@ fn profile_new_matches_the_settings_screen_default() {
 fn profile_delete_always_confirms_and_names_what_goes() {
     let mut c = Cmd::new();
     c.s.set_chat_list(vec![
-        ChatSummary {
-            id: c.chat,
-            profile_id: Uuid::from_u128(2),
-            title: "Про космос".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 1,
-            children: Vec::new(),
-        },
-        ChatSummary {
-            id: Uuid::from_u128(9),
-            profile_id: Uuid::from_u128(2),
-            title: "Второй".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 1,
-            children: Vec::new(),
-        },
+        card(c.chat, Uuid::from_u128(2), "Про космос"),
+        card(Uuid::from_u128(9), Uuid::from_u128(2), "Второй"),
     ]);
     // The setting that gates the two chat-level keys is OFF here — this popup
     // is not governed by it.
@@ -4610,6 +4582,7 @@ mod read_only_transcript {
                 outcome: None,
                 running: false,
             }],
+            children_expanded: false,
         }]);
         let card = c.s.summary_card(child_id).expect("the transcript's card");
         assert_eq!(card.title, "Критик");
@@ -4658,15 +4631,7 @@ mod stage3_commands {
             Default::default(),
             Vec::new(),
         );
-        c.s.set_chat_list(vec![ChatSummary {
-            id: c.chat,
-            profile_id: Uuid::from_u128(2),
-            title: "Про космос".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 1,
-            children: Vec::new(),
-        }]);
+        c.s.set_chat_list(vec![card(c.chat, Uuid::from_u128(2), "Про космос")]);
         c
     }
 
@@ -4675,15 +4640,7 @@ mod stage3_commands {
     fn staffed_on_helios() -> Cmd {
         let mut c = staffed();
         let chat = Uuid::from_u128(5);
-        c.s.set_chat_list(vec![ChatSummary {
-            id: chat,
-            profile_id: Uuid::from_u128(3),
-            title: "Второй".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 0,
-            children: Vec::new(),
-        }]);
+        c.s.set_chat_list(vec![card(chat, Uuid::from_u128(3), "Второй")]);
         c.s.activate_chat(
             chat,
             "Второй".into(),
@@ -4971,5 +4928,143 @@ mod stage3_commands {
         let mut c = staffed();
         type_str(&mut c.s, "/impersonations list");
         assert!(!c.s.input_is_command());
+    }
+}
+
+/// `/subagents` (spec §11.2): the chat list's `Ctrl+O` for the open chat —
+/// flips the stored fold and answers **which way and where**, since the rows
+/// it moves live on another screen.
+mod subagents_command {
+    use super::*;
+    use crate::app::events::ChildView;
+    use crate::entities::chat::ChildSummary;
+    use crate::entities::subagent::SubagentRun;
+
+    /// [`Cmd::new`] with the open chat in the list snapshot, carrying one
+    /// transcript and the given stored fold.
+    fn with_transcript(expanded: bool) -> Cmd {
+        let mut c = Cmd::new();
+        let mut chat = card(c.chat, Uuid::from_u128(2), "Про космос");
+        chat.children = vec![ChildSummary::of(&SubagentRun::fixture(
+            "Критик",
+            &["Оцени X.", "X слаб."],
+        ))];
+        chat.children_expanded = expanded;
+        c.s.set_chat_list(vec![chat]);
+        c
+    }
+
+    #[test]
+    fn subagents_toggles_the_stored_fold_and_says_which_way() {
+        let mut c = with_transcript(false);
+        let chat = c.chat;
+        assert_eq!(
+            c.run("/subagents"),
+            Some(ChatIntent::SetChildrenExpanded {
+                id: chat,
+                expanded: true
+            })
+        );
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.subagents_expanded"));
+
+        let mut c = with_transcript(true);
+        let chat = c.chat;
+        assert_eq!(
+            c.run("/subagents"),
+            Some(ChatIntent::SetChildrenExpanded {
+                id: chat,
+                expanded: false
+            })
+        );
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.subagents_collapsed"));
+        assert!(c.s.input.is_empty(), "the command must clear the box");
+    }
+
+    /// The two words set the state outright — the hand that knows what it
+    /// wants without checking first. Idempotent: `expand` on an expanded chat
+    /// still answers, and the orchestrator no-ops on the equal value.
+    #[test]
+    fn explicit_subcommands_set_the_state_outright() {
+        let mut c = with_transcript(true);
+        let chat = c.chat;
+        assert_eq!(
+            c.run("/subagents expand"),
+            Some(ChatIntent::SetChildrenExpanded {
+                id: chat,
+                expanded: true
+            })
+        );
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.subagents_expanded"));
+
+        let mut c = with_transcript(false);
+        let chat = c.chat;
+        assert_eq!(
+            c.run("/subagents collapse"),
+            Some(ChatIntent::SetChildrenExpanded {
+                id: chat,
+                expanded: false
+            })
+        );
+        // A word outside the set is the parser's to report, with the usage
+        // line — not silence, and not a message sent to the model.
+        let mut c = with_transcript(false);
+        assert_eq!(c.run("/subagents wide"), None);
+        let note = c.last_note();
+        assert!(note.contains("wide"), "{note}");
+        assert!(note.contains("/subagents"), "{note}");
+    }
+
+    #[test]
+    fn subagents_works_from_an_open_transcript_and_folds_the_parent() {
+        // Read-only refuses what would change the conversation; folding the
+        // parent's list changes neither, so the typed route stays open — and
+        // the state it flips is the parent's.
+        let mut c = with_transcript(true);
+        let parent = c.chat;
+        let child = c.s.chats[0].children[0].id;
+        c.s.set_child_view(Some(ChildView {
+            parent,
+            parent_title: "Про космос".into(),
+            system_message: "Ты — критик.".into(),
+        }));
+        c.s.activate_chat(
+            child,
+            "Критик".into(),
+            &[],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        c.chat = child;
+        assert!(c.s.read_only());
+        assert_eq!(
+            c.run("/subagents"),
+            Some(ChatIntent::SetChildrenExpanded {
+                id: parent,
+                expanded: false
+            })
+        );
+    }
+
+    #[test]
+    fn subagents_without_transcripts_or_chat_answers() {
+        // A chat with none: the note says where the rows come from, instead
+        // of toggling something invisible (docs/lessons.md §4).
+        let mut c = Cmd::new();
+        c.s.set_chat_list(vec![card(c.chat, Uuid::from_u128(2), "Про космос")]);
+        assert_eq!(c.run("/subagents"), None);
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.subagents_none"));
+
+        // Before the list snapshot arrives the answer is the same — the
+        // screen knows of no transcripts to fold.
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/subagents"), None);
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.subagents_none"));
+
+        // No chat at all.
+        let mut c = Cmd::bare();
+        assert_eq!(c.run("/subagents"), None);
+        assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.no_chat"));
     }
 }

@@ -323,6 +323,7 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         // View state isn't part of the exchange format either — an imported chat
         // opens with everything collapsed, like a new one.
         feed_view: FeedView::default(),
+        children_expanded: false,
         // The import format (v1) carries no attachments — see docs/import-format.md.
         attachments: Vec::new(),
         deleted: Vec::new(),

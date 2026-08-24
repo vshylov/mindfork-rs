@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Added
 
+- **Sub-agent transcripts fold under their chat.** The chat list now keeps a
+  chat's transcript rows collapsed by default, with a muted `▸ n` beside the
+  count saying how many it holds; `Ctrl+O` in the list unfolds/refolds the
+  selected chat's (on a transcript row — its parent's), and `/subagents` typed
+  in the chat does the same for the open conversation (bare — a toggle;
+  `expand`/`collapse` set it outright). The choice is remembered per chat, and
+  a search still surfaces a matching transcript under its collapsed chat.
+
 - **The sub-agent has the assistant's tools.** `call_subagent` no longer asks
   one tool-less question: the sub-agent runs as a nested turn with the same
   tools the assistant has in this chat (except creating sub-agents, reading

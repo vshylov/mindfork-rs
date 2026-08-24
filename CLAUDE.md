@@ -167,7 +167,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-24, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2556 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2571 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,6 +179,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Sub-agent transcripts fold under their chat in the list** — collapsed by
+  default with a `▸ n` mark on the row; `Ctrl+O` in the list / `/subagents` in
+  the chat, remembered per chat (`Chat.children_expanded`, additive), and a
+  search match still surfaces a transcript
+  ([docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.2).
 - **The binary/command is `mindfork`** — one `[[bin]]` stanza over the
   unchanged package `mindfork-rs`; the Linux symlink/`.desktop`/icons, the
   Windows installer, CI and the docs' command examples follow, while data

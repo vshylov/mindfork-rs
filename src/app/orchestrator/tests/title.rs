@@ -52,28 +52,6 @@ async fn wait_renamed(evt_rx: &mut UnboundedReceiver<AppEvent>) -> (Uuid, String
     }
 }
 
-/// A bare orchestrator holding one chat with `messages` — the shared opening
-/// of the non-async tests here, under the same fixture rule.
-fn bare_with_chat(
-    messages: Vec<Message>,
-) -> (
-    tempfile::TempDir,
-    Orchestrator,
-    UnboundedReceiver<AppEvent>,
-    Uuid,
-) {
-    let (d, mut orch, rx) = bare_orch_rx();
-    let profile = Profile::new("P", "sys");
-    let mut chat = Chat::from_profile(&profile, "Новый чат");
-    for m in messages {
-        chat.push_message(m);
-    }
-    let chat_id = chat.id;
-    orch.profiles.push(profile);
-    orch.chats.push(chat);
-    (d, orch, rx, chat_id)
-}
-
 /// A [`TitleResult`] as the background task would deliver it.
 fn title_result(chat_id: Uuid, text: Result<&str, &str>, origin: TitleOrigin) -> TitleResult {
     TitleResult {

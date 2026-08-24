@@ -169,7 +169,6 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use ratatui::crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -181,15 +180,9 @@ mod tests {
     }
 
     fn chat(title: &str) -> ChatSummary {
-        ChatSummary {
-            id: Uuid::new_v4(),
-            profile_id: Uuid::nil(),
-            title: title.to_string(),
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            message_count: 1,
-            children: Vec::new(),
-        }
+        let mut c = ChatSummary::fixture(title);
+        c.message_count = 1;
+        c
     }
 
     #[test]

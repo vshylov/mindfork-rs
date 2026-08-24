@@ -2404,6 +2404,19 @@ docs/research/subagent-chats.md §3.7–§3.8). `ChatSummary.children` carries t
 transcripts' cards, built by `Chat::summary()` from the records; the list widget
 flattens the snapshot into `Row`s (a chat, or a transcript with `parent`,
 `outcome`, a `dimmed` flag) in `visible()`, which is where the tree rule lives.
+**The rows are folded by default** (spec §11.2): `Chat.children_expanded`
+(additive, mirrored onto the summary) gates them in `visible()` — but only
+while nothing is searched for, since an explicit match outranks the fold; a
+folded parent row carries `collapsed_children` and draws a `▸ n` mark beside
+its count. The list's `Ctrl+O` (`toggle_children`) emits
+`ChatListAction::SetChildrenExpanded` with the absolute value — on a
+transcript row it targets the parent and parks the selection there first —
+and `/subagents` on the chat screen (`typed_subagents`, reading the list
+snapshot the screen holds) sends the same `ChatIntent`; both funnel into
+`AppCommand::SetChildrenExpanded`, whose orchestrator handler
+(`handle_set_children_expanded`) resolves a transcript's id via `parent_of`,
+flips the chat, marks it dirty without touching `modified_at` (the
+`SetFeedView` rule), and re-emits the list so an open overlay redraws.
 Opening one goes through the ordinary `SwitchChat`: the orchestrator's single
 resolver `view(id) → ChatView::{Top, Child}` finds a transcript inside its
 parent, `activate_focused` emits `ChatActivated` with `child: Some(ChildView

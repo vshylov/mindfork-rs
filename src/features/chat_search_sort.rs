@@ -45,18 +45,12 @@ pub fn filter_and_sort(chats: &[ChatSummary], query: &str, sort: SortMode) -> Ve
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use uuid::Uuid;
 
     fn summary(title: &str, created_min: i64, modified_min: i64) -> ChatSummary {
-        ChatSummary {
-            id: Uuid::new_v4(),
-            profile_id: Uuid::nil(),
-            title: title.to_string(),
-            created_at: Utc.timestamp_opt(created_min * 60, 0).unwrap(),
-            modified_at: Utc.timestamp_opt(modified_min * 60, 0).unwrap(),
-            message_count: 0,
-            children: Vec::new(),
-        }
+        let mut c = ChatSummary::fixture(title);
+        c.created_at = Utc.timestamp_opt(created_min * 60, 0).unwrap();
+        c.modified_at = Utc.timestamp_opt(modified_min * 60, 0).unwrap();
+        c
     }
 
     fn sample() -> Vec<ChatSummary> {

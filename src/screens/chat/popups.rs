@@ -278,6 +278,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     // users look for "how do I search my history?".
     ("Ctrl+F", "ui.help.search_content"),
     ("Ctrl+G", "ui.help.search_messages"),
+    ("Ctrl+O", "ui.help.subagents_fold"),
     ("Ctrl+N", "ui.help.new_chat"),
     ("F3", "ui.help.self_model"),
     ("F4", "ui.help.changes"),
