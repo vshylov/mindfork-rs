@@ -53,6 +53,10 @@ pub enum ChatListIntent {
     /// Open a chat at its first message matching the query (`Enter` in content
     /// mode); the orchestrator resolves which message that is.
     OpenFirstMatch { chat: Uuid, query: String },
+    /// Fold or unfold a chat's sub-agent transcripts in the list (`Ctrl+O`;
+    /// the list stays open). Stored on the chat — `/subagents` on the chat
+    /// screen is the same state's other route. See spec §11.2.
+    SetChildrenExpanded { id: Uuid, expanded: bool },
 }
 
 /// Chat-list screen: widget state + render context.
@@ -152,6 +156,9 @@ impl ChatListScreen {
             ChatListAction::OpenFirstMatch { chat, query } => {
                 Some(ChatListIntent::OpenFirstMatch { chat, query })
             }
+            ChatListAction::SetChildrenExpanded { id, expanded } => {
+                Some(ChatListIntent::SetChildrenExpanded { id, expanded })
+            }
         }
     }
 
@@ -192,7 +199,6 @@ impl ChatListScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
     fn ru() -> &'static Locale {
@@ -200,15 +206,7 @@ mod tests {
     }
 
     fn chat(title: &str) -> ChatSummary {
-        ChatSummary {
-            id: Uuid::new_v4(),
-            profile_id: Uuid::nil(),
-            title: title.to_string(),
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            message_count: 0,
-            children: Vec::new(),
-        }
+        ChatSummary::fixture(title)
     }
 
     fn key(code: KeyCode) -> KeyEvent {

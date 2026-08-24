@@ -652,6 +652,9 @@ impl Orchestrator {
             AppCommand::CancelImpersonation => self.handle_cancel_impersonation(),
             AppCommand::SetDraft(text) => self.handle_set_draft(text),
             AppCommand::SetFeedView(view) => self.handle_set_feed_view(view),
+            AppCommand::SetChildrenExpanded { id, expanded } => {
+                self.handle_set_children_expanded(id, expanded)
+            }
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),

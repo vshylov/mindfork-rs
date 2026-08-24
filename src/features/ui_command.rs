@@ -70,6 +70,12 @@ pub enum UiCommand {
     Thoughts,
     /// Fold/unfold tool calls in the feed (`Ctrl+O`).
     ToolCalls,
+    /// Fold/unfold the open chat's sub-agent transcripts in the chat list
+    /// (`Ctrl+O` *there* toggles the selected chat's; the state is the chat's
+    /// own — spec §11.2). Bare — a toggle, like the key; `expand`/`collapse`
+    /// set the state outright, for the hand that knows what it wants without
+    /// checking first.
+    Subagents,
     /// Toggle mouse capture (`Ctrl+W`).
     Mouse,
     /// The emoji picker (`Ctrl+B`).
@@ -180,6 +186,7 @@ pub const COMMANDS: &[Spec] = &[
     // The feed.
     row(&["/thoughts"], UiCommand::Thoughts, Arity::None, "/thoughts", "ui.help.cmd_thoughts"),
     row(&["/toolcalls"], UiCommand::ToolCalls, Arity::None, "/toolcalls", "ui.help.cmd_toolcalls"),
+    row(&["/subagents"], UiCommand::Subagents, Arity::Subcommand(&["expand", "collapse"]), "ui.help.k.subagents", "ui.help.cmd_subagents"),
     row(&["/mouse"], UiCommand::Mouse, Arity::None, "/mouse", "ui.help.cmd_mouse"),
     row(&["/emoji"], UiCommand::Emoji, Arity::None, "/emoji", "ui.help.cmd_emoji"),
 ];

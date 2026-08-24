@@ -268,6 +268,40 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
     (dir, orch, evt_rx)
 }
 
+/// A bare orchestrator holding one chat with `messages` — the shared opening
+/// of non-async tests that need a conversation in place (title, the list's
+/// fold), under the same fixture rule.
+fn bare_with_chat(
+    messages: Vec<Message>,
+) -> (
+    tempfile::TempDir,
+    Orchestrator,
+    UnboundedReceiver<AppEvent>,
+    Uuid,
+) {
+    let (d, mut orch, rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "Новый чат");
+    for m in messages {
+        chat.push_message(m);
+    }
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    (d, orch, rx, chat_id)
+}
+
+/// An assistant message carrying one sub-agent transcript on its record, plus
+/// the run's id — the opening of a test that needs a chat with a child
+/// (spec §9.3.2).
+fn carrier_with_run(title: &str, texts: &[&str]) -> (Message, Uuid) {
+    let run = crate::entities::subagent::SubagentRun::fixture(title, texts);
+    let run_id = run.id;
+    let mut carrier = Message::assistant("делегировал");
+    carrier.tool_calls = vec![run.on_record()];
+    (carrier, run_id)
+}
+
 /// Enables the whole tool catalog on the profile (including the control followup/
 /// rewrite tools) — for control-tool tests. Returns the profile's id.
 async fn enable_all_tools(

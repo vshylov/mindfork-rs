@@ -105,6 +105,14 @@ pub enum ChatIntent {
     AutoTitleChat(Uuid),
     /// Clone the open chat (command `/clone`; `Ctrl+D` in the chat list).
     CloneChat(Uuid),
+    /// Fold or unfold the open chat's sub-agent transcripts in the chat list
+    /// (command `/subagents`; `Ctrl+O` in the list toggles the *selected*
+    /// chat's through [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).
+    /// Stored on the chat; see spec §11.2.
+    SetChildrenExpanded {
+        id: Uuid,
+        expanded: bool,
+    },
     /// Write the open chat to a file (command `/export [md|json] [path]`).
     /// The orchestrator owns the conversation and the disk, so it formats and
     /// writes; a relative path (or a generated name) resolves against the

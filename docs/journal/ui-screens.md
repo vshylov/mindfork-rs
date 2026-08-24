@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -57,6 +57,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the chat list scrolls symmetrically (done)
 - Post-M9: the same scrolling rule for every other list (done)
 - Post-M9: sub-agent chats — the child view arrives before the feed is built (done)
+- Post-M9: the chat list folds a chat's sub-agent transcripts (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2380,3 +2381,51 @@ storage or tool surface is touched.
 - **Tests**: 2555 green (+1), 107 `#[ignore]`. A live model run is not
   required (AGENTS.md §3) — pure UI wiring; no engine, storage or tool
   surface is touched. Lesson recorded (lessons §2).
+
+### Post-M9: the chat list folds a chat's sub-agent transcripts (done)
+
+- **What**: the transcript rows under a chat (spec §11.2) sit behind a
+  per-chat fold now, **collapsed by default** — a long list of delegating
+  chats was mostly transcripts. `Ctrl+O` in the list folds/unfolds the
+  selected chat's (on a transcript row — its parent's, parking the selection
+  on the parent first, so it never rests on a row the fold is hiding);
+  `/subagents` typed in the chat is the same flip for the open conversation —
+  bare a toggle like the key, `expand`/`collapse` setting the state outright —
+  and it answers *which way and where* — the rows it moves live on another
+  screen, so a silent toggle would read as a refusal (lessons §4). A folded
+  chat shows a muted `▸ n` beside its count (without it, a chat with
+  transcripts is indistinguishable from one without — the collapsed-pill
+  lesson), the hint is advertised only on chats that have any and carries the
+  direction it would take, and opening the list while a fold-hidden
+  transcript is the active conversation selects its parent.
+- **Key decisions**. *Storage*: `Chat.children_expanded`, additive with the
+  `renamed_manually` serde shape (no key until someone expands; ADR 0006 F12,
+  `CHAT_SCHEMA` stays 2), mirrored onto `ChatSummary` so the widget renders
+  and toggles from the snapshot it already holds. *The route* is the rename's,
+  not `SetFeedView`'s: addressed by id (`AppCommand::SetChildrenExpanded`),
+  since the list toggles any row's chat — but with `SetFeedView`'s write rules
+  (debounced save, `modified_at` untouched) and its parent resolution for a
+  transcript's id; the handler re-emits the list so an open overlay redraws.
+  The senders compute the **absolute** value from their snapshot, so the two
+  routes cannot double-flip. *Search outranks the fold*: a query match (title
+  or content) surfaces a transcript under a collapsed parent — the fold hides
+  rows only under the blanket "everything matches" of an empty query or a
+  content search with no answer yet; hiding a hit would make the search lie.
+  *Import* stays view-state-free (an imported chat opens collapsed, the
+  `feed_view` rule). *The demo fixture* pins `children_expanded: true` on the
+  one gallery chat with a transcript, keeping the committed dumps
+  byte-identical — the fold itself is pinned by widget tests instead.
+- **Tests**: 2571 green (+15), 107 `#[ignore]`: the serde round trip on chat
+  and summary; the widget's fold/marker/toggle/selection-fallback/hint and
+  both search-override scopes; the orchestrator handler (persists by id
+  without bumping `modified_at`, re-emits the list, resolves a transcript to
+  its parent, no-op chatter-free); `/subagents` toggling with the note, the
+  explicit words, from an open transcript (read-only leaves it be — folding
+  changes no conversation), and answering when there is nothing to fold.
+  Test-fixture debt paid down on the way: the four copies of the
+  `ChatSummary` test literal (and two more same-shape in-test ones) collapsed
+  into one `ChatSummary::fixture` — the offline duplication probe read 2.8%
+  of changed lines inside duplicated windows before, 1.9% after, against
+  Sonar's 3% new-code bar (lessons §2, eighth entry). A live model run is not
+  required (AGENTS.md §3) — UI plus one additive stored field; no engine or
+  tool surface is touched.

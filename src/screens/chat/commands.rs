@@ -135,6 +135,7 @@ impl ChatScreen {
             // The feed.
             UiCommand::Thoughts => self.handle_ctrl_shortcut('t').flatten(),
             UiCommand::ToolCalls => self.handle_ctrl_shortcut('o').flatten(),
+            UiCommand::Subagents => self.typed_subagents(argument),
             UiCommand::Mouse => self.handle_ctrl_shortcut('w').flatten(),
             UiCommand::Emoji => self.handle_ctrl_shortcut('b').flatten(),
         }
@@ -157,6 +158,42 @@ impl ChatScreen {
         }
         self.confirm = Some(ConfirmAction::ClearSelfModel);
         None
+    }
+
+    /// `/subagents [expand|collapse]` — the chat list's `Ctrl+O` for the open
+    /// chat: folds or unfolds its sub-agent transcripts in the list
+    /// (spec §11.2); bare it toggles like the key, the two words set the state
+    /// outright. The effect lives on another screen, so the note says which
+    /// way it went and where. From an open transcript the parent's list is
+    /// what folds — the state is the parent's, as everywhere. With no
+    /// transcripts (or before the list snapshot has arrived) the command
+    /// explains instead: the rows appear once the assistant calls a sub-agent.
+    fn typed_subagents(&mut self, argument: String) -> Option<ChatIntent> {
+        let Some(active) = self.active_chat else {
+            return self.note("ui.cmd.no_chat");
+        };
+        // The parser normalized the word to the registry's spelling; anything
+        // else it reported itself, so bare is the only other shape here.
+        let want = match argument.as_str() {
+            "expand" => Some(true),
+            "collapse" => Some(false),
+            _ => None,
+        };
+        let target = self
+            .chats
+            .iter()
+            .find(|c| c.id == active || c.child_ids().any(|k| k == active))
+            .filter(|c| !c.children.is_empty())
+            .map(|c| (c.id, want.unwrap_or(!c.children_expanded)));
+        let Some((id, expanded)) = target else {
+            return self.note("ui.cmd.subagents_none");
+        };
+        self.push_note(self.loc.t(if expanded {
+            "ui.cmd.subagents_expanded"
+        } else {
+            "ui.cmd.subagents_collapsed"
+        }));
+        Some(ChatIntent::SetChildrenExpanded { id, expanded })
     }
 
     /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by

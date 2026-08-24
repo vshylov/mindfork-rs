@@ -53,6 +53,13 @@ pub enum AppCommand {
     /// save debounce, `modified_at` untouched — a view toggle must not bump the
     /// chat up the list. See spec §11.3, docs/feed-collapse.md.
     SetFeedView(FeedView),
+    /// Store whether the chat list shows this chat's sub-agent transcripts
+    /// (`Ctrl+O` in the list, `/subagents` in the chat). Addressed by id — the
+    /// list toggles any row's chat, not only the active one; a transcript's id
+    /// resolves to its parent, like [`AppCommand::SetFeedView`]'s sharing.
+    /// Written with the save debounce, `modified_at` untouched — a view toggle
+    /// must not bump the chat up the list. See spec §11.2.
+    SetChildrenExpanded { id: Uuid, expanded: bool },
     /// Regenerate the last assistant reply: delete everything after the last
     /// user message and restart generation from the same request.
     RegenerateLast,
@@ -315,6 +322,7 @@ impl AppCommand {
             | AppCommand::ConfirmTool { .. }
             | AppCommand::SetDraft(_)
             | AppCommand::SetFeedView(_)
+            | AppCommand::SetChildrenExpanded { .. }
             | AppCommand::Cancel
             | AppCommand::CancelImpersonation
             | AppCommand::NewChat { .. }

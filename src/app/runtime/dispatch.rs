@@ -499,6 +499,12 @@ pub(super) fn dispatch(
         // feed note when the list is closed). See spec §11.2.
         ChatIntent::AutoTitleChat(id) => AppCommand::AutoRenameChat(id),
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
+        // `/subagents` — the chat screen's route to the fold the list's
+        // `Ctrl+O` toggles; the orchestrator resolves a transcript's id to its
+        // parent (spec §11.2).
+        ChatIntent::SetChildrenExpanded { id, expanded } => {
+            AppCommand::SetChildrenExpanded { id, expanded }
+        }
         ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
         // commands the settings and self-model screens send — the typed routes
@@ -723,6 +729,11 @@ pub(super) fn dispatch_chat_list(
         ChatListIntent::Delete(id) => AppCommand::DeleteChat(id),
         ChatListIntent::Rename { id, title } => AppCommand::RenameChat { id, title },
         ChatListIntent::AutoRename(id) => AppCommand::AutoRenameChat(id),
+        // Folding a chat's transcripts keeps the list open too: the updated
+        // rows come back via the `ChatList` event, like a rename's.
+        ChatListIntent::SetChildrenExpanded { id, expanded } => {
+            AppCommand::SetChildrenExpanded { id, expanded }
+        }
         // Content search: the raw query goes to the orchestrator, which escapes
         // it and answers with `ChatSearchResults`. The list stays open.
         ChatListIntent::SearchContent(query) => AppCommand::SearchChats(query),

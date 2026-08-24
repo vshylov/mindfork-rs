@@ -1907,12 +1907,29 @@ A direct requirement from the task:
   §3.7): indented with a `└` in place of the dot, in **call order** under their
   parent (they are the steps of its work, so "newest first" would read them
   backwards), with a muted mark beside the count when the run did not complete
-  (*cancelled* / *timed out* / *failed* / *round limit* / *interrupted*). The
-  filter rule, in both search scopes: **a row is shown iff it matches; a chat
-  is additionally shown — dimmed — when any of its transcripts matches.** So a
-  matched transcript never appears without its parent, an unmatched one never
-  pads a matched parent, and text found only in the parent shows the parent
-  alone. Content mode names transcripts from the index by their own ids
+  (*cancelled* / *timed out* / *failed* / *round limit* / *interrupted*).
+  **The rows are folded away by default**: like the feed's "thoughts" and tool
+  cards ([§11.3](#113-message-feed)), the transcripts are the steps behind an
+  answer — detail you ask for. `Ctrl+O` in the list folds/unfolds the selected
+  chat's (on a transcript row — its parent's, parking the selection on the
+  parent so it never rests on a row the fold hides); `/subagents` typed in the
+  chat is the same flip for the open conversation — bare a toggle like the
+  key, `expand`/`collapse` setting the state outright — answering which way it
+  went and where, since the rows live on another screen. The state is the chat's
+  own (`Chat.children_expanded`, additive, default collapsed), saved with the
+  draft's debounce and **not** bumping `modified_at`; a collapsed chat shows a
+  muted `▸ n` beside its count, so it never reads as a chat without
+  transcripts, and the `Ctrl+O` hint appears only on chats that have any, with
+  the direction it would take. Opening the list while a fold-hidden transcript
+  is the active conversation selects its **parent** rather than the first row.
+  The filter rule, in both search scopes: **a row is shown iff it matches; a
+  chat is additionally shown — dimmed — when any of its transcripts matches.**
+  So a matched transcript never appears without its parent, an unmatched one
+  never pads a matched parent, and text found only in the parent shows the
+  parent alone. A search **outranks the fold**: the user asked where something
+  is, so a matching transcript surfaces under a collapsed parent too — the
+  fold hides rows only while nothing is being searched for (an empty query, or
+  a content search with no answer yet). Content mode names transcripts from the index by their own ids
   ([§11.2.1](#1121-the-message-level-search-screen)), so the rule is one
   membership test there too — and `Enter` on a transcript row opens it on
   *its* first match, on a chat row on the chat's own (a match inside a
@@ -2628,7 +2645,7 @@ docs/history/external-api-key.md.
 | `Home`/`End` | a ladder of stops (§11.5): `Home` — the row's text, its start, then the whole line's; `End` — the row's end, then the line's |
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
 | `Ctrl+T` | collapse/expand "thoughts" in the feed (per chat, §11.3) |
-| `Ctrl+O` | collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3) |
+| `Ctrl+O` | in a chat: collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3); in the chat list: fold/unfold the selected chat's sub-agent transcripts (per chat, collapsed by default, §11.2 — `/subagents` is the typed route) |
 | `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
 | click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
 | click on a `chat://` reference in the feed | follow it (with `Ctrl+W` capture on; `Ctrl+L` is the route that needs no mouse) |
@@ -2759,11 +2776,12 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty commands:
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-one commands:
 `/settings` `/self` `/chats` `/help` · `/new [profile]` `/rename [title]`
 `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/takeback`
 `/impersonate [text]` `/stop` · `/find [text]` `/search <text>` `/links` ·
-`/thoughts` `/toolcalls` `/mouse` `/emoji`. Load-bearing properties:
+`/thoughts` `/toolcalls` `/subagents [expand|collapse]` `/mouse` `/emoji`.
+Load-bearing properties:
 
 - **A command is its key.** Each one reaches the action through the *same*
   handler the chord uses (`handle_ctrl_shortcut`, or the chord's own intent), so
