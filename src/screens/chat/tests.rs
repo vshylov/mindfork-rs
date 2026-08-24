@@ -1,6 +1,6 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
-use super::popups::{HELP_KEYS, KEY_GROUP_OPENERS};
+use super::popups::HELP_SECTIONS;
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
@@ -1204,10 +1204,14 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     term.draw(|f| s.render(f)).unwrap();
     // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
     // the max (well below what was requested) and the scrollbar thumb is drawn.
-    // The bound: entries + one blank per group opener comfortably exceeds the
-    // tab's line count minus the view (a couple of rows also wrap).
+    // The bound: rows + opener blanks + a header and a break per section is an
+    // upper estimate of the tab's line count (a couple of rows also wrap).
+    let tab_lines: usize = HELP_SECTIONS
+        .iter()
+        .map(|s| s.rows.len() + s.openers.len() + 2)
+        .sum();
     assert!(
-        s.help.as_ref().unwrap().scroll < HELP_KEYS.len() + KEY_GROUP_OPENERS.len(),
+        s.help.as_ref().unwrap().scroll < tab_lines,
         "scroll clamps to the maximum"
     );
     let buf = term.backend().buffer();
@@ -2450,8 +2454,10 @@ fn help_shows_logo_when_terminal_is_tall() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Margin: the border (2) + all the keys + the lockup block (top and bottom breathing room).
-    let tall = HELP_KEYS.len() as u16 + 2 + LOCKUP_ROWS + 2;
+    // Tall enough to reach the dialog's height cap (44 content rows + border +
+    // air) — the sectioned key list is taller than any dialog now, so the
+    // lockup condition is about the dialog's own height, not the list's.
+    let tall = 52u16;
     let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 

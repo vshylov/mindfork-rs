@@ -121,7 +121,8 @@ additions:
 - Errors: `anyhow` in application layers, `thiserror` in `shared`. Logs —
   file only (`logs/`), no `println!` (stdout is taken by the TUI).
 - New keys/commands — go straight into the help overlay (`F1`/`?`,
-  `HELP_KEYS`) and the key tables in README / spec §11.7.
+  `HELP_SECTIONS`, into the section of the screen that handles the key) and
+  the key tables in README / spec §11.7.
 - Playbook for mechanically splitting large files —
   [docs/history/refactoring-god-objects.md](docs/history/refactoring-god-objects.md).
 

@@ -148,6 +148,13 @@ split by subsystem.
 
 ### Changed
 
+- **The help lists keys by screen.** The `F1` shortcuts tab is now sections —
+  everywhere · chat · chat list · settings · self-model · changes · found
+  messages — with the section you opened it from marked *you are here*. A key
+  that means different things on different screens (`Ctrl+O`, `Ctrl+F`,
+  `Ctrl+R`…) is one short row per screen instead of one row trying to say
+  both, and the settings, self-model, changes and search screens' keys are
+  listed at all for the first time.
 - **The command is `mindfork` now.** The binary lost the `-rs` suffix — that
   stays the project's name: type `mindfork` (`mindfork demo`, `mindfork
   sandbox setup`, …), the Linux packages symlink `/usr/bin/mindfork` and the
