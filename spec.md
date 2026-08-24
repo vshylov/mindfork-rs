@@ -483,7 +483,7 @@ loop:
 - **Cancellation**: a `CancellationToken` aborts the current HTTP stream; the partial response is kept; the chat goes `Cancelling → Idle`.
 - **Regenerating the last response**: delete the last assistant message (and any tool messages from that turn) and repeat the request with the same context (a new seed, if a random seed is enabled).
 - **Continuing a response**: request a continuation of the assistant's last response (optional; useful when `finish_reason = Length`).
-- **Deleting the last message**: on request — the **last Assistant message** is deleted along with the **last User message**, and its text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there. (If the last message is a user message with no reply, only it is deleted, with its text returned.)
+- **Deleting the last message**: on request — the **last Assistant message** is deleted along with the **last User message**, and its text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there, separated from the draft by a **blank line** (the restored message is a message of its own, not a continuation of the draft). (If the last message is a user message with no reply, only it is deleted, with its text returned.)
 
 ### 6.5. Parsing "thoughts" (CoT)
 

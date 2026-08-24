@@ -640,17 +640,23 @@ fn restore_input_sets_when_empty_and_prepends_when_not() {
     // An empty field is simply filled.
     s.restore_input("вопрос".into());
     assert_eq!(s.input.text(), "вопрос");
-    // Non-empty — the text is prepended, the existing input is kept.
+    // Non-empty — the text is prepended, the existing input is kept, and a blank
+    // line separates the restored message from the draft (spec §11.7).
     s.input.clear();
     type_str(&mut s, "хвост");
     s.restore_input("голова ".into());
-    assert_eq!(s.input.text(), "голова хвост");
-    // Neither boundary has whitespace of its own → one space is inserted, or
-    // the restored message would fuse with the typed text mid-word.
+    assert_eq!(s.input.text(), "голова\n\nхвост");
+    // The separator is exactly one blank line, whatever whitespace the two
+    // sides brought with them.
     s.input.clear();
     type_str(&mut s, "хвост");
     s.restore_input("голова".into());
-    assert_eq!(s.input.text(), "голова хвост");
+    assert_eq!(s.input.text(), "голова\n\nхвост");
+    // A blank restored message leaves the draft exactly as typed.
+    s.input.clear();
+    type_str(&mut s, "хвост");
+    s.restore_input("   ".into());
+    assert_eq!(s.input.text(), "хвост");
 }
 
 #[test]

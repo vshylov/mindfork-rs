@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -39,6 +39,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/project` is highlighted while it is typed (done)
 - Post-M9: OSC 52 — the note that did not close the door (done)
 - Post-M9: the draft flush lags the intent — a spent command resurfaces in the box (done)
+- Post-M9: the restored message and the draft are separated by a blank line (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1440,3 +1441,31 @@ already covered the screen half.
 
 **A live model run is not required** (AGENTS.md §3) — pure UI/runtime routing.
 The live evidence is the screenshot that started it.
+
+### Post-M9: the restored message and the draft are separated by a blank line (done)
+
+- **What.** Deleting the last exchange (`Ctrl+E` / `/takeback`) returns the
+  user's message to the input box, prepending it to whatever is already
+  typed. The glue was **one space** (the nit fixed in the entry above), which
+  is right for a word boundary and wrong for what this actually is: two
+  separate utterances. Typing a next question, then taking the previous
+  exchange back, produced one run-on paragraph. The separator is now a **blank
+  line** (`{restored}\n\n{draft}`) whenever the draft is non-empty.
+- **Exactly one blank line, whatever the halves bring.** The restored text is
+  `trim_end`-ed and the draft's leading newlines are dropped, so a message that
+  ended in a newline or a draft that started with one still yields a single
+  empty line between them — the joint is normalized rather than concatenated.
+  A restored message that is blank (whitespace only) leaves the draft
+  byte-identical; an empty box is still simply filled, untrimmed.
+- **Where it lives.** `ChatScreen::restore_input`
+  ([src/screens/chat/feed.rs](../../src/screens/chat/feed.rs)) — the one seam
+  every `AppEvent::RestoreInput` goes through (delete-last, and the takeback
+  paths that share it), so the orchestrator needed no change. spec §6.4 records
+  the separator.
+
+**Tests** (one extended). The `restore_input` fixture now pins the blank line on
+both the trailing-space and the no-boundary-whitespace cases, and gains the
+whitespace-only restored message that must leave the draft alone. 2548 unit
+tests green.
+
+**A live model run is not required** (AGENTS.md §3) — pure UI.

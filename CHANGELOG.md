@@ -203,6 +203,11 @@ split by subsystem.
 
 ### Fixed
 
+- **A taken-back message no longer runs into what you were typing.**
+  Deleting the last exchange (`Ctrl+E`, `/takeback`) returns your message to
+  the input box; if something was already typed there, the two are now
+  separated by an empty line instead of a single space.
+
 - **Lists scroll the same way up as they do down.** Moving the selection up
   with `↑` scrolled the whole list on every press, keeping the selection pinned
   to the bottom row; now it walks up to the top visible row first, and only then
