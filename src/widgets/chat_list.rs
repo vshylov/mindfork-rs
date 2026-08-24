@@ -155,6 +155,9 @@ pub struct ChatListState {
     results_query: String,
     /// Selection index within the currently filtered list.
     selected: usize,
+    /// The list's scroll offset — the index of the first visible row. Lives
+    /// here rather than in a per-frame `ListState`, see [`Self::render`].
+    offset: usize,
     mode: Mode,
     /// The current operation error (auto-title/delete/clone) for the dedicated area.
     /// Reset on the next key press.
@@ -175,6 +178,7 @@ impl ChatListState {
             results: None,
             results_query: String::new(),
             selected: 0,
+            offset: 0,
             mode: Mode::Search,
             error: None,
             notice: None,
@@ -660,11 +664,23 @@ impl ChatListState {
         // Selection — a soft backdrop (like the tint in the mockup), not inverting the whole line;
         // the selected row's green rail is added in `item_line`.
         let list = List::new(items).highlight_style(Style::new().bg(palette.keycap_bg));
-        let mut list_state = ListState::default();
+        // The scroll offset is carried over from the previous frame. ratatui
+        // moves the offset only as far as it must to bring the selection back
+        // into view, so a `ListState` rebuilt from zero every frame recomputes
+        // it from the top each time: `↓` looked right (the selection stops at
+        // the bottom row and the list follows), but `↑` scrolled the list on
+        // every press instead of first walking the selection up to the top
+        // row. Keeping the offset makes both directions symmetric (spec §11.2).
+        // Clamped first: the filter or a deletion can have shortened the list
+        // under an offset that scrolled past its new tail.
+        let max_offset = visible.len().saturating_sub(list_area.height as usize);
+        self.offset = self.offset.min(max_offset);
+        let mut list_state = ListState::default().with_offset(self.offset);
         if !visible.is_empty() {
             list_state.select(Some(self.selected.min(visible.len() - 1)));
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
+        self.offset = list_state.offset();
 
         // The scrollbar on the "Chats" panel's right border — when there are more
         // chats than the list's visible height. The bar occupies only the list's rows
@@ -1437,6 +1453,55 @@ mod tests {
         s.on_key(key(KeyCode::PageUp));
         s.on_key(key(KeyCode::PageUp));
         assert_eq!(s.selected, 0);
+    }
+
+    /// `↑` must first walk the selection up to the window's top row and only
+    /// then scroll the list — the mirror image of what `↓` does. The offset
+    /// therefore has to survive between frames: rebuilt from zero, ratatui
+    /// recomputes it around the selection, and the list scrolls on every press.
+    #[test]
+    fn moving_up_walks_to_the_top_row_before_the_list_scrolls() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Explicitly descending timestamps: the sort is newest-first, so the
+        // list runs from -00 at its head to -29 at its tail regardless of how
+        // coarse the clock behind the fixture is.
+        let chats: Vec<ChatSummary> = (0..30)
+            .map(|i| ChatSummary {
+                modified_at: Utc::now() - chrono::Duration::seconds(i),
+                ..chat(&format!("код-{i:02}"))
+            })
+            .collect();
+        let mut s = ChatListState::new(chats, None);
+        let mut term = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        let mut render = |state: &mut ChatListState| {
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default(), ru()))
+                .unwrap();
+            format!("{:?}", term.backend().buffer())
+        };
+
+        // Jump to the tail: the last chat is on the bottom row, the first one is
+        // scrolled out of the window.
+        s.on_key(key(KeyCode::End));
+        let tail = render(&mut s);
+        assert!(tail.contains("код-29"), "{tail}");
+        assert!(!tail.contains("код-00"), "{tail}");
+
+        // A single press moves the selection inside the window — the rows stay put.
+        s.on_key(key(KeyCode::Up));
+        let inside = render(&mut s);
+        assert!(
+            inside.contains("код-29"),
+            "the window must not scroll while the selection can still move inside it: {inside}"
+        );
+
+        // Only once the selection has reached the top row does the list scroll.
+        for _ in 0..29 {
+            s.on_key(key(KeyCode::Up));
+        }
+        let head = render(&mut s);
+        assert!(head.contains("код-00"), "{head}");
+        assert!(!head.contains("код-29"), "{head}");
     }
 
     #[test]

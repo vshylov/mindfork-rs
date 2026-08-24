@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -54,6 +54,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats — the sub-agent's text streams into its transcript (done)
 - Post-M9: sub-agent chats — the parent's round in progress is mirrored too (done)
 - Post-M9: command-only control — stage 3 (`/autotitle`, the profile texts, `/impersonation`) (done)
+- Post-M9: the chat list scrolls symmetrically (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2259,3 +2260,43 @@ before the PR: clean.
 existing orchestrator surface (`AutoRenameChat`, `UpdateProfile`,
 `UpdateConfig`, all already covered). The motivating host behaviour is the
 JupyterLab report this stage answers.
+### Post-M9: the chat list scrolls symmetrically (done)
+
+**The report**: in the chat list `↓` behaved as expected — the selection walks
+down the visible rows and the list follows only at the bottom edge — while `↑`
+scrolled the list from the very first press, the selected chat glued to the
+bottom row instead of climbing to the top one.
+
+**The cause** was one line in `ChatListState::render`: the `ListState` handed to
+`render_stateful_widget` was built fresh every frame (`ListState::default()`).
+ratatui's list moves the offset only as far as it must to bring the selection
+into view — from an offset of `0` that means "scroll down until the selection is
+the *last* visible row". Rebuilt per frame, that rule ran from scratch on every
+draw, so the offset was always derived from the selection rather than remembered:
+downward it coincided with what a scrolling list should do, upward it produced a
+scroll per press. The asymmetry was in the state's lifetime, not in the key
+handling — `KeyCode::Up` was always a plain `selected -= 1`.
+
+**The fix**: the offset is a field of the widget (`ChatListState::offset`),
+seeded into the per-frame `ListState` (`with_offset`) and read back after the
+draw — the value the scrollbar was already reading. Clamped to
+`visible.len() - list_area.height` before the draw: a filter change or a deletion
+can shorten the list under an offset that has scrolled past its new tail, and the
+clamp belongs where the height is known. Everything that resets the selection
+(a new query, `Home`, a restored content query) needs no offset bookkeeping —
+ratatui pulls the window back up when the selection is above it.
+
+**Doors closed**: the same per-frame-`ListState` shape lives in the settings
+screen, the profile popup, the link picker and the message-search screen; those
+lists are short enough that no one has hit it, and mixing four unreported
+behaviour changes into a reported one-line fix is how a fix stops being
+reviewable. Left as a note here.
+
+**Tests** (suite 2543 → 2544): a render-level regression in
+`widgets::chat_list` — 30 chats with explicitly descending timestamps (so the
+sort order is not at the mercy of the clock's resolution), `End`, then one `↑`
+that must leave the rows where they are, then enough presses to reach the top
+and scroll. It fails on the old `ListState::default()` line, which is the point.
+
+**A live model run is not required** (AGENTS.md §3) — pure UI, no engine,
+storage or tool surface is touched.

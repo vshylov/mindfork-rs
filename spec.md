@@ -1858,6 +1858,13 @@ A direct requirement from the task:
   key that is a no-op is worse than a missing hint.
 - **Two sort modes**: by creation date and by last-modified date (toggled with a key; the active mode is indicated).
 - **List navigation**: `↑`/`↓` — one row, `PageUp`/`PageDown` — one page (a fixed step, since the list height is only known at render time), `Home`/`End` — to the first/last chat.
+  **The window follows the selection, it is not dragged by it**: the selection
+  moves inside the visible rows until it reaches the top or the bottom one, and
+  only then does the list scroll — symmetrically in both directions. This is a
+  property of the *state*, not of the drawing: the scroll offset is kept between
+  frames (`ChatListState::offset`), because a `ListState` rebuilt per frame makes
+  ratatui recompute the offset around the selection each time, which pinned the
+  selection to an edge row and scrolled the list on every `↑`.
 - **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
   (`set_single_line`, see [11.5](#115-input-and-editing-spellcheck)/[11.6](#116-the-settings-screen)),
   which gives spellcheck (error underlining), word-wise navigation/deletion
