@@ -167,7 +167,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-25, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2572 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2579 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,10 +179,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
-- **The `F1` "Shortcuts" tab lists keys by screen** — per-screen sections
-  (`HELP_SECTIONS`) with a "you are here" marker, the previously unlisted
-  screens' keys (settings, self-model, changes, search) included; stage 2 —
-  `F1` on every screen, scroll anchored to its section
+- **`F1` help by screen, from every screen** — the "Shortcuts" tab is
+  per-screen sections with a "you are here" marker; `F1` opens the dialog —
+  a runtime overlay now — over any screen, scrolled to that screen's
+  section, and each screen owns its section table next to its key handler
   ([docs/help-hotkeys-context.md](docs/help-hotkeys-context.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.7).
 - **Sub-agent transcripts fold under their chat in the list** — collapsed by

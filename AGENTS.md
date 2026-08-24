@@ -120,9 +120,10 @@ additions:
   spelling it into the label. `tools/cyrillic_scan.py` enforces both rules in CI.
 - Errors: `anyhow` in application layers, `thiserror` in `shared`. Logs —
   file only (`logs/`), no `println!` (stdout is taken by the TUI).
-- New keys/commands — go straight into the help overlay (`F1`/`?`,
-  `HELP_SECTIONS`, into the section of the screen that handles the key) and
-  the key tables in README / spec §11.7.
+- New keys/commands — go straight into the help overlay (`F1`/`?`): a key's
+  row belongs in the owning screen's `HELP_SECTION` table, which sits next to
+  that screen's key handler; commands land on the "Commands" tab. Plus the
+  key tables in README / spec §11.7.
 - Playbook for mechanically splitting large files —
   [docs/history/refactoring-god-objects.md](docs/history/refactoring-god-objects.md).
 
