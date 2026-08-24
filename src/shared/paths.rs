@@ -53,6 +53,10 @@ impl DataLocation {
                 // English context: this error occurs in `Paths::resolve` before
                 // the CLI language is known (docs/history/i18n-cli.md §7 — the
                 // "before the language is known" boundary).
+                // Deliberately the project id `mindfork-rs`, NOT the binary name
+                // (`mindfork`, credits::APP_NAME): this string keys the existing
+                // per-user data folder, and following the rename would strand
+                // that data (docs/research/binary-rename.md §3).
                 let dirs = directories::ProjectDirs::from("", "", "mindfork-rs")
                     .context("cannot determine the standard OS data folder")?;
                 Ok(dirs.data_dir().to_path_buf())

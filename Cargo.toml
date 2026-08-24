@@ -6,6 +6,13 @@ license = "MIT"
 homepage = "https://mindfork.io"
 repository = "https://github.com/vshylov/mindfork-rs"
 
+# The user-facing command is the brand name (`shared/credits.rs::APP_NAME`, held
+# by a gate test there); the package keeps the project name. See
+# docs/research/binary-rename.md.
+[[bin]]
+name = "mindfork"
+path = "src/main.rs"
+
 [dependencies]
 ansi-to-tui = "8.0.1"
 anyhow = "1.0.103"

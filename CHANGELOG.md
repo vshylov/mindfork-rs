@@ -140,6 +140,12 @@ split by subsystem.
 
 ### Changed
 
+- **The command is `mindfork` now.** The binary lost the `-rs` suffix — that
+  stays the project's name: type `mindfork` (`mindfork demo`, `mindfork
+  sandbox setup`, …), the Linux packages symlink `/usr/bin/mindfork` and the
+  application-menu entry says *mindfork*, and the Windows installer installs
+  `mindfork.exe` with matching shortcuts. Where your data lives, the package
+  names and the archive names are unchanged.
 - **`/reindex` now also rebuilds an attached file's search index when it is
   missing entirely.** Before, it re-embedded vectors that already existed, which
   is what an embedding-model change leaves behind — but an index can be gone
@@ -171,7 +177,7 @@ split by subsystem.
   the order the tool declares its arguments in, and the collapsed one-line header
   follows the same order.
 - **The Windows installer is a 64-bit program now.** It installs exactly what it
-  installed before, but it refuses a system that cannot run mindfork-rs before
+  installed before, but it refuses a system that cannot run mindfork before
   the wizard opens rather than on a page inside it — the program is 64-bit only,
   and now so is its installer. The download grows by about 0.7 MB. The wizard's
   title bar also drops the word "version" before the number, following the

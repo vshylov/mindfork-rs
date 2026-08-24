@@ -134,6 +134,11 @@ impl SecretKey {
 /// Plaintext of the `check` probe: encrypted alongside the keys; decrypting it
 /// successfully identifies an entry as "ours" (we do not store an explicit
 /// machine-id in the portable config).
+///
+/// The `mindfork-rs` prefix here and in [`ENTROPY`]/[`HKDF_INFO`] is frozen:
+/// these v1 constants are inputs of the stored-key encryption, so "aligning"
+/// them with the binary's rename to `mindfork` would orphan every stored key
+/// (docs/research/binary-rename.md §3).
 const CHECK_PLAINTEXT: &str = "mindfork-rs api-key check v1";
 
 /// Additional DPAPI entropy / HKDF salt — an app constant (not a secret).

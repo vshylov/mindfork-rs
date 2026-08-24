@@ -624,7 +624,7 @@ impl McpClient {
                     "protocolVersion": PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "mindfork-rs",
+                        "name": "mindfork",
                         "version": env!("CARGO_PKG_VERSION"),
                     }
                 }),

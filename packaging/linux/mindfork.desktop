@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=mindfork-rs
+Name=mindfork
 GenericName=AI Chat
 GenericName[ru]=ИИ-чат
 Comment=Console AI chat with local and cloud models
 Comment[ru]=Консольный ИИ-чат с локальными и облачными моделями
-Exec=mindfork-rs
-Icon=mindfork-rs
+Exec=mindfork
+Icon=mindfork
 # Mandatory: the app is a TUI, stdout is occupied by the interface. Without Terminal=true
 # launching from the menu gives no terminal and the window closes instantly.
 Terminal=true

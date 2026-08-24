@@ -2699,9 +2699,10 @@ both tables fits at both bounds of the dialog's width range in every bundled loc
 a second test pinning the one-column alignment itself.
 Wrapping rather than shortening, because the alternative is writing the help twice: once
 short enough for `en` and once for whichever locale the label is widest in.
-The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME`, not the
-package `mindfork-rs`); the same text is set as the **terminal window's title**
-at startup (`SetTitle`, Windows).
+The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME` — also the
+binary/command's name, while the Cargo package stays `mindfork-rs`, see
+[binary-rename.md](docs/research/binary-rename.md)); the same text is set as the
+**terminal window's title** at startup (`SetTitle`, Windows).
 
 Ctrl-shortcuts are layout-independent: a character is normalized to the "physical"
 Latin key (`shared/keys.rs::hotkey_char`), so `Ctrl+Q` (quit) works even under an
@@ -2871,7 +2872,7 @@ terminal, where the escape below is dropped and the pty is server-side anyway.
   Markdown already — that is how models write, and what the feed renders. It
   honours `config.copy`, so "what a copy includes" means one thing.
 - **JSON is a `mindfork-import` v1 document** ([import-format.md](docs/import-format.md))
-  carrying explicit ids, so `mindfork-rs import` puts it back onto the *same*
+  carrying explicit ids, so `mindfork import` puts it back onto the *same*
   chat — export and import are a round trip. The format has nowhere to put tool
   calls, and every JSON export's note says so rather than leaving it to be
   discovered.

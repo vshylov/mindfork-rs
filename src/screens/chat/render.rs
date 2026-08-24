@@ -114,7 +114,7 @@ impl ChatScreen {
         .areas(frame.area());
 
         let title = if self.title.is_empty() {
-            "mindfork-rs".to_string()
+            crate::shared::credits::APP_NAME.to_string()
         } else {
             self.title.clone()
         };

@@ -176,7 +176,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         root = %paths.root().display(),
-        "mindfork-rs starting"
+        "mindfork starting"
     );
 
     // Data schema migration at startup (before opening storage): downgrade guard,
@@ -299,8 +299,8 @@ fn launch_tui(
     runtime.shutdown_timeout(Duration::from_secs(2));
 
     match &result {
-        Ok(()) => tracing::info!("mindfork-rs exited cleanly"),
-        Err(err) => tracing::error!(error = %err, "mindfork-rs exited with error"),
+        Ok(()) => tracing::info!("mindfork exited cleanly"),
+        Err(err) => tracing::error!(error = %err, "mindfork exited with error"),
     }
     result.map(|()| ExitCode::SUCCESS)
 }

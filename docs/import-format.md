@@ -6,7 +6,7 @@ reads the source app's format and emits a single JSON file in this format;
 the app imports it with:
 
 ```
-mindfork-rs import <file.json>
+mindfork import <file.json>
 ```
 
 **The app also emits this format**: `/export json` writes one chat (plus the

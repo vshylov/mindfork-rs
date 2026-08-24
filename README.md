@@ -1,7 +1,7 @@
 <h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="artwork/mindfork-wordmark-dark.svg">
-    <img src="artwork/mindfork-wordmark-light.svg" alt="mindfork-rs" width="320">
+    <img src="artwork/mindfork-wordmark-light.svg" alt="mindfork" width="320">
   </picture>
 </h1>
 
