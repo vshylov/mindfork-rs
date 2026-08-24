@@ -9,11 +9,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState};
+use ratatui::widgets::{Clear, List, ListItem};
 use uuid::Uuid;
 
 use crate::entities::profile::ProfileSummary;
 use crate::shared::theme::Palette;
+use crate::shared::ui::ListScroll;
 
 /// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +31,9 @@ pub enum ProfileListAction {
 pub struct ProfileListState {
     profiles: Vec<ProfileSummary>,
     selected: usize,
+    /// The popup is capped at the screen's height, so a long profile list does
+    /// scroll — and a scroll position has to survive the frame ([`ListScroll`]).
+    scroll: ListScroll,
 }
 
 impl ProfileListState {
@@ -38,6 +42,7 @@ impl ProfileListState {
         Self {
             profiles,
             selected: 0,
+            scroll: ListScroll::default(),
         }
     }
 
@@ -73,7 +78,7 @@ impl ProfileListState {
 
     /// Draws the overlay centered in `area`.
     pub fn render(
-        &self,
+        &mut self,
         frame: &mut Frame,
         area: Rect,
         palette: &Palette,
@@ -109,11 +114,14 @@ impl ProfileListState {
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::new().reversed());
-        let mut state = ListState::default();
-        if !self.profiles.is_empty() {
-            state.select(Some(self.selected.min(self.profiles.len() - 1)));
-        }
-        frame.render_stateful_widget(list, popup, &mut state);
+        self.scroll.render(
+            frame,
+            list,
+            popup,
+            self.profiles.len(),
+            popup.height.saturating_sub(2) as usize, // the panel's borders
+            (!self.profiles.is_empty()).then_some(self.selected),
+        );
     }
 }
 
@@ -178,7 +186,7 @@ mod tests {
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let s = ProfileListState::new(vec![profile("Альфа"), profile("Бета")]);
+        let mut s = ProfileListState::new(vec![profile("Альфа"), profile("Бета")]);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))

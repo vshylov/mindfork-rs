@@ -17,7 +17,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use uuid::Uuid;
 
 use crate::app::events::ChildView;
@@ -35,7 +35,7 @@ use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{dim_background, render_scrollbar};
+use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::impersonation_preview;
@@ -453,6 +453,10 @@ struct SuggestPopup {
     end: usize,
     items: Vec<SuggestItem>,
     selected: usize,
+    /// The list's scroll position. The popup is sized to its (at most eight)
+    /// suggestions, so it only scrolls on a terminal too short to hold them —
+    /// but the rule is the same one every list here follows ([`ListScroll`]).
+    scroll: ListScroll,
 }
 
 /// Impersonation state (`Ctrl+U`): while a reply "on behalf of the user" is

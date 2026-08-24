@@ -16,12 +16,13 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState};
+use ratatui::widgets::{Clear, List, ListItem};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
+use crate::shared::ui::ListScroll;
 
 /// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +45,9 @@ pub struct ChatLinkPickerState {
     /// (docs/lessons.md §4).
     current: Option<Uuid>,
     selected: usize,
+    /// The popup is capped at the screen's height, so a chat with many
+    /// references does scroll — see [`ListScroll`].
+    scroll: ListScroll,
 }
 
 impl ChatLinkPickerState {
@@ -54,6 +58,7 @@ impl ChatLinkPickerState {
             chats,
             current,
             selected: 0,
+            scroll: ListScroll::default(),
         }
     }
 
@@ -88,7 +93,13 @@ impl ChatLinkPickerState {
     }
 
     /// Draws the overlay centered in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect, palette: &Palette, loc: &'static Locale) {
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        palette: &Palette,
+        loc: &'static Locale,
+    ) {
         let rows = (self.chats.len() as u16 + 2).clamp(5, area.height);
         let popup = centered_rect(60, 40, rows, area);
         frame.render_widget(Clear, popup);
@@ -132,11 +143,14 @@ impl ChatLinkPickerState {
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::new().reversed());
-        let mut state = ListState::default();
-        if !self.chats.is_empty() {
-            state.select(Some(self.selected.min(self.chats.len() - 1)));
-        }
-        frame.render_stateful_widget(list, popup, &mut state);
+        self.scroll.render(
+            frame,
+            list,
+            popup,
+            self.chats.len(),
+            popup.height.saturating_sub(2) as usize, // the panel's borders
+            (!self.chats.is_empty()).then_some(self.selected),
+        );
     }
 }
 
@@ -160,6 +174,10 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
     fn chat(title: &str) -> ChatSummary {
@@ -186,6 +204,45 @@ mod tests {
         s.on_key(key(KeyCode::Down));
         s.on_key(key(KeyCode::Down));
         assert_eq!(s.selected_id(), Some(last), "no wrap past the bottom");
+    }
+
+    /// A chat with more references than the screen can hold scrolls, and it
+    /// scrolls the same way in both directions: the selection crosses the
+    /// visible rows first, the window moves only when it has to
+    /// ([`ListScroll`], docs/lessons.md §5).
+    #[test]
+    fn a_long_reference_list_scrolls_symmetrically() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let chats: Vec<ChatSummary> = (0..30).map(|i| chat(&format!("чат {i}"))).collect();
+        let mut s = ChatLinkPickerState::new(chats, None);
+        let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        let mut draw = |s: &mut ChatLinkPickerState| {
+            term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))
+                .unwrap();
+        };
+
+        draw(&mut s);
+        for _ in 0..29 {
+            s.on_key(key(KeyCode::Down));
+            draw(&mut s);
+        }
+        let bottom = s.scroll.offset();
+        assert!(bottom > 0, "the popup is capped at the screen's height");
+
+        s.on_key(key(KeyCode::Up));
+        draw(&mut s);
+        assert_eq!(
+            s.scroll.offset(),
+            bottom,
+            "the rows must stay put while the selection can still move inside them"
+        );
+
+        for _ in 0..29 {
+            s.on_key(key(KeyCode::Up));
+            draw(&mut s);
+        }
+        assert_eq!(s.scroll.offset(), 0);
     }
 
     #[test]

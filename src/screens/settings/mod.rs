@@ -15,7 +15,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::profile::Profile;
@@ -35,7 +35,7 @@ use crate::shared::osc52::Osc52Mode;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{dim_background, render_scrollbar};
+use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
 use crate::widgets::input_box::{InputBox, RenderOpts};
 use crate::widgets::status_bar;
 
@@ -823,6 +823,8 @@ struct SearchHit {
 /// The field-search overlay (`/`): a query line + a flat filtered result set.
 struct SearchState {
     input: InputBox,
+    /// The results list's scroll position (see [`ListScroll`]).
+    scroll: ListScroll,
     /// The full index of fields across all sections/subsections (built on open).
     all: Vec<SearchHit>,
     /// Indices into `all` that passed the query filter.
@@ -835,6 +837,9 @@ struct ChoiceState {
     field: FieldId,
     options: Vec<String>,
     selected: usize,
+    /// The option list's scroll position — the popup is capped at the screen's
+    /// height, so a long option set does scroll (see [`ListScroll`]).
+    scroll: ListScroll,
 }
 
 /// The settings screen: a working copy of the configuration and profiles + navigation state.
@@ -895,6 +900,11 @@ pub struct SettingsScreen {
     undo: Vec<EditStep>,
     /// Undone edits available for `Ctrl+Y`; cleared by any fresh edit.
     redo: Vec<EditStep>,
+    /// Scroll positions of the two panes' lists. Kept between frames — that is
+    /// what makes `↑` walk the selection to the top row before the pane starts
+    /// scrolling, symmetrically with `↓` (see [`ListScroll`]).
+    menu_scroll: ListScroll,
+    fields_scroll: ListScroll,
 }
 
 // ---------- submodules (a breakup of a god object: docs/history/refactoring-god-objects.md) ----------

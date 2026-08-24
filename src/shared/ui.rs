@@ -6,7 +6,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{
+    Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 use crate::shared::theme::Palette;
 
@@ -123,6 +125,58 @@ pub fn render_scrollbar(
     frame.render_stateful_widget(bar, area, &mut state);
 }
 
+/// A list's scroll position, kept **between frames**.
+///
+/// ratatui moves a list's offset only as far as it must to bring the selection
+/// into view, so a `ListState` built inside a `render` function recomputes the
+/// offset from zero on every draw — which reads as "scroll until the selection
+/// is the *last* visible row". Downward that looks like a window correctly
+/// following the selection; upward the list scrolls on every press and the
+/// selection never walks up to the top row (docs/lessons.md §5). The offset is
+/// state, not decoration: the widget owns one of these and calls
+/// [`ListScroll::render`] instead of building a `ListState` itself.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ListScroll {
+    offset: usize,
+}
+
+impl ListScroll {
+    /// The first visible row of the last draw — what [`render_scrollbar`] takes
+    /// as its `position`.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// Draws `list` into `area` with the selection on `selected` (`None` — no
+    /// selection), carrying the scroll position over from the previous frame.
+    ///
+    /// `len` — the number of items, `view_h` — the rows the list actually draws
+    /// into (`area.height` minus the block's borders, when it has one). The two
+    /// clamp the stored offset to the list's tail before the draw, so a list
+    /// that has shrunk under it (a filter, a deletion) cannot leave the window
+    /// hanging past its end. For items taller than one row the clamp is merely
+    /// conservative — ratatui still scrolls down to the selection.
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        list: List<'_>,
+        area: Rect,
+        len: usize,
+        view_h: usize,
+        selected: Option<usize>,
+    ) {
+        self.offset = self.offset.min(len.saturating_sub(view_h));
+        let mut state = ListState::default().with_offset(self.offset);
+        if len > 0
+            && let Some(sel) = selected
+        {
+            state.select(Some(sel.min(len - 1)));
+        }
+        frame.render_stateful_widget(list, area, &mut state);
+        self.offset = state.offset();
+    }
+}
+
 /// What [`screen_chrome`] hands back: where the content goes, where the hotkey
 /// grid goes, and the grid itself.
 pub struct ScreenChrome {
@@ -233,6 +287,59 @@ mod tests {
         (area.top()..area.bottom())
             .map(|y| buf[(area.right() - 1, y)].symbol().to_string())
             .collect()
+    }
+
+    /// One draw of `len` single-row items into an `h`-row area, with the
+    /// selection on `selected`.
+    fn draw(scroll: &mut ListScroll, len: usize, selected: usize, h: u16) {
+        let mut term = Terminal::new(TestBackend::new(12, h)).unwrap();
+        term.draw(|f| {
+            let items: Vec<ratatui::widgets::ListItem> =
+                (0..len).map(|i| format!("row {i}").into()).collect();
+            let area = f.area();
+            scroll.render(f, List::new(items), area, len, h as usize, Some(selected));
+        })
+        .unwrap();
+    }
+
+    /// The window follows the selection instead of being dragged by it: the
+    /// selection crosses the visible rows first, and only a selection that has
+    /// left the window moves it — the same in both directions. Guarding the
+    /// helper guards every list built on it (docs/lessons.md §5).
+    #[test]
+    fn the_window_moves_only_when_the_selection_leaves_it() {
+        let mut scroll = ListScroll::default();
+        // Landing on the last item scrolls it to the bottom row.
+        draw(&mut scroll, 30, 29, 10);
+        assert_eq!(scroll.offset(), 20);
+        // Moving up inside the window leaves the rows exactly where they were.
+        draw(&mut scroll, 30, 28, 10);
+        assert_eq!(scroll.offset(), 20);
+        draw(&mut scroll, 30, 20, 10);
+        assert_eq!(scroll.offset(), 20, "the selection is on the top row");
+        // Past the top row — now, and only now, the list scrolls, by one row.
+        draw(&mut scroll, 30, 19, 10);
+        assert_eq!(scroll.offset(), 19);
+        // Symmetrically at the other edge: down through the window, then a row.
+        draw(&mut scroll, 30, 28, 10);
+        assert_eq!(scroll.offset(), 19);
+        draw(&mut scroll, 30, 29, 10);
+        assert_eq!(scroll.offset(), 20);
+    }
+
+    /// A list that has shrunk under the stored offset (a filter, a deletion)
+    /// must not leave the window hanging past its new tail — a couple of rows
+    /// at the top and empty space below.
+    #[test]
+    fn a_shrunken_list_pulls_the_window_back_to_its_tail() {
+        let mut scroll = ListScroll::default();
+        draw(&mut scroll, 30, 29, 10);
+        assert_eq!(scroll.offset(), 20);
+        draw(&mut scroll, 12, 11, 10);
+        assert_eq!(scroll.offset(), 2, "the last ten of twelve rows");
+        // Shorter than the window — everything is visible from the first row.
+        draw(&mut scroll, 4, 3, 10);
+        assert_eq!(scroll.offset(), 0);
     }
 
     #[test]

@@ -228,10 +228,10 @@ impl ChatScreen {
     /// spellcheck suggestions, the emoji picker, the tool confirmation, the
     /// `Ctrl+R`/`Ctrl+E` confirmation, help) — in stacking order.
     fn render_overlays(&mut self, frame: &mut Frame) {
-        if let Some(overlay) = &self.profile_overlay {
+        if let Some(overlay) = &mut self.profile_overlay {
             overlay.render(frame, frame.area(), &self.palette, self.loc);
         }
-        if let Some(popup) = &self.suggest {
+        if let Some(popup) = &mut self.suggest {
             dim_background(frame, &self.palette);
             render_suggest(frame, popup, &self.palette, self.loc);
         }
@@ -239,7 +239,7 @@ impl ChatScreen {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
         }
-        if let Some(picker) = &self.chat_links {
+        if let Some(picker) = &mut self.chat_links {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
         }

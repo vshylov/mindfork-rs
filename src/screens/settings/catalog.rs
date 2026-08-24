@@ -40,6 +40,8 @@ impl SettingsScreen {
             mcp_import_result: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            menu_scroll: ListScroll::default(),
+            fields_scroll: ListScroll::default(),
         }
     }
 

@@ -34,6 +34,7 @@ impl ChatScreen {
             end: word.end,
             items,
             selected: 0,
+            scroll: ListScroll::default(),
         });
     }
 
@@ -996,7 +997,7 @@ fn leader_row(
 /// Draws the spellcheck-suggestion popup centered on screen.
 pub(super) fn render_suggest(
     frame: &mut Frame,
-    popup: &SuggestPopup,
+    popup: &mut SuggestPopup,
     palette: &Palette,
     loc: &'static Locale,
 ) {
@@ -1044,9 +1045,15 @@ pub(super) fn render_suggest(
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::new().bg(palette.keycap_bg));
-    let mut state = ListState::default();
-    state.select(Some(selected));
-    frame.render_stateful_widget(list, area, &mut state);
+    let len = popup.items.len();
+    popup.scroll.render(
+        frame,
+        list,
+        area,
+        len,
+        area.height.saturating_sub(2) as usize, // the panel's borders
+        Some(selected),
+    );
 }
 
 /// Draws the modal confirmation popup for an irreversible operation

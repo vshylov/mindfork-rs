@@ -203,11 +203,14 @@ split by subsystem.
 
 ### Fixed
 
-- **The chat list scrolls the same way up as it does down.** Moving the
-  selection up with `↑` scrolled the whole list on every press, keeping the
-  selected chat pinned to the bottom row; now the selection walks up to the top
-  visible row first, and only then does the list scroll — the mirror image of
-  `↓`.
+- **Lists scroll the same way up as they do down.** Moving the selection up
+  with `↑` scrolled the whole list on every press, keeping the selection pinned
+  to the bottom row; now it walks up to the top visible row first, and only then
+  does the list scroll — the mirror image of `↓`. Fixed in the chat list, in the
+  settings screen's section menu, field pane and field search (`/`), and in the
+  profile, reference (`Ctrl+L`) and spellcheck popups. The settings field pane
+  also keeps a row of context around the selection, so the group header you are
+  standing under stays visible.
 
 - **A typed command no longer resurfaces in the input box after doing its
   job.** `/takeback` glued itself onto the restored message ("your text/takeback"),
