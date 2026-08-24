@@ -955,7 +955,7 @@ impl ChatListState {
         // (spec §11.2): an advertised key that is a no-op is worse than a
         // missing hint, and the refusal itself still names the way out.
         let selected = self.selected_row();
-        let on_child = selected.as_ref().is_some_and(|r| r.is_child());
+        let on_child = selected.as_ref().is_some_and(Row::is_child);
         // `Ctrl+O` folds/unfolds the selected chat's transcripts — advertised
         // only when it has any, with the direction it would take (the way
         // `Tab` carries the sort). On a transcript row it names the parent's.
