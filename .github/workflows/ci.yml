@@ -137,6 +137,15 @@ jobs:
       # megabyte. None of it breaks a build. Needs no toolchain, so it runs here.
       - name: Documentation structure (journal indexes + CLAUDE.md size)
         run: python3 tools/doc_index_check.py
+      # A list's scroll offset built inside `render` is recomputed from zero on
+      # every frame, so the selection sticks to an edge row and the list scrolls
+      # on every press in one direction. It is four ordinary-looking lines, no
+      # test that asserts on the selection notices, and it reached eight lists
+      # by copy-paste before a user reported it — twice. The rule now has one
+      # implementation (`shared::ui::ListScroll`); this keeps it the only one.
+      # Needs no toolchain, so it runs here.
+      - name: A list's scroll state has one implementation
+        run: python3 tools/list_scroll_check.py --list
       # The Windows installer shows DISCLAIMER.md on a wizard page, and Inno Setup
       # renders only text or RTF — so that page reads a generated copy of the file.
       # Left ungated, an edit to the disclaimer would leave the installer presenting

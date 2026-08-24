@@ -141,6 +141,7 @@ cargo run                          # TUI (needs a REAL terminal — see Pitfalls
 python tools/cyrillic_scan.py      # source-language gate
 python tools/link_check.py         # relative-link gate
 python tools/doc_index_check.py    # documentation-structure gate
+python tools/list_scroll_check.py  # one implementation of a list's scroll state
 python tools/wizard_rtf.py         # regenerate the Windows installer's disclaimer page
 python tools/wizard_rtf.py --check # ...and the gate that it matches DISCLAIMER.md
 ```

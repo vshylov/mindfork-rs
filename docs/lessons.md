@@ -783,8 +783,11 @@ the same defect, because each was written by copying a neighbour rather than a
 helper. A rule that must hold in eight places is one function, not eight.
 The sibling trap: a list whose rows are **not all selectable** (group headers)
 needs `scroll_padding(1)`, or the header of the group the selection stands in
-scrolls out — the selection is the only thing ratatui keeps in view.
-— *the chat list scrolls symmetrically*, *the same for every other list*.
+scrolls out — the selection is the only thing ratatui keeps in view. Since a
+convention is what let this spread in the first place, `tools/list_scroll_check.py`
+(CI's `lint` job) now fails on a `ListState`/`TableState` built anywhere else.
+— *the chat list scrolls symmetrically*, *the same for every other list*,
+*the gate under it*.
 
 ---
 
