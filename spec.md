@@ -2666,7 +2666,7 @@ binary was built for, so a report names the actual build), the links — the web
 **leader table** the "Components" tab uses, one value column anchored against the
 mirrored right margin, because a value column left-aligned one step past the widest
 label left the right ~30 columns of a wide dialog empty),
-**"Hotkeys"** (this table), **"Commands"** (input-box commands `/rag …`/
+**"Hotkeys"** (this table, presented as per-screen sections — below), **"Commands"** (input-box commands `/rag …`/
 `/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
 **"Disclaimer"** (`DISCLAIMER.md` — what the author does not answer for when the model that
 writes every word on screen was chosen and downloaded by the user: generated output,
@@ -2703,17 +2703,32 @@ truthful and license scanners start reporting "Other" (a `shared::credits` gate 
 that line). The strip's labels are width-budgeted — a `screens::chat` gate test checks that
 it fits the dialog's **minimum** width in **every** bundled locale, since the tab that
 overflows is the rightmost one and would be silently truncated for one language only.
-The **rows of the "Hotkeys"/"Commands" tabs are width-budgeted the same way**, and for the
-same reason: those tabs are plain `Paragraph`s with no wrapping of their own, so a
-description longer than the dialog simply lost its tail mid-word — in `ru` while looking
-fine in `en`, or the other way round. Each tab is laid out as one table: related entries
-sit in **groups separated by a blank line** (the groups carry no headers, so they need no
-locale keys), and every description starts in the **same column** — one past the tab's
-widest label, measured per tab and per locale in display columns, since the labels differ
-in width between languages and a fixed constant would be wrong for one of them. A long
-description **wraps, hung under that shared column**, and a gate test asserts every row of
-both tables fits at both bounds of the dialog's width range in every bundled locale, with
-a second test pinning the one-column alignment itself.
+The **"Hotkeys" tab is a list of per-screen sections**
+([help-hotkeys-context.md](docs/help-hotkeys-context.md)): "Everywhere", then the chat,
+the chat list, the settings, the self-model, the changes and the message-search screens,
+each under a localized header (`ui.help.sec.*`) whose title also names the route to the
+screen ("Settings (Ctrl+P)"). A key is listed once per screen where it does something, so
+a chord with two meanings is two short rows in two sections rather than one row with an
+"in the chat list: …" clause written per locale — and the screens whose keys the flat
+list used to omit entirely (settings, self-model, changes, search) each have a section.
+The section for the screen the dialog was opened from carries a **"you are here"
+marker** (`ui.help.here`) on its header — today that is always the chat, the only screen
+that opens the dialog; making `F1` work on every screen and anchor the tab's scroll to
+the opener's section is the track's second stage. Related entries within a section still
+sit in **groups separated by a blank line** (a break carries no text and needs no locale
+key); the "Commands" tab stays one headerless table with the same groups. Command labels
+(`/…`) are colored as commands only on the "Commands" tab — the hotkeys tab draws every
+label as a keycap, so the settings screen's `/` (find a setting) reads as the key it is.
+The **rows of both tabs are width-budgeted like the strip**, and for the same reason:
+the tabs are plain `Paragraph`s with no wrapping of their own, so a description longer
+than the dialog simply lost its tail mid-word — in `ru` while looking fine in `en`, or
+the other way round. Every description starts in the **same column** — one past the
+tab's widest label, measured per tab and per locale in display columns, since the labels
+differ in width between languages and a fixed constant would be wrong for one of them. A
+long description **wraps, hung under that shared column**, and a gate test asserts every
+row of both tabs — the section headers included — fits at both bounds of the dialog's
+width range in every bundled locale, with a second test pinning the one-column alignment
+itself.
 Wrapping rather than shortening, because the alternative is writing the help twice: once
 short enough for `en` and once for whichever locale the label is widest in.
 The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME` — also the

@@ -423,19 +423,48 @@ impl HelpTab {
 /// sought-after content; "About" is the neighboring tab.
 pub(super) const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
+/// The screen the help dialog was opened from — the "Shortcuts" tab marks that
+/// screen's section "you are here" (`popups::HELP_SECTIONS`). Today only the
+/// chat opens the dialog; stage 2 of docs/help-hotkeys-context.md threads the
+/// real invoking screen through and anchors the tab's scroll to its section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HelpContext {
+    /// The chat screen (the feed + the input box).
+    Chat,
+    /// The chat-list overlay (`Esc` from the chat).
+    ChatList,
+    /// The settings screen (`Ctrl+P`).
+    Settings,
+    /// The self-model screen (`F3`).
+    SelfModel,
+    /// The attached project's changes screen (`F4`).
+    Changes,
+    /// The message-search results (`Ctrl+G` in the chat list).
+    Search,
+}
+
 /// The help dialog's state: the active tab + its content's scroll position
-/// (reset on tab switch). Opens on `F1`/`?`. See spec §11.7.
+/// (reset on tab switch), and the screen it was opened from. Opens on
+/// `F1`/`?`. See spec §11.7.
 pub(super) struct HelpState {
     pub(super) tab: HelpTab,
     /// The first visible row of the active tab's content (clamped in `render_help`).
     pub(super) scroll: usize,
+    /// The invoking screen, for the "you are here" marker.
+    pub(super) context: HelpContext,
 }
 
 impl HelpState {
     /// Open on the given tab (on reopening — on the last-selected one,
-    /// [`ChatScreen::help_last_tab`]).
+    /// [`ChatScreen::help_last_tab`]). The chat screen is the only opener
+    /// today, so the context is fixed (docs/help-hotkeys-context.md §6 threads
+    /// the real one in stage 2).
     pub(super) fn open(tab: HelpTab) -> Self {
-        Self { tab, scroll: 0 }
+        Self {
+            tab,
+            scroll: 0,
+            context: HelpContext::Chat,
+        }
     }
 
     /// The next tab (wrapping); resets scroll.

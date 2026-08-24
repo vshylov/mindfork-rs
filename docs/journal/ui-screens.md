@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -58,6 +58,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the same scrolling rule for every other list (done)
 - Post-M9: sub-agent chats — the child view arrives before the feed is built (done)
 - Post-M9: the chat list folds a chat's sub-agent transcripts (done)
+- Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2429,3 +2430,57 @@ storage or tool surface is touched.
   Sonar's 3% new-code bar (lessons §2, eighth entry). A live model run is not
   required (AGENTS.md §3) — UI plus one additive stored field; no engine or
   tool surface is touched.
+
+### Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
+- **The `F1` "Shortcuts" tab reorganized from one flat list into per-screen
+  sections** (branch `feat/help-keys-sections`; design
+  [docs/help-hotkeys-context.md](../help-hotkeys-context.md), forks decided by
+  the user 2026-08-24, all as recommended). The flat `HELP_KEYS` had grown
+  three ways of expressing context at once: clauses inside descriptions
+  ("in a chat: …; in the chat list: …" — `Ctrl+F`), the same chord listed
+  twice in different groups unexplained (`Ctrl+O`, `Ctrl+G`), and meanings
+  missing outright (`Ctrl+R`'s list meaning; every key of the settings,
+  self-model, changes and search screens). Now: `HelpSection { title, context,
+  rows, openers }` and `HELP_SECTIONS` (`screens/chat/popups.rs`) — Everywhere
+  · Chat · Chat list · Settings · Self-model · Changes · Found messages — each
+  header a localized `ui.help.sec.*` title that also names the route
+  ("Settings (Ctrl+P)"), rendered as the title plus a `─` rule with one
+  description column shared across the whole tab; the intra-section
+  blank-line groups keep the opener mechanism, now per section.
+- **Section rows were written against the actual key handlers**, inventoried
+  match-arm by match-arm (an Explore pass over `widgets/chat_list.rs`,
+  `screens/settings/apply.rs`, `self_model.rs`, `search.rs`, `changes.rs`) —
+  which surfaced keys no help listed: the list's `Tab` (sort toggle),
+  `Ctrl+D` (clone), `Del` (delete); the settings' `/` search, `Ctrl+Z/Y`
+  settings-undo, `Del` field reset; the changes screen's `r`. The chat
+  section also gained the missing `F2` row.
+- **"You are here"** (fork F1): `HelpState.context` (`HelpContext`, stage 1
+  always `Chat` — the only opener) marks the matching section's header with
+  an accent `· you are here` suffix (`ui.help.here`). Stage 2 threads the
+  real invoking screen, routes `F1` on every screen (today only the chat
+  handles it) and anchors the tab's scroll to the opener's section (fork F2:
+  the chat keeps its last-tab behavior).
+- **Deliberate reversal, recorded**: the "groups carry no headers, so they
+  need no locale keys" rule stays true for the *micro*-groups, but the seven
+  section headers are new locale keys on purpose — cheaper than the context
+  clause every dual-meaning description was paying per locale.
+- **The `/` key exposed a latent assumption**: `key_lines` styled any label
+  starting with `/` as a command. The settings' search key *is* `/`, so the
+  command styling became a per-table flag (`table_lines(_, command_labels)`)
+  — the hotkeys tab is keycaps throughout, the "Commands" tab unchanged.
+- **Gates extended, not weakened**: width-budget and one-column tests run
+  over `hotkeys_lines` (headers included; header rows are excluded from the
+  column check by their `─` rule); `group_openers_open_real_rows` pins
+  openers per section and looks each opener up inside its own section's
+  slice, delimited by the (unique) headers — key labels repeat across
+  sections now ("Esc", "Enter"), which is exactly what made the old
+  whole-tab lookup wrong. New test: the marker appears exactly once and
+  follows the context (`the_invoking_screens_section_is_marked`, pinned for
+  two contexts).
+- i18n: ~50 new keys (`ui.help.sec.*`, `ui.help.here`, the section rows),
+  two crammed keys deleted (`ui.help.search_content`,
+  `ui.help.search_messages`), `esc`/`subagents_fold` reworded shorter;
+  `ru`+`en` at parity, the i18n gates green. Docs: spec §11.7, README,
+  AGENTS.md §3 (`HELP_SECTIONS`), CHANGELOG. **2572 unit tests green.** A
+  live run is not required (AGENTS.md §3) — a help tab; no engine, storage
+  or tool surface is touched.

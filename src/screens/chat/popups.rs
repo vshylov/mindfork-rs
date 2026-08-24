@@ -258,52 +258,170 @@ impl ChatScreen {
     }
 }
 
-/// Hotkeys for the "Hotkeys" tab (`F1`/`?`). Pairs `(keycap, desc_key)`: `keycap`
-/// is a literal "key" (ASCII, universal) **or** a `ui.*` key where the label
-/// itself has words (mouse); `desc_key` is always a `ui.*` description key. Both
-/// are resolved through the locale in [`key_lines`]. Input-box commands (`/…`)
-/// are split out into [`HELP_COMMANDS`] (a separate tab). Related keys sit in
-/// display groups, encoded **outside** the table — [`KEY_GROUP_OPENERS`] names
-/// the row that opens each group. See spec §11.7, docs/i18n-ui.md.
-pub(super) const HELP_KEYS: &[(&str, &str)] = &[
-    ("Enter", "ui.help.send"),
-    ("Shift+Enter / Alt+Enter", "ui.help.newline"),
-    ("Shift+←/→/↑/↓", "ui.help.select"),
-    ("Ctrl+A", "ui.help.select_all"),
-    ("Ctrl+C", "ui.help.copy"),
-    ("Ctrl+X", "ui.help.cut"),
-    ("Ctrl+V", "ui.help.paste"),
-    ("Esc", "ui.help.esc"),
-    // Only meaningful inside the chat list, but it belongs here: that is where
-    // users look for "how do I search my history?".
-    ("Ctrl+F", "ui.help.search_content"),
-    ("Ctrl+G", "ui.help.search_messages"),
-    ("Ctrl+O", "ui.help.subagents_fold"),
-    ("Ctrl+N", "ui.help.new_chat"),
-    ("F3", "ui.help.self_model"),
-    ("F4", "ui.help.changes"),
-    ("F5", "ui.help.copy_chat"),
-    ("Ctrl+R", "ui.help.regenerate"),
-    ("Ctrl+E", "ui.help.delete_exchange"),
-    ("Ctrl+U", "ui.help.impersonate"),
-    ("Ctrl+K", "ui.help.clear_input"),
-    ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
-    ("Ctrl+←/→", "ui.help.word_move"),
-    ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
-    ("Home", "ui.help.line_home"),
-    ("End", "ui.help.line_end"),
-    ("Ctrl+Home/End", "ui.help.doc_move"),
-    ("Ctrl+P", "ui.help.settings"),
-    ("Ctrl+T", "ui.help.thoughts"),
-    ("Ctrl+O", "ui.help.tool_calls"),
-    ("Ctrl+G", "ui.help.spell"),
-    ("Ctrl+B", "ui.help.emoji"),
-    ("Ctrl+L", "ui.help.chat_links"),
-    ("Ctrl+W", "ui.help.mouse_toggle"),
-    ("ui.help.k.mouse", "ui.help.mouse_action"),
-    ("PageUp/PageDown", "ui.help.scroll"),
-    ("F1 / ?", "ui.help.help"),
-    ("Ctrl+Q / F10", "ui.help.quit"),
+/// One section of the "Shortcuts" tab (`F1`/`?`): the keys of one screen under
+/// a localized header. A key is listed once per screen where it does something,
+/// so a chord with two meanings is two short rows in two sections — the header
+/// says the context the descriptions used to spell out ("in the chat list: …")
+/// per locale, or dropped entirely (the settings screen's keys were absent).
+/// Rows are `(keycap, desc_key)` pairs: `keycap` is a literal "key" (ASCII,
+/// universal) **or** a `ui.*` key where the label itself has words (mouse,
+/// typing); `desc_key` is always a `ui.*` description key. Both are resolved
+/// through the locale in [`key_lines`]. Input-box commands (`/…`) are split out
+/// into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
+/// docs/help-hotkeys-context.md, docs/i18n-ui.md.
+pub(super) struct HelpSection {
+    /// Locale key of the header (`ui.help.sec.*`). The route to the screen is
+    /// part of the localized title ("Settings (Ctrl+P)") — the header doubles
+    /// as "how do I get there".
+    pub(super) title: &'static str,
+    /// The screen this section documents — the one whose header carries the
+    /// "you are here" marker when the dialog was opened from it. `None` — the
+    /// "Everywhere" rows, never marked.
+    pub(super) context: Option<HelpContext>,
+    /// The section's `(keycap, desc_key)` rows.
+    pub(super) rows: &'static [(&'static str, &'static str)],
+    /// The rows that open an intra-section display group: a blank line is
+    /// drawn before each (never before the section's first row — the header
+    /// already separates). Encoded **outside** the rows on purpose: the rows
+    /// are long-lived, and a line added among them lands inside the region the
+    /// SonarQube copy-paste detector flags on these uniform tuple tables
+    /// (docs/lessons.md §2). `group_openers_open_real_rows` pins each opener
+    /// to exactly one row of its section.
+    pub(super) openers: &'static [&'static str],
+}
+
+/// The "Shortcuts" tab as per-screen sections (spec §11.7,
+/// docs/help-hotkeys-context.md): "Everywhere" first, then the screens by how
+/// often the user is on them. Rows follow each screen's actual key handler —
+/// completeness against the `match` arms is the point, and AGENTS.md §3 sends
+/// every new key here.
+pub(super) const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        title: "ui.help.sec.everywhere",
+        context: None,
+        rows: &[("Ctrl+Q / F10", "ui.help.quit")],
+        openers: &[],
+    },
+    // The chat's groups: composing · selection/clipboard · the conversation ·
+    // editing · panels and toggles (with the way out at the end).
+    HelpSection {
+        title: "ui.help.sec.chat",
+        context: Some(HelpContext::Chat),
+        rows: &[
+            ("Enter", "ui.help.send"),
+            ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+            ("Shift+←/→/↑/↓", "ui.help.select"),
+            ("Ctrl+A", "ui.help.select_all"),
+            ("Ctrl+C", "ui.help.copy"),
+            ("Ctrl+X", "ui.help.cut"),
+            ("Ctrl+V", "ui.help.paste"),
+            ("Esc", "ui.help.esc"),
+            ("Ctrl+N", "ui.help.new_chat"),
+            ("F2", "ui.help.rename_chat"),
+            ("F5", "ui.help.copy_chat"),
+            ("Ctrl+R", "ui.help.regenerate"),
+            ("Ctrl+E", "ui.help.delete_exchange"),
+            ("Ctrl+U", "ui.help.impersonate"),
+            ("Ctrl+K", "ui.help.clear_input"),
+            ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+            ("Ctrl+←/→", "ui.help.word_move"),
+            ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+            ("Home", "ui.help.line_home"),
+            ("End", "ui.help.line_end"),
+            ("Ctrl+Home/End", "ui.help.doc_move"),
+            ("Ctrl+G", "ui.help.spell"),
+            ("Ctrl+P", "ui.help.settings"),
+            ("F3", "ui.help.self_model"),
+            ("F4", "ui.help.changes"),
+            ("Ctrl+F", "ui.help.find_in_chat"),
+            ("Ctrl+T", "ui.help.thoughts"),
+            ("Ctrl+O", "ui.help.tool_calls"),
+            ("Ctrl+B", "ui.help.emoji"),
+            ("Ctrl+L", "ui.help.chat_links"),
+            ("Ctrl+W", "ui.help.mouse_toggle"),
+            ("ui.help.k.mouse", "ui.help.mouse_action"),
+            ("PageUp/PageDown", "ui.help.scroll"),
+            ("F1 / ?", "ui.help.help"),
+        ],
+        openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
+    },
+    // The list's groups: searching · acting on the selection · managing chats.
+    HelpSection {
+        title: "ui.help.sec.chat_list",
+        context: Some(HelpContext::ChatList),
+        rows: &[
+            ("ui.help.k.type", "ui.help.list_type"),
+            ("Ctrl+F", "ui.help.list_scope"),
+            ("Ctrl+G", "ui.help.list_messages"),
+            ("Enter", "ui.help.list_open"),
+            ("↑/↓", "ui.help.list_select"),
+            ("Tab", "ui.help.list_sort"),
+            ("Esc", "ui.help.list_close"),
+            ("F2", "ui.help.list_rename"),
+            ("F5", "ui.help.list_copy"),
+            ("Ctrl+R", "ui.help.list_autotitle"),
+            ("Ctrl+N", "ui.help.new_chat"),
+            ("Ctrl+D", "ui.help.list_clone"),
+            ("Del", "ui.help.list_delete"),
+            ("Ctrl+O", "ui.help.subagents_fold"),
+        ],
+        openers: &["Enter", "F2"],
+    },
+    // The settings' groups: moving through sections and fields · the tools
+    // over them (search, undo, the two list sections' CRUD).
+    HelpSection {
+        title: "ui.help.sec.settings",
+        context: Some(HelpContext::Settings),
+        rows: &[
+            ("Tab / Shift+Tab", "ui.help.set_sections"),
+            ("↑/↓", "ui.help.set_rows"),
+            ("Enter", "ui.help.set_enter"),
+            ("←/→", "ui.help.set_cycle"),
+            ("Space", "ui.help.set_toggle"),
+            ("Del", "ui.help.set_reset"),
+            ("Esc", "ui.help.set_back"),
+            ("/", "ui.help.set_search"),
+            ("Ctrl+Z / Ctrl+Y", "ui.help.set_undo"),
+            ("Ctrl+N", "ui.help.set_new"),
+            ("Ctrl+D", "ui.help.set_delete"),
+        ],
+        openers: &["/"],
+    },
+    HelpSection {
+        title: "ui.help.sec.self_model",
+        context: Some(HelpContext::SelfModel),
+        rows: &[
+            ("↑/↓", "ui.help.sm_select"),
+            ("Enter", "ui.help.sm_edit"),
+            ("Space", "ui.help.sm_goal"),
+            ("Del", "ui.help.sm_delete"),
+            ("Ctrl+K Ctrl+K", "ui.help.sm_clear"),
+            ("Esc", "ui.help.sm_close"),
+        ],
+        openers: &[],
+    },
+    HelpSection {
+        title: "ui.help.sec.changes",
+        context: Some(HelpContext::Changes),
+        rows: &[
+            ("Tab", "ui.help.ch_pane"),
+            ("↑/↓", "ui.help.ch_select"),
+            ("PageUp/PageDown", "ui.help.ch_scroll"),
+            ("R", "ui.help.ch_revert"),
+            ("Esc", "ui.help.ch_close"),
+        ],
+        openers: &[],
+    },
+    HelpSection {
+        title: "ui.help.sec.search",
+        context: Some(HelpContext::Search),
+        rows: &[
+            ("↑/↓", "ui.help.sr_select"),
+            ("Enter", "ui.help.sr_open"),
+            ("Esc", "ui.help.sr_back"),
+        ],
+        openers: &[],
+    },
 ];
 
 /// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
@@ -405,22 +523,7 @@ pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// The labels that **open a display group** of [`HELP_KEYS`]: [`key_lines`]
-/// draws one blank line before each of these rows, so related keys read as
-/// small groups (composing · selection/clipboard · navigation · the
-/// conversation · editing · panels/toggles · the way out) without headers —
-/// and without locale keys, since a break carries no text.
-///
-/// The breaks live **outside** the table on purpose: the rows are long-lived,
-/// and any line added among them lands inside the region the SonarQube
-/// copy-paste detector flags on these uniform tuple tables, where every *new*
-/// line counts toward the duplication density (docs/lessons.md §2 — this
-/// table's regrouping is the lesson's third recurrence).
-/// `group_openers_open_real_rows` pins each opener to exactly one row.
-pub(super) const KEY_GROUP_OPENERS: &[&str] =
-    &["Shift+←/→/↑/↓", "Esc", "F3", "Ctrl+K", "Ctrl+P", "F1 / ?"];
-
-/// [`COMMAND_GROUP_OPENERS`] is [`KEY_GROUP_OPENERS`] for the "Commands" tab:
+/// [`COMMAND_GROUP_OPENERS`] is [`HelpSection::openers`] for the "Commands" tab:
 /// files · images · the code project · the knowledge base · housekeeping ·
 /// speech · the profiles · the impersonation profiles · the screens ·
 /// the conversation · finding things · the feed · the way out. The last four
@@ -542,7 +645,7 @@ pub(super) fn render_help(
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc, inner_w),
-        HelpTab::Hotkeys => key_lines(HELP_KEYS, KEY_GROUP_OPENERS, palette, loc, inner_w),
+        HelpTab::Hotkeys => hotkeys_lines(help.context, palette, loc, inner_w),
         HelpTab::Commands => key_lines(
             &command_rows(),
             COMMAND_GROUP_OPENERS,
@@ -683,27 +786,74 @@ fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Lin
     lines
 }
 
-/// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
-/// "key" + a description (a command label `/…` uses the command color); a
-/// blank line is drawn before every row named in `openers`, separating the
-/// display groups. The locale resolves both label keys and descriptions.
-/// Shared by both tabs ([`HELP_KEYS`]/[`HELP_COMMANDS`], with their
-/// [`KEY_GROUP_OPENERS`]/[`COMMAND_GROUP_OPENERS`]).
-///
-/// Every description starts in the **same column** — one past the tab's widest
-/// label — and a description too long for `width` **wraps**, hung under that
-/// column ([`push_key_entry`]), rather than being clipped at the dialog's edge:
-/// the tab is a plain `Paragraph` with no wrapping of its own, so an over-long
-/// row used to lose its tail mid-word. Both are per-locale work — a row can fit
-/// in `en` and overflow in `ru`, so whoever writes the label never sees it
-/// (docs/lessons.md §7), and the label lengths differ per locale too, which is
-/// why the column is measured here (in display columns — a label can carry `↔`
-/// or a box-drawing glyph, where `.len()` would be bytes) rather than fixed as
-/// a constant. `help_rows_fit_the_dialog_in_every_locale` is the gate. See
-/// spec §11.7.
+/// A table's section for [`table_lines`]: an optional header (the localized
+/// title key + whether it carries the "you are here" marker) over rows in the
+/// [`HelpSection`] format. The "Commands" tab is one headerless section.
+struct TabSection<'a> {
+    header: Option<(&'a str, bool)>,
+    rows: &'a [(&'a str, &'a str)],
+    openers: &'a [&'a str],
+}
+
+/// The "Shortcuts" tab: [`HELP_SECTIONS`] under their headers, the section for
+/// `context` marked "you are here" (docs/help-hotkeys-context.md, fork F1).
+pub(super) fn hotkeys_lines(
+    context: HelpContext,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let sections: Vec<TabSection<'_>> = HELP_SECTIONS
+        .iter()
+        .map(|s| TabSection {
+            header: Some((s.title, s.context == Some(context))),
+            rows: s.rows,
+            openers: s.openers,
+        })
+        .collect();
+    table_lines(&sections, false, palette, loc, width)
+}
+
+/// One headerless section of `(label, description)` rows — the "Commands" tab
+/// (a command label `/…` uses the command color), and the shape the table
+/// tests exercise directly.
 fn key_lines(
     entries: &[(&str, &str)],
     openers: &[&str],
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let section = TabSection {
+        header: None,
+        rows: entries,
+        openers,
+    };
+    table_lines(std::slice::from_ref(&section), true, palette, loc, width)
+}
+
+/// The "Shortcuts"/"Commands" tabs: sections of `(label, description)` rows —
+/// a "key" + a description; a section's header row precedes its rows, and a
+/// blank line is drawn before every row named in its `openers`, separating the
+/// display groups. The locale resolves label keys, titles and descriptions.
+/// `command_labels` draws `/…` labels in the command color (the "Commands"
+/// tab); the hotkeys tab is keycaps throughout, so its `/` key row (the
+/// settings search) is not mistaken for a command.
+///
+/// Every description starts in the **same column** — one past the whole tab's
+/// widest label — and a description too long for `width` **wraps**, hung under
+/// that column ([`push_key_entry`]), rather than being clipped at the dialog's
+/// edge: the tab is a plain `Paragraph` with no wrapping of its own, so an
+/// over-long row used to lose its tail mid-word. Both are per-locale work — a
+/// row can fit in `en` and overflow in `ru`, so whoever writes the label never
+/// sees it (docs/lessons.md §7), and the label lengths differ per locale too,
+/// which is why the column is measured here (in display columns — a label can
+/// carry `↔` or a box-drawing glyph, where `.len()` would be bytes) rather
+/// than fixed as a constant. `help_rows_fit_the_dialog_in_every_locale` is the
+/// gate. See spec §11.7.
+fn table_lines(
+    sections: &[TabSection<'_>],
+    command_labels: bool,
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
@@ -712,20 +862,29 @@ fn key_lines(
     // whole tab, so it has to be measured before any row can be built. Both
     // label styles pad with a space on each side, so one measurement covers
     // keycaps and command labels alike.
-    let resolved: Vec<(bool, Span<'static>, String)> = entries
+    type Rows<'a> = (Option<(&'a str, bool)>, Vec<(bool, Span<'static>, String)>);
+    let resolved: Vec<Rows<'_>> = sections
         .iter()
-        .map(|(k, d)| {
-            let key = loc.t(k).to_string();
-            let key_span = if key.starts_with('/') {
-                Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-            } else {
-                palette.keycap(key)
-            };
-            (openers.contains(k), key_span, loc.t(d).to_string())
+        .map(|section| {
+            let rows = section
+                .rows
+                .iter()
+                .map(|(k, d)| {
+                    let key = loc.t(k).to_string();
+                    let key_span = if command_labels && key.starts_with('/') {
+                        Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+                    } else {
+                        palette.keycap(key)
+                    };
+                    (section.openers.contains(k), key_span, loc.t(d).to_string())
+                })
+                .collect();
+            (section.header, rows)
         })
         .collect();
     let label_col = resolved
         .iter()
+        .flat_map(|(_, rows)| rows.iter())
         .map(|(_, span, _)| span_width(span))
         .max()
         .unwrap_or(0);
@@ -733,13 +892,52 @@ fn key_lines(
     // separating space.
     let indent = HELP_PAD.chars().count() + label_col + 1;
     let mut lines = vec![Line::raw("")];
-    for (opens_group, key_span, desc) in &resolved {
-        if *opens_group {
-            lines.push(Line::raw("")); // a breath between the groups
+    for (si, (header, rows)) in resolved.iter().enumerate() {
+        if si > 0 {
+            lines.push(Line::raw("")); // a breath between the sections
         }
-        push_key_entry(&mut lines, key_span, desc, palette, width, indent);
+        if let Some((title, marked)) = header {
+            lines.push(section_header(title, *marked, palette, loc, width));
+        }
+        for (opens_group, key_span, desc) in rows {
+            if *opens_group {
+                lines.push(Line::raw("")); // a breath between the groups
+            }
+            push_key_entry(&mut lines, key_span, desc, palette, width, indent);
+        }
     }
     lines
+}
+
+/// A section's header row: the localized title, the "you are here" marker when
+/// the dialog was opened from that screen (docs/help-hotkeys-context.md, fork
+/// F1), and a rule to the dialog's edge, so the sections read as chapters.
+fn section_header(
+    title: &str,
+    marked: bool,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(HELP_PAD),
+        Span::styled(
+            format!("{} ", loc.t(title)),
+            Style::new().fg(palette.text).bold(),
+        ),
+    ];
+    if marked {
+        spans.push(Span::styled(
+            format!("· {} ", loc.t("ui.help.here")),
+            Style::new().fg(palette.accent).bold(),
+        ));
+    }
+    let used: usize = spans.iter().map(span_width).sum();
+    spans.push(Span::styled(
+        "─".repeat(width.saturating_sub(used)),
+        palette.border_style(false),
+    ));
+    Line::from(spans)
 }
 
 /// One entry of a [`key_lines`] table: the label row with its description
@@ -1173,11 +1371,17 @@ mod tests {
         for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
             for &lang in crate::shared::i18n::Lang::ALL {
                 let loc = crate::shared::i18n::locale(lang);
-                for (name, entries, openers) in [
-                    ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-                    ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
+                for (name, lines) in [
+                    (
+                        "hotkeys tab",
+                        hotkeys_lines(HelpContext::Chat, &palette, loc, w),
+                    ),
+                    (
+                        "commands tab",
+                        key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w),
+                    ),
                 ] {
-                    for line in key_lines(entries, openers, &palette, loc, w) {
+                    for line in lines {
                         let width = line_width(&line);
                         assert!(
                             width <= w,
@@ -1203,16 +1407,24 @@ mod tests {
         let commands = command_rows();
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            for (name, entries, openers) in [
-                ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-                ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
+            let w = HELP_MAX_WIDTH as usize;
+            for (name, lines) in [
+                (
+                    "hotkeys tab",
+                    hotkeys_lines(HelpContext::Chat, &palette, loc, w),
+                ),
+                (
+                    "commands tab",
+                    key_lines(&commands, COMMAND_GROUP_OPENERS, &palette, loc, w),
+                ),
             ] {
-                let lines = key_lines(entries, openers, &palette, loc, HELP_MAX_WIDTH as usize);
                 // The description is always the last span; everything before it
                 // (indent, label, gap — or the hanging indent) is its column.
+                // Section headers end in a rule, not a description — skip them.
                 let starts: Vec<usize> = lines
                     .iter()
                     .filter(|l| l.spans.iter().any(|s| !s.content.trim().is_empty()))
+                    .filter(|l| !l.spans.iter().any(|s| s.content.contains('─')))
                     .map(|l| {
                         l.spans[..l.spans.len() - 1]
                             .iter()
@@ -1312,57 +1524,155 @@ mod tests {
     }
 
     /// The opener contract behind the group breaks: every opener names exactly
-    /// one row of its table (a renamed label would silently orphan its break —
-    /// this is the desync the out-of-table encoding trades for keeping the
-    /// long-lived rows untouched, so it is pinned here), never the first row
-    /// (that would double the leading spacer), and each draws as exactly one
-    /// blank line — the tab's blank rows are the openers plus the leading
-    /// spacer, nothing else.
+    /// one row of its section (a renamed label would silently orphan its
+    /// break — this is the desync the out-of-table encoding trades for keeping
+    /// the long-lived rows untouched, so it is pinned here), never the first
+    /// row (the header — or the leading spacer — already separates), and each
+    /// draws as exactly one blank line: a tab's blank rows are the leading
+    /// spacer, the section breaks and the openers, nothing else.
     #[test]
     fn group_openers_open_real_rows() {
         let palette = Palette::default();
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let commands = command_rows();
-        for (name, entries, openers) in [
-            ("HELP_KEYS", HELP_KEYS, KEY_GROUP_OPENERS),
-            ("commands tab", commands.as_slice(), COMMAND_GROUP_OPENERS),
-        ] {
-            assert!(!openers.is_empty(), "{name} lost its group breaks");
-            for opener in openers {
+        let is_blank =
+            |l: &Line<'_>| -> bool { l.spans.iter().all(|s| s.content.trim().is_empty()) };
+
+        // The per-section contract of the "Shortcuts" tab.
+        for section in HELP_SECTIONS {
+            assert!(
+                !section.rows.is_empty(),
+                "{}: an empty section",
+                section.title
+            );
+            for opener in section.openers {
                 assert_eq!(
-                    entries.iter().filter(|(k, _)| k == opener).count(),
+                    section.rows.iter().filter(|(k, _)| k == opener).count(),
                     1,
-                    "{name}: opener {opener:?} must name exactly one row"
+                    "{}: opener {opener:?} must name exactly one row",
+                    section.title
                 );
             }
             assert!(
-                !openers.contains(&entries[0].0),
-                "{name}: the first row cannot open a group"
+                !section.openers.contains(&section.rows[0].0),
+                "{}: the first row cannot open a group",
+                section.title
             );
-            let lines = key_lines(entries, openers, &palette, loc, HELP_MIN_WIDTH as usize);
-            let blanks = lines
-                .iter()
-                .filter(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
-                .count();
-            assert_eq!(
-                blanks,
-                openers.len() + 1,
-                "{name}: openers + the leading spacer"
-            );
-            // …and each break sits immediately BEFORE its opener's row, not
-            // after it or somewhere else (the count alone can't tell).
-            for opener in openers {
+        }
+
+        // Rendered blanks: the leading spacer, one break before every section
+        // after the first, one per opener — headers are rule rows, not blanks.
+        let lines = hotkeys_lines(HelpContext::Chat, &palette, loc, HELP_MIN_WIDTH as usize);
+        let openers_total: usize = HELP_SECTIONS.iter().map(|s| s.openers.len()).sum();
+        assert_eq!(
+            lines.iter().filter(|l| is_blank(l)).count(),
+            1 + (HELP_SECTIONS.len() - 1) + openers_total,
+            "hotkeys tab: the leading spacer + section breaks + openers"
+        );
+
+        // …and each break sits immediately BEFORE its opener's row. Key labels
+        // repeat across sections ("Esc", "Enter"), so each opener is looked up
+        // inside its own section's slice, delimited by the (unique) headers.
+        let header_at: Vec<usize> = HELP_SECTIONS
+            .iter()
+            .map(|s| {
+                lines
+                    .iter()
+                    .position(|l| l.spans.iter().any(|sp| sp.content.trim() == loc.t(s.title)))
+                    .unwrap_or_else(|| panic!("{}: header is not rendered", s.title))
+            })
+            .collect();
+        for (i, section) in HELP_SECTIONS.iter().enumerate() {
+            let end = header_at.get(i + 1).copied().unwrap_or(lines.len());
+            for opener in section.openers {
                 let label = loc.t(opener);
-                let at = lines
+                let at = lines[header_at[i]..end]
                     .iter()
                     .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
-                    .unwrap_or_else(|| panic!("{name}: opener {opener:?} is not rendered"));
+                    .map(|p| header_at[i] + p)
+                    .unwrap_or_else(|| {
+                        panic!("{}: opener {opener:?} is not rendered", section.title)
+                    });
                 assert!(
-                    lines[at - 1]
+                    is_blank(&lines[at - 1]),
+                    "{}: no blank line before opener {opener:?}",
+                    section.title
+                );
+            }
+        }
+
+        // The commands tab keeps the headerless contract.
+        let commands = command_rows();
+        assert!(
+            !COMMAND_GROUP_OPENERS.is_empty(),
+            "commands tab lost its group breaks"
+        );
+        for opener in COMMAND_GROUP_OPENERS {
+            assert_eq!(
+                commands.iter().filter(|(k, _)| k == opener).count(),
+                1,
+                "commands tab: opener {opener:?} must name exactly one row"
+            );
+        }
+        assert!(
+            !COMMAND_GROUP_OPENERS.contains(&commands[0].0),
+            "commands tab: the first row cannot open a group"
+        );
+        let lines = key_lines(
+            &commands,
+            COMMAND_GROUP_OPENERS,
+            &palette,
+            loc,
+            HELP_MIN_WIDTH as usize,
+        );
+        assert_eq!(
+            lines.iter().filter(|l| is_blank(l)).count(),
+            COMMAND_GROUP_OPENERS.len() + 1,
+            "commands tab: openers + the leading spacer"
+        );
+        for opener in COMMAND_GROUP_OPENERS {
+            let label = loc.t(opener);
+            let at = lines
+                .iter()
+                .position(|l| l.spans.iter().any(|s| s.content.trim() == label))
+                .unwrap_or_else(|| panic!("commands tab: opener {opener:?} is not rendered"));
+            assert!(
+                is_blank(&lines[at - 1]),
+                "commands tab: no blank line before opener {opener:?}"
+            );
+        }
+    }
+
+    /// Fork F1 of docs/help-hotkeys-context.md: the section for the screen the
+    /// dialog was opened from — and only it — carries the "you are here"
+    /// marker, next to its own title. Pinned for two contexts so the marker
+    /// provably follows the context rather than sticking to the chat.
+    #[test]
+    fn the_invoking_screens_section_is_marked() {
+        let palette = Palette::default();
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let here = loc.t("ui.help.here");
+            for (context, title) in [
+                (HelpContext::Chat, "ui.help.sec.chat"),
+                (HelpContext::Settings, "ui.help.sec.settings"),
+            ] {
+                let lines = hotkeys_lines(context, &palette, loc, HELP_MIN_WIDTH as usize);
+                let marked: Vec<&Line<'_>> = lines
+                    .iter()
+                    .filter(|l| {
+                        l.spans
+                            .iter()
+                            .any(|s| s.content.contains(here) && s.content != here)
+                    })
+                    .collect();
+                assert_eq!(marked.len(), 1, "one marker per dialog ({lang:?})");
+                assert!(
+                    marked[0]
                         .spans
                         .iter()
-                        .all(|s| s.content.trim().is_empty()),
-                    "{name}: no blank line before opener {opener:?}"
+                        .any(|s| s.content.trim() == loc.t(title)),
+                    "the marker must sit on the {title} header ({lang:?}): {:?}",
+                    marked[0]
                 );
             }
         }
