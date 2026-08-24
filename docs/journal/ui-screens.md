@@ -2435,7 +2435,7 @@ storage or tool surface is touched.
 ### Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
 - **The `F1` "Shortcuts" tab reorganized from one flat list into per-screen
   sections** (branch `feat/help-keys-sections`; design
-  [docs/help-hotkeys-context.md](../help-hotkeys-context.md), forks decided by
+  [docs/help-hotkeys-context.md](../history/help-hotkeys-context.md), forks decided by
   the user 2026-08-24, all as recommended). The flat `HELP_KEYS` had grown
   three ways of expressing context at once: clauses inside descriptions
   ("in a chat: …; in the chat list: …" — `Ctrl+F`), the same chord listed
@@ -2488,7 +2488,7 @@ storage or tool surface is touched.
 
 ### Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
 - **The dialog left the chat screen** (branch `feat/help-f1-everywhere`,
-  stage 2 of [docs/help-hotkeys-context.md](../help-hotkeys-context.md);
+  stage 2 of [docs/help-hotkeys-context.md](../history/help-hotkeys-context.md);
   three commits — a verbatim move, the lift, the table distribution — so the
   mechanical and the behavioral steps review separately). The renderer, tabs,
   sizing and `HelpState` (now with `handle_key` → `HelpKeyOutcome` and

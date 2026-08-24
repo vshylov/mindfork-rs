@@ -2704,7 +2704,7 @@ that line). The strip's labels are width-budgeted — a `screens::chat` gate tes
 it fits the dialog's **minimum** width in **every** bundled locale, since the tab that
 overflows is the rightmost one and would be silently truncated for one language only.
 The **"Hotkeys" tab is a list of per-screen sections**
-([help-hotkeys-context.md](docs/help-hotkeys-context.md)): "Everywhere", then the chat,
+([help-hotkeys-context.md](docs/history/help-hotkeys-context.md)): "Everywhere", then the chat,
 the chat list, the settings, the self-model, the changes and the message-search screens,
 each under a localized header (`ui.help.sec.*`) whose title also names the route to the
 screen ("Settings (Ctrl+P)"). A key is listed once per screen where it does something, so
@@ -2722,7 +2722,7 @@ user's own scrolling then sticks); the chat keeps the remembered last tab, its s
 sitting right under the short "Everywhere" block anyway. `?` (on empty input) and
 `/help` remain the chat's routes to the same dialog. Each screen owns its section's
 table **next to its key handler**, and the app layer composes the tab — the one place
-that knows every screen exists ([help-hotkeys-context.md](docs/help-hotkeys-context.md)
+that knows every screen exists ([help-hotkeys-context.md](docs/history/help-hotkeys-context.md)
 §6). Related entries within a section still
 sit in **groups separated by a blank line** (a break carries no text and needs no locale
 key); the "Commands" tab stays one headerless table with the same groups. Command labels

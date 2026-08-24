@@ -28,7 +28,7 @@ use crate::widgets::input_box::{InputBox, RenderOpts};
 /// The chat list's "Shortcuts" section (`F1`): one row per key `on_key`
 /// matches — a new arm gets a row here, next door (AGENTS.md §3). The app
 /// layer composes the dialog's tab from the screens' sections
-/// (docs/help-hotkeys-context.md §6).
+/// (docs/history/help-hotkeys-context.md §6).
 pub(crate) static HELP_SECTION: HelpSection = HelpSection {
     title: "ui.help.sec.chat_list",
     context: Some(HelpContext::ChatList),

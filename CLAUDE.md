@@ -183,7 +183,7 @@ being recent is dropped, not shortened.
   per-screen sections with a "you are here" marker; `F1` opens the dialog —
   a runtime overlay now — over any screen, scrolled to that screen's
   section, and each screen owns its section table next to its key handler
-  ([docs/help-hotkeys-context.md](docs/help-hotkeys-context.md),
+  ([docs/history/help-hotkeys-context.md](docs/history/help-hotkeys-context.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.7).
 - **Sub-agent transcripts fold under their chat in the list** — collapsed by
   default with a `▸ n` mark on the row; `Ctrl+O` in the list / `/subagents` in

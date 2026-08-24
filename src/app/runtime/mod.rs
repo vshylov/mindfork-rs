@@ -183,7 +183,7 @@ impl Back {
 /// Deriving it in the draw path instead makes "the bar says where `Esc` goes"
 /// true of every frame by construction.
 /// The help overlay above whatever screen is active (spec §11.7,
-/// docs/help-hotkeys-context.md stage 2): the open dialog plus the tab
+/// docs/history/help-hotkeys-context.md stage 2): the open dialog plus the tab
 /// remembered between opens. Runtime-owned so `F1` means the same thing on
 /// every screen — the screens keep no `F1` handler of their own.
 struct HelpOverlay {
@@ -224,7 +224,7 @@ impl HelpOverlay {
 /// screens by how often the user is on them. Composed here — the app layer is
 /// the one place that knows every screen exists — from tables owned by the
 /// code they document (proximity to the `match` is the anti-drift force;
-/// docs/help-hotkeys-context.md §6). `help_sections_cover_every_context`
+/// docs/history/help-hotkeys-context.md §6). `help_sections_cover_every_context`
 /// closes the loop [`help_context`] opens: one section per screen.
 pub(super) static HELP_SECTIONS: [&HelpSection; 7] = [
     &help_dialog::EVERYWHERE,

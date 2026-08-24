@@ -229,7 +229,7 @@ impl ChatScreen {
             // Help/"About": `?` — only on empty input (otherwise the
             // character gets typed). `F1` never reaches the screen — the
             // runtime routes it above every screen and owns the overlay
-            // (spec §11.7). See docs/help-hotkeys-context.md stage 2.
+            // (spec §11.7). See docs/history/help-hotkeys-context.md stage 2.
             (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
                 Some(ChatIntent::OpenHelp)
             }
