@@ -102,8 +102,13 @@ pub(super) fn apply_event(
         } => {
             clear_back_if_left(back, id);
             close_or_mark_chat_list(active, id);
-            screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
+            // The child view goes first: `activate_chat` reads it while
+            // building the feed (the persona bubble, the transcript's message
+            // copy), so setting it after would build every feed with the
+            // previous chat's view — a transcript opening without its persona,
+            // and the chat opened next inheriting one that is not its own.
             screen.set_child_view(child);
+            screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
             screen.set_live_turn(live_turn);
         }
         AppEvent::TranscriptGrew { id, messages } => screen.grow_transcript(id, &messages),
