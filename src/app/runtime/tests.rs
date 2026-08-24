@@ -1088,6 +1088,7 @@ fn the_status_bar_esc_hint_follows_the_stashed_results() {
 struct Harness {
     screen: ChatScreen,
     active: ActiveScreen,
+    help: HelpOverlay,
     back: Option<Back>,
     clip: Option<arboard::Clipboard>,
     cmd_tx: UnboundedSender<AppCommand>,
@@ -1100,11 +1101,26 @@ impl Harness {
         Self {
             screen: ChatScreen::new(),
             active: ActiveScreen::Chat,
+            help: HelpOverlay::new(),
             back: None,
             clip: None,
             cmd_tx,
             cmd_rx,
         }
+    }
+
+    /// One event through the input pipeline (a single-event batch); returns
+    /// `true` when quitting was requested.
+    fn feed(&mut self, ev: Event) -> bool {
+        process_input_batch(
+            vec![ev],
+            &mut self.screen,
+            &mut self.active,
+            &mut self.help,
+            &mut self.back,
+            &self.cmd_tx,
+            &mut self.clip,
+        )
     }
 
     fn apply(&mut self, event: AppEvent) {
@@ -1314,26 +1330,12 @@ fn a_command_intent_is_preceded_by_the_empty_draft_flush() {
     // One event per batch: a burst of key events in a single batch is taken
     // for a paste and coalesced into text, which never sends.
     for c in "/takeback".chars() {
-        process_input_batch(
-            vec![Event::Key(KeyEvent::new(
-                KeyCode::Char(c),
-                KeyModifiers::NONE,
-            ))],
-            &mut h.screen,
-            &mut h.active,
-            &mut h.back,
-            &h.cmd_tx,
-            &mut h.clip,
-        );
+        h.feed(Event::Key(KeyEvent::new(
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+        )));
     }
-    process_input_batch(
-        vec![key(KeyCode::Enter)],
-        &mut h.screen,
-        &mut h.active,
-        &mut h.back,
-        &h.cmd_tx,
-        &mut h.clip,
-    );
+    h.feed(key(KeyCode::Enter));
 
     let mut got = Vec::new();
     while let Some(cmd) = h.next_command() {
@@ -1365,4 +1367,95 @@ fn working_after_a_search_jump_drops_the_results_too() {
     // `Esc` now opens the chat list, as it does from any ordinary chat.
     h.dispatch(ChatIntent::OpenChatList);
     assert!(matches!(h.active, ActiveScreen::ChatList(_)));
+}
+
+/// `F1` opens the help over any screen — routed above the active screen's
+/// handler, which keeps no `F1` arm of its own — and while the dialog is open
+/// the keys belong to it (spec §11.7, docs/help-hotkeys-context.md stage 2).
+#[test]
+fn f1_opens_the_help_over_any_screen_and_owns_the_keys() {
+    let mut h = Harness::new();
+    // From the chat: the remembered (default) tab, chat context.
+    h.feed(key(KeyCode::F(1)));
+    let state = h.help.open.as_ref().expect("the dialog opened");
+    assert_eq!(
+        (state.tab, state.context),
+        (HelpTab::Hotkeys, HelpContext::Chat)
+    );
+    // While open, keys go to the dialog: a character neither closes it nor
+    // lands in the chat's input box (the draft never goes dirty).
+    h.feed(key(KeyCode::Char('x')));
+    assert!(
+        h.help.open.is_some(),
+        "a stray key must not close the dialog"
+    );
+    assert!(
+        h.screen.take_dirty_draft().is_none(),
+        "input leaked under the dialog"
+    );
+    // Esc closes it, back to the covered screen.
+    h.feed(key(KeyCode::Esc));
+    assert!(h.help.open.is_none());
+
+    // From a non-chat screen: "Shortcuts" is forced and the context is that
+    // screen's — the anchor itself is consumed at render and pinned in
+    // `widgets::help_dialog::tests::a_non_chat_open_lands_on_its_section`.
+    h.active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+        None,
+        Palette::default(),
+        h.screen.loc(),
+    )));
+    h.feed(key(KeyCode::F(1)));
+    let state = h.help.open.as_ref().expect("the dialog opened over F3");
+    assert_eq!(
+        (state.tab, state.context),
+        (HelpTab::Hotkeys, HelpContext::SelfModel)
+    );
+}
+
+/// The dialog remembers its tab between chat-side opens, and the quit keys
+/// punch through it — the behavior the chat guaranteed while it owned the
+/// dialog, now pinned at the runtime that took it over.
+#[test]
+fn the_help_remembers_its_tab_and_quit_punches_through() {
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::F(1)));
+    h.feed(key(KeyCode::Tab)); // Hotkeys → Commands
+    h.feed(key(KeyCode::Esc));
+    assert!(h.help.open.is_none());
+    h.feed(key(KeyCode::F(1)));
+    assert_eq!(h.help.open.as_ref().unwrap().tab, HelpTab::Commands);
+    assert!(
+        h.feed(Event::Key(KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::CONTROL
+        ))),
+        "Ctrl+Q must quit through the open dialog"
+    );
+}
+
+/// The chat's `?` (and `/help`, which reports the same intent) reaches the
+/// overlay as `ChatIntent::OpenHelp` — one dialog, opened with the chat's
+/// context.
+#[test]
+fn the_chats_question_mark_opens_the_overlay() {
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::Char('?')));
+    let state = h.help.open.as_ref().expect("`?` opened the dialog");
+    assert_eq!(state.context, HelpContext::Chat);
+}
+
+/// While the dialog is open a paste (and a mouse event — the same match arm)
+/// acts on nothing: there is no paste target, and the wheel would scroll a
+/// screen the dialog covers — the rule the chat applied while it owned it.
+#[test]
+fn a_paste_is_inert_under_the_open_help() {
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::F(1)));
+    h.feed(Event::Paste("stray".into()));
+    h.feed(key(KeyCode::Esc));
+    assert!(
+        h.screen.take_dirty_draft().is_none(),
+        "the paste leaked into the input box under the dialog"
+    );
 }

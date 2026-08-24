@@ -48,9 +48,6 @@ impl ChatScreen {
         if self.search.is_some() {
             return Some(self.handle_search_key(key));
         }
-        if self.help.is_some() {
-            return Some(self.handle_help_key(key));
-        }
         if self.impersonation.is_some() {
             return Some(self.handle_impersonation_key(key));
         }
@@ -80,40 +77,6 @@ impl ChatScreen {
         }
         if self.profile_overlay.is_some() {
             return Some(self.handle_profile_overlay_key(key));
-        }
-        None
-    }
-
-    /// The help/"About" dialog (`F1`/`?`) intercepts input: `Tab`/`←→`
-    /// switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` scroll the active tab, `Esc`
-    /// (and a repeat `F1`/`?`) close it, `Ctrl+Q`/`F10` — quit. Other keys
-    /// are ignored (they don't close it — otherwise navigation would get
-    /// confusing). Scroll clamping — in `render_help`. See spec §11.7.
-    fn handle_help_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
-        let help = self.help.as_mut()?;
-        // Quit punches through the dialog (layout-independent), as in the
-        // confirmation popup.
-        if key.code == KeyCode::F(10)
-            || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && keys::hotkey_char(&key) == Some('q'))
-        {
-            self.help = None;
-            return Some(ChatIntent::Quit);
-        }
-        match key.code {
-            KeyCode::Tab | KeyCode::Right => help.next_tab(),
-            KeyCode::BackTab | KeyCode::Left => help.prev_tab(),
-            KeyCode::Up => help.scroll = help.scroll.saturating_sub(1),
-            KeyCode::Down => help.scroll = help.scroll.saturating_add(1),
-            KeyCode::PageUp => help.scroll = help.scroll.saturating_sub(PAGE_SCROLL),
-            KeyCode::PageDown => help.scroll = help.scroll.saturating_add(PAGE_SCROLL),
-            KeyCode::Home => help.scroll = 0,
-            KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => {
-                // Remember the tab to restore it on the next open.
-                self.help_last_tab = help.tab;
-                self.help = None;
-            }
-            _ => {}
         }
         None
     }
@@ -263,16 +226,12 @@ impl ChatScreen {
             // terminal intercepts Ctrl+Q; F10 often opens the emulator's menu
             // in Linux DEs, but it's dismissible).
             (KeyCode::F(10), _) => Some(ChatIntent::Quit),
-            // Help/"About": F1 always works; `?` — only on empty input
-            // (otherwise the character gets typed). Opens on the
-            // last-selected tab. See spec §11.7.
-            (KeyCode::F(1), _) => {
-                self.help = Some(HelpState::open(self.help_last_tab));
-                None
-            }
+            // Help/"About": `?` — only on empty input (otherwise the
+            // character gets typed). `F1` never reaches the screen — the
+            // runtime routes it above every screen and owns the overlay
+            // (spec §11.7). See docs/help-hotkeys-context.md stage 2.
             (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
-                self.help = Some(HelpState::open(self.help_last_tab));
-                None
+                Some(ChatIntent::OpenHelp)
             }
             // View of the active profile's "self-model" (a read-only view).
             (KeyCode::F(3), _) => Some(ChatIntent::OpenSelfModel),
@@ -674,8 +633,7 @@ impl ChatScreen {
             }
             return;
         }
-        if self.help.is_some()
-            || self.suggest.is_some()
+        if self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
             || self.confirm.is_some()
@@ -703,7 +661,6 @@ impl ChatScreen {
     /// already answers `false` outside its own.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ChatIntent> {
         if self.search.is_some()
-            || self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.chat_links.is_some()

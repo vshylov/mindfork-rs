@@ -154,6 +154,7 @@ pub(super) fn process_input_batch(
     batch: Vec<Event>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
     back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
@@ -161,6 +162,11 @@ pub(super) fn process_input_batch(
     let mut quit = false;
     for chunk in chunk_batch(batch) {
         match chunk {
+            // The help overlay is modal: it has no paste target, and a wheel
+            // or click would act on a screen the dialog is covering — the same
+            // rule the chat applied while it owned the dialog.
+            Chunk::Paste(_) | Chunk::Event(Event::Paste(_) | Event::Mouse(_))
+                if help.open.is_some() => {}
             // A clipboard paste: on the settings screen — into the active field editor; in
             // the chat — into the input box (never sends); the list has no paste target.
             // `Chunk::Paste` — a reconstruction from key events (Windows); we reconcile it
@@ -175,7 +181,7 @@ pub(super) fn process_input_batch(
                 active.handle_paste(screen, &text);
             }
             Chunk::Event(Event::Key(key)) => {
-                if handle_key_event(key, screen, active, back, cmd_tx, clipboard) {
+                if handle_key_event(key, screen, active, help, back, cmd_tx, clipboard) {
                     quit = true;
                 }
             }
@@ -210,17 +216,39 @@ fn flush_draft(screen: &mut ChatScreen, cmd_tx: &UnboundedSender<AppCommand>) {
     }
 }
 
-/// Handles one key event: takes the intent off the active screen and dispatches
-/// it — including the `CopyToClipboard` special case, a UI-layer side effect
-/// executed right here. Returns `true` if quitting was requested.
+/// Handles one key event: the help overlay first (it is modal above every
+/// screen, and `F1` opens it from any of them — no screen keeps an `F1`
+/// handler of its own, spec §11.7); otherwise takes the intent off the active
+/// screen and dispatches it — including the `CopyToClipboard` special case, a
+/// UI-layer side effect executed right here. Returns `true` if quitting was
+/// requested.
 fn handle_key_event(
     key: KeyEvent,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
     back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
+    if let Some(state) = help.open.as_mut() {
+        return match state.handle_key(&key) {
+            HelpKeyOutcome::Quit => true,
+            HelpKeyOutcome::Close => {
+                help.close();
+                false
+            }
+            HelpKeyOutcome::Handled => false,
+        };
+    }
+    // `F1` opens the help wherever the user is — even inside a sub-mode
+    // (a rename field, an armed confirmation): the dialog is read-only, and
+    // the sub-mode's state is exactly as they left it on `Esc`. The chat's
+    // `?` and `/help` arrive as [`ChatIntent::OpenHelp`] below.
+    if key.code == KeyCode::F(1) {
+        help.open_for(help_context(active));
+        return false;
+    }
     // Take the intent off the active screen (the borrow ends at the
     // owned `AnyIntent` value), then dispatch through a single ownership —
     // otherwise `active`/`screen` borrows would conflict.
@@ -262,6 +290,13 @@ fn handle_key_event(
         // and the orchestrator receives pixels rather than a request to go and look.
         Some(AnyIntent::Chat(ChatIntent::PasteImage { text_fallback })) => {
             paste_from_clipboard(text_fallback, screen, active, cmd_tx, clipboard);
+            false
+        }
+        // The chat's typed/`?` routes into the help — the overlay lives here,
+        // beside the `F1` interception above, not in `dispatch` (which turns
+        // intents into orchestrator commands; this one never leaves the UI).
+        Some(AnyIntent::Chat(ChatIntent::OpenHelp)) => {
+            help.open_for(HelpContext::Chat);
             false
         }
         Some(intent) => dispatch_any(intent, cmd_tx, screen, active, back),

@@ -4,6 +4,7 @@
 //! it grew up in `screens/chat/popups.rs` and moved here unchanged.
 
 use ratatui::Frame;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
@@ -11,6 +12,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use crate::shared::credits;
 use crate::shared::i18n::Locale;
+use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{centered_rect, render_scrollbar};
 use crate::shared::wrap;
@@ -72,9 +74,8 @@ impl HelpTab {
 pub const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
 /// The screen the help dialog was opened from — the "Shortcuts" tab marks that
-/// screen's section "you are here" (`popups::HELP_SECTIONS`). Today only the
-/// chat opens the dialog; stage 2 of docs/help-hotkeys-context.md threads the
-/// real invoking screen through and anchors the tab's scroll to its section.
+/// screen's section "you are here" ([`HELP_SECTIONS`]) and, opened anywhere but
+/// the chat, scrolls to it (docs/help-hotkeys-context.md, forks F1/F2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpContext {
     /// The chat screen (the feed + the input box).
@@ -92,26 +93,44 @@ pub enum HelpContext {
 }
 
 /// The help dialog's state: the active tab + its content's scroll position
-/// (reset on tab switch), and the screen it was opened from. Opens on
-/// `F1`/`?`. See spec §11.7.
+/// (reset on tab switch), and the screen it was opened from. Owned by the
+/// runtime and drawn over whatever screen is active; opens on `F1` (any
+/// screen), `?` and `/help` (the chat). See spec §11.7.
 pub struct HelpState {
     pub tab: HelpTab,
     /// The first visible row of the active tab's content (clamped in `render_help`).
     pub scroll: usize,
     /// The invoking screen, for the "you are here" marker.
     pub context: HelpContext,
+    /// Scroll the "Shortcuts" tab to the invoking screen's section on the
+    /// next render (fork F2 — a non-chat opener). Consumed at render time,
+    /// where the width — and therefore the wrapped rows above the section —
+    /// is known.
+    pending_anchor: bool,
 }
 
 impl HelpState {
-    /// Open on the given tab (on reopening — on the last-selected one,
-    /// the opener's `help_last_tab` memory). The chat screen is the only opener
-    /// today, so the context is fixed (docs/help-hotkeys-context.md §6 threads
-    /// the real one in stage 2).
+    /// Open from the chat on the given tab (on reopening — the last-selected
+    /// one, the runtime's `help_last_tab` memory), scrolled to the top: the
+    /// chat's section sits right under the short "Everywhere" block, so an
+    /// anchor would only hide the latter (fork F2).
     pub fn open(tab: HelpTab) -> Self {
         Self {
             tab,
             scroll: 0,
             context: HelpContext::Chat,
+            pending_anchor: false,
+        }
+    }
+
+    /// Open from any other screen: always the "Shortcuts" tab, scrolled to
+    /// that screen's section with its "you are here" header on top (fork F2).
+    pub fn open_at(context: HelpContext) -> Self {
+        Self {
+            tab: HelpTab::Hotkeys,
+            scroll: 0,
+            context,
+            pending_anchor: true,
         }
     }
 
@@ -128,7 +147,52 @@ impl HelpState {
         self.tab = HelpTab::ALL[(self.tab.index() + n - 1) % n];
         self.scroll = 0;
     }
+
+    /// One key of the open dialog: `Tab`/`←→` switch tabs, `↑↓`/`PgUp`/`PgDn`/
+    /// `Home` scroll the active tab, `Esc` (and a repeat `F1`/`?`) close,
+    /// `Ctrl+Q`/`F10` quit — the layout-independent punch-through every modal
+    /// has. Other keys are ignored (they don't close it — otherwise navigation
+    /// would get confusing). Scroll clamping — in [`render_help`]. The caller
+    /// closes/quits on the returned outcome; on [`HelpKeyOutcome::Close`] the
+    /// final tab is still readable for the last-tab memory. See spec §11.7.
+    pub fn handle_key(&mut self, key: &KeyEvent) -> HelpKeyOutcome {
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && keys::hotkey_char(key) == Some('q'))
+        {
+            return HelpKeyOutcome::Quit;
+        }
+        match key.code {
+            KeyCode::Tab | KeyCode::Right => self.next_tab(),
+            KeyCode::BackTab | KeyCode::Left => self.prev_tab(),
+            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(HELP_PAGE_SCROLL),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(HELP_PAGE_SCROLL),
+            KeyCode::Home => self.scroll = 0,
+            KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => return HelpKeyOutcome::Close,
+            _ => {}
+        }
+        HelpKeyOutcome::Handled
+    }
 }
+
+/// What a key did to the open dialog ([`HelpState::handle_key`]): stayed
+/// inside, asked to close, or asked to quit the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpKeyOutcome {
+    /// Consumed (navigation, or ignored) — the dialog stays open.
+    Handled,
+    /// Close the dialog (`Esc`, a repeat `F1`/`?`); the owner remembers
+    /// [`HelpState::tab`] for the next open.
+    Close,
+    /// Quit the application (`Ctrl+Q`/`F10` punch through the dialog).
+    Quit,
+}
+
+/// The dialog's `PgUp`/`PgDn` step, in rows — the chat feed's page step, which
+/// is where the dialog's keys grew up.
+const HELP_PAGE_SCROLL: usize = 8;
 
 /// One section of the "Shortcuts" tab (`F1`/`?`): the keys of one screen under
 /// a localized header. A key is listed once per screen where it does something,
@@ -171,7 +235,9 @@ pub const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         title: "ui.help.sec.everywhere",
         context: None,
-        rows: &[("Ctrl+Q / F10", "ui.help.quit")],
+        // `F1` is routed at the runtime level, above every screen; `?` is the
+        // chat's convenience alias (typing owns it elsewhere).
+        rows: &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
         openers: &[],
     },
     // The chat's groups: composing · selection/clipboard · the conversation ·
@@ -213,7 +279,6 @@ pub const HELP_SECTIONS: &[HelpSection] = &[
             ("Ctrl+W", "ui.help.mouse_toggle"),
             ("ui.help.k.mouse", "ui.help.mouse_action"),
             ("PageUp/PageDown", "ui.help.scroll"),
-            ("F1 / ?", "ui.help.help"),
         ],
         openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
     },
@@ -517,7 +582,16 @@ pub fn render_help(
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc, inner_w),
-        HelpTab::Hotkeys => hotkeys_lines(help.context, palette, loc, inner_w),
+        HelpTab::Hotkeys => {
+            let (lines, anchor) = hotkeys_tab(help.context, palette, loc, inner_w);
+            // A non-chat opener lands with its section's header on top (fork
+            // F2); consumed here, where the wrapped rows above are known.
+            if help.pending_anchor {
+                help.scroll = anchor;
+                help.pending_anchor = false;
+            }
+            lines
+        }
         HelpTab::Commands => key_lines(
             &command_rows(),
             COMMAND_GROUP_OPENERS,
@@ -664,13 +738,16 @@ struct TabSection<'a> {
 }
 
 /// The "Shortcuts" tab: [`HELP_SECTIONS`] under their headers, the section for
-/// `context` marked "you are here" (docs/help-hotkeys-context.md, fork F1).
-pub fn hotkeys_lines(
+/// `context` marked "you are here" (fork F1), plus that section's header row —
+/// the anchor a non-chat opener scrolls to (fork F2). The anchor is computed
+/// rather than stored, because the rows above the section wrap by `width`, so
+/// it is only knowable where the width is. See docs/help-hotkeys-context.md.
+pub fn hotkeys_tab(
     context: HelpContext,
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, usize) {
     let sections: Vec<TabSection<'_>> = HELP_SECTIONS
         .iter()
         .map(|s| TabSection {
@@ -679,7 +756,10 @@ pub fn hotkeys_lines(
             openers: s.openers,
         })
         .collect();
-    table_lines(&sections, false, palette, loc, width)
+    let (lines, marked) = table_lines(&sections, false, palette, loc, width);
+    // Every context has a section, so the fallback never fires in practice —
+    // but a missing anchor must degrade to the top, not panic mid-render.
+    (lines, marked.unwrap_or(0))
 }
 
 /// One headerless section of `(label, description)` rows — the "Commands" tab
@@ -697,7 +777,7 @@ fn key_lines(
         rows: entries,
         openers,
     };
-    table_lines(std::slice::from_ref(&section), true, palette, loc, width)
+    table_lines(std::slice::from_ref(&section), true, palette, loc, width).0
 }
 
 /// The "Shortcuts"/"Commands" tabs: sections of `(label, description)` rows —
@@ -725,7 +805,7 @@ fn table_lines(
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Option<usize>) {
     // Resolve every label up front: the description column is shared by the
     // whole tab, so it has to be measured before any row can be built. Both
     // label styles pad with a space on each side, so one measurement covers
@@ -760,11 +840,16 @@ fn table_lines(
     // separating space.
     let indent = HELP_PAD.chars().count() + label_col + 1;
     let mut lines = vec![Line::raw("")];
+    // The marked header's row — the anchor [`hotkeys_tab`] hands back.
+    let mut marked_at = None;
     for (si, (header, rows)) in resolved.iter().enumerate() {
         if si > 0 {
             lines.push(Line::raw("")); // a breath between the sections
         }
         if let Some((title, marked)) = header {
+            if *marked {
+                marked_at = Some(lines.len());
+            }
             lines.push(section_header(title, *marked, palette, loc, width));
         }
         for (opens_group, key_span, desc) in rows {
@@ -774,7 +859,7 @@ fn table_lines(
             push_key_entry(&mut lines, key_span, desc, palette, width, indent);
         }
     }
-    lines
+    (lines, marked_at)
 }
 
 /// A section's header row: the localized title, the "you are here" marker when
@@ -1088,7 +1173,7 @@ mod tests {
                 for (name, lines) in [
                     (
                         "hotkeys tab",
-                        hotkeys_lines(HelpContext::Chat, &palette, loc, w),
+                        hotkeys_tab(HelpContext::Chat, &palette, loc, w).0,
                     ),
                     (
                         "commands tab",
@@ -1125,7 +1210,7 @@ mod tests {
             for (name, lines) in [
                 (
                     "hotkeys tab",
-                    hotkeys_lines(HelpContext::Chat, &palette, loc, w),
+                    hotkeys_tab(HelpContext::Chat, &palette, loc, w).0,
                 ),
                 (
                     "commands tab",
@@ -1213,26 +1298,37 @@ mod tests {
     /// tab is taller than the dialog, and a one-pass read would silently stop
     /// asserting about everything below the fold. What each test wants is "this
     /// row renders somewhere in the tab", not "on the first screen of it".
-    fn commands_tab_text() -> String {
+    /// The `ru` locale — the default the ported screen-level tests ran under.
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
+    /// Renders the dialog on a `w`×`h` test terminal and returns the buffer as
+    /// text (rows joined by newlines) — the shared read behind the tests that
+    /// assert on visible content.
+    fn dialog_text(help: &mut HelpState, loc: &'static Locale, w: u16, h: u16) -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-
         let palette = Palette::default();
-        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| render_help(f, help, &palette, loc)).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn commands_tab_text() -> String {
         let mut out = String::new();
         for scroll in [0usize, usize::MAX] {
             let mut help = HelpState::open(HelpTab::Commands);
             help.scroll = scroll;
-            let mut term = Terminal::new(TestBackend::new(90, 50)).unwrap();
-            term.draw(|f| render_help(f, &mut help, &palette, loc))
-                .unwrap();
-            let buf = term.backend().buffer();
-            for y in buf.area.top()..buf.area.bottom() {
-                for x in buf.area.left()..buf.area.right() {
-                    out.push_str(buf[(x, y)].symbol());
-                }
-                out.push('\n');
-            }
+            out.push_str(&dialog_text(&mut help, ru(), 90, 50));
         }
         out
     }
@@ -1275,7 +1371,7 @@ mod tests {
 
         // Rendered blanks: the leading spacer, one break before every section
         // after the first, one per opener — headers are rule rows, not blanks.
-        let lines = hotkeys_lines(HelpContext::Chat, &palette, loc, HELP_MIN_WIDTH as usize);
+        let lines = hotkeys_tab(HelpContext::Chat, &palette, loc, HELP_MIN_WIDTH as usize).0;
         let openers_total: usize = HELP_SECTIONS.iter().map(|s| s.openers.len()).sum();
         assert_eq!(
             lines.iter().filter(|l| is_blank(l)).count(),
@@ -1370,7 +1466,7 @@ mod tests {
                 (HelpContext::Chat, "ui.help.sec.chat"),
                 (HelpContext::Settings, "ui.help.sec.settings"),
             ] {
-                let lines = hotkeys_lines(context, &palette, loc, HELP_MIN_WIDTH as usize);
+                let lines = hotkeys_tab(context, &palette, loc, HELP_MIN_WIDTH as usize).0;
                 let marked: Vec<&Line<'_>> = lines
                     .iter()
                     .filter(|l| {
@@ -1651,5 +1747,445 @@ mod tests {
             text.contains("перехватывающих Ctrl+Q"),
             "the localized description: {text}"
         );
+    }
+
+    /// The dialog's key handling ([`HelpState::handle_key`]): scroll, tab
+    /// switching with a scroll reset, closing, and the quit punch-through.
+    /// These semantics lived in the chat screen's tests while it owned the
+    /// dialog; the runtime's tests cover the overlay around them.
+    #[test]
+    fn help_keys_navigate_scroll_close_and_quit() {
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let mut h = HelpState::open(DEFAULT_HELP_TAB);
+        assert_eq!(h.handle_key(&key(KeyCode::Down)), HelpKeyOutcome::Handled);
+        assert_eq!(
+            h.handle_key(&key(KeyCode::PageDown)),
+            HelpKeyOutcome::Handled
+        );
+        assert_eq!(h.scroll, 1 + HELP_PAGE_SCROLL);
+        h.handle_key(&key(KeyCode::Up));
+        assert_eq!(h.scroll, HELP_PAGE_SCROLL);
+        h.handle_key(&key(KeyCode::Home));
+        assert_eq!(h.scroll, 0);
+        // A scroll then a tab switch: the next tab starts at the top.
+        h.handle_key(&key(KeyCode::Down));
+        h.handle_key(&key(KeyCode::Tab));
+        assert_eq!((h.tab, h.scroll), (HelpTab::Commands, 0));
+        h.handle_key(&key(KeyCode::Left));
+        assert_eq!(h.tab, HelpTab::Hotkeys);
+        // Any other key is consumed and changes nothing — a stray press must
+        // not close the dialog mid-reading.
+        assert_eq!(
+            h.handle_key(&key(KeyCode::Char('x'))),
+            HelpKeyOutcome::Handled
+        );
+        assert_eq!((h.tab, h.scroll), (HelpTab::Hotkeys, 0));
+        // Esc (or a repeat F1/`?`) asks to close; the quit keys punch through,
+        // layout-independently.
+        assert_eq!(h.handle_key(&key(KeyCode::Esc)), HelpKeyOutcome::Close);
+        assert_eq!(h.handle_key(&key(KeyCode::F(1))), HelpKeyOutcome::Close);
+        assert_eq!(h.handle_key(&key(KeyCode::F(10))), HelpKeyOutcome::Quit);
+        assert_eq!(
+            h.handle_key(&KeyEvent::new(KeyCode::Char('й'), KeyModifiers::CONTROL)),
+            HelpKeyOutcome::Quit
+        );
+    }
+
+    /// Fork F2 of docs/help-hotkeys-context.md: opened anywhere but the chat,
+    /// the dialog lands on "Shortcuts" scrolled so the opener's section header
+    /// — with its "you are here" marker — is the first content row; the anchor
+    /// is consumed once, so the user's own scrolling then sticks.
+    #[test]
+    fn a_non_chat_open_lands_on_its_section() {
+        let loc = ru();
+        let mut help = HelpState::open_at(HelpContext::Settings);
+        assert_eq!(help.tab, HelpTab::Hotkeys, "a non-chat open forces the tab");
+        let text = dialog_text(&mut help, loc, 90, 40);
+        assert!(help.scroll > 0, "the anchor scrolled the tab");
+        assert!(
+            text.contains(loc.t("ui.help.sec.settings")),
+            "the settings header is not visible: {text}"
+        );
+        assert!(
+            text.contains(loc.t("ui.help.here")),
+            "the marker is not visible: {text}"
+        );
+        assert!(
+            !text.contains(loc.t("ui.help.sec.everywhere")),
+            "the sections above the anchor must be scrolled past: {text}"
+        );
+        // One-shot: the user's scroll survives the next frame.
+        help.scroll = 3;
+        let _ = dialog_text(&mut help, loc, 90, 40);
+        assert_eq!(help.scroll, 3, "the anchor re-fired on a later render");
+    }
+
+    /// An over-scrolled state clamps at render time, and a short terminal —
+    /// where the tab is taller than the view — draws the scrollbar thumb.
+    #[test]
+    fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let palette = Palette::default();
+        let mut help = HelpState::open(DEFAULT_HELP_TAB);
+        help.scroll = 10_000; // "over-scrolled" — the render clamps it
+        let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+            .unwrap();
+        let (lines, _) = hotkeys_tab(HelpContext::Chat, &palette, ru(), HELP_MAX_WIDTH as usize);
+        assert!(help.scroll < lines.len(), "scroll clamps to the maximum");
+        let buf = term.backend().buffer();
+        let mut thumb = false;
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                thumb |= buf[(x, y)].symbol() == "█";
+            }
+        }
+        assert!(thumb, "on a short terminal help has a scrollbar thumb");
+    }
+
+    /// The lockup in the dialog's header is drawn when the terminal height
+    /// allows it; the mark is left-aligned to the key list's margin
+    /// (docs/branding.md §5).
+    #[test]
+    fn help_shows_logo_when_terminal_is_tall() {
+        use crate::widgets::logo::LOGO_COLS;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
+
+        let palette = Palette::default();
+        let mut help = HelpState::open(DEFAULT_HELP_TAB);
+        // Tall enough to reach the dialog's height cap (44 content rows +
+        // border + air) — the sectioned key list is taller than any dialog, so
+        // the lockup condition is about the dialog's own height.
+        let mut term = Terminal::new(TestBackend::new(90, 52)).unwrap();
+        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+            .unwrap();
+
+        let buf = term.backend().buffer();
+        let mut orange: Vec<(u16, u16)> = Vec::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                let c = &buf[(x, y)];
+                if c.style().fg == Some(ORANGE) || c.style().bg == Some(ORANGE) {
+                    orange.push((x, y));
+                }
+            }
+        }
+        // The glyph's brand-color stem is in every one of its rows, plus
+        // "fork" in the word.
+        assert!(
+            orange.len() > LOCKUP_ROWS as usize,
+            "too little brand color — the mark isn't drawn (found {})",
+            orange.len()
+        );
+        // The popup's left border: a rounded corner (default palette — Auto).
+        let corner = (buf.area.top()..buf.area.bottom())
+            .flat_map(|y| (buf.area.left()..buf.area.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf[(x, y)].symbol() == "╭")
+            .max_by_key(|&(x, _)| x)
+            .expect("the popup's border");
+        // The mark is left-aligned: the glyph's stem (columns 4-5 of its ink)
+        // sits exactly on the key list's margin — the border + two spaces.
+        let left = orange.iter().map(|(x, _)| *x).min().unwrap();
+        assert_eq!(
+            left,
+            corner.0 + 1 + 2 + 4,
+            "the glyph's stem is not on the key list's left margin"
+        );
+        // The wordmark's "fork" — to the right of the glyph, past its edge.
+        let right = orange.iter().map(|(x, _)| *x).max().unwrap();
+        assert!(
+            right > corner.0 + 1 + 2 + LOGO_COLS,
+            "the wordmark's \"fork\" is not drawn to the right of the glyph"
+        );
+    }
+
+    /// On a short terminal the logo isn't drawn at all — the key list doesn't
+    /// shift and doesn't need extra scrolling (a hard degradation,
+    /// docs/branding.md §5).
+    #[test]
+    fn help_hides_logo_when_terminal_is_short() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
+
+        let palette = Palette::default();
+        let mut help = HelpState::open(DEFAULT_HELP_TAB);
+        // A dialog height of 13 (11 rows inside) doesn't fit the lockup with
+        // breathing room → it isn't drawn, the tabs don't shift down.
+        let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
+        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+            .unwrap();
+
+        let buf = term.backend().buffer();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                let c = &buf[(x, y)];
+                assert_ne!(c.style().fg, Some(ORANGE), "the logo must not be drawn");
+                assert_ne!(c.style().bg, Some(ORANGE), "the logo must not be drawn");
+            }
+        }
+    }
+
+    /// The tab strip is one line and the dialog has a fixed width, so a tab
+    /// label that is a few columns too long in *some* locale silently
+    /// truncates the last tab — and the tab that gets cut is the rightmost
+    /// one, which nobody looking at the developer's locale would notice.
+    /// Adding the "Disclaimer" tab pushed the `ru` strip six columns over the
+    /// edge, and the fix was to shorten the hotkeys label in
+    /// `locales/ru.json` — so the budget is checked for every bundled locale
+    /// rather than left to luck.
+    #[test]
+    fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
+        use crate::shared::i18n::{Lang, locale};
+
+        // The budget is the dialog's MINIMUM width: the strip has to fit the
+        // smallest window the adaptive sizing ever grants.
+        let palette = Palette::default();
+        for lang in Lang::ALL {
+            let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang));
+            let chars: Vec<char> = strip.spans.iter().flat_map(|s| s.content.chars()).collect();
+            let width = crate::shared::wrap::display_width(&chars);
+            assert!(
+                width <= HELP_MIN_WIDTH as usize,
+                "the {} tab strip is {width} columns wide, the dialog is {HELP_MIN_WIDTH}",
+                lang.code()
+            );
+        }
+    }
+
+    /// The legal tabs are the one place where a whole *document*, not a UI
+    /// string, follows the interface language: `ru` gets the translations
+    /// under `docs/legal/`, every other language the authoritative English
+    /// (docs/history/legal-ru-translations.md §4.2).
+    #[test]
+    fn the_legal_tabs_follow_the_interface_language() {
+        use crate::shared::i18n::{Lang, locale};
+
+        let text_for = |lang: Lang, tab: HelpTab| -> String {
+            let mut help = HelpState::open(tab);
+            dialog_text(&mut help, locale(lang), 90, 60)
+        };
+
+        // `(language, tab, the marker that must show, the one that must not)`.
+        let cases = [
+            (Lang::En, HelpTab::License, "MIT License", "перевод"),
+            (
+                Lang::Ru,
+                HelpTab::License,
+                "неофициальный перевод",
+                "MIT License",
+            ),
+            (
+                Lang::En,
+                HelpTab::Disclaimer,
+                "mindfork is a client",
+                "клиент",
+            ),
+            (Lang::Ru, HelpTab::Disclaimer, "это клиент", "is a client"),
+        ];
+        for (lang, tab, wanted, unwanted) in cases {
+            let text = text_for(lang, tab);
+            assert!(
+                text.contains(wanted),
+                "the {} {tab:?} tab does not show {wanted:?}",
+                lang.code()
+            );
+            assert!(
+                !text.contains(unwanted),
+                "the {} {tab:?} tab shows the other language's text ({unwanted:?})",
+                lang.code()
+            );
+        }
+    }
+
+    /// A level-1 markdown heading is accent + bold + **underlined**, and the
+    /// writer puts that on the `Line` rather than on its spans — so the
+    /// "Disclaimer" tab's left indent inherited it and the underline visibly
+    /// ran out to the left of the heading's text. The style belongs on the
+    /// content spans; the indent stays blank. Reported from a real screenshot.
+    #[test]
+    fn the_disclaimer_indent_does_not_inherit_the_heading_style() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Modifier;
+
+        let palette = Palette::default();
+        let mut help = HelpState::open(HelpTab::Disclaimer);
+        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        term.draw(|f| render_help(f, &mut help, &palette, ru()))
+            .unwrap();
+
+        let buf = term.backend().buffer();
+        // Find the heading row and the column its `#` marker starts at.
+        let (y, x) = (buf.area.top()..buf.area.bottom())
+            .find_map(|y| {
+                (buf.area.left()..buf.area.right())
+                    .find(|&x| buf[(x, y)].symbol() == "#")
+                    .map(|x| (y, x))
+            })
+            .expect("the disclaimer heading is not on screen");
+        assert!(
+            buf[(x, y)]
+                .style()
+                .add_modifier
+                .contains(Modifier::UNDERLINED),
+            "the heading itself lost its underline"
+        );
+        for dx in 1..=2 {
+            let cell = &buf[(x - dx, y)];
+            assert_eq!(cell.symbol(), " ", "the indent is not blank");
+            assert!(
+                !cell.style().add_modifier.contains(Modifier::UNDERLINED),
+                "the indent column {dx} left of the heading is underlined"
+            );
+        }
+    }
+
+    /// Every tab draws its own distinctive content, and the tab strip carries
+    /// all six tabs.
+    #[test]
+    fn help_tabs_render_distinct_content() {
+        // The same render, scrolled to the bottom: a tab taller than the
+        // popup would otherwise hide rows at *both* scroll extremes.
+        let scrolled_to_end = |tab: HelpTab| -> String {
+            let mut help = HelpState::open(tab);
+            help.scroll = usize::MAX;
+            dialog_text(&mut help, ru(), 90, 60)
+        };
+        let text_for = |tab: HelpTab| -> String {
+            let mut help = HelpState::open(tab);
+            dialog_text(&mut help, ru(), 90, 60)
+        };
+
+        // The tab strip carries all six labels on any tab.
+        let about = text_for(HelpTab::About);
+        for label in [
+            "О программе",
+            "Клавиши",
+            "Команды",
+            "Лицензия",
+            "Дисклеймер",
+            "Компоненты",
+        ] {
+            assert!(about.contains(label), "missing the \"{label}\" tab label");
+        }
+        // "About": the brand name, author, version, links.
+        assert!(about.contains("Vladimir Shylov"), "missing the author");
+        assert!(
+            about.contains(env!("CARGO_PKG_VERSION")),
+            "missing the version"
+        );
+        assert!(
+            about.contains("https://mindfork.io"),
+            "missing the site link"
+        );
+        assert!(
+            about.contains("https://crates.io/crates/mindfork"),
+            "missing the crate link"
+        );
+
+        // "Hotkeys": a key description, but NOT commands (their own tab).
+        let hotkeys = text_for(HelpTab::Hotkeys);
+        assert!(
+            hotkeys.contains("отправить сообщение"),
+            "missing a key description"
+        );
+        assert!(
+            !hotkeys.contains("/rag add"),
+            "commands must not be on the hotkeys tab"
+        );
+
+        // "Commands": input-box commands, read at both scroll extremes.
+        let commands = format!(
+            "{}{}",
+            text_for(HelpTab::Commands),
+            scrolled_to_end(HelpTab::Commands)
+        );
+        assert!(
+            commands.contains("/rag add"),
+            "missing the /rag add command"
+        );
+        assert!(commands.contains("/tts"), "missing the /tts command");
+        // Attachments are listed FIRST — they're the commands used while
+        // writing a message (docs/file-attachments.md §4.8).
+        assert!(
+            commands.contains("/file attach"),
+            "missing the /file attach command"
+        );
+        assert!(
+            commands.find("/file attach") < commands.find("/rag add"),
+            "the /file commands must come before /rag: {commands}"
+        );
+
+        // "License": the MIT text. This render runs in `ru`, and the legal
+        // tabs follow the interface language — the markers here are the
+        // translation's; the two-language rule itself is pinned by
+        // `the_legal_tabs_follow_the_interface_language`.
+        let license = text_for(HelpTab::License);
+        assert!(license.contains("MIT"), "missing the license header");
+        assert!(license.contains("ГАРАНТИЙ"), "missing the license body");
+        // The disclaimer is a separate tab, not a tail on the license: the
+        // MIT text must stay pure (see `credits::LICENSE_TEXT`).
+        assert!(
+            !license.contains("это клиент"),
+            "the disclaimer leaked into the license tab"
+        );
+
+        // "Disclaimer": rendered through our own markdown renderer — headings
+        // keep their styled `#` prefix, but emphasis markers are consumed.
+        let disclaimer = text_for(HelpTab::Disclaimer);
+        assert!(
+            disclaimer.contains("Дисклеймер"),
+            "missing the disclaimer heading"
+        );
+        assert!(
+            disclaimer.contains("это клиент"),
+            "missing the disclaimer body"
+        );
+        assert!(
+            !disclaimer.contains("**"),
+            "raw markdown emphasis markers on screen — the renderer was bypassed"
+        );
+
+        // "Components": name, version, and license (from the list's start —
+        // it is long and scrolls).
+        let components = text_for(HelpTab::Components);
+        assert!(components.contains("ansi-to-tui"), "missing the component");
+        assert!(
+            components.contains("8.0.1"),
+            "missing the component version"
+        );
+        assert!(
+            components.contains("Zlib OR Apache-2.0 OR MIT"),
+            "missing the component license"
+        );
+    }
+
+    /// The vendored syntax grammars are third-party data we redistribute, so
+    /// the "Components" tab must name them and their licences — like the
+    /// crates above. They sit at the end of a long list, so this scrolls to
+    /// the bottom rather than reading the first screen (`syntaxes/SOURCES.md`).
+    #[test]
+    fn components_tab_lists_the_vendored_grammars() {
+        let mut help = HelpState::open(HelpTab::Components);
+        help.scroll = usize::MAX / 2; // the render clamps to the last page
+        let out = dialog_text(&mut help, ru(), 100, 40);
+
+        assert!(
+            out.contains("грамматики"),
+            "missing the grammars section header: {out}"
+        );
+        // The last row of the manifest — whichever it is, must be on the last page.
+        let (lang, repo, licence) = *crate::shared::credits::GRAMMARS
+            .last()
+            .expect("the manifest lists grammars");
+        assert!(out.contains(lang), "missing the grammar {lang}: {out}");
+        assert!(out.contains(repo), "missing its upstream {repo}");
+        assert!(out.contains(licence), "missing its licence {licence}");
     }
 }

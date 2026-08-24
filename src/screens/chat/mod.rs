@@ -38,7 +38,6 @@ use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, dim_background};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
-use crate::widgets::help_dialog::{DEFAULT_HELP_TAB, HelpState, HelpTab};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -178,6 +177,10 @@ pub enum ChatIntent {
     /// Open the changes screen (`F4`, `/changes`): what the assistant changed
     /// in the attached project. See spec §9.12.
     OpenChanges,
+    /// Open the help dialog (`?` on empty input, `/help`). `F1` never reaches
+    /// the screen — the runtime routes it above every screen and owns the
+    /// overlay (spec §11.7, docs/help-hotkeys-context.md stage 2).
+    OpenHelp,
     /// Set, show or clear one of the project's command slots
     /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).
     ProjectSlot {
@@ -522,12 +525,6 @@ pub struct ChatScreen {
     /// opening the settings screen via `Ctrl+P`. Filled in by the `Settings`
     /// event. See spec §11.6, docs/history/i18n.md.
     settings_snapshot: Option<SettingsSnapshot>,
-    /// The help/"About" dialog (`F1`/`?`): tabs + the active tab's scroll
-    /// position; `None` — closed. See spec §11.7.
-    help: Option<HelpState>,
-    /// The last-opened tab of the help dialog — restored on reopening (the
-    /// popup "remembers" the choice, like the emoji picker).
-    help_last_tab: HelpTab,
     /// The active theme palette (from `config.interface.theme`). See spec §11.6.
     palette: Palette,
     /// The interface locale (from `config.interface.language`, axis B —
@@ -644,8 +641,6 @@ impl ChatScreen {
             search_last: String::new(),
             confirm_destructive: false,
             settings_snapshot: None,
-            help: None,
-            help_last_tab: DEFAULT_HELP_TAB,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,

@@ -104,10 +104,9 @@ impl ChatScreen {
             // "the chat list" (`/stop` is the other half).
             UiCommand::Chats => Some(ChatIntent::OpenChatList),
             UiCommand::Changes => Some(ChatIntent::OpenChanges),
-            UiCommand::Help => {
-                self.help = Some(HelpState::open(self.help_last_tab));
-                None
-            }
+            // The runtime owns the overlay; the typed route reports the same
+            // intent the chat's `?` does (a command is its key).
+            UiCommand::Help => Some(ChatIntent::OpenHelp),
             // The conversation.
             UiCommand::NewChat if argument.is_empty() => self.request_new_chat(),
             UiCommand::NewChat => self.new_chat_by_name(&argument),
