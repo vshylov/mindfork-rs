@@ -1371,7 +1371,7 @@ fn working_after_a_search_jump_drops_the_results_too() {
 
 /// `F1` opens the help over any screen — routed above the active screen's
 /// handler, which keeps no `F1` arm of its own — and while the dialog is open
-/// the keys belong to it (spec §11.7, docs/help-hotkeys-context.md stage 2).
+/// the keys belong to it (spec §11.7, docs/history/help-hotkeys-context.md stage 2).
 #[test]
 fn f1_opens_the_help_over_any_screen_and_owns_the_keys() {
     let mut h = Harness::new();
@@ -1460,7 +1460,7 @@ fn a_paste_is_inert_under_the_open_help() {
     );
 }
 
-// ---- the composed "Shortcuts" sections (docs/help-hotkeys-context.md §6) ----
+// ---- the composed "Shortcuts" sections (docs/history/help-hotkeys-context.md §6) ----
 //
 // The section tables live next to the key handlers they document; the app
 // composes them, so the whole-tab gates live here — the one layer that can

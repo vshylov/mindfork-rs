@@ -1,6 +1,6 @@
 //! The help/"About" dialog (`F1`/`?`): the tabs, the per-screen hotkey
 //! sections and their rendering. A widget of its own so the runtime can draw
-//! it over whatever screen is active (docs/help-hotkeys-context.md, stage 2);
+//! it over whatever screen is active (docs/history/help-hotkeys-context.md, stage 2);
 //! it grew up in `screens/chat/popups.rs` and moved here unchanged.
 
 use ratatui::Frame;
@@ -75,7 +75,7 @@ pub const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
 /// The screen the help dialog was opened from — the "Shortcuts" tab marks that
 /// screen's section "you are here" ([`HELP_SECTIONS`]) and, opened anywhere but
-/// the chat, scrolls to it (docs/help-hotkeys-context.md, forks F1/F2).
+/// the chat, scrolls to it (docs/history/help-hotkeys-context.md, forks F1/F2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpContext {
     /// The chat screen (the feed + the input box).
@@ -204,7 +204,7 @@ const HELP_PAGE_SCROLL: usize = 8;
 /// typing); `desc_key` is always a `ui.*` description key. Both are resolved
 /// through the locale in [`key_lines`]. Input-box commands (`/…`) are split out
 /// into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
-/// docs/help-hotkeys-context.md, docs/i18n-ui.md.
+/// docs/history/help-hotkeys-context.md, docs/i18n-ui.md.
 pub struct HelpSection {
     /// Locale key of the header (`ui.help.sec.*`). The route to the screen is
     /// part of the localized title ("Settings (Ctrl+P)") — the header doubles
@@ -230,7 +230,7 @@ pub struct HelpSection {
 /// screen. The other sections live **next to the key handlers they document**
 /// (the chat's in `screens/chat`, the list's in `widgets/chat_list`, …), and
 /// the app layer composes the display order — the one place that knows every
-/// screen exists (docs/help-hotkeys-context.md §6). Proximity of a table to
+/// screen exists (docs/history/help-hotkeys-context.md §6). Proximity of a table to
 /// its `match` is the anti-drift force, and AGENTS.md §3 sends every new key
 /// to its owner's table.
 pub static EVERYWHERE: HelpSection = HelpSection {
@@ -624,7 +624,7 @@ struct TabSection<'a> {
 /// header row — the anchor a non-chat opener scrolls to (fork F2). The anchor
 /// is computed rather than stored, because the rows above the section wrap by
 /// `width`, so it is only knowable where the width is. The caller (the app
-/// layer) owns the composed list. See docs/help-hotkeys-context.md.
+/// layer) owns the composed list. See docs/history/help-hotkeys-context.md.
 pub fn hotkeys_tab(
     sections: &[&HelpSection],
     context: HelpContext,
@@ -748,7 +748,7 @@ fn table_lines(
 }
 
 /// A section's header row: the localized title, the "you are here" marker when
-/// the dialog was opened from that screen (docs/help-hotkeys-context.md, fork
+/// the dialog was opened from that screen (docs/history/help-hotkeys-context.md, fork
 /// F1), and a rule to the dialog's edge, so the sections read as chapters.
 fn section_header(
     title: &str,
@@ -1042,7 +1042,7 @@ mod tests {
 
     /// The widget's own tests exercise the tabs that read no sections; the
     /// sectioned "Shortcuts" tab is tested where the real composed list
-    /// lives — `app::runtime::tests` (docs/help-hotkeys-context.md §6).
+    /// lives — `app::runtime::tests` (docs/history/help-hotkeys-context.md §6).
     const NO_SECTIONS: &[&HelpSection] = &[];
 
     /// The gate behind the wrapping in [`key_lines`]: no row of the commands

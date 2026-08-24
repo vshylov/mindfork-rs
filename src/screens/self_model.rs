@@ -28,7 +28,7 @@ use crate::widgets::input_box::{InputBox, RenderOpts};
 /// The self-model screen's "Shortcuts" section (`F1`): one row per key
 /// `handle_key` matches — a new arm gets a row here (AGENTS.md §3). The app
 /// layer composes the dialog's tab from the screens' sections
-/// (docs/help-hotkeys-context.md §6).
+/// (docs/history/help-hotkeys-context.md §6).
 pub(crate) static HELP_SECTION: HelpSection = HelpSection {
     title: "ui.help.sec.self_model",
     context: Some(HelpContext::SelfModel),

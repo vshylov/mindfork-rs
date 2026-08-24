@@ -49,7 +49,7 @@ use crate::widgets::status_bar::{self, EscTarget};
 /// handlers match (`input.rs` — the chords, the plain keys, the input box) —
 /// a new arm gets a row here, next door (AGENTS.md §3). The app layer
 /// composes the dialog's tab from the screens' sections
-/// (docs/help-hotkeys-context.md §6).
+/// (docs/history/help-hotkeys-context.md §6).
 pub(crate) static HELP_SECTION: HelpSection = HelpSection {
     title: "ui.help.sec.chat",
     context: Some(HelpContext::Chat),
@@ -228,7 +228,7 @@ pub enum ChatIntent {
     OpenChanges,
     /// Open the help dialog (`?` on empty input, `/help`). `F1` never reaches
     /// the screen — the runtime routes it above every screen and owns the
-    /// overlay (spec §11.7, docs/help-hotkeys-context.md stage 2).
+    /// overlay (spec §11.7, docs/history/help-hotkeys-context.md stage 2).
     OpenHelp,
     /// Set, show or clear one of the project's command slots
     /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).

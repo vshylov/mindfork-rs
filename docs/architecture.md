@@ -286,7 +286,7 @@ src/
 │  │                        app composes HELP_SECTIONS), "you are here" marker +
 │  │                        scroll anchor, HelpState/handle_key; runtime-owned and
 │  │                        drawn over the active screen (spec §11.7,
-│  │                        docs/help-hotkeys-context.md). "License"/"Disclaimer"
+│  │                        docs/history/help-hotkeys-context.md). "License"/"Disclaimer"
 │  │                        show the interface language's text
 │  │                        (credits::license_text), the disclaimer through
 │  │                        shared::markdown (ADR 0003)
@@ -2305,7 +2305,7 @@ variant, which forces the next screen to decide too.
 
 **The help dialog is a runtime overlay** (`widgets/help_dialog.rs` +
 `HelpOverlay` beside `active` in `run_loop`; spec §11.7,
-[help-hotkeys-context.md](help-hotkeys-context.md)). `handle_key_event` routes
+[help-hotkeys-context.md](history/help-hotkeys-context.md)). `handle_key_event` routes
 `F1` above every screen — none keeps an `F1` arm of its own — and while the
 dialog is open its keys, pastes and mouse events belong to it; the chat's
 `?`/`/help` arrive as `ChatIntent::OpenHelp` and are intercepted at the same
