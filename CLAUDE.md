@@ -167,7 +167,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-24, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2555 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2556 unit tests
 green, 107 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,6 +179,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The binary/command is `mindfork`** — one `[[bin]]` stanza over the
+  unchanged package `mindfork-rs`; the Linux symlink/`.desktop`/icons, the
+  Windows installer, CI and the docs' command examples follow, while data
+  locations, package/artifact names and the encryption/lock identifiers
+  deliberately keep the project id; pre-release, so no compat shims
+  ([docs/research/binary-rename.md](docs/research/binary-rename.md)).
 - **Commands — stage 3: `/autotitle`, the personas, the profile texts, and the
   command residue** — the JupyterLab pass's gaps closed: the model-written
   title, the impersonation profiles (`/impersonation list|new|delete|use|system`)

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -37,6 +37,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.9.7 (prepared)
 - Post-M9: the installer's legal pages speak Russian (done)
 - Post-M9: the Windows installer moves to Inno Setup 7 (done)
+- Post-M9: the binary/command renamed to `mindfork` (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1361,3 +1362,51 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Checks**: 2443 unit tests green, 106 `#[ignore]` (no Rust code touched);
   `fmt`/`clippy -D warnings`/`cyrillic_scan`/`link_check`/`doc_index_check`
   /`wizard_rtf --check` clean, both workflow YAMLs valid.
+
+### Post-M9: the binary/command renamed to `mindfork` (done)
+- **The command is the brand now** (branch `feat/binary-rename`, research
+  [docs/research/binary-rename.md](../research/binary-rename.md); user's
+  decisions 2026-08-24: rename; the project/repository/package stays
+  `mindfork-rs`; and — no public release having happened — a clean cut, with
+  no transitional `/usr/bin/mindfork-rs` symlink and no `[InstallDelete]`
+  archaeology in the installer). One Cargo stanza does the rename
+  (`[[bin]] name = "mindfork"`, `path = "src/main.rs"` — an explicit `[[bin]]`
+  disables autodiscovery); nothing in the repository invokes the built binary
+  by name, so `cargo build/run/test` were untouched.
+- **Everything else is surfaces**: the CLI usage/`--version`/guard strings
+  (5 locale keys in each of en/ru), the empty-chat title fallback (now
+  `credits::APP_NAME` instead of a second literal), the startup/exit log
+  lines, MCP `clientInfo.name`, the sandbox download User-Agent; the Linux
+  staged binary + `/usr/bin` symlink + the `.desktop` (file renamed,
+  `Name`/`Exec`/`Icon`) + the hicolor icon names, with `packaging.yml`'s
+  container-smoke assertions moved in step; the Inno installer
+  (`AppName`/`UninstallDisplayName`/`DefaultGroupName`/shortcuts/exe);
+  `release.yml`'s binary paths; and the command examples across install.md,
+  import-format.md, CONTRIBUTING.md, AGENTS.md §6 and spec.md.
+- **What deliberately kept the old string** — each now carries a source
+  comment naming the research doc: `ProjectDirs("", "", "mindfork-rs")` (the
+  existing per-user data folder), the `secrets.rs` v1 encryption constants
+  (protocol inputs; "aligning" them would orphan every stored key), the
+  single-instance lock id (a pre-rename build and a current one must still
+  exclude each other), the Inno `AppId`/`DefaultDirName`/
+  `OutputBaseFilename`, the package and artifact names, and every directory
+  (`/usr/lib/mindfork-rs/` also being where the `config|noreplace`
+  `defaults.json` lives). A new gate test in `credits.rs` pins
+  `[[bin]] name` ≡ `APP_NAME` and the package name, so the brand constant and
+  the typed command cannot drift apart.
+- **Linux was the question that started the track**; the answer (research doc
+  §4): no distribution packages a `mindfork` (nearest neighbour —
+  MindForger's `mindforger`; checked 2026-08-24), package managers swap the
+  renamed paths cleanly on upgrade, and `current_exe()` never depended on the
+  file name — `/proc/self/exe` resolves the symlink to
+  `/usr/lib/mindfork-rs/` whatever the binary is called. The would-be
+  transition costs (user scripts spelling the old command, a stale desktop
+  pin, a tarball unpacked over an old one) are all voided by the pre-release
+  timing.
+- **Verification**: no live engine run (engine/memory/tools untouched — the
+  renamed `clientInfo`/`User-Agent` strings change no protocol);
+  `target\debug\mindfork.exe --version` prints `mindfork 0.9.7`; the
+  container install smokes and the `.iss` compile ride the PR's
+  `packaging.yml`. **Gate green**: 2556 unit tests (one new — the name gate),
+  107 `#[ignore]`; `fmt`/`clippy -D warnings`/`cyrillic_scan`/`link_check`/
+  `doc_index_check` clean.

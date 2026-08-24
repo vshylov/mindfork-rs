@@ -63,7 +63,7 @@ jobs:
       - name: Build deb/rpm/archlinux
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          bash packaging/linux/build-packages.sh target/release/mindfork-rs "$VERSION" dist
+          bash packaging/linux/build-packages.sh target/release/mindfork "$VERSION" dist
       - uses: actions/upload-artifact@v5
         with:
           name: linux-packages
@@ -117,29 +117,29 @@ jobs:
           fi
 
           # Layout: the real binary + defaults.json + dictionaries in /usr/lib/<pkg>/.
-          test -f /usr/lib/mindfork-rs/mindfork-rs
+          test -f /usr/lib/mindfork-rs/mindfork
           test -f /usr/lib/mindfork-rs/defaults.json
           test -d /usr/lib/mindfork-rs/data/dictionaries
           ls /usr/lib/mindfork-rs/data/dictionaries/*.dic >/dev/null
 
           # The symlink from PATH resolves to the real binary → defaults.json is visible next to it.
-          real="$(readlink -f /usr/bin/mindfork-rs)"
-          test "$real" = /usr/lib/mindfork-rs/mindfork-rs
+          real="$(readlink -f /usr/bin/mindfork)"
+          test "$real" = /usr/lib/mindfork-rs/mindfork
           test -f "$(dirname "$real")/defaults.json"
           grep -q '"mode"' /usr/lib/mindfork-rs/defaults.json
 
           # The application-menu entry and theme icons (docs/branding.md §4.2).
-          desktop=/usr/share/applications/mindfork-rs.desktop
+          desktop=/usr/share/applications/mindfork.desktop
           test -f "$desktop"
           # Terminal=true is critical: without it, launching from the menu gives no terminal.
           grep -q '^Terminal=true$' "$desktop"
-          grep -q '^Exec=mindfork-rs$' "$desktop"
-          grep -q '^Icon=mindfork-rs$' "$desktop"
+          grep -q '^Exec=mindfork$' "$desktop"
+          grep -q '^Icon=mindfork$' "$desktop"
           # The icon file name must match the Icon= key.
           for size in 16x16 32x32 48x48 64x64 128x128 256x256; do
-            test -f "/usr/share/icons/hicolor/$size/apps/mindfork-rs.png"
+            test -f "/usr/share/icons/hicolor/$size/apps/mindfork.png"
           done
-          test -f /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
+          test -f /usr/share/icons/hicolor/scalable/apps/mindfork.svg
 
           # The standard validator — if present in the image (won't install it just for this).
           if command -v desktop-file-validate >/dev/null 2>&1; then
@@ -153,9 +153,9 @@ jobs:
           # readable. `--version` — the peek phase, creates no data directories.
           if command -v useradd >/dev/null 2>&1; then
             useradd -m tester
-            su tester -c 'mindfork-rs --version'
+            su tester -c 'mindfork --version'
           else
-            mindfork-rs --version
+            mindfork --version
           fi
           echo "SMOKE OK: ${{ matrix.image }}"
 
@@ -179,7 +179,7 @@ jobs:
           # We don't build a real binary here — we only check that the .iss (and its
           # Pascal code) compiles. The stub satisfies [Files].
           New-Item -ItemType Directory -Force stage | Out-Null
-          Set-Content -Path stage\mindfork-rs.exe -Value "dummy"
+          Set-Content -Path stage\mindfork.exe -Value "dummy"
           & $env:ISCC "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
       - uses: actions/upload-artifact@v5
         with:

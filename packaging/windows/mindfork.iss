@@ -1,4 +1,4 @@
-﻿; The Inno Setup installer script for mindfork-rs on Windows (§3.3 docs/history/installers.md).
+﻿; The Inno Setup installer script for mindfork on Windows (§3.3 docs/history/installers.md).
 ; The stock legal pages (the MIT license, then the disclaimer — see [Setup] and
 ; [Languages] below, one text per language) and two custom ones — "Application
 ; language" and "Data location" — with the choice written
@@ -25,7 +25,11 @@
 
 [Setup]
 AppId={{A7E3F1C2-9B84-4D6E-8F1A-2C5B7D9E0463}
-AppName=mindfork-rs
+; Naming: the app presents as the brand `mindfork` — AppName, the shortcuts,
+; the installed exe — while DefaultDirName and OutputBaseFilename keep the
+; project name `mindfork-rs`, like every data directory
+; (docs/research/binary-rename.md).
+AppName=mindfork
 AppVersion={#AppVersion}
 AppPublisher=Vladimir Shylov
 ; The three URLs surface in Windows "Apps & features" (the ARP entry). The project
@@ -58,7 +62,7 @@ AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
 ; would then present a different text than the repository, the release archives
 ; and the app's F1 tabs.
 DefaultDirName={autopf}\mindfork-rs
-DefaultGroupName=mindfork-rs
+DefaultGroupName=mindfork
 DisableProgramGroupPage=yes
 ; Per-user by default (no UAC); the user can choose "for everyone" at startup.
 PrivilegesRequired=lowest
@@ -81,8 +85,8 @@ OutputBaseFilename=mindfork-rs-v{#AppVersion}-x86_64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=mindfork-rs
-UninstallDisplayIcon={app}\mindfork-rs.exe
+UninstallDisplayName=mindfork
+UninstallDisplayIcon={app}\mindfork.exe
 ; Branding (docs/branding.md §4.1). The icon of setup.exe itself and the logo in the
 ; wizard's header. PNG is accepted on par with BMP and 35x lighter — verified on
 ; Inno 6, and taken unchanged by 7 (the header logo was looked at on a 64-bit setup).
@@ -157,7 +161,7 @@ ru.SandboxStatus=Установка Python-песочницы (может зан
 ; download into the default data directory instead of the one picked on the
 ; "Data location" page. Writing it right after the binary lands is early enough
 ; for every path. WriteDefaults is idempotent (it skips an existing file).
-Source: "{#BinDir}\mindfork-rs.exe"; DestDir: "{app}"; Flags: ignoreversion; AfterInstall: WriteDefaults
+Source: "{#BinDir}\mindfork.exe"; DestDir: "{app}"; Flags: ignoreversion; AfterInstall: WriteDefaults
 ; Spellcheck dictionaries — in a portable layout next to the binary (the P1 fallback): with
 ; mode=system they're absent from the data directory, the app takes them from here.
 Source: "{#SourcePath}..\..\dictionaries\*.aff"; DestDir: "{app}\data\dictionaries"; Flags: ignoreversion
@@ -174,8 +178,8 @@ Source: "{#SourcePath}..\..\docs\legal\DISCLAIMER.ru.md"; DestDir: "{app}"; Flag
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\mindfork-rs"; Filename: "{app}\mindfork-rs.exe"
-Name: "{autodesktop}\mindfork-rs"; Filename: "{app}\mindfork-rs.exe"; Tasks: desktopicon
+Name: "{group}\mindfork"; Filename: "{app}\mindfork.exe"
+Name: "{autodesktop}\mindfork"; Filename: "{app}\mindfork.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
@@ -192,16 +196,16 @@ Name: "installsandbox"; Description: "{cm:SandboxTask}"; Flags: unchecked
 ;    not assumed — which is why defaults.json is written from AfterInstall on the
 ;    [Files] entry instead. Without that the download would land in the default
 ;    data directory rather than the one picked on the "Data location" page;
-;  * no `runhidden`: mindfork-rs.exe is a console binary, so the console window it
+;  * no `runhidden`: mindfork.exe is a console binary, so the console window it
 ;    opens is what shows the download progress of a multi-minute job;
 ;  * `runasoriginaluser` matters for a per-machine install (Setup is elevated then,
 ;    and the data directory in `system` mode is per-user — without this the sandbox
 ;    would land in the elevating admin's %APPDATA%);
 ;  * a failed download does NOT fail the install (Inno ignores a non-zero exit code
 ;    of a [Run] entry). The sandbox is optional and re-runnable at any time with
-;    `mindfork-rs sandbox setup`; the error stays visible in the console.
+;    `mindfork sandbox setup`; the error stays visible in the console.
 [Run]
-Filename: "{app}\mindfork-rs.exe"; Parameters: "sandbox setup --enable-python"; WorkingDir: "{app}"; \
+Filename: "{app}\mindfork.exe"; Parameters: "sandbox setup --enable-python"; WorkingDir: "{app}"; \
   StatusMsg: "{cm:SandboxStatus}"; Tasks: installsandbox; \
   Flags: waituntilterminated runasoriginaluser
 

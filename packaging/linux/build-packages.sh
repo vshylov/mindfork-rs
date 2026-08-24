@@ -3,7 +3,7 @@
 # nfpm must be on PATH. Used both in CI (packaging.yml / release.yml) and locally.
 #
 # Usage: packaging/linux/build-packages.sh <path-to-binary> <version> <output-dir>
-# Example: packaging/linux/build-packages.sh target/release/mindfork-rs 0.9.0 dist
+# Example: packaging/linux/build-packages.sh target/release/mindfork 0.9.0 dist
 set -euo pipefail
 
 BIN="${1:?path to the binary}"
@@ -16,8 +16,8 @@ cd "$ROOT"
 
 # The binary is staged at a fixed path, which packaging/nfpm.yaml refers to.
 mkdir -p dist/stage "$OUT"
-cp "$BIN" dist/stage/mindfork-rs
-chmod +x dist/stage/mindfork-rs
+cp "$BIN" dist/stage/mindfork
+chmod +x dist/stage/mindfork
 
 # Artifact names — following format conventions (§8 docs/history/installers.md).
 deb="mindfork-rs_${VERSION}-1_amd64.deb"

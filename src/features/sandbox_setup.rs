@@ -27,7 +27,7 @@ pub const WASMER_VERSION: &str = "7.2.0";
 /// The CPython package in the Wasmer registry (downloaded into `python.webc`).
 const PYTHON_PACKAGE: &str = "python/python";
 /// User-Agent for downloads (GitHub/PyPI sometimes reject an empty UA).
-const USER_AGENT: &str = "mindfork-rs-sandbox-setup";
+const USER_AGENT: &str = "mindfork-sandbox-setup";
 
 /// A platform `wasmer` archive from GitHub (tar.gz). `os`/`arch` — from
 /// [`std::env::consts`]. Unpacked whole into `<dir>/wasmer-dist/`.

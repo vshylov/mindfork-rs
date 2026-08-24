@@ -393,7 +393,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     let arguments = loc.t("cli.help.arguments");
     match topic {
         None => format!(
-            "{about}\n\n{usage} mindfork-rs [COMMAND]\n\n{commands}\n\
+            "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
              {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
@@ -413,7 +413,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ov = loc.t("cli.help.opt.version"),
         ),
         Some(HelpTopic::Backup) => format!(
-            "{d}\n\n{usage} mindfork-rs backup [OPTIONS]\n\n{options}\n\
+            "{d}\n\n{usage} mindfork backup [OPTIONS]\n\n{options}\n\
              {o:<30}{co}\n{c:<30}{cc}\n{p:<30}{cp}\n{h:<30}{ch}",
             d = loc.t("cli.help.cmd.backup"),
             o = "  -o, --output <FILE>",
@@ -426,7 +426,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Restore) => format!(
-            "{d}\n\n{usage} mindfork-rs restore <ARCHIVE> [OPTIONS]\n\n{arguments}\n\
+            "{d}\n\n{usage} mindfork restore <ARCHIVE> [OPTIONS]\n\n{arguments}\n\
              {a:<30}{ca}\n\n{options}\n{p:<30}{cp}\n{h:<30}{ch}",
             d = loc.t("cli.help.cmd.restore"),
             a = "  <ARCHIVE>",
@@ -437,20 +437,20 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Import) => format!(
-            "{d}\n\n{usage} mindfork-rs import <FILE>\n\n{arguments}\n\
+            "{d}\n\n{usage} mindfork import <FILE>\n\n{arguments}\n\
              {a:<12}{ca}",
             d = loc.t("cli.help.cmd.import"),
             a = "  <FILE>",
             ca = loc.t("cli.help.arg.import.file"),
         ),
         Some(HelpTopic::Sandbox) => format!(
-            "{d}\n\n{usage} mindfork-rs sandbox <COMMAND>\n\n{commands}\n{s:<12}{cs}",
+            "{d}\n\n{usage} mindfork sandbox <COMMAND>\n\n{commands}\n{s:<12}{cs}",
             d = loc.t("cli.help.cmd.sandbox"),
             s = "  setup",
             cs = loc.t("cli.help.cmd.sandbox.setup"),
         ),
         Some(HelpTopic::SandboxSetup) => format!(
-            "{d}\n\n{usage} mindfork-rs sandbox setup [OPTIONS]\n\n{options}\n\
+            "{d}\n\n{usage} mindfork sandbox setup [OPTIONS]\n\n{options}\n\
              {f:<20}{cf}\n{e:<20}{ce}\n{h:<20}{ch}",
             d = loc.t("cli.help.cmd.sandbox.setup"),
             f = "  -f, --force",
@@ -461,18 +461,18 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Demo) => format!(
-            "{d}\n\n{usage} mindfork-rs demo\n\n{n}",
+            "{d}\n\n{usage} mindfork demo\n\n{n}",
             d = loc.t("cli.help.cmd.demo"),
             n = loc.t("cli.help.demo.note"),
         ),
         Some(HelpTopic::Locales) => format!(
-            "{d}\n\n{usage} mindfork-rs locales <COMMAND>\n\n{commands}\n{e:<12}{ce}",
+            "{d}\n\n{usage} mindfork locales <COMMAND>\n\n{commands}\n{e:<12}{ce}",
             d = loc.t("cli.help.cmd.locales"),
             e = "  export",
             ce = loc.t("cli.help.cmd.locales.export"),
         ),
         Some(HelpTopic::LocalesExport) => format!(
-            "{d}\n\n{usage} mindfork-rs locales export <CODE> --output <FILE>\n\n\
+            "{d}\n\n{usage} mindfork locales export <CODE> --output <FILE>\n\n\
              {arguments}\n{a:<24}{ca}\n\n{options}\n{o:<24}{co}\n{h:<24}{ch}",
             d = loc.t("cli.help.cmd.locales.export"),
             a = "  <CODE>",
@@ -522,7 +522,7 @@ mod tests {
         let general = render_help(None, loc);
         assert!(general.contains("demo"), "listed in the command table");
         let topic = render_help(Some(HelpTopic::Demo), loc);
-        assert!(topic.contains("mindfork-rs demo"));
+        assert!(topic.contains("mindfork demo"));
         assert!(
             topic.contains("temporary folder"),
             "the note must say where the data lives"
@@ -742,7 +742,7 @@ mod tests {
                 let text = render_help(topic, loc);
                 assert!(!text.contains("{"), "{lang:?} {topic:?}: {text}");
                 // Command/flag names are present (not lost during formatting).
-                assert!(text.contains("mindfork-rs"), "{lang:?} {topic:?}");
+                assert!(text.contains("mindfork"), "{lang:?} {topic:?}");
             }
         }
     }

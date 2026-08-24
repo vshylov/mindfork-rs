@@ -12,8 +12,11 @@
 
 use crate::shared::i18n::Lang;
 
-/// App brand name (as in the wordmark logo and on crates.io). The package/binary
-/// is `mindfork-rs` (`CARGO_PKG_NAME`), but the user sees the short "mindfork".
+/// App brand name (as in the wordmark logo and on crates.io). The binary is
+/// named after it (`[[bin]]` in `Cargo.toml`, held by the gate test
+/// [`tests::the_binary_is_named_after_the_brand`]); the package keeps the
+/// project name `mindfork-rs` (`CARGO_PKG_NAME`). See
+/// docs/research/binary-rename.md.
 pub const APP_NAME: &str = "mindfork";
 
 /// Author (matches the copyright in `LICENSE`).
@@ -271,6 +274,32 @@ mod tests {
             missing.is_empty() && extra.is_empty(),
             "COMPONENTS has drifted from Cargo.toml — missing from the list: {missing:?}; extra: {extra:?}"
         );
+    }
+
+    /// Gate: the binary target carries the brand name and the package keeps
+    /// the project name (docs/research/binary-rename.md). `[[bin]] name` is
+    /// read from the manifest the way [`cargo_runtime_deps`] reads it, so
+    /// [`APP_NAME`] and the command the user actually types cannot drift
+    /// apart.
+    #[test]
+    fn the_binary_is_named_after_the_brand() {
+        assert_eq!(env!("CARGO_PKG_NAME"), "mindfork-rs");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let toml = std::fs::read_to_string(path).expect("Cargo.toml is present");
+        let mut in_bin = false;
+        let mut bin_name = None;
+        for line in toml.lines() {
+            let t = line.trim();
+            if t.starts_with('[') {
+                in_bin = t == "[[bin]]";
+                continue;
+            }
+            if in_bin && let Some(v) = t.strip_prefix("name = \"") {
+                bin_name = v.strip_suffix('"');
+                break;
+            }
+        }
+        assert_eq!(bin_name, Some(APP_NAME), "[[bin]] name ≠ credits::APP_NAME");
     }
 
     /// Gate: the manifest and the vendored files agree — every row names a

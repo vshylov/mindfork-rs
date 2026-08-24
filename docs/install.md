@@ -1,4 +1,4 @@
-# Installing and running mindfork-rs
+# Installing and running mindfork
 
 Project site: [mindfork.io](https://mindfork.io) ·
 sources and releases: [GitHub](https://github.com/vshylov/mindfork-rs).
@@ -15,7 +15,7 @@ backed up and restored (§2.2).
 Prebuilt binaries for **Windows** and **Linux** are published on
 [GitHub Releases](https://github.com/vshylov/mindfork-rs/releases): download the
 `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` archive, optionally verify the
-checksum against `sha256sums.txt`, unpack it, and run the binary (`mindfork-rs --version`
+checksum against `sha256sums.txt`, unpack it, and run the binary (`mindfork --version`
 prints the version). The Linux build is built against glibc 2.35 (`ubuntu-22.04`) and
 runs on most current distros (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch;
 RHEL/Rocky 9 with glibc 2.34 is **not** supported).
@@ -34,7 +34,7 @@ sudo pacman -U  ./mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst # Arch
 ```
 
 The packages place the binary in `/usr/lib/mindfork-rs/` (symlinked from
-`/usr/bin/mindfork-rs`), the dictionaries next to it, and keep data in the
+`/usr/bin/mindfork`), the dictionaries next to it, and keep data in the
 **standard OS folder** (`~/.local/share/mindfork-rs` — set by the
 `/usr/lib/mindfork-rs/defaults.json` file with `{"mode":"system"}`). The interface
 language on first run is detected from the system locale. Packages are unsigned —
@@ -44,7 +44,7 @@ verify integrity against the release's `sha256sums.txt`.
 
 Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It is a
 64-bit program, like the application it carries, so on a system that cannot run
-mindfork-rs it does not open at all. It installs
+mindfork it does not open at all. It installs
 **for the current user without administrator rights** (an "all users" option is
 available). It opens with the **MIT license** (which has to be accepted to
 continue) and the **disclaimer** — the same text as
@@ -549,8 +549,8 @@ For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`,
 and packages into `data/sandbox/`; ~300 MB on disk):
 
 ```bash
-mindfork-rs sandbox setup                    # --force — re-download
-mindfork-rs sandbox setup --enable-python    # …and switch the tool on afterwards
+mindfork sandbox setup                    # --force — re-download
+mindfork sandbox setup --enable-python    # …and switch the tool on afterwards
 ```
 
 `--enable-python` turns on "Python execution" (`tools.python_enabled`) in the
@@ -742,7 +742,7 @@ A one-off idempotent import of profiles and chats from a file in the neutral
 **mindfork-import** format (spec — [docs/import-format.md](import-format.md)):
 
 ```bash
-mindfork-rs import path/to/export.json
+mindfork import path/to/export.json
 ```
 
 The file is emitted by an **external converter** that knows the source app's
@@ -753,13 +753,13 @@ version is rejected. The command doesn't launch the TUI and exits the process;
 re-running it doesn't create duplicates (deterministic ids from stable keys).
 
 > The former `import-lamellama <dir>` command has been removed — its role is now
-> played by the "external converter → `mindfork-rs import`" combo.
+> played by the "external converter → `mindfork import`" combo.
 
 ## 6. Running
 
 ```bash
 cargo run            # dev
-./target/release/mindfork-rs   # release
+./target/release/mindfork   # release
 ```
 
 To look around before configuring anything, run the **demo**: sample data and
@@ -767,7 +767,7 @@ a scripted engine in a throwaway temp folder (removed on exit), no model or
 key needed —
 
 ```bash
-mindfork-rs demo
+mindfork demo
 ```
 
 Needs a **real terminal** (TUI). In a headless environment the app "hangs" — that's

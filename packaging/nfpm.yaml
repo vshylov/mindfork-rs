@@ -10,6 +10,9 @@
 # absent from the data directory → they're taken from /usr/lib/mindfork-rs/data/dictionaries (fallback P1).
 #
 # The version and the binary path are substituted by packaging/linux/build-packages.sh via env.
+#
+# Naming: the command is the brand `mindfork`; the package and its /usr/lib
+# directory keep the project name `mindfork-rs` (docs/research/binary-rename.md).
 name: mindfork-rs
 arch: amd64
 platform: linux
@@ -55,8 +58,8 @@ overrides:
 
 contents:
   # The real binary (a sidecar in /usr/lib/<pkg>/, not in /usr/bin).
-  - src: ./dist/stage/mindfork-rs
-    dst: /usr/lib/mindfork-rs/mindfork-rs
+  - src: ./dist/stage/mindfork
+    dst: /usr/lib/mindfork-rs/mindfork
     file_info:
       mode: 0755
 
@@ -80,48 +83,48 @@ contents:
       mode: 0644
 
   # The user-facing entry point: a symlink from PATH to the real binary.
-  - src: /usr/lib/mindfork-rs/mindfork-rs
-    dst: /usr/bin/mindfork-rs
+  - src: /usr/lib/mindfork-rs/mindfork
+    dst: /usr/bin/mindfork
     type: symlink
 
   # The application-menu entry. Terminal=true is mandatory — the app is a TUI
   # (see docs/branding.md §4.2). Exec refers to the symlink on PATH.
-  - src: ./packaging/linux/mindfork-rs.desktop
-    dst: /usr/share/applications/mindfork-rs.desktop
+  - src: ./packaging/linux/mindfork.desktop
+    dst: /usr/share/applications/mindfork.desktop
     file_info:
       mode: 0644
 
   # hicolor theme icons. The file name must match the Icon= key in the .desktop
-  # (mindfork-rs), so the source files are renamed on install.
+  # (mindfork), so the source files are renamed on install.
   # We don't add cache-refresh scriptlets: both Debian (the update-icon-caches
   # trigger) and Fedora (a file trigger on /usr/share/icons/hicolor) do it themselves.
   - src: ./artwork/mindfork-icon-16.png
-    dst: /usr/share/icons/hicolor/16x16/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/16x16/apps/mindfork.png
     file_info:
       mode: 0644
   - src: ./artwork/mindfork-icon-32.png
-    dst: /usr/share/icons/hicolor/32x32/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/32x32/apps/mindfork.png
     file_info:
       mode: 0644
   - src: ./artwork/mindfork-icon-48.png
-    dst: /usr/share/icons/hicolor/48x48/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/48x48/apps/mindfork.png
     file_info:
       mode: 0644
   - src: ./artwork/mindfork-icon-64.png
-    dst: /usr/share/icons/hicolor/64x64/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/64x64/apps/mindfork.png
     file_info:
       mode: 0644
   - src: ./artwork/mindfork-icon-128.png
-    dst: /usr/share/icons/hicolor/128x128/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/128x128/apps/mindfork.png
     file_info:
       mode: 0644
   - src: ./artwork/mindfork-icon-256.png
-    dst: /usr/share/icons/hicolor/256x256/apps/mindfork-rs.png
+    dst: /usr/share/icons/hicolor/256x256/apps/mindfork.png
     file_info:
       mode: 0644
   # The vector variant — with a backdrop, like the raster ones (a consistent look in the menu).
   - src: ./artwork/mindfork-icon.svg
-    dst: /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/mindfork.svg
     file_info:
       mode: 0644
 

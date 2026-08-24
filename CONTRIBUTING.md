@@ -10,7 +10,7 @@ like. It is deliberately short: the project's real process documentation is
 Open a GitHub issue. For a bug in the TUI, the environment usually matters as
 much as the steps, so please include:
 
-- the app version (`F1` → the About tab, or `mindfork-rs --version`);
+- the app version (`F1` → the About tab, or `mindfork --version`);
 - your OS **and terminal emulator** (Windows Terminal, conhost, GNOME
   Terminal, kitty, …) — rendering and keyboard behavior differ a lot between
   them;

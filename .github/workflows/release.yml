@@ -24,10 +24,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04       # old glibc 2.35 — the binary works on most distributions
-            bin: mindfork-rs
+            bin: mindfork
             artifact: linux
           - os: windows-latest
-            bin: mindfork-rs.exe
+            bin: mindfork.exe
             artifact: windows
     runs-on: ${{ matrix.os }}
     # Measured over the last three releases: Linux 7.8–8.8 min, Windows
@@ -79,8 +79,8 @@ jobs:
       - name: Build packages
         run: |
           VERSION="${GITHUB_REF_NAME#v}"   # e.g. v0.9.0 → 0.9.0
-          chmod +x bin/mindfork-rs
-          bash packaging/linux/build-packages.sh bin/mindfork-rs "$VERSION" dist
+          chmod +x bin/mindfork
+          bash packaging/linux/build-packages.sh bin/mindfork "$VERSION" dist
       - uses: actions/upload-artifact@v5
         with:
           name: linux-packages
@@ -160,15 +160,15 @@ jobs:
 
           # Linux: tar.gz
           mkdir -p stage-linux
-          cp "artifacts/bin-linux/mindfork-rs" stage-linux/
-          chmod +x stage-linux/mindfork-rs
+          cp "artifacts/bin-linux/mindfork" stage-linux/
+          chmod +x stage-linux/mindfork
           cp "${DOCS[@]}" stage-linux/
           stage_data stage-linux
           tar -C stage-linux -czf "dist/mindfork-rs-${TAG}-x86_64-linux.tar.gz" .
 
           # Windows: zip
           mkdir -p stage-win
-          cp "artifacts/bin-windows/mindfork-rs.exe" stage-win/
+          cp "artifacts/bin-windows/mindfork.exe" stage-win/
           cp "${DOCS[@]}" stage-win/
           stage_data stage-win
           (cd stage-win && zip -qr "../dist/mindfork-rs-${TAG}-x86_64-windows.zip" .)

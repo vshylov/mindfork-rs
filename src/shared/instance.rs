@@ -10,7 +10,9 @@
 use single_instance::SingleInstance;
 use thiserror::Error;
 
-/// Unique lock identifier.
+/// Unique lock identifier. Keeps the historical `mindfork-rs` id after the
+/// binary's rename to `mindfork`: a pre-rename build and a current one are the
+/// same app and must still exclude each other (docs/research/binary-rename.md §3).
 const INSTANCE_ID: &str = "mindfork-rs-single-instance";
 
 /// Holder of the single-instance lock.

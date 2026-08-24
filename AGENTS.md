@@ -229,7 +229,7 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
    (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers; Windows:
    `.iss` compilation).
-5. **Artifact smoke test**: download the archive, `mindfork-rs --version` (matches
+5. **Artifact smoke test**: download the archive, `mindfork --version` (matches
    the tag), run the TUI on a copy of the data; optionally — install the package/
    installer in a VM.
 
