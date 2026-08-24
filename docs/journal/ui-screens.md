@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -56,6 +56,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: command-only control — stage 3 (`/autotitle`, the profile texts, `/impersonation`) (done)
 - Post-M9: the chat list scrolls symmetrically (done)
 - Post-M9: the same scrolling rule for every other list (done)
+- Post-M9: sub-agent chats — the child view arrives before the feed is built (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2349,3 +2350,33 @@ reference picker (a popup capped at the screen height).
 
 **A live model run is not required** (AGENTS.md §3) — pure UI, no engine,
 storage or tool surface is touched.
+
+### Post-M9: sub-agent chats — the child view arrives before the feed is built (done)
+
+- **What**: a transcript opened without its persona bubble, and the chat opened
+  right after one inherited it. The `AppEvent::ChatActivated` dispatch arm
+  applied the event as `activate_chat` → `set_child_view`, while
+  `activate_chat` is what **reads** the child view — to head the feed with the
+  persona (spec §11.3) and to keep the message copy a running transcript's
+  `TranscriptGrew` extends. So every feed was built with the *previous* chat's
+  view: the persona missing where it belonged, present where it was not (the
+  parent opened right after its transcript — the "unstable, every other time"
+  symptom: it depended on what was open before), and a running transcript's
+  first filed round rebuilding the feed from the new rounds alone, the
+  pre-open messages gone. One reorder in the arm fixes all three.
+- **Why 2554 tests were green**: the ordering contract was written twice — on
+  `set_child_view` ("applied **before** `activate_chat` builds the feed") and
+  on the `child` field ("set by `app` right before `activate_chat`") — and the
+  screen tests obeyed it by hand, calling the pair in the documented order.
+  The one real call site had it backwards from the day it was written (PR 4,
+  #359), and no test drove that seam. The regression test goes through
+  `apply_event` with the real event and asserts the **rendered frame** (the
+  feed is private to the screen): the persona present on the transcript,
+  absent on the chat opened next. Locale-free on purpose — it checks the
+  persona text, not the role header, which is the screen tests' business.
+- **No changelog entry**: the transcript feature is still in `[Unreleased]`,
+  whose Added text already promises the correct behaviour; released paths
+  never carry a child view, so nothing a 0.9.7 user sees changed.
+- **Tests**: 2555 green (+1), 107 `#[ignore]`. A live model run is not
+  required (AGENTS.md §3) — pure UI wiring; no engine, storage or tool
+  surface is touched. Lesson recorded (lessons §2).

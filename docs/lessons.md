@@ -429,6 +429,18 @@ its tables align*, *cross-chat search for the assistant*, *`Esc` retraces a foll
 `chat://` reference*, *the external server's API key, entered in settings*, *automatic
 chat titling on the first exchange*, *a model split across several GGUF files*.
 
+**A documented call-order contract is tested at its real call site, or it is not
+tested.** `set_child_view` said "applied *before* `activate_chat` builds the feed", the
+field's doc repeated it — and every screen test obeyed, calling the pair in the
+documented order by hand. The one real call site, the `ChatActivated` dispatch arm, had
+it backwards from the day it was written: every feed built with the previous chat's
+child view (a transcript opening without its persona, the chat opened next inheriting
+it), and 2554 green tests unable to see it, because the layer that owns the ordering
+had no test driving it. A doc comment saying "call me before X" is one decision split
+across two calls: either fold it into one call, or pin the order with a test through
+the real seam — here `apply_event` with the real event, asserted on the rendered frame.
+— *sub-agent chats — the child view arrives before the feed is built*.
+
 ---
 
 ## 3. Measure; do not assume

@@ -648,6 +648,81 @@ fn character_names_event_reaches_the_feed() {
     assert!(dump.contains("GAIA"), "{dump}");
 }
 
+/// The transcript's persona bubble is built by `activate_chat` from the child
+/// view, so the view must be applied **before** it (its documented contract).
+/// The screen-level tests call the pair by hand in the right order — only an
+/// event-level test can catch the dispatch applying them backwards: a
+/// transcript opening without its persona, and the chat opened *next*
+/// inheriting one that is not its own.
+#[test]
+fn a_transcript_opens_with_its_persona_and_the_next_chat_does_not_inherit_it() {
+    use crate::app::events::ChildView;
+    use crate::entities::message::Message;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = ActiveScreen::Chat;
+    let dump = |screen: &mut ChatScreen| {
+        let mut term = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        term.draw(|f| screen.render(f)).unwrap();
+        format!("{:?}", term.backend().buffer())
+    };
+
+    // Opening a transcript straight from a chat (the view was `None` so far).
+    let parent = uuid::Uuid::new_v4();
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::ChatActivated {
+            id: uuid::Uuid::new_v4(),
+            title: "Critic".into(),
+            messages: vec![Message::user("the task")],
+            draft: String::new(),
+            feed_view: FeedView::default(),
+            focus: None,
+            compaction: None,
+            child: Some(ChildView {
+                parent,
+                parent_title: "Space".into(),
+                system_message: "Critic persona".into(),
+            }),
+            live_turn: None,
+        },
+    );
+    assert!(screen.read_only());
+    // The persona text alone, not the role header: the header is a locale
+    // string, and how the bubble is headed is the screen tests' business —
+    // this test is only about the event applying the view in time.
+    let on_transcript = dump(&mut screen);
+    assert!(
+        on_transcript.contains("Critic persona"),
+        "the persona must head the transcript's feed: {on_transcript}"
+    );
+
+    // Back to the parent: its feed must not inherit the transcript's persona.
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(parent),
+    );
+    assert!(!screen.read_only());
+    let on_parent = dump(&mut screen);
+    assert!(
+        !on_parent.contains("Critic persona"),
+        "a chat never shows a system bubble: {on_parent}"
+    );
+}
+
 // ---- the way back from a chat opened out of the search results ----
 
 /// A results snapshot with **known** ids, so a test can activate the very chat a
