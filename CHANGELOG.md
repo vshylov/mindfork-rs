@@ -203,6 +203,16 @@ split by subsystem.
 
 ### Fixed
 
+- **A fresh install can change the profile's framework language.** The empty
+  chat the first launch creates counted as the profile's data, so the
+  "Framework language" field was born locked — and deleting that chat only
+  created another. An untouched chat no longer locks the language: while a
+  profile has no conversations, no «self-model» and no notes, the language can
+  be switched, and the untouched defaults follow it — the profile's name and
+  system message, the empty chat's title. Anything you wrote yourself (a
+  renamed chat, your own system message) stays exactly as you typed it; the
+  first real message locks the language as before.
+
 - **A taken-back message no longer runs into what you were typing.**
   Deleting the last exchange (`Ctrl+E`, `/takeback`) returns your message to
   the input box; if something was already typed there, the two are now

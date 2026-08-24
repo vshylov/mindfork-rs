@@ -3,6 +3,7 @@
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
+use crate::entities::profile::Profile;
 use crate::features::profiles::ProfileEdit;
 use crate::shared::config::ImpersonationProfile;
 
@@ -185,6 +186,13 @@ impl Orchestrator {
                 ));
             }
         }
+        // The language the switch leaves behind, when one survived the gate —
+        // `apply_edit` consumes the edit, and the re-derivation below compares
+        // against the *old* locale's defaults.
+        let old_lang = edit
+            .language
+            .and_then(|_| self.profiles.iter().find(|p| p.id == id))
+            .map(|p| p.language);
         let Some(profile) = self.profiles.iter_mut().find(|p| p.id == id) else {
             return;
         };
@@ -194,6 +202,12 @@ impl Orchestrator {
             ));
             return;
         }
+        // A data-free profile just switched scaffold language: untouched
+        // localized defaults follow it — on the profile here, on its pristine
+        // chats below (after the save settles the profile's final shape).
+        if let Some(old) = old_lang {
+            crate::features::profiles::reseed_language_defaults(profile, old);
+        }
         let profile = profile.clone();
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
             let _ = self.evt_tx.send(AppEvent::Error(
@@ -202,10 +216,52 @@ impl Orchestrator {
             ));
             return;
         }
+        if let Some(old) = old_lang {
+            self.rederive_pristine_chats(&profile, old);
+        }
         self.emit_profile_list();
         self.emit_settings();
         // Role names live on the profile and are resolved at render time — refresh
         // the feed's copy so a rename applies to the open chat immediately (spec §11.3).
         self.emit_character_names();
+    }
+
+    /// Re-derives the localized defaults of the profile's pristine chats after
+    /// a scaffold-language switch (axis A, spec §10): an untouched default
+    /// title follows the new locale, and the system message / role names are
+    /// re-copied from the updated profile — as if the chat were created now.
+    /// Nothing else is touched (draft, attachments, workspace, sampling stay
+    /// the user's). Chats with conversation content never get here — they lock
+    /// the language (`profile_has_data`); a manually renamed title is kept.
+    fn rederive_pristine_chats(&mut self, profile: &Profile, old_lang: crate::shared::i18n::Lang) {
+        let old_title = crate::shared::i18n::locale(old_lang).t("defaults.chat_title");
+        let new_title = crate::shared::i18n::locale(profile.language).t("defaults.chat_title");
+        let mut dirty: Vec<Uuid> = Vec::new();
+        let mut renamed: Vec<(Uuid, String)> = Vec::new();
+        for chat in self
+            .chats
+            .iter_mut()
+            .filter(|c| c.profile_id == profile.id && c.is_pristine())
+        {
+            if !chat.renamed_manually && chat.title == old_title {
+                chat.title = new_title.to_string();
+                renamed.push((chat.id, chat.title.clone()));
+            }
+            chat.system_message = profile.default_system_message.clone();
+            chat.character_names = profile.character_names.clone();
+            dirty.push(chat.id);
+        }
+        if dirty.is_empty() {
+            return;
+        }
+        for id in dirty {
+            self.mark_dirty(id);
+        }
+        // The same pair a manual rename sends: the list redraws its rows, the
+        // open chat's feed header updates without a rebuild (spec §11.2).
+        self.emit_chat_list();
+        for (id, title) in renamed {
+            let _ = self.evt_tx.send(AppEvent::ChatRenamed { id, title });
+        }
     }
 }

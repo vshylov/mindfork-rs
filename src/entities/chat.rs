@@ -238,6 +238,18 @@ impl Chat {
         self.modified_at = Utc::now();
     }
 
+    /// Whether the chat holds no conversation content at all: no messages, no
+    /// deleted-exchange tombstones (restorable content), no compaction summary.
+    /// Such a chat — the first-launch default one included — does not bind its
+    /// profile to the scaffold language (axis A, spec §10): everything
+    /// language-bearing it carries (default title, the system-message copy) is
+    /// a re-derivable localized default. The draft, attachments, workspace and
+    /// sampling override deliberately don't count: they are the user's, not
+    /// the agent's — the same rule that keeps RAG documents out of the lock.
+    pub fn is_pristine(&self) -> bool {
+        self.messages.is_empty() && self.deleted.is_empty() && self.compaction.is_none()
+    }
+
     /// Records a deleted exchange (`Ctrl+E`/`Ctrl+R`) into the `deleted` collection
     /// for manual recovery. An empty message set is ignored. The new entry is
     /// inserted at the **front** of the collection (recent deletions are faster to
@@ -594,6 +606,43 @@ mod tests {
         assert_eq!(chat.deleted[0].messages.len(), 2);
         assert_eq!(chat.deleted[0].draft, "набранный, но не отправленный текст");
         assert_eq!(chat.deleted[0].cause, Some(DeletedCause::DeleteExchange));
+    }
+
+    /// What binds a profile to its scaffold language (spec §10): conversation
+    /// content only. The user's own state on an untouched chat doesn't count.
+    #[test]
+    fn is_pristine_tracks_conversation_content_only() {
+        let p = Profile::new("X", "s");
+        let mut chat = Chat::from_profile(&p, "t");
+        chat.draft = "typed but unsent".into();
+        chat.sampling_override = Some(SamplingConfig::default());
+        chat.renamed_manually = true;
+        assert!(chat.is_pristine(), "user-side state is not content");
+
+        // Any message counts — a greeting copy included.
+        let mut with_message = Chat::from_profile(&p, "t");
+        with_message.push_message(Message::assistant("Здравствуйте!"));
+        assert!(!with_message.is_pristine());
+
+        // A deleted-exchange tombstone is restorable conversation content.
+        let mut with_tombstone = Chat::from_profile(&p, "t");
+        with_tombstone.record_deleted(
+            vec![Message::user("hi")],
+            String::new(),
+            DeletedCause::DeleteExchange,
+        );
+        assert!(!with_tombstone.is_pristine());
+
+        // So is a compaction summary.
+        let mut with_summary = Chat::from_profile(&p, "t");
+        with_summary.compaction = Some(Compaction {
+            summary: "сводка".into(),
+            upto: 0,
+            boundary_id: Uuid::new_v4(),
+            compacted_at: Utc::now(),
+            rolls: 1,
+        });
+        assert!(!with_summary.is_pristine());
     }
 
     #[test]

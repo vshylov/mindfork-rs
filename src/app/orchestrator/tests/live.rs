@@ -477,7 +477,7 @@ async fn image_attachment_e2e_live() {
 
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
 /// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
-/// (the bootstrap profile is locked: it already has a default chat), set it to En, create a
+/// (its own texts, independent of the bootstrap profile's state), set it to En, create a
 /// chat, run an English turn and auto-titling. `#[ignore]`, manual against a live model.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -489,7 +489,7 @@ async fn i18n_en_profile_title_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    // A fresh profile (the bootstrap profile has a default chat → its language is locked).
+    // A fresh profile with its own English texts (the bootstrap one is Russian).
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "English".into(),
@@ -1388,7 +1388,7 @@ async fn self_model_gate_en_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    // A fresh profile (the bootstrap profile is locked to Ru) → set scaffold language En.
+    // A fresh profile with its own English texts → set scaffold language En.
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "English".into(),
