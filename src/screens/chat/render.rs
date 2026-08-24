@@ -2,9 +2,10 @@
 //! split out of the chat.rs monolith (see
 //! docs/history/refactoring-god-objects.md, stage 2).
 
-use super::popups::{render_confirm, render_help, render_suggest, render_tool_confirm};
+use super::popups::{render_confirm, render_suggest, render_tool_confirm};
 use super::*;
 use crate::shared::wrap;
+use crate::widgets::help_dialog::render_help;
 
 impl ChatScreen {
     // ---------- rendering ----------

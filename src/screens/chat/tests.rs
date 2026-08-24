@@ -1,9 +1,9 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
-use super::popups::HELP_SECTIONS;
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
+use crate::widgets::help_dialog::HELP_SECTIONS;
 
 fn gen_id() -> Uuid {
     Uuid::new_v4()
@@ -2535,8 +2535,8 @@ fn help_hides_logo_when_terminal_is_short() {
 /// bundled locale rather than left to luck.
 #[test]
 fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
-    use super::popups::{HELP_MIN_WIDTH, help_tab_strip};
     use crate::shared::i18n::{Lang, locale};
+    use crate::widgets::help_dialog::{HELP_MIN_WIDTH, help_tab_strip};
 
     // The budget is the dialog's MINIMUM width: the strip has to fit the
     // smallest window the adaptive sizing ever grants.

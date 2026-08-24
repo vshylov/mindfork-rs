@@ -16,7 +16,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use uuid::Uuid;
 
@@ -35,9 +35,10 @@ use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
+use crate::shared::ui::{ListScroll, dim_background};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
+use crate::widgets::help_dialog::{DEFAULT_HELP_TAB, HelpState, HelpTab};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -369,117 +370,6 @@ enum SuggestItem {
     Replace(String),
     /// Add the word to the personal dictionary.
     AddToDictionary,
-}
-
-/// A tab of the help/"About" dialog (`F1`/`?`), KDE/Qt-style. See spec §11.7.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HelpTab {
-    /// Name/author/version and links (site, repository, crate).
-    About,
-    /// The hotkey list.
-    Hotkeys,
-    /// Input-box commands (`/rag …`, `/tts …`).
-    Commands,
-    /// The application's license text (MIT).
-    License,
-    /// The disclaimer covering model output, tools and automated actions
-    /// (`DISCLAIMER.md`) — a supplement to the license, not part of it.
-    Disclaimer,
-    /// Third-party components, their versions and licenses.
-    Components,
-}
-
-impl HelpTab {
-    /// Tabs in display order (the tab strip's order).
-    pub(super) const ALL: [HelpTab; 6] = [
-        Self::About,
-        Self::Hotkeys,
-        Self::Commands,
-        Self::License,
-        Self::Disclaimer,
-        Self::Components,
-    ];
-
-    /// The tab's position in [`Self::ALL`].
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|&t| t == self).unwrap()
-    }
-
-    /// The locale key for the tab's name (for the tab strip).
-    pub(super) fn label_key(self) -> &'static str {
-        match self {
-            Self::About => "ui.help.tab.about",
-            Self::Hotkeys => "ui.help.tab.hotkeys",
-            Self::Commands => "ui.help.tab.commands",
-            Self::License => "ui.help.tab.license",
-            Self::Disclaimer => "ui.help.tab.disclaimer",
-            Self::Components => "ui.help.tab.components",
-        }
-    }
-}
-
-/// The tab the help dialog opens on by default (and until a choice is first
-/// remembered): `F1`/`?` — the familiar help key, and "Hotkeys" is the most
-/// sought-after content; "About" is the neighboring tab.
-pub(super) const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
-
-/// The screen the help dialog was opened from — the "Shortcuts" tab marks that
-/// screen's section "you are here" (`popups::HELP_SECTIONS`). Today only the
-/// chat opens the dialog; stage 2 of docs/help-hotkeys-context.md threads the
-/// real invoking screen through and anchors the tab's scroll to its section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HelpContext {
-    /// The chat screen (the feed + the input box).
-    Chat,
-    /// The chat-list overlay (`Esc` from the chat).
-    ChatList,
-    /// The settings screen (`Ctrl+P`).
-    Settings,
-    /// The self-model screen (`F3`).
-    SelfModel,
-    /// The attached project's changes screen (`F4`).
-    Changes,
-    /// The message-search results (`Ctrl+G` in the chat list).
-    Search,
-}
-
-/// The help dialog's state: the active tab + its content's scroll position
-/// (reset on tab switch), and the screen it was opened from. Opens on
-/// `F1`/`?`. See spec §11.7.
-pub(super) struct HelpState {
-    pub(super) tab: HelpTab,
-    /// The first visible row of the active tab's content (clamped in `render_help`).
-    pub(super) scroll: usize,
-    /// The invoking screen, for the "you are here" marker.
-    pub(super) context: HelpContext,
-}
-
-impl HelpState {
-    /// Open on the given tab (on reopening — on the last-selected one,
-    /// [`ChatScreen::help_last_tab`]). The chat screen is the only opener
-    /// today, so the context is fixed (docs/help-hotkeys-context.md §6 threads
-    /// the real one in stage 2).
-    pub(super) fn open(tab: HelpTab) -> Self {
-        Self {
-            tab,
-            scroll: 0,
-            context: HelpContext::Chat,
-        }
-    }
-
-    /// The next tab (wrapping); resets scroll.
-    pub(super) fn next_tab(&mut self) {
-        let n = HelpTab::ALL.len();
-        self.tab = HelpTab::ALL[(self.tab.index() + 1) % n];
-        self.scroll = 0;
-    }
-
-    /// The previous tab (wrapping); resets scroll.
-    pub(super) fn prev_tab(&mut self) {
-        let n = HelpTab::ALL.len();
-        self.tab = HelpTab::ALL[(self.tab.index() + n - 1) % n];
-        self.scroll = 0;
-    }
 }
 
 /// The spellcheck suggestions popup for the word under the cursor. See spec §11.5.
