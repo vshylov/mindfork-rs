@@ -2712,9 +2712,18 @@ a chord with two meanings is two short rows in two sections rather than one row 
 "in the chat list: …" clause written per locale — and the screens whose keys the flat
 list used to omit entirely (settings, self-model, changes, search) each have a section.
 The section for the screen the dialog was opened from carries a **"you are here"
-marker** (`ui.help.here`) on its header — today that is always the chat, the only screen
-that opens the dialog; making `F1` work on every screen and anchor the tab's scroll to
-the opener's section is the track's second stage. Related entries within a section still
+marker** (`ui.help.here`) on its header. **`F1` opens the dialog from every screen** —
+routed at the runtime level, above the active screen's own keys, so it works inside
+sub-modes too — and the dialog is drawn over that screen; `Esc` returns to it exactly as
+it was, and `Ctrl+Q`/`F10` still quit through it. Opened anywhere but the chat, the
+dialog forces the "Hotkeys" tab **scrolled so the opener's section header is the top
+row** (the anchor is computed at render, where wrapping is known, and consumed once — the
+user's own scrolling then sticks); the chat keeps the remembered last tab, its section
+sitting right under the short "Everywhere" block anyway. `?` (on empty input) and
+`/help` remain the chat's routes to the same dialog. Each screen owns its section's
+table **next to its key handler**, and the app layer composes the tab — the one place
+that knows every screen exists ([help-hotkeys-context.md](docs/help-hotkeys-context.md)
+§6). Related entries within a section still
 sit in **groups separated by a blank line** (a break carries no text and needs no locale
 key); the "Commands" tab stays one headerless table with the same groups. Command labels
 (`/…`) are colored as commands only on the "Commands" tab — the hotkeys tab draws every

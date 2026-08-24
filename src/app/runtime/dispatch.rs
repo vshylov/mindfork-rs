@@ -624,6 +624,11 @@ pub(super) fn dispatch(
             let _ = cmd_tx.send(AppCommand::OpenChanges);
             return false;
         }
+        // The help overlay never becomes an orchestrator command: it is opened
+        // in `handle_key_event`, which owns the overlay — the one caller that
+        // can produce this intent (`?`/`/help` on the chat). The arm exists so
+        // the exhaustive match keeps asking about new intents.
+        ChatIntent::OpenHelp => return false,
         // Viewing the self-model: the orchestrator owns the data — request a snapshot,
         // the screen opens on the `SelfModelView` event (see `apply_event`).
         ChatIntent::OpenSelfModel => {

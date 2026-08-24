@@ -2,7 +2,7 @@
 //! split out of the chat.rs monolith (see
 //! docs/history/refactoring-god-objects.md, stage 2).
 
-use super::popups::{render_confirm, render_help, render_suggest, render_tool_confirm};
+use super::popups::{render_confirm, render_suggest, render_tool_confirm};
 use super::*;
 use crate::shared::wrap;
 
@@ -250,10 +250,6 @@ impl ChatScreen {
         if let Some(action) = &self.confirm {
             dim_background(frame, &self.palette);
             render_confirm(frame, action, &self.palette, self.loc);
-        }
-        if let Some(help) = &mut self.help {
-            dim_background(frame, &self.palette);
-            render_help(frame, help, &self.palette, self.loc);
         }
     }
 }

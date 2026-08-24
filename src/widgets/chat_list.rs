@@ -22,7 +22,35 @@ use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
 use crate::shared::ui::{ListScroll, render_scrollbar};
 use crate::shared::wrap;
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
+
+/// The chat list's "Shortcuts" section (`F1`): one row per key `on_key`
+/// matches — a new arm gets a row here, next door (AGENTS.md §3). The app
+/// layer composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.chat_list",
+    context: Some(HelpContext::ChatList),
+    // The groups: searching · acting on the selection · managing chats.
+    rows: &[
+        ("ui.help.k.type", "ui.help.list_type"),
+        ("Ctrl+F", "ui.help.list_scope"),
+        ("Ctrl+G", "ui.help.list_messages"),
+        ("Enter", "ui.help.list_open"),
+        ("↑/↓", "ui.help.list_select"),
+        ("Tab", "ui.help.list_sort"),
+        ("Esc", "ui.help.list_close"),
+        ("F2", "ui.help.list_rename"),
+        ("F5", "ui.help.list_copy"),
+        ("Ctrl+R", "ui.help.list_autotitle"),
+        ("Ctrl+N", "ui.help.new_chat"),
+        ("Ctrl+D", "ui.help.list_clone"),
+        ("Del", "ui.help.list_delete"),
+        ("Ctrl+O", "ui.help.subagents_fold"),
+    ],
+    openers: &["Enter", "F2"],
+};
 
 /// The paged-selection-move step for `PageUp`/`PageDown`. Fixed,
 /// since the actual list height is only known at render time.

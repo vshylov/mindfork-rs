@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -59,6 +59,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats — the child view arrives before the feed is built (done)
 - Post-M9: the chat list folds a chat's sub-agent transcripts (done)
 - Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
+- Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2484,3 +2485,56 @@ storage or tool surface is touched.
   AGENTS.md §3 (`HELP_SECTIONS`), CHANGELOG. **2572 unit tests green.** A
   live run is not required (AGENTS.md §3) — a help tab; no engine, storage
   or tool surface is touched.
+
+### Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
+- **The dialog left the chat screen** (branch `feat/help-f1-everywhere`,
+  stage 2 of [docs/help-hotkeys-context.md](../help-hotkeys-context.md);
+  three commits — a verbatim move, the lift, the table distribution — so the
+  mechanical and the behavioral steps review separately). The renderer, tabs,
+  sizing and `HelpState` (now with `handle_key` → `HelpKeyOutcome` and
+  `open_at`) live in `widgets/help_dialog.rs`; the runtime owns a
+  `HelpOverlay { open, last_tab }` beside `active` and draws the dialog over
+  whatever screen is active in the same `terminal.draw` closure, theme and
+  locale taken from the chat screen — the base that always exists and
+  receives every settings event.
+- **`F1` is routed in `handle_key_event`, above every screen** — no screen
+  keeps an `F1` arm (the inventory had shown none handled it at all; there
+  is no global key handler, each screen even quits by itself). It therefore
+  works inside sub-modes too (a rename field, an armed confirmation) —
+  deliberate: the dialog is read-only and `Esc` returns the sub-mode exactly
+  as it was. While the dialog is open, keys go to `HelpState::handle_key`,
+  and pastes/mouse events are swallowed (the rule the chat used to apply).
+  The chat's `?` and `/help` became `ChatIntent::OpenHelp`, intercepted at
+  the same level; `dispatch` keeps a documented no-op arm so the exhaustive
+  match still asks about new intents.
+- **Fork F2 landed as designed**: a non-chat opener forces the "Shortcuts"
+  tab with `pending_anchor`; the anchor — the marked section header's row —
+  is computed by `hotkeys_tab` at render time (wrapping above the section
+  depends on width) and consumed once, so the user's scrolling sticks. The
+  chat restores the remembered tab at the top. The `F1 / ?` row moved to the
+  "Everywhere" section.
+- **The section tables moved next to the handlers they document** (design
+  §6): `HELP_SECTION` statics in `screens/chat/mod.rs`,
+  `widgets/chat_list.rs`, `screens/settings/mod.rs`, `self_model.rs`,
+  `changes.rs`, `search.rs`; the widget keeps the type, the "Everywhere"
+  rows and the renderer (now taking the composed list as a parameter); the
+  app composes `HELP_SECTIONS` — the one layer that knows every screen.
+  `help_context` is an exhaustive match over `ActiveScreen` and the new
+  `help_sections_cover_every_context` gate pins one section per context, so
+  a new screen cannot ship without deciding — and filling — its section.
+- **Repaint discipline**: the overlay's open/close toggle counts as a screen
+  switch for `prime_full_redraw` — the dialog's keycaps and arrows are the
+  wide-glyph risk group that leaves artifacts under a cell diff.
+- **Tests follow their subjects** (net +7, **2579 green**): dialog
+  navigation, clamp/scrollbar, logo, tab strip, legal tabs, disclaimer
+  indent, distinct content and the commands-tab gates live in
+  `widgets::help_dialog::tests` (rendered directly — no `ChatScreen`);
+  overlay routing (`F1` per screen, tab memory, quit punch-through, inert
+  paste, `?`→overlay) plus the whole-tab gates over the composed sections
+  (width per locale, one column, opener structure per section, the marker,
+  the anchored open) live in `app::runtime::tests`, joined by the coverage
+  gate; the chat keeps the `?`-intent test and swapped its modal-routing
+  test's subject to the in-feed search (the emoji picker closes on foreign
+  keys — found by the first swap attempt going red). A live run is not
+  required (AGENTS.md §3) — pure UI; no engine, storage or tool surface is
+  touched.

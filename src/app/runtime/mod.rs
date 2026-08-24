@@ -39,6 +39,10 @@ use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
+use crate::shared::ui::dim_background;
+use crate::widgets::help_dialog::{
+    self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
+};
 use crate::widgets::status_bar::EscTarget;
 
 /// The screen open on top of the chat. `ChatScreen` always exists as the base (the
@@ -178,6 +182,75 @@ impl Back {
 /// funnel), which is exactly how a hint drifts away from the key it describes.
 /// Deriving it in the draw path instead makes "the bar says where `Esc` goes"
 /// true of every frame by construction.
+/// The help overlay above whatever screen is active (spec §11.7,
+/// docs/help-hotkeys-context.md stage 2): the open dialog plus the tab
+/// remembered between opens. Runtime-owned so `F1` means the same thing on
+/// every screen — the screens keep no `F1` handler of their own.
+struct HelpOverlay {
+    /// The open dialog, drawn over the active screen ([`draw_frame`]).
+    open: Option<HelpState>,
+    /// The tab restored on the next chat-side open; a non-chat open forces
+    /// "Shortcuts" anchored to its section instead (fork F2).
+    last_tab: HelpTab,
+}
+
+impl HelpOverlay {
+    fn new() -> Self {
+        Self {
+            open: None,
+            last_tab: DEFAULT_HELP_TAB,
+        }
+    }
+
+    /// Open for the given screen: the chat restores the remembered tab at the
+    /// top (its section is right under the short "Everywhere" block); any
+    /// other screen gets "Shortcuts" scrolled to its own section.
+    fn open_for(&mut self, context: HelpContext) {
+        self.open = Some(match context {
+            HelpContext::Chat => HelpState::open(self.last_tab),
+            other => HelpState::open_at(other),
+        });
+    }
+
+    /// Close, remembering the tab for the next open.
+    fn close(&mut self) {
+        if let Some(state) = self.open.take() {
+            self.last_tab = state.tab;
+        }
+    }
+}
+
+/// The "Shortcuts" tab's sections in display order: "Everywhere", then the
+/// screens by how often the user is on them. Composed here — the app layer is
+/// the one place that knows every screen exists — from tables owned by the
+/// code they document (proximity to the `match` is the anti-drift force;
+/// docs/help-hotkeys-context.md §6). `help_sections_cover_every_context`
+/// closes the loop [`help_context`] opens: one section per screen.
+pub(super) static HELP_SECTIONS: [&HelpSection; 7] = [
+    &help_dialog::EVERYWHERE,
+    &crate::screens::chat::HELP_SECTION,
+    &crate::widgets::chat_list::HELP_SECTION,
+    &crate::screens::settings::HELP_SECTION,
+    &crate::screens::self_model::HELP_SECTION,
+    &crate::screens::changes::HELP_SECTION,
+    &crate::screens::search::HELP_SECTION,
+];
+
+/// The active screen's help context — the section the dialog marks "you are
+/// here" and anchors to. An exhaustive match on purpose: a new screen cannot
+/// join `ActiveScreen` without deciding its help section (the same rule the
+/// enum's other match sites enforce, architecture.md §10).
+fn help_context(active: &ActiveScreen) -> HelpContext {
+    match active {
+        ActiveScreen::Chat => HelpContext::Chat,
+        ActiveScreen::ChatList(_) => HelpContext::ChatList,
+        ActiveScreen::Settings(_) => HelpContext::Settings,
+        ActiveScreen::SelfModel(_) => HelpContext::SelfModel,
+        ActiveScreen::Search(_) => HelpContext::Search,
+        ActiveScreen::Changes(_) => HelpContext::Changes,
+    }
+}
+
 fn esc_target(back: &Option<Back>) -> EscTarget {
     match back {
         Some(Back::Search { .. }) => EscTarget::SearchResults,
@@ -385,6 +458,8 @@ fn run_loop(
     // X11/Wayland the constructor may fail — then we show an error, not panic).
     let mut clipboard: Option<arboard::Clipboard> = None;
     let mut spell = SpellLoader::new(dict_dir, bundled_dict_dir, personal);
+    // The help dialog, drawn over whatever screen is active (`F1` anywhere).
+    let mut help = HelpOverlay::new();
     let mut quit = false;
     // We repaint ONLY on change (the `dirty` flag), not on every tick.
     // Otherwise `terminal.draw` is called ~20 times/sec and repositions the cursor
@@ -398,6 +473,10 @@ fn run_loop(
     // repaint (see below, at `prime_full_redraw`). We track this by the actual draw —
     // switching "there and back" between frames changes nothing visually.
     let mut last_screen = std::mem::discriminant(&active);
+    // Whether the help overlay was drawn in the previous frame — its toggle is
+    // a screen switch for repaint purposes (the dialog's arrows/keycaps are
+    // exactly the wide-glyph risk group a cell diff leaves artifacts of).
+    let mut last_overlay = false;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
             apply_event(
@@ -425,12 +504,21 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
-            draw_frame(terminal, &mut screen, &mut active, &back, &mut last_screen)?;
+            draw_frame(
+                terminal,
+                &mut screen,
+                &mut active,
+                &mut help,
+                &back,
+                &mut last_screen,
+                &mut last_overlay,
+            )?;
             dirty = false;
         }
         if handle_input_tick(
             &mut screen,
             &mut active,
+            &mut help,
             &mut back,
             cmd_tx,
             &mut clipboard,
@@ -502,8 +590,10 @@ fn draw_frame(
     terminal: &mut DefaultTerminal,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
     back: &Option<Back>,
     last_screen: &mut std::mem::Discriminant<ActiveScreen>,
+    last_overlay: &mut bool,
 ) -> Result<()> {
     // The status bar's `Esc` hint, derived from the back-stack for this
     // frame (see `esc_target`). The stash only ever changes while
@@ -562,19 +652,36 @@ fn draw_frame(
     let now_screen = std::mem::discriminant(active);
     let switched = now_screen != *last_screen;
     *last_screen = now_screen;
-    if requested || switched {
+    // The help overlay's toggle is a screen switch for repaint purposes: the
+    // dialog appearing or vanishing changes the frame wholesale, and its
+    // keycap/arrow glyphs are the risk group the cell diff mishandles.
+    let overlay = help.open.is_some();
+    let overlay_toggled = overlay != *last_overlay;
+    *last_overlay = overlay;
+    if requested || switched || overlay_toggled {
         crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
         terminal.swap_buffers();
     }
     let _ = execute!(stdout(), BeginSynchronizedUpdate);
-    let drawn = match active {
-        ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame)),
-        ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
-        ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
-        ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
-        ActiveScreen::Search(search) => terminal.draw(|frame| search.render(frame)),
-        ActiveScreen::Changes(changes) => terminal.draw(|frame| changes.render(frame)),
-    };
+    // One draw closure: the active screen, then — modal above every one of
+    // them — the help dialog (spec §11.7; theme and locale come from the chat
+    // screen, the base that always exists and receives every settings event).
+    let palette = screen.palette();
+    let loc = screen.loc();
+    let drawn = terminal.draw(|frame| {
+        match active {
+            ActiveScreen::Chat => screen.render(frame),
+            ActiveScreen::ChatList(list) => list.render(frame),
+            ActiveScreen::Settings(settings) => settings.render(frame),
+            ActiveScreen::SelfModel(view) => view.render(frame),
+            ActiveScreen::Search(search) => search.render(frame),
+            ActiveScreen::Changes(changes) => changes.render(frame),
+        }
+        if let Some(state) = help.open.as_mut() {
+            dim_background(frame, &palette);
+            help_dialog::render_help(frame, state, &HELP_SECTIONS, &palette, loc);
+        }
+    });
     let _ = execute!(stdout(), EndSynchronizedUpdate);
     drawn?;
     Ok(())
@@ -587,6 +694,7 @@ fn draw_frame(
 fn handle_input_tick(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
     back: &mut Option<Back>,
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
@@ -618,7 +726,7 @@ fn handle_input_tick(
         }
     }
     Ok(process_input_batch(
-        batch, screen, active, back, cmd_tx, clipboard,
+        batch, screen, active, help, back, cmd_tx, clipboard,
     ))
 }
 

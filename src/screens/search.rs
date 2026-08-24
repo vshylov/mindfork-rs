@@ -28,6 +28,22 @@ use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap::wrap_line;
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
+
+/// The search results screen's "Shortcuts" section (`F1`): one row per key
+/// `handle_key` matches — a new arm gets a row here (AGENTS.md §3). The app
+/// layer composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.search",
+    context: Some(HelpContext::Search),
+    rows: &[
+        ("↑/↓", "ui.help.sr_select"),
+        ("Enter", "ui.help.sr_open"),
+        ("Esc", "ui.help.sr_back"),
+    ],
+    openers: &[],
+};
 
 /// Paged selection step for `PageUp`/`PageDown`. Fixed, like the chat list's:
 /// the real list height is only known at render time, and hits are variable

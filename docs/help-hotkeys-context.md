@@ -1,8 +1,9 @@
 # Help hotkeys by context — track design
 
-**Status:** in progress. Forks decided by the user 2026-08-24 (all as
-recommended). Stage 1 — branch `feat/help-keys-sections`; stage 2 — a
-follow-up branch.
+**Status:** done. Forks decided by the user 2026-08-24 (all as recommended).
+Stage 1 — branch `feat/help-keys-sections` (PR #382, merged 2026-08-25);
+stage 2 — branch `feat/help-f1-everywhere`. The journal entries live in
+[docs/journal/ui-screens.md](journal/ui-screens.md).
 
 The help dialog's "Shortcuts" tab (`F1`/`?`, spec §11.7) describes keys whose
 meaning depends on the screen, and the flat list has grown three different

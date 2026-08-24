@@ -36,8 +36,34 @@ use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
 use crate::widgets::status_bar;
+
+/// The settings screen's "Shortcuts" section (`F1`): one row per key the
+/// handler in `apply.rs` matches — a new arm gets a row here (AGENTS.md §3).
+/// The app layer composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.settings",
+    context: Some(HelpContext::Settings),
+    // The groups: moving through sections and fields · the tools over them
+    // (search, undo, the two list sections' CRUD).
+    rows: &[
+        ("Tab / Shift+Tab", "ui.help.set_sections"),
+        ("↑/↓", "ui.help.set_rows"),
+        ("Enter", "ui.help.set_enter"),
+        ("←/→", "ui.help.set_cycle"),
+        ("Space", "ui.help.set_toggle"),
+        ("Del", "ui.help.set_reset"),
+        ("Esc", "ui.help.set_back"),
+        ("/", "ui.help.set_search"),
+        ("Ctrl+Z / Ctrl+Y", "ui.help.set_undo"),
+        ("Ctrl+N", "ui.help.set_new"),
+        ("Ctrl+D", "ui.help.set_delete"),
+    ],
+    openers: &["/"],
+};
 
 /// The intent that `app` executes (translates into an `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]

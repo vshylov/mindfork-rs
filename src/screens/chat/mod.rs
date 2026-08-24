@@ -16,7 +16,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use uuid::Uuid;
 
@@ -35,14 +35,63 @@ use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
+use crate::shared::ui::{ListScroll, dim_background};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
+use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
+
+/// The chat's "Shortcuts" section (`F1`): one row per key this screen's
+/// handlers match (`input.rs` — the chords, the plain keys, the input box) —
+/// a new arm gets a row here, next door (AGENTS.md §3). The app layer
+/// composes the dialog's tab from the screens' sections
+/// (docs/help-hotkeys-context.md §6).
+pub(crate) static HELP_SECTION: HelpSection = HelpSection {
+    title: "ui.help.sec.chat",
+    context: Some(HelpContext::Chat),
+    // The groups: composing · selection/clipboard · the conversation ·
+    // editing · panels and toggles.
+    rows: &[
+        ("Enter", "ui.help.send"),
+        ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+        ("Shift+←/→/↑/↓", "ui.help.select"),
+        ("Ctrl+A", "ui.help.select_all"),
+        ("Ctrl+C", "ui.help.copy"),
+        ("Ctrl+X", "ui.help.cut"),
+        ("Ctrl+V", "ui.help.paste"),
+        ("Esc", "ui.help.esc"),
+        ("Ctrl+N", "ui.help.new_chat"),
+        ("F2", "ui.help.rename_chat"),
+        ("F5", "ui.help.copy_chat"),
+        ("Ctrl+R", "ui.help.regenerate"),
+        ("Ctrl+E", "ui.help.delete_exchange"),
+        ("Ctrl+U", "ui.help.impersonate"),
+        ("Ctrl+K", "ui.help.clear_input"),
+        ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+        ("Ctrl+←/→", "ui.help.word_move"),
+        ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+        ("Home", "ui.help.line_home"),
+        ("End", "ui.help.line_end"),
+        ("Ctrl+Home/End", "ui.help.doc_move"),
+        ("Ctrl+G", "ui.help.spell"),
+        ("Ctrl+P", "ui.help.settings"),
+        ("F3", "ui.help.self_model"),
+        ("F4", "ui.help.changes"),
+        ("Ctrl+F", "ui.help.find_in_chat"),
+        ("Ctrl+T", "ui.help.thoughts"),
+        ("Ctrl+O", "ui.help.tool_calls"),
+        ("Ctrl+B", "ui.help.emoji"),
+        ("Ctrl+L", "ui.help.chat_links"),
+        ("Ctrl+W", "ui.help.mouse_toggle"),
+        ("ui.help.k.mouse", "ui.help.mouse_action"),
+        ("PageUp/PageDown", "ui.help.scroll"),
+    ],
+    openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
+};
 
 /// Feed scroll height per PageUp/PageDown press (rows).
 const PAGE_SCROLL: usize = 8;
@@ -177,6 +226,10 @@ pub enum ChatIntent {
     /// Open the changes screen (`F4`, `/changes`): what the assistant changed
     /// in the attached project. See spec §9.12.
     OpenChanges,
+    /// Open the help dialog (`?` on empty input, `/help`). `F1` never reaches
+    /// the screen — the runtime routes it above every screen and owns the
+    /// overlay (spec §11.7, docs/help-hotkeys-context.md stage 2).
+    OpenHelp,
     /// Set, show or clear one of the project's command slots
     /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).
     ProjectSlot {
@@ -371,117 +424,6 @@ enum SuggestItem {
     AddToDictionary,
 }
 
-/// A tab of the help/"About" dialog (`F1`/`?`), KDE/Qt-style. See spec §11.7.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HelpTab {
-    /// Name/author/version and links (site, repository, crate).
-    About,
-    /// The hotkey list.
-    Hotkeys,
-    /// Input-box commands (`/rag …`, `/tts …`).
-    Commands,
-    /// The application's license text (MIT).
-    License,
-    /// The disclaimer covering model output, tools and automated actions
-    /// (`DISCLAIMER.md`) — a supplement to the license, not part of it.
-    Disclaimer,
-    /// Third-party components, their versions and licenses.
-    Components,
-}
-
-impl HelpTab {
-    /// Tabs in display order (the tab strip's order).
-    pub(super) const ALL: [HelpTab; 6] = [
-        Self::About,
-        Self::Hotkeys,
-        Self::Commands,
-        Self::License,
-        Self::Disclaimer,
-        Self::Components,
-    ];
-
-    /// The tab's position in [`Self::ALL`].
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|&t| t == self).unwrap()
-    }
-
-    /// The locale key for the tab's name (for the tab strip).
-    pub(super) fn label_key(self) -> &'static str {
-        match self {
-            Self::About => "ui.help.tab.about",
-            Self::Hotkeys => "ui.help.tab.hotkeys",
-            Self::Commands => "ui.help.tab.commands",
-            Self::License => "ui.help.tab.license",
-            Self::Disclaimer => "ui.help.tab.disclaimer",
-            Self::Components => "ui.help.tab.components",
-        }
-    }
-}
-
-/// The tab the help dialog opens on by default (and until a choice is first
-/// remembered): `F1`/`?` — the familiar help key, and "Hotkeys" is the most
-/// sought-after content; "About" is the neighboring tab.
-pub(super) const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
-
-/// The screen the help dialog was opened from — the "Shortcuts" tab marks that
-/// screen's section "you are here" (`popups::HELP_SECTIONS`). Today only the
-/// chat opens the dialog; stage 2 of docs/help-hotkeys-context.md threads the
-/// real invoking screen through and anchors the tab's scroll to its section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HelpContext {
-    /// The chat screen (the feed + the input box).
-    Chat,
-    /// The chat-list overlay (`Esc` from the chat).
-    ChatList,
-    /// The settings screen (`Ctrl+P`).
-    Settings,
-    /// The self-model screen (`F3`).
-    SelfModel,
-    /// The attached project's changes screen (`F4`).
-    Changes,
-    /// The message-search results (`Ctrl+G` in the chat list).
-    Search,
-}
-
-/// The help dialog's state: the active tab + its content's scroll position
-/// (reset on tab switch), and the screen it was opened from. Opens on
-/// `F1`/`?`. See spec §11.7.
-pub(super) struct HelpState {
-    pub(super) tab: HelpTab,
-    /// The first visible row of the active tab's content (clamped in `render_help`).
-    pub(super) scroll: usize,
-    /// The invoking screen, for the "you are here" marker.
-    pub(super) context: HelpContext,
-}
-
-impl HelpState {
-    /// Open on the given tab (on reopening — on the last-selected one,
-    /// [`ChatScreen::help_last_tab`]). The chat screen is the only opener
-    /// today, so the context is fixed (docs/help-hotkeys-context.md §6 threads
-    /// the real one in stage 2).
-    pub(super) fn open(tab: HelpTab) -> Self {
-        Self {
-            tab,
-            scroll: 0,
-            context: HelpContext::Chat,
-        }
-    }
-
-    /// The next tab (wrapping); resets scroll.
-    pub(super) fn next_tab(&mut self) {
-        let n = HelpTab::ALL.len();
-        self.tab = HelpTab::ALL[(self.tab.index() + 1) % n];
-        self.scroll = 0;
-    }
-
-    /// The previous tab (wrapping); resets scroll.
-    pub(super) fn prev_tab(&mut self) {
-        let n = HelpTab::ALL.len();
-        self.tab = HelpTab::ALL[(self.tab.index() + n - 1) % n];
-        self.scroll = 0;
-    }
-}
-
 /// The spellcheck suggestions popup for the word under the cursor. See spec §11.5.
 struct SuggestPopup {
     word: String,
@@ -632,12 +574,6 @@ pub struct ChatScreen {
     /// opening the settings screen via `Ctrl+P`. Filled in by the `Settings`
     /// event. See spec §11.6, docs/history/i18n.md.
     settings_snapshot: Option<SettingsSnapshot>,
-    /// The help/"About" dialog (`F1`/`?`): tabs + the active tab's scroll
-    /// position; `None` — closed. See spec §11.7.
-    help: Option<HelpState>,
-    /// The last-opened tab of the help dialog — restored on reopening (the
-    /// popup "remembers" the choice, like the emoji picker).
-    help_last_tab: HelpTab,
     /// The active theme palette (from `config.interface.theme`). See spec §11.6.
     palette: Palette,
     /// The interface locale (from `config.interface.language`, axis B —
@@ -754,8 +690,6 @@ impl ChatScreen {
             search_last: String::new(),
             confirm_destructive: false,
             settings_snapshot: None,
-            help: None,
-            help_last_tab: DEFAULT_HELP_TAB,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,

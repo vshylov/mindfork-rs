@@ -330,10 +330,12 @@ The long version — modes, data paths, locales, import, live tests — is in
 
 ## Keys and commands
 
-`F1` (or `?`) opens the built-in help with all of this and more — its
-shortcuts tab lists the keys **by screen** (everywhere · chat · chat list ·
-settings · self-model · changes · search), since a few chords mean different
-things on different screens. The highlights:
+`F1` opens the built-in help **from any screen** (in the chat, `?` on an empty
+input box does the same) with all of this and more. Its shortcuts tab lists
+the keys **by screen** (everywhere · chat · chat list · settings · self-model
+· changes · search), since a few chords mean different things on different
+screens — opened outside the chat, it lands right on the section of the
+screen you were on, marked *you are here*. The highlights:
 
 | Key | Action |
 |---|---|

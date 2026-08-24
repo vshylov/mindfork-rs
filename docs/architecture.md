@@ -227,10 +227,9 @@ src/
 │  │  ├─ mod.rs             ChatIntent, popup types, struct ChatScreen, accessors
 │  │  ├─ feed.rs            projects AppEvent into the feed (messages/generation/tool/tokens)
 │  │  ├─ input.rs           key/mouse/paste handling, draft, spellcheck, commands
-│  │  ├─ popups.rs          popups: spellcheck, confirmation, emoji, help. The help
-│  │  │                     dialog's tabs (spec §11.7); "License"/"Disclaimer" show
-│  │  │                     the text for the interface language (credits::license_text),
-│  │  │                     the disclaimer through shared::markdown (ADR 0003)
+│  │  ├─ popups.rs          popups: spellcheck suggestions, confirmations, the chat's
+│  │  │                     HELP_SECTION table (the help dialog itself is
+│  │  │                     widgets/help_dialog.rs, drawn by the runtime)
 │  │  ├─ impersonation.rs   preview of the reply written on the user's behalf (Ctrl+U)
 │  │  ├─ rag.rs             RAG indexing progress banner (RagBanner: before/name/location/after,
 │  │  │                     fitted to the row at render time — location dropped, name elided)
@@ -282,6 +281,15 @@ src/
 │  │                        help overlay header. Brand colors (except `mind` —
 │  │                        theme-dependent per the brand), docs/branding.md §5
 │  ├─ chat_list.rs          chat list widget (search/sort/F2/F5); wrapped by ChatListScreen
+│  ├─ help_dialog.rs        the help/"About" dialog (F1): tabs, per-screen hotkey
+│  │                        sections (HelpSection; each screen owns its table, the
+│  │                        app composes HELP_SECTIONS), "you are here" marker +
+│  │                        scroll anchor, HelpState/handle_key; runtime-owned and
+│  │                        drawn over the active screen (spec §11.7,
+│  │                        docs/help-hotkeys-context.md). "License"/"Disclaimer"
+│  │                        show the interface language's text
+│  │                        (credits::license_text), the disclaimer through
+│  │                        shared::markdown (ADR 0003)
 │  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode
 │  ├─ profile_list.rs       profile selection overlay when creating a chat
 │  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U)
@@ -2295,6 +2303,22 @@ the results with a self-model snapshot, and the `Settings` broadcast would have
 left the new screen's theme and UI language frozen — so both are now exhaustive by
 variant, which forces the next screen to decide too.
 
+**The help dialog is a runtime overlay** (`widgets/help_dialog.rs` +
+`HelpOverlay` beside `active` in `run_loop`; spec §11.7,
+[help-hotkeys-context.md](help-hotkeys-context.md)). `handle_key_event` routes
+`F1` above every screen — none keeps an `F1` arm of its own — and while the
+dialog is open its keys, pastes and mouse events belong to it; the chat's
+`?`/`/help` arrive as `ChatIntent::OpenHelp` and are intercepted at the same
+level. Opened from a non-chat screen it forces the "Shortcuts" tab anchored to
+that screen's section ("you are here"); the chat restores the remembered tab.
+Each screen owns its `HELP_SECTION` table **next to its key handler**, and the
+app composes `HELP_SECTIONS` — the one layer that knows every screen exists;
+`help_context` is an exhaustive match, so a new screen must decide its
+section, and `help_sections_cover_every_context` closes the loop from the
+match to the table. The overlay's open/close counts as a screen switch for the
+full-repaint rule (the dialog's keycaps and arrows are the wide-glyph risk
+group).
+
 **Going back from a jump — a one-deep back-stack** (`Back`, a local of
 `run_loop` beside `active` rather than a variant of it: it has to survive while
 another screen is in front). Two ways down write it, and they differ only in what
@@ -2524,6 +2548,7 @@ flowchart TB
         SB["status_bar"]
         PL["profile_list (overlay)"]
         IP["impersonation_preview"]
+        HELP["help_dialog (F1 overlay)"]
     end
     subgraph SH["shared (rendering)"]
         MD["markdown (pulldown-cmark)"]
@@ -2535,6 +2560,7 @@ flowchart TB
     RT --> CHAT
     RT --> CLS
     RT --> SET
+    RT --> HELP
     CHAT --> FEED & INP & SB & PL & IP
     CLS --> CL
     FEED --> MD --> WR

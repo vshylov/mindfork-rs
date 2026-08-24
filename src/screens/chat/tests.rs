@@ -1,6 +1,5 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
-use super::popups::HELP_SECTIONS;
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
@@ -1109,119 +1108,24 @@ fn ctrl_c_copies_selection_ctrl_x_cuts() {
     assert_eq!(s.input.text(), "hellod");
 }
 
+/// The chat's own help routes report [`ChatIntent::OpenHelp`] — the runtime
+/// owns the overlay, and `F1` never reaches the screen (spec §11.7; the
+/// dialog's own behavior is pinned in `widgets::help_dialog` and
+/// `app::runtime` tests). With text in the box `?` is just a character.
 #[test]
-fn f1_opens_help_and_esc_closes() {
+fn question_mark_reports_open_help_only_when_input_empty() {
     let mut s = ChatScreen::new();
-    assert!(s.help.is_none());
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert!(s.help.is_some());
-    // Opens on the "Hotkeys" tab.
-    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
-    // Any other key doesn't close the dialog (it has tabs/navigation) and isn't typed.
-    let intent = s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
-    assert_eq!(intent, None);
-    assert!(s.help.is_some(), "another key must not close the dialog");
-    assert!(
-        s.input.is_empty(),
-        "input must not be typed while the dialog is open"
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
+        Some(ChatIntent::OpenHelp)
     );
-    // Esc closes it.
-    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(s.help.is_none());
-}
-
-#[test]
-fn question_mark_opens_help_only_when_input_empty() {
-    let mut s = ChatScreen::new();
-    // Empty input → `?` opens the dialog.
-    s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
-    assert!(s.help.is_some());
-    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // close it
-    // Non-empty input → `?` is typed, the dialog doesn't open.
+    // Non-empty input → `?` is typed, no intent.
     type_str(&mut s, "abc");
-    s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
-    assert!(s.help.is_none());
-    assert_eq!(s.input.text(), "abc?");
-}
-
-#[test]
-fn help_navigation_scrolls_and_switches_tabs() {
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // ↑↓/PgUp/PgDn scroll the active tab without closing the dialog.
-    s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    s.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-    assert!(s.help.is_some(), "scrolling must not close the dialog");
-    assert_eq!(s.help.as_ref().unwrap().scroll, 1 + PAGE_SCROLL);
-    s.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(s.help.as_ref().unwrap().scroll, PAGE_SCROLL);
-    s.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
-    assert_eq!(s.help.as_ref().unwrap().scroll, 0);
-    // Scroll a bit and switch tabs → scroll resets (Tab — next tab,
-    // order About/Hotkeys/Commands/License/Components: the one after Hotkeys is Commands).
-    s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    let h = s.help.as_ref().unwrap();
-    assert_eq!(h.tab, HelpTab::Commands);
-    assert_eq!(h.scroll, 0, "switching tabs resets scroll");
-    // ← goes back to the previous tab.
-    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
-    // Esc closes it; reopening — on the same tab (remembered), with scroll at
-    // zero. Here we came back to Hotkeys, so it reopens on Hotkeys.
-    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(s.help.is_none());
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    let h = s.help.as_ref().unwrap();
-    assert_eq!((h.tab, h.scroll), (HelpTab::Hotkeys, 0));
-}
-
-/// The help dialog remembers the last-selected tab and opens on it.
-#[test]
-fn help_remembers_last_tab() {
-    let mut s = ChatScreen::new();
-    // Open it (Hotkeys by default), switch to "Components", close it.
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // About ← Hotkeys ← ... : two `←` from Hotkeys → Components (wrapping: Hotkeys→About→Components).
-    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
-    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(s.help.is_none());
-    // Reopening — on "Components" again.
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
-}
-
-#[test]
-fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    s.help.as_mut().unwrap().scroll = 10_000; // "over-scrolled" — the render clamps it
-    let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
-    term.draw(|f| s.render(f)).unwrap();
-    // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
-    // the max (well below what was requested) and the scrollbar thumb is drawn.
-    // The bound: rows + opener blanks + a header and a break per section is an
-    // upper estimate of the tab's line count (a couple of rows also wrap).
-    let tab_lines: usize = HELP_SECTIONS
-        .iter()
-        .map(|s| s.rows.len() + s.openers.len() + 2)
-        .sum();
-    assert!(
-        s.help.as_ref().unwrap().scroll < tab_lines,
-        "scroll clamps to the maximum"
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
+        None
     );
-    let buf = term.backend().buffer();
-    let mut thumb = false;
-    for y in buf.area.top()..buf.area.bottom() {
-        for x in buf.area.left()..buf.area.right() {
-            thumb |= buf[(x, y)].symbol() == "█";
-        }
-    }
-    assert!(thumb, "on a short terminal help has a scrollbar thumb");
+    assert_eq!(s.input.text(), "abc?");
 }
 
 #[test]
@@ -1486,11 +1390,14 @@ fn ctrl_w_toggles_mouse_capture_intent() {
 #[test]
 fn mouse_wheel_ignored_while_overlay_open() {
     let mut s = ChatScreen::new();
-    s.help = Some(HelpState::open(DEFAULT_HELP_TAB));
+    // The emoji picker stands in for any chat-owned popup (the help dialog,
+    // which this test used to open, is the runtime's overlay now).
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    assert!(s.emoji.is_some());
     s.handle_mouse(wheel(MouseEventKind::ScrollUp));
     assert!(
         s.feed_view.is_following(),
-        "with help open, the wheel doesn't touch the feed"
+        "with a popup open, the wheel doesn't touch the feed"
     );
 }
 
@@ -2440,419 +2347,6 @@ fn render_does_not_panic() {
     s.push_chunk(id, "# Ответ\n\nтекст");
     let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-}
-
-/// The lockup in the help dialog's header is drawn when the terminal height allows both
-/// the mark and the full key list to fit; the mark is left-aligned to the list margin (docs/branding.md §5).
-#[test]
-fn help_shows_logo_when_terminal_is_tall() {
-    use crate::widgets::logo::{LOCKUP_ROWS, LOGO_COLS};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::style::Color;
-    const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
-
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Tall enough to reach the dialog's height cap (44 content rows + border +
-    // air) — the sectioned key list is taller than any dialog now, so the
-    // lockup condition is about the dialog's own height, not the list's.
-    let tall = 52u16;
-    let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
-    term.draw(|f| s.render(f)).unwrap();
-
-    let buf = term.backend().buffer();
-    let mut orange: Vec<(u16, u16)> = Vec::new();
-    for y in buf.area.top()..buf.area.bottom() {
-        for x in buf.area.left()..buf.area.right() {
-            let c = &buf[(x, y)];
-            if c.style().fg == Some(ORANGE) || c.style().bg == Some(ORANGE) {
-                orange.push((x, y));
-            }
-        }
-    }
-    // The glyph's brand-color stem is in every one of its rows, plus "fork" in the word.
-    assert!(
-        orange.len() > LOCKUP_ROWS as usize,
-        "too little brand color — the mark isn't drawn (found {})",
-        orange.len()
-    );
-    // The popup's left border: a rounded corner (default palette — Auto). The chat's
-    // own panels are drawn full-width, i.e. their corners sit in column 0; the popup
-    // is centered and inset, so its corner is the rightmost one found.
-    let corner = (buf.area.top()..buf.area.bottom())
-        .flat_map(|y| (buf.area.left()..buf.area.right()).map(move |x| (x, y)))
-        .filter(|&(x, y)| buf[(x, y)].symbol() == "╭")
-        .max_by_key(|&(x, _)| x)
-        .expect("the popup's border");
-    // The mark is left-aligned: the glyph's stem (columns 4-5 of its ink) sits exactly on the
-    // key list's margin — the border + two spaces. Centering would have shifted it right.
-    let left = orange.iter().map(|(x, _)| *x).min().unwrap();
-    assert_eq!(
-        left,
-        corner.0 + 1 + 2 + 4,
-        "the glyph's stem is not on the key list's left margin"
-    );
-    // The wordmark's "fork" — to the right of the glyph, past its right edge.
-    let right = orange.iter().map(|(x, _)| *x).max().unwrap();
-    assert!(
-        right > corner.0 + 1 + 2 + LOGO_COLS,
-        "the wordmark's \"fork\" is not drawn to the right of the glyph"
-    );
-}
-
-/// On a short terminal the logo isn't drawn at all — the key list doesn't shift
-/// and doesn't need extra scrolling (a hard degradation, docs/branding.md §5).
-#[test]
-fn help_hides_logo_when_terminal_is_short() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::style::Color;
-    const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
-
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // A dialog height of 13 (11 rows inside) doesn't fit the lockup with breathing room → it
-    // isn't drawn, the tabs don't shift down.
-    let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
-    term.draw(|f| s.render(f)).unwrap();
-
-    let buf = term.backend().buffer();
-    for y in buf.area.top()..buf.area.bottom() {
-        for x in buf.area.left()..buf.area.right() {
-            let c = &buf[(x, y)];
-            assert_ne!(c.style().fg, Some(ORANGE), "the logo must not be drawn");
-            assert_ne!(c.style().bg, Some(ORANGE), "the logo must not be drawn");
-        }
-    }
-}
-/// The tab strip is one line and the dialog has a fixed width, so a tab label
-/// that is a few columns too long in *some* locale silently truncates the last
-/// tab — and the tab that gets cut is the rightmost one, which nobody looking
-/// at the developer's locale would notice. Adding the "Disclaimer" tab pushed
-/// the `ru` strip six columns over the edge, and the fix was to shorten the
-/// hotkeys label in `locales/ru.json` — so the budget is checked for every
-/// bundled locale rather than left to luck.
-#[test]
-fn the_help_tab_strip_fits_the_dialog_in_every_locale() {
-    use super::popups::{HELP_MIN_WIDTH, help_tab_strip};
-    use crate::shared::i18n::{Lang, locale};
-
-    // The budget is the dialog's MINIMUM width: the strip has to fit the
-    // smallest window the adaptive sizing ever grants.
-    let palette = Palette::default();
-    for lang in Lang::ALL {
-        let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang));
-        let chars: Vec<char> = strip.spans.iter().flat_map(|s| s.content.chars()).collect();
-        let width = crate::shared::wrap::display_width(&chars);
-        assert!(
-            width <= HELP_MIN_WIDTH as usize,
-            "the {} tab strip is {width} columns wide, the dialog is {HELP_MIN_WIDTH}",
-            lang.code()
-        );
-    }
-}
-
-/// The legal tabs are the one place where a whole *document*, not a UI string,
-/// follows the interface language: `ru` gets the translations under
-/// `docs/legal/`, every other language the authoritative English
-/// (docs/history/legal-ru-translations.md §4.2). Rendered through the whole screen
-/// rather than off `credits`, because the wiring is what can break — a tab still
-/// reading the constant directly would pass a test written against the accessor.
-#[test]
-fn the_legal_tabs_follow_the_interface_language() {
-    use crate::shared::i18n::{Lang, locale};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    let text_for = |lang: Lang, tab: HelpTab| -> String {
-        let mut s = ChatScreen::new();
-        s.loc = locale(lang);
-        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        s.help.as_mut().unwrap().tab = tab;
-        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
-        let buf = term.backend().buffer();
-        let mut out = String::new();
-        for y in buf.area.top()..buf.area.bottom() {
-            for x in buf.area.left()..buf.area.right() {
-                out.push_str(buf[(x, y)].symbol());
-            }
-            out.push('\n');
-        }
-        out
-    };
-
-    // `(language, tab, the marker that must show, the marker that must not)`.
-    let cases = [
-        (Lang::En, HelpTab::License, "MIT License", "перевод"),
-        (
-            Lang::Ru,
-            HelpTab::License,
-            "неофициальный перевод",
-            "MIT License",
-        ),
-        (
-            Lang::En,
-            HelpTab::Disclaimer,
-            "mindfork is a client",
-            "клиент",
-        ),
-        (Lang::Ru, HelpTab::Disclaimer, "это клиент", "is a client"),
-    ];
-    for (lang, tab, wanted, unwanted) in cases {
-        let text = text_for(lang, tab);
-        assert!(
-            text.contains(wanted),
-            "the {} {tab:?} tab does not show {wanted:?}",
-            lang.code()
-        );
-        assert!(
-            !text.contains(unwanted),
-            "the {} {tab:?} tab shows the other language's text ({unwanted:?})",
-            lang.code()
-        );
-    }
-}
-
-/// A level-1 markdown heading is accent + bold + **underlined**, and the writer
-/// puts that on the `Line` rather than on its spans — so the "Disclaimer" tab's
-/// left indent inherited it and the underline visibly ran out to the left of the
-/// heading's text. The style belongs on the content spans; the indent stays
-/// blank. Reported from a real screenshot.
-#[test]
-fn the_disclaimer_indent_does_not_inherit_the_heading_style() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::style::Modifier;
-
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    s.help.as_mut().unwrap().tab = HelpTab::Disclaimer;
-    let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
-    term.draw(|f| s.render(f)).unwrap();
-
-    let buf = term.backend().buffer();
-    // Find the heading row and the column its `#` marker starts at.
-    let (y, x) = (buf.area.top()..buf.area.bottom())
-        .find_map(|y| {
-            (buf.area.left()..buf.area.right())
-                .find(|&x| buf[(x, y)].symbol() == "#")
-                .map(|x| (y, x))
-        })
-        .expect("the disclaimer heading is not on screen");
-    assert!(
-        buf[(x, y)]
-            .style()
-            .add_modifier
-            .contains(Modifier::UNDERLINED),
-        "the heading itself lost its underline"
-    );
-    for dx in 1..=2 {
-        let cell = &buf[(x - dx, y)];
-        assert_eq!(cell.symbol(), " ", "the indent is not blank");
-        assert!(
-            !cell.style().add_modifier.contains(Modifier::UNDERLINED),
-            "the indent column {dx} left of the heading is underlined"
-        );
-    }
-}
-
-/// Every tab of the help dialog draws its own distinctive content, and the tab strip
-/// carries all six tabs.
-#[test]
-fn help_tabs_render_distinct_content() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    // The same render, scrolled to the bottom: the tab is taller than the popup.
-    let scrolled_to_end = |tab: HelpTab| -> String {
-        let mut s = ChatScreen::new();
-        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        let help = s.help.as_mut().unwrap();
-        help.tab = tab;
-        help.scroll = usize::MAX;
-        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
-        let buf = term.backend().buffer();
-        let mut out = String::new();
-        for y in buf.area.top()..buf.area.bottom() {
-            for x in buf.area.left()..buf.area.right() {
-                out.push_str(buf[(x, y)].symbol());
-            }
-            out.push('\n');
-        }
-        out
-    };
-    let text_for = |tab: HelpTab| -> String {
-        let mut s = ChatScreen::new();
-        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        s.help.as_mut().unwrap().tab = tab;
-        // 60 rows, not 40: two frames of a 40-row popup no longer cover the
-        // commands tab, and five rows in its middle were invisible at *both*
-        // scroll extremes — an absence that reads as a missing command.
-        let mut term = Terminal::new(TestBackend::new(90, 60)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
-        let buf = term.backend().buffer();
-        let mut out = String::new();
-        for y in buf.area.top()..buf.area.bottom() {
-            for x in buf.area.left()..buf.area.right() {
-                out.push_str(buf[(x, y)].symbol());
-            }
-            out.push('\n');
-        }
-        out
-    };
-
-    // The tab strip carries all six labels on any tab.
-    let about = text_for(HelpTab::About);
-    for label in [
-        "О программе",
-        "Клавиши",
-        "Команды",
-        "Лицензия",
-        "Дисклеймер",
-        "Компоненты",
-    ] {
-        assert!(about.contains(label), "missing the \"{label}\" tab label");
-    }
-    // "About": the brand name, author, version, links.
-    assert!(about.contains("Vladimir Shylov"), "missing the author");
-    assert!(
-        about.contains(env!("CARGO_PKG_VERSION")),
-        "missing the version"
-    );
-    assert!(
-        about.contains("https://mindfork.io"),
-        "missing the site link"
-    );
-    assert!(
-        about.contains("https://crates.io/crates/mindfork"),
-        "missing the crate link"
-    );
-
-    // "Hotkeys": a label from HELP_KEYS, but NOT commands (they're on their own tab).
-    let hotkeys = text_for(HelpTab::Hotkeys);
-    assert!(
-        hotkeys.contains("отправить сообщение"),
-        "missing a key description"
-    );
-    assert!(
-        !hotkeys.contains("/rag add"),
-        "commands must not be on the hotkeys tab"
-    );
-
-    // "Commands": input-box commands. Read at both scroll extremes, because the
-    // list outgrew one screen when the project command slots joined it — the
-    // convention `popups::tests::commands_tab_text` already uses. Asserting
-    // against scroll 0 alone is an "everything fits" assumption that any new
-    // command eventually falsifies, and it fails in a way that reads as a
-    // missing command rather than a full page.
-    let commands = format!(
-        "{}{}",
-        text_for(HelpTab::Commands),
-        scrolled_to_end(HelpTab::Commands)
-    );
-    assert!(
-        commands.contains("/rag add"),
-        "missing the /rag add command"
-    );
-    assert!(commands.contains("/tts"), "missing the /tts command");
-    // Attachments are listed FIRST — they're the commands used while writing a
-    // message (docs/file-attachments.md §4.8).
-    assert!(
-        commands.contains("/file attach"),
-        "missing the /file attach command"
-    );
-    assert!(
-        commands.find("/file attach") < commands.find("/rag add"),
-        "the /file commands must come before /rag: {commands}"
-    );
-
-    // "License": the MIT text. This screen runs in the default locale (`ru`), and
-    // since docs/history/legal-ru-translations.md the legal tabs follow the interface
-    // language — so the markers here are the translation's, and the two-language
-    // rule itself is pinned by `the_legal_tabs_follow_the_interface_language`.
-    let license = text_for(HelpTab::License);
-    assert!(license.contains("MIT"), "missing the license header");
-    assert!(license.contains("ГАРАНТИЙ"), "missing the license body");
-    // The disclaimer is a separate tab, not a tail on the license: the MIT text
-    // must stay pure (see `credits::LICENSE_TEXT`). The marker is a phrase from
-    // the notice's body, not its title — the title is also a tab label, and the
-    // strip is drawn on every tab.
-    assert!(
-        !license.contains("это клиент"),
-        "the disclaimer leaked into the license tab"
-    );
-
-    // "Disclaimer": the model-output notice, rendered through our own markdown
-    // renderer — headings keep their styled `#` prefix (that is the renderer's
-    // house style), but emphasis markers are consumed, which is what tells us
-    // the text went through the renderer rather than being dumped verbatim.
-    let disclaimer = text_for(HelpTab::Disclaimer);
-    assert!(
-        disclaimer.contains("Дисклеймер"),
-        "missing the disclaimer heading"
-    );
-    assert!(
-        disclaimer.contains("это клиент"),
-        "missing the disclaimer body"
-    );
-    assert!(
-        !disclaimer.contains("**"),
-        "raw markdown emphasis markers on screen — the renderer was bypassed"
-    );
-
-    // "Components": name, version, and license (taken from the start of the list — it's
-    // long and scrolls, distant crates are off-screen).
-    let components = text_for(HelpTab::Components);
-    assert!(components.contains("ansi-to-tui"), "missing the component");
-    assert!(
-        components.contains("8.0.1"),
-        "missing the component version"
-    );
-    assert!(
-        components.contains("Zlib OR Apache-2.0 OR MIT"),
-        "missing the component license"
-    );
-}
-
-/// The vendored syntax grammars are third-party data we redistribute, so the
-/// "Components" tab must name them and their licences — like the crates above.
-/// They sit at the end of a long list, so this scrolls to the bottom rather
-/// than reading the first screen (see `syntaxes/SOURCES.md`).
-#[test]
-fn components_tab_lists_the_vendored_grammars() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    let mut s = ChatScreen::new();
-    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    let help = s.help.as_mut().unwrap();
-    help.tab = HelpTab::Components;
-    help.scroll = usize::MAX / 2; // render() clamps to the last page
-    let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
-    term.draw(|f| s.render(f)).unwrap();
-    let buf = term.backend().buffer();
-    let mut out = String::new();
-    for y in buf.area.top()..buf.area.bottom() {
-        for x in buf.area.left()..buf.area.right() {
-            out.push_str(buf[(x, y)].symbol());
-        }
-        out.push('\n');
-    }
-
-    assert!(
-        out.contains("грамматики"),
-        "missing the grammars section header: {out}"
-    );
-    // The last row of the manifest — whichever it is, it must be on the last page.
-    let (lang, repo, licence) = *crate::shared::credits::GRAMMARS
-        .last()
-        .expect("the manifest lists grammars");
-    assert!(out.contains(lang), "missing the grammar {lang}: {out}");
-    assert!(out.contains(repo), "missing its upstream {repo}");
-    assert!(out.contains(licence), "missing its licence {licence}");
 }
 
 /// In-feed search must never touch the message being written — that is the whole
@@ -3869,12 +3363,17 @@ fn every_command_agrees_with_the_chord_it_mirrors() {
             "{line} and {code:?} disagree"
         );
     }
+    // `/help` and the chat's `?` share one intent; `F1` never reaches the
+    // screen (the runtime routes it above every screen), so the typed route is
+    // compared against `?` — the chat-side key that remains.
+    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
+    assert_eq!(
+        typed.run("/help"),
+        pressed.key(KeyCode::Char('?')),
+        "/help and `?` disagree"
+    );
     // In-screen effects have no intent to compare, so compare the state each
     // route leaves behind.
-    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
-    assert_eq!(typed.run("/help"), None);
-    pressed.key(KeyCode::F(1));
-    assert_eq!(typed.s.help.is_some(), pressed.s.help.is_some());
     let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
     assert_eq!(typed.run("/emoji"), None);
     pressed.ctrl('b');
@@ -4159,8 +3658,7 @@ fn no_command_is_a_silent_no_op() {
             _ => spec.aliases[0].to_string(),
         };
         let intent = c.run(&line);
-        let visible = c.s.help.is_some()
-            || c.s.emoji.is_some()
+        let visible = c.s.emoji.is_some()
             || c.s.search.is_some()
             || c.s.profile_overlay.is_some()
             || c.s.chat_links.is_some()
@@ -4176,13 +3674,21 @@ fn no_command_is_a_silent_no_op() {
 
 /// A modal owns the keyboard while it is open, so a command typed "through" one
 /// cannot fire. This pins the routing order rather than the commands themselves.
+/// The in-feed search field stands in for any chat-owned modal (the help
+/// dialog, which this test used to open, is the runtime's overlay now — its
+/// modality is pinned in the runtime's tests): it owns every typed character,
+/// so the command line lands in the query, never in the parser.
 #[test]
 fn commands_do_not_fire_through_a_modal() {
     let mut c = Cmd::new();
-    c.s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert!(c.s.help.is_some());
+    c.s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    assert!(c.s.search.is_some());
     assert_eq!(c.run("/settings"), None, "a modal must keep the keyboard");
-    assert!(c.s.help.is_some(), "the dialog closed unexpectedly");
+    assert!(c.s.search.is_some(), "the search field closed unexpectedly");
+    assert!(
+        c.s.input.is_empty(),
+        "the command line leaked into the input box"
+    );
 }
 
 /// The registry's `UiCommand` variants are all reachable from the table — a
