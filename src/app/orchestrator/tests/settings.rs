@@ -641,7 +641,6 @@ fn a_stored_search_key_beats_the_named_environment_variable() {
 
     let mut cfg = crate::shared::config::AppConfig::default();
     cfg.tools.web_tavily_key_env = Some(VAR.into());
-    cfg.tools.web_brave_key_env = None;
 
     // Only the environment is set: it is used.
     assert_eq!(
@@ -672,7 +671,9 @@ fn a_stored_search_key_beats_the_named_environment_variable() {
 fn an_unconfigured_search_provider_yields_no_key() {
     let mut cfg = crate::shared::config::AppConfig::default();
     cfg.tools.web_tavily_key_env = None;
-    cfg.tools.web_brave_key_env = Some("   ".into());
+    assert!(super::super::web_search_keys(&cfg).is_empty());
+    // A whitespace-only variable name is not a name either.
+    cfg.tools.web_tavily_key_env = Some("   ".into());
     assert!(super::super::web_search_keys(&cfg).is_empty());
 }
 

@@ -1063,8 +1063,6 @@ pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
 pub(super) fn web_provider_label(m: WebProvider, loc: &'static Locale) -> String {
     loc.t(match m {
         WebProvider::Auto => "ui.settings.choice.web_provider_auto",
-        WebProvider::Tavily => "ui.settings.choice.web_provider_tavily",
-        WebProvider::Brave => "ui.settings.choice.web_provider_brave",
         WebProvider::FreeOnly => "ui.settings.choice.web_provider_free",
     })
     .to_string()

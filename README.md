@@ -190,9 +190,8 @@ build the moment they drift from what the app actually renders
   fallback (DuckDuckGo → Mojeek → Ecosia), page fetching and semantic
   re-ranking of results. The free engines throttle automated requests hard, so
   Settings → Tools → **Web search** also takes an API key for **Tavily** (1000
-  searches a month, no card) or **Brave**; with a key the assistant searches
-  there first and falls back to the free engines, and with no key nothing
-  changes. `fetch_url` — page to summary (or raw extracted
+  searches a month, no card); with a key the assistant searches there first and
+  falls back to the free engines, and with no key nothing changes. `fetch_url` — page to summary (or raw extracted
   text). Both stay on the public internet: an address on your own machine or
   network is refused, since the links the model follows usually come from a page
   it just read. Settings → Tools → **Allow local addresses** opens them if you

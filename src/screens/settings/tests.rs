@@ -309,28 +309,16 @@ fn keyed_search_rows_follow_the_provider_choice() {
 
     let auto = tools_ids(WebProvider::Auto);
     assert!(auto.contains(&FieldId::TWebProvider));
-    for id in [
-        FieldId::TWebTavilyKey,
-        FieldId::TWebTavilyKeyEnv,
-        FieldId::TWebBraveKey,
-        FieldId::TWebBraveKeyEnv,
-    ] {
-        assert!(auto.contains(&id), "auto shows every key row: {id:?}");
+    for id in [FieldId::TWebTavilyKey, FieldId::TWebTavilyKeyEnv] {
+        assert!(auto.contains(&id), "auto shows the key row: {id:?}");
     }
-
-    let tavily = tools_ids(WebProvider::Tavily);
-    assert!(tavily.contains(&FieldId::TWebTavilyKey));
-    assert!(
-        !tavily.contains(&FieldId::TWebBraveKey),
-        "choosing Tavily must not offer a Brave key it will never spend"
-    );
 
     let free = tools_ids(WebProvider::FreeOnly);
     assert!(
         free.contains(&FieldId::TWebProvider),
         "the choice itself stays, or there is no way back"
     );
-    for id in [FieldId::TWebTavilyKey, FieldId::TWebBraveKey] {
+    for id in [FieldId::TWebTavilyKey, FieldId::TWebTavilyKeyEnv] {
         assert!(!free.contains(&id), "free_only spends no key: {id:?}");
     }
 }
@@ -350,19 +338,11 @@ fn keyed_search_rows_address_their_own_secret_slot() {
         s.secret_field_key(FieldId::TWebTavilyKey),
         Some(SecretKey::Search(SearchSlot::Tavily))
     );
-    assert_eq!(
-        s.secret_field_key(FieldId::TWebBraveKey),
-        Some(SecretKey::Search(SearchSlot::Brave))
-    );
-    // Distinct storage names, so one cannot silently overwrite the other or a
-    // cloud provider's key.
+    // A name of its own, so it cannot overwrite a cloud provider's key or be
+    // overwritten by one. It is on disk now, so it is pinned literally.
     assert_eq!(
         SecretKey::Search(SearchSlot::Tavily).storage_name(),
         "search-tavily"
-    );
-    assert_ne!(
-        SecretKey::Search(SearchSlot::Brave).storage_name(),
-        SecretKey::Search(SearchSlot::Tavily).storage_name()
     );
 }
 

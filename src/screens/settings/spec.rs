@@ -124,7 +124,6 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             },
         ),
         TWebTavilyKeyEnv => text(|c, t| c.tools.web_tavily_key_env = opt(t)),
-        TWebBraveKeyEnv => text(|c, t| c.tools.web_brave_key_env = opt(t)),
         TPythonMode => choice(
             |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
             |c, loc| {

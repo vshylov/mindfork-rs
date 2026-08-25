@@ -392,20 +392,17 @@ fn web_search_keys(config: &AppConfig) -> Vec<(SearchSlot, String)> {
             .then(|| std::env::var(name).ok())
             .flatten()
     };
-    [
-        (SearchSlot::Tavily, &config.tools.web_tavily_key_env),
-        (SearchSlot::Brave, &config.tools.web_brave_key_env),
-    ]
-    .into_iter()
-    .filter_map(|(slot, env_name)| {
-        let key = crate::shared::secrets::stored_key(
-            &config.api_keys,
-            &crate::shared::secrets::SecretKey::Search(slot).storage_name(),
-        )
-        .or_else(|| from_env(env_name))?;
-        (!key.trim().is_empty()).then_some((slot, key))
-    })
-    .collect()
+    [(SearchSlot::Tavily, &config.tools.web_tavily_key_env)]
+        .into_iter()
+        .filter_map(|(slot, env_name)| {
+            let key = crate::shared::secrets::stored_key(
+                &config.api_keys,
+                &crate::shared::secrets::SecretKey::Search(slot).storage_name(),
+            )
+            .or_else(|| from_env(env_name))?;
+            (!key.trim().is_empty()).then_some((slot, key))
+        })
+        .collect()
 }
 
 /// What an id the UI hands over resolves to (see [`Orchestrator::view`]).

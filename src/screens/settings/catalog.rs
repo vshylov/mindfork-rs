@@ -134,46 +134,28 @@ impl SettingsScreen {
         key.is_some_and(|k| self.secrets_present.contains(k))
     }
 
-    /// The API-key pair (the key itself and the variable it may come from
-    /// instead) of one keyed search provider — or nothing, when the current
-    /// `web_provider` cannot spend that key.
-    ///
-    /// `which` is the [`WebProvider`] variant naming this provider, which is
-    /// also what makes the visibility rule one comparison: a row shows under
-    /// `Auto` and under its own name, and never under `FreeOnly`.
-    fn keyed_search_rows(&self, which: WebProvider, loc: &'static Locale) -> Vec<FieldRow> {
+    /// The keyed search provider's API-key pair (the key itself and the variable
+    /// it may come from instead) — or nothing under `FreeOnly`, which is the
+    /// setting that says the key must not be spent. An unused key row reading as
+    /// a live one is how someone ends up believing a provider is configured when
+    /// nothing will ever call it.
+    fn keyed_search_rows(&self, loc: &'static Locale) -> Vec<FieldRow> {
         let t = &self.config.tools;
-        if !matches!(t.web_provider, WebProvider::Auto) && t.web_provider != which {
+        if t.web_provider == WebProvider::FreeOnly {
             return Vec::new();
         }
-        let (key_id, env_id, label, env_value) = match which {
-            WebProvider::Tavily => (
-                FieldId::TWebTavilyKey,
-                FieldId::TWebTavilyKeyEnv,
-                "ui.settings.field.tavily_api_key",
-                &t.web_tavily_key_env,
-            ),
-            WebProvider::Brave => (
-                FieldId::TWebBraveKey,
-                FieldId::TWebBraveKeyEnv,
-                "ui.settings.field.brave_api_key",
-                &t.web_brave_key_env,
-            ),
-            // Not a keyed provider — nothing to show.
-            WebProvider::Auto | WebProvider::FreeOnly => return Vec::new(),
-        };
         vec![
             secret_row(
-                key_id,
-                self.secret_field_present(key_id),
-                loc.t(label),
+                FieldId::TWebTavilyKey,
+                self.secret_field_present(FieldId::TWebTavilyKey),
+                loc.t("ui.settings.field.tavily_api_key"),
                 DESC_SEARCH_API_KEY,
                 loc,
             ),
             text_row(
-                env_id,
+                FieldId::TWebTavilyKeyEnv,
                 loc.t("ui.settings.field.api_key_env_opt"),
-                env_value,
+                &t.web_tavily_key_env,
             )
             .describe(loc.t("ui.settings.desc.search_api_key_env")),
         ]
@@ -209,7 +191,6 @@ impl SettingsScreen {
             // not inference providers and must never resolve through the
             // engine's key lookup (see `SecretKey::Search`).
             FieldId::TWebTavilyKey => Some(SecretKey::Search(SearchSlot::Tavily)),
-            FieldId::TWebBraveKey => Some(SecretKey::Search(SearchSlot::Brave)),
             FieldId::BackupPassword => Some(SecretKey::BackupPassword),
             FieldId::McpEnvSecret(idx) => {
                 let srv = self.config.mcp.servers.get(self.mcp_server_idx)?;
@@ -713,8 +694,7 @@ impl SettingsScreen {
             // a named provider only its own, and `FreeOnly` neither — the
             // same "a sub-section per mode" shape the engine sections have,
             // and it keeps an unused key from reading as a live one.
-            .chain(self.keyed_search_rows(WebProvider::Tavily, loc))
-            .chain(self.keyed_search_rows(WebProvider::Brave, loc))
+            .chain(self.keyed_search_rows(loc))
             .collect::<Vec<_>>(),
         ));
         rows.extend(grouped("Python", {

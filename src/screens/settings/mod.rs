@@ -521,9 +521,6 @@ enum FieldId {
     /// The Tavily API key, and the variable it may come from instead.
     TWebTavilyKey,
     TWebTavilyKeyEnv,
-    /// The Brave Search API key, and the variable it may come from instead.
-    TWebBraveKey,
-    TWebBraveKeyEnv,
     TPython,
     TPythonMode,
     TPythonPath,

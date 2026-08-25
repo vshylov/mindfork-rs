@@ -690,11 +690,9 @@ pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
 /// See docs/research/python-wasmer-sandbox.md.
 pub const DEFAULT_PYTHON_WASM_TIMEOUT_SECS: u64 = 30;
 
-/// Default env-variable names for the keyed search providers, matching each
+/// Default env-variable name for the keyed search provider, matching the
 /// vendor's own documentation so an existing shell already works.
 pub const DEFAULT_TAVILY_KEY_ENV: &str = "TAVILY_API_KEY";
-/// See [`DEFAULT_TAVILY_KEY_ENV`].
-pub const DEFAULT_BRAVE_KEY_ENV: &str = "BRAVE_API_KEY";
 
 /// Which `web_search` backend to prefer (spec §9.3.1,
 /// docs/research/web-search-keyed-providers.md).
@@ -702,19 +700,19 @@ pub const DEFAULT_BRAVE_KEY_ENV: &str = "BRAVE_API_KEY";
 /// The keyless scraping chain is never removed — it is the last fallback under
 /// every value, and the whole behaviour under [`Self::Auto`] with no key stored
 /// is byte-identical to the version before keyed providers existed.
+/// It is deliberately a choice rather than a toggle: [`SearchSlot`] is a set,
+/// and the day a second provider ships this gains a variant instead of a new
+/// setting — the stored `"auto"`/`"freeonly"` values keep round-tripping.
+///
+/// [`SearchSlot`]: crate::shared::secrets::SearchSlot
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WebProvider {
-    /// Every keyed provider that has a key, in the order below, then the
-    /// keyless chain. Default: with no key configured this *is* the old
-    /// behaviour, and configuring a key is the whole opt-in.
+    /// Every keyed provider that has a key, then the keyless chain. Default:
+    /// with no key configured this *is* the old behaviour, and configuring a
+    /// key is the whole opt-in.
     #[default]
     Auto,
-    /// Tavily first (if keyed), then the keyless chain — Brave is not tried
-    /// even if it has a key.
-    Tavily,
-    /// Brave first (if keyed), then the keyless chain.
-    Brave,
     /// Ignore stored keys entirely and use only the keyless chain. For someone
     /// who has a key configured for another purpose and does not want
     /// `web_search` spending it.
@@ -723,12 +721,7 @@ pub enum WebProvider {
 
 impl WebProvider {
     /// All variants in UI-cycle order (for the Choice popup and the cycle).
-    pub const ALL: [WebProvider; 4] = [
-        WebProvider::Auto,
-        WebProvider::Tavily,
-        WebProvider::Brave,
-        WebProvider::FreeOnly,
-    ];
+    pub const ALL: [WebProvider; 2] = [WebProvider::Auto, WebProvider::FreeOnly];
 
     /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
@@ -801,10 +794,6 @@ pub struct ToolSettings {
     /// precedence `api_key_env` already has).
     #[serde(default)]
     pub web_tavily_key_env: Option<String>,
-    /// Env-variable name carrying the Brave Search API key — same precedence as
-    /// [`Self::web_tavily_key_env`].
-    #[serde(default)]
-    pub web_brave_key_env: Option<String>,
     /// Python execution. Off by default (the tool's master gate).
     pub python_enabled: bool,
     /// `python_exec` execution mode: the Wasmer sandbox (default) or the local
@@ -866,7 +855,6 @@ impl Default for ToolSettings {
             web_allow_private: false,
             web_provider: WebProvider::default(),
             web_tavily_key_env: Some(DEFAULT_TAVILY_KEY_ENV.into()),
-            web_brave_key_env: Some(DEFAULT_BRAVE_KEY_ENV.into()),
             python_enabled: false,
             python_mode: PythonMode::default(),
             python_path: None,

@@ -182,7 +182,8 @@ Anthropic), so the tool would still fetch every page itself; and it welds
 do. Worth revisiting only as a fallback slot.
 
 **Recommendation: Tavily first, Brave second, SearXNG as the self-hosted
-escape hatch.** Tavily because the free tier is real and cardless, the response
+escape hatch.** (Written pre-decision. Brave was built and then removed on
+availability grounds — see §7 F2.) Tavily because the free tier is real and cardless, the response
 is shaped for exactly this use (title, url, snippet, score, and optional cleaned
 page text), and the returned content lets the tool **skip its own N parallel page
 fetches** — a latency win and one less thing for a site's anti-bot to see. Brave
@@ -289,9 +290,17 @@ unless contradicted.
   fix plus the §5 free-side work — no key, helps everyone, and it must not wait
   behind a vendor discussion. PR2: the keyed backends. PR1 also carries the
   selector verification left open in §1.1.
-- **F2. Which providers ship — Tavily and Brave.** Both in the first keyed PR;
-  Brave's card requirement is accepted for the sake of a second independent
-  index. **SearXNG is not adopted** — the design in §4.1 stands as written and
+- **F2. Which providers ship — Tavily. (Brave reversed the same day.)** Both
+  were built; **Brave was then removed on the user's decision, 2026-08-25**,
+  because they could not register for it at all — the service is not offered in
+  every country. The reason that decided it is stronger than one person's
+  access, and is why it came out rather than shipping disabled: a provider
+  nobody here can obtain a key for is one the live gate can never cover, and an
+  untestable second backend is a liability rather than a fallback. The card
+  requirement, noted below as acceptable, turned out not to be the obstacle —
+  availability was. Re-adding Brave, or any other provider, is a `SearchSlot`
+  variant plus a parser under the `Backend::Api` shape, so this is not a
+  one-way door. **SearXNG is not adopted** — the design in §4.1 stands as written and
   the address-policy argument it settles stays on record, but a self-hosted
   instance is a deployment this track will not ask for. Serper and the cloud
   server tools remain deferred.
@@ -309,11 +318,17 @@ unless contradicted.
 
 ---
 
-## 8. Go/no-go for the live run
+## 8. Go/no-go for the live run — met
 
 The keyed track's criterion, per AGENTS.md §1 (MVP probe before tiers): with a
 Tavily key configured, **ten `web_search` calls in one turn, all ten returning
 results**, against the reference stack — the exact load pattern that today
-degrades to two. And for the §2 fix, the criterion is narrower and does not need
+degrades to two.
+
+**Result (2026-08-25): GO — ten for ten in 10.5 seconds**, every one answered by
+Tavily and none falling through, measured on the same IP that every keyless
+provider was still blocking at that moment. A second smoke settles Tavily's
+`include_raw_content` field name live, because getting it wrong would look
+exactly like success while the tool quietly fetched every page itself. And for the §2 fix, the criterion is narrower and does not need
 a model at all: `live_search_returns_results` must fail with the **throttled
 error**, never with "no results", when the chain is blocked.

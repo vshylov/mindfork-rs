@@ -1732,7 +1732,7 @@ Implementation notes:
   `disarm()` after reaping stops it signalling a pid the OS has since reused.
 - **`web_search`** — tries the keyed providers a key is configured for
   (`keyed_backends` from `tools.web_provider` + the resolved
-  `SecretKey::Search` slots; `Backend::Api` — Tavily, Brave), then falls back
+  `SecretKey::Search` slots; `Backend::Api` — Tavily), then falls back
   across the scraped providers (DDG lite → DDG html → Mojeek → Ecosia,
   `Backend::Scraped`). Keys are resolved in `orchestrator::web_search_keys`
   (stored beats the named env variable) and reach the tool as strings, so the

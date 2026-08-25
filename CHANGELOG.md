@@ -20,12 +20,12 @@ split by subsystem.
   throttle automated requests hard — measured, they answer about twice in a row
   before blocking, and the block lasts far longer than a conversation — which is
   why a long chain of searches used to fall apart. Settings → Tools → Web search
-  now offers **Tavily** (1000 searches a month, no card) and **Brave** ($5 of
-  monthly credits, card required to verify you). Enter a key and the assistant
-  searches through that provider first; the free engines stay as the fallback,
-  so nothing changes if you enter no key at all. You can also point the app at
-  an environment variable instead, pick one provider explicitly, or turn keys
-  off entirely for search. Search results now say which service answered.
+  now takes an API key for **Tavily** — 1000 searches a month, no card needed.
+  Enter one and the assistant searches through Tavily first; the free engines
+  stay as the fallback, so nothing changes if you enter no key at all. You can
+  also point the app at an environment variable instead (`TAVILY_API_KEY`), or
+  turn the key off for search entirely. Search results now say which service
+  answered.
 
 - **Sub-agent transcripts fold under their chat.** The chat list now keeps a
   chat's transcript rows collapsed by default, with a muted `▸ n` beside the

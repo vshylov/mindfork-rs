@@ -193,7 +193,6 @@ impl ApiBackend {
         use crate::shared::secrets::SearchSlot::*;
         match self.slot {
             Tavily => "Tavily",
-            Brave => "Brave",
         }
     }
 
@@ -203,7 +202,6 @@ impl ApiBackend {
         use crate::shared::secrets::SearchSlot::*;
         match self.slot {
             Tavily => "tavily",
-            Brave => "brave",
         }
     }
 }
@@ -212,25 +210,20 @@ impl ApiBackend {
 ///
 /// `keys` arrives in preference order with the stored-beats-environment rule
 /// already applied. [`WebProvider::FreeOnly`] yields none — someone who keeps a
-/// key for another purpose can stop `web_search` spending it — and a named
-/// provider yields only itself, so choosing Tavily does not quietly fall back
-/// to a Brave key that happens to be present.
+/// key for another purpose can stop `web_search` spending it. A blank key yields
+/// nothing either: a cleared settings field must not put a backend into the
+/// order that can only answer 401.
 ///
 /// [`WebProvider::FreeOnly`]: crate::shared::config::WebProvider::FreeOnly
 pub fn keyed_backends(
     provider: crate::shared::config::WebProvider,
     keys: &[(crate::shared::secrets::SearchSlot, String)],
 ) -> Vec<ApiBackend> {
-    use crate::shared::config::WebProvider as P;
-    use crate::shared::secrets::SearchSlot as S;
-    let wanted = |slot: S| match provider {
-        P::Auto => true,
-        P::Tavily => slot == S::Tavily,
-        P::Brave => slot == S::Brave,
-        P::FreeOnly => false,
-    };
+    if provider == crate::shared::config::WebProvider::FreeOnly {
+        return Vec::new();
+    }
     keys.iter()
-        .filter(|(slot, key)| wanted(*slot) && !key.trim().is_empty())
+        .filter(|(_, key)| !key.trim().is_empty())
         .map(|(slot, key)| ApiBackend {
             slot: *slot,
             key: key.clone(),
@@ -641,16 +634,6 @@ impl WebSearch {
                     // `fetch_content=false` the tool would throw it away.
                     "include_raw_content": want_content,
                 })),
-            Brave => {
-                let mut url = reqwest::Url::parse("https://api.search.brave.com/res/v1/web/search")
-                    .with_context(|| loc.tf("tool.web_search.err.url_parse", &[("name", name)]))?;
-                url.query_pairs_mut()
-                    .append_pair("q", query)
-                    .append_pair("count", &max.to_string());
-                http.get(url)
-                    .header("X-Subscription-Token", &api.key)
-                    .header(reqwest::header::ACCEPT, "application/json")
-            }
         };
         let resp = req
             .send()
@@ -678,7 +661,6 @@ impl WebSearch {
             .with_context(|| loc.tf("tool.web_search.err.read", &[("name", name)]))?;
         let results = match api.slot {
             Tavily => parse_tavily(&body, max),
-            Brave => parse_brave(&body, max),
         };
         Ok(if results.is_empty() {
             // A keyed provider answering 200 with an empty list is believable
@@ -729,51 +711,6 @@ fn parse_tavily(body: &serde_json::Value, max: usize) -> Vec<SearchResult> {
         })
         .take(max)
         .collect()
-}
-
-/// Brave's `{"web": {"results": [{title, url, description}]}}`. Snippets only —
-/// the tool fetches the pages itself, as it does for the keyless chain.
-fn parse_brave(body: &serde_json::Value, max: usize) -> Vec<SearchResult> {
-    let Some(items) = body
-        .get("web")
-        .and_then(|w| w.get("results"))
-        .and_then(|v| v.as_array())
-    else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|it| {
-            let url = it.get("url")?.as_str()?.trim();
-            let title = it.get("title").and_then(|v| v.as_str()).unwrap_or_default();
-            (!url.is_empty() && !title.is_empty()).then(|| SearchResult {
-                title: collapse_ws(title),
-                url: url.to_string(),
-                // Brave marks the query terms with `<strong>` — this is a
-                // snippet for a model to read, not markup to render.
-                snippet: collapse_ws(&strip_tags(
-                    it.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                )),
-                content: String::new(),
-            })
-        })
-        .take(max)
-        .collect()
-}
-
-/// Drops HTML tags from a snippet, keeping their text.
-fn strip_tags(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
 }
 
 /// Reorders results by decreasing similarity of their content to the query
@@ -1649,10 +1586,7 @@ mod tests {
     }
 
     fn keys() -> Vec<(SearchSlot, String)> {
-        vec![
-            (SearchSlot::Tavily, "tvly-x".into()),
-            (SearchSlot::Brave, "brave-x".into()),
-        ]
+        vec![(SearchSlot::Tavily, "tvly-x".into())]
     }
 
     /// The invariant the whole keyed track rests on: **no key configured means
@@ -1675,19 +1609,17 @@ mod tests {
         }
     }
 
-    /// `auto` uses every key present; a named provider uses only its own (so
-    /// choosing Tavily never quietly spends a Brave key); `free_only` uses none.
+    /// `auto` uses every key present; `free_only` uses none, so someone holding
+    /// a key for another purpose can stop `web_search` spending it.
     #[test]
-    fn the_provider_choice_decides_which_keys_are_used() {
+    fn the_provider_choice_decides_whether_keys_are_used() {
         let names = |p| -> Vec<&'static str> {
             keyed_backends(p, &keys())
                 .iter()
                 .map(|b| b.name())
                 .collect()
         };
-        assert_eq!(names(WebProvider::Auto), vec!["Tavily", "Brave"]);
-        assert_eq!(names(WebProvider::Tavily), vec!["Tavily"]);
-        assert_eq!(names(WebProvider::Brave), vec!["Brave"]);
+        assert_eq!(names(WebProvider::Auto), vec!["Tavily"]);
         assert!(names(WebProvider::FreeOnly).is_empty());
     }
 
@@ -1695,10 +1627,7 @@ mod tests {
     /// backend into the order that can only answer 401.
     #[test]
     fn a_blank_key_yields_no_backend() {
-        let blank = vec![
-            (SearchSlot::Tavily, "   ".to_string()),
-            (SearchSlot::Brave, String::new()),
-        ];
+        let blank = vec![(SearchSlot::Tavily, "   ".to_string())];
         assert!(keyed_backends(WebProvider::Auto, &blank).is_empty());
     }
 
@@ -1712,8 +1641,8 @@ mod tests {
             keyed_backends(WebProvider::Auto, &keys()),
         );
         let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
-        assert_eq!(&names[..2], &["Tavily", "Brave"]);
-        assert_eq!(names.len(), 2 + PROVIDERS.len());
+        assert_eq!(names[0], "Tavily");
+        assert_eq!(names.len(), 1 + PROVIDERS.len());
     }
 
     /// ...and a keyed backend that rate-limited us is reordered by the same
@@ -1727,7 +1656,10 @@ mod tests {
         );
         tool.mark_blocked("tavily");
         let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
-        assert_eq!(names[0], "Brave", "the un-blocked keyed backend leads");
+        assert_eq!(
+            names[0], "DuckDuckGo lite",
+            "with the keyed backend cooling, the free chain leads"
+        );
         assert_eq!(
             names.last(),
             Some(&"Tavily"),
@@ -1758,36 +1690,17 @@ mod tests {
         assert_eq!(parse_tavily(&body, 1).len(), 1, "max_results is honoured");
     }
 
-    #[test]
-    fn brave_results_are_parsed_and_their_snippets_de_marked_up() {
-        let body = serde_json::json!({"web": {"results": [
-            {"title": "Rust", "url": "https://rust-lang.org",
-             "description": "A <strong>language</strong> empowering everyone"},
-            {"url": "https://no-title.example"}
-        ]}});
-        let r = parse_brave(&body, 5);
-        assert_eq!(r.len(), 1, "an item without a title is dropped");
-        assert_eq!(
-            r[0].snippet, "A language empowering everyone",
-            "Brave marks query terms with <strong>; the model reads text, not markup"
-        );
-        assert!(
-            r[0].content.is_empty(),
-            "Brave returns snippets only — the pages are fetched as for the free chain"
-        );
-    }
-
-    /// A shape neither vendor documents but both could send on an off day.
+    /// A shape the vendor does not document but could send on an off day.
     #[test]
     fn a_malformed_api_body_parses_to_nothing_rather_than_panicking() {
         for body in [
             serde_json::json!({}),
+            serde_json::json!({"results": [{}]}),
             serde_json::json!({"results": "not a list"}),
             serde_json::json!({"web": {}}),
             serde_json::json!(null),
         ] {
             assert!(parse_tavily(&body, 5).is_empty());
-            assert!(parse_brave(&body, 5).is_empty());
         }
     }
 
@@ -2198,22 +2111,60 @@ fn (data &amp;MyType) free() {
         assert!(out.result.contains("http"), "got: {}", out.result);
     }
 
+    /// Pins Tavily's **`include_raw_content`** end to end: if that field name
+    /// were wrong, `content` would silently arrive empty and the tool would
+    /// quietly fetch every page itself — a degradation that costs latency and
+    /// looks exactly like success, which is the failure class this whole track
+    /// exists to stop. Only a live call can settle a vendor's field name.
+    #[tokio::test]
+    #[ignore = "requires a keyed search provider (TAVILY_API_KEY)"]
+    async fn live_tavily_returns_page_text_so_the_tool_need_not_fetch_it() {
+        let Ok(key) = std::env::var(crate::shared::config::DEFAULT_TAVILY_KEY_ENV) else {
+            eprintln!("skip: no Tavily key configured");
+            return;
+        };
+        let tool = WebSearch::default();
+        let api = ApiBackend {
+            slot: SearchSlot::Tavily,
+            key,
+        };
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let attempt = tool
+            .run_api(&api, "rust programming language", 3, true, loc)
+            .await
+            .expect("Tavily request failed");
+        let Attempt::Results(results) = attempt else {
+            panic!("Tavily returned no results for a query that certainly has some");
+        };
+        assert!(
+            results.iter().any(|r| !r.content.is_empty()),
+            "no result carried page text — has `include_raw_content` been renamed?              results: {:?}",
+            results.iter().map(|r| &r.url).collect::<Vec<_>>()
+        );
+        assert!(
+            needs_content(&results).len() < results.len(),
+            "if every result still needs fetching, the keyed backend saved nothing"
+        );
+    }
+
     /// The keyed track's live criterion (docs/research/web-search-keyed-providers.md
     /// §8): **ten searches in one run, all ten returning results** — the load
     /// pattern that degrades the keyless chain to two. Silently skipped without
     /// a key, like every other gated smoke.
     ///
-    /// Set `MINDFORK_TAVILY_KEY` or `MINDFORK_BRAVE_KEY` to run it. Unlike the
-    /// keyless smoke above there is **no skip-on-throttle escape**: a keyed
-    /// provider answering 429 within ten searches is a real finding about the
-    /// free tier, not an infrastructure excuse, and this test exists to catch it.
+    /// Set `TAVILY_API_KEY` to run it — the same variable the app itself
+    /// defaults to, so a shell configured for the app needs no extra setup.
+    /// Unlike the keyless smoke above there is **no skip-on-throttle escape**: a
+    /// keyed provider answering 429 within ten searches is a real finding about
+    /// the free tier, not an infrastructure excuse, and this test exists to
+    /// catch it.
     #[tokio::test]
-    #[ignore = "requires a keyed search provider (MINDFORK_TAVILY_KEY / MINDFORK_BRAVE_KEY)"]
+    #[ignore = "requires a keyed search provider (TAVILY_API_KEY)"]
     async fn live_keyed_search_survives_ten_searches_in_a_row() {
-        let keyed: Vec<_> = [
-            (SearchSlot::Tavily, "MINDFORK_TAVILY_KEY"),
-            (SearchSlot::Brave, "MINDFORK_BRAVE_KEY"),
-        ]
+        let keyed: Vec<_> = [(
+            SearchSlot::Tavily,
+            crate::shared::config::DEFAULT_TAVILY_KEY_ENV,
+        )]
         .into_iter()
         .filter_map(|(slot, var)| Some((slot, std::env::var(var).ok()?)))
         .collect();
@@ -2245,7 +2196,7 @@ fn (data &amp;MyType) free() {
             "wasmer wasix python",
             "duckduckgo lite anti-bot",
             "tavily search api",
-            "brave search api pricing",
+            "anti-bot rate limiting http 429",
             "rust edition 2024 changes",
         ];
         for (i, q) in queries.iter().enumerate() {

@@ -92,23 +92,24 @@ impl ExternalSlot {
 /// from a fixed list rather than by URL, and each has its own account, so one
 /// shared key would be meaningless. See
 /// docs/research/web-search-keyed-providers.md §6.
+///
+/// One variant today. It stays an enum because the slot is what the stored name
+/// (`search-tavily`) and the settings row are keyed by: a second provider is a
+/// variant, not a reshape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchSlot {
     /// Tavily (`api.tavily.com`) — `Authorization: Bearer`.
     Tavily,
-    /// Brave Search API (`api.search.brave.com`) — `X-Subscription-Token`.
-    Brave,
 }
 
 impl SearchSlot {
     /// Every slot, for enumerating the presence list.
-    pub const ALL: [SearchSlot; 2] = [Self::Tavily, Self::Brave];
+    pub const ALL: [SearchSlot; 1] = [Self::Tavily];
 
     /// The slot's part of the storage name (see [`SecretKey::storage_name`]).
     fn key(self) -> &'static str {
         match self {
             Self::Tavily => "tavily",
-            Self::Brave => "brave",
         }
     }
 }
