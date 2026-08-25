@@ -104,8 +104,9 @@ impl ChatScreen {
             // "the chat list" (`/stop` is the other half).
             UiCommand::Chats => Some(ChatIntent::OpenChatList),
             UiCommand::Changes => Some(ChatIntent::OpenChanges),
-            // The runtime owns the overlay; the typed route reports the same
-            // intent the chat's `?` does (a command is its key).
+            // The runtime owns the overlay; the typed route reports the intent
+            // it opens on, and is the chat's only route of its own — `?` was
+            // dropped, `F1` never reaches the screen (spec §11.7).
             UiCommand::Help => Some(ChatIntent::OpenHelp),
             // The conversation.
             UiCommand::NewChat if argument.is_empty() => self.request_new_chat(),

@@ -226,13 +226,6 @@ impl ChatScreen {
             // terminal intercepts Ctrl+Q; F10 often opens the emulator's menu
             // in Linux DEs, but it's dismissible).
             (KeyCode::F(10), _) => Some(ChatIntent::Quit),
-            // Help/"About": `?` — only on empty input (otherwise the
-            // character gets typed). `F1` never reaches the screen — the
-            // runtime routes it above every screen and owns the overlay
-            // (spec §11.7). See docs/history/help-hotkeys-context.md stage 2.
-            (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
-                Some(ChatIntent::OpenHelp)
-            }
             // View of the active profile's "self-model" (a read-only view).
             (KeyCode::F(3), _) => Some(ChatIntent::OpenSelfModel),
             // What the assistant changed in the attached project. `F4` was the

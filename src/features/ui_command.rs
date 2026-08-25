@@ -39,7 +39,7 @@ pub enum UiCommand {
     /// The changes screen (`F4`): what the assistant changed in the attached
     /// project (spec §9.12).
     Changes,
-    /// The help/"About" dialog (`F1`/`?`).
+    /// The help/"About" dialog (`F1`).
     Help,
     /// A new chat; the argument picks the profile by name (`Ctrl+N`).
     NewChat,

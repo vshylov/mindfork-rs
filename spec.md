@@ -1763,7 +1763,7 @@ Two main screens + overlays (modals):
 - **Settings screen** — a separate screen (via `Ctrl+P`/a button) with sections (see [11.6](#116-the-settings-screen)).
 - **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one and highlighting the query inside it; `Esc` from that chat comes back to the results (see [11.2.1](#1121-the-message-level-search-screen)).
 - **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
-- **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`?`), the server startup log.
+- **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`F1`), the server startup log.
 - **Token counter** in the status bar: the total "conversation (prompt) + response" count,
   updates live during generation and is visible right from the start (not "starting from one").
   There's a dual source: a live approximation from the number of streamed deltas + an exact
@@ -2654,9 +2654,9 @@ docs/history/external-api-key.md.
 | `PageUp`/`PageDown` / mouse wheel | scroll the feed |
 | `e` (on a message) | edit the message |
 | `Space`/`Tab` (on a block) | collapse/expand a **single** block — deferred; today `Ctrl+T`/`Ctrl+O` act on the whole feed |
-| `F1` / `?` | the help/"about" dialog (tabbed, see below) |
+| `F1` | the help/"about" dialog (tabbed, see below) |
 
-**The help/"about" dialog (`F1`/`?`)** — a modal popup in the KDE/Qt style:
+**The help/"about" dialog (`F1`)** — a modal popup in the KDE/Qt style:
 a logo lockup in the header, a tab strip, and scrollable content for the active
 tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name and
 description, then the facts — version, license (the SPDX id from `Cargo.toml`; the full
@@ -2678,10 +2678,10 @@ license columns aligned under each other against the mirrored right margin, and 
 between bridged by a dotted leader in the dialog's dimmest color — the tab's natural width
 is well under the dialog's, and a left-hugging table left the right half empty, while
 centering it was rejected because nothing else in the app centers text).
-Opens on the "Hotkeys" tab (`F1`/`?` — the familiar help key), and on
+Opens on the "Hotkeys" tab (`F1` — the familiar help key), and on
 reopening — on the **last-selected** tab (remembered). Navigation:
 `Tab`/`←→` — switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` — scroll the active tab, `Esc`
-(or `F1`/`?` again) — close, `Ctrl+Q`/`F10` — quit. The dialog **follows the
+(or `F1` again) — close, `Ctrl+Q`/`F10` — quit. The dialog **follows the
 terminal between bounds** — 76–96 columns × 34–44 rows of content — one size for
 every tab, so the window doesn't "jump" on switching: the maximum caps line length
 for readability on a wide screen, and below the minimum the dialog is clamped to
@@ -2704,7 +2704,7 @@ that line). The strip's labels are width-budgeted — a `screens::chat` gate tes
 it fits the dialog's **minimum** width in **every** bundled locale, since the tab that
 overflows is the rightmost one and would be silently truncated for one language only.
 The **"Hotkeys" tab is a list of per-screen sections**
-([help-hotkeys-context.md](docs/history/help-hotkeys-context.md)): "Everywhere", then the chat,
+([help-hotkeys-context.md](docs/history/help-hotkeys-context.md)): "Globally", then the chat,
 the chat list, the settings, the self-model, the changes and the message-search screens,
 each under a localized header (`ui.help.sec.*`) whose title also names the route to the
 screen ("Settings (Ctrl+P)"). A key is listed once per screen where it does something, so
@@ -2719,8 +2719,14 @@ it was, and `Ctrl+Q`/`F10` still quit through it. Opened anywhere but the chat, 
 dialog forces the "Hotkeys" tab **scrolled so the opener's section header is the top
 row** (the anchor is computed at render, where wrapping is known, and consumed once — the
 user's own scrolling then sticks); the chat keeps the remembered last tab, its section
-sitting right under the short "Everywhere" block anyway. `?` (on empty input) and
-`/help` remain the chat's routes to the same dialog. Each screen owns its section's
+sitting right under the short "Globally" block anyway. `/help` is the chat's own
+route to the same dialog. **`?` is not a help key** — it was `F1`'s alias while
+the dialog belonged to the chat screen, and it survived the move as a key that
+worked on one screen out of six, and there only on an empty input box: everywhere
+else (the list's filter, the settings' search, any box with text in it) it is the
+character being typed. A key advertised as global that works in one place is worse
+than no key, so the row reads `F1` alone, and the dialog no longer closes on `?`
+either. Each screen owns its section's
 table **next to its key handler**, and the app layer composes the tab — the one place
 that knows every screen exists ([help-hotkeys-context.md](docs/history/help-hotkeys-context.md)
 §6). Related entries within a section still

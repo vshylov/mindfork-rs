@@ -243,8 +243,8 @@ fn handle_key_event(
     }
     // `F1` opens the help wherever the user is — even inside a sub-mode
     // (a rename field, an armed confirmation): the dialog is read-only, and
-    // the sub-mode's state is exactly as they left it on `Esc`. The chat's
-    // `?` and `/help` arrive as [`ChatIntent::OpenHelp`] below.
+    // the sub-mode's state is exactly as they left it on `Esc`. It is the only
+    // help *key*; the chat's `/help` arrives as [`ChatIntent::OpenHelp`] below.
     if key.code == KeyCode::F(1) {
         help.open_for(help_context(active));
         return false;
@@ -292,7 +292,7 @@ fn handle_key_event(
             paste_from_clipboard(text_fallback, screen, active, cmd_tx, clipboard);
             false
         }
-        // The chat's typed/`?` routes into the help — the overlay lives here,
+        // The chat's typed `/help` routes into the overlay, which lives here,
         // beside the `F1` interception above, not in `dispatch` (which turns
         // intents into orchestrator commands; this one never leaves the UI).
         Some(AnyIntent::Chat(ChatIntent::OpenHelp)) => {

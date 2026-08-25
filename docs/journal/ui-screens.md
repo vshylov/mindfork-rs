@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -60,6 +60,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the chat list folds a chat's sub-agent transcripts (done)
 - Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
 - Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
+- Post-M9: the "Globally" section, and `?` dropped as a help key (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2538,3 +2539,44 @@ storage or tool surface is touched.
   keys — found by the first swap attempt going red). A live run is not
   required (AGENTS.md §3) — pure UI; no engine, storage or tool surface is
   touched.
+
+### Post-M9: the "Globally" section, and `?` dropped as a help key (done)
+
+- **Why**: two reports from the same look at the shortcuts tab. The first
+  section's header read "Everywhere", and the word for keys that work anywhere
+  in a program is *globally* — renamed to "Globally" (and its `ru` pair), key
+  `ui.help.sec.everywhere` → `ui.help.sec.global` and the static
+  `help_dialog::EVERYWHERE` → `GLOBAL` with it (an internal identifier that
+  disagrees with the string it holds is exactly the drift the per-screen tables
+  were placed next to their handlers to avoid).
+- **The second report was the real one**: the section advertised `F1 / ?`, and
+  `?` did nothing on the chat list, in settings, or in any input box with text
+  in it — it typed a question mark. **The inventory**: `?` was registered in
+  exactly one place, `screens/chat/input.rs`'s `handle_plain_key`, guarded by
+  `self.input.is_empty()`, plus a close arm in `HelpState::handle_key`. So it
+  worked on one screen out of six, and there only on an empty box — which is
+  why the user's own attempts (a chat with a draft, the list's filter, the
+  settings' search) all produced a character. That is a stricter condition than
+  a hotkey table can express, and it predates the dialog being a runtime
+  overlay: `?` was the chat's alias for `F1` back when the chat *was* the only
+  screen that could open the help (stage 2 above lifted `F1` out; `?` stayed
+  behind by inertia).
+- **Decision — remove it, don't extend it.** Making `?` global would mean
+  claiming a printable character on every screen with a text field (the list's
+  filter, the settings' search, the rename box, the chat itself), each with its
+  own "only when empty" caveat — a key that means "help" or "?" depending on
+  state the user cannot see. `F1` already opens the dialog from anywhere and
+  `/help` is the typed route (command-only control), so nothing is lost. Gone
+  from the input handler, from the dialog's close arm (a stray `?` under the
+  open dialog is now inert, like any other character) and from the row, which
+  reads `F1`.
+- **Tests** (2579 green, count unchanged — every touched test was replaced in
+  place): the chat's `question_mark_reports_open_help_only_when_input_empty`
+  became `question_mark_is_typed_never_a_help_key` (empty box included); the
+  typed/chord equivalence table lost its `/help` ↔ `?` pair and now checks
+  `/help` against the intent directly, since that route has no chord left to
+  compare with; `app::runtime`'s `the_chats_question_mark_opens_the_overlay`
+  became `the_chats_typed_help_opens_the_overlay` (`?` opens nothing, `/help`
+  does, with the chat context); the dialog's navigation test pins `?` among the
+  keys that are consumed and change nothing. A live run is not required
+  (AGENTS.md §3) — pure UI.

@@ -2308,8 +2308,9 @@ variant, which forces the next screen to decide too.
 [help-hotkeys-context.md](history/help-hotkeys-context.md)). `handle_key_event` routes
 `F1` above every screen — none keeps an `F1` arm of its own — and while the
 dialog is open its keys, pastes and mouse events belong to it; the chat's
-`?`/`/help` arrive as `ChatIntent::OpenHelp` and are intercepted at the same
-level. Opened from a non-chat screen it forces the "Shortcuts" tab anchored to
+`/help` arrives as `ChatIntent::OpenHelp` and is intercepted at the same
+level (`?` used to arrive the same way, from an empty input box only, and was
+dropped — spec §11.7). Opened from a non-chat screen it forces the "Shortcuts" tab anchored to
 that screen's section ("you are here"); the chat restores the remembered tab.
 Each screen owns its `HELP_SECTION` table **next to its key handler**, and the
 app composes `HELP_SECTIONS` — the one layer that knows every screen exists;

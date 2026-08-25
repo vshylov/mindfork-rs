@@ -675,7 +675,7 @@
   "ui.help.tab.license": "Лицензия",
   "ui.help.tab.disclaimer": "Дисклеймер",
   "ui.help.tab.components": "Компоненты",
-  "ui.help.sec.everywhere": "Везде",
+  "ui.help.sec.global": "Глобально",
   "ui.help.sec.chat": "Чат",
   "ui.help.sec.chat_list": "Список чатов (Esc)",
   "ui.help.sec.settings": "Настройки (Ctrl+P)",

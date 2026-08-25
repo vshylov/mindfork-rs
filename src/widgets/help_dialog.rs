@@ -1,4 +1,4 @@
-//! The help/"About" dialog (`F1`/`?`): the tabs, the per-screen hotkey
+//! The help/"About" dialog (`F1`): the tabs, the per-screen hotkey
 //! sections and their rendering. A widget of its own so the runtime can draw
 //! it over whatever screen is active (docs/history/help-hotkeys-context.md, stage 2);
 //! it grew up in `screens/chat/popups.rs` and moved here unchanged.
@@ -21,7 +21,7 @@ use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 /// Left indent of the lockup — matches where the hotkey list starts.
 const LOGO_INDENT: u16 = 2;
 
-/// A tab of the help/"About" dialog (`F1`/`?`), KDE/Qt-style. See spec §11.7.
+/// A tab of the help/"About" dialog (`F1`), KDE/Qt-style. See spec §11.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTab {
     /// Name/author/version and links (site, repository, crate).
@@ -69,7 +69,7 @@ impl HelpTab {
 }
 
 /// The tab the help dialog opens on by default (and until a choice is first
-/// remembered): `F1`/`?` — the familiar help key, and "Hotkeys" is the most
+/// remembered): `F1` — the familiar help key, and "Hotkeys" is the most
 /// sought-after content; "About" is the neighboring tab.
 pub const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
@@ -149,7 +149,7 @@ impl HelpState {
     }
 
     /// One key of the open dialog: `Tab`/`←→` switch tabs, `↑↓`/`PgUp`/`PgDn`/
-    /// `Home` scroll the active tab, `Esc` (and a repeat `F1`/`?`) close,
+    /// `Home` scroll the active tab, `Esc` (and a repeat `F1`) close,
     /// `Ctrl+Q`/`F10` quit — the layout-independent punch-through every modal
     /// has. Other keys are ignored (they don't close it — otherwise navigation
     /// would get confusing). Scroll clamping — in [`render_help`]. The caller
@@ -170,7 +170,7 @@ impl HelpState {
             KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(HELP_PAGE_SCROLL),
             KeyCode::PageDown => self.scroll = self.scroll.saturating_add(HELP_PAGE_SCROLL),
             KeyCode::Home => self.scroll = 0,
-            KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => return HelpKeyOutcome::Close,
+            KeyCode::Esc | KeyCode::F(1) => return HelpKeyOutcome::Close,
             _ => {}
         }
         HelpKeyOutcome::Handled
@@ -183,7 +183,7 @@ impl HelpState {
 pub enum HelpKeyOutcome {
     /// Consumed (navigation, or ignored) — the dialog stays open.
     Handled,
-    /// Close the dialog (`Esc`, a repeat `F1`/`?`); the owner remembers
+    /// Close the dialog (`Esc`, a repeat `F1`); the owner remembers
     /// [`HelpState::tab`] for the next open.
     Close,
     /// Quit the application (`Ctrl+Q`/`F10` punch through the dialog).
@@ -194,7 +194,7 @@ pub enum HelpKeyOutcome {
 /// is where the dialog's keys grew up.
 const HELP_PAGE_SCROLL: usize = 8;
 
-/// One section of the "Shortcuts" tab (`F1`/`?`): the keys of one screen under
+/// One section of the "Shortcuts" tab (`F1`): the keys of one screen under
 /// a localized header. A key is listed once per screen where it does something,
 /// so a chord with two meanings is two short rows in two sections — the header
 /// says the context the descriptions used to spell out ("in the chat list: …")
@@ -212,7 +212,7 @@ pub struct HelpSection {
     pub title: &'static str,
     /// The screen this section documents — the one whose header carries the
     /// "you are here" marker when the dialog was opened from it. `None` — the
-    /// "Everywhere" rows, never marked.
+    /// "Globally" rows, never marked.
     pub context: Option<HelpContext>,
     /// The section's `(keycap, desc_key)` rows.
     pub rows: &'static [(&'static str, &'static str)],
@@ -226,23 +226,25 @@ pub struct HelpSection {
     pub openers: &'static [&'static str],
 }
 
-/// The "Everywhere" rows — the keys that mean the same thing on every
+/// The "Globally" rows — the keys that mean the same thing on every
 /// screen. The other sections live **next to the key handlers they document**
 /// (the chat's in `screens/chat`, the list's in `widgets/chat_list`, …), and
 /// the app layer composes the display order — the one place that knows every
 /// screen exists (docs/history/help-hotkeys-context.md §6). Proximity of a table to
 /// its `match` is the anti-drift force, and AGENTS.md §3 sends every new key
 /// to its owner's table.
-pub static EVERYWHERE: HelpSection = HelpSection {
-    title: "ui.help.sec.everywhere",
+pub static GLOBAL: HelpSection = HelpSection {
+    title: "ui.help.sec.global",
     context: None,
-    // `F1` is routed at the runtime level, above every screen; `?` is the
-    // chat's convenience alias (typing owns it elsewhere).
-    rows: &[("F1 / ?", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
+    // `F1` is routed at the runtime level, above every screen — and it is the
+    // only help key: `?` was listed here while it worked on the chat screen
+    // alone, and on an empty input box at that (spec §11.7). `/help` is the
+    // typed route.
+    rows: &[("F1", "ui.help.help"), ("Ctrl+Q / F10", "ui.help.quit")],
     openers: &[],
 };
 
-/// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
+/// Input-box commands for the "Commands" tab (`F1`). Same format as
 /// [`HELP_KEYS`], with the display groups likewise encoded outside the table
 /// ([`COMMAND_GROUP_OPENERS`]); a command label (`/…`) is drawn in the command
 /// color. Split out of the hotkeys so they don't clutter reading them. See
@@ -1547,13 +1549,14 @@ mod tests {
         h.handle_key(&key(KeyCode::Left));
         assert_eq!(h.tab, HelpTab::Hotkeys);
         // Any other key is consumed and changes nothing — a stray press must
-        // not close the dialog mid-reading.
-        assert_eq!(
-            h.handle_key(&key(KeyCode::Char('x'))),
-            HelpKeyOutcome::Handled
-        );
+        // not close the dialog mid-reading. `?` is one of those keys now: it
+        // used to close the dialog as `F1`'s alias, and stopped being a help
+        // key at all when it turned out to work on one screen only (spec §11.7).
+        for code in [KeyCode::Char('x'), KeyCode::Char('?')] {
+            assert_eq!(h.handle_key(&key(code)), HelpKeyOutcome::Handled);
+        }
         assert_eq!((h.tab, h.scroll), (HelpTab::Hotkeys, 0));
-        // Esc (or a repeat F1/`?`) asks to close; the quit keys punch through,
+        // Esc (or a repeat F1) asks to close; the quit keys punch through,
         // layout-independently.
         assert_eq!(h.handle_key(&key(KeyCode::Esc)), HelpKeyOutcome::Close);
         assert_eq!(h.handle_key(&key(KeyCode::F(1))), HelpKeyOutcome::Close);

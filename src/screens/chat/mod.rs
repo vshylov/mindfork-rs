@@ -226,9 +226,9 @@ pub enum ChatIntent {
     /// Open the changes screen (`F4`, `/changes`): what the assistant changed
     /// in the attached project. See spec §9.12.
     OpenChanges,
-    /// Open the help dialog (`?` on empty input, `/help`). `F1` never reaches
-    /// the screen — the runtime routes it above every screen and owns the
-    /// overlay (spec §11.7, docs/history/help-hotkeys-context.md stage 2).
+    /// Open the help dialog (`/help`). `F1` never reaches the screen — the
+    /// runtime routes it above every screen and owns the overlay (spec §11.7,
+    /// docs/history/help-hotkeys-context.md stage 2).
     OpenHelp,
     /// Set, show or clear one of the project's command slots
     /// (`/project build-cmd|run-cmd|test-cmd [line]`, `/project clear <slot>`).

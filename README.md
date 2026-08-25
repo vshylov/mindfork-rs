@@ -330,9 +330,9 @@ The long version — modes, data paths, locales, import, live tests — is in
 
 ## Keys and commands
 
-`F1` opens the built-in help **from any screen** (in the chat, `?` on an empty
-input box does the same) with all of this and more. Its shortcuts tab lists
-the keys **by screen** (everywhere · chat · chat list · settings · self-model
+`F1` opens the built-in help **from any screen** (`/help` types the same) with
+all of this and more. Its shortcuts tab lists
+the keys **by screen** (globally · chat · chat list · settings · self-model
 · changes · search), since a few chords mean different things on different
 screens — opened outside the chat, it lands right on the section of the
 screen you were on, marked *you are here*. The highlights:
@@ -342,7 +342,7 @@ screen you were on, marked *you are here*. The highlights:
 | `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol) |
 | `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results or the conversation you came from (the status bar says which) |
 | `Ctrl+Q` / `F10` | quit (or type `/exit` — see the commands below, for terminals that keep both keys for themselves) |
-| `F1` / `?` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
+| `F1` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
 | `Ctrl+P` | settings |
 | `F3` | the self-model screen — what the assistant currently thinks about itself, and about you |
 | `Ctrl+N` | new chat (with a profile picker) |
