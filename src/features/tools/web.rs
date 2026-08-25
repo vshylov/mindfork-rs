@@ -178,11 +178,111 @@ pub struct SearchResult {
     pub content: String,
 }
 
-/// `web_search` — internet search (DuckDuckGo → Mojeek → Ecosia, see [`PROVIDERS`]).
+/// One keyed provider the tool may use, with its credential already resolved
+/// (spec §9.3.1). Constructed by [`keyed_backends`]; the tool never reads a
+/// secret store or the environment itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApiBackend {
+    slot: crate::shared::secrets::SearchSlot,
+    key: String,
+}
+
+impl ApiBackend {
+    /// The name for logs, errors and the "which backend answered" line.
+    fn name(&self) -> &'static str {
+        use crate::shared::secrets::SearchSlot::*;
+        match self.slot {
+            Tavily => "Tavily",
+            Brave => "Brave",
+        }
+    }
+
+    /// The cooldown key. A keyed provider is its own family: its rate limit is
+    /// per-account, unrelated to any other's.
+    fn family(&self) -> &'static str {
+        use crate::shared::secrets::SearchSlot::*;
+        match self.slot {
+            Tavily => "tavily",
+            Brave => "brave",
+        }
+    }
+}
+
+/// Which keyed backends a configuration yields, in the order to try them.
+///
+/// `keys` arrives in preference order with the stored-beats-environment rule
+/// already applied. [`WebProvider::FreeOnly`] yields none — someone who keeps a
+/// key for another purpose can stop `web_search` spending it — and a named
+/// provider yields only itself, so choosing Tavily does not quietly fall back
+/// to a Brave key that happens to be present.
+///
+/// [`WebProvider::FreeOnly`]: crate::shared::config::WebProvider::FreeOnly
+pub fn keyed_backends(
+    provider: crate::shared::config::WebProvider,
+    keys: &[(crate::shared::secrets::SearchSlot, String)],
+) -> Vec<ApiBackend> {
+    use crate::shared::config::WebProvider as P;
+    use crate::shared::secrets::SearchSlot as S;
+    let wanted = |slot: S| match provider {
+        P::Auto => true,
+        P::Tavily => slot == S::Tavily,
+        P::Brave => slot == S::Brave,
+        P::FreeOnly => false,
+    };
+    keys.iter()
+        .filter(|(slot, key)| wanted(*slot) && !key.trim().is_empty())
+        .map(|(slot, key)| ApiBackend {
+            slot: *slot,
+            key: key.clone(),
+        })
+        .collect()
+}
+
+/// One entry in the order [`WebSearch`] tries: a keyed API, or one of the
+/// keyless scraped [`PROVIDERS`].
+#[derive(Clone, Copy)]
+enum Backend<'a> {
+    Api(&'a ApiBackend),
+    Scraped(&'static Provider),
+}
+
+impl Backend<'_> {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Api(a) => a.name(),
+            Self::Scraped(p) => p.name,
+        }
+    }
+    fn family(&self) -> &'static str {
+        match self {
+            Self::Api(a) => a.family(),
+            Self::Scraped(p) => p.family,
+        }
+    }
+}
+
+/// What one backend's attempt came to. Kept separate from `Result` because
+/// "blocked" is neither success nor a failure to report: it is the one outcome
+/// that must never reach the model as "the web has nothing".
+enum Attempt {
+    /// Results, always non-empty.
+    Results(Vec<SearchResult>),
+    /// A genuine, believable empty result set.
+    Empty,
+    /// Anti-bot throttling, a challenge page, or a vendor rate limit.
+    Blocked,
+}
+
+/// `web_search` — internet search: the keyed providers a key is configured for
+/// (see [`keyed_backends`]), then the keyless chain (DuckDuckGo → Mojeek →
+/// Ecosia, see [`PROVIDERS`]).
 pub struct WebSearch {
     http: crate::shared::net::GuardedClient,
     /// The default value for the `fetch_content` argument (from `config.tools`).
     fetch_content_default: bool,
+    /// Keyed backends, in preference order — empty when no key is configured,
+    /// which is what makes that case byte-identical to the keyless tool.
+    api: Vec<ApiBackend>,
     /// When each provider family was last seen blocking us, for
     /// [`WebSearch::provider_order`]. The tool outlives the turn — the registry
     /// is built once and rebuilt only on a settings/MCP change
@@ -197,12 +297,20 @@ impl Default for WebSearch {
     fn default() -> Self {
         // The guarded policy is the default here too: a caller that does not pass one must
         // get the safe tool, not the permissive one.
-        Self::new(true, crate::shared::net::AddressPolicy::PublicOnly)
+        Self::new(
+            true,
+            crate::shared::net::AddressPolicy::PublicOnly,
+            Vec::new(),
+        )
     }
 }
 
 impl WebSearch {
-    pub fn new(fetch_content_default: bool, policy: crate::shared::net::AddressPolicy) -> Self {
+    pub fn new(
+        fetch_content_default: bool,
+        policy: crate::shared::net::AddressPolicy,
+        api: Vec<ApiBackend>,
+    ) -> Self {
         // A request timeout: otherwise a hung DDG response would hold up the whole turn.
         // The address policy rides on the same client: the result pages this fetches are
         // chosen by whatever the search provider ranked, which is one step further from the
@@ -212,6 +320,7 @@ impl WebSearch {
         Self {
             http,
             fetch_content_default,
+            api,
             cooldown: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -230,33 +339,44 @@ impl WebSearch {
         }
     }
 
-    /// The order to try providers in: everything not known to be blocking first
-    /// (in the declared preference order), then the cooling families, oldest
-    /// block first.
+    /// When `family` was last seen blocking us, if that is still within
+    /// [`PROVIDER_COOLDOWN`].
+    fn blocked_at(&self, family: &str) -> Option<std::time::Instant> {
+        let seen = self.cooldown.lock().ok()?;
+        let now = std::time::Instant::now();
+        seen.iter()
+            .find(|(f, _)| *f == family)
+            .map(|(_, at)| *at)
+            .filter(|at| now.duration_since(*at) < PROVIDER_COOLDOWN)
+    }
+
+    /// The order to try backends in: **keyed providers first** (user's
+    /// decision, 2026-08-25 — a dead round trip through a blocked scraper costs
+    /// more seconds than a credit costs cents, and a block outlives fifteen
+    /// minutes), then the keyless chain. Within that, everything not known to
+    /// be blocking comes first in its declared order, then the cooling
+    /// families, oldest block first.
     ///
-    /// A cooling provider is **reordered, never skipped**. Skipping would let a
+    /// A cooling backend is **reordered, never skipped**. Skipping would let a
     /// stale cooldown return "everything is throttled" without a single request
     /// having gone out — the tool would be lying about the same thing it exists
     /// to report honestly, and a family that recovered early would never be
     /// found to have recovered.
-    fn provider_order(&self) -> Vec<&'static Provider> {
-        let blocked_at = |family: &str| -> Option<std::time::Instant> {
-            let seen = self.cooldown.lock().ok()?;
-            let now = std::time::Instant::now();
-            seen.iter()
-                .find(|(f, _)| *f == family)
-                .map(|(_, at)| *at)
-                .filter(|at| now.duration_since(*at) < PROVIDER_COOLDOWN)
-        };
-        let mut order: Vec<(Option<std::time::Instant>, usize, &'static Provider)> = PROVIDERS
+    fn backend_order(&self) -> Vec<Backend<'_>> {
+        let all = self
+            .api
             .iter()
+            .map(Backend::Api)
+            .chain(PROVIDERS.iter().map(Backend::Scraped));
+        let mut order: Vec<(Option<std::time::Instant>, usize, Backend<'_>)> = all
             .enumerate()
-            .map(|(i, p)| (blocked_at(p.family), i, p))
+            .map(|(i, b)| (self.blocked_at(b.family()), i, b))
             .collect();
         // `None` sorts before `Some`, and among the cooling ones the oldest
-        // block (the smallest `Instant`) first; ties keep the declared order.
+        // block (the smallest `Instant`) first; ties keep the declared order —
+        // which is what keeps every keyed backend ahead of every scraped one.
         order.sort_by_key(|(at, i, _)| (*at, *i));
-        order.into_iter().map(|(_, _, p)| p).collect()
+        order.into_iter().map(|(_, _, b)| b).collect()
     }
 
     /// One HTTP request to a provider: `Ok(Some(html))` — a normal page;
@@ -368,13 +488,19 @@ impl WebSearch {
 
     /// Fetches result pages in parallel and sets the extracted text into
     /// `content`. Each fetch is independent and fault-tolerant (see [`Self::fetch_content`]).
+    /// A result that **already carries content** is left alone: a keyed provider
+    /// can return the page text itself (Tavily's `include_raw_content`), and
+    /// re-fetching it would spend the latency this backend was chosen to avoid
+    /// and put one more automated request in front of the site's own anti-bot.
     async fn enrich_with_content(&self, results: &mut [SearchResult]) {
-        let contents =
-            futures_util::future::join_all(results.iter().map(|r| self.fetch_content(&r.url)))
-                .await;
-        for (r, c) in results.iter_mut().zip(contents) {
+        let pending = needs_content(results);
+        let contents = futures_util::future::join_all(
+            pending.iter().map(|&i| self.fetch_content(&results[i].url)),
+        )
+        .await;
+        for (i, c) in pending.into_iter().zip(contents) {
             if let Some(c) = c {
-                r.content = c;
+                results[i].content = c;
             }
         }
     }
@@ -382,62 +508,272 @@ impl WebSearch {
     /// Goes through providers in order: the first one to return a non-empty
     /// result set wins. On throttling, moves to the next one right away
     /// (retrying a sticky per-IP throttle is pointless). Returns the results,
-    /// `got_clean_page` — at least one provider returned a normal
-    /// (non-challenge) page: then emptiness is a genuine "no results", not
-    /// throttling — and the last provider error, if any.
+    /// `got_clean_page` — at least one backend returned a normal (non-challenge)
+    /// answer: then emptiness is a genuine "no results", not throttling — the
+    /// last backend error, if any, and the name of the backend that answered.
     async fn run_providers(
         &self,
         query: &str,
         max: usize,
+        want_content: bool,
         loc: &crate::shared::i18n::Locale,
-    ) -> (Vec<SearchResult>, bool, Option<anyhow::Error>) {
+    ) -> (
+        Vec<SearchResult>,
+        bool,
+        Option<anyhow::Error>,
+        Option<&'static str>,
+    ) {
         let mut got_clean_page = false;
         let mut last_err: Option<anyhow::Error> = None;
         let mut results = Vec::new();
-        for provider in self.provider_order() {
-            match self.fetch(provider, query, loc).await {
-                Ok(Some(html)) => {
-                    let r = parse_results(
-                        &html,
-                        provider.link_sel,
-                        provider.title_sel,
-                        provider.snippet_sel,
-                        max,
-                    );
-                    if !r.is_empty() {
-                        results = r;
-                        break;
-                    }
-                    // Empty parse: either the query genuinely has no matches, or
-                    // this is an anti-bot challenge served with HTTP 200 (Mojeek
-                    // does exactly that — measured). The check runs only here, on
-                    // an empty parse, so a results page can never be mistaken for
-                    // a challenge (a search for "captcha" keeps working).
-                    if is_challenge_page(&html, query) {
-                        tracing::debug!(
-                            provider = provider.name,
-                            "web search: anti-bot challenge behind a 200, trying the next provider"
-                        );
-                        self.mark_blocked(provider.family);
-                    } else {
-                        got_clean_page = true;
-                    }
+        let mut answered_by = None;
+        for backend in self.backend_order() {
+            match self
+                .run_backend(backend, query, max, want_content, loc)
+                .await
+            {
+                Ok(Attempt::Results(r)) => {
+                    results = r;
+                    answered_by = Some(backend.name());
+                    break;
                 }
-                Ok(None) => {
+                Ok(Attempt::Empty) => got_clean_page = true,
+                Ok(Attempt::Blocked) => {
                     tracing::debug!(
-                        provider = provider.name,
-                        "web search: throttled, trying the next provider"
+                        provider = backend.name(),
+                        "web search: blocked, trying the next backend"
                     );
-                    self.mark_blocked(provider.family);
+                    self.mark_blocked(backend.family());
                 }
                 Err(err) => {
-                    tracing::warn!(provider = provider.name, error = %err, "web search: provider error");
+                    tracing::warn!(provider = backend.name(), error = %err, "web search: backend error");
                     last_err = Some(err);
                 }
             }
         }
-        (results, got_clean_page, last_err)
+        (results, got_clean_page, last_err, answered_by)
     }
+
+    /// One backend's attempt.
+    async fn run_backend(
+        &self,
+        backend: Backend<'_>,
+        query: &str,
+        max: usize,
+        want_content: bool,
+        loc: &crate::shared::i18n::Locale,
+    ) -> Result<Attempt> {
+        match backend {
+            Backend::Scraped(p) => self.run_scraped(p, query, max, loc).await,
+            Backend::Api(a) => self.run_api(a, query, max, want_content, loc).await,
+        }
+    }
+
+    /// One keyless provider: fetch the results page and parse it.
+    async fn run_scraped(
+        &self,
+        provider: &'static Provider,
+        query: &str,
+        max: usize,
+        loc: &crate::shared::i18n::Locale,
+    ) -> Result<Attempt> {
+        let Some(html) = self.fetch(provider, query, loc).await? else {
+            return Ok(Attempt::Blocked);
+        };
+        let r = parse_results(
+            &html,
+            provider.link_sel,
+            provider.title_sel,
+            provider.snippet_sel,
+            max,
+        );
+        if !r.is_empty() {
+            return Ok(Attempt::Results(r));
+        }
+        // Empty parse: either the query genuinely has no matches, or this is an
+        // anti-bot challenge served with HTTP 200 (Mojeek does exactly that —
+        // measured). The check runs only here, on an empty parse, so a results
+        // page can never be mistaken for a challenge (a search for "captcha"
+        // keeps working).
+        Ok(if is_challenge_page(&html, query) {
+            Attempt::Blocked
+        } else {
+            Attempt::Empty
+        })
+    }
+
+    /// One keyed provider. The endpoints answer JSON, so there is no markup to
+    /// parse and no challenge to recognise — the failure modes are HTTP status
+    /// codes, and they mean different things:
+    ///
+    /// - **429** is a rate limit: the same shape as an anti-bot throttle, so it
+    ///   takes the same cooldown and falls through.
+    /// - **401/403/402** mean the key is wrong, revoked or out of credit. That
+    ///   is a *user* problem and must not be reported as throttling — but it
+    ///   must not fail the search either, or a stale key would take web search
+    ///   down while a working keyless chain sits behind it. So it becomes
+    ///   `last_err`: the run continues, and if nothing else answers, the message
+    ///   the model gets names the key rather than blaming the network.
+    async fn run_api(
+        &self,
+        api: &ApiBackend,
+        query: &str,
+        max: usize,
+        want_content: bool,
+        loc: &crate::shared::i18n::Locale,
+    ) -> Result<Attempt> {
+        use crate::shared::secrets::SearchSlot::*;
+        let name = api.name();
+        // A fixed vendor endpoint the code itself writes, not an address the
+        // model or a page chose — the same category as the YouTube metadata
+        // calls, so it does not go through the address guard (which would
+        // resolve and re-check a hostname that is not in question).
+        let http = self.http.unchecked_inner();
+        let req = match api.slot {
+            Tavily => http
+                .post("https://api.tavily.com/search")
+                .bearer_auth(&api.key)
+                .json(&serde_json::json!({
+                    "query": query,
+                    "max_results": max,
+                    // Ask for the page text only when the caller wants content:
+                    // it is the expensive half of the response, and with
+                    // `fetch_content=false` the tool would throw it away.
+                    "include_raw_content": want_content,
+                })),
+            Brave => {
+                let mut url = reqwest::Url::parse("https://api.search.brave.com/res/v1/web/search")
+                    .with_context(|| loc.tf("tool.web_search.err.url_parse", &[("name", name)]))?;
+                url.query_pairs_mut()
+                    .append_pair("q", query)
+                    .append_pair("count", &max.to_string());
+                http.get(url)
+                    .header("X-Subscription-Token", &api.key)
+                    .header(reqwest::header::ACCEPT, "application/json")
+            }
+        };
+        let resp = req
+            .send()
+            .await
+            .with_context(|| loc.tf("tool.web_search.err.request", &[("name", name)]))?;
+        let status = resp.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Ok(Attempt::Blocked);
+        }
+        if matches!(
+            status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::PAYMENT_REQUIRED
+        ) {
+            anyhow::bail!(loc.tf("tool.web_search.err.key_rejected", &[("name", name)]));
+        }
+        if !status.is_success() {
+            anyhow::bail!(loc.tf(
+                "tool.web_search.err.status",
+                &[("name", name), ("status", &status.to_string())]
+            ));
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .with_context(|| loc.tf("tool.web_search.err.read", &[("name", name)]))?;
+        let results = match api.slot {
+            Tavily => parse_tavily(&body, max),
+            Brave => parse_brave(&body, max),
+        };
+        Ok(if results.is_empty() {
+            // A keyed provider answering 200 with an empty list is believable
+            // emptiness — there is no interstitial to mistake it for.
+            Attempt::Empty
+        } else {
+            Attempt::Results(results)
+        })
+    }
+}
+
+/// Which results still need their page fetched — those whose `content` is
+/// empty. Its own function so the decision can be asserted on directly: the
+/// behaviour is a *negative* one (a populated result is never fetched), and a
+/// test that only checks the field afterwards passes even when the skip is
+/// removed, because a refused fetch leaves the field alone anyway.
+fn needs_content(results: &[SearchResult]) -> Vec<usize> {
+    results
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.content.is_empty())
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Tavily's `{"results": [{title, url, content, raw_content?}]}`.
+/// `content` is the snippet; `raw_content` (present only when the request asked
+/// for it) is the cleaned page text, which spares the tool its own fetch.
+fn parse_tavily(body: &serde_json::Value, max: usize) -> Vec<SearchResult> {
+    let Some(items) = body.get("results").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let url = it.get("url")?.as_str()?.trim();
+            let title = it.get("title").and_then(|v| v.as_str()).unwrap_or_default();
+            (!url.is_empty() && !title.is_empty()).then(|| SearchResult {
+                title: collapse_ws(title),
+                url: url.to_string(),
+                snippet: collapse_ws(it.get("content").and_then(|v| v.as_str()).unwrap_or("")),
+                content: it
+                    .get("raw_content")
+                    .and_then(|v| v.as_str())
+                    .map(|c| truncate_chars(c.trim(), MAX_CONTENT_CHARS))
+                    .unwrap_or_default(),
+            })
+        })
+        .take(max)
+        .collect()
+}
+
+/// Brave's `{"web": {"results": [{title, url, description}]}}`. Snippets only —
+/// the tool fetches the pages itself, as it does for the keyless chain.
+fn parse_brave(body: &serde_json::Value, max: usize) -> Vec<SearchResult> {
+    let Some(items) = body
+        .get("web")
+        .and_then(|w| w.get("results"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let url = it.get("url")?.as_str()?.trim();
+            let title = it.get("title").and_then(|v| v.as_str()).unwrap_or_default();
+            (!url.is_empty() && !title.is_empty()).then(|| SearchResult {
+                title: collapse_ws(title),
+                url: url.to_string(),
+                // Brave marks the query terms with `<strong>` — this is a
+                // snippet for a model to read, not markup to render.
+                snippet: collapse_ws(&strip_tags(
+                    it.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                )),
+                content: String::new(),
+            })
+        })
+        .take(max)
+        .collect()
+}
+
+/// Drops HTML tags from a snippet, keeping their text.
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Reorders results by decreasing similarity of their content to the query
@@ -795,7 +1131,8 @@ impl Tool for WebSearch {
             .and_then(|v| v.as_bool())
             .unwrap_or(self.fetch_content_default);
 
-        let (mut results, got_clean_page, last_err) = self.run_providers(query, max, ctx.loc).await;
+        let (mut results, got_clean_page, last_err, answered_by) =
+            self.run_providers(query, max, fetch_content, ctx.loc).await;
 
         if results.is_empty() {
             return no_results_outcome(got_clean_page, last_err, ctx.loc);
@@ -808,7 +1145,11 @@ impl Tool for WebSearch {
             rerank_by_embeddings(ctx.embedder.as_ref(), query, &mut results).await;
         }
 
-        Ok(ToolOutcome::text(format_results(&results, ctx.loc)))
+        Ok(ToolOutcome::text(format_results(
+            &results,
+            answered_by,
+            ctx.loc,
+        )))
     }
 }
 
@@ -836,13 +1177,29 @@ fn no_results_outcome(
 }
 
 /// Formats the result list into the tool's text result.
-fn format_results(results: &[SearchResult], loc: &crate::shared::i18n::Locale) -> String {
+///
+/// The header names **which backend answered**. The chain degrades silently by
+/// design — a keyed provider, then three scrapers, then nothing — and without
+/// this the model cannot tell a thin answer from a degraded one; the transcript
+/// that started this work has it reasoning aloud about the tool's health with no
+/// evidence to reason from.
+fn format_results(
+    results: &[SearchResult],
+    answered_by: Option<&str>,
+    loc: &crate::shared::i18n::Locale,
+) -> String {
     let mut out = format!(
         "{}\n",
-        loc.tf(
-            "tool.web_search.result.header",
-            &[("n", &results.len().to_string())]
-        )
+        match answered_by {
+            Some(name) => loc.tf(
+                "tool.web_search.result.header_via",
+                &[("n", &results.len().to_string()), ("name", name)]
+            ),
+            None => loc.tf(
+                "tool.web_search.result.header",
+                &[("n", &results.len().to_string())]
+            ),
+        }
     );
     for (i, r) in results.iter().enumerate() {
         out.push_str(&format!("{}. {} — {}\n", i + 1, r.title, r.url));
@@ -1048,6 +1405,8 @@ fn collapse_ws(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::config::WebProvider;
+    use crate::shared::secrets::SearchSlot;
 
     #[test]
     fn web_search_description_is_localized() {
@@ -1281,12 +1640,155 @@ mod tests {
     #[test]
     fn provider_order_is_the_declared_one_when_nothing_is_cooling() {
         let tool = WebSearch::default();
-        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
         assert_eq!(
             names,
             PROVIDERS.iter().map(|p| p.name).collect::<Vec<_>>(),
             "no cooldown recorded must mean no reordering"
         );
+    }
+
+    fn keys() -> Vec<(SearchSlot, String)> {
+        vec![
+            (SearchSlot::Tavily, "tvly-x".into()),
+            (SearchSlot::Brave, "brave-x".into()),
+        ]
+    }
+
+    /// The invariant the whole keyed track rests on: **no key configured means
+    /// the tool is what it was**. If this ever fails, a fresh install has
+    /// quietly changed how it searches.
+    #[test]
+    fn without_a_key_the_order_is_the_keyless_chain_alone() {
+        for provider in WebProvider::ALL {
+            let tool = WebSearch::new(
+                true,
+                crate::shared::net::AddressPolicy::PublicOnly,
+                keyed_backends(provider, &[]),
+            );
+            let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
+            assert_eq!(
+                names,
+                PROVIDERS.iter().map(|p| p.name).collect::<Vec<_>>(),
+                "{provider:?} with no key must be the keyless chain"
+            );
+        }
+    }
+
+    /// `auto` uses every key present; a named provider uses only its own (so
+    /// choosing Tavily never quietly spends a Brave key); `free_only` uses none.
+    #[test]
+    fn the_provider_choice_decides_which_keys_are_used() {
+        let names = |p| -> Vec<&'static str> {
+            keyed_backends(p, &keys())
+                .iter()
+                .map(|b| b.name())
+                .collect()
+        };
+        assert_eq!(names(WebProvider::Auto), vec!["Tavily", "Brave"]);
+        assert_eq!(names(WebProvider::Tavily), vec!["Tavily"]);
+        assert_eq!(names(WebProvider::Brave), vec!["Brave"]);
+        assert!(names(WebProvider::FreeOnly).is_empty());
+    }
+
+    /// A blank key is not a key: a cleared settings field must not put a
+    /// backend into the order that can only answer 401.
+    #[test]
+    fn a_blank_key_yields_no_backend() {
+        let blank = vec![
+            (SearchSlot::Tavily, "   ".to_string()),
+            (SearchSlot::Brave, String::new()),
+        ];
+        assert!(keyed_backends(WebProvider::Auto, &blank).is_empty());
+    }
+
+    /// Keyed backends go **before** the keyless chain (user's decision: a dead
+    /// round trip through a blocked scraper costs more than a credit does).
+    #[test]
+    fn keyed_backends_are_tried_before_the_free_chain() {
+        let tool = WebSearch::new(
+            true,
+            crate::shared::net::AddressPolicy::PublicOnly,
+            keyed_backends(WebProvider::Auto, &keys()),
+        );
+        let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
+        assert_eq!(&names[..2], &["Tavily", "Brave"]);
+        assert_eq!(names.len(), 2 + PROVIDERS.len());
+    }
+
+    /// ...and a keyed backend that rate-limited us is reordered by the same
+    /// cooldown as a scraper, not treated as a special case.
+    #[test]
+    fn a_rate_limited_keyed_backend_moves_back_too() {
+        let tool = WebSearch::new(
+            true,
+            crate::shared::net::AddressPolicy::PublicOnly,
+            keyed_backends(WebProvider::Auto, &keys()),
+        );
+        tool.mark_blocked("tavily");
+        let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
+        assert_eq!(names[0], "Brave", "the un-blocked keyed backend leads");
+        assert_eq!(
+            names.last(),
+            Some(&"Tavily"),
+            "the rate-limited one goes last, but is still there"
+        );
+    }
+
+    #[test]
+    fn tavily_results_are_parsed_with_their_page_text() {
+        let body = serde_json::json!({"results": [
+            {"title": "Rust", "url": "https://rust-lang.org",
+             "content": "A language empowering everyone", "raw_content": "  Full page text.  "},
+            {"title": "No URL"},
+            {"title": "Ratatui", "url": "https://ratatui.rs", "content": "TUI library"}
+        ]});
+        let r = parse_tavily(&body, 5);
+        assert_eq!(r.len(), 2, "an item without a url is dropped");
+        assert_eq!(r[0].url, "https://rust-lang.org");
+        assert_eq!(r[0].snippet, "A language empowering everyone");
+        assert_eq!(
+            r[0].content, "Full page text.",
+            "raw_content lands as content, trimmed — that is what spares the fetch"
+        );
+        assert!(
+            r[1].content.is_empty(),
+            "no raw_content means the page still needs fetching"
+        );
+        assert_eq!(parse_tavily(&body, 1).len(), 1, "max_results is honoured");
+    }
+
+    #[test]
+    fn brave_results_are_parsed_and_their_snippets_de_marked_up() {
+        let body = serde_json::json!({"web": {"results": [
+            {"title": "Rust", "url": "https://rust-lang.org",
+             "description": "A <strong>language</strong> empowering everyone"},
+            {"url": "https://no-title.example"}
+        ]}});
+        let r = parse_brave(&body, 5);
+        assert_eq!(r.len(), 1, "an item without a title is dropped");
+        assert_eq!(
+            r[0].snippet, "A language empowering everyone",
+            "Brave marks query terms with <strong>; the model reads text, not markup"
+        );
+        assert!(
+            r[0].content.is_empty(),
+            "Brave returns snippets only — the pages are fetched as for the free chain"
+        );
+    }
+
+    /// A shape neither vendor documents but both could send on an off day.
+    #[test]
+    fn a_malformed_api_body_parses_to_nothing_rather_than_panicking() {
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({"results": "not a list"}),
+            serde_json::json!({"web": {}}),
+            serde_json::json!(null),
+        ] {
+            assert!(parse_tavily(&body, 5).is_empty());
+            assert!(parse_brave(&body, 5).is_empty());
+        }
     }
 
     /// A block moves the whole **family** back, not just the entry that saw it:
@@ -1296,7 +1798,7 @@ mod tests {
     fn a_block_moves_the_whole_family_to_the_back() {
         let tool = WebSearch::default();
         tool.mark_blocked(DDG);
-        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
         assert_eq!(
             names,
             vec!["Mojeek", "Ecosia", "DuckDuckGo lite", "DuckDuckGo html"]
@@ -1313,7 +1815,7 @@ mod tests {
             tool.mark_blocked(family);
         }
         assert_eq!(
-            tool.provider_order().len(),
+            tool.backend_order().len(),
             PROVIDERS.len(),
             "no provider may be dropped from the order"
         );
@@ -1329,7 +1831,7 @@ mod tests {
         tool.mark_blocked(DDG);
         std::thread::sleep(Duration::from_millis(20));
         tool.mark_blocked("mojeek");
-        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        let names: Vec<_> = tool.backend_order().iter().map(|b| b.name()).collect();
         assert_eq!(
             names,
             vec!["Ecosia", "DuckDuckGo lite", "DuckDuckGo html", "Mojeek"]
@@ -1631,6 +2133,33 @@ fn (data &amp;MyType) free() {
         assert_eq!(results[1].url, "https://e/b");
     }
 
+    /// A result that already carries content (Tavily's `raw_content`) must not
+    /// be fetched again — that is the latency the keyed backend was chosen to
+    /// avoid, and one fewer automated request in front of the site's own
+    /// anti-bot. Asserted on the *selection*, not on the field afterwards: an
+    /// unfetchable URL leaves the field intact either way, so the weaker
+    /// assertion passes even with the skip removed (measured — it did).
+    #[test]
+    fn only_results_without_content_are_fetched() {
+        let r = |content: &str| SearchResult {
+            title: "t".into(),
+            url: "https://example.test/p".into(),
+            snippet: "s".into(),
+            content: content.into(),
+        };
+        let results = vec![r("already have this"), r(""), r("and this")];
+        assert_eq!(
+            needs_content(&results),
+            vec![1],
+            "only the result with no content may be fetched"
+        );
+        assert!(
+            needs_content(&[r("x"), r("y")]).is_empty(),
+            "a fully populated set must issue no fetches at all"
+        );
+        assert_eq!(needs_content(&[r(""), r("")]), vec![0, 1]);
+    }
+
     /// A real network smoke (manual: `cargo test -- --ignored`).
     #[tokio::test]
     #[ignore = "requires network access to search providers"]
@@ -1667,5 +2196,78 @@ fn (data &amp;MyType) free() {
             }
         };
         assert!(out.result.contains("http"), "got: {}", out.result);
+    }
+
+    /// The keyed track's live criterion (docs/research/web-search-keyed-providers.md
+    /// §8): **ten searches in one run, all ten returning results** — the load
+    /// pattern that degrades the keyless chain to two. Silently skipped without
+    /// a key, like every other gated smoke.
+    ///
+    /// Set `MINDFORK_TAVILY_KEY` or `MINDFORK_BRAVE_KEY` to run it. Unlike the
+    /// keyless smoke above there is **no skip-on-throttle escape**: a keyed
+    /// provider answering 429 within ten searches is a real finding about the
+    /// free tier, not an infrastructure excuse, and this test exists to catch it.
+    #[tokio::test]
+    #[ignore = "requires a keyed search provider (MINDFORK_TAVILY_KEY / MINDFORK_BRAVE_KEY)"]
+    async fn live_keyed_search_survives_ten_searches_in_a_row() {
+        let keyed: Vec<_> = [
+            (SearchSlot::Tavily, "MINDFORK_TAVILY_KEY"),
+            (SearchSlot::Brave, "MINDFORK_BRAVE_KEY"),
+        ]
+        .into_iter()
+        .filter_map(|(slot, var)| Some((slot, std::env::var(var).ok()?)))
+        .collect();
+        if keyed.is_empty() {
+            eprintln!("skip: no keyed search provider configured");
+            return;
+        }
+        let backends = keyed_backends(WebProvider::Auto, &keyed);
+        let names: Vec<_> = backends.iter().map(|b| b.name()).collect();
+        eprintln!("keyed backends under test: {names:?}");
+        let tool = WebSearch::new(
+            false, // titles and links only: this measures the search, not the fetching
+            crate::shared::net::AddressPolicy::PublicOnly,
+            backends,
+        );
+        let (_dir, _storage, ctx) = super::super::testkit::ctx_with_backends(
+            uuid::Uuid::new_v4(),
+            std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),
+            std::sync::Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
+        );
+        // Ten *different* queries: repeating one would let a vendor-side cache
+        // answer nine of them and prove nothing about the rate limit.
+        let queries = [
+            "rust ratatui widget",
+            "llama.cpp jinja template",
+            "sqlite-vec vector search",
+            "feature sliced design",
+            "tokio cancellation token",
+            "wasmer wasix python",
+            "duckduckgo lite anti-bot",
+            "tavily search api",
+            "brave search api pricing",
+            "rust edition 2024 changes",
+        ];
+        for (i, q) in queries.iter().enumerate() {
+            let out = tool
+                .invoke(&ctx, serde_json::json!({"query": q, "max_results": 3}))
+                .await
+                .unwrap_or_else(|e| panic!("search {} of 10 ({q:?}) failed: {e:#}", i + 1));
+            assert!(
+                out.result.contains("http"),
+                "search {} of 10 ({q:?}) returned no links: {}",
+                i + 1,
+                out.result
+            );
+            // The header names the backend, which is how a silent fall-through
+            // to the keyless chain would show up here rather than passing as a
+            // success (see `format_results`).
+            assert!(
+                names.iter().any(|n| out.result.contains(n)),
+                "search {} of 10 fell through to the keyless chain: {}",
+                i + 1,
+                out.result
+            );
+        }
     }
 }

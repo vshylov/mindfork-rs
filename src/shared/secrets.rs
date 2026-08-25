@@ -87,6 +87,32 @@ impl ExternalSlot {
     }
 }
 
+/// One of the keyed **web-search** providers (spec §9.3.1). Like
+/// [`ExternalSlot`], a closed set addressed by slot: the providers are picked
+/// from a fixed list rather than by URL, and each has its own account, so one
+/// shared key would be meaningless. See
+/// docs/research/web-search-keyed-providers.md §6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchSlot {
+    /// Tavily (`api.tavily.com`) — `Authorization: Bearer`.
+    Tavily,
+    /// Brave Search API (`api.search.brave.com`) — `X-Subscription-Token`.
+    Brave,
+}
+
+impl SearchSlot {
+    /// Every slot, for enumerating the presence list.
+    pub const ALL: [SearchSlot; 2] = [Self::Tavily, Self::Brave];
+
+    /// The slot's part of the storage name (see [`SecretKey::storage_name`]).
+    fn key(self) -> &'static str {
+        match self {
+            Self::Tavily => "tavily",
+            Self::Brave => "brave",
+        }
+    }
+}
+
 /// Which secret a storage slot holds. One typed key instead of raw strings: the
 /// side effects of storing differ per kind (a provider key re-raises the servers
 /// that use it, an MCP one re-spawns that server, a backup password needs
@@ -105,6 +131,11 @@ pub enum SecretKey {
     /// provider, but the sub-section the user is typing the URL into is a
     /// perfectly good address. See docs/history/external-api-key.md.
     External(ExternalSlot),
+    /// The API key of one keyed web-search provider (spec §9.3.1). Its own
+    /// variant rather than a [`Self::Provider`] one: these are not inference
+    /// providers, they have their own accounts and their own billing, and a
+    /// `web_search` key must never be reachable from the engine's key lookup.
+    Search(SearchSlot),
     /// The backup password (spec §12.3).
     BackupPassword,
     /// The value of one environment variable handed to an MCP server
@@ -115,16 +146,18 @@ pub enum SecretKey {
 }
 
 impl SecretKey {
-    /// The key this secret is stored under in the machine entry. Neither `mcp-`
-    /// nor `external-` can collide with a provider key
+    /// The key this secret is stored under in the machine entry. Neither `mcp-`,
+    /// `external-` nor `search-` can collide with a provider key
     /// (`openai`/`gemini`/`claude`/`grok`) or with [`BACKUP_PASSWORD_KEY`], and
     /// since a variable name is restricted to `[A-Za-z0-9_]` (only the server id
     /// may contain `-`) the composed MCP name is unambiguous from the right. The
-    /// external slots are a closed set, so theirs cannot be ambiguous at all.
+    /// external and search slots are closed sets, so theirs cannot be ambiguous
+    /// at all.
     pub fn storage_name(&self) -> String {
         match self {
             Self::Provider(p) => p.key().to_string(),
             Self::External(slot) => format!("external-{}", slot.key()),
+            Self::Search(slot) => format!("search-{}", slot.key()),
             Self::BackupPassword => BACKUP_PASSWORD_KEY.to_string(),
             Self::McpEnv { server, var } => format!("mcp-{server}-{var}"),
         }
@@ -486,10 +519,15 @@ mod tests {
             .into_iter()
             .map(SecretKey::Provider)
             .chain(ExternalSlot::ALL.into_iter().map(SecretKey::External))
+            .chain(SearchSlot::ALL.into_iter().map(SecretKey::Search))
             .chain([
                 SecretKey::BackupPassword,
                 SecretKey::McpEnv {
                     server: "chat".into(), // a server named after an external slot
+                    var: "TOKEN".into(),
+                },
+                SecretKey::McpEnv {
+                    server: "tavily".into(), // ...and one named after a search slot
                     var: "TOKEN".into(),
                 },
             ])

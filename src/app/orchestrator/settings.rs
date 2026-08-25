@@ -130,6 +130,12 @@ impl Orchestrator {
             // config itself is unchanged, so `McpManager::is_current` has to
             // compare the *resolved* environment, not just the settings (§9.1).
             SecretKey::McpEnv { .. } => self.restarts.mark_mcp(),
+            // `WebSearch` takes its keyed backends at construction, so the key
+            // only reaches the tool through a registry rebuild — the same
+            // reason the Gemini branch above rebuilds for the video slot.
+            // Cheap and in-memory; without it `web_search` would keep using the
+            // keyless chain until the next unrelated settings edit.
+            SecretKey::Search(_) => self.rebuild_registry(),
             // Read at backup/restore time — nothing to restart.
             SecretKey::BackupPassword => {}
         }

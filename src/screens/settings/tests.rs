@@ -3,9 +3,9 @@
 use super::helpers::*;
 use super::*;
 use crate::features::tools::default_tool_ids;
-use crate::shared::config::{FlashAttn, MediaResolution, PythonMode, SpecType};
+use crate::shared::config::{FlashAttn, MediaResolution, PythonMode, SpecType, WebProvider};
 use crate::shared::embed_prefix::EmbedConvention;
-use crate::shared::secrets::ExternalSlot;
+use crate::shared::secrets::{ExternalSlot, SearchSlot};
 
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -289,6 +289,81 @@ fn python_group_visibility_follows_mode() {
     assert!(!ids.contains(&FieldId::TPythonNet));
     assert!(!ids.contains(&FieldId::TPythonWasmTimeout));
     assert!(!ids.contains(&FieldId::TPythonWasmMemory));
+}
+
+/// A key row shows only where the key can be spent: under `auto` both, under a
+/// named provider only its own, under `free_only` neither. An unused key row
+/// reading as a live one is how someone ends up believing a provider is
+/// configured when nothing will ever call it.
+#[test]
+fn keyed_search_rows_follow_the_provider_choice() {
+    let tools_ids = |provider: WebProvider| -> Vec<FieldId> {
+        let mut cfg = AppConfig::default();
+        cfg.tools.web_provider = provider;
+        let mut p = Profile::new("Базовый", "Ты — ассистент.");
+        p.enabled_tools = default_tool_ids();
+        let mut s = SettingsScreen::new(cfg, vec![p], vec![]);
+        goto_section(&mut s, Section::Tools);
+        s.fields().iter().map(|f| f.id).collect()
+    };
+
+    let auto = tools_ids(WebProvider::Auto);
+    assert!(auto.contains(&FieldId::TWebProvider));
+    for id in [
+        FieldId::TWebTavilyKey,
+        FieldId::TWebTavilyKeyEnv,
+        FieldId::TWebBraveKey,
+        FieldId::TWebBraveKeyEnv,
+    ] {
+        assert!(auto.contains(&id), "auto shows every key row: {id:?}");
+    }
+
+    let tavily = tools_ids(WebProvider::Tavily);
+    assert!(tavily.contains(&FieldId::TWebTavilyKey));
+    assert!(
+        !tavily.contains(&FieldId::TWebBraveKey),
+        "choosing Tavily must not offer a Brave key it will never spend"
+    );
+
+    let free = tools_ids(WebProvider::FreeOnly);
+    assert!(
+        free.contains(&FieldId::TWebProvider),
+        "the choice itself stays, or there is no way back"
+    );
+    for id in [FieldId::TWebTavilyKey, FieldId::TWebBraveKey] {
+        assert!(!free.contains(&id), "free_only spends no key: {id:?}");
+    }
+}
+
+/// The row a user types into and the secret the orchestrator stores must be the
+/// same one. A search key must resolve to its **own** slot — never through the
+/// engine's provider lookup, which is what would let a `web_search` key and an
+/// inference key overwrite each other.
+#[test]
+fn keyed_search_rows_address_their_own_secret_slot() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.web_provider = WebProvider::Auto;
+    let mut p = Profile::new("Базовый", "Ты — ассистент.");
+    p.enabled_tools = default_tool_ids();
+    let s = SettingsScreen::new(cfg, vec![p], vec![]);
+    assert_eq!(
+        s.secret_field_key(FieldId::TWebTavilyKey),
+        Some(SecretKey::Search(SearchSlot::Tavily))
+    );
+    assert_eq!(
+        s.secret_field_key(FieldId::TWebBraveKey),
+        Some(SecretKey::Search(SearchSlot::Brave))
+    );
+    // Distinct storage names, so one cannot silently overwrite the other or a
+    // cloud provider's key.
+    assert_eq!(
+        SecretKey::Search(SearchSlot::Tavily).storage_name(),
+        "search-tavily"
+    );
+    assert_ne!(
+        SecretKey::Search(SearchSlot::Brave).storage_name(),
+        SecretKey::Search(SearchSlot::Tavily).storage_name()
+    );
 }
 
 #[test]
@@ -3057,9 +3132,12 @@ fn value_column_is_shared_across_groups() {
     // per section; a per-group column "sawtoothed" between groups).
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
-    // "Tools" now carries an extra "Video (YouTube)" group above "Files" — tall enough
-    // that every group (through "Files") stays on screen.
-    let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    // "Tools" now carries "Video (YouTube)" above "Files", and "Web search" grew
+    // the provider choice plus a key pair per keyed provider — so the viewport
+    // has to be tall enough that every group (through "Files") is still on
+    // screen. The height is incidental to what this test asserts (one value
+    // column across groups); it only has to clear the last group.
+    let mut term = Terminal::new(TestBackend::new(100, 52)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     let buf = term.backend().buffer();
     let lines: Vec<String> = (0..buf.area.height)

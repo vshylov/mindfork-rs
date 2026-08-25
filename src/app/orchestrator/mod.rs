@@ -73,7 +73,7 @@ use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::FinishReason;
 use crate::shared::config::{AppConfig, CloudProvider};
-use crate::shared::secrets::SecretKey;
+use crate::shared::secrets::{SearchSlot, SecretKey};
 use crate::shared::storage::Storage;
 
 use self::attachments::AttachResult;
@@ -359,6 +359,8 @@ fn build_registry(
         sandbox_dir: Some(sandbox_dir),
         web_fetch_content: config.tools.web_fetch_content,
         web_allow_private: config.tools.web_allow_private,
+        web_provider: config.tools.web_provider,
+        web_search_keys: web_search_keys(config),
         fs_root: config.tools.fs_root.clone(),
         // The video slot for `youtube_watch`: settings + the shared Gemini key
         // (ADR 0008). Independent of the chat engine — see `shared::video`.
@@ -373,6 +375,37 @@ fn build_registry(
         // get_sampling/set_sampling (schema + filtering). See ADR 0004.
         sampling_provider: config.engine.mode.cloud_provider(),
     })
+}
+
+/// Resolves the keyed search providers' credentials, in preference order.
+///
+/// A key stored in settings (machine-encrypted, ADR 0008) **wins** over the
+/// environment variable the settings name — the same precedence `api_key_env`
+/// already has everywhere else, so a key typed into the app is never shadowed by
+/// a stale shell. Resolving it here rather than inside the tool keeps the secret
+/// store in one layer: `web_search` receives strings and never learns where they
+/// came from.
+fn web_search_keys(config: &AppConfig) -> Vec<(SearchSlot, String)> {
+    let from_env = |name: &Option<String>| -> Option<String> {
+        let name = name.as_deref()?.trim();
+        (!name.is_empty())
+            .then(|| std::env::var(name).ok())
+            .flatten()
+    };
+    [
+        (SearchSlot::Tavily, &config.tools.web_tavily_key_env),
+        (SearchSlot::Brave, &config.tools.web_brave_key_env),
+    ]
+    .into_iter()
+    .filter_map(|(slot, env_name)| {
+        let key = crate::shared::secrets::stored_key(
+            &config.api_keys,
+            &crate::shared::secrets::SecretKey::Search(slot).storage_name(),
+        )
+        .or_else(|| from_env(env_name))?;
+        (!key.trim().is_empty()).then_some((slot, key))
+    })
+    .collect()
 }
 
 /// What an id the UI hands over resolves to (see [`Orchestrator::view`]).
@@ -850,6 +883,7 @@ impl Orchestrator {
                     .into_iter()
                     .map(SecretKey::External),
             )
+            .chain(SearchSlot::ALL.into_iter().map(SecretKey::Search))
             .chain(std::iter::once(SecretKey::BackupPassword))
             .chain(self.config.mcp.servers.iter().flat_map(|s| {
                 s.env.keys().map(|var| SecretKey::McpEnv {
