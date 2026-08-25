@@ -1934,6 +1934,47 @@ mod tests {
         assert_eq!(c, back);
     }
 
+    /// The container test environment seeds its `settings.json` from a **partial**
+    /// document (`docker/lab/settings.seed.json`), which is legal only because this
+    /// struct and every section it names carry `#[serde(default)]`. That is a
+    /// contract nothing else enforces: rename a field here and the seed keeps
+    /// parsing while quietly configuring nothing, so the lab would come up pointed
+    /// at no server at all and look like a broken engine.
+    ///
+    /// Placeholders are substituted at container start; here they stand in as
+    /// ordinary strings, which is exactly what makes the check cheap.
+    /// See docs/research/docker-jupyter-env.md §5 (fork F4).
+    #[test]
+    fn docker_settings_seed_still_configures_what_it_claims() {
+        const SEED: &str = include_str!("../../docker/lab/settings.seed.json");
+        let c: AppConfig = serde_json::from_str(SEED).expect("the seed is valid AppConfig JSON");
+
+        assert_eq!(c.engine.mode, ServerMode::External);
+        assert_eq!(c.engine.external.url.as_deref(), Some("__CHAT_URL__"));
+        assert_eq!(c.embed.mode, ServerMode::External);
+        assert_eq!(c.embed.external.url.as_deref(), Some("__EMBED_URL__"));
+
+        // Switching the engine to a cloud provider in the settings screen has to
+        // work without typing anything: the seed names the variable each key
+        // arrives in, and docker/compose.yaml passes those through.
+        assert_eq!(
+            c.engine.claude.api_key_env.as_deref(),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert_eq!(
+            c.engine.openai.api_key_env.as_deref(),
+            Some("OPENAI_API_KEY")
+        );
+
+        // The container ships a real interpreter, so `python_exec` needs no
+        // ~300 MB wasmer provisioning to work there.
+        assert!(c.tools.python_enabled);
+        assert_eq!(c.tools.python_mode, PythonMode::Local);
+
+        // Everything the seed does not mention must still be the default.
+        assert_eq!(c.max_tool_rounds, AppConfig::default().max_tool_rounds);
+    }
+
     #[test]
     fn active_model_name_by_mode() {
         // Managed — the GGUF's base name without the path or extension.

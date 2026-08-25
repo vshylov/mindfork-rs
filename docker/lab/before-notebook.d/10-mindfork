@@ -1,0 +1,49 @@
+#!/bin/bash
+# Run by the base image's start.sh (as uid 1000) before the Jupyter server
+# launches — the documented extension point of the jupyter/docker-stacks images.
+#
+# Deliberately named without a `.sh` suffix: run-hooks.sh *sources* `*.sh` hooks
+# and *executes* everything else. Sourced, the `set -euo pipefail` below would
+# leak `-u` and `pipefail` into start.sh (its runner only restores `-e`).
+#
+# Everything here is first-run seeding onto the data volume, and every write is
+# guarded by "only if absent": the point of seeding rather than setting
+# MINDFORK_ENGINE_URL is that whatever the user changes inside the app has to
+# survive a restart, including switching the engine to a cloud provider
+# (src/main.rs `apply_env_overrides` would pin the mode to external forever).
+
+set -euo pipefail
+
+MINDFORK_HOME=/opt/mindfork
+DATA_ROOT=/home/jovyan/mindfork/data
+
+mkdir -p "${DATA_ROOT}"
+
+# Installation defaults, next to the binary and NOT inside data/ (docs/install.md
+# §2.1). Rewritten on every start: it carries no user state, and `default_language`
+# should follow `.env` without a rebuild. It only ever takes effect on a data root
+# that is still empty — afterwards settings.json wins.
+cat > "${MINDFORK_HOME}/defaults.json" <<EOF
+{
+  "mode": "path",
+  "path": "${DATA_ROOT}",
+  "default_language": "${LAB_LANG:-ru}"
+}
+EOF
+
+if [ ! -f "${DATA_ROOT}/settings.json" ]; then
+    # The header shows the model's name from the message's own metadata, and the
+    # file extension has no place there.
+    chat_model="${LAB_CHAT_MODEL:-google_gemma-4-E2B-it-Q8_0.gguf}"
+    chat_model="${chat_model%.gguf}"
+
+    sed -e "s|__CHAT_URL__|${LAB_CHAT_URL:-http://chat:8000/v1}|" \
+        -e "s|__EMBED_URL__|${LAB_EMBED_URL:-http://embed:8001/v1}|" \
+        -e "s|__CHAT_MODEL__|${chat_model}|" \
+        -e "s|__LANG__|${LAB_LANG:-ru}|" \
+        "${MINDFORK_HOME}/settings.seed.json" > "${DATA_ROOT}/settings.json"
+
+    echo "mindfork: seeded ${DATA_ROOT}/settings.json"
+else
+    echo "mindfork: ${DATA_ROOT}/settings.json exists, left alone"
+fi

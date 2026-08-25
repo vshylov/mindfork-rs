@@ -165,9 +165,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-25, version 0.9.7)
+## Status (2026-08-26, version 0.9.7)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2599 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2600 unit tests
 green, 109 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,6 +179,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **A containerised test environment — JupyterLab, the app, and a CPU stack** —
+  `docker compose up` in `docker/` ends in a browser JupyterLab terminal running
+  `mindfork` built from the working tree against two CPU `llama-server`
+  containers; the app is configured by a seeded partial `settings.json` (not
+  `MINDFORK_ENGINE_URL`, which would pin the mode to external forever), and the
+  published server ports double as a local, free live-smoke gate that does not
+  replace the rented one
+  ([docs/research/docker-jupyter-env.md](docs/research/docker-jupyter-env.md),
+  [docker/README.md](docker/README.md), install.md §7.3).
 - **`F1` help by screen, from every screen** — the "Shortcuts" tab is
   per-screen sections with a "you are here" marker; `F1` opens the dialog —
   a runtime overlay now — over any screen, scrolled to that screen's

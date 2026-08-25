@@ -1186,9 +1186,16 @@ from 19 minutes*.
 branch into a docs PR therefore correctly makes it non-docs-only. Its allowlist must
 exclude files that *look* like docs but are read by the build or a gate test (`LICENSE`,
 artwork SVGs, locale JSON, `Cargo.toml`) — established by grepping `include_str!` /
-`include_bytes!` / `CARGO_MANIFEST_DIR`, not by assumption.
+`include_bytes!` / `CARGO_MANIFEST_DIR`, not by assumption. **Recorded twice**, and the
+second time was a different tool with the same premise: a `.dockerignore` written to keep
+the build context small excluded `/docs` wholesale, and `shared/credits.rs` pulls
+`docs/legal/*` through `include_str!` — which surfaces as a compile error at the *end* of
+a ten-minute build, not at the start. Generalise it: **anything that filters the tree**
+(build context, package manifest, release archive, a docs-only gate) is making a claim
+about the crate's compile-time inputs, and those are not confined to `src/`. Run the same
+grep before writing the filter.
 — *one Actions cache per job instead of one per branch*, *skipping the test job for
-docs-only pull requests*.
+docs-only pull requests*, *a containerised test environment*.
 
 **A refactor moves long-uncovered lines into the "new code" ledger.** Three pure
 extraction PRs failed a new-code coverage gate with zero new issues and unchanged

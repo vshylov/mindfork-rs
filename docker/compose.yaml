@@ -1,0 +1,132 @@
+# A disposable test environment: JupyterLab in the browser, the app built from the
+# working tree, and a CPU-only llama.cpp stack it talks to in `external` mode.
+# Design and the decisions behind it: docs/research/docker-jupyter-env.md
+#
+#   cd docker && cp .env.example .env && docker compose up --build
+#   → http://localhost:8888/lab?token=mindfork → Terminal → `mindfork`
+#
+# The app reaches the servers over this network as `chat`/`embed`. External mode
+# rather than managed (ADR 0004) so the weights stay loaded across app restarts:
+# `mindfork` is started and killed dozens of times in a testing session, and
+# reloading 4.6 GiB each time would make that unusable.
+
+name: mindfork-lab
+
+x-llama: &llama
+  image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+  restart: unless-stopped
+  volumes:
+    - ${MODELS_DIR:-models}:/models:ro
+  depends_on:
+    models:
+      condition: service_completed_successfully
+
+services:
+  # One-shot: fills the models volume and exits 0. Both servers wait on its
+  # *completion*, so they never race the same download.
+  models:
+    image: ${CURL_IMAGE:-curlimages/curl:8.21.0}
+    # A freshly created named volume is root-owned; the image's own `curl` user
+    # could not write into it.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/opt/fetch/fetch.sh"]
+    restart: "no"
+    volumes:
+      - ${MODELS_DIR:-models}:/models
+      # The *directory*, not the file. A single-file bind mount is resolved to an
+      # inode, so an editor that writes by replace-and-rename leaves the container
+      # reading the old copy — a debugging trap with no error message.
+      - ./models:/opt/fetch:ro
+    environment:
+      DEST: /models
+      CHAT_REPO: ${CHAT_REPO:-bartowski/google_gemma-4-E2B-it-GGUF}
+      CHAT_GGUF: ${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
+      MMPROJ_GGUF: ${MMPROJ_GGUF-mmproj-google_gemma-4-E2B-it-f16.gguf}
+      EMBED_REPO: ${EMBED_REPO:-ggml-org/bge-m3-Q8_0-GGUF}
+      EMBED_GGUF: ${EMBED_GGUF:-bge-m3-q8_0.gguf}
+      HF_TOKEN: ${HF_TOKEN:-}
+
+  # Chat. `--jinja` is not optional: it is what loads Gemma's own chat template,
+  # without which formatting and tool-calling are both wrong (docs/install.md §3).
+  chat:
+    <<: *llama
+    command: >
+      -m /models/${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
+      --host 0.0.0.0 --port 8000
+      -c ${CHAT_CTX:-8192}
+      --jinja
+      ${CHAT_EXTRA_ARGS-}
+    ports:
+      - "${CHAT_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      # Loading 4.6 GiB from a cold page cache on a CPU takes a while, and a
+      # start_period failure is not counted against `retries`.
+      start_period: 10m
+      retries: 3
+
+  # Embeddings. `-ub`/`-b` raised to the context on purpose: an embedding model is
+  # non-causal, the whole input must fit one physical batch, and the 512-token
+  # default silently rejects any larger chunk — files then fail to index with no
+  # obvious cause (docs/install.md §3).
+  embed:
+    <<: *llama
+    command: >
+      -m /models/${EMBED_GGUF:-bge-m3-q8_0.gguf}
+      --embeddings
+      --host 0.0.0.0 --port 8001
+      -c 8192 -ub 8192 -b 8192
+      ${EMBED_EXTRA_ARGS-}
+    ports:
+      - "${EMBED_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5m
+      retries: 3
+
+  # JupyterLab + the `mindfork` binary built from this working tree.
+  lab:
+    build:
+      context: ..
+      dockerfile: docker/lab/Dockerfile
+    image: mindfork-lab:local
+    restart: unless-stopped
+    ports:
+      - "${LAB_PORT:-8888}:8888"
+    # Deliberately `service_started`, not `service_healthy`: if a model fails to
+    # load, a terminal to diagnose it from is exactly what you need, and the app
+    # reports an unreachable server on its own.
+    depends_on:
+      chat:
+        condition: service_started
+      embed:
+        condition: service_started
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-mindfork}
+      # `LAB_*`, deliberately outside the app's `MINDFORK_*` namespace: these are
+      # read by the start-up hook (docker/lab/before-notebook.d/10-mindfork), not
+      # by the binary. The app is configured through settings.json instead, so
+      # that switching the engine to a cloud provider in the settings screen
+      # sticks across a restart.
+      LAB_CHAT_URL: http://chat:8000/v1
+      LAB_EMBED_URL: http://embed:8001/v1
+      LAB_CHAT_MODEL: ${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
+      LAB_LANG: ${LAB_LANG:-ru}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+    volumes:
+      # The app's data root. A named volume rather than a bind mount: it holds
+      # data.db and chats/*.json, and it must survive every image rebuild.
+      - mindfork-data:/home/jovyan/mindfork
+      # …and a host directory for everything you want to hand the app by path.
+      - ${WORK_DIR:-./work}:/home/jovyan/work
+
+volumes:
+  models:
+  mindfork-data:
