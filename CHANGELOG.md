@@ -235,6 +235,19 @@ split by subsystem.
 
 ### Fixed
 
+- **Web search said "no results" when it had actually been blocked.** Search
+  engines cut off traffic that looks automated, and one of them now serves that
+  block as an ordinary-looking page — which the app read as "the web has nothing
+  on this" and reported to the assistant as an empty result. The assistant would
+  then stop searching and answer from memory. A block is now recognised for what
+  it is, and the assistant is told the search is temporarily unavailable so it
+  can try again. Searching *for* captchas and anti-bot topics still works.
+- **Repeated searches in one answer no longer retry a provider that just blocked
+  them.** When the assistant runs several searches in a row, the ones after the
+  first used to start over with the provider that had already refused, wasting
+  seconds on every call. A provider that blocked is now tried last for a few
+  minutes — but never dropped, so nothing is silently left unsearched.
+
 - **A fresh install can change the profile's framework language.** The empty
   chat the first launch creates counted as the profile's data, so the
   "Framework language" field was born locked — and deleting that chat only

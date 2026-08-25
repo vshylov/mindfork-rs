@@ -696,6 +696,21 @@ looks like when it stopped one step short of the format it was checking.
 — *a model split across several GGUF files*, *managed — preflight model-file
 check*.
 
+**A classifier anchored on someone else's prose expires without telling you.**
+`web_search` decides "blocked" versus "genuinely empty", and the first version of
+that check matched five phrases from the anti-bot page's body. Those phrases were
+copied from the real interstitial, so the fix was measured and correct — and it
+went silently dead the day the operator reworded the page, putting the false "the
+web knows nothing" straight back in front of the model. Prose belonging to a
+third party is the least stable thing on a page and the easiest thing to test
+against; **anchor on structure instead** — what a page calls *itself* (`<title>`),
+a status code, an element's presence — and keep the prose list only as a second
+signal. The same applies to any check reading someone else's HTML, JSON error
+strings, or CLI output. Where a stale anchor cannot be avoided, make its failure
+loud: a check that silently stops matching is indistinguishable from a check that
+matches nothing, which is why this one took two rounds to find.
+— *`web_search` said "no results" while it was blocked, again*.
+
 ## 5. Terminal and ratatui rendering
 
 **One wide label in an aligned table re-wraps every description in it.** The help

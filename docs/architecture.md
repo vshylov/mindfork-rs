@@ -1732,7 +1732,14 @@ Implementation notes:
   `disarm()` after reaping stops it signalling a pid the OS has since reused.
 - **`web_search`** — falls back across providers (DDG lite → DDG html →
   Mojeek → Ecosia); recognizes anti-bot throttling (HTTP 202/403/429) and
-  switches providers instead of parsing an empty result set.
+  switches providers instead of parsing an empty result set. A block behind a
+  **200** is caught by `is_challenge_page`, anchored on the `<title>` element
+  (`CHALLENGE_TITLES`) with the body-phrase list as a second signal, and
+  guarded by "a title containing the query is a results page" — the anchor
+  moved there after Mojeek rewrote its interstitial out of every phrase the
+  previous check knew. Chain order is not fixed: a family that blocked is
+  remembered for `PROVIDER_COOLDOWN` and reordered to the back (the two DDG
+  entries share one `Provider::family`, hence one throttle), never skipped.
 - **Cross-chat pair (`chats.rs`)** — the full-text index is profile-blind
   and includes the current chat, so the scope lives in a turn snapshot
   (`ToolContext::other_chats`, built by `snapshot_other_chats` in
