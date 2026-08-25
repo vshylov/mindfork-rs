@@ -1434,14 +1434,25 @@ fn the_help_remembers_its_tab_and_quit_punches_through() {
     );
 }
 
-/// The chat's `?` (and `/help`, which reports the same intent) reaches the
-/// overlay as `ChatIntent::OpenHelp` — one dialog, opened with the chat's
-/// context.
+/// The chat's `/help` reaches the overlay as `ChatIntent::OpenHelp` — one
+/// dialog, opened with the chat's context. `?` is typed into the box instead:
+/// it was `F1`'s chat-only alias and is no longer a help key (spec §11.7).
 #[test]
-fn the_chats_question_mark_opens_the_overlay() {
+fn the_chats_typed_help_opens_the_overlay() {
+    let mut typed = Harness::new();
+    typed.feed(key(KeyCode::Char('?')));
+    assert!(
+        typed.help.open.is_none(),
+        "`?` is a character, not a help key"
+    );
+    // A fresh box: `?` is now sitting in the one above, and a command is only
+    // a command at the start of the line.
     let mut h = Harness::new();
-    h.feed(key(KeyCode::Char('?')));
-    let state = h.help.open.as_ref().expect("`?` opened the dialog");
+    for c in "/help".chars() {
+        h.feed(key(KeyCode::Char(c)));
+    }
+    h.feed(key(KeyCode::Enter));
+    let state = h.help.open.as_ref().expect("`/help` opened the dialog");
     assert_eq!(state.context, HelpContext::Chat);
 }
 
@@ -1722,7 +1733,7 @@ fn a_non_chat_open_lands_on_its_section() {
         "the marker is not visible: {text}"
     );
     assert!(
-        !text.contains(loc.t("ui.help.sec.everywhere")),
+        !text.contains(loc.t("ui.help.sec.global")),
         "the sections above the anchor must be scrolled past: {text}"
     );
     // One-shot: the user's scroll survives the next frame.

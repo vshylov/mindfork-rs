@@ -220,14 +220,14 @@ impl HelpOverlay {
     }
 }
 
-/// The "Shortcuts" tab's sections in display order: "Everywhere", then the
+/// The "Shortcuts" tab's sections in display order: "Globally", then the
 /// screens by how often the user is on them. Composed here — the app layer is
 /// the one place that knows every screen exists — from tables owned by the
 /// code they document (proximity to the `match` is the anti-drift force;
 /// docs/history/help-hotkeys-context.md §6). `help_sections_cover_every_context`
 /// closes the loop [`help_context`] opens: one section per screen.
 pub(super) static HELP_SECTIONS: [&HelpSection; 7] = [
-    &help_dialog::EVERYWHERE,
+    &help_dialog::GLOBAL,
     &crate::screens::chat::HELP_SECTION,
     &crate::widgets::chat_list::HELP_SECTION,
     &crate::screens::settings::HELP_SECTION,

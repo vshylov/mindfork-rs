@@ -149,7 +149,7 @@ split by subsystem.
 ### Changed
 
 - **The help lists keys by screen, and `F1` works everywhere.** The shortcuts
-  tab is now sections — everywhere · chat · chat list · settings · self-model
+  tab is now sections — globally · chat · chat list · settings · self-model
   · changes · found messages. A key that means different things on different
   screens (`Ctrl+O`, `Ctrl+F`, `Ctrl+R`…) is one short row per screen instead
   of one row trying to say both, and the settings, self-model, changes and
@@ -157,6 +157,15 @@ split by subsystem.
   the help from **any** screen — not just the chat — landing right on the
   section of the screen you were on, marked *you are here*; `Esc` puts you
   back exactly where you were.
+- **The help is `F1` (or `/help`) — `?` is just a character now.** The
+  shortcuts tab used to advertise `F1 / ?`, but `?` only ever opened the help
+  on the chat screen, and there only with an empty input box: in the chat
+  list's filter, the settings' search or any box with text in it, it typed a
+  question mark. A key listed as global that works in one place out of six is
+  worse than no key, so it is gone — from the input handler, from the open
+  dialog (which no longer closes on it) and from the help's own table. `F1`
+  opens the help from anywhere, `/help` types the same.
+
 - **The command is `mindfork` now.** The binary lost the `-rs` suffix — that
   stays the project's name: type `mindfork` (`mindfork demo`, `mindfork
   sandbox setup`, …), the Linux packages symlink `/usr/bin/mindfork` and the

@@ -1108,24 +1108,24 @@ fn ctrl_c_copies_selection_ctrl_x_cuts() {
     assert_eq!(s.input.text(), "hellod");
 }
 
-/// The chat's own help routes report [`ChatIntent::OpenHelp`] — the runtime
-/// owns the overlay, and `F1` never reaches the screen (spec §11.7; the
-/// dialog's own behavior is pinned in `widgets::help_dialog` and
-/// `app::runtime` tests). With text in the box `?` is just a character.
+/// `?` is a character, not a hotkey — on an empty box as much as on a full
+/// one. It opened the help while it was the chat's alias for `F1`, which made
+/// it a key that worked on one screen out of six, and on an empty box at that;
+/// the help is `F1` (routed above every screen) or `/help` (spec §11.7).
 #[test]
-fn question_mark_reports_open_help_only_when_input_empty() {
+fn question_mark_is_typed_never_a_help_key() {
     let mut s = ChatScreen::new();
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
-        Some(ChatIntent::OpenHelp)
+        None
     );
-    // Non-empty input → `?` is typed, no intent.
+    assert_eq!(s.input.text(), "?");
     type_str(&mut s, "abc");
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
         None
     );
-    assert_eq!(s.input.text(), "abc?");
+    assert_eq!(s.input.text(), "?abc?");
 }
 
 #[test]
@@ -3363,15 +3363,12 @@ fn every_command_agrees_with_the_chord_it_mirrors() {
             "{line} and {code:?} disagree"
         );
     }
-    // `/help` and the chat's `?` share one intent; `F1` never reaches the
-    // screen (the runtime routes it above every screen), so the typed route is
-    // compared against `?` — the chat-side key that remains.
-    let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());
-    assert_eq!(
-        typed.run("/help"),
-        pressed.key(KeyCode::Char('?')),
-        "/help and `?` disagree"
-    );
+    // `/help` has no chord to compare against: `F1` never reaches the screen
+    // (the runtime routes it above every screen and owns the overlay), and the
+    // chat's `?` is gone — so the typed route is checked against the intent the
+    // runtime opens the overlay on.
+    let mut typed = Cmd::new();
+    assert_eq!(typed.run("/help"), Some(ChatIntent::OpenHelp));
     // In-screen effects have no intent to compare, so compare the state each
     // route leaves behind.
     let (mut typed, mut pressed) = (Cmd::new(), Cmd::new());

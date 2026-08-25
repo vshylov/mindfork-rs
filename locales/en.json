@@ -674,7 +674,7 @@
   "ui.help.tab.license": "License",
   "ui.help.tab.disclaimer": "Disclaimer",
   "ui.help.tab.components": "Components",
-  "ui.help.sec.everywhere": "Everywhere",
+  "ui.help.sec.global": "Globally",
   "ui.help.sec.chat": "Chat",
   "ui.help.sec.chat_list": "Chat list (Esc)",
   "ui.help.sec.settings": "Settings (Ctrl+P)",
