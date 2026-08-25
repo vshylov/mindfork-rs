@@ -652,6 +652,13 @@ pub struct ToolConfig {
     /// Whether model-chosen URLs may reach local/private addresses
     /// (`config.tools.web_allow_private`). Off by default; see `shared::net`.
     pub web_allow_private: bool,
+    /// Which `web_search` backend to prefer (`config.tools.web_provider`).
+    pub web_provider: crate::shared::config::WebProvider,
+    /// Resolved keys for the keyed search providers, in preference order —
+    /// already through "stored key beats the named env variable", so the tool
+    /// never reads a secret store or the environment itself. Empty (the
+    /// default) → the keyless chain alone, exactly as before keyed providers.
+    pub web_search_keys: Vec<(crate::shared::secrets::SearchSlot, String)>,
     /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
     /// Resolved video-understanding slot for `youtube_watch` (`None` — not
@@ -677,6 +684,8 @@ impl Default for ToolConfig {
             sandbox_dir: None,
             web_fetch_content: true,
             web_allow_private: false,
+            web_provider: crate::shared::config::WebProvider::default(),
+            web_search_keys: Vec::new(),
             fs_root: None,
             video: None,
             sampling_provider: None,
@@ -716,7 +725,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);
-    reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content, policy)));
+    reg.register(Arc::new(web::WebSearch::new(
+        cfg.web_fetch_content,
+        policy,
+        web::keyed_backends(cfg.web_provider, &cfg.web_search_keys),
+    )));
     reg.register(Arc::new(fetch::FetchUrl::new(policy)));
     // Video understanding is a slot of its own (only Gemini takes video at all),
     // so the tool gets a client built from `cfg.video` rather than `ctx.engine`.

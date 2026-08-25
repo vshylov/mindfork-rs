@@ -198,7 +198,8 @@ Anthropic), so the tool would still fetch every page itself; and it welds
 do. Worth revisiting only as a fallback slot.
 
 **Recommendation: Tavily first, Brave second, SearXNG as the self-hosted
-escape hatch.** Tavily because the free tier is real and cardless, the response
+escape hatch.** (Written pre-decision. Brave was built and then removed on
+availability grounds — see §7 F2.) Tavily because the free tier is real and cardless, the response
 is shaped for exactly this use (title, url, snippet, score, and optional cleaned
 page text), and the returned content lets the tool **skip its own N parallel page
 fetches** — a latency win and one less thing for a site's anti-bot to see. Brave
@@ -222,6 +223,49 @@ result pages it returns keep going through the guarded one. That distinction is
 the whole safety argument and needs a comment and a test, not a config flag.
 
 ---
+
+### 4.2 Google, asked again — and measured
+
+"Why not the Google Custom Search JSON API?" is the obvious follow-up, and it
+has two separate answers.
+
+**The API itself is a dead end**, and worse than Brave was: it has been **closed
+to new customers since 2025** — the same wall, a key simply cannot be obtained —
+**and it shuts down 2027-01-01**, four months after this was written. Vertex AI
+Search, which Google points to, is not a replacement: it is semantic search over
+*your own* content, a different product.
+
+**Google is still reachable through a key this machine already has** — Gemini's
+`google_search` grounding — so that was measured rather than argued about
+(2026-08-25, `gemini-2.5-flash`, two queries):
+
+| | Measured |
+|---|---|
+| Sources per query | 8 and 10 |
+| Their URIs | **8/8 and 10/10 are redirects** (`vertexaisearch.cloud.google.com/grounding-api-redirect/…`); none direct |
+| Do the redirects resolve? | **Yes** — 3/3 to real publisher URLs, HTTP 200 |
+| `title` of a source | the **domain** only (`docs.rs`, `medium.com`), not a page title |
+| Snippet per source | **none** — `groundingSupports` maps segments of the *generated answer* to source indices; that is citation mapping, not results |
+| What actually comes back | a **5 003-character written answer**: 1 093 output + 904 thinking tokens for one query |
+
+Three of those break this tool's contract. The result format is
+`N. <title> — <url>`, which would degrade to a list of bare domains. There are no
+snippets, and snippets are what feeds embedding reranking when a page fetch
+fails. And it is **not a search API but a model round trip**: to obtain links,
+one model must first write an essay the assistant never sees.
+
+There is an architectural objection on top. The agentic loop is client-side and
+owns the search ([ADR 0004](../decisions/0004-engine-contract-multi-provider.md));
+routing search through another model injects a second opinion before the
+assistant has seen anything. And the address policy would be checking
+`vertexaisearch.cloud.google.com` rather than the real destination — recoverable
+by resolving the redirect first, but that is a new hop to get right on a path
+whose whole point is that the address which was approved is the address
+connected to.
+
+**Neither is adopted.** If a second *obtainable and testable* provider is ever
+wanted, Serper remains the candidate, with the Google-SERP licensing question
+in §4 still unanswered.
 
 ## 5. Free-side work that still pays
 
@@ -305,9 +349,17 @@ unless contradicted.
   fix plus the §5 free-side work — no key, helps everyone, and it must not wait
   behind a vendor discussion. PR2: the keyed backends. PR1 also carries the
   selector verification left open in §1.1.
-- **F2. Which providers ship — Tavily and Brave.** Both in the first keyed PR;
-  Brave's card requirement is accepted for the sake of a second independent
-  index. **SearXNG is not adopted** — the design in §4.1 stands as written and
+- **F2. Which providers ship — Tavily. (Brave reversed the same day.)** Both
+  were built; **Brave was then removed on the user's decision, 2026-08-25**,
+  because they could not register for it at all — the service is not offered in
+  every country. The reason that decided it is stronger than one person's
+  access, and is why it came out rather than shipping disabled: a provider
+  nobody here can obtain a key for is one the live gate can never cover, and an
+  untestable second backend is a liability rather than a fallback. The card
+  requirement, noted below as acceptable, turned out not to be the obstacle —
+  availability was. Re-adding Brave, or any other provider, is a `SearchSlot`
+  variant plus a parser under the `Backend::Api` shape, so this is not a
+  one-way door. **SearXNG is not adopted** — the design in §4.1 stands as written and
   the address-policy argument it settles stays on record, but a self-hosted
   instance is a deployment this track will not ask for. Serper and the cloud
   server tools remain deferred.
@@ -325,11 +377,17 @@ unless contradicted.
 
 ---
 
-## 8. Go/no-go for the live run
+## 8. Go/no-go for the live run — met
 
 The keyed track's criterion, per AGENTS.md §1 (MVP probe before tiers): with a
 Tavily key configured, **ten `web_search` calls in one turn, all ten returning
 results**, against the reference stack — the exact load pattern that today
-degrades to two. And for the §2 fix, the criterion is narrower and does not need
+degrades to two.
+
+**Result (2026-08-25): GO — ten for ten in 10.5 seconds**, every one answered by
+Tavily and none falling through, measured on the same IP that every keyless
+provider was still blocking at that moment. A second smoke settles Tavily's
+`include_raw_content` field name live, because getting it wrong would look
+exactly like success while the tool quietly fetched every page itself. And for the §2 fix, the criterion is narrower and does not need
 a model at all: `live_search_returns_results` must fail with the **throttled
 error**, never with "no results", when the chain is blocked.

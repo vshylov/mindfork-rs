@@ -625,3 +625,89 @@ async fn external_server_is_never_relaunched() {
         "an external server must not be relaunched by us"
     );
 }
+
+/// A key typed into settings **wins** over the environment variable the settings
+/// name — the precedence `api_key_env` already has everywhere else. Without it a
+/// stale shell would silently shadow the key someone just entered, and the
+/// resulting 401 would look like the app's fault.
+#[test]
+fn a_stored_search_key_beats_the_named_environment_variable() {
+    use crate::shared::secrets::SearchSlot;
+
+    // A variable name this test owns, so it cannot collide with a real shell.
+    const VAR: &str = "MINDFORK_TEST_TAVILY_KEY_ENV";
+    // SAFETY: single-threaded test, and the variable is this test's own name.
+    unsafe { std::env::set_var(VAR, "from-the-environment") };
+
+    let mut cfg = crate::shared::config::AppConfig::default();
+    cfg.tools.web_tavily_key_env = Some(VAR.into());
+
+    // Only the environment is set: it is used.
+    assert_eq!(
+        super::super::web_search_keys(&cfg),
+        vec![(SearchSlot::Tavily, "from-the-environment".to_string())]
+    );
+
+    // Now store one in settings — it must win.
+    crate::shared::secrets::put_key(
+        &mut cfg.api_keys,
+        &crate::shared::secrets::SecretKey::Search(SearchSlot::Tavily).storage_name(),
+        "from-settings",
+        || "test".to_string(),
+    )
+    .expect("the machine key scheme must be available in tests");
+    assert_eq!(
+        super::super::web_search_keys(&cfg),
+        vec![(SearchSlot::Tavily, "from-settings".to_string())]
+    );
+
+    // SAFETY: as above.
+    unsafe { std::env::remove_var(VAR) };
+}
+
+/// A provider with neither a stored key nor a variable simply is not in the
+/// list — `web_search` must never be handed an empty credential to fail on.
+#[test]
+fn an_unconfigured_search_provider_yields_no_key() {
+    let mut cfg = crate::shared::config::AppConfig::default();
+    cfg.tools.web_tavily_key_env = None;
+    assert!(super::super::web_search_keys(&cfg).is_empty());
+    // A whitespace-only variable name is not a name either.
+    cfg.tools.web_tavily_key_env = Some("   ".into());
+    assert!(super::super::web_search_keys(&cfg).is_empty());
+}
+
+/// A stored search key must appear in the presence list, or the settings row
+/// keeps reading "not set" over a key that is on disk and in use — and someone
+/// enters it a second time, or concludes the provider is broken. Clippy found
+/// this one as dead code (`SearchSlot::ALL` unused); nothing was pinning it.
+#[tokio::test]
+async fn a_stored_search_key_shows_as_present() {
+    use crate::shared::secrets::SearchSlot;
+
+    if !crate::shared::secrets::scheme_available() {
+        return; // non-systemd Linux without machine-id: saving keys isn't supported
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+
+    for slot in SearchSlot::ALL {
+        cmd_tx
+            .send(AppCommand::SetSecret {
+                key: SecretKey::Search(slot),
+                value: format!("key-for-{slot:?}"),
+            })
+            .unwrap();
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::Settings { secrets_present, .. }
+                if secrets_present.contains(&SecretKey::Search(slot)))
+        })
+        .await
+        .unwrap_or_else(|| panic!("{slot:?} never showed as present"));
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}

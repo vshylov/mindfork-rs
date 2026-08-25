@@ -3,6 +3,7 @@
 //! [super] module; split out of the settings.rs monolith (see docs/history/refactoring-god-objects.md).
 
 use super::*;
+use crate::shared::config::WebProvider;
 // ---------- free functions ----------
 
 /// Whether a sampling parameter is in the subset accepted by a cloud provider.
@@ -1057,6 +1058,18 @@ pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
     })
     .to_string()
 }
+
+/// The preferred `web_search` backend's label (spec §9.3.1).
+pub(super) fn web_provider_label(m: WebProvider, loc: &'static Locale) -> String {
+    loc.t(match m {
+        WebProvider::Auto => "ui.settings.choice.web_provider_auto",
+        WebProvider::FreeOnly => "ui.settings.choice.web_provider_free",
+    })
+    .to_string()
+}
+
+/// The description key of the keyed-search API-key rows.
+pub(super) const DESC_SEARCH_API_KEY: &str = "ui.settings.desc.search_api_key";
 
 /// The video-understanding frame-sampling detail's label
 /// (`youtube_watch`/`config.video.media_resolution`).

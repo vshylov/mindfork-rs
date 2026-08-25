@@ -516,6 +516,11 @@ enum FieldId {
     TWeb,
     TWebFetch,
     TWebAllowPrivate,
+    /// Which `web_search` backend to prefer (spec §9.3.1).
+    TWebProvider,
+    /// The Tavily API key, and the variable it may come from instead.
+    TWebTavilyKey,
+    TWebTavilyKeyEnv,
     TPython,
     TPythonMode,
     TPythonPath,

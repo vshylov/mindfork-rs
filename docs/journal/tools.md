@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the code workspace's loose ends (done)
 - Post-M9: sub-agent chats, PR 2 — the sub-agent with the agent's tools (done)
 - Post-M9: `web_search` said "no results" while it was blocked, again (done)
+- Post-M9: `web_search` keyed providers — Tavily (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2584,4 +2585,116 @@ the probe lives on `spike/code-search-probe`, unmerged.
 - **The keyed providers are the next PR, not this one** (user's decision,
   2026-08-25): Tavily and Brave, tried before the free chain when a key is
   present, with the free chain kept as the last fallback and the no-key default.
-  This PR is the defect and needs no key.
+  This PR is the defect and needs no key. (Brave did not survive that PR — see
+  the next entry.)
+
+### Post-M9: `web_search` keyed providers — Tavily (done)
+- **Why, and why not more free ones.** The measurements in the previous entry
+  closed the keyless option: from a residential IP the chain answers about twice
+  before every provider blocks, the block outlives fifteen minutes of silence,
+  and a real Chrome from the same IP is blocked too — a rate ceiling, not a
+  fingerprint one. Every keyless alternative was surveyed and rejected (Yep 403,
+  Marginalia a queue interstitial over a tiny index, Startpage and keyless Brave
+  captchas, public SearXNG instances 403 or JSON disabled). The provider survey,
+  the rejected vendors and the decided forks:
+  [web-search-keyed-providers.md](../research/web-search-keyed-providers.md).
+- **One provider: Tavily.** Its free tier is 1 000 searches a month with no card,
+  its response is shaped for this use (title/url/snippet/score) and it returns
+  cleaned page text on request. **Brave was implemented and then removed the
+  same day** (2026-08-25): the user could not register for it at all — the
+  service is not offered in every country. That is a stronger reason than one
+  person's access, and it is why it came out rather than shipping disabled: a
+  provider nobody here can obtain a key for is a provider the live gate can
+  never cover, and an untestable second backend is a liability, not a fallback.
+  The `Backend::Api` shape means re-adding it (or any other) is a variant and a
+  parser, not a reshape — this is not a one-way door. **SearXNG was designed and
+  not adopted** —
+  §4.1 of the research stands, including the address-policy argument it settles
+  (a user-typed LAN URL is the engine-address category, not the model-chosen
+  one), but a self-hosted instance is a deployment this track will not ask for.
+  Google CSE and Bing were rejected as dead: closed to new customers with a
+  2027-01-01 end date, and retired 2025-08-11 respectively. The clouds' own
+  server-side search tools were rejected too — a search costs a whole model round
+  trip, the results come back without readable content (Anthropic's
+  `encrypted_content` is only decryptable by Anthropic), and it would weld
+  `web_search` to a cloud key.
+- **The shape.** `PROVIDERS` was a table of *HTML-scraping* descriptions, so
+  keyed providers could not be nullable columns on it: the loop now runs over
+  `Backend::{Api, Scraped}` and each attempt returns `Attempt::{Results, Empty,
+  Blocked}`. That third arm is the whole point of the previous entry, now made
+  explicit in the type rather than reconstructed from an empty parse. The
+  keyless path through it is unchanged.
+- **The invariant, and the test that pins it**: with no key configured the
+  backend order **is** the scraped chain, for every `web_provider` value. If that
+  ever fails, a fresh install has quietly changed how it searches.
+- **Keyed first (fork F3).** A dead round trip through a blocked scraper costs
+  more seconds than a credit costs cents, and §1.1's fifteen-minute persistence
+  means the scraper is likely to be blocked rather than merely slow. `auto` uses
+  every keyed provider that has a key; `free_only` uses none, for someone holding
+  a key for another purpose. It stays a *choice* rather than a toggle even with
+  one provider, because the slot set is what a second one would extend and the
+  stored `"auto"`/`"freeonly"` values keep round-tripping. The free chain is
+  never removed.
+- **Failure modes read apart from each other.** `429` is a rate limit and takes
+  the same family cooldown as an anti-bot throttle. `401`/`403`/`402` mean the key
+  is wrong, revoked or spent — that must not read as throttling, but must not fail
+  the search either, or a stale key would take web search down with a working
+  keyless chain sitting behind it. So it falls through *and* becomes `last_err`:
+  the run continues, and if nothing answers, the message names the key instead of
+  blaming the network. Same defect class as ever ([lessons §4](../lessons.md)) —
+  the message has to close the right door.
+- **A result that arrives with its page text is not fetched again** (Tavily's
+  `raw_content`) — the latency the keyed backend was chosen to avoid, and one
+  fewer automated request in front of the site's own anti-bot. **The result also
+  names which backend answered**: the chain degrades silently by design, and
+  without the name the model cannot tell a thin answer from a degraded one — the
+  transcript that started this work has it reasoning aloud about the tool's
+  health with no evidence to reason from.
+- **Plumbing.** `SecretKey::Search(SearchSlot)` mirrors `SecretKey::External`
+  exactly — a closed set, an unambiguous `search-<slot>` name, machine-bound
+  (ADR 0008); its own variant rather than a `Provider` one because these are not
+  inference providers and a `web_search` key must never resolve through the
+  engine's key lookup. Keys resolve in `orchestrator::web_search_keys` (stored
+  beats the named variable) and reach the tool as strings, so the secret store
+  stays in one layer. A `SecretKey::Search` edit rebuilds the registry, for the
+  same reason the Gemini key does for the video slot. In settings, the Web-search
+  group gained the provider choice plus a key/env pair **only where the key can
+  be spent** — `auto` shows both, a named provider only its own, `free_only`
+  neither; an unused key row reading as a live one is how someone ends up
+  believing a provider is configured when nothing will ever call it.
+- **Clippy found a real defect, not a style nit.** `SearchSlot::ALL` came back
+  unused — because the orchestrator's `secrets_present` list had not been
+  extended, so a stored search key would have kept showing "not set" in settings
+  over a key that was on disk and in use. Nothing was pinning it; there is a test
+  now.
+- **Tests**: 2599 green (+13), 109 `#[ignore]` (+2, both live); clippy
+  `-D warnings`, fmt, the i18n gates, `cyrillic_scan`, `link_check`,
+  `doc_index_check` clean, and the settings screenshot dumps regenerated.
+  **Mutation-tested**: making `free_only` return keys, putting the keyed
+  backends after the free chain, and letting the environment beat the stored key
+  each fail exactly their own test.
+- **One test was rewritten because the mutation run exposed it as worthless.**
+  "A result that already has content is not re-fetched" originally asserted on
+  the field *after* enrichment — and it passed with the skip removed, because an
+  unfetchable URL leaves the field alone either way. The selection is now its own
+  function (`needs_content`) and the assertion is on that; it fails under the
+  mutation. A negative behaviour needs an assertion on the decision, not on the
+  state afterwards — the same trap [lessons §2](../lessons.md) records for
+  fixtures that measure nothing.
+- **Live run — GO** (2026-08-25, the user's own Tavily key in `TAVILY_API_KEY`).
+  The criterion (research §8) was ten searches in one run, all ten returning
+  results and none falling through to the keyless chain — the load pattern that
+  degrades the free chain to two. **Ten for ten in 10.5 seconds**, every one
+  answered by Tavily, *on the same IP that every free provider was still
+  blocking at the time*: the contrast is the measurement. The smoke deliberately
+  has **no skip-on-throttle escape** — a keyed provider answering 429 inside ten
+  searches would be a real finding about the free tier, not an infrastructure
+  excuse.
+- **A second live check, for a failure that would have looked like success.**
+  `include_raw_content` is a vendor field name, and if it were wrong the tool
+  would silently receive no page text and quietly fetch every page itself —
+  slower, more requests in front of other sites' anti-bot, and indistinguishable
+  from working. Only a live call can settle a field name, so there is a smoke
+  that does (`live_tavily_returns_page_text_so_the_tool_need_not_fetch_it`):
+  **GO** — results carry text, and `needs_content` selects fewer pages than there
+  are results, which is the saving stated as an assertion rather than a hope.

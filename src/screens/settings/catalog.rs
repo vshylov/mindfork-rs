@@ -4,6 +4,8 @@
 
 use super::helpers::*;
 use super::*;
+use crate::shared::config::WebProvider;
+use crate::shared::secrets::SearchSlot;
 
 impl SettingsScreen {
     /// Creates the screen from a settings snapshot (config + visible profiles + profiles
@@ -132,6 +134,33 @@ impl SettingsScreen {
         key.is_some_and(|k| self.secrets_present.contains(k))
     }
 
+    /// The keyed search provider's API-key pair (the key itself and the variable
+    /// it may come from instead) — or nothing under `FreeOnly`, which is the
+    /// setting that says the key must not be spent. An unused key row reading as
+    /// a live one is how someone ends up believing a provider is configured when
+    /// nothing will ever call it.
+    fn keyed_search_rows(&self, loc: &'static Locale) -> Vec<FieldRow> {
+        let t = &self.config.tools;
+        if t.web_provider == WebProvider::FreeOnly {
+            return Vec::new();
+        }
+        vec![
+            secret_row(
+                FieldId::TWebTavilyKey,
+                self.secret_field_present(FieldId::TWebTavilyKey),
+                loc.t("ui.settings.field.tavily_api_key"),
+                DESC_SEARCH_API_KEY,
+                loc,
+            ),
+            text_row(
+                FieldId::TWebTavilyKeyEnv,
+                loc.t("ui.settings.field.api_key_env_opt"),
+                &t.web_tavily_key_env,
+            )
+            .describe(loc.t("ui.settings.desc.search_api_key_env")),
+        ]
+    }
+
     /// Whether the secret a given field addresses is stored on this machine (that
     /// field's status). Goes through [`Self::secret_field_key`], so the row a user
     /// reads and the value an edit replaces are the same secret by construction —
@@ -158,6 +187,10 @@ impl SettingsScreen {
             // The video slot has no mode of its own — only Gemini takes video
             // (spec §9.9), so this row always addresses the Gemini key.
             FieldId::VideoApiKey => Some(SecretKey::Provider(CloudProvider::Gemini)),
+            // A search slot, like an external one, is its own address: these are
+            // not inference providers and must never resolve through the
+            // engine's key lookup (see `SecretKey::Search`).
+            FieldId::TWebTavilyKey => Some(SecretKey::Search(SearchSlot::Tavily)),
             FieldId::BackupPassword => Some(SecretKey::BackupPassword),
             FieldId::McpEnvSecret(idx) => {
                 let srv = self.config.mcp.servers.get(self.mcp_server_idx)?;
@@ -649,7 +682,20 @@ impl SettingsScreen {
                     FieldKind::Toggle(t.web_allow_private),
                 )
                 .describe(loc.t("ui.settings.desc.web_allow_private")),
-            ],
+                row(
+                    FieldId::TWebProvider,
+                    loc.t("ui.settings.field.web_provider"),
+                    FieldKind::Choice(web_provider_label(t.web_provider, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.web_provider")),
+            ]
+            .into_iter()
+            // A key row only where the key can be spent. `Auto` shows both,
+            // a named provider only its own, and `FreeOnly` neither — the
+            // same "a sub-section per mode" shape the engine sections have,
+            // and it keeps an unused key from reading as a live one.
+            .chain(self.keyed_search_rows(loc))
+            .collect::<Vec<_>>(),
         ));
         rows.extend(grouped("Python", {
             let mut py = vec![

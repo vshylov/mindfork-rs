@@ -11,6 +11,7 @@
 
 use super::helpers::*;
 use super::*;
+use crate::shared::config::WebProvider;
 
 /// How to read/change a config field's value. `fn` pointers (not closures) — `'static`,
 /// no capturing; routing by mode (external vs cloud) lives **inside** the setter
@@ -114,6 +115,15 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, dir| c.impersonation_engine.mode = cycle_imp_mode(c.impersonation_engine.mode, dir),
             |c, _loc| index_menu(&IMP_MODES, c.impersonation_engine.mode, imp_mode_label),
         ),
+        TWebProvider => choice(
+            |c, dir| c.tools.web_provider = c.tools.web_provider.cycle(dir),
+            |c, loc| {
+                index_menu(&WebProvider::ALL, c.tools.web_provider, |x| {
+                    web_provider_label(x, loc)
+                })
+            },
+        ),
+        TWebTavilyKeyEnv => text(|c, t| c.tools.web_tavily_key_env = opt(t)),
         TPythonMode => choice(
             |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
             |c, loc| {

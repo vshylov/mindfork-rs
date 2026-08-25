@@ -1730,8 +1730,16 @@ Implementation notes:
   own process group changes how signals reach it. Dropping the guard kills,
   because cancellation drops the tool's future and no cleanup of ours runs;
   `disarm()` after reaping stops it signalling a pid the OS has since reused.
-- **`web_search`** — falls back across providers (DDG lite → DDG html →
-  Mojeek → Ecosia); recognizes anti-bot throttling (HTTP 202/403/429) and
+- **`web_search`** — tries the keyed providers a key is configured for
+  (`keyed_backends` from `tools.web_provider` + the resolved
+  `SecretKey::Search` slots; `Backend::Api` — Tavily), then falls back
+  across the scraped providers (DDG lite → DDG html → Mojeek → Ecosia,
+  `Backend::Scraped`). Keys are resolved in `orchestrator::web_search_keys`
+  (stored beats the named env variable) and reach the tool as strings, so the
+  secret store stays in one layer; a `SecretKey::Search` edit rebuilds the
+  registry, as the Gemini/video key does. With no key the order *is* the
+  scraped chain, which a test pins. Recognizes anti-bot throttling (HTTP
+  202/403/429, and a keyed provider's 429) and
   switches providers instead of parsing an empty result set. A block behind a
   **200** is caught by `is_challenge_page`, anchored on the `<title>` element
   (`CHALLENGE_TITLES`) with the body-phrase list as a second signal, and

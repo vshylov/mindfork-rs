@@ -690,6 +690,47 @@ pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
 /// See docs/research/python-wasmer-sandbox.md.
 pub const DEFAULT_PYTHON_WASM_TIMEOUT_SECS: u64 = 30;
 
+/// Default env-variable name for the keyed search provider, matching the
+/// vendor's own documentation so an existing shell already works.
+pub const DEFAULT_TAVILY_KEY_ENV: &str = "TAVILY_API_KEY";
+
+/// Which `web_search` backend to prefer (spec §9.3.1,
+/// docs/research/web-search-keyed-providers.md).
+///
+/// The keyless scraping chain is never removed — it is the last fallback under
+/// every value, and the whole behaviour under [`Self::Auto`] with no key stored
+/// is byte-identical to the version before keyed providers existed.
+/// It is deliberately a choice rather than a toggle: [`SearchSlot`] is a set,
+/// and the day a second provider ships this gains a variant instead of a new
+/// setting — the stored `"auto"`/`"freeonly"` values keep round-tripping.
+///
+/// [`SearchSlot`]: crate::shared::secrets::SearchSlot
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WebProvider {
+    /// Every keyed provider that has a key, then the keyless chain. Default:
+    /// with no key configured this *is* the old behaviour, and configuring a
+    /// key is the whole opt-in.
+    #[default]
+    Auto,
+    /// Ignore stored keys entirely and use only the keyless chain. For someone
+    /// who has a key configured for another purpose and does not want
+    /// `web_search` spending it.
+    FreeOnly,
+}
+
+impl WebProvider {
+    /// All variants in UI-cycle order (for the Choice popup and the cycle).
+    pub const ALL: [WebProvider; 2] = [WebProvider::Auto, WebProvider::FreeOnly];
+
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+}
+
 /// `python_exec` execution mode: an isolated Wasmer/WASIX sandbox (by
 /// default — no access to machine files, pre-installed packages) or the local
 /// system interpreter (previous behavior). See
@@ -741,6 +782,18 @@ pub struct ToolSettings {
     /// which the *user* types, or the engine addresses in settings.
     #[serde(default)]
     pub web_allow_private: bool,
+    /// Which `web_search` backend to prefer (spec §9.3.1). The keyless
+    /// scraping chain is always the last fallback and the no-key default, so a
+    /// configuration with no key behaves exactly as before this setting existed.
+    #[serde(default)]
+    pub web_provider: WebProvider,
+    /// Env-variable name carrying the Tavily API key. Stores the **name**, not
+    /// the secret (ADR 0004); a key entered in settings and kept
+    /// machine-encrypted under [`crate::shared::secrets::SearchSlot::Tavily`]
+    /// **wins** over the variable named here (ADR 0008 §3, and the same
+    /// precedence `api_key_env` already has).
+    #[serde(default)]
+    pub web_tavily_key_env: Option<String>,
     /// Python execution. Off by default (the tool's master gate).
     pub python_enabled: bool,
     /// `python_exec` execution mode: the Wasmer sandbox (default) or the local
@@ -800,6 +853,8 @@ impl Default for ToolSettings {
             web_enabled: true,
             web_fetch_content: true,
             web_allow_private: false,
+            web_provider: WebProvider::default(),
+            web_tavily_key_env: Some(DEFAULT_TAVILY_KEY_ENV.into()),
             python_enabled: false,
             python_mode: PythonMode::default(),
             python_path: None,
