@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -27,6 +27,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — two new lint families, and eight complexity findings (done)
 - Post-M9: SonarQube follow-up — four findings from the week's merges (done)
 - Post-M9: a gate for the one implementation of a list's scroll state (done)
+- Post-M9: SonarQube follow-up — the help dialog's table builder (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -978,3 +979,40 @@ assumed.
 
 **No live run and no new Rust tests** — a Python gate over the repository's own
 structure (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the help dialog's table builder (done)
+
+- **The one issue open on `main`** after the help-hotkeys track landed:
+  `rust:S3776` on `table_lines` (`src/widgets/help_dialog.rs`), cognitive
+  complexity **18** against the 15 allowed. The quality gate stayed OK
+  throughout — one maintainability smell cannot flip a new-code rating, the
+  `docs/lessons.md` §10 gap again. Branch `fix/help-table-lines-complexity`.
+- **Why it grew**: the function does two jobs that the stage-2 recipe would
+  have split from the start. Stage 1 of the help track made it render
+  *sections* rather than one flat list of rows, so a header, a "you are here"
+  marker and a blank line between sections were folded into a body that already
+  carried a two-level resolve nest (per section → per row, with the
+  command-label `if`/`else` inside it) and a two-level emit nest (per section →
+  per row, with the group-opener `if` inside it). Neither nest is a deliberate
+  shape: they are two separate passes sharing one `fn` because the second one
+  needs the first one's measurement.
+- **The fix is the stage-2/4 recipe** — the nests moved out **verbatim**, one
+  per pass. `resolve_rows(section, command_labels, palette, loc)` returns the
+  new `ResolvedRows` alias (the tuple the old local `type Rows` half-named),
+  and `push_section(lines, header, rows, …) -> Option<usize>` emits one
+  section, returning the marked header's row index rather than writing to a
+  captured `mut`. What is left in `table_lines` is what the name promises: map
+  the sections, measure the shared description column, walk them with a blank
+  line between. All three parts are well under the bar, so the threshold is
+  *met* by every part rather than waived for the whole.
+- **Behaviour is unchanged by construction**: the emitted `Line`s are built by
+  the same expressions in the same order, and the anchor keeps its
+  last-marked-wins semantics (`if let Some(at) = push_section(…) { marked_at = Some(at) }`
+  — an `.or()` would have quietly made it first-wins; only one section is ever
+  marked, but the reader should not have to know that to trust the line).
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2579 green, count unchanged**: `table_lines` is private, the tests exercise
+  it through `hotkeys_tab`/`key_lines`, and the wrapping, column-alignment,
+  per-locale fit and anchor cases all still pass untouched. **No live run
+  required** (AGENTS.md §3) — pure UI, no engine, memory or tool surface. No
+  CHANGELOG entry: nothing the user sees changed (§4).

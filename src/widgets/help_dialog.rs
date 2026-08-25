@@ -697,24 +697,13 @@ fn table_lines(
     // whole tab, so it has to be measured before any row can be built. Both
     // label styles pad with a space on each side, so one measurement covers
     // keycaps and command labels alike.
-    type Rows<'a> = (Option<(&'a str, bool)>, Vec<(bool, Span<'static>, String)>);
-    let resolved: Vec<Rows<'_>> = sections
+    let resolved: Vec<(Option<(&str, bool)>, ResolvedRows)> = sections
         .iter()
         .map(|section| {
-            let rows = section
-                .rows
-                .iter()
-                .map(|(k, d)| {
-                    let key = loc.t(k).to_string();
-                    let key_span = if command_labels && key.starts_with('/') {
-                        Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
-                    } else {
-                        palette.keycap(key)
-                    };
-                    (section.openers.contains(k), key_span, loc.t(d).to_string())
-                })
-                .collect();
-            (section.header, rows)
+            (
+                section.header,
+                resolve_rows(section, command_labels, palette, loc),
+            )
         })
         .collect();
     let label_col = resolved
@@ -733,20 +722,68 @@ fn table_lines(
         if si > 0 {
             lines.push(Line::raw("")); // a breath between the sections
         }
-        if let Some((title, marked)) = header {
-            if *marked {
-                marked_at = Some(lines.len());
-            }
-            lines.push(section_header(title, *marked, palette, loc, width));
-        }
-        for (opens_group, key_span, desc) in rows {
-            if *opens_group {
-                lines.push(Line::raw("")); // a breath between the groups
-            }
-            push_key_entry(&mut lines, key_span, desc, palette, width, indent);
+        if let Some(at) = push_section(&mut lines, *header, rows, palette, loc, width, indent) {
+            marked_at = Some(at);
         }
     }
     (lines, marked_at)
+}
+
+/// One section's rows with their labels already resolved through the locale:
+/// whether the row opens a display group, the label span, the description.
+type ResolvedRows = Vec<(bool, Span<'static>, String)>;
+
+/// The labels and descriptions of one section, resolved through the locale —
+/// the step [`table_lines`] has to finish for the whole tab before it can
+/// measure the shared description column.
+fn resolve_rows(
+    section: &TabSection<'_>,
+    command_labels: bool,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> ResolvedRows {
+    section
+        .rows
+        .iter()
+        .map(|(k, d)| {
+            let key = loc.t(k).to_string();
+            let key_span = if command_labels && key.starts_with('/') {
+                Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+            } else {
+                palette.keycap(key)
+            };
+            (section.openers.contains(k), key_span, loc.t(d).to_string())
+        })
+        .collect()
+}
+
+/// One section onto `lines`: its header (when it has one), then its rows, with
+/// a blank line before every row that opens a display group. Returns the index
+/// of the header row when this is the marked section — the "you are here"
+/// anchor [`table_lines`] hands back.
+fn push_section(
+    lines: &mut Vec<Line<'static>>,
+    header: Option<(&str, bool)>,
+    rows: &ResolvedRows,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+    indent: usize,
+) -> Option<usize> {
+    let mut marked_at = None;
+    if let Some((title, marked)) = header {
+        if marked {
+            marked_at = Some(lines.len());
+        }
+        lines.push(section_header(title, marked, palette, loc, width));
+    }
+    for (opens_group, key_span, desc) in rows {
+        if *opens_group {
+            lines.push(Line::raw("")); // a breath between the groups
+        }
+        push_key_entry(lines, key_span, desc, palette, width, indent);
+    }
+    marked_at
 }
 
 /// A section's header row: the localized title, the "you are here" marker when
