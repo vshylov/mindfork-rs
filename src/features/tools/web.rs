@@ -13,12 +13,20 @@
 //! `403`/`429`, not results. Previously `202` was treated as "success" (`error_for_status`
 //! lets 2xx through) → an empty page got parsed → the model saw "the search returned no
 //! results" (even though the query was valid), and a `403` surfaced as a fatal
-//! "provider unavailable" error. Now throttling is detected ([`is_throttled`]) and on it
-//! the next provider is tried right away (throttling is sticky per-IP — retries only
-//! deepen it; different providers throttle independently, so almost always someone
-//! answers). If **all** are unavailable/throttled — an explicit error is returned (not
-//! "no results"), so the model retries the request later instead of reporting that it
-//! found nothing.
+//! "provider unavailable" error. Now throttling is detected ([`is_throttled`], and
+//! behind a `200` by [`is_challenge_page`]) and on it the next provider is tried right
+//! away (throttling is sticky per-IP — retries only deepen it; different providers
+//! throttle independently, so almost always someone answers). If **all** are
+//! unavailable/throttled — an explicit error is returned (not "no results"), so the
+//! model retries the request later instead of reporting that it found nothing.
+//!
+//! A block is also **remembered** ([`WebSearch::mark_blocked`]) and moves that
+//! provider *family* to the back of the order for [`PROVIDER_COOLDOWN`]. Without
+//! it every call restarted at DuckDuckGo and paid two dead round trips before
+//! reaching a provider that could answer — measured across an agentic turn,
+//! where a model issues several searches in a row
+//! (docs/research/web-search-keyed-providers.md §1.1). A cooling provider is
+//! reordered, never skipped.
 //!
 //! **Content extraction + reranking** (spec §9.3.1, on by default,
 //! disabled via the `fetch_content` argument). After the results page arrives, results
@@ -66,6 +74,20 @@ const MIN_FRAGMENT_CHARS: usize = 40;
 /// How many characters of a result's content go into the embedding during reranking
 /// (enough for a representative start; doesn't bloat the embedder request).
 const RERANK_EMBED_CHARS: usize = 800;
+/// The DuckDuckGo family name — two [`PROVIDERS`] entries share it (see
+/// [`Provider::family`]).
+const DDG: &str = "ddg";
+/// How long a family that answered with a block is moved to the back of the
+/// order (see [`WebSearch::provider_order`]).
+///
+/// A judgement call, not a measurement: what *was* measured (2026-08-25, from a
+/// residential IP, docs/research/web-search-keyed-providers.md §1.1) is that a
+/// block outlives fifteen minutes of complete silence, so no honest value here
+/// "waits out" anything. Five minutes is chosen to span a whole agentic turn —
+/// which is what the reordering is for — while being short enough that a family
+/// which did recover is not stranded for the session. Nothing is ever *skipped*
+/// on account of a cooldown, so an over-long value cannot make the tool blind.
+const PROVIDER_COOLDOWN: Duration = Duration::from_secs(300);
 
 /// HTTP method for the request to the search provider.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,6 +102,14 @@ enum Method {
 struct Provider {
     /// The name for logs/errors.
     name: &'static str,
+    /// Which infrastructure this entry sits on. Throttling is **per-IP and
+    /// per-operator**, not per-URL: `lite.duckduckgo.com` and
+    /// `html.duckduckgo.com` are two markup variants of one search engine and
+    /// share a single throttle (measured — with lite already blocked, html
+    /// answered `202` on its very first request). So the cooldown is keyed by
+    /// family, and a chain of four entries is a chain of **three** independent
+    /// providers.
+    family: &'static str,
     url: &'static str,
     method: Method,
     /// The result-link selector (where `href` comes from).
@@ -101,6 +131,7 @@ struct Provider {
 const PROVIDERS: &[Provider] = &[
     Provider {
         name: "DuckDuckGo lite",
+        family: DDG,
         url: "https://lite.duckduckgo.com/lite/",
         method: Method::PostForm,
         link_sel: "a.result-link",
@@ -109,6 +140,7 @@ const PROVIDERS: &[Provider] = &[
     },
     Provider {
         name: "DuckDuckGo html",
+        family: DDG,
         url: "https://html.duckduckgo.com/html/",
         method: Method::PostForm,
         link_sel: "a.result__a",
@@ -117,6 +149,7 @@ const PROVIDERS: &[Provider] = &[
     },
     Provider {
         name: "Mojeek",
+        family: "mojeek",
         url: "https://www.mojeek.com/search",
         method: Method::GetQuery,
         link_sel: "a.title",
@@ -125,6 +158,7 @@ const PROVIDERS: &[Provider] = &[
     },
     Provider {
         name: "Ecosia",
+        family: "ecosia",
         url: "https://www.ecosia.org/search",
         method: Method::GetQuery,
         // Stable semantic `data-test-id`s (not hashed css classes).
@@ -149,6 +183,14 @@ pub struct WebSearch {
     http: crate::shared::net::GuardedClient,
     /// The default value for the `fetch_content` argument (from `config.tools`).
     fetch_content_default: bool,
+    /// When each provider family was last seen blocking us, for
+    /// [`WebSearch::provider_order`]. The tool outlives the turn — the registry
+    /// is built once and rebuilt only on a settings/MCP change
+    /// (`orchestrator::build_registry`) — so this memory spans the whole
+    /// agentic loop, which is exactly the span that wastes round trips today.
+    /// A plain `Mutex`: it guards a four-entry array, is never held across an
+    /// `await`, and a poisoned lock is not worth failing a search over.
+    cooldown: std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>,
 }
 
 impl Default for WebSearch {
@@ -170,7 +212,51 @@ impl WebSearch {
         Self {
             http,
             fetch_content_default,
+            cooldown: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Records that `family` just answered with a block, so the next search
+    /// starts elsewhere. Keyed by family, not by provider: the two DuckDuckGo
+    /// entries share one throttle (see [`Provider::family`]).
+    fn mark_blocked(&self, family: &'static str) {
+        let Ok(mut seen) = self.cooldown.lock() else {
+            return; // a poisoned lock only costs us the reordering
+        };
+        let now = std::time::Instant::now();
+        match seen.iter_mut().find(|(f, _)| *f == family) {
+            Some((_, at)) => *at = now,
+            None => seen.push((family, now)),
+        }
+    }
+
+    /// The order to try providers in: everything not known to be blocking first
+    /// (in the declared preference order), then the cooling families, oldest
+    /// block first.
+    ///
+    /// A cooling provider is **reordered, never skipped**. Skipping would let a
+    /// stale cooldown return "everything is throttled" without a single request
+    /// having gone out — the tool would be lying about the same thing it exists
+    /// to report honestly, and a family that recovered early would never be
+    /// found to have recovered.
+    fn provider_order(&self) -> Vec<&'static Provider> {
+        let blocked_at = |family: &str| -> Option<std::time::Instant> {
+            let seen = self.cooldown.lock().ok()?;
+            let now = std::time::Instant::now();
+            seen.iter()
+                .find(|(f, _)| *f == family)
+                .map(|(_, at)| *at)
+                .filter(|at| now.duration_since(*at) < PROVIDER_COOLDOWN)
+        };
+        let mut order: Vec<(Option<std::time::Instant>, usize, &'static Provider)> = PROVIDERS
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (blocked_at(p.family), i, p))
+            .collect();
+        // `None` sorts before `Some`, and among the cooling ones the oldest
+        // block (the smallest `Instant`) first; ties keep the declared order.
+        order.sort_by_key(|(at, i, _)| (*at, *i));
+        order.into_iter().map(|(_, _, p)| p).collect()
     }
 
     /// One HTTP request to a provider: `Ok(Some(html))` — a normal page;
@@ -201,7 +287,16 @@ impl WebSearch {
             }
         };
         let resp = req
+            // The same browser-like header set `fetch_content` already sends. A
+            // Chrome `User-Agent` with no `Accept`/`Accept-Language` beside it is
+            // a bot signature in its own right, and this request had exactly
+            // that shape. Hygiene, not a fix: measured, once an IP is blocked a
+            // real Chrome from that IP is blocked too, so headers can only
+            // affect *whether* the block is provoked, never recovery from it
+            // (docs/research/web-search-keyed-providers.md §5, F-3).
             .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .header(reqwest::header::ACCEPT, ACCEPT_HTML)
+            .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
             .send()
             .await
             .with_context(|| loc.tf("tool.web_search.err.request", &[("name", provider.name)]))?;
@@ -299,7 +394,7 @@ impl WebSearch {
         let mut got_clean_page = false;
         let mut last_err: Option<anyhow::Error> = None;
         let mut results = Vec::new();
-        for provider in PROVIDERS {
+        for provider in self.provider_order() {
             match self.fetch(provider, query, loc).await {
                 Ok(Some(html)) => {
                     let r = parse_results(
@@ -318,11 +413,12 @@ impl WebSearch {
                     // does exactly that — measured). The check runs only here, on
                     // an empty parse, so a results page can never be mistaken for
                     // a challenge (a search for "captcha" keeps working).
-                    if is_challenge_page(&html) {
+                    if is_challenge_page(&html, query) {
                         tracing::debug!(
                             provider = provider.name,
                             "web search: anti-bot challenge behind a 200, trying the next provider"
                         );
+                        self.mark_blocked(provider.family);
                     } else {
                         got_clean_page = true;
                     }
@@ -332,6 +428,7 @@ impl WebSearch {
                         provider = provider.name,
                         "web search: throttled, trying the next provider"
                     );
+                    self.mark_blocked(provider.family);
                 }
                 Err(err) => {
                     tracing::warn!(provider = provider.name, error = %err, "web search: provider error");
@@ -774,8 +871,23 @@ fn is_throttled(status: StatusCode, body: &str) -> bool {
     ) || body.contains("anomaly")
 }
 
-/// Phrases an anti-bot interstitial uses. Deliberately whole phrases, not the
-/// word "captcha": this is checked **only on a page that parsed to zero results**
+/// What an anti-bot interstitial calls itself in its `<title>`. Matched as a
+/// **whole title or its leading phrase** (see [`is_challenge_page`]), never as a
+/// substring of the body — which is what makes this list safe to keep short and
+/// generic where the phrase list below could not be.
+const CHALLENGE_TITLES: &[&str] = &[
+    "captcha",
+    "verification required",
+    "attention required",
+    "just a moment",
+    "access denied",
+    "robot check",
+    "security check",
+];
+
+/// Phrases an anti-bot interstitial uses in its **body**. The second signal, for
+/// pages whose title is generic. Deliberately whole phrases, not the word
+/// "captcha": this is checked **only on a page that parsed to zero results**
 /// (see the provider loop), so a genuine result set is never at risk — but the
 /// snippets of a *fruitless* search for anti-bot topics could still be, and a
 /// phrase is far less likely to appear there than a single word.
@@ -788,14 +900,50 @@ const CHALLENGE_MARKERS: &[&str] = &[
 ];
 
 /// `true` if the body looks like an anti-bot interstitial rather than a results
-/// page. Mojeek serves its captcha with **HTTP 200** and no `anomaly` marker
-/// (measured live), so [`is_throttled`] cannot see it, and without this the
-/// blocked provider counted as "answered, found nothing" — which suppressed the
-/// honest "all providers are throttled" error and told the model the web had
-/// nothing to say. See docs/history/fetch-url-fidelity.md §2 (P4).
-fn is_challenge_page(body: &str) -> bool {
+/// page. Mojeek serves its captcha with **HTTP 200** and no `anomaly` marker, so
+/// [`is_throttled`] cannot see it, and without this the blocked provider counts
+/// as "answered, found nothing" — which suppresses the honest "all providers are
+/// throttled" error and tells the model the web has nothing to say. That is the
+/// worst thing this tool can say, and it has now been said twice: the first fix
+/// (docs/history/fetch-url-fidelity.md §2, P4) matched *body phrases*, and
+/// Mojeek's block page has since been rewritten to contain none of them —
+/// measured 2026-08-25, `HTTP 200`, `<title>Captcha</title>`, zero of the five
+/// phrases present (docs/research/web-search-keyed-providers.md §2).
+///
+/// So the primary anchor is now the **title element**, which names what the page
+/// *is* and survives a rewording of its prose. Two guards keep this from firing
+/// on a real result set, on top of the caller only asking on an empty parse:
+///
+/// - a title that **contains the query** is a results page, whatever else it
+///   says — that is how a search engine titles a result set (`captcha - Mojeek
+///   Search`), and it is precisely the fruitless-search-for-anti-bot-topics case
+///   the phrase list was contorted to avoid;
+/// - otherwise the title must **be** a marker or **begin** with one, so a marker
+///   buried in a page's prose cannot reach the classifier at all.
+fn is_challenge_page(body: &str, query: &str) -> bool {
+    let title = page_title(body);
+    let query = collapse_ws(&query.to_lowercase());
+    if !title.is_empty() && !query.is_empty() && title.contains(&query) {
+        return false; // a results page names what was searched for
+    }
+    // `starts_with` rather than equality: Cloudflare's is "Attention Required! |
+    // Cloudflare", and the operator's name is appended to several of these.
+    if CHALLENGE_TITLES.iter().any(|m| title.starts_with(m)) {
+        return true;
+    }
     let lower = body.to_ascii_lowercase();
     CHALLENGE_MARKERS.iter().any(|m| lower.contains(m))
+}
+
+/// The document's `<title>`, lowercased and whitespace-collapsed (empty when
+/// there is none).
+fn page_title(body: &str) -> String {
+    let doc = Html::parse_document(body);
+    let sel = Selector::parse("title").unwrap();
+    doc.select(&sel)
+        .next()
+        .map(|el| collapse_ws(&el.text().collect::<String>()).to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Parses a provider's result set: lists of links (`link_q` → `href`), titles
@@ -1069,14 +1217,123 @@ mod tests {
     fn a_captcha_behind_a_200_is_recognized_as_a_challenge() {
         let mojeek = "<html><body>Captcha Search Web Images News Verification required \
              Please complete the challenge to continue. Waiting for verification.</body></html>";
-        assert!(is_challenge_page(mojeek));
+        assert!(is_challenge_page(mojeek, "rust language"));
         assert!(is_challenge_page(
-            "<p>We detected UNUSUAL TRAFFIC from your network</p>"
+            "<p>We detected UNUSUAL TRAFFIC from your network</p>",
+            "rust language"
         ));
         // A real result set is never a challenge — the check runs only on an
         // empty parse, but it must not be trigger-happy even so.
-        assert!(!is_challenge_page(FIXTURE));
-        assert!(!is_challenge_page(FIXTURE_MOJEEK));
+        assert!(!is_challenge_page(FIXTURE, "rust language"));
+        assert!(!is_challenge_page(FIXTURE_MOJEEK, "rust language"));
+    }
+
+    /// The regression this branch exists for. Mojeek's block page was rewritten
+    /// and now carries **none** of `CHALLENGE_MARKERS` — measured 2026-08-25,
+    /// `HTTP 200`, `<title>Captcha</title>`, and the body says only "Please
+    /// prove you are human". Under the old body-phrase check this parsed to zero
+    /// results, was declared a clean page, and the model was told the web knew
+    /// nothing. See docs/research/web-search-keyed-providers.md §2.
+    #[test]
+    fn a_block_page_is_recognized_by_its_title_alone() {
+        let reworded = "<html><head><title>Captcha</title></head>\
+             <body><h1>Please prove you are human</h1></body></html>";
+        // The premise: the old signal really is absent from this page.
+        let lower = reworded.to_ascii_lowercase();
+        assert!(
+            !CHALLENGE_MARKERS.iter().any(|m| lower.contains(m)),
+            "fixture must not carry a body phrase, or it proves nothing"
+        );
+        assert!(is_challenge_page(reworded, "rust language"));
+        // Cloudflare appends its own name after the phrase.
+        assert!(is_challenge_page(
+            "<title>Attention Required! | Cloudflare</title>",
+            "rust language"
+        ));
+    }
+
+    /// The guard that lets someone search *for* anti-bot topics. A search engine
+    /// titles a result set after the query, so a title containing the query is a
+    /// results page whatever else it says — which is what makes the short,
+    /// generic `CHALLENGE_TITLES` list safe.
+    #[test]
+    fn a_fruitless_search_for_captcha_is_not_a_challenge() {
+        let empty_results = "<html><head><title>captcha bypass - Mojeek Search</title></head>\
+             <body><p>No results found.</p></body></html>";
+        assert!(!is_challenge_page(empty_results, "captcha bypass"));
+        // ...and the same page for an unrelated query *would* read as a block:
+        // that is the trade this check makes, and it errs toward "retry later"
+        // rather than toward "the web knows nothing".
+        assert!(is_challenge_page(empty_results, "rust language"));
+    }
+
+    #[test]
+    fn page_title_is_normalized() {
+        assert_eq!(
+            page_title("<html><head><title>  Just\n a   Moment  </title></head></html>"),
+            "just a moment"
+        );
+        assert_eq!(page_title("<html><body>no title</body></html>"), "");
+    }
+
+    /// With nothing known to be blocking, the order is the declared preference
+    /// order — so a fresh process behaves exactly as before this change.
+    #[test]
+    fn provider_order_is_the_declared_one_when_nothing_is_cooling() {
+        let tool = WebSearch::default();
+        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            PROVIDERS.iter().map(|p| p.name).collect::<Vec<_>>(),
+            "no cooldown recorded must mean no reordering"
+        );
+    }
+
+    /// A block moves the whole **family** back, not just the entry that saw it:
+    /// the two DuckDuckGo hosts share one throttle, so hitting the second after
+    /// the first is the wasted round trip this exists to stop.
+    #[test]
+    fn a_block_moves_the_whole_family_to_the_back() {
+        let tool = WebSearch::default();
+        tool.mark_blocked(DDG);
+        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            vec!["Mojeek", "Ecosia", "DuckDuckGo lite", "DuckDuckGo html"]
+        );
+    }
+
+    /// Every family blocked must still yield every provider: a cooling one is
+    /// reordered, never skipped. Otherwise a stale cooldown would let the tool
+    /// report "everything is throttled" without a request going out.
+    #[test]
+    fn a_cooling_provider_is_reordered_not_skipped() {
+        let tool = WebSearch::default();
+        for family in [DDG, "mojeek", "ecosia"] {
+            tool.mark_blocked(family);
+        }
+        assert_eq!(
+            tool.provider_order().len(),
+            PROVIDERS.len(),
+            "no provider may be dropped from the order"
+        );
+    }
+
+    /// Among cooling families the one blocked longest ago is tried first — it is
+    /// the likeliest to have recovered.
+    #[test]
+    fn the_oldest_block_is_retried_first() {
+        let tool = WebSearch::default();
+        tool.mark_blocked("ecosia");
+        std::thread::sleep(Duration::from_millis(20));
+        tool.mark_blocked(DDG);
+        std::thread::sleep(Duration::from_millis(20));
+        tool.mark_blocked("mojeek");
+        let names: Vec<_> = tool.provider_order().iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            vec!["Ecosia", "DuckDuckGo lite", "DuckDuckGo html", "Mojeek"]
+        );
     }
 
     #[test]

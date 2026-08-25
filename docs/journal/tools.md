@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the change journal followed the chat, not the project (done)
 - Post-M9: the code workspace's loose ends (done)
 - Post-M9: sub-agent chats, PR 2 — the sub-agent with the agent's tools (done)
+- Post-M9: `web_search` said "no results" while it was blocked, again (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2492,3 +2493,95 @@ the probe lives on `spike/code-search-probe`, unmerged.
   `Esc` landing `Cancelled`, an empty `message` refused without a run; the
   three settings-step shapes), 107 `#[ignore]` (+1, the live smoke). The
   settings screenshots were regenerated for the renamed field.
+
+### Post-M9: `web_search` said "no results" while it was blocked, again (done)
+- **The report**: search works "in 50–70 % of calls", and on the rest the model
+  announces that anti-bot measures are cutting it off and goes to the primary
+  sources it already knows. The ask was whether keyed providers would help.
+  Measuring it first turned up two problems wearing one coat, and only the
+  second is about capacity. Full survey, provider comparison and the decided
+  forks: [web-search-keyed-providers.md](../research/web-search-keyed-providers.md).
+- **The defect: the body-phrase captcha check expired.** `is_challenge_page` was
+  added the last time this bit (P4, above) and matched five whole phrases in the
+  body. Measured 2026-08-25 from the reporting machine: **Mojeek's block page now
+  carries none of them** — `HTTP 200`, `<title>Captcha</title>`, body "Please
+  prove you are human". So the page parsed to zero results, was not recognised as
+  a challenge, `got_clean_page` was set, and `no_results_outcome` took the
+  honest-emptiness branch. The app's own live smoke reproduced it exactly:
+  `live_search_returns_results` **panicked with "no results"** rather than taking
+  the throttled path it is written to skip on. Third instance of
+  [lessons §4](../lessons.md)'s recurring class in this one function — a message
+  that closes the wrong door — and the second time on this exact line.
+- **The anchor moved to the `<title>` element.** A title names what a page *is*
+  and survives a rewrite of its prose; `CHALLENGE_TITLES` is therefore allowed to
+  be short and generic (`captcha`, `just a moment`, `attention required`, …)
+  where the phrase list could not be, because two guards stand in front of it:
+  the check still runs **only on an empty parse**, and a title **containing the
+  query** is declared a results page whatever else it says — which is precisely
+  the "somebody searched for captchas and found nothing" case the phrase list was
+  contorted to avoid (`captcha bypass - Mojeek Search` reads as results; the same
+  page under an unrelated query reads as a block, and that trade errs toward
+  "retry later" rather than toward "the web knows nothing"). The body phrases stay
+  as a second signal for generically-titled pages, so this is strictly additive
+  in coverage.
+- **The chain also stopped re-paying dead round trips.** A family that answered
+  with a block is remembered (`mark_blocked`) and moved to the back of the order
+  for `PROVIDER_COOLDOWN`; `provider_order` reorders, it never skips — skipping
+  would let a stale cooldown report "everything is throttled" with no request
+  having gone out, which is the same lie in the opposite direction.
+  `Provider::family` is what the cooldown is keyed by, because **`lite.` and
+  `html.duckduckgo.com` share one per-IP throttle** (measured: with lite already
+  blocked, html answered `202` on its first request) — so the chain of four
+  entries was always a chain of **three** independent providers, and every call
+  restarted at the blocked one. Five minutes is a judgement call, not a
+  measurement, and says so at the constant.
+- **What was measured, and what could not be.** From a residential IP, six
+  back-to-back requests per provider: DDG lite answers ~2 then `202`+`anomaly`,
+  Mojeek ~2 then the `200` captcha, Ecosia `403` at once. **A block outlives
+  fifteen minutes of complete silence** — `web.rs` called throttling
+  "short-lived", and it is not. It is also **not fingerprinting**: with the IP in
+  the penalty box, a real Chrome driving the same pages got the same block
+  (`anomaly` present; `<title>Captcha`). That is why the browser-like headers
+  added to the provider request (`Accept`/`Accept-Language` — `fetch_content`
+  already sent them, `fetch` sent a bare `User-Agent`) are recorded as hygiene
+  with no promises attached. The keyless alternatives were surveyed and are
+  exhausted: Yep `403`, Marginalia a queue interstitial over a tiny index,
+  Startpage and Brave-without-a-key captchas, public SearXNG instances `403` or
+  JSON disabled. **One question this IP could not settle at the time**: with every
+  provider serving a block page, a stale CSS selector and a blocked response are
+  indistinguishable — both parse to zero, so all four selector sets were recorded
+  as unverified rather than assumed good.
+- **Re-measured once the IP partly recovered, and the gap is now mostly closed.**
+  The user re-ran `live_search_returns_results` and it passed — which alone
+  proves only that *someone* answered, so each provider was probed by name:
+  **DuckDuckGo lite and html both served real result sets, 10 links and 10
+  snippets each — their selectors are confirmed, and the earlier zeroes were the
+  block, not rot.** Mojeek (`200` + `<title>Captcha`) and Ecosia (`403`,
+  `<title>Ecosia Firewall`) were still blocking, so those two stay unverified for
+  the same reason as before. The primary provider being sound is what the
+  question was really about.
+- **And it produced a stronger confirmation of this fix than the original run.**
+  Mojeek was still serving `HTTP 200` with `<title>Captcha</title>` and **none**
+  of the five old body markers, while DuckDuckGo beside it answered normally — so
+  the title anchor was shown to *discriminate*, not merely to fire. The first
+  live run could only show it firing when everything was blocked.
+- **Recovery is per-operator, and the spread is hours.** DuckDuckGo came back
+  while Mojeek and Ecosia did not. That is the argument for keying the cooldown
+  by family and for reordering rather than skipping, made by measurement rather
+  than by design intent: a chain that dropped a blocked family would have kept
+  DuckDuckGo out long after it recovered.
+- **Tests**: 2586 green (+7), 107 `#[ignore]`; clippy `-D warnings`, fmt,
+  `cyrillic_scan`, `link_check`, `doc_index_check` clean. **Mutation-tested**:
+  removing the title anchor fails both title tests, removing the
+  title-contains-query guard fails the fruitless-search test, and giving the two
+  DDG entries separate families fails both ordering tests — each exactly its own.
+- **Live run — GO** (network only, no model needed). The criterion was that the
+  conditions which produced "no results" must now produce the honest error, and
+  they do: the same smoke on the same blocked IP now prints *"skip: every search
+  provider is throttling this IP"* where before it panicked on the false
+  negative. The positive arm (a search returning results) could not be re-run —
+  the IP was still blocked from the measurements above.
+- **The keyed providers are the next PR, not this one** (user's decision,
+  2026-08-25): Tavily and Brave, tried before the free chain when a key is
+  present, with the free chain kept as the last fallback and the no-key default.
+  This PR is the defect and needs no key.
