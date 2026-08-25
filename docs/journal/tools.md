@@ -2547,10 +2547,29 @@ the probe lives on `spike/code-search-probe`, unmerged.
   with no promises attached. The keyless alternatives were surveyed and are
   exhausted: Yep `403`, Marginalia a queue interstitial over a tiny index,
   Startpage and Brave-without-a-key captchas, public SearXNG instances `403` or
-  JSON disabled. **One question this IP could not settle**: with every provider
-  serving a block page, a stale CSS selector and a blocked response are
-  indistinguishable — both parse to zero. The four selector sets are therefore
-  unverified against the live sites and must be checked from a clean IP.
+  JSON disabled. **One question this IP could not settle at the time**: with every
+  provider serving a block page, a stale CSS selector and a blocked response are
+  indistinguishable — both parse to zero, so all four selector sets were recorded
+  as unverified rather than assumed good.
+- **Re-measured once the IP partly recovered, and the gap is now mostly closed.**
+  The user re-ran `live_search_returns_results` and it passed — which alone
+  proves only that *someone* answered, so each provider was probed by name:
+  **DuckDuckGo lite and html both served real result sets, 10 links and 10
+  snippets each — their selectors are confirmed, and the earlier zeroes were the
+  block, not rot.** Mojeek (`200` + `<title>Captcha`) and Ecosia (`403`,
+  `<title>Ecosia Firewall`) were still blocking, so those two stay unverified for
+  the same reason as before. The primary provider being sound is what the
+  question was really about.
+- **And it produced a stronger confirmation of this fix than the original run.**
+  Mojeek was still serving `HTTP 200` with `<title>Captcha</title>` and **none**
+  of the five old body markers, while DuckDuckGo beside it answered normally — so
+  the title anchor was shown to *discriminate*, not merely to fire. The first
+  live run could only show it firing when everything was blocked.
+- **Recovery is per-operator, and the spread is hours.** DuckDuckGo came back
+  while Mojeek and Ecosia did not. That is the argument for keying the cooldown
+  by family and for reordering rather than skipping, made by measurement rather
+  than by design intent: a chain that dropped a blocked family would have kept
+  DuckDuckGo out long after it recovered.
 - **Tests**: 2586 green (+7), 107 `#[ignore]`; clippy `-D warnings`, fmt,
   `cyrillic_scan`, `link_check`, `doc_index_check` clean. **Mutation-tested**:
   removing the title anchor fails both title tests, removing the

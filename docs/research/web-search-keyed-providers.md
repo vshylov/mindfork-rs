@@ -46,12 +46,28 @@ every one of the four still blocked** — DDG lite and html `202`, Mojeek the
 `200` captcha, Ecosia `403`, on two different queries. A minute-scale cooldown
 would be too short to be worth having.
 
-**One question this IP could not settle.** With every provider serving a block
-page, there is no way to tell a *stale CSS selector* from a *blocked response* —
-both parse to zero results. `a.result-link`, `a.result__a`, `a.title` and the
-Ecosia `data-test-id` set are therefore **unverified**, and PR1 must check them
-from a clean IP before assuming §2 is the whole story. Recording the gap rather
-than guessing past it.
+**One question this IP could not settle at the time — since narrowed.** With
+every provider serving a block page, there is no way to tell a *stale CSS
+selector* from a *blocked response*: both parse to zero results. Re-measured
+later the same day, once the IP had partly recovered:
+
+| Provider | State | Selectors |
+|---|---|---|
+| DuckDuckGo lite | `200`, a real result set | **confirmed** — 10 links, 10 snippets |
+| DuckDuckGo html | `200`, a real result set | **confirmed** — 10 links, 10 snippets |
+| Mojeek | still `200` + `<title>Captcha</title>` | still unverified |
+| Ecosia | still `403`, `<title>Ecosia Firewall</title>` | still unverified |
+
+So the chain's *primary* provider is sound and the earlier zeroes were the block,
+not rot. Mojeek's and Ecosia's selectors stay unverified for the same reason as
+before, and want a re-check whenever those two are seen answering.
+
+**The recovery is per-operator, and the spread is large.** Hours after the load
+stopped, DuckDuckGo was answering normally while Mojeek and Ecosia were still
+blocking — which is the whole argument for keying the cooldown by *family* and
+for reordering rather than skipping ([§5](#5-free-side-work-that-still-pays),
+F-1/F-2): a chain that dropped a blocked family would have kept DuckDuckGo out
+long after it came back.
 
 Two further conclusions:
 
