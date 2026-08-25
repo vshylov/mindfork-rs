@@ -1047,13 +1047,26 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   are not defects — `tools/e2e_hf.py` stays the gate of record, and a journal
   entry claiming "Smoke — GO" must keep naming the stack it ran on. It is also
   not a shipping artefact: the supported installation paths are unchanged.
-- **Verification**: the `lab` image builds and `mindfork --version` reports
-  0.9.7 inside it, with `libasound.so.2` resolved and a non-empty machine-id;
-  the seeding hook writes the expected `settings.json`/`defaults.json`;
-  `fetch.sh` was exercised on all four paths (fresh, already-complete, resume
-  from a 4.15 GiB partial, and a wrong file name → `HTTP 404` and a non-zero
-  exit that keeps the servers from starting). Live run — TODO. No Rust changed
-  beyond one new test: **2600 unit tests green, 109 `#[ignore]`**;
+- **Verification — the stack was built and run, not just written.** All three
+  services come up healthy; `/props` on the chat server reports
+  `modalities.vision: true`, so the app's image path is live. `fetch.sh` was
+  exercised on four paths (fresh, already-complete, resume from a 4.15 GiB
+  partial, wrong file name → `HTTP 404` and a non-zero exit that keeps the
+  servers from starting). **The TUI was driven on a real pty inside the
+  container** (`ptyprocess`, which the image already carries for terminado):
+  it draws the Russian interface seeded by `LAB_LANG`, the header carries
+  `google_gemma-4-E2B-it-Q8_0` from the seeded `model_name`, the status bar
+  shows **both** server indicators lit — the proof the seed wired chat *and*
+  embeddings — and `Ctrl+Q` exits cleanly. **The protocol smoke group ran from
+  the Windows host against the published ports: 22 passed, 1 failed, 243 s** —
+  streaming, anti-self-termination on EOS text, tool-call parsing, thoughts,
+  the sampling extensions, the typed non-transient 400 on an oversized prompt,
+  and `tool_result_image_is_seen_live` (green background, circle — the
+  projector is wired). The one failure is the predicted class and worth naming:
+  `control_tools_are_callable` — the 2B-effective model simply did not call
+  `rewrite_current_message`. That is the line between the two gates, drawn by
+  the environment itself on its first run. No Rust changed beyond one new test:
+  **2600 unit tests green, 109 `#[ignore]`**;
   `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cyrillic_scan`/`link_check`/`doc_index_check` all clean. No CHANGELOG entry —
   developer infrastructure, no user-visible effect (AGENTS.md §4).

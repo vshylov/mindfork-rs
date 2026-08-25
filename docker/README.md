@@ -69,11 +69,19 @@ $env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"
 cargo test -- --ignored --nocapture --test-threads=1
 ```
 
-**This is not the gate of record.** Several smokes assert on model *behaviour*
-and were calibrated on Gemma 4 31B / Qwen 3.6 27B; a 2B-effective model fails
-some of them for reasons that are not defects. Use it for protocol, streaming,
-tool-call and RAG plumbing, and keep `python tools/e2e_hf.py run` for a verdict
-worth writing "Smoke — GO" about.
+Measured on the first run (2026-08-26), the protocol group
+`cargo test ignored_smoke -- --ignored` gives **22 passed, 1 failed in 243 s**:
+streaming, anti-self-termination on EOS text, tool-call parsing, thoughts, the
+sampling extensions, the typed non-transient 400 on an oversized prompt, and the
+vision path all pass. The failure is `control_tools_are_callable` — the
+2B-effective model did not call `rewrite_current_message`.
+
+**Which is exactly why this is not the gate of record.** Several smokes assert on
+model *behaviour* and were calibrated on Gemma 4 31B / Qwen 3.6 27B; a small
+model fails some of them for reasons that are not defects. Use this for protocol,
+streaming, tool-call and RAG plumbing, and keep `python tools/e2e_hf.py run` for
+a verdict worth writing "Smoke — GO" about. The full `cargo test -- --ignored`
+also runs here, but at CPU speed it is an hours-long affair.
 
 ## 5. Knobs
 
