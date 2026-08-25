@@ -208,6 +208,49 @@ the whole safety argument and needs a comment and a test, not a config flag.
 
 ---
 
+### 4.2 Google, asked again — and measured
+
+"Why not the Google Custom Search JSON API?" is the obvious follow-up, and it
+has two separate answers.
+
+**The API itself is a dead end**, and worse than Brave was: it has been **closed
+to new customers since 2025** — the same wall, a key simply cannot be obtained —
+**and it shuts down 2027-01-01**, four months after this was written. Vertex AI
+Search, which Google points to, is not a replacement: it is semantic search over
+*your own* content, a different product.
+
+**Google is still reachable through a key this machine already has** — Gemini's
+`google_search` grounding — so that was measured rather than argued about
+(2026-08-25, `gemini-2.5-flash`, two queries):
+
+| | Measured |
+|---|---|
+| Sources per query | 8 and 10 |
+| Their URIs | **8/8 and 10/10 are redirects** (`vertexaisearch.cloud.google.com/grounding-api-redirect/…`); none direct |
+| Do the redirects resolve? | **Yes** — 3/3 to real publisher URLs, HTTP 200 |
+| `title` of a source | the **domain** only (`docs.rs`, `medium.com`), not a page title |
+| Snippet per source | **none** — `groundingSupports` maps segments of the *generated answer* to source indices; that is citation mapping, not results |
+| What actually comes back | a **5 003-character written answer**: 1 093 output + 904 thinking tokens for one query |
+
+Three of those break this tool's contract. The result format is
+`N. <title> — <url>`, which would degrade to a list of bare domains. There are no
+snippets, and snippets are what feeds embedding reranking when a page fetch
+fails. And it is **not a search API but a model round trip**: to obtain links,
+one model must first write an essay the assistant never sees.
+
+There is an architectural objection on top. The agentic loop is client-side and
+owns the search ([ADR 0004](../decisions/0004-engine-contract-multi-provider.md));
+routing search through another model injects a second opinion before the
+assistant has seen anything. And the address policy would be checking
+`vertexaisearch.cloud.google.com` rather than the real destination — recoverable
+by resolving the redirect first, but that is a new hop to get right on a path
+whose whole point is that the address which was approved is the address
+connected to.
+
+**Neither is adopted.** If a second *obtainable and testable* provider is ever
+wanted, Serper remains the candidate, with the Google-SERP licensing question
+in §4 still unanswered.
+
 ## 5. Free-side work that still pays
 
 Independent of any key, and each one small:
