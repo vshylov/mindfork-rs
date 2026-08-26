@@ -246,6 +246,14 @@ split by subsystem.
 
 ### Fixed
 
+- **Plugin (MCP) tool switches line up with the rest again.** A tool served by
+  an MCP server carries its full name in the profile's tool list
+  (`mcp__<server>__<tool>`), and one longer than the column pushed its own `[x]`
+  a step to the right — in a list of a dozen such tools the checkboxes came out
+  ragged. The name is now trimmed with `…` at the column instead, so every
+  switch in the section sits on one vertical line; the short tool name still
+  stands beside it, and its full description is in the panel below.
+
 - **The `auto` theme really follows your terminal now.** It always took its role
   colours from the terminal's palette, but two things it could not express that
   way — the shading of code blocks and the backdrop every selected row is drawn

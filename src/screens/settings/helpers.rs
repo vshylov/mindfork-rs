@@ -522,26 +522,29 @@ pub(super) fn label_width(label: &str) -> usize {
 /// The value column's floor: a section made of only short labels doesn't push
 /// values all the way to the left edge (a stable minimum across sections).
 pub(super) const MIN_LABEL_COL: usize = 20;
-/// A cap on a label's involvement in alignment: a longer label doesn't push away
-/// the whole section's value column — its value sits locally right after it
-/// (local overflow). All current labels fit within the cap
-/// (test `all_labels_fit_alignment_cap`) — a safety net for the future.
+/// The ceiling of the value column: a long label may push the column up to here
+/// and no further — beyond it the label itself is clipped ([`render_field_line`])
+/// rather than shifting its own value right. All *static* labels fit within the cap
+/// (test `all_labels_fit_alignment_cap`); the ones that do not are user/server data —
+/// an MCP tool id `mcp__<server>__<tool>` (up to 64 characters) or an env-var name.
 pub(super) const LABEL_CAP: usize = 28;
 
 /// The section's shared value column: the longest label among visible fields,
-/// with a floor [`MIN_LABEL_COL`] and a cap [`LABEL_CAP`]. One column per section
+/// clamped to \[[`MIN_LABEL_COL`], [`LABEL_CAP`]\]. One column per section
 /// (not per group): the values of all groups line up on a shared vertical — a per-group
-/// column "sawtoothed" with different stops from group to group. The subsection
-/// selector is drawn as a tab strip, not a list row — excluded from alignment.
+/// column "sawtoothed" with different stops from group to group. An over-cap label
+/// raises the column *to the cap* (so a clipped label keeps as much of itself as the
+/// cap allows) and no further — the section's remaining width belongs to the values
+/// and their inline hints. The subsection selector is drawn as a tab strip, not a
+/// list row — excluded from alignment.
 pub(super) fn section_label_col(fields: &[FieldRow]) -> usize {
     fields
         .iter()
         .filter(|f| !is_subsection(f.id))
         .map(|f| label_width(&f.label))
-        .filter(|&w| w <= LABEL_CAP)
         .max()
         .unwrap_or(0)
-        .max(MIN_LABEL_COL)
+        .clamp(MIN_LABEL_COL, LABEL_CAP)
 }
 
 /// The bottom hint panel's floor in content rows (the border is extra): a section
@@ -887,7 +890,8 @@ pub(super) fn header_line(
 
 /// A field row: label + value, colored by type (a toggle — green/
 /// muted, a choice — blue, a dash/empty — the border color, text — the base color).
-/// The value is truncated to `value_w` with "…" (fully visible in the bottom panel).
+/// The value is truncated to `value_w` with "…" (fully visible in the bottom panel),
+/// and the label to `label_col` — the value column holds unconditionally.
 pub(super) fn render_field_line(
     f: &FieldRow,
     label_col: usize,
@@ -898,13 +902,20 @@ pub(super) fn render_field_line(
 ) -> Line<'static> {
     let (value, value_style) = field_value_and_style(f, palette);
     let (value, vw) = truncate_to_width(&value, value_w.max(1));
+    // A label wider than the section's column is clipped with "…" instead of
+    // pushing its own value right: such labels are user/server data (an MCP tool id
+    // `mcp__<server>__<tool>`, an env-var name), and one of them was enough to break
+    // the single vertical the shared column exists for (spec §11.6). The full text
+    // stays reachable — the inline hint carries the bare tool name, the bottom panel
+    // the description.
+    let (label, lw) = truncate_to_width(&f.label, label_col);
     // Pad the label with spaces up to the column width by real width in columns
     // (Rust `{:<N}` counts characters, not columns — for CJK/emoji that drifts).
-    let pad = label_col.saturating_sub(label_width(&f.label));
+    let pad = label_col.saturating_sub(lw);
     let marker = row_marker(selected, modified, palette);
     let mut spans = vec![
         marker,
-        Span::styled(f.label.clone(), palette.muted_style()),
+        Span::styled(label, palette.muted_style()),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
     ];

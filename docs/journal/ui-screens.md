@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -61,6 +61,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: help hotkeys by context — stage 1, per-screen sections (done)
 - Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
 - Post-M9: the "Globally" section, and `?` dropped as a help key (done)
+- Post-M9: the value column holds against an MCP tool's name (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2580,3 +2581,47 @@ storage or tool surface is touched.
   does, with the chat context); the dialog's navigation test pins `?` among the
   keys that are consumed and change nothing. A live run is not required
   (AGENTS.md §3) — pure UI.
+### Post-M9: the value column holds against an MCP tool's name (done)
+- **Symptom** (user report, with a screenshot of the "Profiles" section): in the
+  "Plugins (MCP)" group the `[x]` of `mcp__fs__list_directory_with_sizes` and
+  `mcp__fs__list_allowed_directories` stood a step to the right of every other
+  toggle's — the group's checkboxes were ragged where the whole section is
+  otherwise one vertical.
+- **Cause** — the safety net from "settings — a shared value column per section"
+  meeting data it was not written for. `section_label_col` took the longest
+  label **among those ≤ `LABEL_CAP` (28)** and a longer one kept its full width,
+  its value sitting locally right after it. That was sound while every label was
+  a translated string the app itself names, and the gate
+  `all_labels_fit_alignment_cap` keeps it so. An MCP tool's label is neither: it
+  is `mcp__<server>__<tool>`, composed from a server id and a remote tool name,
+  and `mcp_tool_id` allows it up to 64 characters — six of the fs server's
+  fourteen tools cross the cap. The "no such labels exist" premise held only
+  until a server with long tool names was attached.
+- **Fix** (`screens/settings/{helpers,render}.rs`): the cap changed meaning from
+  "a label this long is excluded from the vote" to "the column stops here" —
+  `section_label_col` is now the longest label **clamped** to
+  \[`MIN_LABEL_COL`, `LABEL_CAP`\], and `render_field_line` clips the label to
+  that column with `…` (`truncate_to_width`, the same helper values use). The
+  column therefore holds unconditionally, whatever a server names its tools.
+  `build_field_items` no longer computes `value_w` off "the real end of the
+  label" — there is no local overflow left for it to correct.
+- **Why not the alternatives.** Raising the cap does not close it (the id may be
+  64 wide, and the column would eat the pane); dropping the `mcp__<server>__`
+  prefix from the label would make two servers' identically named tools
+  indistinguishable in the list. Clipping loses the least: the row already
+  carries the bare tool name as its inline hint (`read_multiple_files`), the
+  server's own description is in the panel below, and the id is what the model
+  sees, not what the user types.
+- **Blast radius** — only sections that actually contain an over-cap label move:
+  "Profiles" with an MCP server attached (column 27 → 28), and an MCP server's
+  env-var rows, whose labels are user data as well. Everywhere else the longest
+  label is already ≤ cap, so the clamp returns exactly what the old max did.
+- **Tests** (2616 green, +2): `overlong_label_keeps_the_value_column` — four fs
+  tool ids through `render_field_line`, the toggles at one cell, the clipped
+  ones ending in `…`; `mcp_tool_toggles_share_the_column` — the same at the
+  screen level (an `McpSnapshot` of those tools, the selection walked down into
+  the group, every `[x]`/`[ ]` in the rendered buffer at one **cell** — a byte
+  offset is meaningless with the Cyrillic section menu to the left). Both fail
+  on the pre-fix code (columns 31 vs 37). `section_label_col_has_floor_cap_and_
+  skips_subsection` now expects the outlier to raise the column to the cap.
+  A live run is not required (AGENTS.md §3) — pure UI. Docs: spec §11.6.

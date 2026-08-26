@@ -2443,9 +2443,13 @@ Sections (a left-hand menu with a field count). Within a section, fields are lai
 **semantic groups** (a group header `Group ────`, not navigable); values are
 aligned in **one shared column across the whole section** — sized off the section's
 longest label, with a floor and a cap: every group's values sit on one vertical line,
-and an overly long label doesn't drag the column away (its value sits right after the
-label; current labels stay shorter than the cap — extra context moves into the group
-header). Below the list — a **hint panel**:
+and an overly long label doesn't drag the column away — it raises it to the cap at most
+and is itself clipped with `…` there, so the vertical holds unconditionally. Static
+labels stay shorter than the cap (extra context moves into the group header); the ones
+that reach it are data the app does not name — an MCP tool id `mcp__<server>__<tool>`
+in the profile's tool list, an env-var name in a server's row — where the clipped tail
+is still read out beside the value (the inline hint carries the bare tool name) and in
+the hint panel below. Below the list — a **hint panel**:
 the selected field's full value (paths/URLs, truncated with `…` in the list) + a description hint.
 Its height is that of the **longest hint across the whole catalog** — every section and
 subsection, not just the one on screen (bounded above — an MCP tool's description is

@@ -3041,6 +3041,123 @@ fn selected_field_shows_green_rail() {
 }
 
 #[test]
+fn overlong_label_keeps_the_value_column() {
+    // The regression: an MCP tool id (`mcp__<server>__<tool>`, dynamic and up to
+    // 64 characters) is longer than the value column, and its `[x]` used to sit
+    // right after the label — a step to the right of every other toggle in the
+    // "Plugins (MCP)" group. The label is clipped at the column instead, so the
+    // toggles line up on one vertical whatever the server names its tools.
+    let palette = Palette::default();
+    let toggle = |label: &str| FieldRow {
+        id: FieldId::PTool(0),
+        label: label.into(),
+        kind: FieldKind::Toggle(true),
+        group: "Плагины (MCP)",
+        hint: None,
+        description: None,
+        warn: false,
+        warn_note: None,
+    };
+    let rows = vec![
+        toggle("mcp__fs__read_file"),
+        toggle("mcp__fs__read_multiple_files"),
+        toggle("mcp__fs__list_directory_with_sizes"),
+        toggle("mcp__fs__list_allowed_directories"),
+    ];
+    let label_col = section_label_col(&rows);
+    assert_eq!(label_col, LABEL_CAP, "the column stops at the cap");
+    // The cell the value starts at = marker(2) + label + padding.
+    let value_col = |f: &FieldRow| -> usize {
+        let line = render_field_line(f, label_col, 24, false, false, &palette);
+        let head: String = line.spans[..3]
+            .iter()
+            .map(|sp| sp.content.as_ref())
+            .collect();
+        assert_eq!(line.spans[3].content.as_ref(), "[x]", "the value span");
+        label_width(&head)
+    };
+    let first = value_col(&rows[0]);
+    for f in &rows[1..] {
+        assert_eq!(
+            value_col(f),
+            first,
+            "the toggle of {:?} is off the column",
+            f.label
+        );
+    }
+    // What was clipped ends with "…" — the row does not pretend the id is shorter.
+    let long = render_field_line(&rows[2], label_col, 24, false, false, &palette);
+    assert!(
+        long.spans[1].content.ends_with('…'),
+        "the clipped label is marked: {:?}",
+        long.spans[1].content
+    );
+}
+
+#[test]
+fn mcp_tool_toggles_share_the_column() {
+    use crate::features::tools::meta::{ToolGate, ToolGroup, ToolInfo};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    // The whole screen's view of the same regression: with a server whose tool
+    // names run past the value column, every toggle of the "Profiles" section —
+    // the static ones and the MCP ones alike — still shows its `[x]`/`[ ]` in one
+    // column. Before the fix a long id pushed its own toggle a step right.
+    let mut s = screen();
+    s.config.mcp.enabled = true;
+    let mcp_tool = |name: &'static str| ToolInfo {
+        id: format!("mcp__fs__{name}"),
+        group: ToolGroup::Plugins,
+        label: name,
+        gate: Some(ToolGate::Mcp),
+        enabled_by_default: false,
+        description: Some("A server-provided description".into()),
+    };
+    s.set_mcp(crate::features::tools::mcp::McpSnapshot {
+        tools: vec![
+            mcp_tool("read_file"),
+            mcp_tool("read_multiple_files"),
+            mcp_tool("list_directory_with_sizes"),
+            mcp_tool("list_allowed_directories"),
+        ],
+        servers: Vec::new(),
+    });
+    goto_section(&mut s, Section::Profiles);
+    s.handle_key(key(KeyCode::Enter)); // into the pane
+    let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    // The MCP group sorts last, and it is exactly the rows below the static ones
+    // that this test is about — walk the selection down to them.
+    term.draw(|f| s.render(f)).unwrap();
+    for _ in 0..120 {
+        s.handle_key(key(KeyCode::Down));
+        term.draw(|f| s.render(f)).unwrap();
+    }
+    let buf = term.backend().buffer();
+    let mut columns: Vec<(String, usize)> = Vec::new();
+    for y in 0..buf.area.height {
+        let line: String = (0..buf.area.width)
+            .map(|x| buf[(x, y)].symbol().to_string())
+            .collect();
+        // The column in CELLS, not bytes: the section menu to the left of the
+        // fields pane is Cyrillic, so a byte offset says nothing about the vertical.
+        let cells: Vec<char> = line.chars().collect();
+        if let Some(col) =
+            (0..cells.len().saturating_sub(2)).find(|&i| cells[i] == '[' && cells[i + 2] == ']')
+        {
+            columns.push((line.trim_end().to_string(), col));
+        }
+    }
+    assert!(
+        columns.iter().any(|(l, _)| l.contains("mcp__fs__list_")),
+        "no long MCP row on screen: {columns:#?}"
+    );
+    let (_, first) = &columns[0];
+    for (line, col) in &columns {
+        assert_eq!(col, first, "the toggle is off the column: {line:?}");
+    }
+}
+
+#[test]
 fn section_label_col_has_floor_cap_and_skips_subsection() {
     let text = |s: &str| FieldKind::Text(s.into());
     // Only short labels → the floor MIN_LABEL_COL.
@@ -3052,14 +3169,15 @@ fn section_label_col_has_floor_cap_and_skips_subsection() {
         row(FieldId::PGreeting, "Подпись средней длины!", text("y")),
     ];
     assert_eq!(section_label_col(&medium), 22);
-    // An overlong label (> LABEL_CAP) doesn't push the column…
+    // An overlong label (> LABEL_CAP) pushes the column to the cap and no further
+    // (there it is clipped instead of shifting its own value right)…
     let mut with_outlier = medium;
     with_outlier.push(row(
         FieldId::PSystem,
         &"а".repeat(LABEL_CAP + 12),
         text("z"),
     ));
-    assert_eq!(section_label_col(&with_outlier), 22);
+    assert_eq!(section_label_col(&with_outlier), LABEL_CAP);
     // …and the subsection selector (a tab strip, not a list row) is excluded entirely.
     let with_sub = vec![
         row(FieldId::PName, "Имя", text("x")),
