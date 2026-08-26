@@ -252,11 +252,16 @@ would land a detector that nothing reads. The user's decision on 2026-08-26 was
 explicitly that the keycap fix rides with the implementation rather than
 becoming its own PR.
 
-**Possible follow-up, separate:** `docker/lab` seeds `interface.theme = "light"`
-to work around this bug. Once detection lands, JupyterLab answers `#ffffff` and
-the seed is redundant — `LAB_THEME` can stay as a deliberate override, but the
-workaround framing in `docker/README.md` and install.md §7.3 should be revisited.
-Not in this PR.
+**Folded in rather than deferred:** `docker/lab` seeded `interface.theme =
+"light"` to work around this bug, and documented it at length in
+`docker/.env.example` and `docker/README.md` §5 as "light on purpose, and not a
+workaround" — reasoning that detection makes false. Docs that describe behaviour
+have to change with the behaviour, or `main` briefly contradicts itself, so the
+seed default is now `auto` and the prose says what `auto` does. `LAB_THEME`
+stays as the way to pin a polarity. The seed's guard test moves with it, and
+deliberately so: the start-up hook substitutes the theme by matching its value
+**literally**, so that assertion is what stops the default drifting away from the
+`sed` pattern in silence.
 
 **Closed: tmux answers.** Measured after the plan was written: the unwrapped
 query gets a reply in **0.1–0.3 ms**, carrying the background of the terminal

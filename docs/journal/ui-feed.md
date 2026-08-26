@@ -1998,7 +1998,15 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   syntax highlighting on white. Found while building the containerised
   environment, which worked around it by seeding `interface.theme = "light"`
   (`docker/lab/settings.seed.json`, knob `LAB_THEME`) — a fix for one container
-  and nobody else.
+  and nobody else. **That workaround is removed here**: the seed is `auto`
+  again, and `docker/.env.example` and `docker/README.md` §5 — which argued at
+  length that light was "on purpose, and not a workaround", on reasoning
+  detection falsifies — now describe what `auto` actually does. Docs that
+  explain behaviour have to move with it, or `main` contradicts itself for as
+  long as they lag. The seed's guard test in `config.rs` moved too, and is
+  load-bearing: the start-up hook substitutes the theme by matching its value
+  *literally*, so that assertion is what keeps the default from drifting away
+  from the `sed` pattern unnoticed.
 - **What `Auto` actually was**: documented as "Follow the system setting";
   `Palette::auto()` detected nothing at all. Most of it genuinely adapts — the
   role colours are named ANSI, `text` is `Color::Reset` — but two things were
