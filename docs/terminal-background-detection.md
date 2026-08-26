@@ -41,12 +41,13 @@ Full matrix and method in the research doc §4–§5. The load-bearing results:
 | JupyterLab (xterm.js 4.6.3) | yes | ST | `#ffffff` | 382 ms | 1–34 ms |
 | SSH → container, from WT | yes | ST | `#0c0c0c` | 23 ms | 32 ms |
 | Windows conhost | **no** | — | — | timeout | timeout |
-| tmux 3.4 | **unmeasured** | — | — | — | — |
+| tmux 3.4 (unwrapped) | yes | **BEL** | `#0c0c0c` | 0.3 ms | 0.1 ms |
 
 Four facts from that table drive the whole design:
 
-1. **Every answering host terminates with ST**, though the query used BEL. A
-   BEL-only reader sees an empty matrix.
+1. **The reply's terminator has to be read as either.** Every host but tmux
+   answers with ST though asked with BEL; tmux answers with BEL. Accepting
+   only one of the two loses either tmux or everything else.
 2. **Local hosts answer in 15–31 ms; JupyterLab needs 382 ms cold.** The reply
    round-trips over a websocket to the browser. (Warm repeats were 1–34 ms, and
    the cold figure came from a browser that had just started, so it is a
@@ -81,8 +82,8 @@ reasoning applies here, and the window is shorter.
 
 **tmux passthrough is one-way.** `ESC P tmux; …` carries the query out to the
 outer terminal but the reply returns on tmux's own input and is consumed there.
-So the app should send the query **unwrapped** and let tmux answer for itself if
-it implements OSC 11 — see the open item in §7.
+So the app sends the query **unwrapped** and lets tmux answer for itself — which
+it does, in 0.1–0.3 ms (§7).
 
 ## 4. Design
 
@@ -257,12 +258,17 @@ the seed is redundant — `LAB_THEME` can stay as a deliberate override, but the
 workaround framing in `docker/README.md` and install.md §7.3 should be revisited.
 Not in this PR.
 
-**Open: tmux.** Unmeasured. Wrapped queries got no answer, which is expected
-(§3) and says nothing about tmux itself; the unwrapped measurement has not been
-taken. The design already sends unwrapped, so if tmux answers it simply works,
-and if it does not, tmux users get the dark fallback — which, unlike conhost, is
-*not* guaranteed safe, since a tmux session can be running in a light terminal.
-Worth taking that measurement before or during implementation.
+**Closed: tmux answers.** Measured after the plan was written: the unwrapped
+query gets a reply in **0.1–0.3 ms**, carrying the background of the terminal
+the SSH session was opened from. Wrapped queries stay silent, exactly as §3
+predicted — passthrough is output-only. So the design's decision to never wrap
+is what makes tmux work rather than a limitation it tolerates, and the one
+case where the dark fallback would have been *wrong* (a tmux session inside a
+light terminal) does not arise.
+
+It also corrected the plan: tmux replies with **BEL**, where every other host
+replies with ST. Reading "either terminator" is therefore load-bearing in both
+directions, not defensive coding.
 
 **Risk: raw mode across an error path.** Between emit and harvest the terminal
 is in raw mode; anything that prints and exits in that window (a `Storage::open`

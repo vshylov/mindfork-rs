@@ -153,13 +153,18 @@ with a human at it.
 | VS Code integrated (1.134.0) | **yes** | ST | `#191a1b` (dark) | 31 ms | 16 ms |
 | JupyterLab (xterm.js 4.6.3) | **yes** | ST | `#ffffff` (light) | **382 ms** | 1–34 ms |
 | SSH → container, from Windows Terminal | **yes** | ST | `#0c0c0c` (dark) | 23 ms | 32 ms |
-| Windows conhost (legacy) | **no** | — | — | timeout | timeout |
+| tmux 3.4 over SSH, **unwrapped** | **yes** | **BEL** | `#0c0c0c` (dark) | 0.3 ms | 0.1 ms |
 | tmux 3.4 over SSH, **wrapped** | no | — | — | timeout | timeout |
-| tmux 3.4 over SSH, **unwrapped** | *not yet measured* | | | | |
+| Windows conhost (legacy) | **no** | — | — | timeout | timeout |
 
-**Four of the five terminals answer, and every one of them terminates with ST**
-even though the query used BEL. A BEL-only parser would read the entire matrix
-as silent.
+**Five of the six hosts answer, and conhost is the only one that does not.**
+
+**Both terminators are load-bearing.** Every host except tmux replies with
+**ST**, although the query asks with BEL; tmux replies with **BEL**. A parser
+that accepted only ST would miss tmux, and one that accepted only BEL would miss
+everything else — the reply's terminator has to be read as "either", which is
+not a defensive nicety but the difference between a working matrix and an empty
+one.
 
 **SSH is transparent**, as the protocol implies but nothing had confirmed: the
 reply is the *local* terminal's background (`#0c0c0c`, identical to running the
@@ -200,10 +205,17 @@ being identical is what one would expect if the query reached the outer terminal
 in each case and the reply was swallowed on the way back.
 
 tmux implements OSC 11 in its own emulation, so the measurement that matters is
-the **unwrapped** query, which asks tmux itself. `--wrapping none` exists for
-this and the row is still open. It also decides an implementation detail: if
-tmux answers unwrapped, the app should never wrap, and multiplexers need no
-special case at all.
+the **unwrapped** query, which asks tmux itself — and **it answers**, in
+**0.1–0.3 ms**, reporting `#0c0c0c`: the background of the Windows Terminal the
+SSH session was opened from. Three orders of magnitude faster than any other
+host because nothing round-trips; tmux answers from what it already knows, having
+asked the outer terminal itself.
+
+That settles the implementation detail too: **the app should never wrap.** The
+plain query is answered by every host that answers at all, and wrapping is what
+breaks the one case it was supposed to help. Multiplexers need no special case,
+and the `wrap_passthrough` helper stays in the probe as the instrument that
+demonstrated why.
 
 ### 5.3 The fallback is safe where it fires
 
@@ -213,10 +225,10 @@ dark when nothing answers" is not merely a default there — on the measured
 evidence it is the *right* answer. Detection succeeds on the light terminal
 (JupyterLab) and fails only where the existing assumption already held.
 
-That property does **not** extend to tmux if §5.2 comes back negative: a tmux
-session can be running inside a light terminal, so a silent tmux would be a case
-where the fallback is genuinely wrong rather than merely conservative. One more
-reason the unwrapped measurement is worth taking.
+The worry that tmux might be a second silent host — and an unsafe one, since a
+tmux session can sit inside a *light* terminal — did not survive the
+measurement: tmux answers, and answers with the outer terminal's real
+background. conhost is the only silent host, and it is the safe one.
 
 ## 6. The fork — settled
 
