@@ -128,8 +128,16 @@ LAB_SSH_PUBKEY="ssh-ed25519 AAAAC3... you@host"
 ssh -p 2222 jovyan@127.0.0.1
 ```
 
-`mindfork` and `tmux` are both on `PATH` there. With no key set, no daemon runs
-at all.
+`mindfork` and `tmux` are both on `PATH` there — and so is the rest of the
+container's environment. That is not free: an SSH session does not inherit
+Docker's `ENV`, and the usual fallback (PAM reading `/etc/environment`) needs a
+**root** daemon, which this deliberately is not. Left alone, a session lands on
+the bare system `PATH` — no `conda` (a "command not found" on every login, from
+the base image's own `.bashrc`), no `node`, and no `mcp-server-filesystem`, so
+`mindfork` started over SSH would have a broken plugin host while the same
+binary in the browser terminal works. The hook therefore writes `SetEnv` into
+the config, taking `PATH` and `LANG` from its own environment so they follow the
+image. With no key set, no daemon runs at all.
 
 What it is, precisely: **sshd as uid 1000**, on port 2222, keys only, `jovyan`
 only, published on `127.0.0.1` alone. A session lands exactly where

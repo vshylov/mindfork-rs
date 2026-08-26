@@ -54,11 +54,30 @@ chmod 600 "${HOST_KEY}"
 printf '%s\n' "${PUBKEY}" > "${SSH_DIR}/authorized_keys"
 chmod 600 "${SSH_DIR}/authorized_keys"
 
+# An SSH session does not inherit the container's environment: Docker's `ENV`
+# reaches the image's own command, not a shell sshd spawns, and the usual
+# fallback — PAM reading /etc/environment — needs a **root** daemon, which this
+# deliberately is not. Measured, a session without this lands on the bare
+# system PATH: no `/opt/conda/bin`, so no `conda` (the error that made this
+# visible), no `node`, and no `mcp-server-filesystem` — meaning `mindfork`
+# started over SSH would have a broken plugin host while the same binary in the
+# browser terminal works. `SetEnv` is what fixes it without root, and it covers
+# both a login shell and `ssh host 'command'`.
+#
+# The values are taken from **this hook's own environment**, which is the
+# container's, so they follow the image rather than being pinned here.
+SET_ENV="SetEnv PATH=${PATH}"
+if [ -n "${LANG:-}" ]; then
+    # A terminal app drawing box characters and emoji cares about this one.
+    SET_ENV="${SET_ENV} LANG=${LANG}"
+fi
+
 cat > "${SSH_DIR}/sshd_config" <<CONF
 Port 2222
 HostKey ${HOST_KEY}
 PidFile ${SSH_DIR}/sshd.pid
 AuthorizedKeysFile ${SSH_DIR}/authorized_keys
+${SET_ENV}
 
 # Keys only. There is no password to guess, and none is set for jovyan.
 PasswordAuthentication no

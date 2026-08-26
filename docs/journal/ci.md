@@ -1151,6 +1151,19 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   the outcome on the container log either way — off, listening, or failed —
   because a daemon that quietly did not come up is indistinguishable from a
   wrong port at the client end (docs/lessons.md §3).
+- **An SSH session inherits none of the container's environment**, which is a
+  bigger deal than the `conda: command not found` that exposed it. Docker's
+  `ENV` reaches the image's own command, not a shell sshd spawns, and the usual
+  fallback — PAM reading `/etc/environment` — needs a **root** daemon, which
+  this deliberately is not (measured: with a non-root sshd it is ignored
+  outright). Left alone the session gets the bare system `PATH`: no
+  `/opt/conda/bin`, so no `node` and no `mcp-server-filesystem`, meaning
+  `mindfork` started over SSH would have a broken plugin host while the same
+  binary in the browser terminal works, and `python3` would be the system 3.12
+  rather than the lab's 3.13. Fixed with `SetEnv` in the generated config —
+  which needs no root and covers a login shell *and* `ssh host 'command'`,
+  both verified — taking `PATH` and `LANG` from the hook's own environment so
+  they follow the image instead of being pinned in the file.
 - **Live check**: all four cases run against the built image. No key → no daemon
   and the log says so. Key → `sshd listening on 2222`, and a real `ssh -p 2222
   jovyan@127.0.0.1` lands with `mindfork` and `tmux` on `PATH`. `docker restart`
