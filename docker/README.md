@@ -144,8 +144,13 @@ mounted `~/work` directory:
 To use it: `Ctrl+P` → **Plugins** → turn the master switch on, then enable the
 tools on the profile (the host is double opt-in by design — an MCP server is an
 arbitrary user-privileged program, so a convenience seed is not allowed to be
-what turns it on). Verified in the container: `secure-filesystem-server 0.2.0`,
-protocol `2025-06-18`, 14 tools.
+what turns it on).
+
+Verified in the container — `secure-filesystem-server 0.2.0`, protocol
+`2025-06-18`, 14 tools — and end to end through the app: asked whether any Python
+files were reachable, Gemma 4 E2B-it called `mcp__fs__list_allowed_directories`,
+got back the one allowed directory, chained
+`mcp__fs__search_files(pattern=*.py)` and listed what it found.
 
 Addressed by its binary rather than `npx @modelcontextprotocol/server-filesystem`
 on purpose — `npx` would reach the registry on every launch. For any other

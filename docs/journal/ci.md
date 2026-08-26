@@ -1031,6 +1031,13 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   in the screenshot this was modelled on — pins `jupyterlab ~=3.0` and cannot be
   installed on JupyterLab 4 at all**; `jupyter-resource-usage` is the equivalent
   that can.
+- **A shell-level `HF_TOKEN` beats an empty one in `.env`, and
+  `docker compose config` prints it in full.** Found the hard way: the variable
+  `tools/e2e_hf.py` asks you to export became this stack's token and appeared in
+  a config dump. `fetch.sh` now keeps it out of the process table as well (a
+  0600 header file rather than `-H` on the command line), but a config dump is
+  outside anything the script controls — so `.env.example` warns where the field
+  is, and the token was rotated.
 - **The download needed two curl flags, both found by failing.** A 4.63 GiB
   transfer from the HF CDN died at 4.34 GiB with exit 92, *"stream error in the
   HTTP/2 framing layer"* — so the fetch runs `--http1.1`. And curl's plain
@@ -1052,8 +1059,17 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   registry. Its master switch stays **off**: the host is double opt-in because
   an MCP server is an arbitrary user-privileged program, and a convenience seed
   is not allowed to be what turns it on — the seed gate test asserts exactly
-  that. Verified in the container by running the app's own handshake:
-  `secure-filesystem-server 0.2.0`, protocol `2025-06-18`, 14 tools.
+  that. Verified twice: the raw handshake in the container
+  (`secure-filesystem-server 0.2.0`, protocol `2025-06-18`, 14 tools), and then
+  **end to end through the app on Gemma 4 E2B-it Q8_0** — asked in Russian
+  whether any Python files were reachable, the model called
+  `mcp__fs__list_allowed_directories` (one directory, `/home/jovyan/work` — the
+  scoping holds), chained `mcp__fs__search_files(pattern=*.py)` and listed them.
+  Worth setting against the failed `control_tools_are_callable` smoke below: the
+  same 2B-effective model selects and chains tools reliably when the request
+  names what it wants, and fails the control-tool smoke, whose trigger is
+  implicit. The container gate's blind spot is narrower than "small model, no
+  tools".
 - **What it deliberately does not do.** It does not replace the rented gate:
   several live smokes assert on model *behaviour* and were calibrated on
   31B-class models, and a 2B-effective one fails some of them for reasons that
