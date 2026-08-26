@@ -606,10 +606,10 @@ impl SettingsScreen {
         let loc = self.loc();
         // A single value column across the WHOLE section (`section_label_col`): values
         // and inline hints of all groups line up on one vertical (a per-group column
-        // "sawtoothed" — each group had its own stop). An overlong label
-        // (> LABEL_CAP) doesn't push the column — its value sits locally right
-        // after the label. This is also where we count the group's toggles (on/total) for
-        // the header counter.
+        // "sawtoothed" — each group had its own stop). An overlong label raises the
+        // column no further than `LABEL_CAP` and is clipped there, so a dynamic label
+        // (an MCP tool id) cannot bend the vertical. This is also where we count the
+        // group's toggles (on/total) for the header counter.
         let label_col = section_label_col(fields);
         let group_toggles = group_toggle_counts(fields);
 
@@ -651,10 +651,9 @@ impl SettingsScreen {
                     .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
                     .unwrap_or(false);
             // Width for the value: minus the marker(2)+label+indent and the right margin.
-            // A label longer than the column (> LABEL_CAP) shifts the value right —
-            // we compute the remainder from its real end, so "…" truncation doesn't lie.
-            let start = label_col.max(label_width(&f.label));
-            let value_w = inner_w.saturating_sub(start + 4);
+            // The label never runs past the column — a longer one is clipped there
+            // (`render_field_line`) — so every row's value gets the same width.
+            let value_w = inner_w.saturating_sub(label_col + 4);
             items.push(ListItem::new(render_field_line(
                 f,
                 label_col,

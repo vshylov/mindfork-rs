@@ -1031,8 +1031,9 @@ impl SettingsScreen {
     /// `secret_field_key` keeps resolving it.
     ///
     /// The label is the variable name — user data, so it can be longer than
-    /// `LABEL_CAP`; the value column then just does not grow past the cap, as
-    /// with the server status rows.
+    /// `LABEL_CAP`; the value column then grows to the cap and no further, and
+    /// the name itself is clipped with "…" there (`render_field_line`) so the
+    /// values keep their single vertical.
     fn mcp_env_value_rows(&self, srv: &McpServerConfig) -> Vec<FieldRow> {
         let loc = self.loc();
         srv.env
