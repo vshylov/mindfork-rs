@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (13)
+## Entries (14)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -25,6 +25,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the rewrite probe's flake — two models, two causes (done)
 - Post-M9: a ceiling on every job, and two orphaned workflows (done)
 - Post-M9: a containerised test environment — JupyterLab, the app, a CPU stack (done)
+- Post-M9: SSH into the lab container (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1113,3 +1114,58 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cyrillic_scan`/`link_check`/`doc_index_check` all clean. No CHANGELOG entry —
   developer infrastructure, no user-visible effect (AGENTS.md §4).
+
+### Post-M9: SSH into the lab container (done)
+- **Why**: the environment's terminal is xterm.js in a browser tab — one
+  emulator with one set of habits. Escape-sequence behaviour (background
+  reporting, clipboard, keyboard protocols) differs per host, so checking it
+  needs a terminal that is *not* the browser's, and "plain SSH into a Linux box"
+  is the row that needs a Linux box. Until now that box had to be improvised by
+  hand outside the compose file, and an sshd started that way does not survive
+  `docker restart` — a restart runs the image's CMD, not whatever was launched
+  afterwards, which presents as `Connection closed by 127.0.0.1` on a port
+  nothing is listening on any more.
+- **Shape**: `openssh-server` and `tmux` in the image; a new start-up hook
+  `docker/lab/before-notebook.d/20-sshd` starts the daemon, so it comes back on
+  every restart like the rest of the environment.
+- **Non-root, deliberately.** The base image's hooks run as uid 1000, and an SSH
+  session that lands as `jovyan` is exactly the access `docker exec` already
+  gives — so this adds a **transport, not a privilege**, and needs no root to
+  do it. sshd therefore listens on **2222** (>1024, no capability required) with
+  its config, host key and `authorized_keys` under the notebook user's own
+  directory.
+- **Off unless asked for**: no daemon runs at all unless `LAB_SSH_PUBKEY` (or
+  `LAB_SSH_PUBKEY_FILE`) carries a public key. Keys only — `jovyan` has no
+  password to guess — and compose publishes the port on **`127.0.0.1` alone**,
+  unlike the lab port, because this one accepts logins.
+- **The host key lives on the named volume** (`mindfork/.lab-ssh/`), beside the
+  data root rather than inside it. Otherwise every `docker compose down` would
+  greet the user with REMOTE HOST IDENTIFICATION HAS CHANGED — verified: the key
+  is byte-identical across a container recreate on the same volume.
+- **`StrictModes no`**, with the reason in the config: the base image makes
+  `$HOME` group-writable for the `users` group, and sshd refuses to serve such a
+  home rather than guessing whether it is shared or compromised. One user behind
+  a loopback-only port leaves that check nothing to protect.
+- **The hook never fails the container.** The lab's job is JupyterLab; an sshd
+  that would not start is a degraded extra, not a broken environment. It reports
+  the outcome on the container log either way — off, listening, or failed —
+  because a daemon that quietly did not come up is indistinguishable from a
+  wrong port at the client end (docs/lessons.md §3).
+- **An SSH session inherits none of the container's environment**, which is a
+  bigger deal than the `conda: command not found` that exposed it. Docker's
+  `ENV` reaches the image's own command, not a shell sshd spawns, and the usual
+  fallback — PAM reading `/etc/environment` — needs a **root** daemon, which
+  this deliberately is not (measured: with a non-root sshd it is ignored
+  outright). Left alone the session gets the bare system `PATH`: no
+  `/opt/conda/bin`, so no `node` and no `mcp-server-filesystem`, meaning
+  `mindfork` started over SSH would have a broken plugin host while the same
+  binary in the browser terminal works, and `python3` would be the system 3.12
+  rather than the lab's 3.13. Fixed with `SetEnv` in the generated config —
+  which needs no root and covers a login shell *and* `ssh host 'command'`,
+  both verified — taking `PATH` and `LANG` from the hook's own environment so
+  they follow the image instead of being pinned in the file.
+- **Live check**: all four cases run against the built image. No key → no daemon
+  and the log says so. Key → `sshd listening on 2222`, and a real `ssh -p 2222
+  jovyan@127.0.0.1` lands with `mindfork` and `tmux` on `PATH`. `docker restart`
+  → the daemon is back on its own and the login still works, with the host key
+  unchanged. Container recreated on the same volume → same host key again.

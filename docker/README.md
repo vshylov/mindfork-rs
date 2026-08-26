@@ -101,11 +101,58 @@ The ones that come up most:
   and nothing needs pinning here. The question is asked once at start-up, so
   restart `mindfork` after switching the lab theme. `light`/`dark` pin a
   polarity regardless of what the terminal says.
+- `LAB_SSH_PUBKEY` / `LAB_SSH_PUBKEY_FILE` — a **public** key turns on an sshd
+  inside the container; empty (the default) means none runs. See §6.1.
+- `LAB_SSH_PORT` — host-side port for it, `2222` by default.
 - `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `XAI_API_KEY` —
   passed through to the app, and the seeded settings already name them, so
   switching the engine to a cloud provider in the settings screen just works.
 
 ## 6. Things worth knowing
+
+### 6.1. SSH in, when the browser terminal is not the point
+
+The terminal in JupyterLab is xterm.js: one emulator, with one set of habits.
+Anything terminal-facing behaves differently elsewhere: background-colour
+reporting, clipboard escapes, keyboard protocols. Measuring that needs hosts
+other than the browser's — and one of them is always "plain SSH into a Linux
+box". This is that box, without leaving the compose file.
+
+Put a **public** key in `.env` and bring the lab up:
+
+```bash
+LAB_SSH_PUBKEY="ssh-ed25519 AAAAC3... you@host"
+```
+
+```bash
+ssh -p 2222 jovyan@127.0.0.1
+```
+
+`mindfork` and `tmux` are both on `PATH` there — and so is the rest of the
+container's environment. That is not free: an SSH session does not inherit
+Docker's `ENV`, and the usual fallback (PAM reading `/etc/environment`) needs a
+**root** daemon, which this deliberately is not. Left alone, a session lands on
+the bare system `PATH` — no `conda` (a "command not found" on every login, from
+the base image's own `.bashrc`), no `node`, and no `mcp-server-filesystem`, so
+`mindfork` started over SSH would have a broken plugin host while the same
+binary in the browser terminal works. The hook therefore writes `SetEnv` into
+the config, taking `PATH` and `LANG` from its own environment so they follow the
+image. With no key set, no daemon runs at all.
+
+What it is, precisely: **sshd as uid 1000**, on port 2222, keys only, `jovyan`
+only, published on `127.0.0.1` alone. A session lands exactly where
+`docker exec` already lands, so this adds a transport rather than a privilege —
+which is also why it needs no root and gets none. The host key lives on the data
+volume (`.lab-ssh/`), so recreating the container does not greet you with
+REMOTE HOST IDENTIFICATION HAS CHANGED. `StrictModes` is off because the base
+image makes `$HOME` group-writable and sshd refuses to serve such a home; with a
+single user behind a loopback-only port there is nothing left for that check to
+protect.
+
+It is started by `before-notebook.d/20-sshd`, which reports on the container's
+log either way — a daemon that quietly failed to start looks exactly like a
+wrong port from the outside.
+
 
 - **RAM.** Weights 4.63 GiB + KV cache + the projector ~0.94 GiB + the embedder
   0.6 GiB + JupyterLab: budget ~9–10 GiB for the Docker VM. Below that the chat
