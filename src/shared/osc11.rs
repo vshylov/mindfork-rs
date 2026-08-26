@@ -177,6 +177,49 @@ pub fn classify(rgb: Rgb) -> Background {
     }
 }
 
+/// The longest reply worth accumulating. A real one is under forty bytes; this
+/// only bounds what a confused terminal can make us hold.
+const MAX_REPLY: usize = 128;
+
+/// Reads one OSC reply from `next`, consuming nothing that is not plainly ours.
+///
+/// The first byte must be ESC and the second `]`; anything else stops the read
+/// at once. Type-ahead typed before the UI came up is discarded either way — the
+/// position `features/terminal_input.rs::discard_type_ahead` already takes for
+/// keystrokes with no consumer — but a terminal that simply stays silent must
+/// not cost more than the one byte that proved it.
+///
+/// Taking the byte source as a closure is what keeps this **one** function
+/// rather than one per platform: unix polls a file descriptor and Windows reads
+/// console records, but the state machine over those bytes is identical, and a
+/// second copy of it is a second place for the terminator handling to drift.
+/// It also makes the machine testable without a terminal at all (see the tests).
+fn read_reply(mut next: impl FnMut() -> Option<u8>) -> Option<Rgb> {
+    if next()? != 0x1b {
+        return None;
+    }
+    if next()? != b']' {
+        return None;
+    }
+    let mut body = vec![0x1b, b']'];
+    loop {
+        let b = next()?;
+        body.push(b);
+        match b {
+            0x07 => break, // BEL — tmux answers this way
+            0x1b => {
+                // ST (`ESC \`) — every other measured host answers this way;
+                // one more byte belongs to the terminator.
+                let _ = next();
+                break;
+            }
+            _ if body.len() > MAX_REPLY => return None,
+            _ => {}
+        }
+    }
+    parse_reply(&body)
+}
+
 // ---------------------------------------------------------------------------
 // exchange — the IO half.
 // ---------------------------------------------------------------------------
@@ -264,7 +307,7 @@ impl Pending {
         {
             self.armed = false; // ratatui owns the terminal from here
             let deadline = self.started + BUDGET;
-            let Some(rgb) = unix::read_reply(deadline) else {
+            let Some(rgb) = read_reply(|| unix::read_byte(deadline)) else {
                 // Logged, not silent: a silent terminal and a detection that
                 // never ran look identical from the outside, and telling them
                 // apart is exactly what cost this track a false negative during
@@ -338,40 +381,6 @@ impl Drop for Pending {
 mod unix {
     use std::time::Instant;
 
-    use super::{Rgb, parse_reply};
-
-    /// Reads one OSC reply, consuming nothing that is not plainly ours.
-    ///
-    /// The first byte must be ESC and the second `]`; anything else stops the
-    /// read at once. Type-ahead typed before the UI came up is discarded either
-    /// way — the position `features/terminal_input.rs::discard_type_ahead`
-    /// already takes for keystrokes with no consumer — but a terminal that
-    /// simply stays silent must not cost more than the one byte that proved it.
-    pub(super) fn read_reply(deadline: Instant) -> Option<Rgb> {
-        if read_byte(deadline)? != 0x1b {
-            return None;
-        }
-        if read_byte(deadline)? != b']' {
-            return None;
-        }
-        let mut body = vec![0x1b, b']'];
-        loop {
-            let b = read_byte(deadline)?;
-            body.push(b);
-            match b {
-                0x07 => break, // BEL
-                0x1b => {
-                    // ST — one more byte to swallow
-                    let _ = read_byte(deadline);
-                    break;
-                }
-                _ if body.len() > 128 => return None,
-                _ => {}
-            }
-        }
-        parse_reply(&body)
-    }
-
     /// One byte, waiting no longer than `deadline`.
     ///
     /// An exhausted deadline still *polls*, with a zero timeout: the budget
@@ -381,7 +390,7 @@ mod unix {
     /// a pre-migration backup) can outlast it — at which point the reply is
     /// already sitting in the buffer and returning `None` would throw away an
     /// answer we have.
-    fn read_byte(deadline: Instant) -> Option<u8> {
+    pub(super) fn read_byte(deadline: Instant) -> Option<u8> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let mut pfd = libc::pollfd {
             fd: libc::STDIN_FILENO,
@@ -421,7 +430,7 @@ mod win {
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
-    use super::{Background, QUERY_BG, Rgb, classify, parse_reply, relative_luminance};
+    use super::{Background, QUERY_BG, classify, relative_luminance};
 
     /// The whole exchange: set the console up, ask, read, put it back.
     pub(super) fn exchange(budget: Duration) -> Option<Background> {
@@ -459,7 +468,8 @@ mod win {
         out.write_all(QUERY_BG.as_bytes()).ok()?;
         out.flush().ok()?;
 
-        let Some(rgb) = read_reply(Instant::now() + budget) else {
+        let deadline = Instant::now() + budget;
+        let Some(rgb) = super::read_reply(|| read_byte(deadline)) else {
             tracing::debug!(
                 budget_ms = budget.as_millis(),
                 "terminal background: no reply — falling back to dark"
@@ -476,30 +486,6 @@ mod win {
             "terminal background detected"
         );
         Some(bg)
-    }
-
-    fn read_reply(deadline: Instant) -> Option<Rgb> {
-        if read_byte(deadline)? != 0x1b {
-            return None;
-        }
-        if read_byte(deadline)? != b']' {
-            return None;
-        }
-        let mut body = vec![0x1b, b']'];
-        loop {
-            let b = read_byte(deadline)?;
-            body.push(b);
-            match b {
-                0x07 => break,
-                0x1b => {
-                    let _ = read_byte(deadline);
-                    break;
-                }
-                _ if body.len() > 128 => return None,
-                _ => {}
-            }
-        }
-        parse_reply(&body)
     }
 
     /// One byte of the reply, or `None` at the deadline.
@@ -693,5 +679,88 @@ mod tests {
     #[test]
     fn the_query_is_the_bytes_terminals_were_measured_with() {
         assert_eq!(QUERY_BG.as_bytes(), b"\x1b]11;?\x07");
+    }
+
+    /// Feeds [`read_reply`] a scripted stream and counts what it consumed.
+    fn reader(
+        stream: &'static [u8],
+    ) -> (
+        impl FnMut() -> Option<u8>,
+        std::rc::Rc<std::cell::Cell<usize>>,
+    ) {
+        let taken = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let counter = std::rc::Rc::clone(&taken);
+        let next = move || {
+            let i = counter.get();
+            let b = stream.get(i).copied();
+            if b.is_some() {
+                counter.set(i + 1);
+            }
+            b
+        };
+        (next, taken)
+    }
+
+    #[test]
+    fn reads_a_reply_under_either_terminator() {
+        for stream in [
+            &b"\x1b]11;rgb:1e1e/1e1e/1e1e\x07"[..], // BEL, as tmux answers
+            b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\",    // ST, as every other host does
+        ] {
+            let (next, _) = reader(stream);
+            assert_eq!(
+                read_reply(next),
+                Some(Rgb {
+                    r: 30,
+                    g: 30,
+                    b: 30
+                }),
+                "stream {stream:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_silent_terminal_costs_at_most_the_byte_that_proved_it() {
+        // The safety property. A terminal that does not answer leaves whatever
+        // the user typed in the buffer, and a reader that swallowed it would be
+        // a worse defect than the one this module exists to fix.
+        let (next, taken) = reader(b"");
+        assert_eq!(read_reply(next), None);
+        assert_eq!(taken.get(), 0, "silence must cost nothing");
+
+        let (next, taken) = reader(b"q");
+        assert_eq!(read_reply(next), None);
+        assert_eq!(taken.get(), 1, "one keystroke must cost exactly one byte");
+    }
+
+    #[test]
+    fn a_truncated_or_endless_reply_yields_nothing() {
+        for stream in [
+            &b"\x1b"[..],      // a bare ESC and then silence
+            b"\x1b]11;rgb:11", // never terminated
+            b"\x1bA",          // ESC, then something that is not ours
+        ] {
+            let (next, _) = reader(stream);
+            assert_eq!(read_reply(next), None, "stream {stream:?}");
+        }
+    }
+
+    #[test]
+    fn a_terminal_that_never_stops_talking_is_bounded() {
+        // `MAX_REPLY` is what stops an unterminated flood being accumulated
+        // forever; the stream here is longer than the cap and never terminates.
+        const FLOOD: &[u8] = b"\x1b]11;rgb:0000/0000/0000\
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(FLOOD.len() > MAX_REPLY);
+        let (next, taken) = reader(FLOOD);
+        assert_eq!(read_reply(next), None);
+        assert!(
+            taken.get() <= MAX_REPLY + 2,
+            "read {} bytes, past the cap",
+            taken.get()
+        );
     }
 }

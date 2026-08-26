@@ -2082,7 +2082,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   the only escape hatch — no settings row, because choosing `dark`/`light`
   already is one. The settings screen did gain a **description** for the theme
   field (en/ru), since a one-word choice label cannot say what `auto` follows.
-- **Tests**: 2610 green (+10), 109 `#[ignore]` unchanged. The parser over the
+- **Tests**: 2614 green (+14), 109 `#[ignore]` unchanged. The parser over the
   replies actually recorded from each host plus every allowed component width
   and the `#rrggbb` form; the luminance verdicts; and the palette itself —
   detected-light borrows `light()`'s keycaps and drops `dark`, detected-dark and
@@ -2090,7 +2090,12 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   guard), and detected-light keeps `Color::Cyan`/`Color::Reset` and is
   `assert_ne!` against `Palette::light()`, which pins F1. `code.rs` pins the
   consequence users see: under a detected-light `Auto` the code-block greys are
-  the light ones.
+  the light ones. The reply **reader** is tested too, which it could not be
+  while it existed twice: SonarQube flagged the unix and Windows copies as
+  duplication, and hoisting the state machine into one function over a byte
+  closure is what made it reachable from a test. It now pins both terminators,
+  the byte cap, and the safety property the module turns on — silence costs
+  nothing and a stray keystroke costs exactly one byte.
 - **Two defects the implementation itself turned up**:
   - *The budget bounds waiting, not looking.* `read_byte` used to refuse to poll
     once the deadline had passed — but the budget runs from the moment the query
