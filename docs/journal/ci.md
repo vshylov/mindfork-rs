@@ -1048,6 +1048,20 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   instead of leaving a truncated GGUF that `llama-server` accepts and then dies
   loading. The expected size is re-read from the server on every run rather than
   hardcoded, so changing the quant in `.env` needs no second edit.
+- **The seeded theme is `light`, and that is a finding rather than a
+  preference.** Reported from the live environment: the app looked wrong in the
+  JupyterLab terminal on the default `Auto`. `Palette::auto` (shared/theme.rs)
+  does not detect anything — it keeps the terminal's named ANSI colours, which
+  is the part that adapts, but it also sets `dark: true` and two absolute RGB
+  keycap colours. `dark: true` is what `build_code_theme` reads to pick a *dark*
+  base16 scheme for code blocks. JupyterLab's terminal inherits the light lab
+  theme, so both land dark on white. Seeded `light`, with `LAB_THEME`
+  (`light`/`dark`/`auto`) for a lab switched to dark. The substitution matches
+  the value literally instead of using a `__PLACEHOLDER__`, because `Theme` is a
+  strict enum and a placeholder would make the seed file un-parseable — and the
+  gate test guards it *by parsing it*. (`__LANG__` only survives that treatment
+  because `Lang` has an external-code escape hatch.) Filed separately: `Auto` is
+  documented as "follow the system setting" and does no such thing.
 - **Node is in the image, so the MCP host has something to launch.** Nearly
   every server in the ecosystem is an `npx` one (install.md §4.2), and the base
   image ships none — which would have left a whole documented feature

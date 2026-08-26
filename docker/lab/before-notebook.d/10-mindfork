@@ -37,10 +37,16 @@ if [ ! -f "${DATA_ROOT}/settings.json" ]; then
     chat_model="${LAB_CHAT_MODEL:-google_gemma-4-E2B-it-Q8_0.gguf}"
     chat_model="${chat_model%.gguf}"
 
+    # The theme is substituted by matching its default value rather than a
+    # `__PLACEHOLDER__`: `Theme` is a strict enum, so a placeholder would make the
+    # seed file itself un-parseable — and the unit test that guards this file
+    # works by parsing it. (`__LANG__` gets away with it only because `Lang` has
+    # an external-code escape hatch.)
     sed -e "s|__CHAT_URL__|${LAB_CHAT_URL:-http://chat:8000/v1}|" \
         -e "s|__EMBED_URL__|${LAB_EMBED_URL:-http://embed:8001/v1}|" \
         -e "s|__CHAT_MODEL__|${chat_model}|" \
         -e "s|__LANG__|${LAB_LANG:-ru}|" \
+        -e "s|\"theme\": \"light\"|\"theme\": \"${LAB_THEME:-light}\"|" \
         "${MINDFORK_HOME}/settings.seed.json" > "${DATA_ROOT}/settings.json"
 
     echo "mindfork: seeded ${DATA_ROOT}/settings.json"

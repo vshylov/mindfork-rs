@@ -1983,6 +1983,14 @@ mod tests {
         assert_eq!(fs.id, "fs");
         assert_eq!(fs.args, vec!["/home/jovyan/work".to_string()]);
 
+        // Light, not the `Auto` default: `Palette::auto` is a *dark* theme
+        // (`dark: true` — absolute dark RGB keycaps, a dark base16 code theme),
+        // and JupyterLab's terminal inherits the light lab theme. The container's
+        // start-up hook substitutes this value by matching it literally, so the
+        // seed has to keep a real `Theme` here rather than a placeholder — which
+        // is also what lets this test parse the file at all.
+        assert_eq!(c.interface.theme, Theme::Light);
+
         // Everything the seed does not mention must still be the default.
         assert_eq!(c.max_tool_rounds, AppConfig::default().max_tool_rounds);
     }

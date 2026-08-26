@@ -116,6 +116,7 @@ services:
       LAB_EMBED_URL: http://embed:8001/v1
       LAB_CHAT_MODEL: ${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
       LAB_LANG: ${LAB_LANG:-ru}
+      LAB_THEME: ${LAB_THEME:-light}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
