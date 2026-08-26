@@ -2028,11 +2028,12 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   | JupyterLab (xterm.js 4.6.3) | yes | `#ffffff` | **382 ms** | 1–34 ms |
   | SSH → container, from WT | yes | `#0c0c0c` | 23 ms | 32 ms |
   | Windows conhost | **no** | — | timeout | timeout |
-  | tmux 3.4 | unmeasured | — | — | — |
+  | tmux 3.4 (unwrapped) | yes | `#0c0c0c` | 0.3 ms | 0.1 ms |
 
 - **What the numbers forced, not just what they decided**:
-  - Every answering host terminates with **ST** though asked with BEL — a
-    BEL-only reader would have seen the whole matrix as silent.
+  - **The terminator has to be read as either.** Every host but tmux answers
+    with **ST** though asked with BEL; tmux answers with **BEL**. Taking one and
+    not the other loses either tmux or all five other hosts.
   - JupyterLab's **382 ms cold** (the reply round-trips over a websocket to the
     browser) is why the query is not waited on: it is emitted in `launch_tui`
     before `Storage::open` and collected in `app::runtime::run` after
@@ -2133,7 +2134,13 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   problem up one level rather than solving it. What works is *typing* the command
   in, over Jupyter's terminal websocket, so it runs as an ordinary interactive
   foreground job — which is also how a user runs it.
-- **Still open**: the tmux row. Wrapped queries measure the wrapper, not tmux
-  (passthrough is output-only), and the unwrapped query has not been run. Unlike
-  conhost, a silent tmux would be a case where the dark fallback is *wrong*, since
-  a tmux session can sit in a light terminal. Noted in the roadmap.
+- **tmux, measured last and closing the matrix**: asked *unwrapped*, tmux 3.4
+  answers in **0.1–0.3 ms** with the background of the terminal the SSH session
+  was opened from — three orders of magnitude faster than any other host,
+  because nothing round-trips: it answers from what it already knows, having
+  queried the outer terminal itself. Wrapped queries stay silent with
+  `allow-passthrough` both off and on, exactly as output-only passthrough
+  predicts. So sending the query unwrapped is what *makes* tmux work rather than
+  a limitation tolerated, and the one case where the dark fallback would have
+  been wrong — a tmux session inside a light terminal — does not arise. conhost
+  is the only silent host, and the safe one to be.

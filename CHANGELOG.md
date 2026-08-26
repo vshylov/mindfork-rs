@@ -253,9 +253,9 @@ split by subsystem.
   on the light lab theme, most visibly) that meant dark-tuned syntax colours and
   a dark bar on white wherever something was selected. The app now asks the
   terminal for its background colour at start-up and matches both to it.
-  Terminals that answer include Windows Terminal, VS Code's, JupyterLab's and a
-  plain SSH session; the legacy Windows console does not answer and is treated
-  as dark, which is what it is. Nothing waits on the reply — the question goes
+  Terminals that answer include Windows Terminal, VS Code's, JupyterLab's, a
+  plain SSH session and tmux; the legacy Windows console does not answer and is
+  treated as dark, which is what it is. Nothing waits on the reply — the question goes
   out before the app opens its storage. Set `MINDFORK_TERMINAL_BG` to `dark`,
   `light` or `off` to override it, or just pick `dark`/`light` in settings.
 

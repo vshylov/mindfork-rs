@@ -183,7 +183,8 @@ being recent is dropped, not shortened.
   system setting" and detected nothing, so code blocks and the *selection
   backdrop* (which `keycap_bg` turns out to drive app-wide) were dark on a light
   terminal; now OSC 11 asks the terminal at startup, measured across six hosts —
-  everything but legacy conhost answers, all with ST though asked with BEL, and
+  everything but legacy conhost answers — tmux included, and it alone with BEL
+  where the rest use ST though asked with BEL — and
   JupyterLab takes 382 ms cold, which is why the query is emitted before storage
   opens and collected once the UI is up
   ([docs/terminal-background-detection.md](docs/terminal-background-detection.md),

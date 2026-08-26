@@ -2565,15 +2565,20 @@ app is drawn on. Those follow the background the terminal reports.
 **Asking for it** — OSC 11 (`shared/osc11.rs`, docs/terminal-background-detection.md):
 the app writes `ESC ] 11 ; ? BEL` at start-up and reads back `ESC ] 11 ; rgb:…`,
 classifying by WCAG relative luminance. Measured: Windows Terminal, VS Code,
-JupyterLab and a plain SSH session all answer (and all terminate with **ST**,
-though asked with BEL); **legacy conhost never does**, no console mode changes
-that. A terminal that stays silent falls back to **dark** — which is what the
-one confirmed silent host is, so the fallback is right where it fires rather
-than merely conservative.
+JupyterLab, a plain SSH session and tmux all answer; **legacy conhost never
+does**, and no console mode changes that. A terminal that stays silent falls
+back to **dark** — which is what the one confirmed silent host is, so the
+fallback is right where it fires rather than merely conservative.
 
-The query is sent **unwrapped** even under a multiplexer: tmux/screen
-passthrough is output-only, carrying the query out but not the reply back, so
-wrapping would measure the wrapper. The reply's cost is hidden rather than
+The reply's **terminator is read as either BEL or ST**, and that is
+load-bearing: every host but tmux answers with ST although the query asks with
+BEL, and tmux answers with BEL — accepting one and not the other loses either
+tmux or everything else. The query is also sent **unwrapped** even under a
+multiplexer, which is what makes tmux work rather than a limitation tolerated:
+passthrough is output-only, carrying the query out but not the reply back, so a
+wrapped query measures the wrapper. Asked plainly, tmux answers for itself in
+well under a millisecond, reporting the background of the terminal it is running
+inside. The reply's cost is hidden rather than
 waited on — the query goes out before storage is opened and is collected once
 the UI is up (JupyterLab needs ~380 ms cold, because its reply round-trips to a
 browser). Windows does the exchange in one step before the UI exists, because

@@ -14,17 +14,19 @@
 //!
 //! **What the measurements forced** (research doc §5):
 //!
-//! - Every host that answers terminates its reply with **ST**, although the
-//!   query asks with BEL. A BEL-only reader sees silence everywhere.
+//! - The reply's terminator has to be read as **either**. Every host but tmux
+//!   answers with ST although the query asks with BEL; tmux answers with BEL.
+//!   Accepting one and not the other loses either tmux or everything else.
 //! - Local terminals answer in 15–31 ms, but JupyterLab needs **382 ms cold**
 //!   because the reply round-trips over a websocket to a browser. Hence the
 //!   two-phase unix path: ask early, collect late, and let startup cover it.
 //! - Legacy conhost never answers, and no console mode changes that — so the
 //!   silent case is normal operation, not an error to report.
-//! - The query is sent **unwrapped** even inside tmux. Multiplexer passthrough
-//!   is output-only: it carries the query out but the reply comes back on the
-//!   multiplexer's own input and is consumed there. Wrapping would measure the
-//!   wrapper.
+//! - The query is sent **unwrapped** even inside tmux — and that is what makes
+//!   tmux work, not a limitation tolerated. Multiplexer passthrough is
+//!   output-only: it carries the query out, but the reply returns on the
+//!   multiplexer's own input and is consumed there, so a wrapped query measures
+//!   the wrapper. Asked plainly, tmux answers for itself in 0.1-0.3 ms.
 
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -570,7 +572,10 @@ mod tests {
     /// `--self-test` carries the same corpus, so the two agree by construction.
     #[test]
     fn parses_the_measured_replies() {
-        // Windows Terminal, VS Code, JupyterLab — all ST-terminated.
+        // Windows Terminal, VS Code and JupyterLab answer ST-terminated; tmux
+        // answers BEL-terminated. Both shapes are here because both were
+        // measured, and a reader that took only one would lose either tmux or
+        // every other host.
         let cases: &[(&[u8], Rgb, Background)] = &[
             (
                 b"\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\",
@@ -598,6 +603,17 @@ mod tests {
                     b: 255,
                 },
                 Background::Light,
+            ),
+            // tmux 3.4 over SSH, asked unwrapped — the one host that terminates
+            // with BEL, reporting the background of the terminal it runs inside.
+            (
+                b"\x1b]11;rgb:0c0c/0c0c/0c0c\x07",
+                Rgb {
+                    r: 12,
+                    g: 12,
+                    b: 12,
+                },
+                Background::Dark,
             ),
         ];
         for (raw, expected, verdict) in cases {
