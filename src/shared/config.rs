@@ -1204,7 +1204,14 @@ pub struct NotesSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    /// Follow the system setting (default).
+    /// Follow the **terminal** (default).
+    ///
+    /// Role colors are named ANSI, so their shades are whatever the terminal's
+    /// palette says. The two things that cannot be expressed that way — light
+    /// or dark code-block greys, and the "keycap"/selection backdrop — follow
+    /// the background the terminal reports over OSC 11 at startup
+    /// (`shared/osc11`, spec §11.6). A terminal that does not answer (legacy
+    /// conhost, a pipe) falls back to dark, which is what those hosts are.
     #[default]
     Auto,
     Dark,
@@ -1983,13 +1990,15 @@ mod tests {
         assert_eq!(fs.id, "fs");
         assert_eq!(fs.args, vec!["/home/jovyan/work".to_string()]);
 
-        // Light, not the `Auto` default: `Palette::auto` is a *dark* theme
-        // (`dark: true` — absolute dark RGB keycaps, a dark base16 code theme),
-        // and JupyterLab's terminal inherits the light lab theme. The container's
-        // start-up hook substitutes this value by matching it literally, so the
-        // seed has to keep a real `Theme` here rather than a placeholder — which
-        // is also what lets this test parse the file at all.
-        assert_eq!(c.interface.theme, Theme::Light);
+        // `Auto`, which is also the app's own default: it asks the terminal for
+        // its background at start-up and matches to it, and JupyterLab's terminal
+        // answers — so the container no longer pins a polarity to work around a
+        // theme that could not detect one. The start-up hook substitutes this
+        // value by matching it **literally**, so the seed has to keep a real
+        // `Theme` here rather than a placeholder — which is also what lets this
+        // test parse the file at all, and what makes this assertion load-bearing:
+        // change the value here and the hook stops substituting silently.
+        assert_eq!(c.interface.theme, Theme::Auto);
 
         // Everything the seed does not mention must still be the default.
         assert_eq!(c.max_tool_rounds, AppConfig::default().max_tool_rounds);

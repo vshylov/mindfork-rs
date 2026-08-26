@@ -779,6 +779,23 @@ wheel is a toggle, `Ctrl+W` (off by default, so native text selection works;
 with capture on, text is selected while holding `Shift`).
 Ctrl shortcuts work under any keyboard layout (including Russian).
 
+**Theme and the terminal's background.** The default theme (`auto`) asks the
+terminal for its background colour at start-up — OSC 11 — and matches the code-block
+shading and the selection highlight to the answer. Windows Terminal, VS Code's
+terminal, JupyterLab's and a plain SSH session all answer; the **legacy Windows
+console does not**, and is treated as dark, which is what it is. Nothing waits on
+the reply: the question goes out before the app opens its storage. Override it
+with
+
+```bash
+MINDFORK_TERMINAL_BG=light   # or: dark, off (don't ask at all)
+```
+
+— useful in a container, in a test, or on a terminal that answers wrongly.
+Choosing `dark`/`light` in *Settings → Interface → Theme* does the same thing
+permanently. See spec §11.6 and
+[terminal-background-detection.md](terminal-background-detection.md).
+
 ## 7. Live-model smoke tests
 
 Unit tests don't need a server. Scenarios against a real server are marked

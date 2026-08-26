@@ -101,7 +101,10 @@ build the moment they drift from what the app actually renders
 - **Impersonation** (`Ctrl+U`): the model drafts your next message *for* you —
   streamed as a preview, seeded with whatever you had already typed, editable
   before sending. It can even run on its own server and sampling.
-- Comfortable everywhere else: dark / light / auto **themes**; an interface in
+- Comfortable everywhere else: dark / light / auto **themes** — `auto` asks the
+  terminal for its background colour and matches code blocks and the selection
+  highlight to it (and falls back to dark on a terminal that won't say); an
+  interface in
   **English or Russian**, switchable live and independent of the model's
   language; **layout-independent shortcuts** (Cyrillic, Greek, Hebrew, …);
   mouse-wheel scrolling; and a **compatibility mode** for old terminals

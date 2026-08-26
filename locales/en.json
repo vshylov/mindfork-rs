@@ -1430,6 +1430,12 @@
   "ui.settings.desc.sm_auto_reflect": "Auto-reflection: every N assistant replies the model reviews the conversation in the background on its own and updates the «self-model». 0 — off. Works only in profiles with self-model tools enabled.",
   "ui.settings.desc.sm_auto_consolidate": "Self-model auto-consolidation («sleep»): every N replies the model in the background merges duplicate observations, shrinks an oversized description, and links contradictions. 0 — off. Works only in profiles with self-model tools enabled.",
   "ui.settings.desc.sm_protocol": "Blend a persona-neutral instruction into the system prompt: when to record changes with tools, «the episodic — into observations», «accuracy over sycophancy». Makes tool use predictable regardless of the persona. Works only in profiles with self-model tools enabled.",
+  "ui.settings.desc.theme": [
+    "auto follows your terminal: at start-up it asks for the background colour and",
+    "matches code blocks and the selection highlight to it. Role colours always come",
+    "from the terminal's own palette. A terminal that does not answer (the legacy",
+    "Windows console) is treated as dark. dark and light are fixed and ignore it."
+  ],
   "ui.settings.desc.compat": "Compatibility mode for legacy terminal emulators (conhost Windows 10 etc.): emoji and rare characters are replaced with simple glyphs, borders — straight, the spinner — ASCII, popup background dimming — by color. Enable if you see «tofu» boxes instead of icons.",
   "ui.settings.desc.table_separators": "Horizontal lines between Markdown-table rows in the feed («grid» look). Off — compact look: a separator only under the header.",
   "ui.settings.desc.mermaid": [

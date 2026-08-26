@@ -554,7 +554,15 @@ src/
    ├─ i18n.rs              agent scaffold language (axis A) + UI (axis B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
-   ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light
+   ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light.
+   │                       Auto's polarity-dependent values (the `dark` flag and
+   │                       the keycap/selection backdrop) come from a process-wide
+   │                       OnceLock set once at startup — set_detected_background
+   ├─ osc11.rs             asking the terminal for its background (OSC 11), so Auto
+   │                       can follow it: pure parse/luminance + a two-phase IO half
+   │                       (begin in main.rs before Storage::open, harvest in
+   │                       app/runtime after ratatui::init; Windows does both at
+   │                       once). docs/terminal-background-detection.md
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)

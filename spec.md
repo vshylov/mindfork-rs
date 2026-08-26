@@ -2553,6 +2553,45 @@ of them deliberate actions behind their own keys. Impersonation personas live in
 the config, so their creation/deletion *is* undoable. See
 docs/history/settings-undo.md.
 
+**Theme** (`interface.theme`: `auto` by default, `dark`, `light`). `dark` and
+`light` are fixed palettes and ignore the terminal. **`auto` follows the
+terminal**, in two distinct ways. Its role colours are *named ANSI*, so their
+shades are whatever the terminal's own palette says — that half has always
+adapted. The rest cannot be expressed in named ANSI and needs to know the
+background's polarity: the light/dark greys `build_code_theme` gives every code
+block (§11.4), and the "keycap"/**selection backdrop** every selected row in the
+app is drawn on. Those follow the background the terminal reports.
+
+**Asking for it** — OSC 11 (`shared/osc11.rs`, docs/terminal-background-detection.md):
+the app writes `ESC ] 11 ; ? BEL` at start-up and reads back `ESC ] 11 ; rgb:…`,
+classifying by WCAG relative luminance. Measured: Windows Terminal, VS Code,
+JupyterLab, a plain SSH session and tmux all answer; **legacy conhost never
+does**, and no console mode changes that. A terminal that stays silent falls
+back to **dark** — which is what the one confirmed silent host is, so the
+fallback is right where it fires rather than merely conservative.
+
+The reply's **terminator is read as either BEL or ST**, and that is
+load-bearing: every host but tmux answers with ST although the query asks with
+BEL, and tmux answers with BEL — accepting one and not the other loses either
+tmux or everything else. The query is also sent **unwrapped** even under a
+multiplexer, which is what makes tmux work rather than a limitation tolerated:
+passthrough is output-only, carrying the query out but not the reply back, so a
+wrapped query measures the wrapper. Asked plainly, tmux answers for itself in
+well under a millisecond, reporting the background of the terminal it is running
+inside. The reply's cost is hidden rather than
+waited on — the query goes out before storage is opened and is collected once
+the UI is up (JupyterLab needs ~380 ms cold, because its reply round-trips to a
+browser). Windows does the exchange in one step before the UI exists, because
+the reply only arrives as VT bytes under a console mode `crossterm` neither sets
+nor expects to find. `MINDFORK_TERMINAL_BG=dark|light|off` forces the outcome or
+skips the query — for tests, containers, and a terminal that answers wrongly;
+choosing `dark`/`light` in settings is the user-facing opt-out.
+
+Deliberately, only the polarity-dependent values move: on a light terminal the
+role colours stay named ANSI, because a terminal themed light supplies its own
+legible shades and that adaptivity is what `auto` is for — picking `light` is
+what asks for the tuned light palette instead.
+
 **Legacy-terminal compatibility mode** (`interface.terminal_compat`, off by
 default). Older emulators (Windows 10's conhost, etc.) can't do emoji or some
 Unicode characters — "tofu" squares are drawn instead of icons, and the `DIM`

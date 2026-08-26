@@ -36,6 +36,6 @@
   "interface": {
     "language": "__LANG__",
     "show_model_name": true,
-    "theme": "light"
+    "theme": "auto"
   }
 }

@@ -46,7 +46,7 @@ if [ ! -f "${DATA_ROOT}/settings.json" ]; then
         -e "s|__EMBED_URL__|${LAB_EMBED_URL:-http://embed:8001/v1}|" \
         -e "s|__CHAT_MODEL__|${chat_model}|" \
         -e "s|__LANG__|${LAB_LANG:-ru}|" \
-        -e "s|\"theme\": \"light\"|\"theme\": \"${LAB_THEME:-light}\"|" \
+        -e "s|\"theme\": \"auto\"|\"theme\": \"${LAB_THEME:-auto}\"|" \
         "${MINDFORK_HOME}/settings.seed.json" > "${DATA_ROOT}/settings.json"
 
     echo "mindfork: seeded ${DATA_ROOT}/settings.json"

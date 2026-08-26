@@ -95,11 +95,12 @@ The ones that come up most:
 - `MODELS_DIR` — a bare name is the named volume, a path is a bind mount of a
   host directory of GGUFs you already have.
 - `LAB_LANG` — `ru` or `en`, applied while the data volume is still empty.
-- `LAB_THEME` — `light` (default) / `dark` / `auto`. Light because `auto` is a
-  *dark-leaning* theme in the app, not a detecting one: it keeps the terminal's
-  ANSI palette but sets `dark: true`, which picks absolute dark RGB keycap pills
-  and a dark base16 scheme for code — both wrong on JupyterLab's terminal, which
-  inherits the light lab theme. Switch the lab to dark and `dark` is the match.
+- `LAB_THEME` — `auto` (default) / `light` / `dark`. `auto` asks the terminal
+  for its background at start-up and matches to it, and JupyterLab's terminal
+  answers — so switching the *lab* between its light and dark themes is enough,
+  and nothing needs pinning here. The question is asked once at start-up, so
+  restart `mindfork` after switching the lab theme. `light`/`dark` pin a
+  polarity regardless of what the terminal says.
 - `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `XAI_API_KEY` —
   passed through to the app, and the seeded settings already name them, so
   switching the engine to a cloud provider in the settings screen just works.

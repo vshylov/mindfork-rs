@@ -1318,7 +1318,8 @@ impl SettingsScreen {
                     FieldId::ITheme,
                     loc.t("ui.settings.field.theme"),
                     FieldKind::Choice(theme_label(i.theme, loc)),
-                ),
+                )
+                .describe(loc.t("ui.settings.desc.theme")),
                 row(
                     FieldId::ILanguage,
                     loc.t("ui.settings.field.language"),

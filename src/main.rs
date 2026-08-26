@@ -246,6 +246,16 @@ fn launch_tui(
     apply_env: bool,
     loc: &Locale,
 ) -> anyhow::Result<ExitCode> {
+    // Ask the terminal for its background **first**, and collect the answer
+    // once the UI is up (`app::runtime::run`). JupyterLab needs 382 ms cold for
+    // the reply — it round-trips to a browser — so asking synchronously would
+    // put that on startup; asking here hides the wait behind the tokio runtime,
+    // storage and the orchestrator, all of which have to happen anyway. On
+    // Windows this already *is* the whole exchange (16-31 ms there, and the
+    // console mode it needs must not outlive it). Silence is normal — legacy
+    // conhost never answers. See docs/terminal-background-detection.md.
+    let background_query = crate::shared::osc11::begin();
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -291,7 +301,14 @@ fn launch_tui(
     let bundled_dict_dir = paths.bundled_dictionaries_dir();
     let personal = paths.personal_dictionary();
 
-    let result = app::runtime::run(cmd_tx.clone(), evt_rx, dict_dir, bundled_dict_dir, personal);
+    let result = app::runtime::run(
+        cmd_tx.clone(),
+        evt_rx,
+        dict_dir,
+        bundled_dict_dir,
+        personal,
+        background_query,
+    );
 
     // Stop the orchestrator; it tears down managed servers itself (kill_on_drop when
     // its task ends). Give background tasks a chance to finish.
