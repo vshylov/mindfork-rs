@@ -41,6 +41,11 @@ BEL = "\x07"
 QUERY_BG = f"{ESC}]11;?{BEL}"
 QUERY_FG = f"{ESC}]10;?{BEL}"
 
+# Relative-luminance boundary between a dark and a light background. Kept the
+# same as `shared::osc11::DARK_THRESHOLD` in the app, so the probe and the
+# product cannot disagree about a measured host.
+DARK_THRESHOLD = 0.5
+
 # A multiplexer swallows the query unless it is told to pass it through to the
 # terminal it is itself running in. tmux: `ESC P tmux; <ESC-doubled body> ESC \`.
 # GNU screen: `ESC P <body> ESC \`. Both are why "does tmux need wrapping" is a
@@ -212,12 +217,75 @@ def open_terminal():
 # ---------------------------------------------------------------------------
 
 
+# The longest reply worth accumulating; a real one is under forty bytes.
+MAX_REPLY = 128
+
+
 class Reply:
     def __init__(self):
         self.raw = b""
         self.elapsed_ms = 0.0
         self.status = "no-answer"  # no-answer | ok | foreign-input | truncated
         self.note = ""
+
+
+def _read_prefix(term, deadline: float, reply: Reply) -> bool:
+    """Consumes the two bytes that identify a reply as ours: ESC then `]`.
+
+    Returns whether the body is worth reading. Split out of `read_osc` so the
+    prefix rules — which carry the safety property — read as three plain cases
+    rather than as branches inside a loop.
+    """
+    first = term.read_byte(deadline)
+    if first is None:
+        return False  # silence; `reply` keeps its "no-answer" default
+
+    reply.raw += bytes([first])
+    if first != 0x1B:
+        reply.status = "foreign-input"
+        reply.note = (
+            "first byte was not ESC - the terminal did not answer and "
+            "something else was waiting on stdin"
+        )
+        return False
+
+    second = term.read_byte(deadline)
+    if second is None:
+        reply.status = "truncated"
+        reply.note = "a bare ESC arrived and nothing followed"
+        return False
+
+    reply.raw += bytes([second])
+    if second != 0x5D:  # ']'
+        reply.status = "foreign-input"
+        reply.note = "ESC was not followed by ']' - not an OSC reply"
+        return False
+
+    return True
+
+
+def _read_body(term, deadline: float, reply: Reply) -> None:
+    """Consumes the reply body, up to BEL or ST (`ESC \`)."""
+    while True:
+        b = term.read_byte(deadline)
+        if b is None:
+            reply.status = "truncated"
+            reply.note = "the reply never terminated"
+            return
+        reply.raw += bytes([b])
+        if b == 0x07:  # BEL — how tmux answers
+            reply.status = "ok"
+            return
+        if b == 0x1B:  # ST — how every other measured host answers
+            nxt = term.read_byte(deadline)
+            if nxt is not None:
+                reply.raw += bytes([nxt])
+            reply.status = "ok"
+            return
+        if len(reply.raw) > MAX_REPLY:
+            reply.status = "truncated"
+            reply.note = f"the reply ran past {MAX_REPLY} bytes"
+            return
 
 
 def read_osc(term, deadline: float) -> Reply:
@@ -231,55 +299,8 @@ def read_osc(term, deadline: float) -> Reply:
     """
     reply = Reply()
     started = time.monotonic()
-
-    first = term.read_byte(deadline)
-    if first is None:
-        reply.elapsed_ms = (time.monotonic() - started) * 1000
-        return reply
-
-    reply.raw += bytes([first])
-    if first != 0x1B:
-        reply.status = "foreign-input"
-        reply.note = "first byte was not ESC - the terminal did not answer and something else was waiting on stdin"
-        reply.elapsed_ms = (time.monotonic() - started) * 1000
-        return reply
-
-    second = term.read_byte(deadline)
-    if second is None:
-        reply.status = "truncated"
-        reply.note = "a bare ESC arrived and nothing followed"
-        reply.elapsed_ms = (time.monotonic() - started) * 1000
-        return reply
-
-    reply.raw += bytes([second])
-    if second != 0x5D:  # ']'
-        reply.status = "foreign-input"
-        reply.note = "ESC was not followed by ']' - not an OSC reply"
-        reply.elapsed_ms = (time.monotonic() - started) * 1000
-        return reply
-
-    # Body, to BEL or to ST (`ESC \`).
-    while True:
-        b = term.read_byte(deadline)
-        if b is None:
-            reply.status = "truncated"
-            reply.note = "the reply never terminated"
-            break
-        reply.raw += bytes([b])
-        if b == 0x07:  # BEL
-            reply.status = "ok"
-            break
-        if b == 0x1B:  # possible ST
-            nxt = term.read_byte(deadline)
-            if nxt is not None:
-                reply.raw += bytes([nxt])
-            reply.status = "ok"
-            break
-        if len(reply.raw) > 128:
-            reply.status = "truncated"
-            reply.note = "the reply ran past 128 bytes"
-            break
-
+    if _read_prefix(term, deadline, reply):
+        _read_body(term, deadline, reply)
     reply.elapsed_ms = (time.monotonic() - started) * 1000
     return reply
 
@@ -383,7 +404,7 @@ def probe_once(term, query: str, label: str, timeout_ms: int, mode: str = "auto"
 
 
 def report(reply: Reply, timeout_ms: int) -> list[str]:
-    """Renders one probe result as lines (returned, so `--out` can keep them)."""
+    """Renders one probe result as lines, so the caller decides where they go."""
     lines = [
         f"{reply.label}:",
         f"  passthrough wrapping : {reply.wrapping}",
@@ -399,17 +420,60 @@ def report(reply: Reply, timeout_ms: int) -> list[str]:
     if rgb:
         lum = relative_luminance(rgb)
         luma = simple_luma(rgb)
-        verdict = "DARK" if lum < 0.5 else "LIGHT"
+        verdict = "DARK" if lum < DARK_THRESHOLD else "LIGHT"
         lines.append(f"  parsed rgb           : #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}  {rgb}")
         lines.append(f"  relative luminance   : {lum:.4f}   (WCAG, linearised)")
         lines.append(f"  gamma-space luma     : {luma:.4f}")
-        lines.append(f"  verdict              : {verdict}  (threshold 0.5 on relative luminance)")
+        lines.append(
+            f"  verdict              : {verdict}  "
+            f"(threshold {DARK_THRESHOLD} on relative luminance)"
+        )
     elif reply.status == "ok":
         lines.append("  parsed rgb           : (could not parse - record the raw reply)")
     return lines
 
 
-def main() -> int:
+def collect(term, args) -> list[Reply]:
+    """Runs the queries the arguments ask for, in order."""
+    if args.delay > 0:
+        time.sleep(args.delay / 1000.0)
+
+    replies = []
+    attempts = max(1, args.repeat)
+    for i in range(attempts):
+        suffix = f" - attempt {i + 1}" if attempts > 1 else ""
+        replies.append(
+            probe_once(term, QUERY_BG, f"background (OSC 11){suffix}", args.timeout, args.wrapping)
+        )
+    if args.foreground:
+        replies.append(
+            probe_once(term, QUERY_FG, "foreground (OSC 10)", args.timeout, args.wrapping)
+        )
+    return replies
+
+
+def summary_line(bg: Reply) -> str:
+    """One pasteable line per run, so a matrix row need not be transcribed."""
+    host = os.environ.get("TERM_PROGRAM") or os.environ.get("TERM") or "unknown"
+    summary = (
+        f"RESULT host={host}"
+        f" wrapping={bg.wrapping}"
+        f" status={bg.status}"
+        f" ms={bg.elapsed_ms:.1f}"
+    )
+    rgb = parse_rgb(bg.raw) if bg.status == "ok" else None
+    if rgb is None:
+        return summary
+    lum = relative_luminance(rgb)
+    verdict = "dark" if lum < DARK_THRESHOLD else "light"
+    return (
+        f"{summary} bg=#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+        f" lum={lum:.4f} verdict={verdict}"
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The command line. Split from `main` because it is a table, not logic."""
     parser = argparse.ArgumentParser(
         description="Measure whether this terminal answers an OSC 11 background-colour query."
     )
@@ -447,17 +511,15 @@ def main() -> int:
         "the probe runs at shell start-up, before the emulator has attached.",
     )
     parser.add_argument(
-        "--out",
-        metavar="PATH",
-        help="also write the report to PATH, so a matrix row can be copied rather "
-        "than transcribed off the screen",
-    )
-    parser.add_argument(
         "--self-test",
         action="store_true",
         help="run the parser over recorded replies and exit; needs no terminal",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     if args.self_test:
         return self_test()
@@ -483,44 +545,19 @@ def main() -> int:
             out.append("  This is legacy conhost behaviour: the reply, if any, will not reach")
             out.append("  us as VT bytes. Record this row as 'no VT input', not 'no answer'.")
 
-        if args.delay > 0:
-            time.sleep(args.delay / 1000.0)
-
-        replies = []
-        for i in range(max(1, args.repeat)):
-            label = "background (OSC 11)" + (f" - attempt {i + 1}" if args.repeat > 1 else "")
-            replies.append(probe_once(term, QUERY_BG, label, args.timeout, args.wrapping))
-        if args.foreground:
-            replies.append(probe_once(term, QUERY_FG, "foreground (OSC 10)", args.timeout, args.wrapping))
+        replies = collect(term, args)
 
     for reply in replies:
         out.append("")
         out.extend(report(reply, args.timeout))
 
-    # One pasteable line per run, so a matrix row does not have to be
-    # transcribed by hand out of the block above.
-    bg = replies[0]
-    rgb = parse_rgb(bg.raw) if bg.status == "ok" else None
-    summary = (
-        f"RESULT host={os.environ.get('TERM_PROGRAM') or os.environ.get('TERM') or 'unknown'}"
-        f" wrapping={bg.wrapping}"
-        f" status={bg.status}"
-        f" ms={bg.elapsed_ms:.1f}"
-    )
-    if rgb:
-        lum = relative_luminance(rgb)
-        summary += f" bg=#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x} lum={lum:.4f} verdict={'dark' if lum < 0.5 else 'light'}"
     out.append("")
-    out.append(summary)
+    out.append(summary_line(replies[0]))
 
     # Raw mode is already restored, but a terminal that was in it needs CR as
     # well as LF for the block to come out left-aligned.
     sys.stdout.write("\r\n".join(out) + "\r\n")
     sys.stdout.flush()
-
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(out) + "\n")
 
     return 0
 
@@ -552,7 +589,7 @@ def self_test() -> int:
             print(f"FAIL parse {escape(raw)}: got {rgb}, expected {expected_rgb}")
             failures += 1
             continue
-        verdict = "dark" if relative_luminance(rgb) < 0.5 else "light"
+        verdict = "dark" if relative_luminance(rgb) < DARK_THRESHOLD else "light"
         if verdict != expected_verdict:
             print(f"FAIL verdict {escape(raw)}: got {verdict}, expected {expected_verdict}")
             failures += 1
