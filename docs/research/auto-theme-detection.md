@@ -142,22 +142,52 @@ terminal are indistinguishable to the probe**, and a detection feature will hit
 the same ambiguity whenever the app is started somewhere the reply cannot come
 back from. Any fallback has to be safe, not merely defaulted.
 
-## 5. Measurement — still needed
+## 5. Measurement — the host matrix
 
-`RESULT` lines from `python tools/osc11_probe.py --foreground --repeat 3`:
+`python tools/osc11_probe.py --foreground --repeat 3`, each host a real terminal
+with a human at it.
 
-| Host | Answers? | Terminator | Cold latency | Notes |
-|---|---|---|---|---|
-| JupyterLab (xterm.js 4.6.3) | **yes** | ST | 382 ms | measured, §4 |
-| Windows Terminal | ? | | | |
-| Windows conhost (legacy) | ? | | | expected to refuse `ENABLE_VIRTUAL_TERMINAL_INPUT`; the probe reports that separately from silence |
-| VS Code integrated terminal | ? | | | |
-| plain SSH into Linux | ? | | | |
-| tmux over SSH | ? | | | needs the passthrough wrapping; the probe applies it automatically |
+| Host | Answers? | Terminator | Reported background | Cold latency | Warm |
+|---|---|---|---|---|---|
+| Windows Terminal | **yes** | ST | `#0c0c0c` (dark) | 16 ms | 15–16 ms |
+| VS Code integrated (1.134.0) | **yes** | ST | `#191a1b` (dark) | 31 ms | 16 ms |
+| JupyterLab (xterm.js 4.6.3) | **yes** | ST | `#ffffff` (light) | **382 ms** | 1–34 ms |
+| Windows conhost (legacy) | **no** | — | — | timeout | timeout |
+| plain SSH into Linux | ? | | | | |
+| tmux over SSH | ? | | | | |
 
-These need a human at a real terminal: the console is tier-restricted to
-automation, and a pty with nothing rendering it measures silence, not support
-(§4.1).
+**Three of the four hosts answer, and every one of them terminates with ST**
+even though the query used BEL. A BEL-only parser would read the entire matrix
+as silent.
+
+**conhost is a clean negative, not an artefact.** The probe did not emit its
+"no VT input" warning there, so `ENABLE_VIRTUAL_TERMINAL_INPUT` *was* accepted
+and conhost simply does not implement the report. The distinction matters: there
+is no console-mode trick that would make it answer.
+
+### 5.1 What the numbers imply for a timeout
+
+Local hosts answer in 15–31 ms; JupyterLab needs **382 ms** on the first query
+because the reply round-trips through a websocket to the browser. So a single
+timeout has to be ~400 ms to cover the host that motivated the work — and
+conhost then pays that ~400 ms as dead startup latency on every launch, having
+never intended to answer.
+
+The way out is not a shorter timeout but **not blocking on it**: emit the query
+as the very first thing the process does, get on with loading config, storage
+and profiles, and harvest the reply just before the first palette is built.
+Startup already does more than 400 ms of work, so the wait overlaps with it and
+costs approximately nothing — on conhost included. This is a design constraint
+worth carrying into the design doc, because the naive "query, sleep, read"
+shape fails exactly where it is needed.
+
+### 5.2 The fallback is safe where it fires
+
+The one host that stays silent is a host whose background is dark
+(conhost's default is `#0c0c0c`/black). So "assume dark when nothing answers"
+is not merely a default — on the measured evidence it is the *right* answer for
+the case where it fires. Detection succeeds on the light terminal (JupyterLab)
+and fails only where the existing assumption already held.
 
 ## 6. The fork — open
 
