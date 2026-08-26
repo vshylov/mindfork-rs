@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the indexing banner fits its row, the collapsed pill wraps whole (done)
 - Post-M9: a tool card lists its arguments in the tool's own order (done)
 - Post-M9: a tool call's card opens when the call starts (done)
+- Post-M9: `Theme::Auto` follows the terminal, over OSC 11 (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -1990,3 +1991,149 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Track closed**: the stage-2 plan moved to `docs/history/`, its links
   re-pointed (`link_check.py`), CLAUDE.md's track line and the roadmap
   updated.
+
+### Post-M9: `Theme::Auto` follows the terminal, over OSC 11 (done)
+- **Symptom**: in a JupyterLab terminal on the light lab theme (white
+  background) the **default** theme drew dark "keycap" pills and dark-tuned
+  syntax highlighting on white. Found while building the containerised
+  environment, which worked around it by seeding `interface.theme = "light"`
+  (`docker/lab/settings.seed.json`, knob `LAB_THEME`) — a fix for one container
+  and nobody else.
+- **What `Auto` actually was**: documented as "Follow the system setting";
+  `Palette::auto()` detected nothing at all. Most of it genuinely adapts — the
+  role colours are named ANSI, `text` is `Color::Reset` — but two things were
+  absolute: `dark: true`, and the `keycap_fg`/`keycap_bg`/`keycap_danger` trio,
+  the latter with an in-code comment acknowledging "Auto is already counted as a
+  dark theme".
+- **The wider half, and the reason it hurt**: `dark` has exactly **one** live
+  consumer (`build_code_theme`; the `shot.rs` branch is dead for `Auto` by its
+  own comment). `keycap_bg`, whose doc comment said "hotkey line", turned out to
+  be the **selection backdrop across eight surfaces** — chat list, search,
+  self-model, settings rows and fields, emoji picker, help dialog, chat popups,
+  markdown keycap spans. So on a light terminal it was not dark pills in one
+  line, it was *every selected row rendering as a dark bar on white*. That doc
+  comment is now corrected in place.
+- **It was also a drift from `Auto`'s own design**: the TUI-redesign entry above
+  specifies `Auto` as "named ANSI (adapts to the terminal) + **neutral grays**
+  for structure". `Color::Rgb(36, 39, 45)` is not a neutral grey.
+- **Measured before deciding** (the OSC 52 precedent — the spec said one thing
+  and JupyterLab did another): `tools/osc11_probe.py` writes `ESC ] 11 ; ? BEL`,
+  reads the reply under a deadline, parses every component width X11 allows and
+  reports luminance. Run by hand in each host:
+
+  | Host | Answers? | Background | Cold | Warm |
+  |---|---|---|---|---|
+  | Windows Terminal | yes | `#0c0c0c` | 16 ms | 15–16 ms |
+  | VS Code 1.134.0 | yes | `#191a1b` | 31 ms | 16 ms |
+  | JupyterLab (xterm.js 4.6.3) | yes | `#ffffff` | **382 ms** | 1–34 ms |
+  | SSH → container, from WT | yes | `#0c0c0c` | 23 ms | 32 ms |
+  | Windows conhost | **no** | — | timeout | timeout |
+  | tmux 3.4 | unmeasured | — | — | — |
+
+- **What the numbers forced, not just what they decided**:
+  - Every answering host terminates with **ST** though asked with BEL — a
+    BEL-only reader would have seen the whole matrix as silent.
+  - JupyterLab's **382 ms cold** (the reply round-trips over a websocket to the
+    browser) is why the query is not waited on: it is emitted in `launch_tui`
+    before `Storage::open` and collected in `app::runtime::run` after
+    `ratatui::init()`, so the wait hides behind work that had to happen anyway.
+    A synchronous "ask, sleep, read" would have put that on every startup.
+  - conhost is a **clean negative**: the probe's `ENABLE_VIRTUAL_TERMINAL_INPUT`
+    was accepted there and nothing came back, so no console mode fixes it.
+  - The fallback is **safe where it fires**: the one confirmed silent host has a
+    dark background and cannot be themed light, so "assume dark" is the right
+    answer there, not merely a conservative one.
+- **A false negative caught in the act**: the first JupyterLab run reported
+  `no-answer` on all four queries. Wrong — the pty had been created through the
+  REST API with no browser attached, and the emulator that answers is xterm.js
+  *in the page*. The server log (no `terminals/websocket/N`) is what caught it.
+  Recorded in lessons.md §3, with the tmux passthrough trap beside it.
+- **`shared/osc11.rs`** copies `osc52.rs`'s split — the query is a constant, the
+  reply is parsed from bytes, the verdict is arithmetic, and the caller does the
+  IO — so the corpus of replies recorded above is unit-testable with no
+  terminal. The IO half is platform-split: unix keeps the query in flight behind
+  a `Pending` whose `Drop` restores raw mode if the process dies between the two
+  phases; Windows does the whole exchange up front, because the reply only
+  arrives as VT bytes under `ENABLE_VIRTUAL_TERMINAL_INPUT`, which crossterm
+  neither sets nor expects to find and which must not outlive the query
+  (affordable there: 16–31 ms, and the slow host is not a Windows host).
+  `windows-sys` gained the `Win32_System_Console`/`Win32_System_Threading`
+  features — no new crate.
+- **Threading it in**: a process-wide `OnceLock` in `theme.rs`
+  (`set_detected_background`), read by `Palette::auto()`. Every existing
+  `Palette::for_theme` call site is untouched — `screens/settings/render.rs`
+  calls it *per frame* — and because the value is fixed for the process, the
+  `Hash` that keys the syntect theme cache stays stable. `Palette::auto_with` is
+  the test seam, since a `OnceLock` cannot be set twice in one test binary.
+- **Forks (design plan §5, user's decisions 2026-08-26)**: (F1) only `dark` and
+  the keycap trio follow the background — the role colours stay named ANSI even
+  on a light terminal, so `Auto` keeps adapting and does not collapse into
+  `Light`; wanting the tuned light palette is what picking `Light` is for.
+  (F2) the platform split above. (F3) `MINDFORK_TERMINAL_BG=dark|light|off` as
+  the only escape hatch — no settings row, because choosing `dark`/`light`
+  already is one. The settings screen did gain a **description** for the theme
+  field (en/ru), since a one-word choice label cannot say what `auto` follows.
+- **Tests**: 2610 green (+10), 109 `#[ignore]` unchanged. The parser over the
+  replies actually recorded from each host plus every allowed component width
+  and the `#rrggbb` form; the luminance verdicts; and the palette itself —
+  detected-light borrows `light()`'s keycaps and drops `dark`, detected-dark and
+  *undetected* are byte-identical to the old palette (the fallback regression
+  guard), and detected-light keeps `Color::Cyan`/`Color::Reset` and is
+  `assert_ne!` against `Palette::light()`, which pins F1. `code.rs` pins the
+  consequence users see: under a detected-light `Auto` the code-block greys are
+  the light ones.
+- **Two defects the implementation itself turned up**:
+  - *The budget bounds waiting, not looking.* `read_byte` used to refuse to poll
+    once the deadline had passed — but the budget runs from the moment the query
+    was written, and the work in between (storage, migrations, a pre-migration
+    backup zip) can outlast it. The reply would then be sitting in the buffer
+    and get thrown away. It now always polls, with a zero timeout when the
+    budget is spent.
+  - *A silent outcome cannot be diagnosed.* Only success was logged, so "no
+    reply", "never asked" and "the code did not run" were one indistinguishable
+    outcome in the log — and the first live run hit exactly that wall. It now
+    ends in **one `INFO` line**, `terminal background resolved`, carrying the
+    polarity, whether it was detected, and which of the four sources decided it
+    (the terminal, no answer, forced, or not asked). `INFO` rather than `DEBUG`
+    deliberately: it is a once-per-startup decision that colours the whole UI,
+    taken invisibly, and whose answer depends on which terminal the user happens
+    to be sitting in — the thing a support log should already contain rather
+    than have to ask for.
+- **Live run** (a UI track, so no engine smoke — this is the run that matters).
+  The real binary in a real **light JupyterLab**, in the lab image built from
+  this working tree, driven by *typing* into the browser's terminal:
+
+  ```
+  INFO mindfork::shared::osc11: terminal background resolved
+       background=Light detected=true source="reported by the terminal"
+  INFO mindfork: mindfork exited cleanly
+  ```
+
+  The opposite polarity was **not** obtained in JupyterLab: three attempts to
+  repaint its terminal dark (the lab theme, then the terminal plugin's own
+  `theme` setting, via `overrides.json`) left xterm.js still reporting
+  `#ffffff`, so the run kept re-measuring the light case. That is a limit of the
+  harness rather than a gap in the path — the dark verdict is covered by the
+  bare-pty fallback run below and by unit tests over the backgrounds actually
+  measured from Windows Terminal (`#0c0c0c`) and VS Code (`#191a1b`).
+
+  On Windows, both branches of `resolve` were run against the real binary:
+  `background=Light detected=true source="forced by MINDFORK_TERMINAL_BG"`, and
+  `not a terminal on both ends — not asking` with no override. And on a bare pty
+  with no emulator behind it, the fallback path logged
+  `no reply — falling back to dark budget_ms=500 waited_ms=499`, which is the
+  two-phase timing doing exactly what it was designed to do: the wait had been
+  overlapped with opening storage, and only the remainder was spent.
+- **What the live check cost, and the trap worth keeping**: driving a TUI in a
+  JupyterLab terminal from `.bashrc` does not work, and fails *silently*. A
+  process started during shell initialisation is not in the terminal's
+  foreground process group, so the first `tcsetattr` — raw mode, whether ours or
+  `ratatui`'s — raises `SIGTTOU` and **stops** the process. It looks exactly
+  like a hang: four log lines and nothing more. Wrapping it in `script` moves the
+  problem up one level rather than solving it. What works is *typing* the command
+  in, over Jupyter's terminal websocket, so it runs as an ordinary interactive
+  foreground job — which is also how a user runs it.
+- **Still open**: the tmux row. Wrapped queries measure the wrapper, not tmux
+  (passthrough is output-only), and the unwrapped query has not been run. Unlike
+  conhost, a silent tmux would be a case where the dark fallback is *wrong*, since
+  a tmux session can sit in a light terminal. Noted in the roadmap.

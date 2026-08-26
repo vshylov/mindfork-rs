@@ -585,6 +585,31 @@ instrument for "was this answer good". That needs a judge model, and budgeting
 for one is part of designing the measurement, not a fallback.
 — *the code workspace — stage 5*.
 
+**A negative measurement needs both ends of the channel proven, not just one.**
+**Recorded twice in one track**, from opposite ends. First: the OSC 11 spike's
+JupyterLab run reported *no answer* to all four queries — wrong, because the pty
+had been created through the REST API with no browser attached, and the emulator
+that answers is xterm.js **in the page**; the server log (no
+`terminals/websocket/N`) caught it, and the retry answered in 382 ms. Then, in
+the live check of the finished feature, the app reported not asking at all — the
+harness ran it as `mindfork >/dev/null`, so `stdout` was not a terminal and the
+app correctly declined. Silence, absence and *never having asked* are one
+indistinguishable outcome from the outside. Two things follow: a negative row
+needs independent evidence that the channel was live at both ends, and **the code
+should log the negative case too** — the second incident was diagnosed in one
+run only because a "not a terminal on both ends" line had just been added beside
+the success line.
+— *terminal background detection*.
+
+**Multiplexer passthrough is output-only, so a wrapped query measures the
+wrapper.** Inside tmux, `ESC P tmux; … ESC \` carries a query out to the terminal
+behind tmux, but that terminal's reply arrives on **tmux's** input and is
+consumed there as a terminal report — it never reaches the pane. So "wrapped
+query, no answer" says nothing about whether tmux itself implements the request;
+`allow-passthrough on` changing nothing is the tell that the query was getting
+out fine. Ask the multiplexer unwrapped before concluding it is silent.
+— *terminal background detection*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

@@ -473,6 +473,34 @@ mod tests {
     }
 
     #[test]
+    fn code_highlight_follows_the_detected_background_under_auto() {
+        // The other half of the `Auto` defect: `dark` reaches `build_code_theme`,
+        // so before detection every code block in the feed was dark-tuned even on
+        // a white terminal. Detected light must give the light theme's greys.
+        use crate::shared::osc11::Background;
+        let detected_light = fg_colors(CODE_MD, &Palette::auto_with(Some(Background::Light)));
+        let fallback = fg_colors(CODE_MD, &Palette::auto_with(None));
+        assert_ne!(
+            detected_light, fallback,
+            "Auto's code highlighting must follow the detected background"
+        );
+        // Only the greys move. `build_code_theme` picks them off `palette.dark`
+        // — dark text on light, light text on dark — while the role colors come
+        // from the palette and stay named ANSI under `Auto` (F1 (a)), which is
+        // why this compares the greys rather than the whole colour list.
+        assert!(
+            detected_light.contains(&Color::Rgb(40, 40, 40))
+                && detected_light.contains(&Color::Rgb(110, 110, 110)),
+            "on a light terminal the greys are the ones tuned for light: {detected_light:?}"
+        );
+        assert!(
+            fallback.contains(&Color::Rgb(212, 212, 212))
+                && fallback.contains(&Color::Rgb(128, 128, 128)),
+            "with nothing detected the greys stay the dark ones: {fallback:?}"
+        );
+    }
+
+    #[test]
     fn highlight_code_has_no_fences_and_is_colored() {
         // Helper for tool cards: highlighting with no enclosing ```, with RGB colors.
         let lines = highlight_code("fn main() {}", "rust", &Palette::for_theme(Theme::Dark));

@@ -272,8 +272,14 @@ pub fn run(
     dict_dir: PathBuf,
     bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
+    background_query: Option<crate::shared::osc11::Pending>,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
+    // Collect the terminal's background before the first `Palette` is built —
+    // `Theme::Auto` reads it (spec §11.6). This is also where the raw mode the
+    // query needed stops being ours: `ratatui::init` owns the terminal now and
+    // restores it on exit, so `Pending` hands over rather than reverting.
+    crate::shared::theme::set_detected_background(crate::shared::osc11::resolve(background_query));
     // The terminal window title = the brand name + version (matches the "About"
     // popup's title, `F1`). On Windows this works via the Console API
     // (`SetConsoleTitle` behind crossterm's `SetTitle`). On unix a console

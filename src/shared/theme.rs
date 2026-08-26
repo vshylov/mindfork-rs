@@ -18,12 +18,39 @@
 //! Unicode characters are replaced with safe ones, and rounded borders with
 //! straight ones.
 
+use std::sync::OnceLock;
+
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::shared::config::Theme;
+use crate::shared::osc11::Background;
 use crate::shared::wrap;
+
+/// What the terminal answered when asked for its background at startup
+/// (`shared/osc11`), or `None` when it did not answer or was never asked.
+///
+/// A process-wide `OnceLock` rather than a parameter threaded through
+/// [`Palette::for_theme`]: the value is one immutable fact about the terminal
+/// the process is attached to, and `for_theme` is called from render paths —
+/// `screens/settings/render.rs` calls it **per frame**. Being fixed for the
+/// life of the process also keeps `Palette`'s `Hash` stable, which matters
+/// because it keys the syntect theme cache in `shared/markdown`.
+static DETECTED_BACKGROUND: OnceLock<Option<Background>> = OnceLock::new();
+
+/// Records the detected background. Called once, from startup; later calls are
+/// ignored, so a second one cannot re-theme a running UI.
+pub fn set_detected_background(background: Option<Background>) {
+    let _ = DETECTED_BACKGROUND.set(background);
+}
+
+/// The detected background, or `None` if nothing was detected. Read by
+/// [`Palette::auto`]; before startup has set it, this is `None` — which is the
+/// same answer as "the terminal stayed silent", and yields today's dark `Auto`.
+pub fn detected_background() -> Option<Background> {
+    DETECTED_BACKGROUND.get().copied().flatten()
+}
 
 /// Interface glyph set. [`UNICODE_GLYPHS`] — the redesign look (emoji and
 /// decorative characters, requires a modern terminal/font with fallback:
@@ -201,7 +228,12 @@ pub struct Palette {
     pub border_focus: Color,
     /// "Keycap" text in the hotkey line.
     pub keycap_fg: Color,
-    /// "Keycap" background in the hotkey line.
+    /// "Keycap" background in the hotkey line — **and the selection backdrop
+    /// throughout the app**: the chat list, search, the self-model screen,
+    /// settings rows and fields, the emoji picker, the help dialog's tabs and
+    /// leaders, and chat popups all draw their selected row on it. Changing it
+    /// is never a hotkey-line-only change, which is why it is one of the two
+    /// values `Auto` has to get right per background (see [`Palette::auto`]).
     pub keycap_bg: Color,
     /// Text of a "dangerous" key (e.g. `Del` for delete) on the `keycap_bg`
     /// background. Separate from `error`: the "keycap" is muted and dark, so
@@ -211,8 +243,9 @@ pub struct Palette {
     /// Whether the theme's background is dark. Needed wherever a color must be
     /// given as absolute RGB (no named ANSI that adapts to the terminal) — e.g.
     /// "default" gray and the comment color in code highlighting: light on a
-    /// dark background, dark on a light one. `Auto` counts as dark (a typical
-    /// terminal is dark; that's how it was before themes).
+    /// dark background, dark on a light one. Under `Auto` this follows what the
+    /// terminal reported over OSC 11 ([`Palette::auto`]), falling back to dark
+    /// when nothing answered.
     pub dark: bool,
     /// Old-terminal compatibility mode (`config.interface.terminal_compat`):
     /// glyphs come from [`COMPAT_GLYPHS`] (see [`Palette::glyphs`]), and popup
@@ -234,9 +267,37 @@ impl Palette {
 
     /// "Auto" — named ANSI colors: their shades are set by the terminal
     /// itself, so the palette adapts to the terminal's theme (the pre-redesign
-    /// behavior). Structural colors (borders/muted/keycaps) are neutral ANSI
-    /// grays.
+    /// behavior). Structural colors (borders/muted) are neutral ANSI grays.
+    ///
+    /// The two things that cannot be expressed in named ANSI — the `dark` flag
+    /// and the "keycap" trio — follow the **detected** background
+    /// ([`detected_background`], spec §11.6): the terminal is asked over OSC 11
+    /// at startup, and when it answers, `Auto` borrows whichever of
+    /// [`Palette::dark`]/[`Palette::light`]'s tuned values matches. Nothing
+    /// answered (legacy conhost, a pipe, the query suppressed) → dark, which is
+    /// what those hosts are. See
+    /// [docs/terminal-background-detection.md](../../docs/terminal-background-detection.md).
+    ///
+    /// Deliberately *only* those two: the role colors stay named ANSI even on a
+    /// light background, because a terminal themed light supplies its own
+    /// legible shades and that adaptivity is the whole point of `Auto` (design
+    /// plan §5, F1 — the user's decision, 2026-08-26). Wanting the tuned light
+    /// palette instead is what picking `Light` in settings is for.
     fn auto() -> Self {
+        Self::auto_with(detected_background())
+    }
+
+    /// [`Palette::auto`] for an explicitly given background.
+    ///
+    /// The seam exists for the tests: the detected value lives in a
+    /// process-wide `OnceLock`, which by construction cannot be set to two
+    /// different things in one test binary.
+    pub(crate) fn auto_with(background: Option<Background>) -> Self {
+        let light = background == Some(Background::Light);
+        // Not new colors: the same pair `dark()`/`light()` already carry, so a
+        // detected polarity looks like the theme designed for it rather than
+        // like a third, half-tuned variant.
+        let reference = if light { Self::light() } else { Self::dark() };
         Self {
             user: Color::Cyan,
             assistant: Color::Green,
@@ -252,15 +313,14 @@ impl Palette {
             muted: Color::DarkGray,
             border: Color::DarkGray,
             border_focus: Color::Gray,
-            // "Keycaps" — quiet dark pills (muted text on a background a touch
-            // lighter than a typical dark terminal background), so as not to
-            // draw attention. Named ANSI has no step darker than `DarkGray`,
-            // hence absolute RGB here (Auto is already counted as a dark theme
-            // — the `dark: true` flag).
-            keycap_fg: Color::Rgb(138, 144, 152),
-            keycap_bg: Color::Rgb(36, 39, 45),
-            keycap_danger: Color::Rgb(226, 110, 98),
-            dark: true,
+            // "Keycaps" — quiet pills, and the backdrop every selected row in
+            // the app is drawn on (see the `keycap_bg` field docs). Named ANSI
+            // has no step suitable for either polarity, so these are absolute
+            // RGB, taken from whichever theme matches the detected background.
+            keycap_fg: reference.keycap_fg,
+            keycap_bg: reference.keycap_bg,
+            keycap_danger: reference.keycap_danger,
+            dark: !light,
             compat: false,
         }
     }
@@ -528,11 +588,70 @@ mod tests {
 
     #[test]
     fn dark_flag_follows_theme() {
-        // Auto and Dark count as dark, Light as light (for absolute RGB colors
-        // in code highlighting, which have no adaptable ANSI equivalent).
+        // Dark counts as dark, Light as light (for absolute RGB colors in code
+        // highlighting, which have no adaptable ANSI equivalent). Auto follows
+        // the terminal — nothing is detected in a test binary, so it falls back
+        // to dark, which is what the untested-for hosts are.
         assert!(Palette::for_theme(Theme::Auto).dark);
         assert!(Palette::for_theme(Theme::Dark).dark);
         assert!(!Palette::for_theme(Theme::Light).dark);
+    }
+
+    #[test]
+    fn auto_undetected_is_byte_for_byte_the_old_palette() {
+        // The fallback is the regression guard: on every host that does not
+        // answer (legacy conhost, a pipe, `MINDFORK_TERMINAL_BG=off`) `Auto`
+        // must render exactly as it did before detection existed — dark, with
+        // the dark theme's keycap trio.
+        let auto = Palette::auto_with(None);
+        let dark = Palette::dark();
+        assert!(auto.dark);
+        assert_eq!(auto.keycap_fg, dark.keycap_fg);
+        assert_eq!(auto.keycap_bg, dark.keycap_bg);
+        assert_eq!(auto.keycap_danger, dark.keycap_danger);
+        // …and the roles stay named ANSI, which is the half that always adapted.
+        assert_eq!(auto.user, Color::Cyan);
+        assert_eq!(auto.text, Color::Reset);
+    }
+
+    #[test]
+    fn auto_detected_light_borrows_the_light_keycaps() {
+        // The defect this track exists to fix: on a light terminal every
+        // selected row was a dark bar on white, because `keycap_bg` is the
+        // selection backdrop app-wide.
+        let auto = Palette::auto_with(Some(Background::Light));
+        let light = Palette::light();
+        assert!(!auto.dark, "a light background must not claim to be dark");
+        assert_eq!(auto.keycap_fg, light.keycap_fg);
+        assert_eq!(auto.keycap_bg, light.keycap_bg);
+        assert_eq!(auto.keycap_danger, light.keycap_danger);
+    }
+
+    #[test]
+    fn auto_detected_light_keeps_the_named_ansi_roles() {
+        // F1 (a), the user's decision: only `dark` and the keycap trio follow
+        // the background. The role colors stay named ANSI even on a light
+        // terminal, so `Auto` keeps adapting and stays distinct from `Light`.
+        let auto = Palette::auto_with(Some(Background::Light));
+        assert_eq!(auto.user, Color::Cyan);
+        assert_eq!(auto.assistant, Color::Green);
+        assert_eq!(auto.tool, Color::Yellow);
+        assert_eq!(auto.text, Color::Reset);
+        assert_ne!(
+            auto,
+            Palette::light(),
+            "Auto on a light terminal must not collapse into Light"
+        );
+    }
+
+    #[test]
+    fn auto_detected_dark_is_the_fallback_palette() {
+        // Detecting dark and detecting nothing must agree — otherwise the
+        // fallback would be a third look nobody designed.
+        assert_eq!(
+            Palette::auto_with(Some(Background::Dark)),
+            Palette::auto_with(None)
+        );
     }
 
     #[test]

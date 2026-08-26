@@ -442,6 +442,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [docs/research/layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
 - **Applying a theme from a color configuration** — a user palette layered
   over auto/dark/light.
+- **Does tmux report its background?** — the one unmeasured row of the OSC 11
+  matrix ([docs/terminal-background-detection.md](terminal-background-detection.md)).
+  Wrapped queries prove nothing (passthrough is output-only, so the reply never
+  reaches the pane); the unwrapped query, which asks tmux itself, has not been
+  run. It matters because unlike conhost — the other silent host, and dark by
+  construction — a tmux session can be sitting in a *light* terminal, so the
+  dark fallback would be wrong there rather than merely conservative.
+  `python tools/osc11_probe.py --wrapping none --repeat 3` inside tmux answers it.
 
 ---
 

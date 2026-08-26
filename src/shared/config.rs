@@ -1204,7 +1204,14 @@ pub struct NotesSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    /// Follow the system setting (default).
+    /// Follow the **terminal** (default).
+    ///
+    /// Role colors are named ANSI, so their shades are whatever the terminal's
+    /// palette says. The two things that cannot be expressed that way — light
+    /// or dark code-block greys, and the "keycap"/selection backdrop — follow
+    /// the background the terminal reports over OSC 11 at startup
+    /// (`shared/osc11`, spec §11.6). A terminal that does not answer (legacy
+    /// conhost, a pipe) falls back to dark, which is what those hosts are.
     #[default]
     Auto,
     Dark,

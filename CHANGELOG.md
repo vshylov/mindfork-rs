@@ -246,6 +246,19 @@ split by subsystem.
 
 ### Fixed
 
+- **The `auto` theme really follows your terminal now.** It always took its role
+  colours from the terminal's palette, but two things it could not express that
+  way — the shading of code blocks and the backdrop every selected row is drawn
+  on — were fixed to dark regardless. On a light terminal (a JupyterLab terminal
+  on the light lab theme, most visibly) that meant dark-tuned syntax colours and
+  a dark bar on white wherever something was selected. The app now asks the
+  terminal for its background colour at start-up and matches both to it.
+  Terminals that answer include Windows Terminal, VS Code's, JupyterLab's and a
+  plain SSH session; the legacy Windows console does not answer and is treated
+  as dark, which is what it is. Nothing waits on the reply — the question goes
+  out before the app opens its storage. Set `MINDFORK_TERMINAL_BG` to `dark`,
+  `light` or `off` to override it, or just pick `dark`/`light` in settings.
+
 - **Web search said "no results" when it had actually been blocked.** Search
   engines cut off traffic that looks automated, and one of them now serves that
   block as an ordinary-looking page — which the app read as "the web has nothing
