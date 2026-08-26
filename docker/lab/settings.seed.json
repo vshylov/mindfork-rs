@@ -1,0 +1,41 @@
+{
+  "engine": {
+    "mode": "external",
+    "external": {
+      "url": "__CHAT_URL__",
+      "model_name": "__CHAT_MODEL__"
+    },
+    "openai": { "model_name": "gpt-5.5", "api_key_env": "OPENAI_API_KEY" },
+    "gemini": { "model_name": "gemini-2.5-flash", "api_key_env": "GEMINI_API_KEY" },
+    "claude": { "model_name": "claude-opus-4-8", "api_key_env": "ANTHROPIC_API_KEY" },
+    "grok": { "model_name": "grok-4.5", "api_key_env": "XAI_API_KEY" }
+  },
+  "embed": {
+    "mode": "external",
+    "external": { "url": "__EMBED_URL__" },
+    "openai": { "model_name": "text-embedding-3-small", "api_key_env": "OPENAI_API_KEY" },
+    "gemini": { "model_name": "gemini-embedding-001", "api_key_env": "GEMINI_API_KEY" }
+  },
+  "tools": {
+    "python_enabled": true,
+    "python_mode": "local"
+  },
+  "mcp": {
+    "enabled": false,
+    "servers": [
+      {
+        "id": "fs",
+        "command": "mcp-server-filesystem",
+        "args": ["/home/jovyan/work"],
+        "enabled": true,
+        "tool_timeout_secs": 60,
+        "max_result_chars": 20000
+      }
+    ]
+  },
+  "interface": {
+    "language": "__LANG__",
+    "show_model_name": true,
+    "theme": "light"
+  }
+}

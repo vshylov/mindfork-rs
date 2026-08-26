@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (12)
+## Entries (13)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -24,6 +24,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a second chat model on the live gate — Qwen 3.6 27B (stages 1–2, done)
 - Post-M9: the rewrite probe's flake — two models, two causes (done)
 - Post-M9: a ceiling on every job, and two orphaned workflows (done)
+- Post-M9: a containerised test environment — JupyterLab, the app, a CPU stack (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -969,3 +970,146 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   tests green, 106 `#[ignore]`**, unchanged; `cyrillic_scan`/`link_check`/
   `doc_index_check` clean. No CHANGELOG entry — dev infrastructure, no
   user-visible effect (AGENTS.md §4).
+
+### Post-M9: a containerised test environment — JupyterLab, the app, a CPU stack (done)
+- **Trigger**: three tracks in a row were opened by findings from a **JupyterLab
+  terminal** — command-only control, `/export`, commands stage 3 — and every one
+  of them was found by a manual pass on a borrowed host. `Ctrl+N`/`Ctrl+T` never
+  arriving, OSC 52 being dropped, "the current directory" meaning the folder the
+  file browser is rooted in: none of it reproduces in Windows Terminal, so
+  verifying a fix meant finding a JupyterLab first. The second half of the
+  trigger is the live gate: the `#[ignore]` suite (AGENTS.md §3) runs either
+  against a hand-started `llama-server` or against rented HF endpoints at ~$1 and
+  ~25 minutes a go, and there was nothing in between.
+- **What and why**: `docker/` — a four-service compose stack. `models` is a
+  one-shot downloader into a named volume; `chat` and `embed` are the official
+  CPU `ghcr.io/ggml-org/llama.cpp:server` image serving Gemma 4 E2B-it Q8_0
+  (+ the vision projector) and bge-m3 Q8_0; `lab` is
+  `quay.io/jupyter/minimal-notebook` with the `mindfork` binary built from the
+  working tree by a Rust stage in the same Dockerfile. `docker compose up
+  --build` ends in a browser tab whose terminal is xterm.js — the host the app is
+  hard to test on — and the two server ports are published, so
+  `cargo test -- --ignored` also runs from the Windows host against it. Design,
+  measurements and the rejected alternatives:
+  [docker-jupyter-env.md](../research/docker-jupyter-env.md); operation:
+  [docker/README.md](../../docker/README.md); user-facing summary: install.md §7.3.
+- **The forks, and what was chosen** (user's decision, 2026-08-26): a compose
+  stack over a single all-in-one container (rebuilding the app after a code
+  change must not reload 4.6 GiB of weights); a named volume filled by a
+  downloader over baking the models into the image, with `MODELS_DIR` switching
+  the same mount to a host directory; JupyterLab with the Launcher, a terminal,
+  the Python kernel and the RAM/CPU status bar, without the screenshot's Java
+  kernel (a JDK buys nothing here); and the vision projector on by default, the
+  host's Docker VM having 16 GiB.
+- **The engine is configured by a seeded `settings.json`, not by
+  `MINDFORK_ENGINE_URL`** — the one decision worth stating on its own.
+  `apply_env_overrides` (src/main.rs) forces `mode: external` on every launch
+  whenever that variable is set, which would make the cloud providers
+  untestable in the very environment built for testing: switching to Claude in
+  the settings screen would not survive a restart. The start-up hook instead
+  writes a **partial** `AppConfig` document (legal only because the struct and
+  every section it names carry `#[serde(default)]`), naming the two server URLs
+  and the `*_API_KEY` variable each cloud key arrives in. A new unit test
+  parses that seed file and asserts what it configures, so renaming a config
+  field cannot silently turn the seed into a no-op.
+- **Four traps, each paid for once and now written down.** (1) Runtime ALSA on
+  Ubuntu 24.04 must be `libasound2t64` — the same time_t64 trap `packaging/`
+  already documents. (2) `/etc/machine-id` ships **empty** in the base image, so
+  without generating one `shared::secrets` refuses to store any API key at all;
+  it is generated per build, which is why the container's durable route for a
+  cloud key is the env variable. (3) `docs/` cannot be excluded wholesale from
+  the build context — `shared/credits.rs` pulls `docs/legal/*` through
+  `include_str!`, so excluding it turns a ten-minute build into a compile error
+  at the very end. (4) A start-up hook named `*.sh` is **sourced** by
+  docker-stacks' `run-hooks.sh`, leaking `set -u`/`pipefail` into `start.sh`;
+  named without the suffix it is executed as a subprocess instead.
+- **Measured, not assumed** (2026-08-26, against the live registries):
+  `ghcr.io/ggml-org/llama.cpp` has no `latest` tag (`server`, `full`, `light`
+  and per-build `server-b<NNNN>`); the chat GGUF is 4 967 497 184 B, the
+  projector 985 653 760 B, the embedder 634 553 760 B; and
+  **`jupyterlab-system-monitor` — the package that draws the RAM/CPU status bar
+  in the screenshot this was modelled on — pins `jupyterlab ~=3.0` and cannot be
+  installed on JupyterLab 4 at all**; `jupyter-resource-usage` is the equivalent
+  that can.
+- **A shell-level `HF_TOKEN` beats an empty one in `.env`, and
+  `docker compose config` prints it in full.** Found the hard way: the variable
+  `tools/e2e_hf.py` asks you to export became this stack's token and appeared in
+  a config dump. `fetch.sh` now keeps it out of the process table as well (a
+  0600 header file rather than `-H` on the command line), but a config dump is
+  outside anything the script controls — so `.env.example` warns where the field
+  is, and the token was rotated.
+- **The download needed two curl flags, both found by failing.** A 4.63 GiB
+  transfer from the HF CDN died at 4.34 GiB with exit 92, *"stream error in the
+  HTTP/2 framing layer"* — so the fetch runs `--http1.1`. And curl's plain
+  `--retry` covers transient HTTP statuses and connection failures, **not** a
+  mid-stream protocol error: without `--retry-all-errors` the one failure that
+  actually happens is the one not retried. Bytes land in `<name>.part` and are
+  renamed only after the size check passes, so an interrupted `up` resumes
+  instead of leaving a truncated GGUF that `llama-server` accepts and then dies
+  loading. The expected size is re-read from the server on every run rather than
+  hardcoded, so changing the quant in `.env` needs no second edit.
+- **The seeded theme is `light`, and that is a finding rather than a
+  preference.** Reported from the live environment: the app looked wrong in the
+  JupyterLab terminal on the default `Auto`. `Palette::auto` (shared/theme.rs)
+  does not detect anything — it keeps the terminal's named ANSI colours, which
+  is the part that adapts, but it also sets `dark: true` and two absolute RGB
+  keycap colours. `dark: true` is what `build_code_theme` reads to pick a *dark*
+  base16 scheme for code blocks. JupyterLab's terminal inherits the light lab
+  theme, so both land dark on white. Seeded `light`, with `LAB_THEME`
+  (`light`/`dark`/`auto`) for a lab switched to dark. The substitution matches
+  the value literally instead of using a `__PLACEHOLDER__`, because `Theme` is a
+  strict enum and a placeholder would make the seed file un-parseable — and the
+  gate test guards it *by parsing it*. (`__LANG__` only survives that treatment
+  because `Lang` has an external-code escape hatch.) Filed separately: `Auto` is
+  documented as "follow the system setting" and does no such thing.
+- **Node is in the image, so the MCP host has something to launch.** Nearly
+  every server in the ecosystem is an `npx` one (install.md §4.2), and the base
+  image ships none — which would have left a whole documented feature
+  untestable here. From conda-forge (Node 26) rather than apt, whose Ubuntu
+  24.04 package is still the end-of-life Node 18, and whose prefix would need
+  root for `npm -g`. The reference filesystem server is installed at build time
+  and seeded into the config **scoped to the mounted work directory**, addressed
+  by its binary rather than through `npx` so a launch does not go to the
+  registry. Its master switch stays **off**: the host is double opt-in because
+  an MCP server is an arbitrary user-privileged program, and a convenience seed
+  is not allowed to be what turns it on — the seed gate test asserts exactly
+  that. Verified twice: the raw handshake in the container
+  (`secure-filesystem-server 0.2.0`, protocol `2025-06-18`, 14 tools), and then
+  **end to end through the app on Gemma 4 E2B-it Q8_0** — asked in Russian
+  whether any Python files were reachable, the model called
+  `mcp__fs__list_allowed_directories` (one directory, `/home/jovyan/work` — the
+  scoping holds), chained `mcp__fs__search_files(pattern=*.py)` and listed them.
+  Worth setting against the failed `control_tools_are_callable` smoke below: the
+  same 2B-effective model selects and chains tools reliably when the request
+  names what it wants, and fails the control-tool smoke, whose trigger is
+  implicit. The container gate's blind spot is narrower than "small model, no
+  tools".
+- **What it deliberately does not do.** It does not replace the rented gate:
+  several live smokes assert on model *behaviour* and were calibrated on
+  31B-class models, and a 2B-effective one fails some of them for reasons that
+  are not defects — `tools/e2e_hf.py` stays the gate of record, and a journal
+  entry claiming "Smoke — GO" must keep naming the stack it ran on. It is also
+  not a shipping artefact: the supported installation paths are unchanged.
+- **Verification — the stack was built and run, not just written.** All three
+  services come up healthy; `/props` on the chat server reports
+  `modalities.vision: true`, so the app's image path is live. `fetch.sh` was
+  exercised on four paths (fresh, already-complete, resume from a 4.15 GiB
+  partial, wrong file name → `HTTP 404` and a non-zero exit that keeps the
+  servers from starting). **The TUI was driven on a real pty inside the
+  container** (`ptyprocess`, which the image already carries for terminado):
+  it draws the Russian interface seeded by `LAB_LANG`, the header carries
+  `google_gemma-4-E2B-it-Q8_0` from the seeded `model_name`, the status bar
+  shows **both** server indicators lit — the proof the seed wired chat *and*
+  embeddings — and `Ctrl+Q` exits cleanly. **The protocol smoke group ran from
+  the Windows host against the published ports: 22 passed, 1 failed, 243 s** —
+  streaming, anti-self-termination on EOS text, tool-call parsing, thoughts,
+  the sampling extensions, the typed non-transient 400 on an oversized prompt,
+  and `tool_result_image_is_seen_live` (green background, circle — the
+  projector is wired). The one failure is the predicted class and worth naming:
+  `control_tools_are_callable` — the 2B-effective model simply did not call
+  `rewrite_current_message`. That is the line between the two gates, drawn by
+  the environment itself on its first run. No Rust changed beyond one new test:
+  **2600 unit tests green, 109 `#[ignore]`**;
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cyrillic_scan`/`link_check`/`doc_index_check` all clean. No CHANGELOG entry —
+  developer infrastructure, no user-visible effect (AGENTS.md §4).

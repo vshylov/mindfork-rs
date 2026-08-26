@@ -1,0 +1,33 @@
+# Build context for docker/lab/Dockerfile (docs/research/docker-jupyter-env.md §6.4).
+# The context is sent to the daemon before the first instruction runs, so anything
+# left in here is paid for on every build. `target/` alone is several GiB, and the
+# build stage compiles from scratch into a BuildKit cache mount anyway.
+
+/target
+/.git
+/.github
+/.claude
+/.vscode
+
+# The website, brand assets and packaging output — nothing the Linux build reads.
+# (`artwork/` is a Windows-only build input: the `.exe` icon via `winresource`.)
+/site
+/artwork
+/dist
+/infra
+
+# Coverage report for SonarQube (~2 MB).
+/lcov.info
+
+# The prose documentation is large and the image needs none of it — except
+# `docs/legal/`, which the binary compiles in: shared/credits.rs pulls the Russian
+# licence and disclaimer through `include_str!`. Excluding the whole directory
+# turns a 10-minute build into a compile error at the very end.
+/docs
+!/docs/legal
+
+# `dictionaries/`, `locales/`, `syntaxes/` and `tests/fixtures/` are deliberately
+# NOT excluded: the first is copied next to the binary (the deb layout, P1), the
+# other three are compiled in via `include_str!`/`include_bytes!` or `build.rs`.
+
+*.bak

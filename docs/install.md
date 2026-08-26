@@ -869,3 +869,41 @@ the managed-server smoke (`MINDFORK_LLAMA_BIN` — it needs a child process of
 our own) and the Python sandbox smokes (they need a provisioned `wasmer`
 sidecar). The cloud-provider smokes (Anthropic / Gemini / OpenAI / TTS) need
 their own keys and are unrelated to the GPU.
+
+### 7.3. The container gate (JupyterLab + a CPU stack, no GPU)
+
+`docker/` holds a compose stack that ends in a **browser JupyterLab terminal**
+with `mindfork` built from the current working tree, talking to two CPU
+`llama-server` containers — Gemma 4 E2B-it Q8_0 for chat, bge-m3 Q8_0 for
+embeddings:
+
+```bash
+cd docker && cp .env.example .env && docker compose up --build
+# → http://localhost:8888/lab?token=mindfork → Terminal → mindfork
+```
+
+Two things it is for. The first is **JupyterLab itself**: its terminal is
+xterm.js in a browser tab, which is where `Ctrl+N`/`Ctrl+T` never arrive, OSC 52
+is dropped and `/export` becomes the way out (§ the notes in
+[docs/history/command-only-control.md](history/command-only-control.md)) — and
+that host reproduces on no Windows terminal. The second is that both server
+ports are published, so the `#[ignore]` suite runs from the host against it:
+
+```powershell
+$env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
+$env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"
+cargo test -- --ignored --nocapture --test-threads=1
+```
+
+The lab container also carries Node and the reference MCP filesystem server, so
+the plugin host (§4.2) is exercisable there — pre-configured and scoped to the
+mounted work directory, with its master switch off, as the double opt-in
+requires.
+
+**It does not replace §7.2.** The memory and self-model gates are calibrated on
+31B-class models; a 2B-effective one fails some of them for reasons that are not
+defects. Use it for protocol, streaming, tool-call and RAG plumbing, and keep the
+rented gate for a verdict worth recording. Budget ~9–10 GiB of Docker VM memory
+and ~6.2 GiB of disk for the weights. Full instructions and every knob:
+[docker/README.md](../docker/README.md); the design and what was rejected:
+[docs/research/docker-jupyter-env.md](research/docker-jupyter-env.md).

@@ -15,3 +15,9 @@ site/static/favicon.ico
 # meant to be shared belongs in the portable `.sonarlint/connectedMode.json`
 # instead.
 /.vscode/
+# The containerised test environment (docker/, docs/research/docker-jupyter-env.md):
+# the local `.env` copied from `.env.example` (it can hold cloud API keys) and
+# whatever gets dropped into the host folder the lab mounts as `~/work`.
+/docker/.env
+/docker/work/*
+!/docker/work/.gitkeep

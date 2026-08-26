@@ -55,7 +55,10 @@ The short version of the workflow:
   needs a real model or server is an `#[ignore]` smoke test, and functionality
   touching the engine / memory / tools must actually be run against a live
   stack before the PR (AGENTS.md §3; commands in the
-  [README](README.md#development)).
+  [README](README.md#development)). No GPU and no local `llama-server`?
+  `cd docker && docker compose up --build` brings up a CPU stack plus a
+  browser JupyterLab terminal to drive the app from — see
+  [docker/README.md](docker/README.md).
 - **Documentation is part of the task**: AGENTS.md §4 has the "what changed →
   what to update" table (journal entry, CHANGELOG, spec/architecture sections,
   README key tables).
