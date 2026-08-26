@@ -152,13 +152,20 @@ with a human at it.
 | Windows Terminal | **yes** | ST | `#0c0c0c` (dark) | 16 ms | 15–16 ms |
 | VS Code integrated (1.134.0) | **yes** | ST | `#191a1b` (dark) | 31 ms | 16 ms |
 | JupyterLab (xterm.js 4.6.3) | **yes** | ST | `#ffffff` (light) | **382 ms** | 1–34 ms |
+| SSH → container, from Windows Terminal | **yes** | ST | `#0c0c0c` (dark) | 23 ms | 32 ms |
 | Windows conhost (legacy) | **no** | — | — | timeout | timeout |
-| plain SSH into Linux | ? | | | | |
-| tmux over SSH | ? | | | | |
+| tmux 3.4 over SSH, **wrapped** | no | — | — | timeout | timeout |
+| tmux 3.4 over SSH, **unwrapped** | *not yet measured* | | | | |
 
-**Three of the four hosts answer, and every one of them terminates with ST**
+**Four of the five terminals answer, and every one of them terminates with ST**
 even though the query used BEL. A BEL-only parser would read the entire matrix
 as silent.
+
+**SSH is transparent**, as the protocol implies but nothing had confirmed: the
+reply is the *local* terminal's background (`#0c0c0c`, identical to running the
+probe locally in the same Windows Terminal), at the same order of latency. The
+emulator that answers is the one the user is sitting in front of, not the box
+the process runs on — the same property OSC 52 was adopted for.
 
 **conhost is a clean negative, not an artefact.** The probe did not emit its
 "no VT input" warning there, so `ENABLE_VIRTUAL_TERMINAL_INPUT` *was* accepted
@@ -181,15 +188,46 @@ costs approximately nothing — on conhost included. This is a design constraint
 worth carrying into the design doc, because the naive "query, sleep, read"
 shape fails exactly where it is needed.
 
-### 5.2 The fallback is safe where it fires
+### 5.2 tmux — the wrapped measurement does not measure tmux
 
-The one host that stays silent is a host whose background is dark
-(conhost's default is `#0c0c0c`/black). So "assume dark when nothing answers"
-is not merely a default — on the measured evidence it is the *right* answer for
-the case where it fires. Detection succeeds on the light terminal (JupyterLab)
-and fails only where the existing assumption already held.
+Inside tmux 3.4 the probe's automatic `ESC P tmux; … ESC \` wrapping got no
+answer, and turning `allow-passthrough on` changed nothing. That result is
+consistent with the wrapper being the wrong instrument rather than tmux being
+silent: **passthrough is output-only.** It carries the query out to the terminal
+behind tmux, but that terminal's reply arrives on tmux's own input, where tmux
+consumes it as a terminal report instead of handing it to the pane. Both runs
+being identical is what one would expect if the query reached the outer terminal
+in each case and the reply was swallowed on the way back.
 
-## 6. The fork — open
+tmux implements OSC 11 in its own emulation, so the measurement that matters is
+the **unwrapped** query, which asks tmux itself. `--wrapping none` exists for
+this and the row is still open. It also decides an implementation detail: if
+tmux answers unwrapped, the app should never wrap, and multiplexers need no
+special case at all.
+
+### 5.3 The fallback is safe where it fires
+
+The one confirmed silent host has a dark background: conhost's default is
+`#0c0c0c`/black, and it cannot be themed light without replacing it. So "assume
+dark when nothing answers" is not merely a default there — on the measured
+evidence it is the *right* answer. Detection succeeds on the light terminal
+(JupyterLab) and fails only where the existing assumption already held.
+
+That property does **not** extend to tmux if §5.2 comes back negative: a tmux
+session can be running inside a light terminal, so a silent tmux would be a case
+where the fallback is genuinely wrong rather than merely conservative. One more
+reason the unwrapped measurement is worth taking.
+
+## 6. The fork — settled
+
+**User's decision, 2026-08-26: option 1.** The gate in the recommendation below
+was met — Windows Terminal, VS Code, JupyterLab and SSH all answer; only conhost
+does not, and the fallback is right there (§5.3). The design plan is
+[docs/terminal-background-detection.md](../terminal-background-detection.md);
+the keycap/selection fix rides with it rather than becoming its own PR
+(user's decision, same date).
+
+The options as they stood:
 
 **Option 1 — make `Auto` detect.** Query OSC 11 at startup, set `dark` from the
 reply's luminance, and pick the keycap/selection colours per polarity. Then

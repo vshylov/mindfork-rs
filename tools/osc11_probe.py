@@ -45,8 +45,22 @@ QUERY_FG = f"{ESC}]10;?{BEL}"
 # terminal it is itself running in. tmux: `ESC P tmux; <ESC-doubled body> ESC \`.
 # GNU screen: `ESC P <body> ESC \`. Both are why "does tmux need wrapping" is a
 # separate row in the matrix and not an implementation detail.
-def wrap_passthrough(seq: str) -> tuple[str, str]:
-    """Returns (sequence to write, name of the wrapping applied)."""
+def wrap_passthrough(seq: str, mode: str = "auto") -> tuple[str, str]:
+    """Returns (sequence to write, name of the wrapping applied).
+
+    `mode` forces the choice; `auto` picks by environment. Forcing matters
+    because passthrough is **output-only**: it carries the query out to the
+    outer terminal, but the reply comes back on the multiplexer's own input and
+    is consumed there rather than delivered to the pane. A multiplexer that
+    implements OSC 11 itself will answer the *unwrapped* query, so "wrapped
+    gets no answer" is not the same finding as "the multiplexer is silent".
+    """
+    if mode == "none":
+        return seq, "none (forced)"
+    if mode == "tmux":
+        return f"{ESC}Ptmux;{seq.replace(ESC, ESC + ESC)}{ESC}\\", "tmux (forced)"
+    if mode == "screen":
+        return f"{ESC}P{seq}{ESC}\\", "screen (forced)"
     if os.environ.get("TMUX"):
         return f"{ESC}Ptmux;{seq.replace(ESC, ESC + ESC)}{ESC}\\", "tmux"
     if os.environ.get("STY"):
@@ -358,8 +372,8 @@ def fingerprint() -> list[str]:
     return lines or ["  (none of the usual markers are set)"]
 
 
-def probe_once(term, query: str, label: str, timeout_ms: int) -> Reply:
-    payload, wrapping = wrap_passthrough(query)
+def probe_once(term, query: str, label: str, timeout_ms: int, mode: str = "auto") -> Reply:
+    payload, wrapping = wrap_passthrough(query, mode)
     term.write(payload)
     deadline = time.monotonic() + timeout_ms / 1000.0
     reply = read_osc(term, deadline)
@@ -417,6 +431,15 @@ def main() -> int:
         help="also query OSC 10 (foreground colour)",
     )
     parser.add_argument(
+        "--wrapping",
+        choices=("auto", "none", "tmux", "screen"),
+        default="auto",
+        help="multiplexer passthrough to apply (default: auto, by environment). "
+        "Use 'none' inside tmux/screen to ask the multiplexer itself rather than "
+        "the terminal behind it - passthrough carries the query out but not the "
+        "reply back.",
+    )
+    parser.add_argument(
         "--delay",
         type=int,
         default=0,
@@ -466,9 +489,9 @@ def main() -> int:
         replies = []
         for i in range(max(1, args.repeat)):
             label = "background (OSC 11)" + (f" - attempt {i + 1}" if args.repeat > 1 else "")
-            replies.append(probe_once(term, QUERY_BG, label, args.timeout))
+            replies.append(probe_once(term, QUERY_BG, label, args.timeout, args.wrapping))
         if args.foreground:
-            replies.append(probe_once(term, QUERY_FG, "foreground (OSC 10)", args.timeout))
+            replies.append(probe_once(term, QUERY_FG, "foreground (OSC 10)", args.timeout, args.wrapping))
 
     for reply in replies:
         out.append("")
