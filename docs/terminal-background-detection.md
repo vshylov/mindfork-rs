@@ -186,7 +186,11 @@ Option 2's content is still owed even though option 1 was chosen, because
 - `keycap_bg`'s doc comment, which says "hotkey line" and means "every selection
   backdrop" — a live trap independent of this track.
 
-## 5. Forks — need a decision before implementation
+## 5. Forks — settled
+
+**User's decisions, 2026-08-26: F1 (a) minimal, F2 the platform split, F3 the
+environment variable only.** All three as recommended below; the reasoning
+stands as written and is what the implementation follows.
 
 **F1. On a detected *light* background, how much of the palette changes?**
 
