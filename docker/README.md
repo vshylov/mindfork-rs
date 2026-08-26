@@ -176,6 +176,18 @@ wrong port from the outside.
   running, and the next launch is refused with *"mindfork is already running on
   this machine"* (spec §1.4). Reattach from the *Running Terminals* panel in the
   left sidebar, or `docker compose exec lab pkill mindfork`.
+- **An `up` that failed while *starting* leaves a container that then starts
+  without its ports.** Compose does not recreate a container whose configuration
+  has not changed — it starts the one already there, and if that container's
+  first start failed (a port taken by something else, an OOM) the record can be
+  left half-initialised: the port bindings are recorded, but the container joins
+  no network and publishes nothing. The next `up` reports it *healthy* — that
+  check runs inside the container — while `localhost:8888` refuses the
+  connection and the app cannot resolve `chat`/`embed` either. `docker ps` tells
+  the two apart: a published port reads `0.0.0.0:8888->8888/tcp`, an unpublished
+  one is a bare `8888/tcp`. The fix is
+  `docker compose up -d --force-recreate lab`, and it costs nothing — the data
+  lives on the volume.
 
 ## 7. MCP plugin tools
 
