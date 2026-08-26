@@ -1041,6 +1041,19 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   instead of leaving a truncated GGUF that `llama-server` accepts and then dies
   loading. The expected size is re-read from the server on every run rather than
   hardcoded, so changing the quant in `.env` needs no second edit.
+- **Node is in the image, so the MCP host has something to launch.** Nearly
+  every server in the ecosystem is an `npx` one (install.md §4.2), and the base
+  image ships none — which would have left a whole documented feature
+  untestable here. From conda-forge (Node 26) rather than apt, whose Ubuntu
+  24.04 package is still the end-of-life Node 18, and whose prefix would need
+  root for `npm -g`. The reference filesystem server is installed at build time
+  and seeded into the config **scoped to the mounted work directory**, addressed
+  by its binary rather than through `npx` so a launch does not go to the
+  registry. Its master switch stays **off**: the host is double opt-in because
+  an MCP server is an arbitrary user-privileged program, and a convenience seed
+  is not allowed to be what turns it on — the seed gate test asserts exactly
+  that. Verified in the container by running the app's own handshake:
+  `secure-filesystem-server 0.2.0`, protocol `2025-06-18`, 14 tools.
 - **What it deliberately does not do.** It does not replace the rented gate:
   several live smokes assert on model *behaviour* and were calibrated on
   31B-class models, and a 2B-effective one fails some of them for reasons that

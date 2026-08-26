@@ -213,6 +213,17 @@ xterm.js in a browser tab**, which is what makes the environment worth having.
 - **Interface language**: the container's locale is `en_US`, so the app would
   come up in English. Proposal: `defaults.json` → `"default_language": "ru"`,
   overridable by an `.env` knob.
+- **Node for the MCP host** *(added after the first review — user's request,
+  2026-08-26)*. Nearly every server in the ecosystem is an `npx` one
+  (install.md §4.2) and the base image ships no Node, which would leave a
+  documented feature untestable here. Conda-forge (Node 26) rather than apt:
+  Ubuntu 24.04 still packages the end-of-life Node 18, and conda's prefix is
+  already owned by the notebook user, so `npm -g` needs no root. The reference
+  filesystem server is installed at build time and seeded **scoped to the
+  mounted work directory**, addressed by its binary rather than `npx` so a
+  launch does not hit the registry — with the master switch left off, because
+  the host's double opt-in exists precisely so that a convenience seed cannot
+  be what enables an arbitrary user-privileged program.
 
 ### F6. Scope of the first PR
 

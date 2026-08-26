@@ -895,6 +895,11 @@ $env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"
 cargo test -- --ignored --nocapture --test-threads=1
 ```
 
+The lab container also carries Node and the reference MCP filesystem server, so
+the plugin host (§4.2) is exercisable there — pre-configured and scoped to the
+mounted work directory, with its master switch off, as the double opt-in
+requires.
+
 **It does not replace §7.2.** The memory and self-model gates are calibrated on
 31B-class models; a 2B-effective one fails some of them for reasons that are not
 defects. Use it for protocol, streaming, tool-call and RAG plumbing, and keep the

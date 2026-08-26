@@ -102,4 +102,22 @@ RUN pip install --no-cache-dir jupyter-resource-usage==1.3.0 \
     && fix-permissions "${CONDA_DIR}" \
     && fix-permissions "/home/${NB_USER}"
 
+# Node, so the MCP plugin host has something to launch (docs/install.md §4.2 —
+# nearly every server in the ecosystem is an `npx` one). From conda-forge rather
+# than apt: Ubuntu 24.04 still ships Node 18, which reached end of life in 2025,
+# and conda's prefix is already owned by the notebook user so `npm -g` needs no
+# root. The major is pinned, not the patch — an even major is the LTS line.
+ARG NODE_VERSION=26
+# The reference server from docs/install.md §4.2, installed at build time so the
+# documented example runs offline and instantly. It is addressed by its **binary**
+# (`mcp-server-filesystem`) rather than through `npx`, which would go to the
+# registry on every launch; `npx` stays available for every other server.
+ARG MCP_FS_VERSION=2026.7.10
+RUN mamba install --yes "nodejs=${NODE_VERSION}.*" \
+    && mamba clean --all -f -y \
+    && npm install -g "@modelcontextprotocol/server-filesystem@${MCP_FS_VERSION}" \
+    && npm cache clean --force \
+    && fix-permissions "${CONDA_DIR}" \
+    && fix-permissions "/home/${NB_USER}"
+
 WORKDIR /home/${NB_USER}

@@ -124,7 +124,39 @@ The ones that come up most:
   this machine"* (spec §1.4). Reattach from the *Running Terminals* panel in the
   left sidebar, or `docker compose exec lab pkill mindfork`.
 
-## 7. What does not work in here, and why that is fine
+## 7. MCP plugin tools
+
+The image carries **Node 26** and npm, so any `npx` server from the Model
+Context Protocol ecosystem runs here (docs/install.md §4.2). The reference
+filesystem server is installed at build time and pre-configured, scoped to the
+mounted `~/work` directory:
+
+```jsonc
+"mcp": {
+  "enabled": false,                          // ← the master switch, deliberately off
+  "servers": [{ "id": "fs",
+                "command": "mcp-server-filesystem",
+                "args": ["/home/jovyan/work"],
+                "enabled": true }]
+}
+```
+
+To use it: `Ctrl+P` → **Plugins** → turn the master switch on, then enable the
+tools on the profile (the host is double opt-in by design — an MCP server is an
+arbitrary user-privileged program, so a convenience seed is not allowed to be
+what turns it on). Verified in the container: `secure-filesystem-server 0.2.0`,
+protocol `2025-06-18`, 14 tools.
+
+Addressed by its binary rather than `npx @modelcontextprotocol/server-filesystem`
+on purpose — `npx` would reach the registry on every launch. For any other
+server, the `npx` spelling in the install docs works as written.
+
+An environment created before this existed keeps its own `settings.json` (the
+start-up hook never overwrites one), so its Plugins section is empty. Either
+`docker compose down -v` for a clean slate, or add just the server entry by hand
+in `Ctrl+P` → Plugins → `Ctrl+N`.
+
+## 8. What does not work in here, and why that is fine
 
 - **The system clipboard.** There is no X server, so `F5` cannot reach one — and
   OSC 52 does not survive JupyterLab either. That is not a container defect, it
@@ -133,9 +165,6 @@ The ones that come up most:
   file lands in the folder the file browser is already showing.
 - **Speech (`/tts`).** No audio device. The app says "audio unavailable" and
   carries on, which is the designed behaviour.
-- **MCP servers launched with `npx`.** The base image ships no Node. Add it when
-  you need to exercise the plugin host:
-  `docker compose exec lab mamba install -y nodejs`.
 - **The Wasmer Python sandbox** is not provisioned — `python_exec` is seeded in
   *local* mode instead, against the container's own Python 3.13. To test the
   sandbox itself: `docker compose exec lab mindfork sandbox setup` (~300 MB into

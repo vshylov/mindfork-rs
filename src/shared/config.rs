@@ -1971,6 +1971,18 @@ mod tests {
         assert!(c.tools.python_enabled);
         assert_eq!(c.tools.python_mode, PythonMode::Local);
 
+        // The MCP example server is pre-configured and scoped to the mounted work
+        // directory, but **the master switch stays off**: an MCP server is an
+        // arbitrary user-privileged program, and a convenience seed must not be
+        // what turns the host on (double opt-in, docs/research/plugin-system.md R7).
+        assert!(
+            !c.mcp.enabled,
+            "the MCP master switch must not be seeded on"
+        );
+        let fs = c.mcp.servers.first().expect("the example server");
+        assert_eq!(fs.id, "fs");
+        assert_eq!(fs.args, vec!["/home/jovyan/work".to_string()]);
+
         // Everything the seed does not mention must still be the default.
         assert_eq!(c.max_tool_rounds, AppConfig::default().max_tool_rounds);
     }
