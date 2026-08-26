@@ -917,6 +917,26 @@ the plugin host (§4.2) is exercisable there — pre-configured and scoped to th
 mounted work directory, with its master switch off, as the double opt-in
 requires.
 
+It can also be reached over **SSH**, which is the way to check the *opposite* of
+what JupyterLab is for: escape-sequence behaviour differs per emulator, so
+anything terminal-facing has to be seen from a terminal that is not xterm.js.
+Put a **public** key in `docker/.env` and the container starts an sshd — off
+entirely when the variable is empty:
+
+```bash
+LAB_SSH_PUBKEY="ssh-ed25519 AAAAC3... you@host"
+```
+
+```bash
+ssh -p 2222 jovyan@127.0.0.1
+```
+
+`mindfork` and `tmux` are both on `PATH` there. It runs as uid 1000 on port
+2222, keys only, `jovyan` only, published on the loopback interface alone — a
+session lands where `docker exec` already lands, so it is a transport rather
+than a privilege. Details and the `StrictModes` caveat:
+[docker/README.md](../docker/README.md) §6.1.
+
 **It does not replace §7.2.** The memory and self-model gates are calibrated on
 31B-class models; a 2B-effective one fails some of them for reasons that are not
 defects. Use it for protocol, streaming, tool-call and RAG plumbing, and keep the

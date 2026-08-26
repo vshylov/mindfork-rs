@@ -97,6 +97,11 @@ services:
     restart: unless-stopped
     ports:
       - "${LAB_PORT:-8888}:8888"
+      # SSH, and unlike the lab port this one is pinned to the loopback
+      # interface: it is a daemon accepting logins, so it should not be
+      # reachable from the network even by accident. Nothing listens on it
+      # unless LAB_SSH_PUBKEY (or LAB_SSH_PUBKEY_FILE) is set.
+      - "127.0.0.1:${LAB_SSH_PORT:-2222}:2222"
     # Deliberately `service_started`, not `service_healthy`: if a model fails to
     # load, a terminal to diagnose it from is exactly what you need, and the app
     # reports an unreachable server on its own.
@@ -117,6 +122,11 @@ services:
       LAB_CHAT_MODEL: ${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
       LAB_LANG: ${LAB_LANG:-ru}
       LAB_THEME: ${LAB_THEME:-auto}
+      # A public key turns the container's sshd on (off when both are empty),
+      # so the app can be driven from a terminal that is not xterm.js — which
+      # is what terminal-facing work has to be checked against.
+      LAB_SSH_PUBKEY: ${LAB_SSH_PUBKEY:-}
+      LAB_SSH_PUBKEY_FILE: ${LAB_SSH_PUBKEY_FILE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

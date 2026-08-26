@@ -43,8 +43,17 @@ USER root
 # transition the old name is only virtual on Ubuntu 24.04 and apt satisfies it
 # with an OSS shim that lacks `snd_device_name_get_hint` — the binary then dies at
 # startup. The project already paid for this once (packaging/nfpm.yaml).
+#
+# `openssh-server` and `tmux` serve the other half of this environment's job:
+# checking terminal-facing behaviour somewhere that is not xterm.js. The browser
+# terminal is one emulator with one set of habits, and escape-sequence work
+# (background reporting, clipboard, keyboard protocols) has to be measured per
+# host — "plain SSH into Linux" and "inside tmux" being two of them.
+# Installing the daemon does not run it —
+# `before-notebook.d/20-sshd` starts it only when a public key is supplied, as
+# uid 1000, on port 2222.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libasound2t64 \
+    && apt-get install -y --no-install-recommends libasound2t64 openssh-server tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # `shared::secrets` derives its Linux encryption key from /etc/machine-id, and the
@@ -72,6 +81,7 @@ RUN ln -sf /opt/mindfork/mindfork /usr/local/bin/mindfork \
 
 # Run by the base image's `start.sh` before the server launches, as uid 1000.
 COPY docker/lab/before-notebook.d/10-mindfork /usr/local/bin/before-notebook.d/
+COPY docker/lab/before-notebook.d/20-sshd /usr/local/bin/before-notebook.d/
 COPY docker/lab/settings.seed.json /opt/mindfork/settings.seed.json
 COPY docker/lab/jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
 # Suppresses the "get notified about official Jupyter news?" prompt that
@@ -80,6 +90,7 @@ COPY docker/lab/jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
 COPY docker/lab/overrides.json ${CONDA_DIR}/share/jupyter/lab/settings/overrides.json
 COPY docker/lab/profile.d/mindfork.sh /etc/profile.d/mindfork.sh
 RUN chmod 0755 /usr/local/bin/before-notebook.d/10-mindfork \
+        /usr/local/bin/before-notebook.d/20-sshd \
     && chmod 0644 /etc/profile.d/mindfork.sh /opt/mindfork/settings.seed.json \
     # The COPY above created this directory root-owned, and the base image's
     # `fix-permissions` later runs as the notebook user — it cannot chmod what it

@@ -1,0 +1,105 @@
+#!/bin/bash
+# Run by the base image's start.sh (as uid 1000) before the Jupyter server
+# launches. Starts an **opt-in, non-root** sshd so the app can be driven from a
+# real terminal of the user's choosing rather than only the browser one.
+#
+# Deliberately named without a `.sh` suffix, for the same reason as 10-mindfork:
+# run-hooks.sh *sources* `*.sh` hooks and *executes* everything else, and sourced
+# this file's `set -euo pipefail` would leak into start.sh.
+#
+# Why it exists: the browser terminal is xterm.js, one emulator with one set of
+# behaviours. Escape-sequence work — background reporting, clipboard, keyboard
+# protocols — has to be measured per host, and "plain SSH into a Linux box" is
+# the row that needs a Linux box. This is that box, without leaving the
+# compose file.
+#
+# Why non-root: these hooks run as uid 1000, and an SSH session that lands as
+# `jovyan` is exactly the access `docker exec` already gives — so this adds a
+# transport, not a privilege. sshd therefore listens on 2222 (>1024, no
+# capability needed) and is off entirely unless a public key is supplied.
+
+set -euo pipefail
+
+# Off by default. Supply a key to turn it on: LAB_SSH_PUBKEY carries the key
+# itself, LAB_SSH_PUBKEY_FILE a path to one (a mount, e.g. your ~/.ssh/id_ed25519.pub).
+PUBKEY="${LAB_SSH_PUBKEY:-}"
+if [ -z "${PUBKEY}" ] && [ -n "${LAB_SSH_PUBKEY_FILE:-}" ] && [ -r "${LAB_SSH_PUBKEY_FILE}" ]; then
+    PUBKEY="$(cat "${LAB_SSH_PUBKEY_FILE}")"
+fi
+
+if [ -z "${PUBKEY}" ]; then
+    echo "mindfork: sshd off (set LAB_SSH_PUBKEY or LAB_SSH_PUBKEY_FILE to enable)"
+    exit 0
+fi
+
+if ! command -v /usr/sbin/sshd >/dev/null 2>&1; then
+    echo "mindfork: sshd requested but openssh-server is not installed — skipping"
+    exit 0
+fi
+
+# On the named volume, beside the data root rather than inside it: the host key
+# has to outlive `docker compose down`, or every recreate greets the user with
+# REMOTE HOST IDENTIFICATION HAS CHANGED.
+SSH_DIR=/home/jovyan/mindfork/.lab-ssh
+mkdir -p "${SSH_DIR}"
+chmod 700 "${SSH_DIR}"
+
+HOST_KEY="${SSH_DIR}/ssh_host_ed25519_key"
+if [ ! -f "${HOST_KEY}" ]; then
+    ssh-keygen -q -t ed25519 -N "" -C "mindfork-lab" -f "${HOST_KEY}"
+    echo "mindfork: generated an SSH host key in ${SSH_DIR}"
+fi
+chmod 600 "${HOST_KEY}"
+
+printf '%s\n' "${PUBKEY}" > "${SSH_DIR}/authorized_keys"
+chmod 600 "${SSH_DIR}/authorized_keys"
+
+cat > "${SSH_DIR}/sshd_config" <<CONF
+Port 2222
+HostKey ${HOST_KEY}
+PidFile ${SSH_DIR}/sshd.pid
+AuthorizedKeysFile ${SSH_DIR}/authorized_keys
+
+# Keys only. There is no password to guess, and none is set for jovyan.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+PermitRootLogin no
+AllowUsers jovyan
+
+# The base image makes \$HOME group-writable (the \`users\` group), which
+# StrictModes rejects outright — it cannot tell a shared home from a
+# compromised one. This container has a single user and the port is published
+# on the loopback interface only, so the check has nothing left to protect.
+StrictModes no
+
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+CONF
+chmod 600 "${SSH_DIR}/sshd_config"
+
+# Already running (a hook re-run without a restart)? Leave it be.
+if [ -f "${SSH_DIR}/sshd.pid" ] && kill -0 "$(cat "${SSH_DIR}/sshd.pid")" 2>/dev/null; then
+    echo "mindfork: sshd already listening on 2222"
+    exit 0
+fi
+
+# Never fail the container over this: the lab's job is JupyterLab, and an sshd
+# that would not start is a degraded extra rather than a broken environment.
+# It is reported either way — a daemon that silently did not come up looks
+# exactly like a wrong port from the outside.
+if /usr/sbin/sshd -f "${SSH_DIR}/sshd_config"; then
+    sleep 1
+    if [ -f "${SSH_DIR}/sshd.pid" ] && kill -0 "$(cat "${SSH_DIR}/sshd.pid")" 2>/dev/null; then
+        echo "mindfork: sshd listening on 2222 (key-only, user jovyan)"
+    else
+        echo "mindfork: sshd exited right after start — see the config in ${SSH_DIR}"
+    fi
+else
+    echo "mindfork: sshd failed to start (exit $?) — continuing without it"
+fi
+
+exit 0
