@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -62,6 +62,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: help hotkeys by context — stage 2, `F1` everywhere as a runtime overlay (done)
 - Post-M9: the "Globally" section, and `?` dropped as a help key (done)
 - Post-M9: the value column holds against an MCP tool's name (done)
+- Post-M9: the confirmation toggle is named by what it does (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2625,3 +2626,46 @@ storage or tool surface is touched.
   on the pre-fix code (columns 31 vs 37). `section_label_col_has_floor_cap_and_
   skips_subsection` now expects the outlier to raise the column to the cap.
   A live run is not required (AGENTS.md §3) — pure UI. Docs: spec §11.6.
+
+### Post-M9: the confirmation toggle is named by what it does (done)
+
+- **The setting was named after its keys.** "Confirm Ctrl+R / Ctrl+E" told the
+  user which chords it intercepts, not which operations it guards, and the
+  description repeated both chords in parentheses. A label built out of key
+  names goes stale the moment a key is rebound or renamed — the help overlay
+  (`F1`) and README already own the key tables, and a settings row does not need
+  to be a third copy of them.
+- **Now** (`locales/{en,ru}.json`, `ui.settings.field.confirm_keys` +
+  `ui.settings.desc.confirm_keys`): "Confirm regenerate / delete" (27 columns)
+  and the ru "confirm regeneration/deletion" (35). The description names the
+  operations in full — regenerating the last reply, deleting the last exchange —
+  says both discard what is already written, and drops the chords entirely
+  rather than keeping them as a hint that would rot the same way. No code
+  changed: the row is the same `FieldId::IConfirmKeys` toggle over
+  `interface.confirm_destructive_keys` (spec §11.6, §11.3).
+- **`LABEL_CAP` 28 → 35** (`screens/settings/helpers.rs`). The ru label is the
+  widest static label in the app and did not fit; clipped, it lost exactly the
+  half the rename adds, and the gate `all_labels_fit_alignment_cap` failed. The
+  cap is the ceiling of the value column, so this is a layout change, not a text
+  one: it was set by the widest label of the day, and the widest label grew.
+  **User's decision (2026-08-27)**, taken over shortening the label and against
+  a stated cost — the "Interface" section's values now start 7 columns further
+  right.
+- **This does not reverse "the value column holds against an MCP tool's name".**
+  That entry's clamp is untouched: `section_label_col` still clamps to
+  \[`MIN_LABEL_COL`, `LABEL_CAP`\] and `render_field_line` still clips the label
+  to the column, so an `mcp__<server>__<tool>` id (up to 64) cannot bend the
+  vertical — it now stops at 35 instead of 28. What that entry rejected was
+  raising the cap *as the fix for a 64-wide dynamic id*; raising it to fit one
+  static label the app itself names is the case the constant is for.
+- **Measured** — the "Interface" section rendered at 80×30: the full label fits,
+  the section's toggles and choices stay on one vertical, and the values narrow
+  from 18 columns to 11, where a long Choice truncates in the row with `…` and
+  stays whole in the hint panel below.
+- **Tests** (2616 green, ±0): `all_labels_fit_alignment_cap` and
+  `section_label_col_has_floor_cap_and_skips_subsection` cover the new cap as
+  they did the old one. `value_column_is_shared_across_groups` needed its
+  fixture widened — its four `mcp__fs__*` ids top out at 34 columns, under the
+  new cap, so the test would have asserted the clamp while never reaching it;
+  the server id is now `mcp__filesystem__` (up to 42). A live run is not
+  required (AGENTS.md §3) — pure UI.

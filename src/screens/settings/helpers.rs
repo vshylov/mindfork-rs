@@ -525,9 +525,11 @@ pub(super) const MIN_LABEL_COL: usize = 20;
 /// The ceiling of the value column: a long label may push the column up to here
 /// and no further — beyond it the label itself is clipped ([`render_field_line`])
 /// rather than shifting its own value right. All *static* labels fit within the cap
-/// (test `all_labels_fit_alignment_cap`); the ones that do not are user/server data —
-/// an MCP tool id `mcp__<server>__<tool>` (up to 64 characters) or an env-var name.
-pub(super) const LABEL_CAP: usize = 28;
+/// (test `all_labels_fit_alignment_cap`) — the cap is set by the widest of them, the
+/// ru "confirm regeneration/deletion" toggle; the labels that do not fit are
+/// user/server data — an MCP tool id `mcp__<server>__<tool>` (up to 64 characters)
+/// or an env-var name.
+pub(super) const LABEL_CAP: usize = 35;
 
 /// The section's shared value column: the longest label among visible fields,
 /// clamped to \[[`MIN_LABEL_COL`], [`LABEL_CAP`]\]. One column per section
