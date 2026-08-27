@@ -2005,10 +2005,15 @@ is a state no real interruption can produce — streams break at token boundarie
 and it measured exactly like the out-of-distribution state it is: Gemma welded
 "Par" into "Parise."/"Pariz.", haiku-4-5 slipped a U+00AD soft hyphen into the
 seam, Gemini a `"\n"`. The asserted arm cuts at a word boundary; the mid-word arm
-stays in the smoke as a recorded, never-asserted exhibit.
+stays in the smoke as a recorded, never-asserted exhibit. The Qwen re-run forced a
+third correction: the invented marker is also a *premise* — Qwen 3.6 answered the
+fixture in-universe ("…the capital of France is **Zorbville.**") where Gemma,
+haiku-4-5 and Gemini answered from geography, so the assertion accepts either
+completion and only a restart or garbage fails it.
 
 **Measured (8/8 green, 2026-08-27, stack: `llama-server` at 192.168.1.20:8000,
-gemma-4-31B q4_0):**
+gemma-4-31B q4_0; llama-side arms re-run the same day on Qwen 3.6, build
+b10659):**
 
 - **llama.cpp**: a plain trailing-assistant request **continues exactly** —
   `" Paris."`, the seam a single space, `finish=Stop` — with the prefill echoed at
@@ -2019,7 +2024,11 @@ gemma-4-31B q4_0):**
   The explicit `continue_final_message`/`add_generation_prompt` pair is *unknown*
   to this build — a wrong-typed value sails through as 200, knobs-off is ignored —
   so on llama.cpp the default prefill alone carries the feature, and the explicit
-  fields ride along harmlessly for vLLM's sake.
+  fields ride along harmlessly for vLLM's sake. The Qwen 3.6 re-run reproduced
+  all of it on **b10659, the day's build**: same echo, same one-space seam, same
+  `finish=Stop`, tools still GO (`get_weather` parsed, `finish=ToolCalls`) — and
+  the knob pair is unknown to the *current* build too, so in practice it is
+  vLLM-only.
 - **Anthropic**: `claude-haiku-4-5` continues cleanly — `" Paris."`, no echo.
   `claude-opus-4-8` rejects with the exact wording now pinned in the smoke: *"This
   model does not support assistant message prefill. The conversation must end with
@@ -2029,16 +2038,22 @@ gemma-4-31B q4_0):**
   asked…" and the reply is a fresh sentence without the marker. xAI has no
   continuation semantics; the research doc's §2 row goes from "unknown" to a
   measured no, and `/continue` will refuse on Grok.
-- **Qwen thinking arm**: the smoke detects the served model via `/v1/models` and
-  skipped loudly ("gemma-4-31b…, not a Qwen thinking model — rerun after switching
-  the stack"); the enable_thinking rejection and the `chat_template_kwargs`
-  escape remain to be measured on Qwen 3.6.
+- **Qwen 3.6 (thinking), build b10659**: the #21889 rejection is **gone** — a
+  plain trailing-assistant prefill is accepted and the server silently **skips
+  thinking** (empty thoughts, and no `<think>` residue: #21511 not reproduced) —
+  which is exactly the semantics a continuation wants: a visible answer resumes
+  without re-opening reasoning. The `chat_template_kwargs
+  {"enable_thinking": false}` escape continues too, so the design keeps sending
+  it for the #21889-era builds and accepts both behaviours. The mid-word exhibit
+  got more vivid on the way: "Par" welded into "Parapluie.".
 
 **Verdict: GO** for stage 1 on the settled forks (managed/external first), with one
 design amendment recorded in the research doc: the OpenAI-compatible path returns
 prefill+continuation while Anthropic/Gemini return the continuation alone, so the
 seed-append site normalizes by stripping the seed's text when the stream opens
-with it.
+with it. The thinking gate turned out **build-dependent rather than absolute**;
+the capability story for managed/external stays "send the kwarg, accept both
+behaviours".
 
 **Tests.** +8 `#[ignore]` (2617 green, 117 `#[ignore]`); no unit delta — the probe
 is the deliverable.

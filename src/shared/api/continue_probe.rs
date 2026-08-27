@@ -90,13 +90,23 @@ fn split_seam(rest: &str) -> (String, String) {
     (seam, cont)
 }
 
+/// Both in-distribution completions of the fixture. "Paris" is world
+/// knowledge; "Zorbville" is the fictional premise taken at its word —
+/// measured live from Qwen 3.6, which answered in-universe where Gemma,
+/// haiku-4-5 and Gemini answered from geography. The marker that makes echo
+/// detectable also offers the model a second right answer, so the assertion
+/// must accept either; a restart or garbage still fails it.
+fn answers_the_question(cont: &str) -> bool {
+    cont.starts_with("Paris") || cont.starts_with("Zorbville")
+}
+
 fn analyze(content: &str, partial: &str) -> Outcome {
     if let Some(rest) = content.strip_prefix(partial) {
         let (seam, cont) = split_seam(rest);
         return Outcome::Echoed { seam, cont };
     }
     let (seam, cont) = split_seam(content);
-    if cont.starts_with("Paris") {
+    if answers_the_question(&cont) {
         return Outcome::Continued { seam, cont };
     }
     if cont.to_lowercase().contains("capital") {
@@ -191,7 +201,7 @@ async fn llama_continues_a_word_boundary_tail() {
         .unwrap_or_else(|| panic!("the reply did not continue the tail: {text:?}"));
     println!("seam bytes at the cut: {seam:?}");
     assert!(
-        cont.starts_with("Paris"),
+        answers_the_question(cont),
         "expected the continuation to resume with the answer, got: {cont:?} (raw {text:?})"
     );
     assert_eq!(finish, Some(FinishReason::Stop));
@@ -216,12 +226,15 @@ async fn llama_continues_a_word_boundary_tail() {
     );
 }
 
-/// Thinking models (Qwen): the documented default is a pre-stream 400
-/// ("Assistant response prefill is incompatible with enable_thinking",
-/// ggml-org/llama.cpp#21889, `--reasoning-budget` default -1), and the
-/// documented per-request escape is `chat_template_kwargs
-/// {"enable_thinking": false}`. Arm A records the default through the app's
-/// client; arm B (the go/no-go) proves the escape by raw body, since the
+/// Thinking models (Qwen): the behaviour is **build-dependent**. The
+/// #21889-era rule is a pre-stream 400 ("Assistant response prefill is
+/// incompatible with enable_thinking", `--reasoning-budget` default -1) with
+/// `chat_template_kwargs {"enable_thinking": false}` as the documented
+/// per-request escape. Measured on b10659 (2026-08-27, Qwen 3.6): the plain
+/// prefill is **not** rejected — the server accepts it and skips thinking
+/// (empty thoughts, no `<think>` residue) — and the kwarg arm continues too.
+/// Arm A records whichever behaviour the build has (asserting the reason only
+/// when it *does* reject); arm B proves the escape by raw body, since the
 /// client has no such knob yet — adding one is the feature.
 ///
 /// Skips (loudly) when the server's model is not a Qwen — rerun after
@@ -310,7 +323,7 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
         .unwrap_or_else(|| panic!("no continuation after the kwarg escape: {content:?}"));
     println!("seam bytes at the cut: {seam:?}");
     assert!(
-        cont.starts_with("Paris"),
+        answers_the_question(cont),
         "expected a continuation after the kwarg escape, got: {cont:?} (raw {content:?})"
     );
 }
@@ -417,7 +430,7 @@ async fn explicit_continuation_knobs_probe() {
     });
     println!("seam bytes at the cut: {seam:?}");
     assert!(
-        cont.starts_with("Paris"),
+        answers_the_question(cont),
         "with the explicit knobs the reply did not continue: {cont:?} (raw {content_on:?})"
     );
 
@@ -512,7 +525,7 @@ async fn anthropic_haiku_continues_a_trailing_assistant() {
         .unwrap_or_else(|| panic!("haiku-4-5 did not continue the tail: {text:?}"));
     println!("seam bytes at the cut: {seam:?}");
     assert!(
-        cont.starts_with("Paris"),
+        answers_the_question(cont),
         "haiku-4-5 did not resume with the answer: {cont:?} (raw {text:?})"
     );
 }
@@ -588,7 +601,7 @@ async fn gemini_continues_a_trailing_model_turn() {
         .unwrap_or_else(|| panic!("gemini did not continue the tail: {text:?}"));
     println!("seam bytes at the cut: {seam:?}");
     assert!(
-        cont.starts_with("Paris"),
+        answers_the_question(cont),
         "gemini did not resume with the answer: {cont:?} (raw {text:?})"
     );
 }
