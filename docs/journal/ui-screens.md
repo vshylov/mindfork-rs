@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -63,6 +63,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the "Globally" section, and `?` dropped as a help key (done)
 - Post-M9: the value column holds against an MCP tool's name (done)
 - Post-M9: the confirmation toggle is named by what it does (done)
+- Post-M9: the build date on the "About" tab (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2669,3 +2670,63 @@ storage or tool surface is touched.
   new cap, so the test would have asserted the clamp while never reaching it;
   the server id is now `mcp__filesystem__` (up to 42). A live run is not
   required (AGENTS.md §3) — pure UI.
+
+### Post-M9: the build date on the "About" tab (done)
+- **What.** `F1` → "About" gained a **"Build date"** row directly under
+  "Version" (`ui.about.build`, en/ru; `widgets/help_dialog.rs::about_lines`):
+  the day the running binary was built, `YYYY-MM-DD` in UTC. Requested by the
+  user. The version number cannot separate two builds of `0.9.7`, and a bug
+  report needs to name the copy that actually ran — the same reason the
+  neighbouring "Platform" row exists.
+- **Where the value comes from.** `build.rs::embed_build_stamp` prints
+  `cargo:rustc-env=MINDFORK_BUILD_EPOCH=<unix seconds>`;
+  `shared/credits.rs::build_date` parses it and formats it with `chrono`.
+  Seconds in, formatting at the point of display: `chrono` is already a runtime
+  dependency, so this costs **no build dependency** and no second date
+  implementation. `SOURCE_DATE_EPOCH` overrides the clock when it is set — the
+  cross-distribution convention for reproducible builds (Debian, Nix,
+  openSUSE), where a wall clock baked into the binary is precisely what breaks
+  a byte-identical rebuild — with `rerun-if-env-changed` so cargo notices the
+  variable appearing.
+- **The row is release-only, and that is the design decision, not a shortcut.**
+  A build script re-runs only when one of its declared `rerun-if-changed` paths
+  moves; ours are `dictionaries/`, `artwork/` and `syntaxes/`. Editing `src/`
+  rebuilds the binary and does **not** re-run the script, so a development
+  binary would carry the date of whenever one of those directories last changed
+  and keep showing it for weeks. `build_date()` therefore returns `Option` and
+  is `None` under `debug_assertions`; in a debug build the tab simply has no
+  such row. A missing row says nothing, a wrong date says something false —
+  the same standard the `Theme::Auto` fix was held to. The user had offered
+  "release builds only" as the fallback in the request; it turned out to be the
+  honest answer rather than the cheap one.
+- **Rejected: forcing the script to re-run on every build.** It would rebuild
+  the syntect dump (~130 ms, plus the write) on every `cargo check`, `test` and
+  `clippy` — paid on every cycle to keep fresh a row nobody reads in a debug
+  build.
+- **Rejected: adding `rerun-if-changed=src`.** Accurate after a source edit and
+  silently stale after a `Cargo.toml`/dependency change that relinks the binary
+  without touching `src/`. *Partial* accuracy is the worse failure here: the row
+  looks equally confident in both cases, so the reader has no way to tell which
+  one they are looking at.
+- **Rejected: the executable's mtime** (`current_exe()` → metadata), which would
+  be accurate in both profiles and needs no build script at all. It is a
+  filesystem fact rather than a build fact: a copy, a backup restore, an
+  unpacker that does not preserve timestamps or any tool that rewrites the file
+  silently turns "built on" into "touched on". Same confident-looking row, now
+  reporting something else entirely.
+- **Tests** (2617 green, +1): `credits::the_build_stamp_is_a_valid_iso_date`
+  goes through the raw `MINDFORK_BUILD_EPOCH` rather than `build_date()`,
+  because that function is deliberately `None` in the only profile the suite
+  runs in — testing it alone would have left the parse/format path unexercised
+  until a **release** build failed far from here — and it pins the profile rule
+  itself (`build_date().is_some() == !cfg!(debug_assertions)`).
+  `about_rows_anchor_right_with_leaders` now counts fact rows as
+  `7 + usize::from(build_date().is_some())` instead of the literal `7`, so the
+  leader-table geometry is asserted in both profiles and the release run checks
+  the extra row instead of skipping it; the tab's content test asserts the date
+  is on screen whenever there is one.
+- **Measured** — `cargo test --release --bin mindfork`: 2617 green, which is
+  where the release-only assertions actually fire — the eighth fact row is
+  present, anchored in the same value column as the other seven at both bounds
+  of the dialog's width range and in `ru`, and the tab's text carries the
+  stamp's date. A live run is not required (AGENTS.md §3) — pure UI.

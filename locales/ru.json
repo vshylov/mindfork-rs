@@ -688,6 +688,7 @@
   "ui.about.desc": "Консольный ИИ-чат с локальными и облачными моделями",
   "ui.about.author": "Автор",
   "ui.about.version": "Версия",
+  "ui.about.build": "Дата сборки",
   "ui.about.license": "Лицензия",
   "ui.about.platform": "Платформа",
   "ui.about.site": "Сайт",

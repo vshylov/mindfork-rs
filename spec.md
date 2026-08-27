@@ -2708,7 +2708,12 @@ docs/history/external-api-key.md.
 **The help/"about" dialog (`F1`)** — a modal popup in the KDE/Qt style:
 a logo lockup in the header, a tab strip, and scrollable content for the active
 tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name and
-description, then the facts — version, license (the SPDX id from `Cargo.toml`; the full
+description, then the facts — version, build date (`YYYY-MM-DD`, UTC; stamped in by
+`build.rs` and shown in **release builds only** — cargo does not re-run a build script
+when `src/` changes, so a development binary would carry the date of whenever
+`dictionaries/`/`artwork/`/`syntaxes/` last moved, and a missing row beats a wrong date;
+`SOURCE_DATE_EPOCH` overrides the stamp for reproducible builds), license (the SPDX id
+from `Cargo.toml`; the full
 text is its own tab), build target (`std::env::consts` — the OS and architecture the
 binary was built for, so a report names the actual build), the links — the website
 `mindfork.io`, the crate, the repository — and the author; laid out as the same

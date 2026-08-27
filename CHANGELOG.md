@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **The build date on the "About" tab.** `F1` → "About" now shows, right under
+  the version, the day the copy you are running was built (`2026-08-27`, UTC) —
+  so a bug report can name a build the version number alone cannot tell apart.
+  The row appears in released builds; a build you made yourself from source in
+  development mode does not show it, because the date there could be older than
+  the code and a wrong date is worse than none.
+
 - **Web search can use a provider with an API key.** The free search engines
   throttle automated requests hard — measured, they answer about twice in a row
   before blocking, and the block lasts far longer than a conversation — which is

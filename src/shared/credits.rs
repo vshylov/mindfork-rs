@@ -10,6 +10,8 @@
 //! (`widgets/logo.rs`). Licenses are cross-checked against `cargo metadata`
 //! (crates' SPDX identifiers).
 
+use std::sync::LazyLock;
+
 use crate::shared::i18n::Lang;
 
 /// App brand name (as in the wordmark logo and on crates.io). The binary is
@@ -41,6 +43,35 @@ pub const LICENSE_ID: &str = env!("CARGO_PKG_LICENSE");
 /// build rather than what the user believes they downloaded.
 pub fn platform() -> String {
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// The date the running binary was built (`YYYY-MM-DD`, UTC) — or `None` in a
+/// debug build, where the value would be a lie.
+///
+/// The timestamp is compiled in by `build.rs` (`MINDFORK_BUILD_EPOCH`, Unix
+/// seconds; `SOURCE_DATE_EPOCH` overrides it for reproducible builds). Cargo
+/// re-runs a build script only when one of its declared `rerun-if-changed`
+/// paths moves — ours are `dictionaries/`, `artwork/` and `syntaxes/` — so
+/// editing `src/` rebuilds the binary **without** re-running the script: a
+/// development build would show the date of some unrelated day and go on
+/// showing it. `debug_assertions` is the honest line between the two cases: a
+/// release build comes off CI from a fresh checkout, and there the stamp is the
+/// build. A missing row says nothing; a wrong date says something false.
+///
+/// Formatting is UTC and language-neutral, like [`platform`] and the version:
+/// ISO order sorts, and a date is what a bug report needs to name a build older
+/// than the version number can (two releases share `0.9.7`, they do not share a
+/// day).
+pub fn build_date() -> Option<&'static str> {
+    static DATE: LazyLock<Option<String>> = LazyLock::new(|| {
+        if cfg!(debug_assertions) {
+            return None;
+        }
+        let secs: i64 = env!("MINDFORK_BUILD_EPOCH").parse().ok()?;
+        let stamp = chrono::DateTime::from_timestamp(secs, 0)?;
+        Some(stamp.format("%Y-%m-%d").to_string())
+    });
+    DATE.as_deref()
 }
 
 /// App license text (MIT) — from the `LICENSE` file at the repository root.
@@ -376,6 +407,32 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted, "COMPONENTS is not sorted by name");
+    }
+
+    /// The build stamp is compiled in, parses, and renders as an ISO date —
+    /// checked through the raw environment value, because [`build_date`] itself
+    /// is deliberately `None` under `cargo test` (a debug build, where the
+    /// stamp may be older than the source; see its doc comment). Without this
+    /// the whole path would be untested in the only profile the test suite
+    /// runs in, and a `build.rs` that stopped emitting the variable would fail
+    /// the **release** build, far from here.
+    #[test]
+    fn the_build_stamp_is_a_valid_iso_date() {
+        let secs: i64 = env!("MINDFORK_BUILD_EPOCH")
+            .parse()
+            .expect("MINDFORK_BUILD_EPOCH is not a number");
+        let rendered = chrono::DateTime::from_timestamp(secs, 0)
+            .expect("the build stamp is not a timestamp")
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(rendered.len(), 10, "not an ISO date: {rendered}");
+        assert!(
+            rendered.starts_with("20") && rendered.matches('-').count() == 2,
+            "not an ISO date: {rendered}"
+        );
+        // The profile rule itself: the row appears in a release build and is
+        // absent in a debug one, and nothing else decides it.
+        assert_eq!(build_date().is_some(), !cfg!(debug_assertions));
     }
 
     /// The license text is embedded and it is MIT (not an empty include).

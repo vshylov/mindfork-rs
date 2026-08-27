@@ -506,6 +506,10 @@ src/
    │                       LICENSE so the MIT text stays byte-identical), plus the
    │                       Russian translations of both (docs/legal/, unofficial —
    │                       license_text/disclaimer_text pick by interface language),
+   │                       build_date() — the MINDFORK_BUILD_EPOCH stamp build.rs
+   │                       compiles in, rendered as an ISO date; None in a debug
+   │                       build, where a build script that did not re-run makes
+   │                       the stamp older than the source (spec §11.7),
    │                       components
    │                       (name/version/license) + gates (names ↔ Cargo.toml,
    │                       versions ↔ Cargo.lock, LICENSE carries nothing but MIT,
