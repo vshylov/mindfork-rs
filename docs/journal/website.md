@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -22,6 +22,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — two articles: the self-model and vector search (done)
 - Post-M9: website — two more articles: local speed and the Python sandbox (done)
 - Post-M9: website — the 0.9.7 release post (done)
+- Post-M9: website — the 0.9.8 release post and the twelve-card landing (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -373,4 +374,50 @@ tools are introduced as off by default in the same sentence that describes
 them, so no reader arrives at the settings screen expecting them to be on.
 
 No live run: site content plus a one-line landing edit, no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green.
+
+### Post-M9: website — the 0.9.8 release post and the twelve-card landing (done)
+
+**What.** `blog/2026-08-27-mindfork-0-9-8.md`, published with the release, plus
+the landing page catching up with everything shipped since 0.9.7. The post is
+organised around the release's actual theme — **work**: handing the assistant
+something real to do and watching it done. Three full sections carry the code
+workspace (attach → read/edit → the user's own build/test command lines → the
+`F4` diff-and-revert screen), the grown-up sub-agents (tools, transcripts as
+live nested conversations, the migration of old calls) and the Tavily-backed
+web search with the measured free-engine block story; an "also" list carries
+the binary rename, OSC 11 theme detection, per-screen `F1`, the Russian legal
+texts, split GGUF, the stage-3 commands and the missing-database warning. A
+closing note tells the reader about the two schema migrations in the terms the
+CHANGELOG's Data rubric uses — automatic, after a pre-migration backup,
+refused by an older build rather than misread.
+
+**The landing grid went 9 → 12, on the 0.9.6 precedent.** Two capabilities of
+this release deserved cards no existing card could absorb — the attached
+project and delegation — and `card-grid` is three columns at desktop width, so
+eleven cards would leave the last row a card short. Instead of padding, the
+strongest capability the landing had never mentioned was written up: search —
+inside the open conversation and across every chat's messages, sub-agent
+transcripts included. The rows now read as themes: engine and memory, tools
+and work, interface and search, endurance/speech/privacy. Alongside the grid:
+the hero line trades "an agentic tool loop" for "an agentic tool loop that
+reaches your own code project", the fetch panel's `tools` row gains
+`project`, and the at-a-glance article's loop section gains a paragraph on
+the workspace and delegation — the article is the site's architectural tour,
+and the loop's two biggest tools were missing from it.
+
+**What the post refuses to overclaim.** The sub-agent's tool grant names its
+exclusions (no sub-agents of its own, no folded history, no self-model) in
+the same sentence that grants the rest. The workspace section puts the
+containment story — attaching *is* the permission, commands are only ever the
+user's own lines — ahead of the capabilities. The Tavily numbers (free
+engines answering about twice in a row, 1000 searches a month on the free
+tier) are the changelog's measured claims, not fresh impressions. The theme
+item names the terminals that answer OSC 11 and the one that does not
+(legacy conhost, treated as the dark background it is).
+
+No live run: site content plus landing/template edits, no Rust touched. The
+build was verified with the pinned Zola 0.22.1 (0.23.x still cannot discover
+`templates/` on Windows — lessons §6): 10 pages, the post at
+`/blog/mindfork-0-9-8/`, all twelve cards rendering. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`) green.

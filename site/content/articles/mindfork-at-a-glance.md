@@ -32,6 +32,14 @@ locks, no shared mutable state, and every provider gets the same tools:
 web search and page fetching, a WASM-sandboxed Python runtime, notes, file
 access, YouTube ingestion — and anything you plug in over MCP.
 
+Two of those tools deserve their own sentence. A chat can have a **code
+project** attached: the assistant reads, searches and edits it, and runs
+the build and test command lines you typed — never ones it composed — with
+every change reviewable as a diff and revertible per file. And it can
+**delegate**: a sub-agent runs as a nested turn with the same tools, and
+its transcript lands in the chat list as a read-only conversation of its
+own — searchable, and streaming live while it runs.
+
 ## Memory is layered, not a vector dump
 
 - a **self-model**: a summary the assistant maintains about itself and
