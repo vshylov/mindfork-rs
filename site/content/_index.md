@@ -4,7 +4,7 @@ description = "Local models via llama.cpp or four cloud providers, persistent me
 
 [extra]
 hero_title = "An AI chat that lives in your terminal"
-hero_sub = "Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Grok. Persistent memory, notes and RAG, an agentic tool loop: one fast native binary for Windows and Linux."
+hero_sub = "Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Grok. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux."
 
 [[extra.features]]
 title = "Local first"
@@ -23,12 +23,24 @@ title = "Real tools"
 desc = "An agentic loop with web search, page fetching, a sandboxed Python runtime and file access — plus your own tools over MCP."
 
 [[extra.features]]
+title = "Hand it your project"
+desc = "Attach a code project to a chat: the assistant reads, searches and edits it, and runs the build and test commands you typed — never ones it composed. F4 shows every change as a diff, with per-file revert."
+
+[[extra.features]]
+title = "It can delegate"
+desc = "The assistant can hand a side-task to a sub-agent with the same tools. The transcript is a conversation of its own — nested in the chat list, searchable, and streaming live while it runs."
+
+[[extra.features]]
 title = "A real TUI"
 desc = "Markdown, syntax highlighting, Mermaid diagrams and LaTeX rendered as text, dark and light themes, English and Russian — all in the terminal."
 
 [[extra.features]]
 title = "Show it a picture"
 desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model and with all four clouds."
+
+[[extra.features]]
+title = "Find anything you said"
+desc = "Search inside the open conversation, or across every chat's messages — a hit opens the chat at the matching message, highlighted. Sub-agent transcripts are searched too."
 
 [[extra.features]]
 title = "Long chats keep working"
