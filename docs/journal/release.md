@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -38,6 +38,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the installer's legal pages speak Russian (done)
 - Post-M9: the Windows installer moves to Inno Setup 7 (done)
 - Post-M9: the binary/command renamed to `mindfork` (done)
+- Release 0.9.8 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1410,3 +1411,41 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `packaging.yml`. **Gate green**: 2556 unit tests (one new — the name gate),
   107 `#[ignore]`; `fmt`/`clippy -D warnings`/`cyrillic_scan`/`link_check`/
   `doc_index_check` clean.
+
+### Release 0.9.8 (prepared)
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.9.8`): bumped `Cargo.toml` `0.9.7 → 0.9.8` (+ `Cargo.lock`),
+  `CHANGELOG.md` — `[Unreleased]` → `[0.9.8] — 2026-08-27`, a fresh empty
+  `[Unreleased]` opened, comparison links updated. The `v0.9.8` tag is applied
+  by the user after the merge (the agent doesn't push tags/`main`).
+- **What the section carries**: the two big tracks — the code workspace
+  (`/project attach` through the typed build/run/test command lines and the
+  `F4` changes screen) and the sub-agent chats (the sub-agent with the agent's
+  tools; transcripts as nested, searchable, auto-titled conversations, live
+  while they run) — plus Tavily-backed web search, the `mindfork` binary
+  rename, the `auto` theme's OSC 11 detection, per-screen `F1` help, the
+  Russian legal texts, split-GGUF support, the stage-3 commands, and a wave of
+  fixes.
+- **The `[Unreleased]` rubrics were reordered on the way in**: the section had
+  grown as Added → Changed → Data → Fixed, and `release.yml` publishes the
+  `## [0.9.8]` section verbatim as the GitHub Release body — so Data was moved
+  behind Fixed to match the order the CHANGELOG header declares (Added /
+  Changed / Fixed / Removed / Data / Security). No rubric merging was needed:
+  one block of each across all the merged PRs.
+- **The first release whose `Data` rubric describes real migrations**: chat
+  files 1 → 2 (transcripts reconstructed for old sub-agent calls) and
+  `settings.json` 1 → 2 (the sub-agent run-timeout rename and the raised token
+  default) — the first production work for the migration framework from
+  release-engineering stages 3–4. 0.9.0's `Data` text described the storage
+  format; every release since had no rubric at all.
+- **Site refreshed with the release** (reasoning in [website.md](website.md)):
+  the 0.9.8 release post, the landing grid grown 9 → 12, the hero line, the
+  fetch panel's `tools` row, and the at-a-glance article's loop section.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`
+  / `cargo test` green — **2616 unit tests, 109 `#[ignore]`**; the
+  documentation gates (`cyrillic_scan`, `link_check`, `doc_index_check`,
+  `list_scroll_check`, `wizard_rtf --check`) green too. No live run needed
+  (version + docs + site content, app code untouched). CLAUDE.md's "## Status"
+  header carries the new version (its test count and date were already
+  current); README's project-status paragraph moves `v0.9.7` / 2304 / 99 →
+  `v0.9.8` / 2616 / 109.

@@ -14,6 +14,8 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-08-27
+
 ### Added
 
 - **Web search can use a provider with an API key.** The free search engines
@@ -234,25 +236,6 @@ split by subsystem.
   instead of hugging the left half of the window. Two rows joined them: the
   app's license and the build target (operating system and CPU architecture).
 
-### Data
-
-- **Chat files schema 1 → 2** (migrated automatically on the first start, after
-  the same pre-migration backup): every sub-agent call made by the old
-  tool-less `call_subagent` gets a transcript reconstructed from what the call
-  already stored — the persona, the question and the reply — so old
-  delegations appear as child chats like new ones. Nothing is removed: a
-  migrated file is the old file plus the transcripts, and it now records its
-  schema version. An older build refuses to open migrated data rather than
-  misread it — restore the pre-migration backup to go back.
-- **`settings.json` schema 1 → 2** (migrated automatically on the first start,
-  after a pre-migration backup): `tools.subagent_timeout_secs` becomes
-  `tools.subagent_run_timeout_secs`. A value left at the old default (60)
-  takes the new default (600); a value you changed is carried over. A
-  `subagent_max_tokens` left at the old default (1024) takes the new one
-  (4096). Chat files are unchanged: a sub-agent's transcript is a new,
-  optional field on the tool call that made it, and older files read as
-  before.
-
 ### Fixed
 
 - **Plugin (MCP) tool switches line up with the rest again.** A tool served by
@@ -365,6 +348,25 @@ split by subsystem.
   the key landed alone on the next, under the icon. It now moves to the next
   row whole, aligned under the call's name; the "images returned" chip does the
   same.
+
+### Data
+
+- **Chat files schema 1 → 2** (migrated automatically on the first start, after
+  the same pre-migration backup): every sub-agent call made by the old
+  tool-less `call_subagent` gets a transcript reconstructed from what the call
+  already stored — the persona, the question and the reply — so old
+  delegations appear as child chats like new ones. Nothing is removed: a
+  migrated file is the old file plus the transcripts, and it now records its
+  schema version. An older build refuses to open migrated data rather than
+  misread it — restore the pre-migration backup to go back.
+- **`settings.json` schema 1 → 2** (migrated automatically on the first start,
+  after a pre-migration backup): `tools.subagent_timeout_secs` becomes
+  `tools.subagent_run_timeout_secs`. A value left at the old default (60)
+  takes the new default (600); a value you changed is carried over. A
+  `subagent_max_tokens` left at the old default (1024) takes the new one
+  (4096). Chat files are unchanged: a sub-agent's transcript is a new,
+  optional field on the tool call that made it, and older files read as
+  before.
 
 ## [0.9.7] — 2026-08-17
 
@@ -1456,7 +1458,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...v0.9.5
