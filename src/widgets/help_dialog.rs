@@ -529,8 +529,9 @@ pub fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) 
 /// Left indent of the tab content (the same column as the lockup).
 const HELP_PAD: &str = "  ";
 
-/// The "About" tab: the name and tagline, then the facts — version, license
-/// and build target, the links (site/crate/repository) and the author — as a
+/// The "About" tab: the name and tagline, then the facts — version, build date
+/// (release builds only), license and build target, the links
+/// (site/crate/repository) and the author — as a
 /// leader table, the geometry the "Components" tab already uses
 /// ([`leader_row`]): the label on the left margin, the values in one column
 /// anchored so the widest of them touches the mirrored right margin, and the
@@ -540,12 +541,19 @@ const HELP_PAD: &str = "  ";
 /// fix (user's decision, 2026-08-19). Links use the accent color (like
 /// "command keys"), the labels are muted.
 fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
-    let rows: Vec<(Span<'static>, Span<'static>)> = [
-        (
-            loc.t("ui.about.version"),
-            env!("CARGO_PKG_VERSION").to_string(),
-            palette.text,
-        ),
+    let mut facts = vec![(
+        loc.t("ui.about.version"),
+        env!("CARGO_PKG_VERSION").to_string(),
+        palette.text,
+    )];
+    // The build date sits right under the version, the fact it refines: two
+    // releases share `0.9.7`, they do not share a day. Present in a release
+    // build only — [`credits::build_date`] returns `None` where the stamp
+    // cannot be trusted, and a missing row is better than a wrong date.
+    if let Some(date) = credits::build_date() {
+        facts.push((loc.t("ui.about.build"), date.to_string(), palette.text));
+    }
+    facts.extend([
         (
             loc.t("ui.about.license"),
             credits::LICENSE_ID.to_string(),
@@ -576,15 +584,16 @@ fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Lin
             credits::AUTHOR.to_string(),
             palette.text,
         ),
-    ]
-    .into_iter()
-    .map(|(label, value, color)| {
-        (
-            Span::styled(format!("{label}:"), palette.muted_style()),
-            Span::styled(value, Style::new().fg(color)),
-        )
-    })
-    .collect();
+    ]);
+    let rows: Vec<(Span<'static>, Span<'static>)> = facts
+        .into_iter()
+        .map(|(label, value, color)| {
+            (
+                Span::styled(format!("{label}:"), palette.muted_style()),
+                Span::styled(value, Style::new().fg(color)),
+            )
+        })
+        .collect();
     // The one column every value starts in — measured in display columns, since
     // a label carries Cyrillic in `ru` and a value could carry anything.
     let value_col = width.saturating_sub(
@@ -1322,7 +1331,11 @@ mod tests {
                 // rows above are single-span.
                 let rows: Vec<&Line<'static>> =
                     lines.iter().filter(|l| l.spans.len() == 4).collect();
-                assert_eq!(rows.len(), 7, "expected every fact row: {rows:?}");
+                // The build-date row exists in a release build only (the stamp
+                // is not trustworthy in a debug one — `credits::build_date`),
+                // so the count is profile-dependent rather than 7 or 8.
+                let expected = 7 + usize::from(credits::build_date().is_some());
+                assert_eq!(rows.len(), expected, "expected every fact row: {rows:?}");
                 let col_of = |line: &Line<'static>| -> usize {
                     line.spans[..3].iter().map(span_width).sum()
                 };
@@ -1373,6 +1386,10 @@ mod tests {
             env!("CARGO_PKG_VERSION"),
         ] {
             assert!(text.contains(fact), "the About tab lost {fact:?}");
+        }
+        // …and the build date whenever there is one to show.
+        if let Some(date) = credits::build_date() {
+            assert!(text.contains(date), "the About tab lost the build date");
         }
     }
 

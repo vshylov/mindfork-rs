@@ -1,4 +1,5 @@
-//! Build script: spellcheck dictionaries next to the binary + a Windows `.exe` icon.
+//! Build script: spellcheck dictionaries next to the binary + a Windows `.exe` icon
+//! + the build stamp.
 //!
 //! **Dictionaries.** In portable mode the application reads data from a `data/` subdirectory
 //! next to the executable (in dev — `target/<profile>/data/`, see shared/paths.rs),
@@ -12,6 +13,12 @@
 //! `artwork/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
 //! default icon. Shortcuts and the installer's `UninstallDisplayIcon`
 //! (`packaging/windows/mindfork.iss`) pick it up from here for free too. See docs/branding.md §4.1.
+//!
+//! **Build stamp.** The moment of the build goes in as `MINDFORK_BUILD_EPOCH`
+//! (Unix seconds, or `SOURCE_DATE_EPOCH` when set) and surfaces as the build-date
+//! row of the "About" tab — in release builds only, because this script does not
+//! re-run for a `src/` change. See `embed_build_stamp` and
+//! `shared/credits.rs::build_date` (spec §11.7).
 //!
 //! **Syntax dump.** The vendored grammars in `syntaxes/` (see its `SOURCES.md`)
 //! are added to syntect's bundled set and written into `OUT_DIR` as one
@@ -27,6 +34,7 @@ fn main() {
     // Re-copy only when the source dictionaries change.
     println!("cargo:rerun-if-changed=dictionaries");
 
+    embed_build_stamp();
     embed_windows_icon();
     build_syntax_dump();
 
@@ -45,6 +53,41 @@ fn main() {
     if let Err(err) = copy_dir(&src, &dst) {
         println!("cargo:warning=could not copy dictionaries: {err}");
     }
+}
+
+/// Compiles the moment of the build in as `MINDFORK_BUILD_EPOCH` (Unix seconds),
+/// which `shared/credits.rs` turns into the build-date row of the "About" tab.
+///
+/// **Seconds, not a formatted date**: `chrono` is already a runtime dependency
+/// and knows how to render a timestamp, so a build dependency (and a second
+/// date implementation) would buy nothing. Formatting happens where the value
+/// is displayed.
+///
+/// `SOURCE_DATE_EPOCH` wins when it is set — the cross-distribution convention
+/// for reproducible builds (Debian, Nix, openSUSE): a package rebuilt from the
+/// same source must produce the same bytes, and a wall clock in the binary is
+/// exactly what breaks that. `rerun-if-env-changed` makes cargo notice when the
+/// variable appears or changes.
+///
+/// **The value is only as fresh as the last run of this script**, and this
+/// script declares `rerun-if-changed` paths, so cargo will not re-run it when
+/// `src/` changes — a development binary would carry the date of whenever
+/// `dictionaries/`, `artwork/` or `syntaxes/` last moved. That is why the row
+/// is shown for release builds alone (`credits::build_date`); forcing a re-run
+/// on every build would rebuild the syntax dump each time and buy a row nobody
+/// reads in a debug build.
+fn embed_build_stamp() {
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+
+    let secs = env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        });
+    println!("cargo:rustc-env=MINDFORK_BUILD_EPOCH={secs}");
 }
 
 /// Embeds the icon into the Windows `.exe` (the `IDI_ICON1` resource) — the Windows-host variant.

@@ -131,6 +131,21 @@ first and check the images come back byte-identical, which is cheap because the
 pipeline is deterministic.
 — *the canvas padding measured in cells*.
 
+**Anything a build script stamps into the binary goes stale the moment the script
+declares `rerun-if-changed`.** Cargo then re-runs it for those paths *only* — ours
+are `dictionaries/`, `artwork/`, `syntaxes/` — so editing `src/` rebuilds the binary
+without re-running the script, and a compiled-in timestamp/SHA freezes at whenever
+one of those directories last moved. Forcing a re-run on every build pays for it in
+the script's own work on every `cargo check`; watching `src/` too buys *partial*
+accuracy, which is the worse failure — the value looks equally confident when it is
+right and when a `Cargo.toml` edit relinked the binary behind it. The way out is to
+show the value only where it is true (the "About" tab's build date is release-only,
+`credits::build_date()` returning `None` under `debug_assertions`) and to make the
+gate a test, not a comment. And prefer a fact the build owns over a fact the
+filesystem owns: the executable's mtime is accurate until a copy, a backup restore
+or a rewriting tool turns "built on" into "touched on", with no way to tell.
+— *the build date on the "About" tab*.
+
 ---
 
 ## 2. Testing discipline

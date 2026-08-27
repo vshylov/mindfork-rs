@@ -687,6 +687,7 @@
   "ui.about.desc": "Terminal AI chat with local and cloud models",
   "ui.about.author": "Author",
   "ui.about.version": "Version",
+  "ui.about.build": "Build date",
   "ui.about.license": "License",
   "ui.about.platform": "Platform",
   "ui.about.site": "Website",
