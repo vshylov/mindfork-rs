@@ -54,6 +54,10 @@ pub enum UiCommand {
     Copy,
     /// Regenerate the last reply (`Ctrl+R`).
     Regen,
+    /// Resume the last interrupted reply in place (no chord — deliberately:
+    /// the command is rare, the free terminal-safe keys are few, and fork F6
+    /// of docs/research/continue-generation.md chose to keep them).
+    Continue,
     /// Delete the last exchange (`Ctrl+E`).
     Takeback,
     /// Write a message as the user; the argument seeds it (`Ctrl+U`).
@@ -176,6 +180,7 @@ pub const COMMANDS: &[Spec] = &[
     // Two spellings, on the `/exit`·`/quit` rule: both words are pre-trained
     // elsewhere, and someone reaching for one does not want to learn the other.
     row(&["/regen", "/retry"], UiCommand::Regen, Arity::None, "/regen · /retry", "ui.help.cmd_regen"),
+    row(&["/continue"], UiCommand::Continue, Arity::None, "/continue", "ui.help.cmd_continue"),
     row(&["/takeback"], UiCommand::Takeback, Arity::None, "/takeback", "ui.help.cmd_takeback"),
     row(&["/impersonate"], UiCommand::Impersonate, Arity::Optional, "ui.help.k.impersonate", "ui.help.cmd_impersonate"),
     row(&["/stop"], UiCommand::Stop, Arity::None, "/stop", "ui.help.cmd_stop"),

@@ -48,7 +48,7 @@ fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
     s.push_error("Достигнут лимит раундов инструментов (8) — свожу итог.");
     // The forced synthesis streams the final reply.
     s.push_chunk(id, "## Итог\n\n**Вывод**.");
-    s.finish_generation(id, FinishReason::Stop);
+    s.finish_generation(id, FinishReason::Stop, false);
 
     // The note is a separate element; the final text is in the assistant bubble (markdown),
     // not in the note.
@@ -74,7 +74,7 @@ fn streaming_sequence_builds_feed() {
     s.push_thoughts(id, "hmm");
     s.push_chunk(id, "Hel");
     s.push_chunk(id, "lo");
-    s.finish_generation(id, FinishReason::Stop);
+    s.finish_generation(id, FinishReason::Stop, false);
 
     assert_eq!(s.feed.len(), 2);
     assert_eq!(s.feed[0].role, FeedRole::User);
@@ -103,7 +103,7 @@ fn live_stream_with_tool_matches_reload() {
         0,
     );
     s.push_chunk(id, "Сейчас ясно.");
-    s.finish_generation(id, FinishReason::Stop);
+    s.finish_generation(id, FinishReason::Stop, false);
 
     let live = s.feed.last().unwrap().clone();
     assert_eq!(live.text, "Ищу погоду.\n\nСейчас ясно.");
@@ -148,7 +148,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     s.push_chunk(id, "Первое сообщение.");
     s.continue_assistant(id);
     s.push_chunk(id, "Второе сообщение.");
-    s.finish_generation(id, FinishReason::Stop);
+    s.finish_generation(id, FinishReason::Stop, false);
 
     // Two separate assistant bubbles.
     let bubbles: Vec<&FeedMessage> = s
@@ -227,7 +227,7 @@ fn live_rewrite_discards_partial_text() {
     s.push_chunk(id, "вильный ответ.");
     s.rewrite_assistant(id);
     s.push_chunk(id, "Правильный ответ.");
-    s.finish_generation(id, FinishReason::Stop);
+    s.finish_generation(id, FinishReason::Stop, false);
 
     // Exactly one assistant bubble with the rewritten text (the partial one is discarded).
     let bubbles: Vec<&FeedMessage> = s
@@ -255,7 +255,7 @@ fn cancelled_finish_adds_note() {
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.begin_generation(id, None);
-    s.finish_generation(id, FinishReason::Cancelled);
+    s.finish_generation(id, FinishReason::Cancelled, false);
     assert!(s.feed.iter().any(|i| i.role == FeedRole::Note));
     assert!(!s.generating);
 }
@@ -2606,7 +2606,7 @@ fn the_retry_chip_shows_the_numbers_and_is_cleared_by_what_ends_the_wait() {
     // And so does the turn finishing, from the other direction.
     s.set_retrying(gen_id, 3, 3, 2);
     assert!(s.background_hint().unwrap().contains('3'));
-    s.finish_generation(gen_id, FinishReason::Error);
+    s.finish_generation(gen_id, FinishReason::Error, false);
     let hint = s.background_hint().unwrap();
     assert!(
         !hint.contains('3'),
@@ -2671,7 +2671,7 @@ fn a_started_call_is_a_running_card_completed_in_place() {
     // The turn ends mid-call: nothing stays running.
     s.push_tool_call_started(id, "c3".into(), "python_exec".into(), "{}".into());
     assert!(s.feed.last().unwrap().tools[2].running);
-    s.finish_generation(id, FinishReason::Cancelled);
+    s.finish_generation(id, FinishReason::Cancelled, false);
     let bubble = |s: &ChatScreen| {
         s.feed
             .iter()
@@ -2722,6 +2722,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
             thoughts: String::new(),
             tools: Vec::new(),
         }),
+        continues: false,
     })));
     assert!(s.generating, "a transcript streams its own run");
     assert!(
@@ -2765,7 +2766,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
 
     // The run's stream ends: its bubble closes and the chip goes (the run is
     // over — the turn's own clearing event usually precedes this anyway).
-    s.finish_generation(stream, FinishReason::Stop);
+    s.finish_generation(stream, FinishReason::Stop, false);
     assert!(!s.generating);
     assert!(s.background_hint().is_none());
     assert!(!s.feed.iter().any(|m| m.role == FeedRole::Note));
@@ -2809,6 +2810,7 @@ fn returning_to_the_running_chat_resumes_its_generation() {
                 },
             ],
         }),
+        continues: false,
     })));
     assert!(s.generating);
     // The seed: one streaming bubble with the text, the thoughts and both
@@ -2833,7 +2835,7 @@ fn returning_to_the_running_chat_resumes_its_generation() {
     assert!(!s.feed.last().unwrap().tools[1].running);
     s.push_chunk(generation, "продолжение");
     assert!(s.feed.iter().any(|m| m.text.contains("продолжение")));
-    s.finish_generation(generation, FinishReason::Stop);
+    s.finish_generation(generation, FinishReason::Stop, false);
     assert!(!s.generating);
 }
 
@@ -2874,7 +2876,7 @@ fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
 
     // The turn ends with a run still reported — the chip goes with it.
     s.set_subagent_progress(gen_id, at(3, None));
-    s.finish_generation(gen_id, FinishReason::Cancelled);
+    s.finish_generation(gen_id, FinishReason::Cancelled, false);
     assert!(!s.background_hint().unwrap().contains("Критик"));
 
     // A stale generation's chip is dropped.
@@ -4576,4 +4578,148 @@ mod subagents_command {
         assert_eq!(c.run("/subagents"), None);
         assert_eq!(c.last_note(), c.s.loc.t("ui.cmd.no_chat"));
     }
+}
+
+// ---------- /continue on the screen (spec §6.4) ----------
+
+/// A continuation streams into the bubble it resumes: same bubble, no
+/// separator, mid-word seam intact — the `"\n\n"` round-stitching must not
+/// fire between the partial and its continuation.
+#[test]
+fn continuation_streams_into_the_resumed_bubble() {
+    let mut s = ChatScreen::new();
+    let id = Uuid::new_v4();
+    let messages = vec![Message::user("вопрос"), Message::assistant("Нача")];
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let g = gen_id();
+    s.begin_continuation(g, None);
+    s.push_chunk(g, "ло");
+    let assistants: Vec<_> = s
+        .feed
+        .iter()
+        .filter(|m| m.role == FeedRole::Assistant)
+        .collect();
+    assert_eq!(assistants.len(), 1, "no second bubble may open");
+    assert_eq!(assistants[0].text, "Начало", "joined with no separator");
+    assert!(assistants[0].streaming);
+}
+
+/// A note that landed after the partial (the "cut short" explanation) moves
+/// above the resumed reply rather than splitting it: the bubble is re-opened
+/// **past** the note, and the stream lands in the bubble, not the note.
+#[test]
+fn continuation_reopens_the_bubble_past_a_trailing_note() {
+    let mut s = ChatScreen::new();
+    let id = Uuid::new_v4();
+    let messages = vec![Message::user("вопрос"), Message::assistant("Нача")];
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.push_note("ответ оборван");
+    let g = gen_id();
+    s.begin_continuation(g, None);
+    s.push_chunk(g, "ло");
+    let last = s.feed.last().unwrap();
+    assert_eq!(last.role, FeedRole::Assistant);
+    assert_eq!(last.text, "Начало");
+    assert!(
+        s.feed.iter().any(|m| m.role == FeedRole::Note),
+        "the note stays, above the reply it described"
+    );
+}
+
+/// The `Length` notes exist at all only since `/continue` made them actionable
+/// (spec §6.4), and each names the route that works in the current mode
+/// (fork F9): the resuming one when the mode can resume, the regenerating one
+/// when it cannot.
+#[test]
+fn a_length_cut_gets_the_note_its_mode_deserves() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    for (continuable, key) in [
+        (true, "ui.err.reply_truncated_continuable"),
+        (false, "ui.err.reply_truncated"),
+    ] {
+        let mut s = ChatScreen::new();
+        let g = gen_id();
+        s.begin_generation(g, None);
+        s.push_chunk(g, "полответа");
+        s.finish_generation(g, FinishReason::Length, continuable);
+        let last = s.feed.last().unwrap();
+        assert_eq!(last.role, FeedRole::Note);
+        assert_eq!(last.text, loc.t(key), "continuable={continuable}");
+    }
+}
+
+/// The cancel note names `/continue` only when it would actually work.
+#[test]
+fn the_cancel_note_names_continue_only_when_it_works() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    for (continuable, key) in [
+        (true, "ui.chat.gen_cancelled_continuable"),
+        (false, "ui.chat.gen_cancelled"),
+    ] {
+        let mut s = ChatScreen::new();
+        let g = gen_id();
+        s.begin_generation(g, None);
+        s.push_chunk(g, "полотв");
+        s.finish_generation(g, FinishReason::Cancelled, continuable);
+        assert_eq!(
+            s.feed.last().unwrap().text,
+            loc.t(key),
+            "continuable={continuable}"
+        );
+    }
+}
+
+/// A mid-continuation switch away and back: the rebuilt feed seeds the live
+/// partial **into** the bubble being continued (`LiveTurn::continues`), not
+/// into a bubble of its own.
+#[test]
+fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
+    let mut s = ChatScreen::new();
+    let id = Uuid::new_v4();
+    let generation = gen_id();
+    let messages = vec![Message::user("вопрос"), Message::assistant("Нача")];
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+        turn: generation,
+        stream: generation,
+        partial: Some(crate::app::events::LivePartial {
+            text: "ло".into(),
+            thoughts: String::new(),
+            tools: Vec::new(),
+        }),
+        continues: true,
+    })));
+    assert!(s.generating);
+    let assistants: Vec<_> = s
+        .feed
+        .iter()
+        .filter(|m| m.role == FeedRole::Assistant)
+        .collect();
+    assert_eq!(assistants.len(), 1, "the partial joins the seed bubble");
+    assert_eq!(assistants[0].text, "Начало");
+    assert!(assistants[0].streaming);
 }

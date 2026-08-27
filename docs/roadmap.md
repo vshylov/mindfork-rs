@@ -218,6 +218,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
+- **`/continue` — stage 2, the clouds** (stage 1 is **done**: managed/external,
+  [continue-generation.md](research/continue-generation.md)): widening
+  `ServerMode::supports_continuation` per the stage-0 measurements — Anthropic
+  on ≤4.5 models (a per-model gate, thinking off, the trailing-whitespace
+  trim), Gemini (measured continuing, undocumented), never Grok (measured
+  restarting) or OpenAI. The capability table grows rows; nothing structural.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
   with the key such a gateway needs

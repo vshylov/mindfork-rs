@@ -242,6 +242,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
@@ -284,6 +285,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
@@ -327,6 +329,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step: what is 17 * 23? Show brief reasoning.",
@@ -389,6 +392,7 @@ mod ignored_smoke {
         let prompt = "Reason briefly which of Paris or Berlin is the capital of France, \
              then call get_weather for that city.";
         let round1 = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(prompt)],
             sampling: sampling.clone(),
@@ -429,6 +433,7 @@ mod ignored_smoke {
         let call = &calls[0];
 
         let round2 = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::user(prompt),

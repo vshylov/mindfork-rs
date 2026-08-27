@@ -204,7 +204,7 @@ pub struct ToolSchema {
 }
 
 /// A request for one generation turn.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChatRequest {
     /// The system message (substituted first). See spec §6.2.
     pub system: Option<String>,
@@ -213,6 +213,15 @@ pub struct ChatRequest {
     pub sampling: SamplingConfig,
     /// Schemas of the available tools (empty — no tool-calling). `tool_choice=auto`.
     pub tools: Vec<ToolSchema>,
+    /// Continue the **trailing assistant message** in place instead of starting
+    /// a new reply (`/continue`, spec §6.4). Only the OpenAI-compatible wire
+    /// acts on it — llama.cpp continues such a tail by default and the explicit
+    /// `continue_final_message` pair plus `enable_thinking:false` ride along
+    /// for vLLM and thinking templates (research §2, §7.1); other wires ignore
+    /// it, and [`ServerMode::supports_continuation`](crate::shared::config::ServerMode)
+    /// keeps it from reaching them. `false` — a request byte-identical to
+    /// before the field existed.
+    pub continue_final: bool,
 }
 
 /// The reason generation finished.

@@ -428,6 +428,7 @@ async fn summarize_text(
         ..ctx.effective_sampling.clone()
     };
     let request = ChatRequest {
+        continue_final: false,
         system: Some(system),
         messages: vec![ApiMessage::user(task)],
         sampling,

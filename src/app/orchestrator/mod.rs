@@ -433,6 +433,10 @@ struct InflightTurn {
     /// The sub-agent's round in progress: text and thoughts streamed since
     /// the last filed round, so a transcript opened mid-round starts whole.
     child_partial: crate::app::events::LivePartial,
+    /// The turn continues the chat's trailing assistant message in place
+    /// (`/continue`, spec §6.4): a mid-turn rebuild folds the filed first
+    /// round into that message's view and appends the live partial there.
+    continuation: bool,
 }
 
 /// Applies one mirrored step to a round in progress (see
@@ -686,6 +690,7 @@ impl Orchestrator {
                 self.handle_set_children_expanded(id, expanded)
             }
             AppCommand::RegenerateLast => self.handle_regenerate(),
+            AppCommand::ContinueLast => self.handle_continue(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
@@ -1100,6 +1105,8 @@ impl Orchestrator {
                     let _ = self.evt_tx.send(AppEvent::Finished {
                         generation_id: turn.child_stream,
                         reason,
+                        // A transcript is read-only — nothing on it continues.
+                        continuable: false,
                     });
                 }
                 self.emit_chat_list();
@@ -1294,12 +1301,17 @@ impl Orchestrator {
                     turn: t.generation,
                     stream: t.generation,
                     partial: Some(t.partial.clone()),
+                    // Only until the first round files: what files after a
+                    // tool round is a message of its own, and the filed
+                    // continuation round was folded into the seed's view below.
+                    continues: t.continuation && t.rounds.is_empty(),
                 }))
             } else if t.child_id() == Some(id) {
                 Some(Box::new(crate::app::events::LiveTurn {
                     turn: t.generation,
                     stream: t.child_stream,
                     partial: Some(t.child_partial.clone()),
+                    continues: false,
                 }))
             } else {
                 None
@@ -1309,7 +1321,23 @@ impl Orchestrator {
             Some(ChatView::Top(chat)) => {
                 let mut messages = chat.messages.clone();
                 if let Some(t) = turn.filter(|t| t.chat == id) {
-                    messages.extend(t.rounds.iter().cloned());
+                    let mut rounds = t.rounds.clone();
+                    // A continuation turn's first filed round belongs **inside**
+                    // the trailing partial (`/continue`, fork F8): fold it into
+                    // the view the same way `handle_done` will fold it into the
+                    // chat — otherwise the rebuild would show the seam the
+                    // append path exists to avoid.
+                    if t.continuation
+                        && let Some(pos) = rounds.iter().position(|m| {
+                            m.role == crate::entities::message::MessageRole::Assistant
+                        })
+                        && let Some(seed) = messages
+                            .last_mut()
+                            .filter(|m| m.role == crate::entities::message::MessageRole::Assistant)
+                    {
+                        generation::merge_continuation(seed, rounds.remove(pos));
+                    }
+                    messages.extend(rounds);
                 }
                 AppEvent::ChatActivated {
                     id,

@@ -1307,6 +1307,7 @@ mod tests {
             let backend = setup.backend.expect("external mode yields a backend");
             async move {
                 let req = crate::shared::api::ChatRequest {
+                    continue_final: false,
                     system: None,
                     messages: vec![crate::shared::api::ApiMessage::user("Say OK.".to_string())],
                     sampling: crate::entities::sampling::SamplingConfig {

@@ -63,6 +63,10 @@ pub enum AppCommand {
     /// Regenerate the last assistant reply: delete everything after the last
     /// user message and restart generation from the same request.
     RegenerateLast,
+    /// Resume the last interrupted assistant reply in place (`/continue`,
+    /// spec §6.4): prefill the trailing partial and append what arrives into
+    /// the same message; a tool-result tail resumes the agentic loop instead.
+    ContinueLast,
     /// Delete the last exchange (the assistant's reply together with the user
     /// message that triggered it); the user's text is restored into the input box
     /// (`RestoreInput`).
@@ -290,6 +294,7 @@ impl AppCommand {
             // Starts a turn in this conversation.
             AppCommand::SendMessage(_)
             | AppCommand::RegenerateLast
+            | AppCommand::ContinueLast
             | AppCommand::Impersonate { .. }
             // Changes what the conversation stores.
             | AppCommand::DeleteLastExchange
@@ -390,6 +395,10 @@ pub struct LiveTurn {
     /// The round in progress so far — text and thoughts — so a feed opened
     /// mid-round starts with what has already streamed.
     pub partial: Option<LivePartial>,
+    /// The round in progress **continues** the feed's last assistant bubble
+    /// (`/continue` before its first tool round): the partial is appended
+    /// there, with no separator, instead of opening a bubble of its own.
+    pub continues: bool,
 }
 
 /// A round in progress (see [`LiveTurn::partial`]): its text and thoughts
@@ -554,6 +563,11 @@ pub enum AppEvent {
     GenerationStarted {
         generation_id: Uuid,
         model: Option<String>,
+        /// The turn **continues** the trailing assistant message in place
+        /// (`/continue`, spec §6.4): the feed re-opens the last assistant
+        /// bubble for streaming instead of pushing a fresh one, and appends
+        /// with no separator — the seam is the model's own.
+        continuation: bool,
     },
     /// A delta of the reply's main text.
     Chunk { generation_id: Uuid, text: String },
@@ -623,6 +637,12 @@ pub enum AppEvent {
     Finished {
         generation_id: Uuid,
         reason: FinishReason,
+        /// `/continue` would resume what this turn left behind — the mode
+        /// supports continuation and an interrupted tail exists — so the
+        /// feed's interruption notes may name the command (fork F9; a note
+        /// naming a command that would refuse is the project's oldest defect,
+        /// docs/lessons.md §4).
+        continuable: bool,
     },
     /// Impersonation started: UI hides the input box and shows a streaming preview
     /// of the reply (pre-filled with the already-typed text). See spec §11.8.

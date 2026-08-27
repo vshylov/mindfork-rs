@@ -1,6 +1,9 @@
 # `/continue` — resuming an interrupted generation — research
 
-> Status: **forks settled, stage-0 probe GO** (2026-08-27). User's decision
+> Status: **implemented — stage 1 (managed/external), 2026-08-28**; the §8
+> stage-2 cloud widening is recorded in the roadmap ("Engine and
+> reliability"). Journal: [engine.md](../journal/engine.md), "stage 1:
+> resuming an interrupted reply in place". User's decision
 > (2026-08-27): every fork in §6 at its recommended option — F1(a) through
 > F9(a). The §7 probe ran the same day (spike PR `spike/continue-probe`,
 > `src/shared/api/continue_probe.rs`): results in §7.1, one design amendment

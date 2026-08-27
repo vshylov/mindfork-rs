@@ -459,6 +459,7 @@ mod tests {
 
     fn req() -> ChatRequest {
         ChatRequest {
+            continue_final: false,
             system: None,
             messages: Vec::new(),
             sampling: Default::default(),

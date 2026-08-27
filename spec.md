@@ -482,7 +482,11 @@ loop:
 
 - **Cancellation**: a `CancellationToken` aborts the current HTTP stream; the partial response is kept; the chat goes `Cancelling → Idle`.
 - **Regenerating the last response**: delete the last assistant message (and any tool messages from that turn) and repeat the request with the same context (a new seed, if a random seed is enabled).
-- **Continuing a response**: request a continuation of the assistant's last response (optional; useful when `finish_reason = Length`).
+- **Continuing a response** (`/continue`, [§11.7](#117-commands); design and measurements — [docs/research/continue-generation.md](docs/research/continue-generation.md)): the history is re-sent with the partial as its **trailing assistant message** and the engine continues it **in place** (assistant prefill). Everything that arrives appends into the same `Message` — same id, same bubble, no separator; the seam is the model's own.
+  - **Eligibility** is read off the tail. An assistant message with visible text whose recorded end state (`MessageMetadata.finish`: `stop`/`length`/`cancelled`/`error`; additive — older messages read as absent) is an interruption — or absent — is continued via prefill. A tail of **tool results** (a turn interrupted between rounds) resumes the agentic loop instead: an ordinary next round, no prefill. A reply that ended in `stop`, a thoughts-only fragment (no provider can resume a reasoning trace over a chat API), an unsupported mode, and a sub-agent transcript are each refused with a note naming the route that works.
+  - **Capability is per mode** (`ServerMode::supports_continuation`, the `supported_sampling_fields` pattern): managed/external only. llama.cpp continues a trailing assistant message by default; the wire also sends `continue_final_message: true` + `add_generation_prompt: false` (vLLM's explicit opt-in, ignored by llama.cpp builds that predate it) and `chat_template_kwargs {"enable_thinking": false}` — resuming a visible reply must not re-open reasoning, and on older llama.cpp builds the kwarg lifts the prefill-vs-thinking rejection. The clouds refuse: Anthropic removed prefill on current models, OpenAI never continues a trailing assistant message, Grok measurably restarts (research §2, §7.1).
+  - **The echo**: llama.cpp returns *prefill + continuation*; a byte-prefix filter withholds the echoed seed from the stream (screen, mirror and stored message alike) and passes everything through unchanged the moment the stream diverges from the seed — a non-echoing server loses nothing. Measured live: the concatenation of both turns' streamed chunks equals the stored text byte-for-byte.
+  - The continued turn is a full citizen of the agentic loop — the resumed round may call tools, and later rounds file as separate messages, as always. The interruption notes (cancelled, cut-short, and the `length` note this feature added — a length-cut reply used to stop silently) name `/continue` only when it would actually work in the current mode.
 - **Deleting the last message**: on request — the **last Assistant message** is deleted along with the **last User message**, and its text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there, separated from the draft by a **blank line** (the restored message is a message of its own, not a continuation of the draft). (If the last message is a user message with no reply, only it is deleted, with its text returned.)
 
 ### 6.5. Parsing "thoughts" (CoT)
@@ -2860,11 +2864,12 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-one commands:
-`/settings` `/self` `/chats` `/help` · `/new [profile]` `/rename [title]`
-`/autotitle` `/clone` `/copy` `/regen`·`/retry` `/takeback`
-`/impersonate [text]` `/stop` · `/find [text]` `/search <text>` `/links` ·
-`/thoughts` `/toolcalls` `/subagents [expand|collapse]` `/mouse` `/emoji`.
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-three commands:
+`/settings` `/self` `/chats` `/changes` `/help` · `/new [profile]`
+`/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
+`/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
+`/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse]` `/mouse`
+`/emoji`.
 Load-bearing properties:
 
 - **A command is its key.** Each one reaches the action through the *same*

@@ -165,10 +165,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-08-27, version 0.9.8)
+## Status (2026-08-28, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2617 unit tests
-green, 117 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2631 unit tests
+green, 118 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -179,6 +179,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **`/continue` — an interrupted reply resumes in place** — assistant prefill
+  on the managed/external path (per-mode capability; the clouds refuse with the
+  route that works), the server's echo of the prefill stripped byte-exactly,
+  `MessageFinish` recorded on every reply, a tool-result tail resuming the
+  loop, and the interruption notes naming `/continue` where it applies — a
+  length-cut reply finally gets a note at all; probe + live run on Qwen
+  3.6/b10659
+  ([docs/research/continue-generation.md](docs/research/continue-generation.md),
+  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Theme::Auto` actually follows the terminal** — it claimed to "follow the
   system setting" and detected nothing, so code blocks and the *selection
   backdrop* (which `keycap_bg` turns out to drive app-wide) were dark on a light
