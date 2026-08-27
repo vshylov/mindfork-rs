@@ -121,6 +121,8 @@ pub enum ChatIntent {
     Send(String),
     /// Regenerate the assistant's last reply (`Ctrl+R`).
     RegenerateLast,
+    /// Resume the last interrupted reply in place (`/continue`, spec §6.4).
+    ContinueLast,
     /// Delete the last exchange; the user's text returns to the input box (`Ctrl+E`).
     DeleteLastExchange,
     Cancel,
@@ -900,6 +902,12 @@ impl ChatScreen {
             // the round in progress is seeded below, the rest streams on.
             self.current_gen = Some(live.stream);
             self.generating = true;
+            // A continuation's round in progress belongs in the bubble it
+            // resumes (`/continue`, spec §6.4), not in a fresh one — re-open
+            // it so the partial below and the stream after land there.
+            if live.continues {
+                self.resume_last_assistant_bubble();
+            }
         } else {
             // A running transcript (docs/history/subagent-live.md §8): its own
             // stream, into a bubble of its own.

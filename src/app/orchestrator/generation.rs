@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use crate::app::events::{AppEvent, ToolDecision};
 use crate::entities::chat::DeletedCause;
-use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
+use crate::entities::message::{
+    Message, MessageFinish, MessageMetadata, MessageRole, ToolCallRecord,
+};
 use crate::entities::profile::ToolId;
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::tools::subagent::{CALL_SUBAGENT_ID, SubagentArgs, withheld_from_subagent};
@@ -117,6 +119,9 @@ pub(super) struct GenResult {
     /// provider reported no `usage`, and then the trigger stays quiet rather than
     /// guessing (sub-decision S2).
     pub(super) usage: Option<TurnUsage>,
+    /// The message this turn **continues** (`/continue`, spec §6.4): the turn's
+    /// first assistant message is folded into it in place rather than pushed.
+    pub(super) continuation: Option<Uuid>,
 }
 
 /// The exact size of one round, as reported by the server's `usage`.
@@ -136,6 +141,65 @@ impl TurnUsage {
     /// come on top — which the threshold's headroom is there to absorb.
     pub(super) fn next_prompt_estimate(self) -> u64 {
         self.prompt_tokens as u64 + self.completion_tokens
+    }
+}
+
+/// What `/continue` resumes (spec §6.4): the trailing partial assistant
+/// message. `text` rides along for the echo filter — llama.cpp returns
+/// prefill + continuation, and the stream must not re-deliver what is already
+/// on screen (docs/research/continue-generation.md §4d, §7.1).
+#[derive(Debug, Clone)]
+pub(super) struct ContinuationSeed {
+    pub(super) message_id: Uuid,
+    pub(super) text: std::sync::Arc<str>,
+}
+
+/// Strips a server echo of the continuation seed from the front of a round's
+/// text stream. Bytes are withheld while they keep matching the seed; on a
+/// full match the echo is dropped and everything after it flows; on the first
+/// mismatch the withheld bytes plus the current delta flow as real content —
+/// a non-echoing server (a future llama.cpp, vLLM) loses nothing. A stream
+/// that dies while still matching was echoing (the only servers this filter
+/// is enabled for echo, and real content diverges at the first new byte), so
+/// the withheld bytes are dropped rather than appended twice.
+pub(super) struct EchoFilter {
+    seed: std::sync::Arc<str>,
+    matched: usize,
+    decided: bool,
+}
+
+impl EchoFilter {
+    pub(super) fn new(seed: std::sync::Arc<str>) -> Self {
+        Self {
+            seed,
+            matched: 0,
+            decided: false,
+        }
+    }
+
+    /// The visible part of `delta` — empty while the echo is being consumed,
+    /// possibly prefixed with previously withheld bytes on a mismatch.
+    pub(super) fn push(&mut self, delta: &str) -> String {
+        if self.decided {
+            return delta.to_string();
+        }
+        let remaining = &self.seed.as_bytes()[self.matched..];
+        let n = delta.len().min(remaining.len());
+        if delta.as_bytes()[..n] == remaining[..n] {
+            self.matched += n;
+            if self.matched == self.seed.len() {
+                self.decided = true;
+                // `n` ends exactly where the seed does — a char boundary of
+                // the seed, and the bytes match, so of `delta` too.
+                return delta[n..].to_string();
+            }
+            String::new()
+        } else {
+            self.decided = true;
+            // The withheld bytes are byte-identical to the seed's prefix, and
+            // `matched` only ever advanced by whole deltas — a char boundary.
+            format!("{}{delta}", &self.seed[..self.matched])
+        }
     }
 }
 
@@ -193,7 +257,7 @@ impl Orchestrator {
         self.mark_dirty(active_id);
         let _ = self.evt_tx.send(AppEvent::UserMessage(text));
 
-        self.start_generation(active_id, backend);
+        self.start_generation(active_id, backend, None);
         // Automatic titling at the `AfterUserMessage` point (spec §11.2), fired
         // for the conversation's first user message — **after** the reply's own
         // request, so on a single-slot server the title never queues ahead of
@@ -251,7 +315,85 @@ impl Orchestrator {
         self.mark_dirty(active_id);
         self.activate(active_id); // rebuild the feed without the old reply
         self.emit_chat_list();
-        self.start_generation(active_id, backend);
+        self.start_generation(active_id, backend, None);
+    }
+
+    /// Resumes the last interrupted assistant reply in place (`/continue`,
+    /// spec §6.4): the history goes out with the partial as its trailing
+    /// assistant message and the engine continues it (assistant prefill),
+    /// everything that arrives appending into the same `Message`. A turn
+    /// interrupted **between** tool rounds — the chat ends with tool results —
+    /// resumes the agentic loop instead, with nothing to prefill. Every
+    /// refusal answers with the route that works (docs/lessons.md §4); the
+    /// cheap state gates (`generating`, no chat, a read-only transcript) were
+    /// already answered by the typed route on the screen.
+    pub(super) fn handle_continue(&mut self) {
+        if !self.gen_state.is_idle() {
+            return;
+        }
+        let Some(active_id) = self.active_id else {
+            return;
+        };
+        if self.parent_of(active_id).is_some() {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.read_only_chat").into(),
+            ));
+            return;
+        }
+        // The capability gate first — its answer does not depend on the server
+        // being up, and a cloud user should hear "cannot" rather than wait out
+        // a readiness check to hear it (single source of truth: research §2).
+        if !self.config.engine.mode.supports_continuation() {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.cmd.continue_unsupported").into(),
+            ));
+            return;
+        }
+        let seed = {
+            let Some(chat) = self.chats.iter().find(|c| c.id == active_id) else {
+                return;
+            };
+            match chat.messages.last() {
+                // Interrupted between rounds: the loop resumes on the recorded
+                // tool results — the ordinary agentic request shape.
+                Some(m) if m.role == MessageRole::Tool => None,
+                Some(m) if m.role == MessageRole::Assistant => {
+                    if m.text.is_empty() {
+                        // Cut inside the reasoning, before any visible text —
+                        // no provider can resume a thought over a chat API (F4).
+                        let _ = self.evt_tx.send(AppEvent::Error(
+                            self.ui_locale().t("ui.cmd.continue_thoughts").into(),
+                        ));
+                        return;
+                    }
+                    let finish = m.metadata.as_ref().and_then(|md| md.finish);
+                    if finish == Some(crate::entities::message::MessageFinish::Stop) {
+                        let _ = self.evt_tx.send(AppEvent::Error(
+                            self.ui_locale().t("ui.cmd.continue_complete").into(),
+                        ));
+                        return;
+                    }
+                    // `Cancelled`/`Error`/`Length`, and `None` for messages
+                    // stored before the bookkeeping existed (fork F1).
+                    Some(ContinuationSeed {
+                        message_id: m.id,
+                        text: std::sync::Arc::from(m.text.as_str()),
+                    })
+                }
+                _ => {
+                    let _ = self.evt_tx.send(AppEvent::Error(
+                        self.ui_locale().t("ui.cmd.continue_nothing").into(),
+                    ));
+                    return;
+                }
+            }
+        };
+        let Some(backend) = self.ready_backend() else {
+            return;
+        };
+        // A tool-result tail resumes as an ordinary next round (`seed` is
+        // `None`); a text tail rides the prefill.
+        self.start_generation(active_id, backend, seed);
     }
 
     /// Deletes the last exchange: the assistant's reply together with the user
@@ -312,8 +454,15 @@ impl Orchestrator {
 
     /// Starts generation from the chat's current state (the history is already
     /// prepared: either the user's message was appended, or the old reply was
-    /// truncated). The shared part for sending a new message and regenerating.
-    fn start_generation(&mut self, active_id: Uuid, backend: Arc<dyn EngineBackend>) {
+    /// truncated). The shared part for sending a new message, regenerating,
+    /// and `/continue` — which passes the `continuation` seed so the turn
+    /// prefills the trailing partial and appends into it (spec §6.4).
+    fn start_generation(
+        &mut self,
+        active_id: Uuid,
+        backend: Arc<dyn EngineBackend>,
+        continuation: Option<ContinuationSeed>,
+    ) {
         // Speech stops per the setting (off by default: listening to the reply
         // while the next one is being written is legitimate). See spec §11.9.
         if self.config.tts.stop_on_generation_start {
@@ -440,7 +589,7 @@ impl Orchestrator {
 
         // Build the request/context + take the last user message (for relevance-
         // based injection of observations in the task).
-        let request;
+        let mut request;
         let ctx;
         let last_user;
         {
@@ -509,6 +658,11 @@ impl Orchestrator {
             );
         }
 
+        // The history already ends with the partial being continued —
+        // `build_request` sent it as the trailing assistant message; the flag
+        // is what makes the wire ask the server to continue it in place.
+        request.continue_final = continuation.is_some();
+
         let id = Uuid::new_v4();
         // Resolved once and used twice: the event below (the live bubble's
         // header) and `GenSpawn.model_name` (the finished message's metadata).
@@ -518,6 +672,7 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::GenerationStarted {
             generation_id: id,
             model: model_name.clone(),
+            continuation: continuation.is_some(),
         });
         self.gen_state.begin(id, cancel.clone());
         self.inflight = Some(super::InflightTurn {
@@ -528,6 +683,7 @@ impl Orchestrator {
             child: None,
             child_stream: Uuid::nil(),
             child_partial: Default::default(),
+            continuation: continuation.is_some(),
         });
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
@@ -559,6 +715,7 @@ impl Orchestrator {
             model_name,
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
+            continuation,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -649,6 +806,23 @@ impl Orchestrator {
             // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
             if !res.deleted.is_empty() {
                 chat.record_deleted(res.deleted, String::new(), DeletedCause::Rewrite);
+            }
+            // `/continue`: the turn's first assistant message finishes the seed
+            // in place (fork F8) — same id, same bubble, no seam — instead of
+            // opening a message of its own.
+            if let Some(seed_id) = res.continuation
+                && let Some(pos) = res
+                    .messages
+                    .iter()
+                    .position(|m| m.role == MessageRole::Assistant)
+            {
+                let round = res.messages.remove(pos);
+                match chat.messages.iter_mut().rfind(|m| m.id == seed_id) {
+                    Some(seed) => merge_continuation(seed, round),
+                    // The seed vanished mid-turn (edited away by hand): keep
+                    // the round as its own message rather than lose the text.
+                    None => res.messages.insert(pos, round),
+                }
             }
             for msg in res.messages {
                 chat.push_message(msg);
@@ -805,6 +979,10 @@ struct GenSpawn {
     /// off it names the setting. Pointing at a command that would refuse is the
     /// dead end this project has closed three times.
     compaction_enabled: bool,
+    /// The message this turn continues (`/continue`, spec §6.4): its text feeds
+    /// the echo filter on the first round, its id rides `GenResult` so the
+    /// orchestrator folds the round into it in place.
+    continuation: Option<ContinuationSeed>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenMessage>,
 }
@@ -945,6 +1123,7 @@ fn spawn_generation(spawn: GenSpawn) {
         model_name,
         ui_loc,
         compaction_enabled,
+        continuation,
         evt_tx,
         done_tx,
     } = spawn;
@@ -1023,12 +1202,31 @@ fn spawn_generation(spawn: GenSpawn) {
             token_base: 0,
             ended_by_limit: None,
             persona: None,
+            echo_seed: continuation.as_ref().map(|c| c.text.clone()),
         };
         let reason = turn.run().await;
 
+        // Whether `/continue` would resume what this turn leaves behind — the
+        // interruption notes name the command only when it will actually work
+        // (fork F9; text derived from state, docs/lessons.md §4). A tool-result
+        // tail resumes the loop; an assistant tail needs visible text; a turn
+        // that filed nothing left nothing new — unless it was itself a
+        // continuation, whose seed still stands.
+        let tail_continuable = match turn.messages.last() {
+            Some(m) if m.role == MessageRole::Tool => true,
+            Some(m) if m.role == MessageRole::Assistant => !m.text.is_empty(),
+            _ => continuation.is_some(),
+        };
+        let continuable = engine_mode.supports_continuation()
+            && matches!(
+                reason,
+                FinishReason::Cancelled | FinishReason::Error | FinishReason::Length
+            )
+            && tail_continuable;
         let _ = evt_tx.send(AppEvent::Finished {
             generation_id: id,
             reason,
+            continuable,
         });
         let _ = done_tx.send(GenMessage::Done(GenResult {
             id,
@@ -1037,6 +1235,7 @@ fn spawn_generation(spawn: GenSpawn) {
             effects: turn.effects,
             deleted: turn.deleted,
             usage: turn.last_usage,
+            continuation: continuation.map(|c| c.message_id),
         }));
     });
 }
@@ -1136,6 +1335,11 @@ struct TurnLoop<'a> {
     /// (`AppEvent::SubagentProgress`); `None` on the turn's own loop, which
     /// reports nothing of the kind.
     persona: Option<String>,
+    /// The continuation seed's text, consumed by the **first** round's stream:
+    /// llama.cpp echoes the prefill back, and the filter keeps it off the
+    /// screen and out of the round (`/continue`, research §4d). `None` on an
+    /// ordinary turn, on every later round, and on a sub-agent's loop.
+    echo_seed: Option<std::sync::Arc<str>>,
 }
 
 /// The limits of one sub-agent run, snapshotted from `config.tools` with the
@@ -1323,6 +1527,9 @@ impl TurnLoop<'_> {
     /// final round, and it is the one whose size the next turn actually starts
     /// from.
     async fn stream(&mut self) -> RoundOutput {
+        // The continuation seed is the first round's alone: it filters the
+        // server's echo of the prefill (research §4d, §7.1).
+        let echo = self.echo_seed.take().map(EchoFilter::new);
         let out = stream_round(
             &self.shared.backend,
             self.request.clone(),
@@ -1333,8 +1540,14 @@ impl TurnLoop<'_> {
             self.total_reasoning,
             self.shared.ui_loc,
             self.shared.compaction_enabled,
+            self.shared.engine_mode.supports_continuation(),
+            echo,
         )
         .await;
+        // The prefill was consumed by the round that carried it: later rounds
+        // end with tool results (nothing to continue), and re-suppressing
+        // thinking there would change rounds that continue nothing.
+        self.request.continue_final = false;
         if let Some(prompt_tokens) = out.prompt_tokens {
             self.last_usage = Some(TurnUsage {
                 prompt_tokens,
@@ -1880,6 +2093,8 @@ impl TurnLoop<'_> {
             token_base,
             ended_by_limit: None,
             persona: Some(parsed.initial_title()),
+            // A sub-agent's run continues nothing — the seed is the turn's.
+            echo_seed: None,
         };
         // Boxed: `run` → `tool_round` → `execute_call` → here → `run` is a
         // recursive async chain, and the compiler needs one indirection in it.
@@ -2104,27 +2319,37 @@ fn engine_error_note(
     err: &str,
     compaction_enabled: bool,
     partial: bool,
+    continuable: bool,
     ui_loc: &'static crate::shared::i18n::Locale,
 ) -> String {
     ui_loc.tf(
-        engine_error_key(err, compaction_enabled, partial),
+        engine_error_key(err, compaction_enabled, partial, continuable),
         &[("err", err)],
     )
 }
 
-/// Which of the four things to tell the user — split out from
+/// Which of the five things to tell the user — split out from
 /// [`engine_error_note`] so the decision can be tested as a decision, without
-/// asserting on localized prose.
-pub(super) fn engine_error_key(err: &str, compaction_enabled: bool, partial: bool) -> &'static str {
+/// asserting on localized prose. `continuable` — the mode can resume the kept
+/// partial (`/continue`), so the note names the route that picks up where the
+/// cut happened rather than only the one that starts over (fork F9).
+pub(super) fn engine_error_key(
+    err: &str,
+    compaction_enabled: bool,
+    partial: bool,
+    continuable: bool,
+) -> &'static str {
     match (
         crate::features::compaction::is_context_overflow(err),
         compaction_enabled,
         partial,
+        continuable,
     ) {
-        (true, true, _) => "ui.err.context_overflow",
-        (true, false, _) => "ui.err.context_overflow_off",
-        (false, _, true) => "ui.err.generation_interrupted",
-        (false, _, false) => "ui.err.generation_failed",
+        (true, true, _, _) => "ui.err.context_overflow",
+        (true, false, _, _) => "ui.err.context_overflow_off",
+        (false, _, true, true) => "ui.err.generation_interrupted_continuable",
+        (false, _, true, false) => "ui.err.generation_interrupted",
+        (false, _, false, _) => "ui.err.generation_failed",
     }
 }
 
@@ -2143,6 +2368,8 @@ async fn stream_round(
     base_reasoning: u32,
     ui_loc: &'static crate::shared::i18n::Locale,
     compaction_enabled: bool,
+    continuation_supported: bool,
+    mut echo: Option<EchoFilter>,
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
@@ -2177,13 +2404,23 @@ async fn stream_round(
             while let Some(chunk) = stream.next().await {
                 match chunk {
                     ChatChunk::Text(t) => {
-                        text.push_str(&t);
+                        // A continuation round strips the server's echo of the
+                        // prefill: the withheld bytes are already on screen and
+                        // in the seed message (research §4d).
+                        let visible = match echo.as_mut() {
+                            Some(f) => f.push(&t),
+                            None => t,
+                        };
                         streamed += 1;
+                        emit_completion(base_tokens + streamed);
+                        if visible.is_empty() {
+                            continue;
+                        }
+                        text.push_str(&visible);
                         sink.send(AppEvent::Chunk {
                             generation_id: id,
-                            text: t,
+                            text: visible,
                         });
-                        emit_completion(base_tokens + streamed);
                     }
                     ChatChunk::Thoughts(t) => {
                         thoughts.push_str(&t);
@@ -2247,10 +2484,14 @@ async fn stream_round(
                     // (docs/research/cloud-retry-backoff.md §1.2).
                     ChatChunk::Error { message, .. } => {
                         let partial = !text.is_empty() || !thoughts.is_empty();
+                        // `/continue` resumes visible text, not a bare thought
+                        // (fork F4) — so the note names it only for one.
+                        let continuable = continuation_supported && !text.is_empty();
                         sink.send(AppEvent::Error(engine_error_note(
                             &message,
                             compaction_enabled,
                             partial,
+                            continuable,
                             ui_loc,
                         )));
                         // The client always yields `Finished(Error)` next; setting the
@@ -2269,6 +2510,7 @@ async fn stream_round(
             sink.send(AppEvent::Error(engine_error_note(
                 &err,
                 compaction_enabled,
+                false,
                 false,
                 ui_loc,
             )));
@@ -2454,6 +2696,8 @@ fn tool_message(call: &ApiToolCall, result: String) -> Message {
 /// The turn's final assistant message (if there's text/thoughts) with a metadata
 /// snapshot: the engine mode, model name, and sampling, **pared down to the fields
 /// available in that mode** (the engine wouldn't accept an unavailable field — spec §8.3).
+/// The round's finish reason is recorded too (`MessageFinish`, spec §6.4) — it is
+/// what lets `/continue` tell an interrupted reply from a completed one.
 fn finalize_message(
     out: &RoundOutput,
     ctx: &ToolContext,
@@ -2473,6 +2717,44 @@ fn finalize_message(
             .retain_supported(mode.cloud_provider()),
         mode,
         model: model.clone(),
+        finish: Some(match out.reason {
+            FinishReason::Length => MessageFinish::Length,
+            FinishReason::Cancelled => MessageFinish::Cancelled,
+            FinishReason::Error => MessageFinish::Error,
+            // `ToolCalls` reaches here only with an empty call list (a claim
+            // with nothing behind it) — the round ended like a plain stop.
+            FinishReason::Stop | FinishReason::ToolCalls => MessageFinish::Stop,
+        }),
     });
     Some(m)
+}
+
+/// Folds the continuation round's first assistant message into the seed
+/// message it continues, in place (`/continue`, fork F8): the text is appended
+/// byte-exactly — the seam is the model's own, already echo-stripped — the
+/// thoughts are joined, tool calls extend, and the metadata becomes the
+/// round's, except the model name, which stays the seed's unless the
+/// continuation outgrew what it continued (fork F7). The message keeps its id
+/// and timestamp: it is the same reply, finished later.
+pub(super) fn merge_continuation(seed: &mut Message, round: Message) {
+    let seed_len = seed.text.len();
+    seed.text.push_str(&round.text);
+    if let Some(t) = round.thoughts {
+        match &mut seed.thoughts {
+            Some(existing) => {
+                existing.push_str("\n\n");
+                existing.push_str(&t);
+            }
+            None => seed.thoughts = Some(t),
+        }
+    }
+    seed.tool_calls.extend(round.tool_calls);
+    let kept_model = seed.metadata.as_ref().and_then(|md| md.model.clone());
+    let outgrown = round.text.len() > seed_len;
+    if let Some(mut md) = round.metadata {
+        if !outgrown && kept_model.is_some() {
+            md.model = kept_model;
+        }
+        seed.metadata = Some(md);
+    }
 }

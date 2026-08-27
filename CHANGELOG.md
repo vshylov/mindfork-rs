@@ -14,6 +14,19 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`/continue` — resume an interrupted reply from where it stopped.** A reply
+  cut by `Esc`, by a connection failure, or by the length/context limit can now
+  be continued in place: the model picks up exactly at the cut, the text grows
+  inside the same message, and a turn interrupted between tool calls resumes
+  its tool loop. Works on the local/managed and external (llama.cpp/vLLM)
+  engines; the cloud providers cannot resume a partial reply, and the command
+  says so instead of guessing. The notes shown for a cancelled or cut-short
+  reply now name `/continue` where it applies — and a reply that hit the
+  length limit finally gets a note at all, instead of stopping mid-sentence in
+  silence.
+
 ## [0.9.8] — 2026-08-27
 
 ### Added

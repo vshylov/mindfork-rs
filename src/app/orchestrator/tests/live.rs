@@ -3838,3 +3838,107 @@ async fn subagent_with_tools_e2e_live() {
         "the codename did not reach the parent's reply: {reply}"
     );
 }
+
+/// End-to-end against a live model (spec §6.4): a reply cancelled mid-stream,
+/// then `/continue` — the resumed turn appends into the same message, and the
+/// concatenation of everything the two turns streamed equals the stored text
+/// byte-for-byte. That single equality carries the whole feature: the echo
+/// filter proved itself against the real server (the llama.cpp path echoes
+/// the prefill — research §7.1), nothing doubled, nothing was lost at the
+/// seam, and the merge landed in place rather than as a second message.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn continue_e2e_live() {
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(no_auto_cfg()) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Count from one to thirty in words, one number per line, no other text.".into(),
+        ))
+        .unwrap();
+    // Cancel after the first visible text chunk — a thoughts-only cut would be
+    // refused (fork F4), and a thinking model fronts its reasoning.
+    let mut streamed = String::new();
+    let mut cancelled = false;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => {
+                streamed.push_str(&text);
+                if !cancelled {
+                    cmd_tx.send(AppCommand::Cancel).unwrap();
+                    cancelled = true;
+                }
+            }
+            AppEvent::Finished { reason, .. } => {
+                assert_eq!(
+                    reason,
+                    FinishReason::Cancelled,
+                    "the reply finished before the cancel landed — the fixture \
+                     needs a longer task, not a different feature"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(cancelled, "the model never produced text to cut");
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let mut resumed = false;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::GenerationStarted { continuation, .. } => {
+                assert!(continuation, "a text tail must resume via prefill");
+                resumed = true;
+            }
+            AppEvent::Chunk { text, .. } => streamed.push_str(&text),
+            AppEvent::Finished { reason, .. } => {
+                assert!(
+                    matches!(reason, FinishReason::Stop | FinishReason::Length),
+                    "the resumed turn must end on its own: {reason:?}"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(resumed, "the continuation turn never started");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(
+        chat.messages.len(),
+        2,
+        "the continuation must land in place, not as a second reply: {:?}",
+        chat.messages
+            .iter()
+            .map(|m| (m.role, m.text.chars().take(30).collect::<String>()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        chat.messages[1].text, streamed,
+        "the stored reply must be exactly what streamed across both turns — \
+         no echo doubling, no gap at the seam"
+    );
+    let head: String = streamed.chars().take(160).collect();
+    println!(
+        "continued reply, {} chars, head: {head:?}",
+        streamed.chars().count()
+    );
+}

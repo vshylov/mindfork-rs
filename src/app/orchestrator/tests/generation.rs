@@ -896,27 +896,39 @@ fn the_failure_note_is_chosen_by_condition() {
     // Overflow wins over everything: it is the one failure with a specific way
     // out, and which way out depends on whether compression is switched on.
     assert_eq!(
-        engine_error_key(overflow, true, false),
+        engine_error_key(overflow, true, false, false),
         "ui.err.context_overflow"
     );
     assert_eq!(
-        engine_error_key(overflow, false, false),
+        engine_error_key(overflow, false, false, false),
         "ui.err.context_overflow_off"
     );
     // ...including when text was already on screen — pointing at `/compact` beats
-    // "press Ctrl+R", which would just overflow again.
+    // "press Ctrl+R", which would just overflow again — and regardless of
+    // whether `/continue` could pick the fragment up: continuing would just
+    // overflow again too, so `/compact` stays the named way out.
     assert_eq!(
-        engine_error_key(overflow, true, true),
+        engine_error_key(overflow, true, true, true),
         "ui.err.context_overflow"
     );
     // Anything else: text already on screen means a fragment, so say so and name
-    // the way to a whole reply; nothing on screen is a plain failure.
+    // the way to a whole reply — the resuming one when the mode can resume
+    // (fork F9), the regenerating one when it cannot; nothing on screen is a
+    // plain failure, whatever the mode.
     assert_eq!(
-        engine_error_key(plain, true, true),
+        engine_error_key(plain, true, true, true),
+        "ui.err.generation_interrupted_continuable"
+    );
+    assert_eq!(
+        engine_error_key(plain, true, true, false),
         "ui.err.generation_interrupted"
     );
     assert_eq!(
-        engine_error_key(plain, true, false),
+        engine_error_key(plain, true, false, true),
+        "ui.err.generation_failed"
+    );
+    assert_eq!(
+        engine_error_key(plain, true, false, false),
         "ui.err.generation_failed"
     );
 }
@@ -1044,4 +1056,424 @@ async fn workspace_rounds_do_not_spend_the_budget_but_still_end() {
     );
     drop(cmd_tx);
     handle.await.unwrap();
+}
+
+// ---------- /continue (spec §6.4, docs/research/continue-generation.md) ----------
+
+/// The echo filter in isolation: an exact echo yields only the continuation, a
+/// non-echoing stream loses nothing (including one that first coincides with
+/// part of the seed), and a multi-byte character split across deltas keeps its
+/// boundaries. Mutating the mismatch flush to drop the withheld bytes fails
+/// the third case; mutating full-match detection fails the first.
+#[test]
+fn the_echo_filter_strips_an_echo_and_passes_real_content() {
+    use super::super::generation::EchoFilter;
+
+    let mut f = EchoFilter::new("Per the atlas".into());
+    assert_eq!(f.push("Per the "), "");
+    assert_eq!(f.push("atlas"), "");
+    assert_eq!(f.push(" Paris."), " Paris.");
+
+    let mut f = EchoFilter::new("Per the atlas".into());
+    assert_eq!(f.push(" Paris."), " Paris.", "no echo: everything flows");
+
+    let mut f = EchoFilter::new("Per the atlas".into());
+    assert_eq!(f.push("Per"), "", "still ambiguous: withheld");
+    assert_eq!(
+        f.push(" it goes"),
+        "Per it goes",
+        "divergence flushes the withheld prefix"
+    );
+
+    let mut f = EchoFilter::new("По".into());
+    assert_eq!(f.push("П"), "");
+    assert_eq!(
+        f.push("о!"),
+        "!",
+        "the split multi-byte echo is consumed whole"
+    );
+}
+
+/// The in-place fold (fork F8) and the model-name rule (fork F7): the text
+/// joins at the model's own seam, the id and timestamp stay the seed's, the
+/// end state becomes the round's — and the model name stays the seed's unless
+/// the continuation outgrew what it continued.
+#[test]
+fn merge_continuation_appends_in_place_and_keeps_the_model_name() {
+    use super::super::generation::merge_continuation;
+    use crate::entities::message::{Message, MessageFinish, MessageMetadata};
+
+    let meta = |model: &str, finish: MessageFinish| MessageMetadata {
+        sampling: Default::default(),
+        mode: Default::default(),
+        model: Some(model.into()),
+        finish: Some(finish),
+    };
+    let mut seed = Message::assistant("Начало было длинным и обстоятельным");
+    seed.metadata = Some(meta("gemma-4-31b", MessageFinish::Cancelled));
+    let (id, stamp) = (seed.id, seed.timestamp);
+
+    let mut round = Message::assistant(", конец.");
+    round.metadata = Some(meta("qwen-3.6", MessageFinish::Stop));
+    merge_continuation(&mut seed, round);
+
+    assert_eq!(seed.text, "Начало было длинным и обстоятельным, конец.");
+    assert_eq!(seed.id, id, "the same reply, finished later");
+    assert_eq!(seed.timestamp, stamp);
+    let md = seed.metadata.as_ref().unwrap();
+    assert_eq!(
+        md.finish,
+        Some(MessageFinish::Stop),
+        "the end state is the round's"
+    );
+    assert_eq!(
+        md.model.as_deref(),
+        Some("gemma-4-31b"),
+        "a short continuation keeps the header on the model that wrote the bulk"
+    );
+
+    // The continuation outgrew the partial: the header follows the larger share.
+    let mut seed = Message::assistant("Нач");
+    seed.metadata = Some(meta("gemma-4-31b", MessageFinish::Error));
+    let mut round = Message::assistant("ало, середина и весь длинный конец ответа.");
+    round.metadata = Some(meta("qwen-3.6", MessageFinish::Stop));
+    merge_continuation(&mut seed, round);
+    assert_eq!(
+        seed.metadata.unwrap().model.as_deref(),
+        Some("qwen-3.6"),
+        "an outgrown partial takes the continuing model's name"
+    );
+}
+
+/// What [`interrupted_turn`] hands back: the harness, plus the first turn's
+/// `Finished` event (some tests assert on what it announced).
+type InterruptedOrch = (
+    tempfile::TempDir,
+    tokio::sync::mpsc::UnboundedSender<AppCommand>,
+    tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    AppEvent,
+);
+
+/// The shared road into a `/continue` scenario: one scripted turn that leaves
+/// its interruption on disk, waited past the list re-emit — the proof the tail
+/// has been applied before a test reads it (the result lands on its own
+/// channel). Each test supplies only its script and its distinctive middle:
+/// when the third test starts the same way as the first two, that opening is
+/// a fixture (docs/lessons.md §2).
+async fn interrupted_turn(script: Vec<Vec<ChatChunk>>) -> InterruptedOrch {
+    let backend = Arc::new(MockBackend::sequence(script)) as Arc<dyn EngineBackend>;
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), no_auto_cfg());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let finished = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    (dir, cmd_tx, evt_rx, handle, finished)
+}
+
+/// The chat as the closed app left it on disk.
+fn reload_chat(root: &std::path::Path) -> crate::entities::chat::Chat {
+    Storage::open(Paths::with_root(root))
+        .unwrap()
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// The whole route: a cancelled reply, then `/continue` — the turn announces
+/// itself as a continuation (the feed re-opens the bubble on that flag), and
+/// on disk there is still **one** assistant message, joined at the model's own
+/// seam, with the end state re-recorded from `Cancelled` to `Stop`.
+#[tokio::test]
+async fn continue_appends_into_the_same_message() {
+    use crate::entities::message::MessageFinish;
+
+    let (dir, cmd_tx, mut evt_rx, handle, _) = interrupted_turn(vec![
+        vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Finished(FinishReason::Cancelled),
+        ],
+        vec![
+            ChatChunk::Text("ло готово.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])
+    .await;
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let started = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::GenerationStarted { .. })
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            started,
+            AppEvent::GenerationStarted {
+                continuation: true,
+                ..
+            }
+        ),
+        "the feed must be told to re-open the bubble instead of pushing one"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = reload_chat(dir.path());
+    assert_eq!(chat.messages.len(), 2, "{:?}", chat.messages);
+    assert_eq!(
+        chat.messages[1].text, "Начало готово.",
+        "joined at the seam, with no separator"
+    );
+    assert_eq!(
+        chat.messages[1].metadata.as_ref().and_then(|m| m.finish),
+        Some(MessageFinish::Stop),
+        "the end state is the continuation's"
+    );
+}
+
+/// llama.cpp returns prefill + continuation (research §7.1): the echoed prefix
+/// must reach neither the screen nor the stored message. The second turn's
+/// script echoes the partial verbatim; the feed sees only the new text, and
+/// the disk holds it exactly once.
+#[tokio::test]
+async fn continue_strips_the_echoed_prefill() {
+    let (dir, cmd_tx, mut evt_rx, handle, _) = interrupted_turn(vec![
+        vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Finished(FinishReason::Cancelled),
+        ],
+        vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Text("ло готово.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])
+    .await;
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let mut chunks: Vec<String> = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => chunks.push(text),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        chunks,
+        vec!["ло готово.".to_string()],
+        "the echoed prefix must not re-stream into the feed"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(
+        reload_chat(dir.path()).messages[1].text,
+        "Начало готово.",
+        "the echo must not double into the stored text"
+    );
+}
+
+/// A length-cut reply records `Length` as its end state, and the turn's
+/// `Finished` carries `continuable` so the feed's truncation note can name
+/// `/continue` (fork F9). The mock supervisor runs as managed — the mode that
+/// supports continuation.
+#[tokio::test]
+async fn a_length_cut_reply_is_recorded_and_announced_as_continuable() {
+    use crate::entities::message::MessageFinish;
+
+    let (dir, cmd_tx, _evt_rx, handle, finished) = interrupted_turn(vec![vec![
+        ChatChunk::Text("Полов".into()),
+        ChatChunk::Finished(FinishReason::Length),
+    ]])
+    .await;
+    assert!(
+        matches!(
+            finished,
+            AppEvent::Finished {
+                reason: FinishReason::Length,
+                continuable: true,
+                ..
+            }
+        ),
+        "a managed-mode length cut must announce the resume route: {finished:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(
+        reload_chat(dir.path()).messages[1]
+            .metadata
+            .as_ref()
+            .and_then(|m| m.finish),
+        Some(MessageFinish::Length)
+    );
+}
+
+/// A turn interrupted between tool rounds leaves a tool-result tail;
+/// `/continue` then resumes the agentic loop as an ordinary round — a **new**
+/// assistant message, no prefill, no bubble re-opening.
+#[tokio::test]
+async fn continue_resumes_the_loop_on_a_tool_result_tail() {
+    use crate::shared::api::contract::ToolCallDelta;
+
+    let (dir, cmd_tx, mut evt_rx, handle, _) = interrupted_turn(vec![
+        vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("note_save".into()),
+                arguments: "{\"content\":\"факт\"}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        // The round after the tool: nothing arrives — the turn ends as
+        // cancelled, leaving the tool message as the chat's tail.
+        vec![ChatChunk::Finished(FinishReason::Cancelled)],
+        // The resumed round.
+        vec![
+            ChatChunk::Text("Записал.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])
+    .await;
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let started = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::GenerationStarted { .. })
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            started,
+            AppEvent::GenerationStarted {
+                continuation: false,
+                ..
+            }
+        ),
+        "a loop resume opens a bubble of its own: {started:?}"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = reload_chat(dir.path());
+    let last = chat.messages.last().unwrap();
+    assert_eq!(last.role, MessageRole::Assistant);
+    assert_eq!(last.text, "Записал.", "{:?}", chat.messages);
+}
+
+/// Every refusal answers with the route that works (docs/lessons.md §4), and
+/// each is chosen by the tail's actual state. Driven on a bare orchestrator:
+/// the refusals need no turn, only the answer.
+#[tokio::test]
+async fn continue_refusals_answer_with_the_route_that_works() {
+    use crate::entities::chat::Chat;
+    use crate::entities::message::{Message, MessageFinish, MessageMetadata};
+    use crate::entities::profile::Profile;
+    use crate::shared::config::ServerMode;
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
+    orch.engines.server_status = ServerStatus::Ready;
+    let mut chat = Chat::from_profile(&Profile::new("P", "sys"), "Чат");
+    let chat_id = chat.id;
+    chat.push_message(Message::user("вопрос"));
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    let mut expect_note = |orch: &mut super::super::Orchestrator, key: &str| {
+        orch.handle_continue();
+        let mut note = None;
+        while let Ok(ev) = rx.try_recv() {
+            if let AppEvent::Error(text) = ev {
+                note = Some(text);
+            }
+        }
+        assert_eq!(note.as_deref(), Some(loc.t(key)), "expected {key}");
+    };
+
+    // A user tail: nothing to continue.
+    expect_note(&mut orch, "ui.cmd.continue_nothing");
+
+    // An assistant tail that finished on its own.
+    let mut done = Message::assistant("Готовый ответ.");
+    done.metadata = Some(MessageMetadata {
+        sampling: Default::default(),
+        mode: Default::default(),
+        model: None,
+        finish: Some(MessageFinish::Stop),
+    });
+    orch.chat_mut(chat_id).unwrap().push_message(done);
+    expect_note(&mut orch, "ui.cmd.continue_complete");
+
+    // Cut inside the reasoning, before any visible text (fork F4).
+    {
+        let chat = orch.chat_mut(chat_id).unwrap();
+        let last = chat.messages.last_mut().unwrap();
+        last.text = String::new();
+        last.thoughts = Some("обрывок мысли".into());
+    }
+    expect_note(&mut orch, "ui.cmd.continue_thoughts");
+
+    // A cloud mode: the capability gate answers before anything else.
+    {
+        let chat = orch.chat_mut(chat_id).unwrap();
+        let last = chat.messages.last_mut().unwrap();
+        last.text = "Оборванный отв".into();
+        last.thoughts = None;
+        if let Some(md) = last.metadata.as_mut() {
+            md.finish = Some(MessageFinish::Cancelled);
+        }
+    }
+    orch.config.engine.mode = ServerMode::OpenAi;
+    expect_note(&mut orch, "ui.cmd.continue_unsupported");
+
+    // Back on a supporting mode with a continuable tail — and a message stored
+    // before the bookkeeping existed (`finish: None`) is continuable too
+    // (fork F1): the turn actually starts.
+    orch.config.engine.mode = ServerMode::Managed;
+    if let Some(md) = orch
+        .chat_mut(chat_id)
+        .unwrap()
+        .messages
+        .last_mut()
+        .unwrap()
+        .metadata
+        .as_mut()
+    {
+        md.finish = None;
+    }
+    orch.handle_continue();
+    let mut started = None;
+    while let Ok(ev) = rx.try_recv() {
+        if let AppEvent::GenerationStarted { continuation, .. } = ev {
+            started = Some(continuation);
+        }
+    }
+    assert_eq!(
+        started,
+        Some(true),
+        "a legacy partial without the end-state field must still continue"
+    );
 }

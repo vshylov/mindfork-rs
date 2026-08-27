@@ -181,6 +181,7 @@ async fn llama_continues_a_word_boundary_tail() {
 
     // Asserted arm: the word-boundary cut.
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -208,6 +209,7 @@ async fn llama_continues_a_word_boundary_tail() {
 
     // Recorded arm: the mid-word cut (retokenization artifact documentation).
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL_MIDWORD),
         sampling: deterministic(),
@@ -269,6 +271,7 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
     // Arm A — the default, through the app's own client (no extra fields).
     let client = OpenAiClient::new(base.clone());
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -349,6 +352,7 @@ async fn prefill_coexists_with_the_tool_grammar() {
         }),
     };
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: vec![
             ApiMessage::user(
@@ -507,6 +511,7 @@ async fn anthropic_haiku_continues_a_trailing_assistant() {
         return;
     };
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -544,6 +549,7 @@ async fn anthropic_current_model_rejects_prefill() {
         return;
     };
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -583,6 +589,7 @@ async fn gemini_continues_a_trailing_model_turn() {
         model.clone(),
     );
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -623,6 +630,7 @@ async fn grok_trailing_assistant_behaviour_is_recorded() {
         .with_model(Some(model.clone()))
         .with_effort_none_omitted(true);
     let req = ChatRequest {
+        continue_final: false,
         system: None,
         messages: fixture(PARTIAL),
         sampling: SamplingConfig {

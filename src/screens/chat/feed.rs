@@ -198,15 +198,7 @@ impl ChatScreen {
     /// shown in the streaming bubble's header when `interface.show_model_name`
     /// is on. See spec §11.3.
     pub fn begin_generation(&mut self, generation_id: Uuid, model: Option<String>) {
-        self.current_gen = Some(generation_id);
-        self.generating = true;
-        self.gen_tokens = 0;
-        self.gen_context = None;
-        self.gen_context_exact = false;
-        self.gen_reasoning = 0;
-        self.gen_model = model;
-        self.pending_text_sep = false;
-        self.pending_thoughts_sep = false;
+        self.begin_turn(generation_id, model);
         self.feed.push(FeedMessage {
             role: FeedRole::Assistant,
             text: String::new(),
@@ -219,6 +211,64 @@ impl ChatScreen {
         self.mark_feed_changed();
         // User-initiated (you pressed send/regenerate): show the new reply (§4).
         self.feed_view.scroll_to_bottom();
+    }
+
+    /// `/continue` (spec §6.4): the turn resumes the last assistant reply, so
+    /// the stream goes **into its bubble** — re-opened for streaming, moved
+    /// past any notes that landed after it (the "reply was cut short" note now
+    /// reads above the reply it described), appended with no separator. With
+    /// no assistant bubble to resume (a tool-result tail whose round filed
+    /// nothing visible), a fresh bubble opens as for any turn.
+    pub fn begin_continuation(&mut self, generation_id: Uuid, model: Option<String>) {
+        self.begin_turn(generation_id, model);
+        if !self.resume_last_assistant_bubble() {
+            self.feed.push(FeedMessage {
+                role: FeedRole::Assistant,
+                text: String::new(),
+                thoughts: String::new(),
+                tools: Vec::new(),
+                streaming: true,
+                message_ids: Vec::new(),
+                model: self.gen_model.clone(),
+            });
+        }
+        self.mark_feed_changed();
+        // User-initiated (you typed the command): show the resumed reply (§4).
+        self.feed_view.scroll_to_bottom();
+    }
+
+    /// Re-opens the last assistant bubble for streaming, moved past any notes
+    /// that landed after it (the "cut short" note then reads above the reply
+    /// it described). `false` — the feed holds no assistant bubble to resume.
+    /// Shared by `/continue`'s two entry points: a fresh start
+    /// ([`Self::begin_continuation`]) and a mid-turn rebuild (`set_live_turn`).
+    pub(super) fn resume_last_assistant_bubble(&mut self) -> bool {
+        match self
+            .feed
+            .iter()
+            .rposition(|m| m.role == FeedRole::Assistant)
+        {
+            Some(idx) => {
+                let mut bubble = self.feed.remove(idx);
+                bubble.streaming = true;
+                self.feed.push(bubble);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The per-turn state both openings share; the bubble is the difference.
+    fn begin_turn(&mut self, generation_id: Uuid, model: Option<String>) {
+        self.current_gen = Some(generation_id);
+        self.generating = true;
+        self.gen_tokens = 0;
+        self.gen_context = None;
+        self.gen_context_exact = false;
+        self.gen_reasoning = 0;
+        self.gen_model = model;
+        self.pending_text_sep = false;
+        self.pending_thoughts_sep = false;
     }
 
     /// Appends a tool block to the current assistant message (live, during the turn).
@@ -483,7 +533,12 @@ impl ChatScreen {
         }
     }
 
-    pub fn finish_generation(&mut self, generation_id: Uuid, reason: FinishReason) {
+    pub fn finish_generation(
+        &mut self,
+        generation_id: Uuid,
+        reason: FinishReason,
+        continuable: bool,
+    ) {
         // A transcript view of the turn that just ended: the chip goes, the
         // feed is not the turn's (docs/subagent-live.md §3.4).
         if self.live_turn == Some(generation_id) && self.current_gen.is_none() {
@@ -511,8 +566,20 @@ impl ChatScreen {
         self.current_gen = None;
         self.clear_retrying();
         self.subagent = None;
-        if reason == FinishReason::Cancelled {
-            self.push_note(self.loc.t("ui.chat.gen_cancelled"));
+        // The interruption notes name `/continue` only when it would actually
+        // work (`continuable` — fork F9); `Length` gets a note at all only
+        // since the command existed to make one actionable (spec §6.4). A
+        // cancelled turn always answers; a length-cut reply used to stop
+        // mid-sentence with nothing on screen saying why.
+        let note = match (reason, continuable) {
+            (FinishReason::Cancelled, true) => Some("ui.chat.gen_cancelled_continuable"),
+            (FinishReason::Cancelled, false) => Some("ui.chat.gen_cancelled"),
+            (FinishReason::Length, true) => Some("ui.err.reply_truncated_continuable"),
+            (FinishReason::Length, false) => Some("ui.err.reply_truncated"),
+            _ => None,
+        };
+        if let Some(key) = note {
+            self.push_note(self.loc.t(key));
         }
     }
 

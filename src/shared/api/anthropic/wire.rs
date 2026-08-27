@@ -423,6 +423,7 @@ mod tests {
 
     fn req(messages: Vec<ApiMessage>) -> ChatRequest {
         ChatRequest {
+            continue_final: false,
             system: Some("Ты — ассистент.".into()),
             messages,
             sampling: SamplingConfig {

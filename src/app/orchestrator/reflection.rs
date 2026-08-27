@@ -250,6 +250,7 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
+            continue_final: false,
             system: Some(reflect_system_message(crate::shared::i18n::locale(lang))),
             messages: vec![ApiMessage::user(digest)],
             sampling,

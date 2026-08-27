@@ -135,6 +135,7 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
+            continue_final: false,
             system: Some(
                 crate::shared::i18n::locale(lang)
                     .t("prompt.consolidate.system")

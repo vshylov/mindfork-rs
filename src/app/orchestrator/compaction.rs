@@ -315,6 +315,7 @@ impl Orchestrator {
             boundary_id: chat.messages[cut].id,
             rolls: chat.compaction.as_ref().map_or(0, |c| c.rolls) + 1,
             request: ChatRequest {
+                continue_final: false,
                 system: Some(summary_system_message(loc, cfg.summary_words)),
                 messages: vec![ApiMessage::user(user)],
                 sampling,

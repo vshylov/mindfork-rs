@@ -102,6 +102,16 @@ pub struct ChatCompletionRequest {
     /// Jinja templates — `enable_thinking`), so both signals are sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<serde_json::Value>,
+    /// Continue the trailing assistant message instead of opening a new one
+    /// (`/continue`, spec §6.4). The explicit opt-in vLLM requires; llama.cpp
+    /// continues by default and ignores the pair on builds that predate it
+    /// (measured on b10659 — research §7.1). Sent only with
+    /// [`ChatRequest::continue_final`], together with `add_generation_prompt:
+    /// false` — the two are one setting on every server that knows them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continue_final_message: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub add_generation_prompt: Option<bool>,
     /// Tool schemas (absent if tool-calling isn't used).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<WireTool>>,
@@ -284,8 +294,11 @@ pub fn build_chat_request(
     // The request to disable "thoughts" (reasoning_budget=0) is also sent via
     // chat_template_kwargs.enable_thinking=false: llama.cpp's built-in formats read
     // reasoning_budget, while models' Jinja templates read enable_thinking; send both.
-    let chat_template_kwargs =
-        (s.reasoning_budget == Some(0)).then(|| serde_json::json!({ "enable_thinking": false }));
+    // A continuation request sends the same kwarg: resuming a visible reply must
+    // not re-open reasoning, and on #21889-era llama.cpp builds it is what lifts
+    // the "prefill is incompatible with enable_thinking" rejection (research §7.1).
+    let chat_template_kwargs = (s.reasoning_budget == Some(0) || req.continue_final)
+        .then(|| serde_json::json!({ "enable_thinking": false }));
     // List fields (DRY breakers, sampler order): an empty list isn't sent —
     // otherwise the server would interpret it as "no breakers"/"disable all samplers".
     let non_empty = |v: &Option<Vec<String>>| v.clone().filter(|x| !x.is_empty());
@@ -331,6 +344,8 @@ pub fn build_chat_request(
             .map(|r| r.as_wire()),
         reasoning_budget: s.reasoning_budget,
         chat_template_kwargs,
+        continue_final_message: req.continue_final.then_some(true),
+        add_generation_prompt: req.continue_final.then_some(false),
         tools,
         tool_choice,
     }
@@ -493,6 +508,7 @@ mod tests {
     #[test]
     fn omits_stop_and_none_fields() {
         let req = ChatRequest {
+            continue_final: false,
             system: Some("sys".into()),
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -528,6 +544,7 @@ mod tests {
     #[test]
     fn a_text_only_request_is_unchanged_by_the_image_support() {
         let req = ChatRequest {
+            continue_final: false,
             system: Some("be brief".into()),
             messages: vec![
                 ApiMessage::user("hi"),
@@ -554,6 +571,7 @@ mod tests {
     #[test]
     fn images_become_content_parts_ahead_of_the_text() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("what is this?").with_images(vec![image(
                 "image/png",
@@ -582,6 +600,7 @@ mod tests {
     #[test]
     fn several_images_keep_their_order_and_a_labelless_one_emits_no_text_part() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("").with_images(vec![
                 image("image/png", "AAA", None),
@@ -607,6 +626,7 @@ mod tests {
     #[test]
     fn a_tool_result_without_images_is_unchanged() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::tool("call-1", "42")],
             sampling: SamplingConfig::default(),
@@ -628,6 +648,7 @@ mod tests {
     #[test]
     fn a_tool_result_image_follows_the_result_text() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::tool("call-1", "screenshot taken").with_images(vec![image(
@@ -661,6 +682,7 @@ mod tests {
     #[test]
     fn an_image_only_tool_result_carries_no_empty_text_part() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::tool("call-1", "").with_images(vec![image(
                 "image/jpeg",
@@ -679,6 +701,7 @@ mod tests {
     #[test]
     fn maps_supported_sampling_fields() {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -747,6 +770,7 @@ mod tests {
     fn list_fields_sent_as_arrays_and_empty_omitted() {
         // Non-empty lists → JSON arrays.
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -764,6 +788,7 @@ mod tests {
 
         // Empty lists are NOT sent (otherwise the server would take them as "disable everything").
         let req_empty = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -783,6 +808,7 @@ mod tests {
     fn model_is_sent_when_some_and_omitted_when_none() {
         // For an external proxy, the model name is set; for llama-server (None) — it isn't.
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -803,6 +829,7 @@ mod tests {
     #[test]
     fn effort_none_is_omitted_only_when_asked() {
         let req = |e: ReasoningEffort| ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -887,6 +914,7 @@ mod tests {
     fn builds_tools_and_tool_choice() {
         use crate::shared::api::contract::ToolSchema;
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -906,6 +934,7 @@ mod tests {
     fn serializes_assistant_tool_calls_in_history() {
         use crate::shared::api::contract::ApiToolCall;
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::assistant_tool_calls(
@@ -989,5 +1018,48 @@ mod stream_error_tests {
         ] {
             assert!(parse_stream_error(data).is_none(), "{data}");
         }
+    }
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::*;
+    use crate::shared::api::contract::ApiMessage;
+
+    /// `/continue` (spec §6.4): the flag adds exactly the three continuation
+    /// fields — the explicit llama.cpp/vLLM pair and the thinking suppression
+    /// (research §2, §7.1) — and without it the body is byte-identical to
+    /// before the feature existed, the images-feature discipline.
+    #[test]
+    fn continuation_adds_its_fields_and_absence_changes_nothing() {
+        let mut req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("q"), ApiMessage::assistant("part")],
+            sampling: Default::default(),
+            tools: vec![],
+            continue_final: false,
+        };
+        let off = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
+        assert!(off.get("continue_final_message").is_none());
+        assert!(off.get("add_generation_prompt").is_none());
+        assert!(off.get("chat_template_kwargs").is_none());
+
+        req.continue_final = true;
+        let on = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
+        assert_eq!(on["continue_final_message"], true);
+        assert_eq!(on["add_generation_prompt"], false);
+        assert_eq!(on["chat_template_kwargs"]["enable_thinking"], false);
+
+        // ...and nothing else moves with the flag.
+        let (mut a, mut b) = (off, on);
+        for k in [
+            "continue_final_message",
+            "add_generation_prompt",
+            "chat_template_kwargs",
+        ] {
+            a.as_object_mut().unwrap().remove(k);
+            b.as_object_mut().unwrap().remove(k);
+        }
+        assert_eq!(a, b, "the flag must touch nothing but its three fields");
     }
 }

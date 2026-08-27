@@ -175,6 +175,7 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
+            continue_final: false,
             system: Some(self_consolidate_system_message(loc)),
             messages: vec![ApiMessage::user(digest)],
             sampling,

@@ -220,6 +220,7 @@ pub(super) fn build_impersonation_request(
         system.push_str(&loc.tf("prompt.impersonation.continue", &[("seed", seed)]));
     }
     ChatRequest {
+        continue_final: false,
         system: Some(system),
         messages,
         sampling,

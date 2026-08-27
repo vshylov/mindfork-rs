@@ -402,6 +402,7 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
     }];
     orch.handle_done(super::super::generation::GenResult {
         usage: None,
+        continuation: None,
         id: gen_id,
         chat_id,
         messages: vec![msg],

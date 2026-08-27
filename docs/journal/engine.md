@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: images in a message — attach by URL (done)
 - Post-M9: a model split across several GGUF files (managed mode) (done)
 - Post-M9: `/continue` — stage 0: the live continuation probe (done)
+- Post-M9: `/continue` — stage 1: resuming an interrupted reply in place (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2094,3 +2095,71 @@ container has neither a `llama-server` binary nor the ~100 GB of weights). Stack
 What is still taken from llama.cpp's `llama_model_loader` source rather than
 observed here is the third case, "a non-first part is refused" — the preflight
 stops that one before the server can have an opinion.
+
+### Post-M9: `/continue` — stage 1: resuming an interrupted reply in place (done)
+
+**What** (2026-08-28, [docs/research/continue-generation.md](../research/continue-generation.md),
+every fork at its recommended option; spec §6.4, §11.7). A reply cut by `Esc`,
+a stream failure or the length/context limit resumes **in place**: the history
+goes back out with the partial as its trailing assistant message, the engine
+continues it (assistant prefill — the mechanism stage 0 measured), and what
+arrives appends into the same `Message` — same id, same bubble, no separator.
+A turn interrupted between tool rounds (a tool-result tail) resumes the
+agentic loop instead, with nothing to prefill. Nineteen-plus-one becomes the
+twenty-third typed route; no chord, per fork F6.
+
+**The pieces.** `MessageFinish` on `MessageMetadata` (additive, ADR 0006) —
+`finalize_message` finally records *why* a reply ended, which is what makes
+eligibility readable (`stop` refuses, `cancelled`/`error`/`length` and
+pre-field `None` continue); `ChatRequest.continue_final` mapped by the
+OpenAI-compatible wire to `continue_final_message: true` +
+`add_generation_prompt: false` + `chat_template_kwargs {"enable_thinking":
+false}` — one byte-compare test pins that the flag off changes nothing;
+`ServerMode::supports_continuation` (managed/external only — the
+`supported_sampling_fields` pattern) gates the command and words the notes;
+`handle_continue` → `start_generation(continuation)` → a `ContinuationSeed`
+through the turn; `merge_continuation` in `handle_done` folds the turn's
+first assistant message into the seed (model name kept unless the
+continuation outgrew the partial — fork F7); `GenerationStarted {
+continuation }` / `Finished { continuable }` / `LiveTurn { continues }` carry
+the one bit each surface needs; the feed's `begin_continuation` re-opens the
+last assistant bubble past any trailing notes, and a mid-turn rebuild folds
+the filed round into the seed's view before `from_messages` stitches — the
+`"\n\n"` seam machinery never fires inside a continued reply.
+
+**The echo filter.** Stage 0 measured llama.cpp returning *prefill +
+continuation*; `EchoFilter` in `stream_round` withholds bytes while they
+match the seed, drops them on a full match, and flushes them intact the
+moment the stream diverges — a non-echoing server (Anthropic/Gemini in a
+future stage 2, vLLM) loses nothing, and a stream that dies mid-echo appends
+nothing twice. Placed upstream of the sink, so the screen, the in-flight
+mirror and the stored message all see continuation-only text.
+
+**Doors closed** (lessons §4). Every refusal answers: nothing to continue,
+a reply that finished on its own, a thoughts-only fragment (F4 — no chat API
+resumes a reasoning trace), an unsupported provider, a read-only transcript.
+The cancelled and cut-short notes gained `_continuable` variants that name
+`/continue` only when the mode supports it — and `FinishReason::Length`,
+invisible in the main path until now, finally produces a note at all
+(`ui.err.reply_truncated[_continuable]`): a length-cut reply used to stop
+mid-sentence in silence.
+
+**Tests.** +14 unit (2631 green) and +1 live (`#[ignore]` 118): the echo
+filter's four shapes, the merge's F7/F8 rules, the wire's byte-compare, the
+metadata's additivity, five orchestrator flows (append-in-place, echo-strip
+through the real loop, `Length` recorded and announced, tool-tail resume,
+the refusal ladder on a bare orchestrator) and five screen tests (the
+resumed bubble, the note moved above the reply it described, both `Length`
+notes, the cancel-note variants, a mid-continuation rebuild). The flow tests
+share one `interrupted_turn` fixture from birth — the third test starting
+like the first two is a fixture, not a test (lessons §2).
+
+**Smoke — GO** (2026-08-28, stack: `llama-server` b10659 at
+192.168.1.20:8000, Qwen 3.6; embedder on :8001). `continue_e2e_live` cancels
+a real streamed reply after its first text chunk, `/continue`s it, and
+asserts the one equality that carries the feature: the concatenation of
+everything both turns streamed equals the stored text byte-for-byte — the
+real server's echo was stripped, nothing doubled, nothing fell into the
+seam, and the reply is one message ("one" through "thirty", 246 chars,
+finish `Stop`). The full orchestrator live set was re-run on the same stack
+for turn-path non-regression.

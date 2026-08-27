@@ -123,6 +123,22 @@ impl ServerMode {
             ServerMode::Managed | ServerMode::External => None,
         }
     }
+
+    /// Whether `/continue` can resume a partial reply in this mode — i.e. the
+    /// server continues a trailing assistant message in place (assistant
+    /// prefill / continue-final-message). The single source of truth for the
+    /// command's gate and the interruption notes, mirroring
+    /// [`supported_sampling_fields`](crate::entities::sampling::supported_sampling_fields).
+    ///
+    /// Measured per provider in docs/research/continue-generation.md §2/§7.1:
+    /// llama.cpp continues by default and vLLM via the explicit fields (both
+    /// behind managed/external); OpenAI cannot; Anthropic removed prefill on
+    /// every current model; Gemini continues but is stage 2 (undocumented,
+    /// probe-only); Grok measurably restarts. Clouds stay `false` until a
+    /// stage 2 widens this per provider — the fork F2 decision.
+    pub fn supports_continuation(self) -> bool {
+        matches!(self, ServerMode::Managed | ServerMode::External)
+    }
 }
 
 /// Default number of GPU layers (`-ngl`): everything on GPU.

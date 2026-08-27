@@ -1280,6 +1280,7 @@ mod ignored_smoke {
             rounds += 1;
             assert!(rounds <= 8, "the model got stuck looping on tool calls");
             let req = ChatRequest {
+                continue_final: false,
                 system: Some(
                     "Ты — ассистент с инструментами файловой системы. Пользуйся ими.".into(),
                 ),

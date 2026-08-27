@@ -480,6 +480,7 @@ mod tests {
     async fn collect(url: String) -> Vec<ChatChunk> {
         let client = OpenAiClient::new(url);
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
             sampling: Default::default(),
@@ -789,6 +790,7 @@ mod ignored_smoke {
             tool
         };
         ChatRequest {
+            continue_final: false,
             system: None,
             // The shape a real turn has: the question is asked up front and the tool
             // result is the last message, so the model answers from it. See the Gemini
@@ -903,6 +905,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
@@ -943,6 +946,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user("word ".repeat(120_000))],
             sampling: SamplingConfig {
@@ -984,6 +988,7 @@ mod ignored_smoke {
     /// "thoughts" (a reasoning model), so both streams are checked.
     async fn assert_no_self_terminate(client: &OpenAiClient, eos_text: &str) {
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(format!(
                 "Print this token literally and then say DONE: {eos_text}"
@@ -1052,6 +1057,7 @@ mod ignored_smoke {
             }),
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(
                 "Call get_weather for Paris. Respond only with the tool call.",
@@ -1099,6 +1105,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step, then answer: what is 17*23?",
@@ -1141,6 +1148,7 @@ mod ignored_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: Some("You are a creative writing assistant.".into()),
             messages: vec![ApiMessage::user(
                 "Write one whimsical sentence about a teapot.",
@@ -1243,6 +1251,7 @@ mod ignored_smoke {
             ),
         ] {
             let req = ChatRequest {
+                continue_final: false,
                 system: Some(system.into()),
                 messages: vec![ApiMessage::user(user)],
                 sampling: SamplingConfig {
@@ -1325,6 +1334,7 @@ mod grok_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step: what is 17 * 23? Show brief reasoning.",
@@ -1361,6 +1371,7 @@ mod grok_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
@@ -1403,6 +1414,7 @@ mod grok_smoke {
             ..Default::default()
         };
         let first = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![ApiMessage::user(
                 "What is the weather in Kyiv? Use the get_weather tool.",
@@ -1437,6 +1449,7 @@ mod grok_smoke {
             }],
         );
         let second = ChatRequest {
+            continue_final: false,
             system: None,
             messages: vec![
                 ApiMessage::user("What is the weather in Kyiv? Use the get_weather tool."),
@@ -1472,6 +1485,7 @@ mod grok_smoke {
             return;
         };
         let req = ChatRequest {
+            continue_final: false,
             system: Some("Be terse.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {

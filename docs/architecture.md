@@ -954,9 +954,10 @@ Details:
 - **Engine failures reach the feed** (spec §6.8). `stream_round` handles both paths
   — the pre-stream `Err` and the in-stream `ChatChunk::Error` — through one
   `engine_error_key`/`engine_error_note` pair, so they cannot describe the same
-  condition differently. Four answers: the two overflow messages of §6.7,
+  condition differently. Five answers: the two overflow messages of §6.7,
   `ui.err.generation_interrupted` when text or "thoughts" had already been
-  streamed (the reply is a fragment — say so and name `Ctrl+R`), and
+  streamed (the reply is a fragment — say so and name `Ctrl+R`; its
+  `_continuable` variant names `/continue` when the mode can resume it), and
   `ui.err.generation_failed` otherwise. The partial reply is still finalized and
   persisted, as before; what is new is that the feed says why it stopped.
 - **EOS.** Stopping is strictly by the model's special-token id (server-side); the
@@ -964,6 +965,25 @@ Details:
 - **Regeneration** truncates history through the last user message inclusive
   and restarts `start_generation`; **deleting the last exchange** removes the
   last user+assistant pair and returns the user's text to the input box.
+- **Continuation** (spec §6.4, `/continue`): `handle_continue` reads the tail —
+  a text-bearing assistant message whose `MessageMetadata.finish` is an
+  interruption (or absent, for pre-field data) goes back out as the request's
+  trailing assistant message with `ChatRequest.continue_final` set, a
+  tool-result tail resumes the loop with no prefill, and everything else is a
+  localized refusal. The gate is `ServerMode::supports_continuation`
+  (managed/external only). `finalize_message` records the end state
+  (`MessageFinish`) that makes the eligibility readable; the turn carries a
+  `ContinuationSeed` whose text drives `EchoFilter` in `stream_round`
+  (llama.cpp echoes the prefill — withheld by byte-prefix match, flushed
+  intact the moment the stream diverges), and `handle_done` folds the turn's
+  first assistant message into the seed in place (`merge_continuation`: same
+  id, text appended with no separator, the model name kept unless the
+  continuation outgrew the partial). `GenerationStarted { continuation }` and
+  `Finished { continuable }` tell the screen which bubble to open and which
+  interruption note to word; the in-flight mirror carries the same flag so a
+  mid-turn rebuild folds the filed round into the seed's view
+  (`activate_focused`) and appends the live partial into the resumed bubble
+  (`LiveTurn::continues`).
 
 ---
 
@@ -2496,13 +2516,20 @@ the screen rebuilds its feed from the `transcript` copy it keeps while a
 transcript is open. `switch_within_turn` exempts the parent ↔ in-flight child
 move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
 from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
-— `LiveTurn { turn, stream, partial }` — which the screen's `set_live_turn`
-turns into a resumed generation on the chat, or, on a transcript, a
-`begin_generation(stream)`, in both cases seeded with `partial`: thoughts,
-text, and the round's tool calls replayed as running or completed cards,
-before the rest of the stream resumes into the same bubble (the chip stays
-keyed on `turn`; the parent's chunks carry the turn's id and never land in a
-transcript). Nothing is refreshed at landing any more.
+— `LiveTurn { turn, stream, partial, continues }` — which the screen's
+`set_live_turn` turns into a resumed generation on the chat, or, on a
+transcript, a `begin_generation(stream)`, in both cases seeded with
+`partial`: thoughts, text, and the round's tool calls replayed as running or
+completed cards, before the rest of the stream resumes into the same bubble
+(the chip stays keyed on `turn`; the parent's chunks carry the turn's id and
+never land in a transcript). Nothing is refreshed at landing any more. A
+`/continue` turn (spec §6.4) rides the same machinery with one difference at
+each end: `begin_continuation` re-opens the **last assistant bubble** for
+streaming (moved past any trailing notes, `resume_last_assistant_bubble`)
+instead of pushing a fresh one, and a mid-turn rebuild folds the filed
+continuation round into the seed message's view before `from_messages` runs —
+so the `"\n\n"` round-stitching never fires between a partial and its
+continuation, and `continues` seeds the live partial into the resumed bubble.
 
 **Search over transcripts** (spec §11.2.1, research §3.9). The orchestrator's
 `indexed_messages(chat)` emits the chat's own messages with `sub_id = None`

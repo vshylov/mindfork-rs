@@ -58,6 +58,25 @@ pub(crate) fn is_zero_u64(n: &u64) -> bool {
     *n == 0
 }
 
+/// Why a reply's generation ended (spec §6.4). Recorded on the assistant
+/// message so `/continue` can tell an interrupted reply (`Cancelled`/`Error`/
+/// `Length`) from one the model finished on its own (`Stop`). Additive
+/// (ADR 0006): messages stored before the field read as `None`, which the
+/// command treats as "unknown, continuable" — the interruptions worth resuming
+/// predate the bookkeeping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageFinish {
+    /// The model finished on its own (EOS).
+    Stop,
+    /// Cut by the token/context limit (`finish_reason = length`).
+    Length,
+    /// Cancelled by the user (`Esc`/`/stop`).
+    Cancelled,
+    /// The stream failed mid-reply (transport drop, provider error).
+    Error,
+}
+
 /// A snapshot of the generation parameters actually applied to the message.
 ///
 /// `sampling` holds **only** the fields available in the engine mode at generation
@@ -74,6 +93,9 @@ pub struct MessageMetadata {
     pub mode: ServerMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// How this reply's generation ended. See [`MessageFinish`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish: Option<MessageFinish>,
 }
 
 /// A chat message.
@@ -251,5 +273,28 @@ mod tests {
                 .unwrap()
                 .contains("thought_signature")
         );
+    }
+
+    /// The end-state field is additive (ADR 0006): a snapshot without it stays
+    /// byte-stable and reads back as `None`; a recorded state round-trips in
+    /// its lowercase wire spelling.
+    #[test]
+    fn metadata_finish_is_additive() {
+        let mut md = MessageMetadata {
+            sampling: Default::default(),
+            mode: Default::default(),
+            model: None,
+            finish: None,
+        };
+        let js = serde_json::to_string(&md).unwrap();
+        assert!(!js.contains("finish"), "absent must stay absent: {js}");
+        let back: MessageMetadata = serde_json::from_str(&js).unwrap();
+        assert_eq!(back.finish, None);
+
+        md.finish = Some(MessageFinish::Length);
+        let js = serde_json::to_string(&md).unwrap();
+        assert!(js.contains("\"finish\":\"length\""), "{js}");
+        let back: MessageMetadata = serde_json::from_str(&js).unwrap();
+        assert_eq!(back.finish, Some(MessageFinish::Length));
     }
 }

@@ -117,7 +117,14 @@ pub(super) fn apply_event(
         AppEvent::GenerationStarted {
             generation_id,
             model,
-        } => screen.begin_generation(generation_id, model),
+            continuation,
+        } => {
+            if continuation {
+                screen.begin_continuation(generation_id, model);
+            } else {
+                screen.begin_generation(generation_id, model);
+            }
+        }
         AppEvent::Chunk {
             generation_id,
             text,
@@ -158,7 +165,8 @@ pub(super) fn apply_event(
         AppEvent::Finished {
             generation_id,
             reason,
-        } => screen.finish_generation(generation_id, reason),
+            continuable,
+        } => screen.finish_generation(generation_id, reason, continuable),
         AppEvent::ImpersonationStarted { generation_id } => {
             screen.begin_impersonation(generation_id)
         }
@@ -487,6 +495,7 @@ pub(super) fn dispatch(
         ChatIntent::Quit => return true,
         ChatIntent::Send(text) => AppCommand::SendMessage(text),
         ChatIntent::RegenerateLast => AppCommand::RegenerateLast,
+        ChatIntent::ContinueLast => AppCommand::ContinueLast,
         ChatIntent::DeleteLastExchange => AppCommand::DeleteLastExchange,
         ChatIntent::Cancel => AppCommand::Cancel,
         ChatIntent::Impersonate { seed } => AppCommand::Impersonate { seed },

@@ -3375,6 +3375,7 @@ mod tests {
             sampling: Default::default(),
             mode: Default::default(),
             model: Some(model.to_string()),
+            finish: None,
         };
         let mut r1 = Message::assistant("ищу");
         r1.metadata = Some(meta("gemma-4-31b"));

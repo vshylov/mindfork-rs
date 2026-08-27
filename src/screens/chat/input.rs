@@ -354,6 +354,7 @@ impl ChatScreen {
         }
         const BLOCKED: &[&str] = &[
             "/compact",
+            "/continue",
             "/file",
             "/image",
             "/project",

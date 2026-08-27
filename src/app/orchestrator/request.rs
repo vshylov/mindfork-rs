@@ -175,6 +175,7 @@ pub(super) fn build_request_in(
     let system = inject_compaction(system, summary, cx.history_tools, cx.loc);
     let system = inject_attachments(system, env.attachments, cx.attachments, cx.indexed, cx.loc);
     ChatRequest {
+        continue_final: false,
         system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
         messages: messages[upto..]
             .iter()

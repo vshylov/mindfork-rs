@@ -122,6 +122,7 @@ impl ChatScreen {
                 |id| Some(ChatIntent::CopyChat(id)),
             ),
             UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
+            UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
             UiCommand::Stop => self.typed_stop(),
             // Finding things.
@@ -210,6 +211,21 @@ impl ChatScreen {
             'e'
         };
         self.handle_ctrl_shortcut(chord).flatten()
+    }
+
+    /// `/continue` — resume the last interrupted reply (spec §6.4). The screen
+    /// answers the two states it can see (a running turn, no chat); whether
+    /// the tail is continuable and whether the mode supports continuation is
+    /// the orchestrator's knowledge, and its refusals answer through the same
+    /// feed notes (`ui.cmd.continue_*`).
+    fn typed_continue(&mut self, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        Some(ChatIntent::ContinueLast)
     }
 
     /// `/impersonate [text]` — the seed is the rest of the line, where the key
