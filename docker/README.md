@@ -90,6 +90,9 @@ The ones that come up most:
 
 - `CHAT_GGUF` — swap the quant. `Q4_K_M` (~2.7 GiB) roughly halves the memory and
   doubles the speed; the download follows the file name automatically.
+- `CHAT_CTX` — the chat server's context window, `16384` by default. It is the
+  KV cache, so lowering it back to `8192` is the first thing to try on a
+  memory-tight box.
 - `CHAT_EXTRA_ARGS` / `EMBED_EXTRA_ARGS` — appended verbatim to the server
   command lines. Where `--mmproj` lives, and where `-t <threads>` goes.
 - `MODELS_DIR` — a bare name is the named volume, a path is a bind mount of a
@@ -154,7 +157,8 @@ log either way — a daemon that quietly failed to start looks exactly like a
 wrong port from the outside.
 
 
-- **RAM.** Weights 4.63 GiB + KV cache + the projector ~0.94 GiB + the embedder
+- **RAM.** Weights 4.63 GiB + KV cache (`CHAT_CTX`, 16384 by default) + the
+  projector ~0.94 GiB + the embedder
   0.6 GiB + JupyterLab: budget ~9–10 GiB for the Docker VM. Below that the chat
   server is OOM-killed while loading and it looks like a hang —
   `docker compose logs chat` says so plainly. On Windows the limit is

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -26,6 +26,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a ceiling on every job, and two orphaned workflows (done)
 - Post-M9: a containerised test environment — JupyterLab, the app, a CPU stack (done)
 - Post-M9: SSH into the lab container (done)
+- Post-M9: the lab stack's chat context raised to 16384 (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1169,3 +1170,22 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   jovyan@127.0.0.1` lands with `mindfork` and `tmux` on `PATH`. `docker restart`
   → the daemon is back on its own and the login still works, with the host key
   unchanged. Container recreated on the same volume → same host key again.
+
+### Post-M9: the lab stack's chat context raised to 16384 (done)
+- **Trigger**: 8192 was inherited from the install.md §3 example, chosen for a
+  first-run box rather than for what the stack is actually used for. A tool loop
+  with the filesystem MCP attached, a chat long enough to trip the rolling
+  summary, or an image plus its projector all eat that window fast, and hitting
+  the ceiling in the lab looks like an app defect rather than a server setting.
+- **What**: `CHAT_CTX` is `16384` — in `docker/.env.example`, and as the
+  `-c ${CHAT_CTX:-16384}` fallback in `compose.yaml` for a checkout with no
+  `.env`. `docker/README.md` gains the knob in §5 and names it in the RAM note,
+  since lowering it back to `8192` is the first move on a memory-tight host.
+- **The embedder's `-c 8192 -ub 8192 -b 8192` was deliberately left alone.**
+  Same number, different meaning: bge-m3 is non-causal, so the whole input must
+  fit one *physical* batch, and those three flags are sized to the largest chunk
+  the indexer submits — not to a conversation window. Raising them would buy
+  nothing and cost the batch buffer.
+- **Cost**: the KV cache scales linearly with the window, so it doubles; the
+  README's ~9–10 GiB budget for the Docker VM already carried the headroom on a
+  16 GiB host (the stack's design assumption, see the entry above).
