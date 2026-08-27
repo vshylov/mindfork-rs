@@ -1,7 +1,13 @@
 # `/continue` — resuming an interrupted generation — research
 
-> Status: **research, forks open** (2026-08-27). No code yet; the forks in §6
-> need the user's decision before implementation (AGENTS.md §1).
+> Status: **forks settled, stage-0 probe GO** (2026-08-27). User's decision
+> (2026-08-27): every fork in §6 at its recommended option — F1(a) through
+> F9(a). The §7 probe ran the same day (spike PR `spike/continue-probe`,
+> `src/shared/api/continue_probe.rs`): results in §7.1, one design amendment
+> in §4(d) (the echoed prefill), and the Grok row in §2 is now a measured no.
+> The Qwen thinking arm remains to run after the stack switches to Qwen 3.6.
+> Journal: [engine.md](../journal/engine.md), "stage 0: the live continuation
+> probe".
 >
 > The ask: a `/continue` command that lets the model resume a generation that
 > was interrupted — by the user (`Esc`/`/stop`), by a connection/stream
@@ -53,7 +59,7 @@ support is per *protocol and model*, not per app:
 | **Anthropic** (`AnthropicClient`) | **model-dependent — removed on current models** | Prefill (trailing assistant message) is a long-standing documented feature, **but Anthropic removed it on Opus/Sonnet 4.6, 4.7, 4.8 and the whole 5 family (Opus 5, Sonnet 5, Fable/Mythos 5): such requests now return 400**. Models ≤ the 4.5 generation (incl. `claude-haiku-4-5`) still accept it — and this repo has **measured** it: the impersonation probe that ended history on an assistant turn got empty text + `Stop` from claude-haiku-4-5 — *"not a rejection but a prefill, since a trailing assistant turn is continued rather than answered"* ([engine journal](../journal/engine.md), "impersonation sends the compacted conversation"; the rule is pinned by `compacted_impersonation_starts_with_assistant_and_ends_with_user` and recorded in spec §17). Two extra constraints where it works: prefill is incompatible with extended thinking (the continuation request must go out without a `thinking` block), and a prefill ending in trailing whitespace is rejected (the tail must be right-trimmed before sending). |
 | **Gemini** (`GeminiClient`) | **yes — measured, undocumented** | The same probe measured native Gemini (gemini-3.5-flash) continuing a trailing `model` turn (empty text + `Stop` on a complete-looking tail). Google's API reference documents neither support nor prohibition; AI Studio's own "run from an edited model turn" flow relies on the same behaviour. Treat as working-but-unwarranted: keep the live probe in the smoke set. |
 | **OpenAI** (`ResponsesClient`, `/responses`) | **no** | Neither Chat Completions nor Responses continues a final assistant message — a trailing assistant item is prior context and the model starts a new message (long-standing; re-confirmed by OpenAI's own developer-community answers in 2025). `previous_response_id` continues a *conversation*, not a partial message, and our client deliberately sends `store:false` (ADR 0004). Only a lossy instruction-based imitation is possible. |
-| **Grok** (`OpenAiClient` against xAI) | **unknown** | xAI documents that roles may appear in any order, and documents nothing about continuing a trailing assistant message. xAI also silently drops unknown request fields (measured in the Grok research), so the llama.cpp/vLLM knobs would be ignored rather than erroring. Needs one live probe with the existing key (§7). |
+| **Grok** (`OpenAiClient` against xAI) | **no — measured** | xAI documents that roles may appear in any order, and documents nothing about continuing a trailing assistant message. The §7 probe (grok-4.5, 2026-08-27) settled it: a mid-answer assistant tail is treated as a complete turn and the model **restarts** — reasoning opens with "The user asked…" and the reply is a fresh sentence without the fixture's marker. No continuation semantics; `/continue` refuses on Grok. (xAI silently drops unknown request fields — measured in the Grok research — so the llama.cpp/vLLM knobs are ignored rather than erroring.) |
 
 Sources: llama.cpp server README (prefill row, `--reasoning-budget` default,
 `chat_template_kwargs`) — github.com/ggml-org/llama.cpp `tools/server/README.md`;
@@ -193,6 +199,14 @@ state it describes, lessons §4).
 `finalize_message` output is **appended to the seed message's `text`** (id
 unchanged, `metadata.finish` updated, model snapshot per F7) instead of pushed;
 later rounds of the same turn (after tool calls) file new messages as today.
+*Amendment from the stage-0 probe (2026-08-27):* llama.cpp **echoes the
+prefill** at the head of the response — the stream delivers
+`partial + continuation` — while Anthropic and Gemini return the continuation
+alone. The seed-append site therefore normalizes first: when the incoming
+round's text starts with the seed's text, that prefix is stripped before
+appending (and the feed must not re-render it as fresh deltas — the same
+strip applies at the streaming consumer, keyed off the continuation marker on
+`GenerationStarted`).
 Feed side: on `GenerationStarted` with a continuation marker, the last
 assistant bubble is re-marked streaming so `push_chunk` appends into it with no
 separator; the in-flight mirror seeds `LivePartial` with the existing text so a
@@ -233,10 +247,15 @@ of a dead end must still name the route that works.
 
 **(h) Honesty about "exactly".** Text-exact, not token-exact: the provider
 re-tokenizes the prompt, so the seam's token boundaries may differ from the
-interrupted stream (mid-word cuts are fine — BPE re-merges), sampling
-penalties see the re-tokenized prefix (same as an uninterrupted run), and on
-Anthropic a whitespace-trimmed seam may drop trailing spaces the partial ended
-with. One thing continuation cannot restore on a thinking model is the lost
+interrupted stream, sampling penalties see the re-tokenized prefix (same as an
+uninterrupted run), and on Anthropic a whitespace-trimmed seam may drop
+trailing spaces the partial ended with. The probe added a precise boundary to
+this claim: a cut placed *inside* what the model would emit as a single token
+(the probe's artificial "…is Par" of a one-token "Paris") is an
+out-of-distribution state and the weld can go wrong (Gemma produced
+"Parise."/"Pariz.", haiku-4-5 injected a U+00AD, Gemini a newline) — but a
+real interruption can only ever cut at a **token boundary**, where the same
+probe measured clean, exact seams on every continuing provider. One thing continuation cannot restore on a thinking model is the lost
 reasoning trace: the model continues from the visible text without its
 chain-of-thought, which can lower the tail's quality relative to an
 uninterrupted run. The spec text should say exactly this much.
@@ -264,7 +283,13 @@ is a bad trade for a rare command. If a chord is wanted anyway, `F6` — and per
 the command-only-control convention the chord and `/continue` must share one
 handler, with a `ctrl_pairs`/help-table row each.
 
-## 6. Forks
+## 6. Forks (settled)
+
+> **User's decision (2026-08-27): every fork below goes to its recommended
+> option — F1(a), F2(a), F3(a), F4(a), F5(a), F6(a), F7(a), F8(a), F9(a).**
+> The stage-0 probe (§7.1) then confirmed F5(a) live and turned F2's cloud
+> question concrete: Anthropic ≤4.5 and Gemini measured as continuing, Grok
+> measured as restarting — so a later stage 2 has its rows ready.
 
 - **F1 — what counts as continuable.**
   **(a) `metadata.finish ∈ {Cancelled, Error, Length}`, plus `None` (legacy
@@ -350,6 +375,31 @@ the impersonation-probe pattern:
    trailing-assistant behaviour — one request each on the existing keys.
 
 Cost: pennies; runs on the same env vars as the rest of the live gate.
+
+### 7.1 Results (2026-08-27) — GO
+
+Eight `#[ignore]` smokes in `src/shared/api/continue_probe.rs`
+(branch `spike/continue-probe`), run against `llama-server` at
+192.168.1.20:8000 (gemma-4-31B q4_0) plus the Anthropic, Gemini and Grok
+keys — **8/8 green**. The first run rebuilt the instrument (lessons §3): the
+fixture gained an invented marker ("Per the Zorbville atlas…") because
+llama.cpp's echo makes continuation and verbatim restart the same bytes
+without one, and the asserted cut moved to a word boundary because a cut
+inside a single token is a state no real interruption produces (§4h).
+
+| Arm | Result |
+|---|---|
+| §7.1 llama.cpp, word-boundary tail | **continues exactly** — `" Paris."`, seam one space, `finish=Stop`; the prefill is **echoed** at the head of the stream (→ the §4d amendment). Mid-word arm (recorded): welded `"Par"` into `"Pariz."` — the out-of-distribution state, as reasoned. |
+| §7.2 Qwen thinking | **pending** — the smoke reads `/v1/models`, saw Gemma, and skipped loudly; reruns after the stack switches to Qwen 3.6. |
+| §7.3 prefill + tools | **GO for F5(a)** — the continued round finished its sentence and emitted a parsed `get_weather` call, `finish=ToolCalls`. |
+| §7.4 explicit knobs | this llama.cpp build does **not** know `continue_final_message` (wrong-typed value passes as 200; knobs-off ignored) — default prefill alone carries the feature there, the fields ride along for vLLM. |
+| §7.5 Anthropic haiku-4-5 | **continues** — `" Paris."`, no echo. |
+| §7.5 Anthropic opus-4-8 | **rejects**, wording pinned: *"This model does not support assistant message prefill. The conversation must end with a user message."* |
+| §7.5 Gemini 2.5-flash | **continues** — `" Paris."`, no echo. |
+| §7.5 Grok 4.5 | **restarts** — no continuation semantics; the §2 row is settled as no. |
+
+Journal entry (with the full raw outcomes): [engine.md](../journal/engine.md),
+"`/continue` — stage 0: the live continuation probe".
 
 ## 8. Scope estimate
 
