@@ -159,6 +159,15 @@ split by subsystem.
 
 ### Changed
 
+- **The confirmation setting is named after what it guards.** Interface →
+  Behavior read "Confirm Ctrl+R / Ctrl+E" — the chords it intercepts rather than
+  what it protects, and its description spelled both out again. It now reads
+  "Confirm regenerate / delete" and says in full what it asks before:
+  regenerating the last reply and deleting the last exchange, both of which
+  throw away text that is already written. The keys stay where they are already
+  listed — the help (`F1`) and the README — so renaming one no longer leaves a
+  setting pointing at a chord that moved.
+
 - **The help lists keys by screen, and `F1` works everywhere.** The shortcuts
   tab is now sections — globally · chat · chat list · settings · self-model
   · changes · found messages. A key that means different things on different

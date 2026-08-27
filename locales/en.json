@@ -1352,7 +1352,7 @@
   "ui.settings.field.model_name": "Model name in the feed",
   "ui.settings.field.spell": "Spell check",
   "ui.settings.field.dicts": "Dictionaries (comma-separated)",
-  "ui.settings.field.confirm_keys": "Confirm Ctrl+R / Ctrl+E",
+  "ui.settings.field.confirm_keys": "Confirm regenerate / delete",
   "ui.settings.field.copy_thoughts": "With «thoughts»",
   "ui.settings.field.copy_tool_calls": "With tool parameters",
   "ui.settings.field.copy_tool_results": "With tool results",
@@ -1450,7 +1450,7 @@
     "message stored without that information (or with no model named) shows",
     "nothing. Off by default."
   ],
-  "ui.settings.desc.confirm_keys": "Ask for confirmation before regeneration (Ctrl+R) and deleting the last exchange (Ctrl+E) — both operations are irreversible in the UI. Off — the shortcuts fire immediately.",
+  "ui.settings.desc.confirm_keys": "Ask for confirmation before regenerating the last reply and before deleting the last exchange — both discard what is already written and are irreversible in the UI. Off — both act immediately.",
   "ui.settings.desc.copy_thoughts": "When copying the conversation (F5) include the assistant's «thoughts» block (CoT). By default only message text is copied.",
   "ui.settings.desc.copy_tool_calls": "When copying the conversation (F5) include tool-call parameters (tool name and arguments).",
   "ui.settings.desc.copy_tool_results": "When copying the conversation (F5) include the results (responses) of tool calls.",

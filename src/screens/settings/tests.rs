@@ -3059,10 +3059,10 @@ fn overlong_label_keeps_the_value_column() {
         warn_note: None,
     };
     let rows = vec![
-        toggle("mcp__fs__read_file"),
-        toggle("mcp__fs__read_multiple_files"),
-        toggle("mcp__fs__list_directory_with_sizes"),
-        toggle("mcp__fs__list_allowed_directories"),
+        toggle("mcp__filesystem__read_file"),
+        toggle("mcp__filesystem__read_multiple_files"),
+        toggle("mcp__filesystem__list_directory_with_sizes"),
+        toggle("mcp__filesystem__list_allowed_directories"),
     ];
     let label_col = section_label_col(&rows);
     assert_eq!(label_col, LABEL_CAP, "the column stops at the cap");
