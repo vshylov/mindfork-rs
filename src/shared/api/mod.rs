@@ -19,6 +19,10 @@ pub mod thoughts;
 // the original and remain the main consumer.
 pub mod mock;
 
+// Stage-0 live probe for `/continue` (docs/research/continue-generation.md §7).
+#[cfg(test)]
+mod continue_probe;
+
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
