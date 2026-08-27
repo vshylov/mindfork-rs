@@ -5,7 +5,10 @@
 > F9(a). The §7 probe ran the same day (spike PR `spike/continue-probe`,
 > `src/shared/api/continue_probe.rs`): results in §7.1, one design amendment
 > in §4(d) (the echoed prefill), and the Grok row in §2 is now a measured no.
-> The Qwen thinking arm remains to run after the stack switches to Qwen 3.6.
+> **Probe complete**: the llama-side arms re-ran the same day on Qwen 3.6
+> (llama.cpp build b10659) — the #21889 thinking rejection is gone on current
+> builds (prefill accepted, thinking silently skipped), and the explicit knob
+> pair is unknown even to b10659, so it is vLLM-only in practice.
 > Journal: [engine.md](../journal/engine.md), "stage 0: the live continuation
 > probe".
 >
@@ -53,7 +56,7 @@ support is per *protocol and model*, not per app:
 
 | Mode / client | Exact continuation | Mechanism and caveats |
 |---|---|---|
-| **Managed** llama-server, **External** llama.cpp (`OpenAiClient`, `/chat/completions`) | **yes — native, on by default** | *"Prefilling of assistant messages similar to the Claude API"*; `--prefill-assistant … (default: prefill enabled)` — a trailing assistant message is simply continued. A newer explicit form also exists (`continue_final_message`, with `add_generation_prompt` required false). Three documented sharp edges: (1) **thinking**: with `--reasoning-budget` non-zero (default **-1**) on a thinking-capable template, prefill is rejected — HTTP 400 *"Assistant response prefill is incompatible with enable_thinking"* (ggml-org/llama.cpp#21889); per-request `chat_template_kwargs: {"enable_thinking": false}` (documented in the server README) lifts it; (2) on Qwen 3.5 with `enable_thinking:false`, a template-injected `<think>\n\n</think>` residue precedes the continued content (#21511) — cosmetic, and our fallback thoughts parser (`shared/api/thoughts.rs`) strips exactly this shape; (3) *"Cannot continue an assistant message that contains tool calls"* (server-common.cpp) — which our tail never does, see §3. Prefill requires string content (#14353); our assistant wire content is always a string (`openai/wire.rs:159-184`). |
+| **Managed** llama-server, **External** llama.cpp (`OpenAiClient`, `/chat/completions`) | **yes — native, on by default** | *"Prefilling of assistant messages similar to the Claude API"*; `--prefill-assistant … (default: prefill enabled)` — a trailing assistant message is simply continued. A newer explicit form exists in master (`continue_final_message`, with `add_generation_prompt` required false), but it is **not wired into `/v1/chat/completions` as of b10659** — the probe's wrong-typed value passed as 200 — so in practice the pair is vLLM-only and default prefill carries llama.cpp. Three documented sharp edges: (1) **thinking**: with `--reasoning-budget` non-zero (default **-1**) on a thinking-capable template, #21889-era builds reject prefill — HTTP 400 *"Assistant response prefill is incompatible with enable_thinking"*; per-request `chat_template_kwargs: {"enable_thinking": false}` (documented in the server README) lifts it — **and the rejection is build-dependent: gone on b10659** (measured 2026-08-27, Qwen 3.6 — prefill accepted, thinking silently skipped with empty reasoning), so the design sends the kwarg and accepts both behaviours; (2) on Qwen 3.5 with `enable_thinking:false`, a template-injected `<think>\n\n</think>` residue precedes the continued content (#21511) — cosmetic, our fallback thoughts parser (`shared/api/thoughts.rs`) strips exactly this shape, and it did **not** reproduce on b10659; (3) *"Cannot continue an assistant message that contains tool calls"* (server-common.cpp) — which our tail never does, see §3. Prefill requires string content (#14353); our assistant wire content is always a string (`openai/wire.rs:159-184`). |
 | **External** vLLM | **yes — explicit opt-in** | `continue_final_message: true` + `add_generation_prompt: false` in the request body (vLLM OpenAI-compatible server docs); without them a trailing assistant message is treated as complete and a **new** message is started. |
 | **External** Ollama / LM Studio / other | **unknown** | Not documented either way; the realistic default is "new message", which would corrupt a continuation (two replies glued with no seam). Needs a probe or an honest refusal (§6 F2). |
 | **Anthropic** (`AnthropicClient`) | **model-dependent — removed on current models** | Prefill (trailing assistant message) is a long-standing documented feature, **but Anthropic removed it on Opus/Sonnet 4.6, 4.7, 4.8 and the whole 5 family (Opus 5, Sonnet 5, Fable/Mythos 5): such requests now return 400**. Models ≤ the 4.5 generation (incl. `claude-haiku-4-5`) still accept it — and this repo has **measured** it: the impersonation probe that ended history on an assistant turn got empty text + `Stop` from claude-haiku-4-5 — *"not a rejection but a prefill, since a trailing assistant turn is continued rather than answered"* ([engine journal](../journal/engine.md), "impersonation sends the compacted conversation"; the rule is pinned by `compacted_impersonation_starts_with_assistant_and_ends_with_user` and recorded in spec §17). Two extra constraints where it works: prefill is incompatible with extended thinking (the continuation request must go out without a `thinking` block), and a prefill ending in trailing whitespace is rejected (the tail must be right-trimmed before sending). |
@@ -381,7 +384,8 @@ Cost: pennies; runs on the same env vars as the rest of the live gate.
 Eight `#[ignore]` smokes in `src/shared/api/continue_probe.rs`
 (branch `spike/continue-probe`), run against `llama-server` at
 192.168.1.20:8000 (gemma-4-31B q4_0) plus the Anthropic, Gemini and Grok
-keys — **8/8 green**. The first run rebuilt the instrument (lessons §3): the
+keys — **8/8 green**; the llama-side arms re-ran the same day on **Qwen 3.6,
+llama.cpp build b10659** — 8/8 again. The first run rebuilt the instrument (lessons §3): the
 fixture gained an invented marker ("Per the Zorbville atlas…") because
 llama.cpp's echo makes continuation and verbatim restart the same bytes
 without one, and the asserted cut moved to a word boundary because a cut
@@ -389,10 +393,10 @@ inside a single token is a state no real interruption produces (§4h).
 
 | Arm | Result |
 |---|---|
-| §7.1 llama.cpp, word-boundary tail | **continues exactly** — `" Paris."`, seam one space, `finish=Stop`; the prefill is **echoed** at the head of the stream (→ the §4d amendment). Mid-word arm (recorded): welded `"Par"` into `"Pariz."` — the out-of-distribution state, as reasoned. |
-| §7.2 Qwen thinking | **pending** — the smoke reads `/v1/models`, saw Gemma, and skipped loudly; reruns after the stack switches to Qwen 3.6. |
-| §7.3 prefill + tools | **GO for F5(a)** — the continued round finished its sentence and emitted a parsed `get_weather` call, `finish=ToolCalls`. |
-| §7.4 explicit knobs | this llama.cpp build does **not** know `continue_final_message` (wrong-typed value passes as 200; knobs-off ignored) — default prefill alone carries the feature there, the fields ride along for vLLM. |
+| §7.1 llama.cpp, word-boundary tail | **continues exactly** — `" Paris."`, seam one space, `finish=Stop`; the prefill is **echoed** at the head of the stream (→ the §4d amendment). Re-run on Qwen 3.6/b10659: identical — with Qwen answering the fixture in-universe (`" Zorbville."`), which widened the probe's accepted completions (the marker is also a premise). Mid-word arm (recorded): welded `"Par"` into `"Pariz."`/`"Parapluie."` — the out-of-distribution state, as reasoned. |
+| §7.2 Qwen 3.6 thinking (b10659) | the #21889 rejection is **gone**: a plain prefill is accepted and thinking is silently **skipped** (empty reasoning, no `<think>` residue — #21511 not reproduced), exactly the semantics a continuation wants; the `chat_template_kwargs` escape continues too, kept for older builds. |
+| §7.3 prefill + tools | **GO for F5(a)** — the continued round finished its sentence and emitted a parsed `get_weather` call, `finish=ToolCalls`. Reproduced on Qwen 3.6/b10659. |
+| §7.4 explicit knobs | **neither build** knows `continue_final_message` on `/v1/chat/completions` — a wrong-typed value passes as 200, knobs-off is ignored — including b10659, the day's build; default prefill alone carries the feature there, the fields ride along for vLLM. |
 | §7.5 Anthropic haiku-4-5 | **continues** — `" Paris."`, no echo. |
 | §7.5 Anthropic opus-4-8 | **rejects**, wording pinned: *"This model does not support assistant message prefill. The conversation must end with a user message."* |
 | §7.5 Gemini 2.5-flash | **continues** — `" Paris."`, no echo. |
