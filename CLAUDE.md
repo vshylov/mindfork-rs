@@ -167,7 +167,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-28, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2631 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2633 unit tests
 green, 118 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,13 +179,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
-- **`/continue` — an interrupted reply resumes in place** — assistant prefill
-  on the managed/external path (per-mode capability; the clouds refuse with the
-  route that works), the server's echo of the prefill stripped byte-exactly,
-  `MessageFinish` recorded on every reply, a tool-result tail resuming the
-  loop, and the interruption notes naming `/continue` where it applies — a
-  length-cut reply finally gets a note at all; probe + live run on Qwen
-  3.6/b10659
+- **`/continue` — an interrupted reply resumes in place, track complete** —
+  assistant prefill on managed/external, Gemini, and Claude ≤4.5 (an
+  allowlist-by-version gate; OpenAI/Grok refuse with the route that works),
+  the server's echo of the prefill stripped byte-exactly, `MessageFinish`
+  recorded on every reply, a tool-result tail resuming the loop, and the
+  interruption notes naming `/continue` where it applies — a length-cut reply
+  finally gets a note at all; probes + live runs on Qwen 3.6/b10659 and the
+  real cloud keys
   ([docs/research/continue-generation.md](docs/research/continue-generation.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Theme::Auto` actually follows the terminal** — it claimed to "follow the

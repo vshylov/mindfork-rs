@@ -218,12 +218,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
-- **`/continue` — stage 2, the clouds** (stage 1 is **done**: managed/external,
-  [continue-generation.md](research/continue-generation.md)): widening
-  `ServerMode::supports_continuation` per the stage-0 measurements — Anthropic
-  on ≤4.5 models (a per-model gate, thinking off, the trailing-whitespace
-  trim), Gemini (measured continuing, undocumented), never Grok (measured
-  restarting) or OpenAI. The capability table grows rows; nothing structural.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
   with the key such a gateway needs
@@ -452,6 +446,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **`/continue`** (complete, probe + 2 stages): an interrupted reply resumes
+  in place via assistant prefill — managed/external (llama.cpp/vLLM, the
+  server's echo stripped byte-exactly), Gemini, and Claude up to the 4.5
+  generation (allowlist-by-version gate; thinking dropped and the prefill
+  right-trimmed on the wire); OpenAI/Grok refuse with the route that works.
+  `MessageFinish` records why every reply ended; a tool-result tail resumes
+  the loop; a length-cut reply finally gets a note. Design and measurements:
+  [docs/research/continue-generation.md](research/continue-generation.md).
+  What stays open: nothing recorded — external non-llama.cpp/vLLM servers
+  keep the documented-fields-plus-honest-note stance (research §10).
 - **Sub-agent chats** (complete, 8 PRs): `call_subagent` as a nested turn with
   the agent's tools (ADR 0010), the transcript on the call's record, the
   migration of old calls, the transcript in the list, in search, titled at
