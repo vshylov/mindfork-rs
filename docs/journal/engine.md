@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: images in a message — stage 2 (the three cloud formats, track complete) (done)
 - Post-M9: images in a message — attach by URL (done)
 - Post-M9: a model split across several GGUF files (managed mode) (done)
+- Post-M9: `/continue` — stage 0: the live continuation probe (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -1981,6 +1982,66 @@ launcher, over a `tempfile` directory: a missing part is named; with every part
 present the launch gets past the preflight and fails on `spawn` instead (a negative
 control — without it the test would pass with the whole check deleted, lessons §2);
 and a later part points at the first.
+
+### Post-M9: `/continue` — stage 0: the live continuation probe (done)
+
+**The question** (2026-08-27, research doc `docs/research/continue-generation.md` §7;
+the forks were settled the same day, every one at its recommended option): does the
+mechanism `/continue` would ride — a trailing assistant message continued in place
+(assistant prefill / continue-final-message) — actually work on the providers the
+design claims, and how does it interact with thinking models, the explicit
+continuation knobs, and the tool grammar. Eight `#[ignore]` smokes in
+`src/shared/api/continue_probe.rs`, run against the reference stack and three cloud
+keys.
+
+**The instrument had to be rebuilt after the first run** (lessons §3 — suspect the
+fixture before the feature). llama.cpp *echoes the prefill* back in the response, so
+a continuation and a verbatim restart are the same bytes unless the partial carries
+a marker no model would regenerate on its own — the fixture now opens with an
+invented "Per the Zorbville atlas …" (the compaction smokes' invented-code
+discipline), which makes echo / bare continuation / restart three distinguishable
+outcomes. And the first fixture's mid-word cut ("…is Par" of a one-token "Paris")
+is a state no real interruption can produce — streams break at token boundaries —
+and it measured exactly like the out-of-distribution state it is: Gemma welded
+"Par" into "Parise."/"Pariz.", haiku-4-5 slipped a U+00AD soft hyphen into the
+seam, Gemini a `"\n"`. The asserted arm cuts at a word boundary; the mid-word arm
+stays in the smoke as a recorded, never-asserted exhibit.
+
+**Measured (8/8 green, 2026-08-27, stack: `llama-server` at 192.168.1.20:8000,
+gemma-4-31B q4_0):**
+
+- **llama.cpp**: a plain trailing-assistant request **continues exactly** —
+  `" Paris."`, the seam a single space, `finish=Stop` — with the prefill echoed at
+  the head of the stream, so the feature's append path must strip the echoed
+  prefix before appending (the one design change this probe forced). **Prefill and
+  a tool schema coexist**: the continued round finished its sentence and emitted a
+  parsed `get_weather` call (`finish=ToolCalls`) — fork F5's include-the-tools GO.
+  The explicit `continue_final_message`/`add_generation_prompt` pair is *unknown*
+  to this build — a wrong-typed value sails through as 200, knobs-off is ignored —
+  so on llama.cpp the default prefill alone carries the feature, and the explicit
+  fields ride along harmlessly for vLLM's sake.
+- **Anthropic**: `claude-haiku-4-5` continues cleanly — `" Paris."`, no echo.
+  `claude-opus-4-8` rejects with the exact wording now pinned in the smoke: *"This
+  model does not support assistant message prefill. The conversation must end with
+  a user message."* — the 4.6+/5-family gate the capability table needs.
+- **Gemini** (`gemini-2.5-flash`): continues cleanly — `" Paris."`, no echo.
+- **Grok** (`grok-4.5`): **restarts** — the reasoning opens with "The user
+  asked…" and the reply is a fresh sentence without the marker. xAI has no
+  continuation semantics; the research doc's §2 row goes from "unknown" to a
+  measured no, and `/continue` will refuse on Grok.
+- **Qwen thinking arm**: the smoke detects the served model via `/v1/models` and
+  skipped loudly ("gemma-4-31b…, not a Qwen thinking model — rerun after switching
+  the stack"); the enable_thinking rejection and the `chat_template_kwargs`
+  escape remain to be measured on Qwen 3.6.
+
+**Verdict: GO** for stage 1 on the settled forks (managed/external first), with one
+design amendment recorded in the research doc: the OpenAI-compatible path returns
+prefill+continuation while Anthropic/Gemini return the continuation alone, so the
+seed-append site normalizes by stripping the seed's text when the stream opens
+with it.
+
+**Tests.** +8 `#[ignore]` (2617 green, 117 `#[ignore]`); no unit delta — the probe
+is the deliverable.
 
 **The duplication gate, one round.** The PR opened red at 4.6% new-code duplication
 (bar 3%) with everything else green, and both causes were already in lessons §2: the
