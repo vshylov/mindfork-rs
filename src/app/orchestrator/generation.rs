@@ -343,7 +343,13 @@ impl Orchestrator {
         // The capability gate first — its answer does not depend on the server
         // being up, and a cloud user should hear "cannot" rather than wait out
         // a readiness check to hear it (single source of truth: research §2).
-        if !self.config.engine.mode.supports_continuation() {
+        let model = self.config.engine.active_model_name();
+        if !self
+            .config
+            .engine
+            .mode
+            .supports_continuation(model.as_deref())
+        {
             let _ = self.evt_tx.send(AppEvent::Error(
                 self.ui_locale().t("ui.cmd.continue_unsupported").into(),
             ));
@@ -1217,7 +1223,7 @@ fn spawn_generation(spawn: GenSpawn) {
             Some(m) if m.role == MessageRole::Assistant => !m.text.is_empty(),
             _ => continuation.is_some(),
         };
-        let continuable = engine_mode.supports_continuation()
+        let continuable = engine_mode.supports_continuation(turn.shared.model_name.as_deref())
             && matches!(
                 reason,
                 FinishReason::Cancelled | FinishReason::Error | FinishReason::Length
@@ -1540,7 +1546,9 @@ impl TurnLoop<'_> {
             self.total_reasoning,
             self.shared.ui_loc,
             self.shared.compaction_enabled,
-            self.shared.engine_mode.supports_continuation(),
+            self.shared
+                .engine_mode
+                .supports_continuation(self.shared.model_name.as_deref()),
             echo,
         )
         .await;

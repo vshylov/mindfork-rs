@@ -44,6 +44,11 @@ const PARTIAL: &str = "Per the Zorbville atlas, the capital of France is";
 /// interruption cannot produce for a single-token word. Recorded to document
 /// the retokenization merge artifact, never asserted.
 const PARTIAL_MIDWORD: &str = "Per the Zorbville atlas, the capital of France is Par";
+/// The primary partial with a trailing space — what a stream cut right after
+/// a whitespace token leaves behind. Anthropic rejects such a prefill as-is;
+/// the wire right-trims its copy (stage 2), and this fixture is what proves
+/// the trim live.
+const PARTIAL_TRAILING: &str = "Per the Zorbville atlas, the capital of France is ";
 
 fn fixture(partial: &str) -> Vec<ApiMessage> {
     vec![ApiMessage::user(QUESTION), ApiMessage::assistant(partial)]
@@ -499,10 +504,40 @@ fn anthropic_client(model: &str) -> Option<AnthropicClient> {
     ))
 }
 
-/// Anthropic, ≤4.5 generation: prefill is documented and was already measured
-/// by the impersonation probe on a complete tail; this arm measures the seam.
-/// The first run (mid-word cut) measured a U+00AD soft hyphen injected at the
-/// seam — the word-boundary cut is what the feature would actually send.
+/// One Anthropic continuation request through the app's own wire
+/// (`continue_final: true` — stage 2), optionally asking for extended
+/// thinking, which the wire must drop.
+async fn anthropic_continue(
+    client: &AnthropicClient,
+    partial: &'static str,
+    thinking: bool,
+) -> (String, Option<FinishReason>) {
+    let mut sampling = deterministic();
+    sampling.thinking = thinking.then_some(true);
+    let req = ChatRequest {
+        continue_final: true,
+        system: None,
+        messages: fixture(partial),
+        sampling,
+        tools: vec![],
+    };
+    let (text, _thoughts, finish) = collect(
+        client
+            .chat_stream(req, Default::default())
+            .await
+            .expect("haiku-4-5 must accept a continuation request"),
+    )
+    .await;
+    (text, finish)
+}
+
+/// Anthropic, ≤4.5 generation, through the app's wire (stage 2): the base
+/// continuation, one with extended thinking requested (the wire drops it —
+/// sent as-is, the API answers `400 prefill is incompatible`), and one whose
+/// partial ends in whitespace (the wire right-trims its copy — sent as-is,
+/// the API rejects trailing whitespace). The first run (mid-word cut)
+/// measured a U+00AD soft hyphen at the seam; the word-boundary cut is what
+/// the feature actually sends.
 #[tokio::test]
 #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
 async fn anthropic_haiku_continues_a_trailing_assistant() {
@@ -510,29 +545,28 @@ async fn anthropic_haiku_continues_a_trailing_assistant() {
         eprintln!("skip: MINDFORK_ANTHROPIC_KEY not set");
         return;
     };
-    let req = ChatRequest {
-        continue_final: false,
-        system: None,
-        messages: fixture(PARTIAL),
-        sampling: deterministic(),
-        tools: vec![],
-    };
-    let (text, _thoughts, finish) = collect(
-        client
-            .chat_stream(req, Default::default())
-            .await
-            .expect("haiku-4-5 must accept a trailing-assistant prefill"),
-    )
-    .await;
-    let outcome = analyze(&text, PARTIAL);
-    println!("anthropic haiku-4-5: finish={finish:?} outcome={outcome:?}\nraw={text:?}");
-    let (seam, cont) = continuation(&outcome)
-        .unwrap_or_else(|| panic!("haiku-4-5 did not continue the tail: {text:?}"));
-    println!("seam bytes at the cut: {seam:?}");
-    assert!(
-        answers_the_question(cont),
-        "haiku-4-5 did not resume with the answer: {cont:?} (raw {text:?})"
-    );
+    for (label, partial, thinking) in [
+        ("base", PARTIAL, false),
+        ("thinking suppressed by the wire", PARTIAL, true),
+        (
+            "trailing whitespace trimmed by the wire",
+            PARTIAL_TRAILING,
+            false,
+        ),
+    ] {
+        let (text, finish) = anthropic_continue(&client, partial, thinking).await;
+        let outcome = analyze(&text, partial);
+        println!(
+            "anthropic haiku-4-5 [{label}]: finish={finish:?} outcome={outcome:?}\nraw={text:?}"
+        );
+        let (seam, cont) = continuation(&outcome)
+            .unwrap_or_else(|| panic!("[{label}] did not continue the tail: {text:?}"));
+        println!("seam bytes at the cut: {seam:?}");
+        assert!(
+            answers_the_question(cont),
+            "[{label}] did not resume with the answer: {cont:?} (raw {text:?})"
+        );
+    }
 }
 
 /// Anthropic, current generation (4.6+/5-family): prefill is documented as
@@ -571,9 +605,10 @@ async fn anthropic_current_model_rejects_prefill() {
     }
 }
 
-/// Gemini: the impersonation probe measured continuation on a complete tail;
-/// this arm measures the seam on the same wire. First run (mid-word cut)
-/// measured a `"\n"` injected at the seam.
+/// Gemini, through the app's wire (stage 2 — the flag adds nothing on this
+/// wire; the trailing `model` turn is the whole mechanism, and the measured
+/// configuration is deliberately the unmodified one). First run (mid-word
+/// cut) measured a `"\n"` injected at the seam.
 #[tokio::test]
 #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
 async fn gemini_continues_a_trailing_model_turn() {
@@ -589,7 +624,7 @@ async fn gemini_continues_a_trailing_model_turn() {
         model.clone(),
     );
     let req = ChatRequest {
-        continue_final: false,
+        continue_final: true,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),

@@ -124,21 +124,50 @@ impl ServerMode {
         }
     }
 
-    /// Whether `/continue` can resume a partial reply in this mode — i.e. the
-    /// server continues a trailing assistant message in place (assistant
-    /// prefill / continue-final-message). The single source of truth for the
-    /// command's gate and the interruption notes, mirroring
+    /// Whether `/continue` can resume a partial reply in this mode and, for
+    /// Anthropic, on this model — i.e. the server continues a trailing
+    /// assistant message in place (assistant prefill / continue-final-message).
+    /// The single source of truth for the command's gate and the interruption
+    /// notes, mirroring
     /// [`supported_sampling_fields`](crate::entities::sampling::supported_sampling_fields).
     ///
     /// Measured per provider in docs/research/continue-generation.md §2/§7.1:
     /// llama.cpp continues by default and vLLM via the explicit fields (both
-    /// behind managed/external); OpenAI cannot; Anthropic removed prefill on
-    /// every current model; Gemini continues but is stage 2 (undocumented,
-    /// probe-only); Grok measurably restarts. Clouds stay `false` until a
-    /// stage 2 widens this per provider — the fork F2 decision.
-    pub fn supports_continuation(self) -> bool {
-        matches!(self, ServerMode::Managed | ServerMode::External)
+    /// behind managed/external); Gemini continues a trailing `model` turn
+    /// (measured live — undocumented, so the probe stays in the smoke set);
+    /// Anthropic continues on models up to the 4.5 generation and returns a
+    /// `400` from 4.6 on ("This model does not support assistant message
+    /// prefill", pinned in `continue_probe`) — see
+    /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts.
+    pub fn supports_continuation(self, model: Option<&str>) -> bool {
+        match self {
+            ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
+            ServerMode::Claude => model.is_some_and(anthropic_model_continues),
+            ServerMode::OpenAi | ServerMode::Grok => false,
+        }
     }
+}
+
+/// Whether an Anthropic model still accepts assistant prefill: every model up
+/// to the 4.5 generation does, everything from 4.6 on rejects it, and the
+/// removal is forward-going — so this is an *allowlist by version*, not a
+/// blocklist by name, and an id whose generation cannot be read refuses
+/// (capability is asked, never guessed — the images-feature discipline).
+///
+/// The generation is read off the id's first two short numeric segments:
+/// `claude-haiku-4-5` and `claude-sonnet-4-5-20250929` → 4.5 (a date segment
+/// is longer than two digits and is skipped), `claude-3-5-sonnet-20241022` →
+/// 3.5, `claude-opus-5` → 5.0, `claude-fable-5` → 5.0.
+fn anthropic_model_continues(model: &str) -> bool {
+    let mut nums = model
+        .split(['-', '.', '@'])
+        .filter(|s| !s.is_empty() && s.len() <= 2 && s.bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|s| s.parse::<u32>().ok());
+    let Some(major) = nums.next() else {
+        return false;
+    };
+    let minor = nums.next().unwrap_or(0);
+    major < 4 || (major == 4 && minor <= 5)
 }
 
 /// Default number of GPU layers (`-ngl`): everything on GPU.
@@ -1838,6 +1867,59 @@ impl Default for AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `/continue` capability matrix (spec §6.4) and the Anthropic version
+    /// gate behind it: an allowlist by generation, refusing what it cannot
+    /// read. Each row is a measured or documented fact from
+    /// docs/research/continue-generation.md §2/§7.1.
+    #[test]
+    fn continuation_capability_is_per_mode_and_anthropic_generation() {
+        for mode in [
+            ServerMode::Managed,
+            ServerMode::External,
+            ServerMode::Gemini,
+        ] {
+            assert!(mode.supports_continuation(None), "{mode:?}");
+        }
+        for mode in [ServerMode::OpenAi, ServerMode::Grok] {
+            assert!(!mode.supports_continuation(Some("anything")), "{mode:?}");
+        }
+        // Anthropic: ≤4.5 continues (haiku-4-5 measured; dated ids and the
+        // old 3.x naming parse the same way), 4.6+ and the 5 family reject
+        // (opus-4-8 measured verbatim), and an unreadable id refuses.
+        for ok in [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-5@20251101",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-20240229",
+        ] {
+            assert!(
+                ServerMode::Claude.supports_continuation(Some(ok)),
+                "{ok} must continue"
+            );
+        }
+        for no in [
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "unknown-model",
+        ] {
+            assert!(
+                !ServerMode::Claude.supports_continuation(Some(no)),
+                "{no} must refuse"
+            );
+        }
+        assert!(
+            !ServerMode::Claude.supports_continuation(None),
+            "no model name — nothing to allow by"
+        );
+    }
 
     #[test]
     fn default_has_current_schema_version() {

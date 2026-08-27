@@ -970,8 +970,12 @@ Details:
   interruption (or absent, for pre-field data) goes back out as the request's
   trailing assistant message with `ChatRequest.continue_final` set, a
   tool-result tail resumes the loop with no prefill, and everything else is a
-  localized refusal. The gate is `ServerMode::supports_continuation`
-  (managed/external only). `finalize_message` records the end state
+  localized refusal. The gate is `ServerMode::supports_continuation(model)` —
+  managed/external and Gemini unconditionally, Anthropic by an
+  allowlist-by-version over the model id (≤4.5 continues, 4.6+ rejects,
+  unparseable refuses), OpenAI/Grok never; the Anthropic wire additionally
+  drops the thinking block and right-trims the trailing prefill on a
+  continuation request. `finalize_message` records the end state
   (`MessageFinish`) that makes the eligibility readable; the turn carries a
   `ContinuationSeed` whose text drives `EchoFilter` in `stream_round`
   (llama.cpp echoes the prefill — withheld by byte-prefix match, flushed

@@ -1449,6 +1449,12 @@ async fn continue_refusals_answer_with_the_route_that_works() {
     orch.config.engine.mode = ServerMode::OpenAi;
     expect_note(&mut orch, "ui.cmd.continue_unsupported");
 
+    // Anthropic is per-model (stage 2): a 4.6+ id refuses — the wider matrix
+    // is pinned in `shared::config`'s own capability test.
+    orch.config.engine.mode = ServerMode::Claude;
+    orch.config.engine.claude.model_name = Some("claude-opus-4-8".into());
+    expect_note(&mut orch, "ui.cmd.continue_unsupported");
+
     // Back on a supporting mode with a continuable tail — and a message stored
     // before the bookkeeping existed (`finish: None`) is continuable too
     // (fork F1): the turn actually starts.

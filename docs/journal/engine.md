@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a model split across several GGUF files (managed mode) (done)
 - Post-M9: `/continue` — stage 0: the live continuation probe (done)
 - Post-M9: `/continue` — stage 1: resuming an interrupted reply in place (done)
+- Post-M9: `/continue` — stage 2: the clouds (track complete)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2163,3 +2164,46 @@ real server's echo was stripped, nothing doubled, nothing fell into the
 seam, and the reply is one message ("one" through "thirty", 246 chars,
 finish `Stop`). The full orchestrator live set was re-run on the same stack
 for turn-path non-regression.
+
+### Post-M9: `/continue` — stage 2: the clouds (track complete)
+
+**What** (2026-08-28, the widening §8 of
+[docs/research/continue-generation.md](../research/continue-generation.md)
+recorded in the roadmap). `/continue` now also works on **Gemini** and on
+**Anthropic models up to the 4.5 generation**; OpenAI and Grok stay refused —
+one measured never continuing, the other measured restarting. The capability
+gate grew a model axis: `ServerMode::supports_continuation(model)`, with the
+Anthropic arm an **allowlist by version** read off the model id (`≤4.5`
+continues, `4.6+` rejects — the removal is forward-going, so a blocklist by
+name would rot open; an id whose generation cannot be parsed refuses, the
+capability-is-asked discipline). The version reads off the id's first two
+short numeric segments, which covers the old `claude-3-5-sonnet-20241022`
+naming, the new `claude-haiku-4-5`, dated and `@`-suffixed variants — the
+matrix is pinned in `shared::config`'s own test.
+
+**The Anthropic wire earns its two constraints.** A continuation request
+drops the extended-thinking block (Anthropic rejects a prefill combined with
+thinking — the same "resuming a visible reply must not re-open reasoning"
+choice the OpenAI-compatible wire makes with `enable_thinking: false`) and
+right-trims the **wire copy** of the trailing prefill (Anthropic rejects
+trailing whitespace; the stored message keeps its bytes — the seam caveat of
+research §4h). One byte-compare test pins that the flag touches only those
+two things. The Gemini wire is deliberately untouched: the measured
+configuration is the unmodified one — the trailing `model` turn *is* the
+mechanism.
+
+**Tests.** +2 unit (2633 green; the capability matrix and the Anthropic wire
+byte-compare), the orchestrator refusal ladder gained the per-model Claude
+arm, and the probe's cloud arms now go **through the app's wire**
+(`continue_final: true`) with two new live arms: extended thinking requested
+(sent as-is the API answers 400 — the wire's suppression is what passes) and
+a trailing-whitespace partial (same shape, the trim is what passes).
+
+**Smoke — GO** (2026-08-28, real keys + `llama-server` b10659/Qwen 3.6):
+`continue_probe` 8/8 — all three haiku-4-5 arms continued with a clean
+one-space seam (` Paris.`), Gemini 2.5-flash likewise through the wire,
+opus-4-8 still rejects with the pinned wording, Grok still restarts
+(recorded), and the llama-side arms are unchanged — no regression from the
+signature change. The orchestrator path above the client is byte-identical to
+the managed one already covered by `continue_e2e_live`, so no cloud-side
+orchestrator harness was built for this.

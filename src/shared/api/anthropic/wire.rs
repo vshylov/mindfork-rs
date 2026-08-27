@@ -151,16 +151,32 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
     };
     // Extended thinking is enabled by the sampling `thinking` flag. The budget/`reasoning_budget`
     // isn't used — 4.x models reject `budget_tokens`; depth is set by `effort`.
-    let thinking = (req.sampling.thinking == Some(true)).then_some(AntThinking {
-        kind: "adaptive",
-        display: "summarized",
-    });
+    // A continuation request (`/continue`, spec §6.4) goes out without it:
+    // Anthropic rejects a prefill combined with extended thinking, and resuming
+    // a visible reply must not re-open reasoning — the same choice the
+    // OpenAI-compatible wire makes with `enable_thinking: false`.
+    let thinking =
+        (req.sampling.thinking == Some(true) && !req.continue_final).then_some(AntThinking {
+            kind: "adaptive",
+            display: "summarized",
+        });
     let output_config = thinking.as_ref().and_then(|_| {
         req.sampling
             .reasoning_effort
             .and_then(ant_effort)
             .map(|effort| AntOutputConfig { effort })
     });
+    let mut messages = build_messages(req);
+    // The trailing assistant message is the prefill being continued, and
+    // Anthropic rejects a prefill that ends in whitespace — the **wire copy**
+    // is right-trimmed; the stored message keeps its bytes (the seam caveat is
+    // recorded in docs/research/continue-generation.md §4h).
+    if req.continue_final
+        && let Some(last) = messages.last_mut().filter(|m| m.role == "assistant")
+        && let Some(AntBlock::Text { text }) = last.content.last_mut()
+    {
+        text.truncate(text.trim_end().len());
+    }
     AntRequest {
         model: model.to_string(),
         max_tokens: req
@@ -169,7 +185,7 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
             .map(|m| m as u64)
             .unwrap_or(DEFAULT_MAX_TOKENS),
         system: req.system.clone(),
-        messages: build_messages(req),
+        messages,
         stream,
         tools,
         thinking,
@@ -883,5 +899,51 @@ mod stream_error_tests {
                 AntStreamEvent::Other
             ));
         }
+    }
+
+    /// `/continue` (spec §6.4): the flag right-trims the trailing prefill (a
+    /// prefill ending in whitespace is a `400`) and drops the thinking block
+    /// (prefill is incompatible with extended thinking) — and with it off the
+    /// body is byte-identical, thinking included.
+    #[test]
+    fn continuation_trims_the_prefill_and_drops_thinking() {
+        let mut r = ChatRequest {
+            messages: vec![
+                ApiMessage::user("вопрос"),
+                ApiMessage::assistant("Оборванный ответ "),
+            ],
+            ..Default::default()
+        };
+        r.sampling.thinking = Some(true);
+        let off = serde_json::to_value(build_request(&r, "claude-haiku-4-5", false)).unwrap();
+        assert_eq!(
+            off["messages"][1]["content"][0]["text"],
+            "Оборванный ответ "
+        );
+        assert_eq!(off["thinking"]["type"], "adaptive");
+
+        r.continue_final = true;
+        let on = serde_json::to_value(build_request(&r, "claude-haiku-4-5", false)).unwrap();
+        assert_eq!(
+            on["messages"][1]["content"][0]["text"], "Оборванный ответ",
+            "the wire copy is right-trimmed; the stored message keeps its bytes"
+        );
+        assert!(
+            on.get("thinking").is_none(),
+            "prefill is incompatible with extended thinking"
+        );
+        // ...and nothing else moves with the flag.
+        let (mut a, mut b) = (off, on);
+        for j in [&mut a, &mut b] {
+            j.as_object_mut().unwrap().remove("thinking");
+            j["messages"][1]["content"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("text");
+        }
+        assert_eq!(
+            a, b,
+            "the flag touches only the trim and the thinking block"
+        );
     }
 }
