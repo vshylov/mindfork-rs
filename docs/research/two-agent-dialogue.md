@@ -1,7 +1,11 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **research — forks await the user's confirmation** (AGENTS.md §1;
-> nothing is implemented). This is the document the sub-agent track promised:
+> Status: **forks confirmed — probe running.** User's decision (2026-08-28):
+> F1–F10 at their recommended options, **F6 amended** — the director carries
+> the **main agent's identity** (the chat's persona) and **knows the
+> conversation with the user**, delivered as a brief built by the `/compact`
+> summarizer's mechanism (§3.2, F6). The §5 probe follows on
+> `spike/dialogue-probe`. This is the document the sub-agent track promised:
 > [subagent-chats.md](subagent-chats.md) §3.14 sketched the feature and left
 > two seams open for it on purpose (`RunKind`, `RunOutcome`), and the roadmap
 > carries it as "the two-agent dialogue (research §3.14 — its own research
@@ -168,8 +172,10 @@ Arguments (localized descriptions; `required` marked):
 optional names — F13 of the sub-agent track); fallbacks are localized labels.
 The tool description teaches the model what the caller controls: personas'
 system messages **are** the role instrument (R1), `direction` is how the
-caller's intent reaches the director, and the description says plainly that a
-dialogue is a long, many-request operation.
+caller adds *explicit* directing intent — the director also receives the
+chat's persona and a conversation brief automatically (§3.2, F6), so
+`direction` is for emphasis, not the only channel — and the description says
+plainly that a dialogue is a long, many-request operation.
 
 ### 3.2 The three contexts and the derivation rule
 
@@ -190,13 +196,24 @@ editing (F3) trivially correct.
   every view is `system, user, assistant, user, …` — the strictest template
   (Gemma's) is satisfied by construction, on every provider. The prologue is
   derivation-only: it never appears in the stored transcript.
-- **Director's view**: `system` = a localized director prompt template
-  (`prompt.dialogue.*`, the axis-A pattern impersonation uses) + `direction`.
-  Its conversation is **persistent and append-only** across checkpoints: new
-  dialogue lines arrive as `user` content (rendered `Name: text`), its own
-  verdicts stay as its `assistant` tool-call turns with a short `tool` result
-  ("noted"). Persistence gives the director memory of its own notes ("I
-  already told A to wrap up") and keeps its context cache-friendly (§2.5).
+- **Director's view** (per the amended F6): `system` = **the parent turn's
+  own persona** (`ctx.system_message` — the field a sub-agent's persona
+  *replaces*, here kept), then a **conversation brief**, then a localized
+  director appendix (`prompt.dialogue.*`, the axis-A pattern impersonation
+  uses) + `direction`. The brief is what makes the director *the main agent
+  directing*, not a hired stranger: it is built the way `/compact` builds a
+  request's head — the chat's rolling summary when one exists
+  (`Chat::compaction`, `entities/chat.rs:93`; the request shape is
+  `compaction_view`, `chat.rs:296`) plus the unfolded tail within a token
+  budget; a long **uncompacted** conversation is folded once at dialogue
+  start by the same summarizer the `/compact` path uses (one extra request,
+  §3.9). The self-model injection stays top-turn-only, as ADR 0010 F3
+  decided for every nested run. The director's conversation is **persistent
+  and append-only** across checkpoints: new dialogue lines arrive as `user`
+  content (rendered `Name: text`), its own verdicts stay as its `assistant`
+  tool-call turns with a short `tool` result ("noted"). Persistence gives
+  the director memory of its own notes ("I already told A to wrap up") and
+  keeps its context cache-friendly (§2.5).
 
 ### 3.3 The loop
 
@@ -345,8 +362,10 @@ absence of any concurrency to guard against; the invariant is stated in the
 tool's spec section and pinned by a unit test on the mock backend (max
 in-flight = 1).
 
-Requests per dialogue: `M + ceil(M / K) + R + 1` — messages, checkpoints,
-retries, the landing auto-title. Defaults (16, 2): ~25 requests. Each context
+Requests per dialogue: `M + ceil(M / K) + R + 1 (+ 1)` — messages,
+checkpoints, retries, the landing auto-title, plus at most one summarization
+request when the director's brief has to fold a long uncompacted
+conversation (§3.2). Defaults (16, 2): ~25 requests. Each context
 is append-only, so on llama-server the three prefixes are individually
 cacheable (§2.5); whether the 4-slot LRU actually holds all three alongside
 the parent is a probe measurement, not an assumption. Worst case is full
@@ -356,9 +375,10 @@ plainly in the tool's description and spec section.
 ### 3.10 i18n
 
 Axis A (agent language, `ctx.loc` / the run's locale): the tool description
-and parameter descriptions, the verdict tools' schemas, the director prompt
-template (`prompt.dialogue.*`), participant fallback labels, every result
-string (stopped/cap/timeout/cancelled). Axis B: nothing new — the viewer
+and parameter descriptions, the verdict tools' schemas, the director appendix
+(`prompt.dialogue.*`; the brief reuses the compaction summarizer's existing
+localized prompt), participant fallback labels, every result string
+(stopped/cap/timeout/cancelled). Axis B: nothing new — the viewer
 reuses the child-view chrome; the system bubble shows the stored briefs.
 Both bundles ship together as always; the no-dead-key and localization gates
 cover the new families.
@@ -422,11 +442,18 @@ alternation hazard; recorded here, not built.
   b) Reuse `subagent_run_timeout_secs` (600 s) — wrong by an order of
      magnitude for a local dialogue (§3.8).
 
-**F6 — the director's identity.** **(recommended)** a built-in localized
-director prompt + the call's `direction` brief. Alternative — inheriting the
-parent chat's persona — mixes the chat's character into a control function and
-was the shape §3.3 of the sub-agent track deliberately avoided (identity
-belongs to the run).
+**F6 — the director's identity.** **User's decision (2026-08-28), replacing
+the recommendation:** the director **is the main agent** — it keeps the
+parent chat's persona and it **knows the conversation with the user**,
+delivered as a brief built by the `/compact` summarizer's mechanism (§3.2).
+The originally recommended neutral built-in director prompt was rejected: the
+director's stop/steer judgment should be informed by *why* the user wanted
+this dialogue, which lives in the conversation, not only in `direction`.
+This does not contradict ADR 0010's identity rule — the *participants* remain
+foreign personas with their own system messages; it is the director that was
+never foreign. The self-model injection stays top-turn-only (ADR 0010 F3,
+the user's own earlier decision); flag it if the director should carry it
+too.
 
 **F7 — the opening.** **(recommended)** `opening.text` is required, authored
 by the caller in the opener's voice (the calling model writes good openers,
@@ -464,7 +491,14 @@ derivation and §3.3 checkpoint logic inlined — no product seams touched.
 Fixture: two personas with a **naturally finite** task (e.g. a barista and a
 customer resolving a wrong order; direction: "stop once they part amicably"),
 `max_messages 16`, `moderate_every 2`; a second fixture with a mild conflict
-to check steering (`dialogue_note` changes the next line's behaviour).
+to check steering (`dialogue_note` changes the next line's behaviour). The
+director fixture is shaped per the amended F6 — a small parent persona + a
+hand-written conversation brief + the director appendix — so the prompt shape
+under test matches the product's. One deliberate divergence: the probe's
+checkpoints are **stateless** (full script re-sent each time, earlier
+directions restated in the prompt) — hand-building the persistent tool-call
+history through the client would test the harness, not the model; the
+persistent form only changes what the wire replays, and lands with PR 1.
 
 Models: the live gate's pair — Gemma 4 31B and Qwen 3.6 27B (the same stack
 the sub-agent smokes ran on), n = 5 per model per fixture. Cloud spot-check:
