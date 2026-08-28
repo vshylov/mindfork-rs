@@ -13,27 +13,27 @@ use crate::shared::api::contract::{ChatStream, ToolCallDelta};
 
 /// One scripted engine round; `hang` keeps the stream open after the chunks
 /// until the request's token is cancelled (a slow sub-agent).
-struct Script {
-    chunks: Vec<ChatChunk>,
-    hang: bool,
+pub(super) struct Script {
+    pub(super) chunks: Vec<ChatChunk>,
+    pub(super) hang: bool,
 }
 
 /// An engine that records every request it is given and plays the scripts in
 /// order, one per `chat_stream` call — the parent's rounds and the child's
 /// interleave on one engine exactly as they do in the application.
-struct ScriptRecorder {
+pub(super) struct ScriptRecorder {
     requests: Mutex<Vec<ChatRequest>>,
     scripts: Mutex<VecDeque<Script>>,
 }
 
 impl ScriptRecorder {
-    fn new(scripts: Vec<Script>) -> Arc<Self> {
+    pub(super) fn new(scripts: Vec<Script>) -> Arc<Self> {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             scripts: Mutex::new(scripts.into()),
         })
     }
-    fn requests(&self) -> Vec<ChatRequest> {
+    pub(super) fn requests(&self) -> Vec<ChatRequest> {
         self.requests.lock().unwrap().clone()
     }
 }
@@ -63,7 +63,7 @@ impl EngineBackend for ScriptRecorder {
     }
 }
 
-fn call(id: &str, name: &str, args: &str) -> Script {
+pub(super) fn call(id: &str, name: &str, args: &str) -> Script {
     Script {
         chunks: vec![
             ChatChunk::ToolCall(ToolCallDelta {
@@ -79,7 +79,7 @@ fn call(id: &str, name: &str, args: &str) -> Script {
     }
 }
 
-fn text(t: &str) -> Script {
+pub(super) fn text(t: &str) -> Script {
     Script {
         chunks: vec![
             ChatChunk::Text(t.into()),
@@ -89,7 +89,7 @@ fn text(t: &str) -> Script {
     }
 }
 
-fn hang(prefix: &str) -> Script {
+pub(super) fn hang(prefix: &str) -> Script {
     Script {
         chunks: vec![ChatChunk::Text(prefix.into())],
         hang: true,
@@ -101,7 +101,7 @@ const DELEGATE: &str =
 
 /// Runs one parent turn over `scripts`; returns the root, the recorder, every
 /// event the UI saw, and the chat id.
-async fn run_turn(
+pub(super) async fn run_turn(
     scripts: Vec<Script>,
     cfg: AppConfig,
 ) -> (tempfile::TempDir, Arc<ScriptRecorder>, Vec<AppEvent>, Uuid) {
@@ -130,7 +130,7 @@ async fn run_turn(
     (dir, backend, events, chat_id)
 }
 
-fn load(root: &std::path::Path, id: Uuid) -> Chat {
+pub(super) fn load(root: &std::path::Path, id: Uuid) -> Chat {
     Storage::open(Paths::with_root(root))
         .unwrap()
         .json()
@@ -1108,7 +1108,7 @@ async fn delegated() -> (tempfile::TempDir, Uuid, Uuid) {
 /// bootstrap; returns the channels, the list snapshot the bootstrap emitted
 /// (it precedes the activation, so it must be caught here) and the first
 /// activation event.
-async fn reopen(
+pub(super) async fn reopen(
     root: &std::path::Path,
 ) -> (
     UnboundedSender<AppCommand>,

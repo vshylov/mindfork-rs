@@ -66,7 +66,8 @@ embedding server · 0003 own markdown renderer · 0004 engine contract and
 multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 0006 data schema versioning and migrations · 0007 plugins — MCP tool host and a
 neutral import format · 0008 API keys with machine-bound encryption · 0009
-message speech (TTS) · 0010 the sub-agent as a nested turn.
+message speech (TTS) · 0010 the sub-agent as a nested turn · 0011 the
+directed dialogue as a scripted multi-context run.
 
 ## Key architectural decisions
 
@@ -167,8 +168,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-29, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2653 unit tests
-green, 125 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2672 unit tests
+green, 126 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -179,6 +180,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **`run_dialogue` — a dialogue of two personas, directed by the assistant** —
+  the sub-agent track's promised next feature, stage 1: a loop-executed
+  sibling of `call_subagent` where two caller-composed personas talk (each
+  sees the other as the user, the role-encoded transcript on the call's
+  record, `CHAT_SCHEMA` 3) and a director — the parent persona with a
+  `/compact`-style brief of the conversation — steers via notes/retries/
+  rewrites and stops the scene; probed GO on both gate models and two clouds
+  before any product code, with the muted re-ask for the all-thinking empty
+  turn discovered live
+  ([docs/research/two-agent-dialogue.md](docs/research/two-agent-dialogue.md),
+  [ADR 0011](docs/decisions/0011-dialogue-directed-run.md), spec §9.13,
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **The chat list counts messages as the conversation reads** — the row's
   `N msg` was `messages.len()`, and an agentic loop stores a row per round and
   per tool result, so one tool-assisted exchange said "34 msg"; now one rule,

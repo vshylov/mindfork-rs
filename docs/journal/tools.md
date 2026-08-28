@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `web_search` said "no results" while it was blocked, again (done)
 - Post-M9: `web_search` keyed providers — Tavily (done)
 - Post-M9: the two-agent dialogue — research and the stage-0 live probe (done)
+- Post-M9: `run_dialogue` — the directed dialogue, stage 1 (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2748,3 +2749,50 @@ the probe lives on `spike/code-search-probe`, unmerged.
 - **Tests**: 2653 unit tests green (unchanged), `#[ignore]` 120 → 125 (the
   five probe arms). Live: the full probe on both gate models on the LAN
   stack, plus the two cloud spot-checks.
+
+### Post-M9: `run_dialogue` — the directed dialogue, stage 1 (done)
+
+- **What**: the product code of the two-agent dialogue (spec §9.13,
+  [ADR 0011](../decisions/0011-dialogue-directed-run.md), design
+  [two-agent-dialogue.md](../research/two-agent-dialogue.md)) — the
+  loop-executed `run_dialogue` beside `call_subagent`: two persona contexts
+  and a persistent director context taking strictly sequential turns on the
+  turn's one backend, the transcript landing on the call's record as a
+  `SubagentRun` with `kind: Dialogue` and `participants`.
+- **Key decisions, as confirmed in the research doc's forks**: the
+  role-encoded transcript (a = `Assistant`, b = `User`, director
+  interventions `System` → note rows) bought the entire viewing pipeline
+  unchanged — the one projection change (`FeedMessage::from_message` maps
+  `System` to `Note`) moved together with `entities::chat::
+  visible_message_count`, and the existing every-prefix pinning test is what
+  held them to each other. The executor is a scripted loop over direct
+  `stream_round` calls — not a nested `TurnLoop` — with the derivation and
+  the verdict vocabulary as pure functions in `features/tools/dialogue.rs`;
+  the probe's two rules are in the loop (the muted re-ask on an empty line,
+  no-call-means-continue on a checkpoint). The director carries the parent
+  persona and a conversation brief — the compaction summary threaded through
+  `TurnShared.compaction_summary` plus the request's own tail.
+- **Not predicted by the plan**: the settings demo dumps rot-gate fired on
+  the new "Dialogue: run time limit" row (regenerated, the committed frames
+  and screenshots updated); the transcript's live growth had to be **per
+  line** (`RoundSink.mute_steps`) because the streamed partial carries no
+  speaker side and half the lines land on the `User` side — token-level
+  streaming into the transcript is the track's stage 2; and the shared
+  engine-script fixtures moved to `pub(super)` in the sub-agent test module
+  so the dialogue suite would not re-copy them (the duplication-gate seam
+  budgeted at design time, lessons §1).
+- **Tests**: 2672 unit green (+19: the derivation/verdict suite in
+  `dialogue.rs`, six orchestrator tests over the scripted engine — landing,
+  cap, the steering ladder, the muted recovery, the timeout, the opened
+  transcript's names and composed bubble), 126 `#[ignore]` (+1:
+  `dialogue_e2e_live`, the probe's café fixture graduated). Live run —
+  **GO, Qwen 3.6 27B Q4_K_M** on the LAN stack: one delegation, a 4-line
+  strictly-alternating scene, the director stopped it at the resolution
+  (`Completed`), 4597 tokens in 167 s, and the parent's reply cited the
+  transcript's `chat://` address unprompted. One familiar behaviour
+  resurfaced: the model passed **no persona names** (the same optional-field
+  habit the sub-agent's F13 recorded on this family), so the localized
+  fallback labels — in the run's agent language, ru — carried the headers
+  and the title, which is exactly what the fallbacks exist for. The Gemma
+  arm of the same scene ran shape-identical in the stage-0 probe; the pair
+  stands.
