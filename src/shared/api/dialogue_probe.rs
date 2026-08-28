@@ -26,6 +26,7 @@
 //! `MINDFORK_DIALOGUE_PROBE_RUNS`, default 5):
 //! `MINDFORK_ENGINE_URL=http://…:8000/v1 cargo test dialogue_probe -- --ignored --nocapture --test-threads=1`
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -36,6 +37,7 @@ use crate::shared::api::contract::{
     ApiMessage, ApiRole, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, ToolCallAccumulator,
     ToolSchema,
 };
+use crate::shared::api::retry::RetryBackend;
 
 /// A hung server must fail the arm loudly, not sit forever (lessons §2).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
@@ -320,9 +322,15 @@ struct Reply {
     prompt_tokens: u32,
     completion_tokens: u32,
     wall: Duration,
+    /// Transient transport failures absorbed by [`RetryBackend`] on the way —
+    /// the first Gemma run died on a stale pooled connection
+    /// (`connection closed before message completed`), the back-to-back-load
+    /// flake lessons §9 records; production wraps external backends in the
+    /// retry decorator, so the probe does too and counts what it absorbed.
+    retries: usize,
 }
 
-async fn ask(client: &OpenAiClient, req: ChatRequest, label: &str) -> Result<Reply, String> {
+async fn ask(client: &dyn EngineBackend, req: ChatRequest, label: &str) -> Result<Reply, String> {
     let started = Instant::now();
     let mut stream = client
         .chat_stream(req, Default::default())
@@ -331,6 +339,7 @@ async fn ask(client: &OpenAiClient, req: ChatRequest, label: &str) -> Result<Rep
     let mut text = String::new();
     let mut acc = ToolCallAccumulator::default();
     let (mut prompt_tokens, mut completion_tokens) = (0, 0);
+    let mut retries = 0usize;
     let drain = async {
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -340,6 +349,7 @@ async fn ask(client: &OpenAiClient, req: ChatRequest, label: &str) -> Result<Rep
                     prompt_tokens = u.prompt_tokens;
                     completion_tokens = u.completion_tokens;
                 }
+                ChatChunk::Retry { .. } => retries += 1,
                 ChatChunk::Error { message, .. } => return Err(format!("{label}: {message}")),
                 ChatChunk::Finished(_) => break,
                 _ => {}
@@ -354,6 +364,7 @@ async fn ask(client: &OpenAiClient, req: ChatRequest, label: &str) -> Result<Rep
             prompt_tokens,
             completion_tokens,
             wall: started.elapsed(),
+            retries,
         }),
         Ok(Err(e)) => Err(e),
         Err(_) => Err(format!("{label}: no finish within {REQUEST_TIMEOUT:?}")),
@@ -371,6 +382,7 @@ struct RunReport {
     stopped_by_director: bool,
     stop_reason: Option<String>,
     bleed_hits: usize,
+    transport_retries: usize,
     requests: usize,
     prompt_tokens: u64,
     completion_tokens: u64,
@@ -379,10 +391,12 @@ struct RunReport {
     director_wall: Vec<Duration>,
 }
 
-/// One full dialogue run. Any request failure aborts the run with `Err` —
-/// template acceptance is go/no-go metric 1 and is asserted, not tolerated.
+/// One full dialogue run. Any request failure that survives the retry
+/// decorator aborts the run with `Err` — template acceptance is go/no-go
+/// metric 1, and a *persistent* refusal is what fails it; transient
+/// transport flakes are retried and counted instead.
 async fn run_dialogue(
-    client: &OpenAiClient,
+    client: &dyn EngineBackend,
     fx: &Fixture,
     run: usize,
 ) -> Result<RunReport, String> {
@@ -423,6 +437,7 @@ async fn run_dialogue(
         };
         let reply = ask(client, req, &format!("{name} line")).await?;
         rep.requests += 1;
+        rep.transport_retries += reply.retries;
         rep.prompt_tokens += u64::from(reply.prompt_tokens);
         rep.completion_tokens += u64::from(reply.completion_tokens);
         rep.participant_wall.push(reply.wall);
@@ -457,6 +472,7 @@ async fn run_dialogue(
             )
             .await?;
             rep.requests += 1;
+            rep.transport_retries += reply.retries;
             rep.prompt_tokens += u64::from(reply.prompt_tokens);
             rep.completion_tokens += u64::from(reply.completion_tokens);
             rep.director_wall.push(reply.wall);
@@ -569,7 +585,7 @@ fn avg_secs(walls: &[Duration]) -> f64 {
     walls.iter().map(Duration::as_secs_f64).sum::<f64>() / walls.len() as f64
 }
 
-async fn run_fixture(client: &OpenAiClient, fx: &Fixture, runs: usize) {
+async fn run_fixture(client: &dyn EngineBackend, fx: &Fixture, runs: usize) {
     println!("\n================ fixture: {} ================", fx.tag);
     let mut reports = Vec::new();
     for run in 0..runs {
@@ -611,6 +627,8 @@ async fn run_fixture(client: &OpenAiClient, fx: &Fixture, runs: usize) {
     println!("  verdict fallbacks: {fallbacks}/{checkpoints} checkpoint replies");
     println!("  steering used: {notes} notes, {retries} retries, {rewrites} rewrites");
     println!("  role-bleed heuristic hits: {bleed}");
+    let transport: usize = reports.iter().map(|r| r.transport_retries).sum();
+    println!("  transport retries absorbed: {transport}");
     println!(
         "  avg wall: participant {:.1}s, director {:.1}s",
         avg_secs(&p_wall),
@@ -637,13 +655,16 @@ fn probe_runs() -> usize {
         .unwrap_or(5)
 }
 
-async fn engine() -> Option<(OpenAiClient, String)> {
+/// The client, wrapped in the production retry decorator (spec §6.8) exactly
+/// as `live_backend()` wraps the e2e set — a stale pooled connection or a
+/// mid-burst drop is retried, not read as a template rejection (lessons §9).
+async fn engine() -> Option<(Arc<dyn EngineBackend>, String)> {
     let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return None;
     };
     let base = url.trim_end_matches('/').to_string();
-    let client = OpenAiClient::new(base.clone());
+    let client = RetryBackend::wrap(Arc::new(OpenAiClient::new(base.clone())));
     let model = client
         .model_id()
         .await
@@ -658,7 +679,7 @@ async fn dialogue_probe_finite_live() {
     let Some((client, _)) = engine().await else {
         return;
     };
-    run_fixture(&client, &finite_fixture(), probe_runs()).await;
+    run_fixture(client.as_ref(), &finite_fixture(), probe_runs()).await;
 }
 
 #[tokio::test]
@@ -667,7 +688,7 @@ async fn dialogue_probe_steering_live() {
     let Some((client, _)) = engine().await else {
         return;
     };
-    run_fixture(&client, &steering_fixture(), probe_runs()).await;
+    run_fixture(client.as_ref(), &steering_fixture(), probe_runs()).await;
 }
 
 /// The §3.9 slot question, measured raw: alternate the three contexts through
