@@ -3,6 +3,7 @@
 
 use super::*;
 
+use crate::entities::chat::ChatSummary;
 use crate::entities::profile::Profile;
 use crate::entities::self_model::SelfModel;
 use crate::features::chat_search::SearchGroup;
@@ -10,6 +11,7 @@ use crate::features::chat_search_sort::SortMode;
 use crate::features::tools::mcp::McpSnapshot;
 use crate::shared::config::AppConfig;
 use crate::shared::secrets::SecretKey;
+use crate::shared::server::ServerStatuses;
 
 /// Applies an orchestrator event to the chat screen (a read-only projection).
 /// A settings snapshot, when the settings screen is open, additionally
@@ -29,28 +31,16 @@ pub(super) fn apply_event(
     match event {
         // Server statuses — into the chat (the status line) and, if open, into the
         // settings screen (chips in the "Model/server" section: connecting → ready is visible in place).
-        AppEvent::ServerStatus(status) => {
-            if let ActiveScreen::Settings(settings) = active {
-                settings.set_server_statuses(status.clone());
-            }
-            screen.set_server_status(status);
-        }
+        AppEvent::ServerStatus(status) => apply_server_status(screen, active, status),
         // The list snapshot is applied to the chat always (for the next open/`Ctrl+N`),
         // and when the list screen is open — to it too (a live update).
-        AppEvent::ChatList(chats) => {
-            if let ActiveScreen::ChatList(list) = active {
-                list.set_chats(chats.clone());
-            }
-            screen.set_chat_list(chats);
-        }
+        AppEvent::ChatList(chats) => apply_chat_list(screen, active, chats),
         AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
         // Content-search results only mean anything to an open chat list — the
         // reply to a query it asked for. Ignored when it is closed (a late reply
         // to a list the user has since left).
         AppEvent::ChatSearchResults { query, chat_ids } => {
-            if let ActiveScreen::ChatList(list) = active {
-                list.set_search_results(query, chat_ids);
-            }
+            apply_content_search_results(active, query, chat_ids)
         }
         // Message-level results (`Ctrl+G`): the screen opens on the reply, not
         // on the key press — the same round-trip as `SelfModelView`, since the
@@ -118,13 +108,7 @@ pub(super) fn apply_event(
             generation_id,
             model,
             continuation,
-        } => {
-            if continuation {
-                screen.begin_continuation(generation_id, model);
-            } else {
-                screen.begin_generation(generation_id, model);
-            }
-        }
+        } => apply_generation_started(screen, generation_id, model, continuation),
         AppEvent::Chunk {
             generation_id,
             text,
@@ -194,21 +178,13 @@ pub(super) fn apply_event(
         AppEvent::WorkspaceChanges(set) => show_changes(screen, active, *set),
         // The "self-model" changed in the background/via tools — refresh ONLY the open
         // `F3` screen (re-request a fresh snapshot); ignored when closed.
-        AppEvent::SelfModelChanged => {
-            if matches!(active, ActiveScreen::SelfModel(_)) {
-                let _ = cmd_tx.send(AppCommand::RequestSelfModel);
-            }
-        }
+        AppEvent::SelfModelChanged => refresh_self_model_screen(active, cmd_tx),
         AppEvent::TtsActive(on) => screen.set_speaking(on),
         AppEvent::BackgroundTask { kind, active: on } => apply_background_task(screen, kind, on),
         // The import runs from the settings screen and its outcome is shown
         // there, on the import row itself — a note in the feed would sit behind
         // the screen the user is standing on.
-        AppEvent::McpImportResult(text) => {
-            if let ActiveScreen::Settings(settings) = active {
-                settings.set_mcp_import_result(text);
-            }
-        }
+        AppEvent::McpImportResult(text) => report_mcp_import_result(active, text),
         AppEvent::Retrying {
             generation_id,
             attempt,
@@ -230,15 +206,54 @@ pub(super) fn apply_event(
             boundary,
             summary,
             folded,
-        } => {
-            if screen.active_chat() == Some(chat_id) {
-                let note = screen
-                    .loc()
-                    .tf("ui.compact.done", &[("count", &folded.to_string())]);
-                screen.set_compaction(Some((boundary, summary)));
-                screen.push_note(&note);
-            }
-        }
+        } => apply_compacted(screen, chat_id, boundary, summary, folded),
+    }
+}
+
+/// The `ServerStatus` arm of [`apply_event`]: into the chat's status line, and
+/// into an open settings screen's chips too, so connecting → ready is visible
+/// in place.
+fn apply_server_status(screen: &mut ChatScreen, active: &mut ActiveScreen, status: ServerStatuses) {
+    if let ActiveScreen::Settings(settings) = active {
+        settings.set_server_statuses(status.clone());
+    }
+    screen.set_server_status(status);
+}
+
+/// The `ChatList` arm of [`apply_event`]: the snapshot goes to the chat always
+/// (for the next open/`Ctrl+N`), and to an open list screen as a live update.
+fn apply_chat_list(screen: &mut ChatScreen, active: &mut ActiveScreen, chats: Vec<ChatSummary>) {
+    if let ActiveScreen::ChatList(list) = active {
+        list.set_chats(chats.clone());
+    }
+    screen.set_chat_list(chats);
+}
+
+/// The `ChatSearchResults` arm of [`apply_event`]: the reply to a query an open
+/// chat list asked for; ignored when the list has since been closed.
+fn apply_content_search_results(
+    active: &mut ActiveScreen,
+    query: String,
+    chat_ids: Option<Vec<Uuid>>,
+) {
+    if let ActiveScreen::ChatList(list) = active {
+        list.set_search_results(query, chat_ids);
+    }
+}
+
+/// The `GenerationStarted` arm of [`apply_event`]: a continuation re-opens the
+/// trailing assistant bubble for streaming (`/continue`, spec §6.4); an
+/// ordinary turn begins a fresh one.
+fn apply_generation_started(
+    screen: &mut ChatScreen,
+    generation_id: Uuid,
+    model: Option<String>,
+    continuation: bool,
+) {
+    if continuation {
+        screen.begin_continuation(generation_id, model);
+    } else {
+        screen.begin_generation(generation_id, model);
     }
 }
 
@@ -366,6 +381,43 @@ fn show_self_model(screen: &mut ChatScreen, active: &mut ActiveScreen, model: Op
                 screen.loc(),
             )))
         }
+    }
+}
+
+/// The `SelfModelChanged` arm of [`apply_event`]: the "self-model" changed in
+/// the background/via tools — an open `F3` screen re-requests a fresh
+/// snapshot; ignored when closed.
+fn refresh_self_model_screen(active: &ActiveScreen, cmd_tx: &UnboundedSender<AppCommand>) {
+    if matches!(active, ActiveScreen::SelfModel(_)) {
+        let _ = cmd_tx.send(AppCommand::RequestSelfModel);
+    }
+}
+
+/// The `McpImportResult` arm of [`apply_event`]: shown on an open settings
+/// screen's import row; dropped otherwise (a feed note would sit behind the
+/// screen the user is standing on).
+fn report_mcp_import_result(active: &mut ActiveScreen, text: String) {
+    if let ActiveScreen::Settings(settings) = active {
+        settings.set_mcp_import_result(text);
+    }
+}
+
+/// The `Compacted` arm of [`apply_event`]: applies a finished roll to the chat
+/// still showing the conversation it rolled; a late one for a chat the user has
+/// switched away from is dropped.
+fn apply_compacted(
+    screen: &mut ChatScreen,
+    chat_id: Uuid,
+    boundary: Uuid,
+    summary: String,
+    folded: usize,
+) {
+    if screen.active_chat() == Some(chat_id) {
+        let note = screen
+            .loc()
+            .tf("ui.compact.done", &[("count", &folded.to_string())]);
+        screen.set_compaction(Some((boundary, summary)));
+        screen.push_note(&note);
     }
 }
 

@@ -762,24 +762,8 @@ impl Orchestrator {
         // is gone with the task — but a field that outlives what it describes is
         // an invitation to reason wrongly about it later.
         self.confirm = None;
-        // The in-flight mirror has served (docs/history/subagent-live.md
-        // §3.6): every progress message preceded this result on the one
-        // channel. What it still knows — a title the user gave the running
-        // transcript — is read here, then it goes.
-        let inflight = self.inflight.take().filter(|t| t.generation == res.id);
         let mut res = res;
-        if let Some(edited) = inflight.as_ref().and_then(|t| t.child.as_ref())
-            && edited.renamed_manually
-            && let Some(run) = res
-                .messages
-                .iter_mut()
-                .flat_map(|m| m.tool_calls.iter_mut())
-                .filter_map(|r| r.subagent.as_deref_mut())
-                .find(|r| r.id == edited.id)
-        {
-            run.title = edited.title.clone();
-            run.renamed_manually = true;
-        }
+        self.carry_inflight_rename(&mut res);
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
         }
@@ -811,25 +795,10 @@ impl Orchestrator {
             // Discarded by the "rewrite" tool — into the deleted archive (manual
             // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
             if !res.deleted.is_empty() {
-                chat.record_deleted(res.deleted, String::new(), DeletedCause::Rewrite);
+                let deleted = std::mem::take(&mut res.deleted);
+                chat.record_deleted(deleted, String::new(), DeletedCause::Rewrite);
             }
-            // `/continue`: the turn's first assistant message finishes the seed
-            // in place (fork F8) — same id, same bubble, no seam — instead of
-            // opening a message of its own.
-            if let Some(seed_id) = res.continuation
-                && let Some(pos) = res
-                    .messages
-                    .iter()
-                    .position(|m| m.role == MessageRole::Assistant)
-            {
-                let round = res.messages.remove(pos);
-                match chat.messages.iter_mut().rfind(|m| m.id == seed_id) {
-                    Some(seed) => merge_continuation(seed, round),
-                    // The seed vanished mid-turn (edited away by hand): keep
-                    // the round as its own message rather than lose the text.
-                    None => res.messages.insert(pos, round),
-                }
-            }
+            land_continuation(chat, &mut res);
             for msg in res.messages {
                 chat.push_message(msg);
             }
@@ -875,6 +844,26 @@ impl Orchestrator {
         self.maybe_auto_compact(res.chat_id, res.usage);
     }
 
+    /// Retires the in-flight mirror (docs/history/subagent-live.md §3.6): every
+    /// progress message preceded the turn's result on the one channel. What it
+    /// still knows — a title the user gave the running transcript — is carried
+    /// onto the landed run's record here, then it goes.
+    fn carry_inflight_rename(&mut self, res: &mut GenResult) {
+        let inflight = self.inflight.take().filter(|t| t.generation == res.id);
+        if let Some(edited) = inflight.as_ref().and_then(|t| t.child.as_ref())
+            && edited.renamed_manually
+            && let Some(run) = res
+                .messages
+                .iter_mut()
+                .flat_map(|m| m.tool_calls.iter_mut())
+                .filter_map(|r| r.subagent.as_deref_mut())
+                .find(|r| r.id == edited.id)
+        {
+            run.title = edited.title.clone();
+            run.renamed_manually = true;
+        }
+    }
+
     /// Routes the user's answer into the turn that asked (spec §9.8, fork F8).
     ///
     /// A reply for a turn that is no longer in flight is **dropped**: the user
@@ -897,6 +886,29 @@ impl Orchestrator {
             return;
         }
         let _ = tx.send((call_id, decision));
+    }
+}
+
+/// `/continue`: the turn's first assistant message finishes the seed in place
+/// (fork F8) — same id, same bubble, no seam — instead of opening a message of
+/// its own. A turn that continues nothing passes through untouched.
+fn land_continuation(chat: &mut crate::entities::chat::Chat, res: &mut GenResult) {
+    let Some(seed_id) = res.continuation else {
+        return;
+    };
+    let Some(pos) = res
+        .messages
+        .iter()
+        .position(|m| m.role == MessageRole::Assistant)
+    else {
+        return;
+    };
+    let round = res.messages.remove(pos);
+    match chat.messages.iter_mut().rfind(|m| m.id == seed_id) {
+        Some(seed) => merge_continuation(seed, round),
+        // The seed vanished mid-turn (edited away by hand): keep the round as
+        // its own message rather than lose the text.
+        None => res.messages.insert(pos, round),
     }
 }
 
@@ -2415,20 +2427,10 @@ async fn stream_round(
                         // A continuation round strips the server's echo of the
                         // prefill: the withheld bytes are already on screen and
                         // in the seed message (research §4d).
-                        let visible = match echo.as_mut() {
-                            Some(f) => f.push(&t),
-                            None => t,
-                        };
+                        let visible = strip_echo(echo.as_mut(), t);
                         streamed += 1;
                         emit_completion(base_tokens + streamed);
-                        if visible.is_empty() {
-                            continue;
-                        }
-                        text.push_str(&visible);
-                        sink.send(AppEvent::Chunk {
-                            generation_id: id,
-                            text: visible,
-                        });
+                        relay_text(visible, &mut text, sink, id);
                     }
                     ChatChunk::Thoughts(t) => {
                         thoughts.push_str(&t);
@@ -2447,9 +2449,8 @@ async fn stream_round(
                         thoughts_signature
                             .get_or_insert_with(String::new)
                             .push_str(&r.signature);
-                        if r.id.is_some() {
-                            thoughts_id = r.id;
-                        }
+                        // A chunk without an id keeps the one accumulated so far.
+                        thoughts_id = r.id.or(thoughts_id);
                     }
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
@@ -2542,6 +2543,28 @@ async fn stream_round(
         prompt_tokens: usage_prompt,
         reasoning_tokens: round_reasoning,
     }
+}
+
+/// The continuation echo filter over one text delta ([`stream_round`]'s `Text`
+/// arm): with no filter armed the delta passes through whole.
+fn strip_echo(echo: Option<&mut EchoFilter>, t: String) -> String {
+    match echo {
+        Some(f) => f.push(&t),
+        None => t,
+    }
+}
+
+/// Accumulates a visible text delta and relays it to the feed; an empty one (a
+/// chunk the echo filter withheld whole) sends nothing.
+fn relay_text(visible: String, text: &mut String, sink: &RoundSink<'_>, id: Uuid) {
+    if visible.is_empty() {
+        return;
+    }
+    text.push_str(&visible);
+    sink.send(AppEvent::Chunk {
+        generation_id: id,
+        text: visible,
+    });
 }
 
 /// Client-side estimate of the prompt's token count (the whole conversation) for
