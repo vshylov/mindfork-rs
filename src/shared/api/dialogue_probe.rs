@@ -32,12 +32,12 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 
 use crate::entities::sampling::SamplingConfig;
-use crate::shared::api::OpenAiClient;
 use crate::shared::api::contract::{
     ApiMessage, ApiRole, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, ToolCallAccumulator,
     ToolSchema,
 };
 use crate::shared::api::retry::RetryBackend;
+use crate::shared::api::{AnthropicClient, GeminiClient, OpenAiClient};
 
 /// A hung server must fail the arm loudly, not sit forever (lessons §2).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
@@ -778,6 +778,54 @@ async fn dialogue_probe_editing_live() {
         return;
     };
     run_fixture(client.as_ref(), &editing_fixture(), 2).await;
+}
+
+fn cloud_key(primary: &str, fallback: &str) -> Option<String> {
+    std::env::var(primary)
+        .ok()
+        .filter(|k| !k.is_empty())
+        .or_else(|| std::env::var(fallback).ok().filter(|k| !k.is_empty()))
+}
+
+/// The cloud spot-check (research §5): one finite run each on Anthropic and
+/// Gemini — the two providers whose wire layers enforce strict alternation by
+/// merging — to see the §3.2 derivation and the verdict tools survive a real
+/// cloud round trip. Each arm runs only when its key is present.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ANTHROPIC_KEY / MINDFORK_GEMINI_KEY (live cloud APIs)"]
+async fn dialogue_probe_cloud_live() {
+    let mut ran = false;
+    if let Some(key) = cloud_key("MINDFORK_ANTHROPIC_KEY", "ANTHROPIC_API_KEY") {
+        let model =
+            std::env::var("MINDFORK_ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-haiku-4-5".into());
+        println!("cloud arm: anthropic {model}");
+        let client = RetryBackend::wrap(Arc::new(AnthropicClient::new(
+            "https://api.anthropic.com",
+            key,
+            model,
+        )));
+        run_fixture(client.as_ref(), &finite_fixture(), 1).await;
+        ran = true;
+    } else {
+        eprintln!("skip: no Anthropic key");
+    }
+    if let Some(key) = cloud_key("MINDFORK_GEMINI_KEY", "GEMINI_API_KEY") {
+        let model =
+            std::env::var("MINDFORK_GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".into());
+        println!("cloud arm: gemini {model}");
+        let client = RetryBackend::wrap(Arc::new(GeminiClient::new(
+            "https://generativelanguage.googleapis.com/v1beta",
+            key,
+            model,
+        )));
+        run_fixture(client.as_ref(), &finite_fixture(), 1).await;
+        ran = true;
+    } else {
+        eprintln!("skip: no Gemini key");
+    }
+    if !ran {
+        eprintln!("skip: no cloud keys at all");
+    }
 }
 
 /// The §3.9 slot question, measured raw: alternate the three contexts through

@@ -1,8 +1,9 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **forks confirmed; probe §5.1 — Gemma arm GO** (2026-08-29, every
-> go bar met, two design rules found on the way; the Qwen arm needs the stack
-> rotated to Qwen 3.6 and is pending). User's decision (2026-08-28):
+> Status: **forks confirmed; probe §5.1 — Gemma arm GO, cloud spot-checks
+> GO** (2026-08-29, every go bar met, two design rules found on the way; the
+> Qwen arm needs the stack rotated to Qwen 3.6 and is the one piece
+> pending). User's decision (2026-08-28):
 > F1–F10 at their recommended options, **F6 amended** — the director carries
 > the **main agent's identity** (the chat's persona) and **knows the
 > conversation with the user**, delivered as a brief built by the `/compact`
@@ -584,9 +585,20 @@ director 1.6–3.1 s avg.
    corner, by the window."). `retry` losing to a strong persona is not a
    defect; it is why `rewrite` exists.
 
+**Cloud spot-check (same day): GO on both.** One finite run each through the
+real cloud clients wrapped in the retry decorator — `claude-haiku-4-5`:
+8 msgs, director stop, 0/4 fallbacks, 14 s wall, 7.5k+0.5k tokens;
+`gemini-2.5-flash`: 10 msgs, director stop, 0/5 fallbacks, 14 s. The swap
+survives both strict-alternation wires end-to-end, verdict tools parse on
+both, and both directors also used a steering note unprompted. One style
+slip, not a bleed: haiku's Mara emitted one `*nods…*` stage direction
+against the persona's rules — line discipline is the caller's persona text,
+not the mechanism, and the doc's §3.1 note (the tool description teaches the
+caller to write a line-format clause) is where that lives. Verdict
+compliance across every arm: **62/62**.
+
 Pending: the Qwen 3.6 arm (the stack rotates on request) — the checkpoint
-mute and the participant thinking budget are the things to watch there; the
-optional cloud spot-checks (Anthropic/Gemini wire merging under the swap).
+mute and the participant thinking budget are the things to watch there.
 
 ## 6. Test plan
 
