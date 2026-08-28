@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -28,6 +28,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — four findings from the week's merges (done)
 - Post-M9: a gate for the one implementation of a list's scroll state (done)
 - Post-M9: SonarQube follow-up — the help dialog's table builder (done)
+- Post-M9: SonarQube follow-up — three complexity findings from the `/continue` merges (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1016,3 +1017,45 @@ structure (AGENTS.md §3).
   per-locale fit and anchor cases all still pass untouched. **No live run
   required** (AGENTS.md §3) — pure UI, no engine, memory or tool surface. No
   CHANGELOG entry: nothing the user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — three complexity findings from the `/continue` merges (done)
+
+- **Three `rust:S3776` issues open on `main`** after the `/continue` track's
+  merges (2026-08-27) — the `docs/lessons.md` §10 gap again: a green PR quality
+  gate judges new-code *ratings*, so a handful of maintainability smells
+  surface only on the next `main` analysis. All three functions crossed the
+  bar of 15 on that track's own growth: `handle_done` (20) by the seed-merge
+  block, `stream_round` (21) by the echo filter and the `continuable` route in
+  its error arm, and `apply_event` (16) by the `GenerationStarted`
+  continuation branch. Branch `refactor/sonar-cognitive-complexity`.
+- **`apply_event` got the stage-2 recipe verbatim** (the dispatch-`match` shape
+  lessons.md already names): the seven precondition-carrying arms —
+  `ServerStatus`, `ChatList`, `ChatSearchResults`, `GenerationStarted`,
+  `SelfModelChanged`, `McpImportResult`, `Compacted` — each moved to a named
+  helper beside the existing arm helpers (`show_self_model` and kin), doc
+  comments carrying the arms' routing rationale. The match is now a table of
+  one-liners: complexity ~1, and every helper is a single guard.
+- **`stream_round` lost its two nested branches to named mechanisms**:
+  `strip_echo` (the continuation echo filter over one delta, `None` → pass
+  through) and `relay_text` (accumulate + `Chunk` to the feed, empty delta —
+  a fully-withheld echo — sends nothing). The `ThoughtsSignature` arm's
+  keep-the-last-id `if` became the branch-free `thoughts_id = r.id.or(thoughts_id)`
+  — same last-`Some`-wins semantics. ~21 → ~9.
+- **`handle_done` gave up two coherent sub-steps**: `carry_inflight_rename`
+  (retire the in-flight mirror, carry a manually renamed transcript title onto
+  the landed run — the take() still runs before the empty-result early return,
+  so the mirror is dropped either way) and `land_continuation` (the `/continue`
+  seed merge, `let…else` guards + the vanished-seed fallback). One knock-on:
+  `record_deleted` had *moved* `res.deleted` out, which a whole-`&mut res`
+  borrow no longer tolerates — `std::mem::take(&mut res.deleted)` keeps `res`
+  whole with identical behaviour. ~20 → ~12.
+- **Behaviour is unchanged by construction** — every extracted body is the same
+  expressions in the same order, and the one rewrite (`Option::or`) is an
+  identity for the replaced `if`. The Sonar snippet pre-check takes no Rust
+  (lessons §10), so the PR analysis is the measurement that closes these.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2633 green, 118 `#[ignore]`, counts unchanged**: the touched paths are
+  exercised through the orchestrator and runtime tests
+  (`merge_continuation`'s own tests included). **No live run required**
+  (AGENTS.md §3) — a pure refactor, no engine, memory or tool surface changed.
+  No CHANGELOG entry: nothing the user sees changed (§4).
