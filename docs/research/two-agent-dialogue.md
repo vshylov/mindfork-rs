@@ -1,6 +1,8 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **forks confirmed — probe running.** User's decision (2026-08-28):
+> Status: **forks confirmed; probe §5.1 — Gemma arm GO** (2026-08-29, every
+> go bar met, two design rules found on the way; the Qwen arm needs the stack
+> rotated to Qwen 3.6 and is pending). User's decision (2026-08-28):
 > F1–F10 at their recommended options, **F6 amended** — the director carries
 > the **main agent's identity** (the chat's persona) and **knows the
 > conversation with the user**, delivered as a brief built by the `/compact`
@@ -234,6 +236,14 @@ loop:
   streams it — the same path a sub-agent's round takes. Per-message reply cap:
   `tools.subagent_max_tokens` min'ed with the effective `max_tokens`, as the
   sub-agent does (`generation.rs:2031`).
+- **The empty-line recovery** (a probe finding, §5.1): an instruction
+  conflict in a participant's effective system — typically a director's note
+  fighting the persona's own format rule — can send a thinking model into
+  unbounded deliberation: the whole reply cap spent in `reasoning_content`,
+  no text (measured on Gemma 4: 1536/1536 tokens of thoughts, four times).
+  The executor re-asks that one generation once with thinking muted (the
+  compliance-probe rule, lessons §9); a second empty reply fails the run
+  honestly. Both generations count against `max_messages`.
 - A **director checkpoint** is one request carrying the verdict tools' schemas
   (§3.4), thinking muted (§2.4). The executor interprets the returned calls
   itself — no registry dispatch; the precedent is the conversation-control
@@ -525,6 +535,58 @@ question; role bleed → name-prefix the user-side lines (`Bob: …`) and
 re-measure; Gemma template refusal despite the prologue → merge the prologue
 into the opening message instead. If none of the three rescues it on either
 gate model, the feature stops here and this document records why.
+
+### 5.1 Results — Gemma arm (2026-08-29): GO
+
+Stack: `gemma-4-31B_q4_0-it` on the live `llama-server`
+(`spike/dialogue-probe`, `src/shared/api/dialogue_probe.rs`; the probe wraps
+its client in `RetryBackend` exactly as `live_backend()` does — the first run
+died on a stale pooled connection, the back-to-back-load flake of lessons §9,
+which is a transport fact and not a template rejection).
+
+| fixture | stopped by director | fallbacks | bleed | steering | cost |
+|---|---|---|---|---|---|
+| finite (café), n=5 | **5/5**, at 6–8 msgs of 12, reasons correct | 0/17 | 0 | none needed | 42–59 s, ~3.5k+1.7k tok |
+| steering (haggle), n=5 | **4/5** (one honest cap on near-incompatible personas) | 0/24 | 0 | 15 notes, followed | 99–152 s, ~8.4k+4.4k tok |
+| editing (poet), n=2 | **2/2**, reasons verifiable (day+hour+spot) | 0/12 | 0 | 4 retries, 4 rewrites | ~140 s, ~6k+5.4k tok |
+
+Go bars: template acceptance — 0 rejections in ~180 requests (the prologue +
+merge derivation holds on Gemma's jinja); role fidelity — 0 heuristic hits
+and the read transcripts are clean (no side-speaking, no narration, personas
+held to the last line — Rita: "Seven. Got it. Now, if you're done, I've got
+floors to mop."); termination — 11/12 director stops at points a reader
+agrees are endings; verdict compliance — **53/53** checkpoint replies carried
+a parseable call; five transport retries absorbed by the decorator.
+
+**Cache slots (the §3.9 question): held.** Alternating the three contexts on
+the default server, every context reuses its prefix from its second visit —
+A `cache_n=146` of 161, B 145, D 106, and it persists across rounds. The
+worst case (full re-prefill per alternation) did not occur; a dialogue costs
+what its appended tails cost. Wall per request: participant 6.5–15.9 s avg,
+director 1.6–3.1 s avg.
+
+**Two design rules found live** (both folded into §3.3/§3.1):
+
+1. **The all-thinking empty turn.** Gemma 4 emits `reasoning_content`, and an
+   instruction conflict in a participant's effective system — first a
+   self-contradictory fixture persona, then, structurally, a director's
+   one-shot retry note fighting the persona's own format rule ("always three
+   sentences" vs "one sentence for the day") — sent it into unbounded
+   deliberation: 1536/1536 tokens of thoughts, empty text, four times. The
+   muted re-ask (`reasoning_budget: 0`) recovered **4/4**; the executor
+   adopts that rule, and the tool's description will tell the calling model
+   that a persona should carry its own line-format clause and that a retry
+   note argues *against* the persona — `dialogue_rewrite` is the strong edit.
+2. **The escalation ladder is real.** Unprompted, the director used exactly
+   the intended ladder: notes while steering preferences (the haggle — 15
+   notes, obeyed), retry-with-note against a style, and — when the persona
+   won anyway — rewrite, in the character's register ("Thursday. The back
+   corner, by the window."). `retry` losing to a strong persona is not a
+   defect; it is why `rewrite` exists.
+
+Pending: the Qwen 3.6 arm (the stack rotates on request) — the checkpoint
+mute and the participant thinking budget are the things to watch there; the
+optional cloud spot-checks (Anthropic/Gemini wire merging under the swap).
 
 ## 6. Test plan
 

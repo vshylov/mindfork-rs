@@ -144,6 +144,48 @@ fn steering_fixture() -> Fixture {
     }
 }
 
+/// The un-exercised half of F3: the finite and steering runs never provoked
+/// `dialogue_retry`/`dialogue_rewrite` (continue/stop/note covered the
+/// director's needs), so this fixture manufactures the need — one persona is
+/// verbose *by construction*, and the direction makes editing the director's
+/// job. A situation, not a numbered script (lessons §9).
+fn editing_fixture() -> Fixture {
+    Fixture {
+        tag: "editing (verbose poet)",
+        a: Persona {
+            name: "Elias",
+            system: "You are Elias, a poet arranging where to hold his reading. \
+                You are incapable of brevity: every sentence of yours winds \
+                through subclauses, parentheticals and flourishes, and you \
+                always use the full three sentences you allow yourself, each as \
+                long as you can spin it.",
+        },
+        b: Persona {
+            name: "Rita",
+            system: "You are Rita, a café owner hosting poetry readings. You are \
+                brisk and practical and just need to settle the day, the hour \
+                and the corner of the room.",
+        },
+        scene: "A café after closing time. The owner is stacking chairs while a \
+            poet lingers at the counter.",
+        opening_by_a: false,
+        opening: "So — your reading. Thursday or Friday, and which corner do \
+            you want?",
+        direction: "The user wants tight, stage-ready dialogue. Whenever a line \
+            sprawls — three sentences, or ornament drowning the point — have \
+            its author retry it with a note to cut it down; if a retried line \
+            still sprawls, rewrite it yourself, shorter, in the character's \
+            voice. Stop once the day, the hour and the spot are settled.",
+        max_messages: 8,
+        moderate_every: 1,
+        parent_persona: "You are the writing assistant in an ongoing chat with a \
+            user who is drafting scenes for a short story collection.",
+        brief: "Conversation so far, in brief: the user is drafting a scene of a \
+            poet and a café owner settling a reading; they asked you to direct \
+            it and, above all, to keep every line tight enough to stage.",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Derivation (research §3.2, inlined)
 
@@ -318,6 +360,9 @@ fn verdict_tools(fx: &Fixture) -> Vec<ToolSchema> {
 
 struct Reply {
     text: String,
+    /// Reasoning the stream routed away from `text` — a participant's line
+    /// landing here instead of `text` is a finding, so it is kept and shown.
+    thoughts: String,
     calls: Vec<ApiToolCall>,
     prompt_tokens: u32,
     completion_tokens: u32,
@@ -337,6 +382,7 @@ async fn ask(client: &dyn EngineBackend, req: ChatRequest, label: &str) -> Resul
         .await
         .map_err(|e| format!("{label}: request refused: {e:#}"))?;
     let mut text = String::new();
+    let mut thoughts = String::new();
     let mut acc = ToolCallAccumulator::default();
     let (mut prompt_tokens, mut completion_tokens) = (0, 0);
     let mut retries = 0usize;
@@ -344,6 +390,7 @@ async fn ask(client: &dyn EngineBackend, req: ChatRequest, label: &str) -> Resul
         while let Some(chunk) = stream.next().await {
             match chunk {
                 ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                 ChatChunk::ToolCall(d) => acc.push(d),
                 ChatChunk::Usage(u) => {
                     prompt_tokens = u.prompt_tokens;
@@ -360,6 +407,7 @@ async fn ask(client: &dyn EngineBackend, req: ChatRequest, label: &str) -> Resul
     match tokio::time::timeout(REQUEST_TIMEOUT, drain).await {
         Ok(Ok(())) => Ok(Reply {
             text,
+            thoughts,
             calls: acc.finish(),
             prompt_tokens,
             completion_tokens,
@@ -383,6 +431,8 @@ struct RunReport {
     stop_reason: Option<String>,
     bleed_hits: usize,
     transport_retries: usize,
+    /// All-thinking empty turns recovered by the muted re-ask — see `speak`.
+    empty_recoveries: usize,
     requests: usize,
     prompt_tokens: u64,
     completion_tokens: u64,
@@ -435,19 +485,47 @@ async fn run_dialogue(
             tools: Vec::new(),
             ..Default::default()
         };
-        let reply = ask(client, req, &format!("{name} line")).await?;
-        rep.requests += 1;
-        rep.transport_retries += reply.retries;
-        rep.prompt_tokens += u64::from(reply.prompt_tokens);
-        rep.completion_tokens += u64::from(reply.completion_tokens);
-        rep.participant_wall.push(reply.wall);
+        let account = |rep: &mut RunReport, reply: &Reply| {
+            rep.requests += 1;
+            rep.transport_retries += reply.retries;
+            rep.prompt_tokens += u64::from(reply.prompt_tokens);
+            rep.completion_tokens += u64::from(reply.completion_tokens);
+            rep.participant_wall.push(reply.wall);
+        };
+        let req_muted = {
+            let mut r = req.clone();
+            r.sampling.reasoning_budget = Some(0);
+            r
+        };
+        let mut reply = ask(client, req, &format!("{name} line")).await?;
+        account(rep, &reply);
+        // The all-thinking empty turn, found live by this very probe: an
+        // instruction conflict (a director's note against a persona's format
+        // rule) sends Gemma 4 into unbounded deliberation — 1536 tokens of
+        // `reasoning_content`, no text. The recovery the compliance probes
+        // established (lessons §9): re-ask once with thinking muted. The
+        // product executor adopts this rule (research §5.1).
+        if reply.text.trim().is_empty() {
+            println!(
+                "  [{name}] empty line ({} completion tokens, all thoughts) — re-asking muted",
+                reply.completion_tokens
+            );
+            rep.empty_recoveries += 1;
+            reply = ask(client, req_muted, &format!("{name} line, muted")).await?;
+            account(rep, &reply);
+        }
         let other = if speaker_a { fx.b.name } else { fx.a.name };
         let text = reply.text.trim().to_string();
         if text.contains(&format!("{other}:")) {
             rep.bleed_hits += 1;
         }
         if text.is_empty() {
-            return Err(format!("{name} produced an empty line"));
+            return Err(format!(
+                "{name} produced an empty line even with thinking muted ({} completion \
+                 tokens; thoughts, first 300 chars: {:?})",
+                reply.completion_tokens,
+                reply.thoughts.chars().take(300).collect::<String>()
+            ));
         }
         println!("  {name}: {text}");
         Ok(Line {
@@ -629,6 +707,8 @@ async fn run_fixture(client: &dyn EngineBackend, fx: &Fixture, runs: usize) {
     println!("  role-bleed heuristic hits: {bleed}");
     let transport: usize = reports.iter().map(|r| r.transport_retries).sum();
     println!("  transport retries absorbed: {transport}");
+    let recovered: usize = reports.iter().map(|r| r.empty_recoveries).sum();
+    println!("  empty lines recovered by the muted re-ask: {recovered}");
     println!(
         "  avg wall: participant {:.1}s, director {:.1}s",
         avg_secs(&p_wall),
@@ -689,6 +769,15 @@ async fn dialogue_probe_steering_live() {
         return;
     };
     run_fixture(client.as_ref(), &steering_fixture(), probe_runs()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn dialogue_probe_editing_live() {
+    let Some((client, _)) = engine().await else {
+        return;
+    };
+    run_fixture(client.as_ref(), &editing_fixture(), 2).await;
 }
 
 /// The §3.9 slot question, measured raw: alternate the three contexts through
