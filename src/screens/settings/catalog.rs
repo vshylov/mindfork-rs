@@ -261,7 +261,7 @@ impl SettingsScreen {
                                 loc.t("ui.settings.field.model_opt"),
                                 &x.external.model_name,
                             )
-                            .describe(loc.t(DESC_MODEL_NAME)),
+                            .describe(loc.t(DESC_MODEL_NAME_EXTERNAL)),
                             ext_api_key_row(
                                 FieldId::XApiKey,
                                 self.secret_field_present(FieldId::XApiKey),
@@ -319,7 +319,7 @@ impl SettingsScreen {
                                 loc.t("ui.settings.field.model_opt"),
                                 &x.external.model_name,
                             )
-                            .describe(loc.t(DESC_MODEL_NAME)),
+                            .describe(loc.t(DESC_MODEL_NAME_EXTERNAL)),
                             ext_api_key_row(
                                 FieldId::IxApiKey,
                                 self.secret_field_present(FieldId::IxApiKey),
@@ -394,7 +394,7 @@ impl SettingsScreen {
                                 loc.t("ui.settings.field.model_opt"),
                                 &e.external.model_name,
                             )
-                            .describe(loc.t(DESC_MODEL_NAME)),
+                            .describe(loc.t(DESC_MODEL_NAME_EXTERNAL)),
                             ext_api_key_row(
                                 FieldId::EApiKey,
                                 self.secret_field_present(FieldId::EApiKey),

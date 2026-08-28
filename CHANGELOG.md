@@ -29,6 +29,26 @@ split by subsystem.
   length limit finally gets a note at all, instead of stopping mid-sentence in
   silence.
 
+- **An external server's model is named on screen, even when you did not name
+  it.** Connect to a `llama-server` (or vLLM, LM Studio, a gateway) by URL and
+  leave the "Model (opt.)" field blank, and the app now asks the server what it
+  is running: the name appears next to the chat title and is recorded on every
+  reply, so `Ctrl+P` → Interface → "Model name in the feed" finally has something to
+  show in this mode. A file path is shortened to the model's name
+  (`D:\GGUF\gemma-4-31B_q4_0-it.gguf` → `gemma-4-31B_q4_0-it`); a name you typed
+  yourself always wins; a server that cannot say leaves the caption empty, as
+  before.
+
+### Fixed
+
+- **The external server's "Model (opt.)" field is now actually sent to it.** It
+  had never left the settings file, which made every multi-model endpoint
+  unusable in `external` mode — `llama-server` in router mode, LM Studio,
+  LiteLLM and OpenRouter all pick the model from that field and refuse a request
+  without it. The chat, impersonation and embedding sections all send it now.
+  A blank field still sends nothing, so a single-model local server is
+  unaffected.
+
 ## [0.9.8] — 2026-08-27
 
 ### Added

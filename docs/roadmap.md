@@ -221,9 +221,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
   with the key such a gateway needs
-  ([external-api-key.md](history/external-api-key.md)); what remains is the
+  ([external-api-key.md](history/external-api-key.md)), and the request now
+  actually carries the configured model name, without which none of those
+  gateways would route at all
+  ([external-model-name.md](research/external-model-name.md)); what remains is the
   optional managed-custom-command (supervisor launches an arbitrary sidecar
-  proxy) — on demand. See [plugin research §6](research/plugin-system.md).
+  proxy) — on demand, and a **live run against a real multi-model endpoint**
+  (`llama-server --router` or a LiteLLM container): the request body is pinned by
+  a unit test, the gateway's side of it has only been read, not exercised. See
+  [plugin research §6](research/plugin-system.md).
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
   additional `scheme`; UI management of other machines' entries ("forget this
   computer") — also where an explicit cleanup of MCP secrets orphaned by a rename

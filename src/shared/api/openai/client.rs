@@ -144,6 +144,35 @@ impl OpenAiClient {
             }
         }
     }
+
+    /// Fetches `GET /v1/models` and returns the ids it lists.
+    ///
+    /// The standard OpenAI-compatible catalogue endpoint — every server family
+    /// this mode can point at answers it, unlike `/props`, which is llama.cpp's
+    /// own. Any failure is `None` ("cannot say"), like [`Self::props`].
+    async fn listed_models(&self) -> Option<Vec<String>> {
+        let url = format!("{}/models", self.base_url);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no answer from /models");
+                return None;
+            }
+        };
+        match resp.json::<wire::ModelList>().await {
+            Ok(list) => Some(
+                list.data
+                    .into_iter()
+                    .map(|m| m.id)
+                    .filter(|id| !id.is_empty())
+                    .collect(),
+            ),
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "/models did not parse");
+                None
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -318,6 +347,38 @@ impl EngineBackend for OpenAiClient {
             None => VisionSupport::Unknown,
         }
     }
+
+    /// Asks the server what it is running: `GET /v1/models` when it lists
+    /// **exactly one** model, then llama.cpp's `/props` (`model_alias`, falling
+    /// back to `model_path`).
+    ///
+    /// **The catalogue goes first** because it is the standard endpoint and,
+    /// measured on b9769, the *public* one: an authenticated `llama-server`
+    /// answers `/v1/models` with `200` and no key at all, while `/props` is
+    /// `401`. A list of **several** models is deliberately not guessed at — on
+    /// such an endpoint (llama.cpp's router mode, LM Studio, Ollama, LiteLLM,
+    /// OpenRouter) the request's own `model` field is what picks one, so the
+    /// name is in settings already or the setup does not work at all; inventing
+    /// an answer here would name a model that did not reply.
+    ///
+    /// See docs/research/external-model-name.md §3.
+    async fn model_id(&self) -> Option<String> {
+        if let Some(only) = self
+            .listed_models()
+            .await
+            .filter(|ids| ids.len() == 1)
+            .and_then(|ids| ids.into_iter().next())
+        {
+            return Some(crate::shared::gguf::display_id(&only));
+        }
+        let props = self.props().await?;
+        let raw = props
+            .model_alias
+            .into_iter()
+            .chain(props.model_path)
+            .find(|s| !s.trim().is_empty())?;
+        Some(crate::shared::gguf::display_id(&raw))
+    }
 }
 
 #[async_trait::async_trait]
@@ -376,6 +437,13 @@ fn server_root_url(base_url: &str, path: &str) -> String {
 #[derive(serde::Deserialize)]
 struct Props {
     default_generation_settings: Option<PropsGeneration>,
+    /// What the server calls the loaded model: `--alias` when one was given,
+    /// otherwise the model's own name, otherwise the `-m` path (llama.cpp
+    /// `server.cpp`). Absent on everything that is not llama.cpp.
+    model_alias: Option<String>,
+    /// The `-m` path. Read only when `model_alias` says nothing, so a server
+    /// that reports one field but not the other still answers.
+    model_path: Option<String>,
     /// What the loaded model accepts besides text. Measured on llama.cpp b10322:
     /// `"modalities": {"vision": true, "video": true, "audio": false}`. Absent on
     /// every server that is not llama.cpp — hence `Option`, and hence
@@ -750,6 +818,177 @@ mod tests {
         assert_eq!(health_url("http://host:9"), "http://host:9/health");
         // A stray slash isn't doubled.
         assert_eq!(health_url("http://host:9/v1/"), "http://host:9/health");
+    }
+
+    /// A server that answers `n` requests, choosing the body by the path asked
+    /// for, and reports the paths in the order they arrived. An unlisted path is
+    /// a `404` — which is what a non-llama.cpp server does with `/props`.
+    ///
+    /// Each response closes its connection, so the two requests `model_id` can
+    /// make arrive as two accepts rather than one pooled pipeline.
+    fn path_server(
+        n: usize,
+        routes: &'static [(&'static str, &'static str, &'static str)],
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            for _ in 0..n {
+                let (mut sock, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 2048];
+                let read = sock.read(&mut buf).unwrap();
+                let req = String::from_utf8_lossy(&buf[..read]).to_string();
+                let path = req
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| *p == path)
+                    .map(|(_, s, b)| (*s, *b))
+                    .unwrap_or(("404 Not Found", "{}"));
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                sock.write_all(resp.as_bytes()).unwrap();
+                asked.push(path);
+            }
+            asked
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    /// The measured shape of `/v1/models` on llama.cpp b9769: `data[0].id` is the
+    /// model's name, and the catalogue is asked **first** — it is the standard
+    /// endpoint and, unlike `/props`, it answers without an API key.
+    #[tokio::test]
+    async fn model_id_takes_a_single_listed_model_without_asking_props() {
+        let (url, server) = path_server(
+            1,
+            &[(
+                "/v1/models",
+                "200 OK",
+                r#"{"object":"list","data":[{"id":"gemma-3-4b-it","object":"model"}]}"#,
+            )],
+        );
+        assert_eq!(
+            OpenAiClient::new(url).model_id().await.as_deref(),
+            Some("gemma-3-4b-it")
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            vec!["/v1/models".to_string()],
+            "one answer is enough — /props must not be asked as well"
+        );
+    }
+
+    /// What an un-aliased `llama-server` actually reports (measured on b10659,
+    /// the live stack): the `-m` path, backslashes and drive letter included. It
+    /// reaches the header as a model name, not as a file.
+    #[tokio::test]
+    async fn model_id_normalizes_a_reported_gguf_path() {
+        let (url, server) = path_server(
+            1,
+            &[(
+                "/v1/models",
+                "200 OK",
+                r#"{"data":[{"id":"D:\\LLM\\GGUF\\gemma-4-31B_q4_0-it.gguf"}]}"#,
+            )],
+        );
+        assert_eq!(
+            OpenAiClient::new(url).model_id().await.as_deref(),
+            Some("gemma-4-31B_q4_0-it")
+        );
+        let _ = server.join();
+    }
+
+    /// Several models listed — llama.cpp's router mode, LM Studio, Ollama, a
+    /// gateway. Which one answers is decided by the request's own `model` field,
+    /// so the catalogue cannot say; `/props` still can, and on a router it
+    /// deliberately does not (`model_alias` is the dummy `"llama-server"`, which
+    /// this test does not simulate — see the next one for the silent case).
+    #[tokio::test]
+    async fn several_listed_models_fall_through_to_props() {
+        let (url, server) = path_server(
+            2,
+            &[
+                (
+                    "/v1/models",
+                    "200 OK",
+                    r#"{"data":[{"id":"qwen-3.6-27b"},{"id":"gemma-4-31b"}]}"#,
+                ),
+                (
+                    "/props",
+                    "200 OK",
+                    r#"{"model_alias":"gemma-4-31b","model_path":"/models/gemma-4-31b.gguf"}"#,
+                ),
+            ],
+        );
+        assert_eq!(
+            OpenAiClient::new(url).model_id().await.as_deref(),
+            Some("gemma-4-31b")
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            vec!["/v1/models".to_string(), "/props".to_string()]
+        );
+    }
+
+    /// A build that reports the path but not the alias still answers — the two
+    /// fields are read in order, not as a pair.
+    #[tokio::test]
+    async fn an_empty_alias_falls_through_to_the_model_path() {
+        let (url, server) = path_server(
+            2,
+            &[(
+                "/props",
+                "200 OK",
+                r#"{"model_alias":"","model_path":"/models/bge-m3-Q8_0.gguf"}"#,
+            )],
+        );
+        assert_eq!(
+            OpenAiClient::new(url).model_id().await.as_deref(),
+            Some("bge-m3-Q8_0")
+        );
+        let _ = server.join();
+    }
+
+    /// Every way of not being told is `None` — "cannot say", never a placeholder.
+    /// The caption and the metadata then show nothing, exactly as they did before
+    /// the engine was ever asked.
+    #[tokio::test]
+    async fn a_server_that_names_no_model_says_nothing() {
+        for routes in [
+            // Neither endpoint exists: a cloud proxy, or a gateway that serves
+            // only completions.
+            &[][..],
+            // A catalogue with no entries at all, and no `/props`.
+            &[("/v1/models", "200 OK", r#"{"data":[]}"#)][..],
+            // llama.cpp's router mode: several models and a `/props` that
+            // describes the router rather than a model.
+            &[
+                (
+                    "/v1/models",
+                    "200 OK",
+                    r#"{"data":[{"id":"a"},{"id":"b"}]}"#,
+                ),
+                ("/props", "200 OK", r#"{"model_alias":"","model_path":""}"#),
+            ][..],
+            // Answers, but not with JSON.
+            &[("/v1/models", "200 OK", "not json at all")][..],
+        ] {
+            let (url, server) = path_server(2, routes);
+            assert_eq!(
+                OpenAiClient::new(url).model_id().await,
+                None,
+                "routes={routes:?}"
+            );
+            let _ = server.join();
+        }
     }
 }
 

@@ -333,7 +333,16 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     Like the model and draft paths, the projector's path is checked before launch (a
     typo gives an immediate "projector file not found …" instead of a server that
     quietly has no vision), and changing it **restarts** the server.
-- **external** — connects to an already-running server by URL.
+- **external** — connects to an already-running server by URL. The **"Model
+  (opt.)"** field next to it is optional but not decorative: it is **sent as the
+  request's `model`**, which is what a multi-model endpoint routes on
+  (`llama-server --router`, LM Studio, Ollama, LiteLLM, OpenRouter all refuse a
+  request without it), while a single-model `llama-server` ignores it. Leave it
+  blank against a single-model server and the app **asks the server** what it is
+  running — `GET /v1/models` when it lists exactly one model, otherwise
+  `/props` — and shows that name next to the chat title and on every reply
+  (`Ctrl+P` → Interface → "Model name in the feed"). A name you type always wins,
+  and a server that cannot say leaves the caption empty.
 
 **How the app knows whether images are accepted.** It asks the server, rather than
 matching model names: `llama-server` reports `modalities` on its `/props` endpoint

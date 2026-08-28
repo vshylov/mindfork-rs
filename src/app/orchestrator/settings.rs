@@ -225,6 +225,9 @@ impl Orchestrator {
         // the previous one must not be carried over — nor an in-flight one
         // applied when it lands (spec §6.7).
         self.context.invalidate();
+        // The same for the model it is running: the previous server's name must
+        // not survive onto the new one's messages (spec §11.3).
+        self.refresh_model_name();
         self.emit_server_status();
     }
 

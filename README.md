@@ -308,6 +308,13 @@ $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
 cargo run
 ```
 
+The **"Model (opt.)"** field above the key is optional but not decorative: it is
+sent as the request's model, which is what a multi-model endpoint routes on
+(`llama-server --router`, LM Studio, Ollama, LiteLLM, OpenRouter refuse a request
+without it), while a single-model server ignores it. Leave it blank and the app
+asks the server what it is running, and shows that name next to the chat title
+and on every reply.
+
 **A managed server.** The app launches and supervises `llama-server` itself:
 set the binary and the GGUF paths in settings (`Ctrl+P`), or via
 `MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,

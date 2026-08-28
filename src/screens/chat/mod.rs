@@ -523,6 +523,11 @@ pub struct ChatScreen {
     /// `send_followup_message` starts a second one mid-turn, and it is the same
     /// model writing it.
     gen_model: Option<String>,
+    /// What the **engine** said it is running (`AppEvent::EngineModel`), used by
+    /// the title's caption when settings name no model — `external` mode with a
+    /// blank "Model (opt.)" field. A configured name always wins; see
+    /// `Self::model_meta` and docs/research/external-model-name.md §4.
+    engine_model: Option<String>,
     /// The spellchecker (loads in the background; `None` until ready / with no
     /// dictionaries).
     spell: Option<SpellChecker>,
@@ -692,6 +697,7 @@ impl ChatScreen {
             search_last: String::new(),
             confirm_destructive: false,
             settings_snapshot: None,
+            engine_model: None,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
@@ -738,6 +744,13 @@ impl ChatScreen {
         self.feed_view
             .set_show_model_name(config.interface.show_model_name);
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
+    }
+
+    /// Records what the engine said it is running (`AppEvent::EngineModel`).
+    /// `None` — it cannot say, or the engine was just replaced; the caption then
+    /// falls back to the configuration alone. See `Self::model_meta`.
+    pub fn set_engine_model(&mut self, model: Option<String>) {
+        self.engine_model = model;
     }
 
     /// Sets the role names shown in the feed — the active chat's profile

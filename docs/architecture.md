@@ -176,6 +176,15 @@ src/
 │  │  │                     per applied engine, epoch-guarded against a stale
 │  │  │                     answer). Never edits `chat.messages` — only what a
 │  │  │                     request carries, spec §6.7
+│  │  ├─ model_name.rs      `ModelDiscovery` — what the engine says it is running
+│  │  │                     when settings cannot say (`external` with a blank
+│  │  │                     "Model (opt.)"): the `ContextDiscovery` shape, but
+│  │  │                     asked **eagerly** (a caption is on screen before the
+│  │  │                     first message) and only when `active_model_name()`
+│  │  │                     is `None` — a typed name always wins and nothing is
+│  │  │                     written back to settings. `effective_model_name()`
+│  │  │                     is what the turn reads; the screen gets the
+│  │  │                     discovered half via `AppEvent::EngineModel`. Spec §11.3
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor
 │  │  ├─ title.rs           chat auto-title (background task) + the automatic
@@ -1136,6 +1145,18 @@ its own — or named by `api_key_env`, resolved through the same
   (`modalities.vision`); the clouds answer statically; anything without `/props`
   stays `Unknown`, which the orchestrator treats optimistically. Managed servers
   gain `--mmproj` (`ManagedConfig`, with the missing-file preflight `-md` has).
+- **`EngineBackend::model_id() -> Option<String>`** (`None` by default) — the
+  third question of that shape, and the one only `external` mode ever asks: what
+  model is this server running, when settings do not say (spec §11.3).
+  `OpenAiClient` answers from `GET /v1/models` when the catalogue lists **exactly
+  one** entry — the standard endpoint, and the *public* one (an `--api-key`
+  `llama-server` answers it with no key while `/props` is `401`) — then from
+  `/props` (`model_alias`, falling back to `model_path`). Several listed models
+  is silence, not a guess: there the request's own `model` picks one. The answer
+  comes back display-shaped through `gguf::display_id`, which reduces a `.gguf`
+  path to its base name and leaves an org-qualified id (`meta-llama/Llama-3-8B`)
+  alone. Delegated by `RetryBackend` — `external` is wrapped in it, so the
+  delegation *is* the feature. See docs/research/external-model-name.md.
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Error{message,transient}` |
   `Finished`. `Error` is the stream's error channel: a failure that arrives after
@@ -1165,9 +1186,13 @@ its own — or named by `api_key_env`, resolved through the same
   `ChatChunk::Retry` *before* sleeping (interruptibly, via the turn's
   `CancellationToken`) so the UI can show the wait while it happens. Policy —
   constants in the module: 3 attempts, ~1 s/~2 s with downward jitter,
-  `Retry-After` honoured up to 30 s. `context_budget` is delegated, which
-  auto-compaction depends on (spec §6.7). See spec §6.8 and
-  docs/research/cloud-retry-backoff.md.
+  `Retry-After` honoured up to 30 s. **All three self-description methods are
+  delegated** (`context_budget`, which auto-compaction depends on — spec §6.7;
+  `vision`; `model_id`): each defaults to "cannot say", so a forgotten delegation
+  is invisible to every test of the inner client and silently removes the
+  capability. It has happened three times; each method now has a delegation test
+  asserting a value the decorator could not have produced by falling through
+  (lessons §9). See spec §6.8 and docs/research/cloud-retry-backoff.md.
 - **`ServerHandle`** (`managed.rs`) owns the child `llama-server`: the `Child`
   is handed to a **monitor task** (`spawn_monitor`), which `select!`s between
   its exit (raising an `exited` token) and a `kill` signal (raised in the

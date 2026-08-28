@@ -12,13 +12,23 @@ impl ChatScreen {
     /// The feed title's right-hand caption: the active engine mode's model. For
     /// managed — "name.gguf · Nk ctx" (context is meaningful); for
     /// external/cloud — the cloud/multi-model model's name with no ctx. Empty
-    /// until the snapshot arrives or no model is set.
+    /// until the snapshot arrives or nothing can name a model.
+    ///
+    /// The configuration answers first; when it says nothing — `external` with a
+    /// blank "Model (opt.)" — the name the **engine** reported is used instead
+    /// (`AppEvent::EngineModel`, docs/research/external-model-name.md §4). Both
+    /// empty still means an empty caption, byte-for-byte the header drawn before
+    /// the engine was ever asked.
     pub(super) fn model_meta(&self) -> String {
         use crate::shared::config::ServerMode;
         let Some((cfg, _, _, _, _)) = &self.settings_snapshot else {
             return String::new();
         };
-        let Some(name) = cfg.engine.active_model_name() else {
+        let Some(name) = cfg
+            .engine
+            .active_model_name()
+            .or_else(|| self.engine_model.clone())
+        else {
             return String::new();
         };
         // For managed, context is meaningful — add "· Nk ctx".

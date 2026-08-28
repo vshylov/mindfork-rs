@@ -134,6 +134,7 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             ServerMode::External => external_chat_setup(
                 settings.external.url.as_deref(),
+                settings.external.model_name.as_deref(),
                 stored_key,
                 settings.external.api_key_env.as_deref(),
                 cancel,
@@ -170,6 +171,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::Shared => not_configured(),
             ImpersonationMode::External => external_chat_setup(
                 settings.external.url.as_deref(),
+                settings.external.model_name.as_deref(),
                 stored_key,
                 settings.external.api_key_env.as_deref(),
                 cancel,
@@ -207,9 +209,20 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             ServerMode::External => match settings.external.url.as_deref() {
                 Some(url) if !url.is_empty() => {
-                    let client = Arc::new(OpenAiClient::new(url).with_api_key(
-                        resolve_api_key(stored_key, settings.external.api_key_env.as_deref()).ok(),
-                    ));
+                    let client = Arc::new(
+                        OpenAiClient::new(url)
+                            .with_api_key(
+                                resolve_api_key(
+                                    stored_key,
+                                    settings.external.api_key_env.as_deref(),
+                                )
+                                .ok(),
+                            )
+                            // The same fix as on the chat half: a multi-model
+                            // embedding endpoint routes on this field, and an
+                            // unset one sends nothing at all.
+                            .with_model(settings.external.model_name.clone()),
+                    );
                     spawn_probe(
                         client.clone(),
                         EXTERNAL_READY_TIMEOUT,
@@ -324,8 +337,19 @@ impl ServerSupervisor for LlamaSupervisor {
 /// (docs/research/api-key-storage.md, decision point R4). It is bound to its **slot**
 /// instead — `secrets::ExternalSlot` — and the orchestrator has already resolved
 /// which one by the time it calls here.
+///
+/// `model_name` is the section's "Model (opt.)" field, and it goes **on the
+/// wire**: a multi-model endpoint — llama.cpp's own router mode, LiteLLM,
+/// OpenRouter — routes on the request's `model` and answers
+/// `400 "model name is missing from the request"` without it, which is what this
+/// mode's documented gateway setups (install.md §3.1) used to hit. A
+/// single-model `llama-server` ignores the field (measured: a request naming a
+/// model it has never heard of is answered by the loaded one), and an unset
+/// field sends no `model` key at all — byte-identical to the request shape that
+/// shipped before. See docs/research/external-model-name.md §2.3.
 fn external_chat_setup(
     url: Option<&str>,
+    model_name: Option<&str>,
     stored_key: Option<&str>,
     api_key_env: Option<&str>,
     cancel: CancellationToken,
@@ -335,7 +359,11 @@ fn external_chat_setup(
     match url {
         Some(url) if !url.is_empty() => {
             let key = resolve_api_key(stored_key, api_key_env).ok();
-            let client = Arc::new(OpenAiClient::new(url).with_api_key(key));
+            let client = Arc::new(
+                OpenAiClient::new(url)
+                    .with_api_key(key)
+                    .with_model(model_name.map(str::to_string)),
+            );
             spawn_probe(
                 client.clone(),
                 EXTERNAL_READY_TIMEOUT,
@@ -1100,6 +1128,113 @@ mod tests {
         );
     }
 
+    /// Answers connections until a `POST` arrives, and reports that request's
+    /// body. The readiness probe's `GET /health` lands on the same stub and is
+    /// answered and skipped — it is not the request under test.
+    fn chat_body_stub() -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::thread::spawn(move || {
+            loop {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return String::new();
+                };
+                let mut req = Vec::new();
+                let mut buf = [0u8; 1024];
+                // Headers first, then exactly `Content-Length` more bytes: a
+                // bounded single read would cut the body under comparison.
+                let head_end = loop {
+                    match sock.read(&mut buf) {
+                        Ok(0) | Err(_) => break None,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                    if let Some(i) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(i + 4);
+                    }
+                };
+                let Some(head_end) = head_end else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&req[..head_end]).to_string();
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse().ok())
+                    })
+                    .unwrap_or(0);
+                while req.len() < head_end + len {
+                    match sock.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                // Answer only after draining (lessons.md §2).
+                let _ = sock.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                if head.starts_with("POST") {
+                    return String::from_utf8_lossy(&req[head_end..]).to_string();
+                }
+            }
+        });
+        (format!("http://{addr}/v1"), seen)
+    }
+
+    /// The body one turn sends to an external server, with the section's "Model
+    /// (opt.)" field set to `model_name`.
+    async fn external_chat_body(model_name: Option<&str>) -> String {
+        let (url, seen) = chat_body_stub();
+        let mut settings = external(Some(&url));
+        settings.external.model_name = model_name.map(String::from);
+        let (tx, _rx) = unbounded_channel();
+        let setup = LlamaSupervisor.apply_chat(&settings, None, CancellationToken::new(), tx, ru());
+        let backend = setup.backend.expect("external mode yields a backend");
+        // The stream is never polled — the request is sent before it exists, and
+        // that request is the whole subject of the test.
+        let _ = backend
+            .chat_stream(
+                crate::shared::api::ChatRequest {
+                    messages: vec![crate::shared::api::ApiMessage::user("hi")],
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        tokio::task::spawn_blocking(move || seen.join().unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// The configured name goes **on the wire**, which is what a multi-model
+    /// endpoint routes on (llama.cpp's router mode, LiteLLM, OpenRouter answer
+    /// `400 "model name is missing from the request"` without it). Until
+    /// docs/research/external-model-name.md §2.3 the value never left settings.
+    #[tokio::test]
+    async fn external_chat_sends_the_configured_model() {
+        let body = external_chat_body(Some("qwen-3.6-27b")).await;
+        assert!(
+            body.contains(r#""model":"qwen-3.6-27b""#),
+            "the configured name must reach the request: {body}"
+        );
+    }
+
+    /// …and a blank field still sends no `model` key at all — byte-identical to
+    /// the request shape that shipped before, which is what keeps a bare local
+    /// `llama-server` unaffected.
+    #[tokio::test]
+    async fn a_blank_model_field_sends_no_model_key() {
+        for blank in [None, Some("")] {
+            let body = external_chat_body(blank).await;
+            assert!(
+                !body.contains(r#""model""#),
+                "blank={blank:?} must send no model key: {body}"
+            );
+        }
+    }
+
     /// The embedding slot resolves its own key the same way. A second slot rather than
     /// a second mechanism: the point is that `apply_embed` now reads the key it is
     /// handed instead of only the variable named in settings.
@@ -1131,8 +1266,15 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         cancel.cancel(); // the probe is already stale before the background task starts
-        let setup =
-            external_chat_setup(Some("http://127.0.0.1:9/v1"), None, None, cancel, tx, ru());
+        let setup = external_chat_setup(
+            Some("http://127.0.0.1:9/v1"),
+            None,
+            None,
+            None,
+            cancel,
+            tx,
+            ru(),
+        );
         assert_eq!(setup.status, ServerStatus::Connecting); // the immediate status as usual
         // Give the background task a chance to run; a stale probe sends nothing.
         tokio::time::sleep(Duration::from_millis(50)).await;

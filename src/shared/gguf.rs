@@ -102,6 +102,25 @@ pub fn display_name(path: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// A model id **as a server reported it**, in the shape it should be shown in.
+///
+/// Only a *file* is reduced to [`display_name`]: `llama-server` started without
+/// `--alias` reports the model as the path exactly as typed on `-m`, drive
+/// letter and all (`D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf`), and that is not
+/// something to put on a chat header. Everything else passes through untouched —
+/// an id like `meta-llama/Llama-3-8B` or `anthropic/claude-opus-4.5` is
+/// org-qualified, not a path, and splitting it on `/` would throw away the half
+/// that says whose model it is. The test for "a file" is the `.gguf` suffix,
+/// which is the only shape this project has ever seen a path arrive in.
+///
+/// See docs/research/external-model-name.md §5.
+pub fn display_id(id: &str) -> String {
+    match id.ends_with(EXT) {
+        true => display_name(id).unwrap_or_else(|| id.to_string()),
+        false => id.to_string(),
+    }
+}
+
 /// Parses a fixed-width run of ASCII digits; `None` if anything else is in there.
 fn digits(b: &[u8]) -> Option<u32> {
     if !b.iter().all(u8::is_ascii_digit) {
@@ -193,5 +212,30 @@ mod tests {
             display_name("-00001-of-00003.gguf").as_deref(),
             Some("-00001-of-00003")
         );
+    }
+
+    /// A reported id is normalized only when it is a **file**. The two path
+    /// cases are what `llama-server` answers without `--alias` (measured on
+    /// b9769 and b10659); the two id cases are what a vLLM or gateway endpoint
+    /// legitimately reports, and losing their first segment would lose whose
+    /// model it is.
+    #[test]
+    fn display_id_normalizes_files_and_leaves_ids_alone() {
+        assert_eq!(
+            display_id(r"D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf"),
+            "gemma-4-31B_q4_0-it"
+        );
+        assert_eq!(
+            display_id("/models/gpt-oss-120b-Q8_0-00001-of-00003.gguf"),
+            "gpt-oss-120b-Q8_0"
+        );
+        assert_eq!(display_id("meta-llama/Llama-3-8B"), "meta-llama/Llama-3-8B");
+        assert_eq!(
+            display_id("anthropic/claude-opus-4.5"),
+            "anthropic/claude-opus-4.5"
+        );
+        assert_eq!(display_id("gemma-3-4b-it"), "gemma-3-4b-it");
+        // Nothing left after trimming — better the file than an empty header.
+        assert_eq!(display_id(".gguf"), ".gguf");
     }
 }

@@ -439,6 +439,29 @@ pub trait EngineBackend: Send + Sync {
     async fn vision(&self) -> VisionSupport {
         VisionSupport::Unknown
     }
+
+    /// What the engine says it is running, when it can say — the name shown on
+    /// the feed and recorded in a message's metadata snapshot (spec §11.3) for a
+    /// server the user connected to without naming its model.
+    ///
+    /// The third question of the same shape as [`context_budget`](Self::context_budget)
+    /// and [`vision`](Self::vision), and for the same reason: what model is
+    /// loaded is engine knowledge, so it is answered here rather than guessed
+    /// above. The default is `None` — **"cannot say", never a placeholder** — and
+    /// a caller that gets it shows nothing, exactly as it did before this method
+    /// existed.
+    ///
+    /// Only [`super::openai::OpenAiClient`] overrides it: the cloud backends are
+    /// unreachable without a configured model name, so there is never a blank to
+    /// fill. The answer is already display-shaped
+    /// ([`gguf::display_id`](crate::shared::gguf::display_id)) — a bare
+    /// `llama-server` answers with the whole `-m` path.
+    ///
+    /// Asked once per applied engine (and again when readiness flips), never per
+    /// turn. See docs/research/external-model-name.md §4.
+    async fn model_id(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Whether an engine accepts image input. See [`EngineBackend::vision`].

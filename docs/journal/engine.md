@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/continue` — stage 0: the live continuation probe (done)
 - Post-M9: `/continue` — stage 1: resuming an interrupted reply in place (done)
 - Post-M9: `/continue` — stage 2: the clouds (track complete)
+- Post-M9: the model's name in `external` mode — asked of the server, and sent to it (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2207,3 +2208,102 @@ opus-4-8 still rejects with the pinned wording, Grok still restarts
 signature change. The orchestrator path above the client is byte-identical to
 the managed one already covered by `continue_e2e_live`, so no cloud-side
 orchestrator harness was built for this.
+
+### Post-M9: the model's name in `external` mode — asked of the server, and sent to it (done)
+
+- **What and why.** `external` is the one mode where the app did not know what it
+  was talking to. `EngineSettings::active_model_name()` answers from settings for
+  every other mode — a managed server's GGUF, a cloud provider's required model
+  name — and for `external` it answers from the optional "Model (opt.)" field,
+  which is normally blank: `MINDFORK_ENGINE_URL` fills the URL and nothing else,
+  and connecting to a `llama-server` by URL is what most local users do. The feed
+  title's caption and every message's `MessageMetadata.model` therefore went
+  empty, and the `interface.show_model_name` toggle had nothing to show — the
+  docker lab seeds `model_name` explicitly for exactly that reason. Now the
+  **engine is asked**, and the answer feeds the same two surfaces the managed and
+  cloud modes already fed. Design and the six forks:
+  [external-model-name.md](../research/external-model-name.md).
+- **A defect found while reading the code, and fixed first because it decides the
+  design.** `external_chat_setup` never passed the configured model name to its
+  client — the value was not among the function's parameters at all, so it could
+  not reach the wire. `ExternalSettings::model_name` is documented as "for a
+  multi-model server", `OpenAiClient::model` as "a multi-model proxy requires
+  it", and install.md §3.1 recommends LiteLLM and OpenRouter as `external`
+  targets — none of which can work without it: llama.cpp's own router mode
+  answers `400 "model name is missing from the request"` on an empty `model`
+  (`server-models.cpp:1550`). The same omission was in `apply_embed`'s external
+  arm; TTS already sent its model. Fixed in all three. An **empty** field still
+  sends no `model` key, so a bare `llama-server` request is byte-identical to
+  before — measured: that server ignores a `model` it has never heard of and
+  answers with the one it loaded.
+- **Why the catalogue is asked before `/props`.** Three channels report the model
+  and, measured on b9769, they agree: `/v1/models` → `data[0].id`, `/props` →
+  `model_alias`/`model_path`, and the chat completion's own `model` field. Two
+  facts pick the order. `/v1/models` is **public** — an `--api-key` server answers
+  it `200` with no header while `/props` is `401` — and it is the standard
+  endpoint, so vLLM, LM Studio and every gateway answer it while `/props` is
+  llama.cpp's alone. A catalogue listing **several** models is deliberately not
+  guessed at: there the request's own `model` picks one, so the name is in
+  settings already or the setup does not work — inventing an answer would name a
+  model that did not reply.
+- **The reply's `model` field was rejected as the source**, though it is the one
+  channel that is always right. It arrives *after* the header is drawn, so the
+  live bubble would rename itself mid-turn — the exact failure the "model's name
+  on the assistant's header" entry solved by resolving the name **once** at turn
+  start — and it says nothing at all before the first message, which is when a
+  caption is already on screen. It also has a history: before llama.cpp PR
+  #17668 (2025-12-02) the field was `request.model ?? "gpt-3.5-turbo"`, so an
+  older server asked without a `model` — precisely what this app sends — answers
+  with a flat lie. `/props` and `/v1/models` were honest even then.
+- **`ModelDiscovery` is `ContextDiscovery` with two differences.** Same epoch /
+  pending / answered shape, invalidated when the engine is applied and when
+  readiness flips. But the question is asked **eagerly** rather than on first use
+  (a compaction budget is needed as a conversation approaches its window; a
+  caption is needed before the first message), and only **when the configuration
+  cannot name a model** — a name the user typed is never second-guessed, and
+  asking anyway would spend a round trip to confirm what settings already say.
+  Nothing is written to `settings.json`: had the discovered name been stored, F1
+  would then have put it on the wire as a routing key, which is a behaviour
+  change nobody asked for.
+- **One value, one meaning.** `AppEvent::EngineModel` carries only the
+  *discovered* half; the screen already holds the configuration and prefers it,
+  so the fallback rule lives in one place per consumer instead of being baked
+  into a merged value. The turn reads `Orchestrator::effective_model_name()` —
+  still a single read per turn, so the streaming header and the stored metadata
+  cannot disagree.
+- **A reported id is normalized only when it is a file.** `gguf::display_id`
+  applies `display_name` to anything ending in `.gguf` and passes everything else
+  through: an un-aliased `llama-server` reports the whole `-m` path (the live
+  stack answers `D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf`), while `meta-llama/Llama-3-8B`
+  and `anthropic/claude-opus-4.5` are org-qualified ids whose first segment says
+  whose model it is.
+- **`RetryBackend` did not delegate the new method — and only the live run said
+  so.** Every stub test passed against a client built directly; production wraps
+  `external` in that decorator, and `external` is the *only* mode that asks, so
+  the one missing line was the entire feature for every real user of it. This is
+  the **third** occurrence on this decorator (`context_budget`, `vision`,
+  `model_id`), and the two earlier ones each left a comment saying it would
+  happen again. Generalized into lessons §9: a defaulted trait method plus a
+  decorator is a silent-`None` hole that no test of the inner type can see.
+- **Tests**: +17 unit (`display_id`'s two shapes; `model_id` taking a single
+  listed model without asking `/props`, normalizing a reported path, falling
+  through to `/props` on a list of several and on an empty alias, and staying
+  silent on every way of not being told; the decorator's delegation; the
+  configured name reaching the request body and a blank field sending no `model`
+  key; the discovery's epoch, the settings-first rule, the "cannot say" case, the
+  emission, the clear-on-change, and a named engine never being asked; the
+  caption's fallback). Suite **2633 → 2650**, +2 `#[ignore]` (118 → 120).
+- **Smoke — GO** (2026-08-28, `llama-server` b10659 / Gemma 4 31B at
+  `192.168.1.20:8000`, "Model (opt.)" blank): `model_id()` → `gemma-4-31B_q4_0-it`,
+  normalized from the reported Windows path; the streaming bubble's header and
+  the stored `MessageMetadata.model`, read back through a fresh activation, both
+  the same string. The whole `orchestrator::tests::live` set was re-run as the
+  turn-path regression — **46 passed, 0 failed** in 866 s, so sending `model` on
+  the external wire (blank here, hence absent) regressed nothing. **Not covered live:** the multi-model gateway half — it
+  needs a `llama-server --router` or a LiteLLM container, and what the app
+  controls (the request body carrying the name) is pinned by a unit test instead.
+- **A behaviour worth knowing**: discovery is a network round trip started when
+  the engine is applied, so a turn sent in the same tick as the bootstrap still
+  records no name. Correct — blocking a turn on a round trip to satisfy a caption
+  would be the wrong trade — but it is why the end-to-end smoke waits for
+  `EngineModel` before sending.
