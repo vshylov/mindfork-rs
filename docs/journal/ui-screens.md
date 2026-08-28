@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (52)
+## Entries (53)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -64,6 +64,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the value column holds against an MCP tool's name (done)
 - Post-M9: the confirmation toggle is named by what it does (done)
 - Post-M9: the build date on the "About" tab (done)
+- Post-M9: the chat list counts messages as the conversation reads (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2730,3 +2731,43 @@ storage or tool surface is touched.
   present, anchored in the same value column as the other seven at both bounds
   of the dialog's width range and in `ru`, and the tab's text carries the
   stamp's date. A live run is not required (AGENTS.md §3) — pure UI.
+
+### Post-M9: the chat list counts messages as the conversation reads (done)
+- **The row's `N msg` now counts the feed's bubbles, not storage rows**
+  (spec §11.2). `ChatSummary`/`ChildSummary` used `messages.len()`, and an
+  agentic loop stores every round as its own assistant message plus a `Tool`
+  message per result — so a chat holding one question and one tool-assisted
+  answer said "34 msg" while opening it showed two messages. The counter now
+  reports what the user perceives: user messages and assistant replies, with
+  tool/system rows and a loop's extra rounds folded into the reply they
+  belong to.
+- **One rule, one place**: `entities::chat::visible_message_count(&[Message])`
+  — tool/system messages draw no bubble of their own; a run of consecutive
+  assistant messages is one bubble unless a round opts out via
+  `Message::new_bubble` (`send_followup_message`, spec §9.3). Both cards go
+  through it — `Chat::summary()` and `ChildSummary::of()` — so the chat rows,
+  the nested transcript rows and the running transcript's live mirror
+  (`emit_chat_list`) all agree with no widget change.
+- **The rule mirrors `FeedMessage::from_messages`, which FSD keeps out of
+  reach** (`entities` cannot import `widgets`), and two statements of one rule
+  is the drift lessons.md keeps recording — so
+  `bubble_count_agrees_with_the_list_counter` (message_feed.rs) asserts
+  `from_messages(prefix).len() == visible_message_count(prefix)` at **every
+  prefix** of a history exercising every branch: a leading assistant greeting,
+  a pure tool-call round, a tool row between rounds, a `new_bubble` followup,
+  a system row, the next question. A drift in either implementation breaks
+  some prefix.
+- **The live-mirror expectation moved with the semantics**: the PR-7 fixture
+  `running_delegation` waited for the running transcript at
+  `message_count == 3` (instruction + round's reply + its tool result); the
+  same filed round now reads `2`, and the predicate matches the same emission
+  as before — the mirror appends a round as one batch, so no earlier list
+  event can show `2` first. Spec §11.2's "a count that grows as its rounds
+  file" became "updated as its rounds file": later rounds merge into the
+  reply, so the number no longer climbs per round.
+- **Tests** (2653 green, +3): the fold/`new_bubble`/system branches and both
+  cards in `entities/chat.rs`, the every-prefix equality lock in
+  `message_feed.rs`. A live run is not required (AGENTS.md §3) — a pure UI
+  projection. The demo dumps are untouched: the gallery counts are fixture
+  literals, and the demo transcript is user+assistant, which counts `2`
+  either way.

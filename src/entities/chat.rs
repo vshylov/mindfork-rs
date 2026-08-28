@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::attachment::Attachment;
-use crate::entities::message::Message;
+use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::subagent::{RunOutcome, SubagentRun};
@@ -322,7 +322,7 @@ impl Chat {
             title: self.title.clone(),
             created_at: self.created_at,
             modified_at: self.modified_at,
-            message_count: self.messages.len(),
+            message_count: visible_message_count(&self.messages),
             children: self.children().map(ChildSummary::of).collect(),
             children_expanded: self.children_expanded,
         }
@@ -368,6 +368,42 @@ impl Chat {
             run.id = Uuid::new_v4();
         }
     }
+}
+
+/// How many messages a chat card says the conversation has: the bubbles the
+/// feed draws, not the raw storage rows (spec §11.2). One question answered
+/// through an agentic loop stores dozens of rows — an assistant message per
+/// round plus a `Tool` message per result — while the feed shows two: the
+/// question, and one stitched reply. A list row saying "34 msg" over that
+/// conversation is noise, so the card counts what the user perceives.
+///
+/// The rule mirrors the feed's projection (`FeedMessage::from_messages`,
+/// spec §11.3/§9.3), which FSD keeps out of reach here — dependencies point
+/// strictly downward, and `entities` cannot import `widgets`. Two statements
+/// of one rule is the drift the lessons warn about, so the
+/// `bubble_count_agrees_with_the_list_counter` test next to the feed pins
+/// them together: tool and system messages draw no bubble of their own, and
+/// consecutive assistant rounds are one bubble unless a round opts out via
+/// [`Message::new_bubble`].
+pub fn visible_message_count(messages: &[Message]) -> usize {
+    let mut count = 0;
+    let mut in_assistant_bubble = false;
+    for m in messages {
+        match m.role {
+            MessageRole::Tool | MessageRole::System => {}
+            MessageRole::User => {
+                count += 1;
+                in_assistant_bubble = false;
+            }
+            MessageRole::Assistant => {
+                if !in_assistant_bubble || m.new_bubble {
+                    count += 1;
+                }
+                in_assistant_bubble = true;
+            }
+        }
+    }
+    count
 }
 
 /// A short chat card for the list/overlay (no messages). See spec §11.2.
@@ -467,7 +503,7 @@ impl ChildSummary {
             title: run.title.clone(),
             created_at: run.created_at,
             finished_at: run.finished_at,
-            message_count: run.messages.len(),
+            message_count: visible_message_count(&run.messages),
             outcome: run.outcome,
             running: false,
         }
@@ -654,6 +690,55 @@ mod tests {
         chat.push_message(Message::user("hi"));
         assert_eq!(chat.messages.len(), 1);
         assert!(chat.modified_at >= before);
+    }
+
+    /// spec §11.2: the card counts the feed's bubbles, not storage rows. An
+    /// agentic exchange — the question, a pure tool-call round, its result,
+    /// the answering round — reads as two messages, not four; a followup
+    /// flagged `new_bubble` (spec §9.3) opens a third; system rows, like tool
+    /// rows, draw nothing; the next question starts a new bubble again.
+    #[test]
+    fn visible_message_count_folds_rounds_and_tool_results() {
+        let mut messages = vec![
+            Message::user("q"),
+            Message::assistant(""),
+            Message::new(MessageRole::Tool, "result"),
+            Message::assistant("the answer"),
+        ];
+        assert_eq!(visible_message_count(&messages), 2);
+
+        let mut followup = Message::assistant("more");
+        followup.new_bubble = true;
+        messages.push(followup);
+        assert_eq!(visible_message_count(&messages), 3);
+
+        messages.push(Message::new(MessageRole::System, "sys"));
+        assert_eq!(visible_message_count(&messages), 3);
+
+        messages.push(Message::user("q2"));
+        messages.push(Message::assistant("a2"));
+        assert_eq!(visible_message_count(&messages), 5);
+    }
+
+    /// Both cards go through [`visible_message_count`]: the chat's own and
+    /// its transcripts' — a sub-agent run stores its rounds exactly like a
+    /// chat (spec §9.3.2), so its row inflates the same way without this.
+    #[test]
+    fn summaries_count_visible_messages_not_rows() {
+        let p = Profile::new("P", "sys");
+        let mut chat = Chat::from_profile(&p, "t");
+        assert_eq!(chat.summary().message_count, 0);
+        chat.push_message(Message::user("q"));
+        chat.push_message(Message::assistant(""));
+        chat.push_message(Message::new(MessageRole::Tool, "result"));
+        chat.push_message(Message::assistant("a"));
+        assert_eq!(chat.summary().message_count, 2);
+
+        let mut run = SubagentRun::fixture("R", &["instruction"]);
+        run.messages.push(Message::assistant(""));
+        run.messages.push(Message::new(MessageRole::Tool, "result"));
+        run.messages.push(Message::assistant("verdict"));
+        assert_eq!(ChildSummary::of(&run).message_count, 2);
     }
 
     #[test]

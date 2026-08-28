@@ -3135,6 +3135,39 @@ mod tests {
         assert_eq!(feed[0].tools.len(), 1, "a regular tool block is visible");
     }
 
+    /// The chat list's counter promises this projection's bubble count
+    /// (`entities::chat::visible_message_count`, spec §11.2). FSD keeps the
+    /// two in different layers, so this is the one place the two statements
+    /// of the rule are held together — at every prefix of a history that
+    /// exercises every branch: a greeting (leading assistant), an agentic
+    /// exchange with a tool row between rounds, a `new_bubble` followup, a
+    /// system row, the next question.
+    #[test]
+    fn bubble_count_agrees_with_the_list_counter() {
+        use crate::entities::chat::visible_message_count;
+        use crate::entities::message::{Message, MessageRole};
+
+        let mut followup = Message::assistant("Ещё одно.");
+        followup.new_bubble = true;
+        let messages = [
+            Message::assistant("Приветствие."),
+            Message::user("вопрос"),
+            Message::assistant(""),
+            Message::new(MessageRole::Tool, "результат"),
+            Message::assistant("Ответ."),
+            followup,
+            Message::new(MessageRole::System, "инструкция"),
+            Message::user("ещё вопрос"),
+        ];
+        for upto in 0..=messages.len() {
+            assert_eq!(
+                FeedMessage::from_messages(&messages[..upto]).len(),
+                visible_message_count(&messages[..upto]),
+                "the list and the feed disagree at prefix {upto}"
+            );
+        }
+    }
+
     #[test]
     fn from_message_skips_system() {
         let sys = Message::new(MessageRole::System, "s");
