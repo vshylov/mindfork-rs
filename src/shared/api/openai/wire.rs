@@ -477,6 +477,23 @@ pub struct DeltaFunction {
     pub arguments: Option<String>,
 }
 
+// ---------- model catalogue ----------
+
+/// `GET /v1/models` — the standard catalogue. Only `data` is read: llama.cpp also
+/// answers with an Ollama-shaped `models` array alongside it, and every other
+/// field of either is ignored, so a richer or a leaner server still parses.
+#[derive(Debug, Deserialize)]
+pub struct ModelList {
+    #[serde(default)]
+    pub data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelEntry {
+    #[serde(default)]
+    pub id: String,
+}
+
 // ---------- embeddings ----------
 
 #[derive(Debug, Serialize)]

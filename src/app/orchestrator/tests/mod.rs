@@ -233,6 +233,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         imp_done_tx,
         budget_tx: unbounded_channel().0,
         context: Default::default(),
+        model_tx: unbounded_channel().0,
+        model: Default::default(),
         tts_cancel: None,
         tts_gen: None,
         tts_playback: None,
@@ -573,6 +575,7 @@ mod images;
 mod impersonation;
 mod live;
 mod mcp;
+mod model_name;
 mod profiles;
 mod project;
 mod rag;

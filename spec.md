@@ -408,6 +408,8 @@ Two-tier (as in attempt #1):
 
 Everything that depends on the specific server/HTTP is hidden behind an `EngineBackend` trait — this gives testability (mock/replay) and the option to swap the transport later without touching the orchestrator.
 
+Besides `chat_stream`, the trait carries three questions an engine may be asked **about itself** — its context window (`context_budget`, 6.7), whether it takes images (`vision`, 9.10) and what model it is running (`model_id`, 11.3). All three default to **"cannot say"** rather than to a guess, so an arbitrary OpenAI-compatible server need implement none of them and the layer above degrades honestly; all three are asked once per applied engine, never per turn; and a decorator over the trait must **delegate** each one, or it answers the default and the capability silently disappears (lessons 9).
+
 ```rust
 pub trait EngineBackend: Send + Sync {
     /// A single-turn streaming request. Returns a stream of chunks.
@@ -2144,6 +2146,24 @@ this?"*; this screen answers *"where exactly, and take me there."*
   under the reader when the turn ends, and a follow-up bubble opened mid-turn
   (§9.3) gets the same name. The flag is part of the feed's render-cache key —
   the name is baked into the cached header line.
+- **Where the name comes from in `external` mode** — from the server, when
+  settings do not say. The "Model (opt.)" field (§11.6) is optional and normally
+  blank, which used to leave both this pill and the title's caption empty for the
+  commonest local setup of all. The engine is now **asked**
+  (`EngineBackend::model_id`, §6.1): `GET /v1/models` when it lists exactly one
+  model, then llama.cpp's `/props` (`model_alias`, then `model_path`). Ordering
+  and silence are both deliberate — the catalogue is the standard endpoint and the
+  *public* one (an `--api-key` server answers it without a key, while `/props`
+  returns `401`), and a catalogue listing **several** models is not guessed at,
+  because there the request's own `model` field picks one and the answer is
+  therefore already in settings. The question is asked once per applied engine
+  (re-asked when readiness flips), never per turn, and only when the
+  configuration cannot name a model: **a name the user typed always wins**.
+  Nothing is written back to `settings.json`. A reported *file* is shortened by
+  `gguf::display_id` the way a managed GGUF path is (`D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf`
+  → `gemma-4-31B_q4_0-it`); an org-qualified id (`meta-llama/Llama-3-8B`) is left
+  alone. An engine that cannot say still shows nothing. See
+  docs/research/external-model-name.md.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
@@ -2480,8 +2500,14 @@ section and subsection), `Esc` — cancel.
   without leaving to the chat. Mode (managed/external/openai/gemini/claude); for managed —
   the *Server* group (the `llama-server` binary, host, port), *Model* (GGUF `-m`,
   context `-c`, `--jinja`), *Performance* (`-ngl`, FlashAttn, `--no-mmap`),
-  *Speculative decoding* (`--spec-type` + draft-model fields); for cloud —
-  *Provider* (model, API-key-env, base URL). The **Embeddings** tab is the dedicated
+  *Speculative decoding* (`--spec-type` + draft-model fields); for external —
+  *Server* (URL, "Model (opt.)", the key fields); for cloud —
+  *Provider* (model, API-key-env, base URL). The external **"Model (opt.)"** field
+  is genuinely optional but not decorative: it is **sent as the request's `model`**,
+  which is what a multi-model endpoint routes on (llama.cpp's router mode,
+  LM Studio, LiteLLM, OpenRouter refuse a request without it), while a
+  single-model `llama-server` ignores it. Left blank it sends no `model` key at
+  all, and the app asks the server for the name instead (§11.3). The **Embeddings** tab is the dedicated
   embedding server for RAG/memory (mode + parameters). **Changing the model = restarting
   the server** — with a debounce (~1.2 s of quiet): a burst of quick edits to engine
   fields is coalesced into a single restart with the final values; the config saves

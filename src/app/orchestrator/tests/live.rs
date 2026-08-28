@@ -2753,6 +2753,131 @@ async fn props_reports_the_context_window_live() {
     assert!(n >= 512, "an implausible window: {n}");
 }
 
+/// The other question only a real server can answer: that it will **name the
+/// model it is running**, and that our client reads a name a header can show.
+///
+/// This is the whole of `external` mode's blank caption
+/// (docs/research/external-model-name.md): connect by URL with no model named in
+/// settings and, until this existed, neither the feed nor a message's metadata
+/// could say what answered. A stub only proves our own fixture parses — what
+/// this asserts is that the live stack answers `/v1/models` or `/props` at all,
+/// and that the answer arrives normalized (an un-aliased `llama-server` reports
+/// the whole `-m` path).
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn the_engine_names_the_model_it_is_running_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let name = backend.model_id().await;
+    eprintln!("live model name: {name:?}");
+    let name = name.expect(
+        "a live OpenAI-compatible server must name its model at /v1/models or          /props — without it an external chat has no name to show",
+    );
+    assert!(!name.trim().is_empty(), "an empty name is not an answer");
+    assert!(
+        !name.ends_with(crate::shared::gguf::EXT),
+        "a file name reached the header unnormalized: {name}"
+    );
+    assert!(
+        !name.contains('\\') && !name.contains('/'),
+        "a path reached the header instead of a model name: {name}"
+    );
+}
+
+/// …and it lands where the user sees it: the reply the turn stores carries the
+/// discovered name in its metadata snapshot (spec §11.3), with nothing named in
+/// settings. The end-to-end half of the smoke above — the name is read back off
+/// the **stored** message, through a fresh activation, not off the event that
+/// announced it.
+///
+/// The wait for `EngineModel` is not ceremony: discovery is a network round trip
+/// started when the engine is applied, and a turn sent in the same tick as the
+/// bootstrap genuinely resolves to no name. A human takes seconds to type; this
+/// test would otherwise race the first request out of the door (measured — it
+/// did, on the first live run).
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn a_reply_records_the_discovered_model_live() {
+    let mut cfg = no_auto_cfg();
+    // The mode the discovery exists for, with the "Model (opt.)" field blank —
+    // which is also what `MINDFORK_ENGINE_URL` alone produces.
+    cfg.engine.external.model_name = None;
+    let Some((_dir, cmd_tx, mut evt_rx, _task)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+
+    // The bootstrap chat and the engine's answer arrive in either order.
+    let (chat, discovered) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (mut chat, mut model) = (None, None);
+        while chat.is_none() || model.is_none() {
+            match evt_rx.recv().await {
+                Some(AppEvent::ChatActivated { id, .. }) => chat = Some(id),
+                Some(AppEvent::EngineModel(Some(m))) => model = Some(m),
+                Some(_) => {}
+                None => break,
+            }
+        }
+        (chat, model)
+    })
+    .await
+    .expect("the engine must name its model within 30s of connecting");
+    let chat = chat.expect("the bootstrap chat");
+    let discovered = discovered.expect("the engine's own name for the model");
+    eprintln!("discovered: {discovered}");
+
+    // The live bubble's header: this is the value the stored message must agree
+    // with, and disagreement is the failure the single resolve prevents.
+    cmd_tx
+        .send(AppCommand::SendMessage("Say hi in one word.".into()))
+        .unwrap();
+    let mut announced = None;
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::GenerationStarted { model, .. } => announced = model.clone(),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        announced.as_deref(),
+        Some(discovered.as_str()),
+        "the streaming bubble must name what the engine reported"
+    );
+
+    // Read the stored reply back through a real activation. A switch **to the
+    // open chat is a no-op** and emits nothing, so the way back has to leave
+    // first — a fresh chat, then back (the first attempt at this smoke waited
+    // forever on an event that was never going to come).
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    cmd_tx.send(AppCommand::SwitchChat(chat)).unwrap();
+    let messages = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat),
+    )
+    .await
+    .and_then(|e| match e {
+        AppEvent::ChatActivated { messages, .. } => Some(messages),
+        _ => None,
+    })
+    .expect("the chat re-opens");
+    let recorded = messages
+        .iter()
+        .filter(|m| m.role == crate::entities::message::MessageRole::Assistant)
+        .filter_map(|m| m.metadata.as_ref()?.model.clone())
+        .next_back();
+    eprintln!("recorded in the metadata: {recorded:?}");
+    assert_eq!(
+        recorded.as_deref(),
+        Some(discovered.as_str()),
+        "the stored reply must name the model that wrote it"
+    );
+}
+
 /// Stage 2 end to end: nobody types `/compact`, and the conversation is folded
 /// anyway once it approaches the window.
 ///

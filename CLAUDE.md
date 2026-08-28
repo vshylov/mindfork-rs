@@ -167,8 +167,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-28, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2633 unit tests
-green, 118 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2650 unit tests
+green, 120 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -179,6 +179,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The model's name in `external` mode — asked of the server, and sent to it** —
+  connect by URL with the "Model (opt.)" field blank and the engine is now asked
+  what it is running (`EngineBackend::model_id`: `GET /v1/models` when it lists
+  exactly one, then `/props`), so the feed's caption and every reply's metadata
+  stop being empty in the commonest local setup; a typed name always wins and
+  nothing is written back to settings. Fixed on the way: that field had **never
+  been sent to the server**, which is what every multi-model endpoint routes on.
+  `RetryBackend`'s missing delegation — the third of its kind — was caught by the
+  live gate and nothing else
+  ([docs/research/external-model-name.md](docs/research/external-model-name.md),
+  spec §11.3, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`/continue` — an interrupted reply resumes in place, track complete** —
   assistant prefill on managed/external, Gemini, and Claude ≤4.5 (an
   allowlist-by-version gate; OpenAI/Grok refuse with the route that works),

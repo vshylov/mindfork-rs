@@ -343,7 +343,7 @@ impl Orchestrator {
         // The capability gate first — its answer does not depend on the server
         // being up, and a cloud user should hear "cannot" rather than wait out
         // a readiness check to hear it (single source of truth: research §2).
-        let model = self.config.engine.active_model_name();
+        let model = self.effective_model_name();
         if !self
             .config
             .engine
@@ -673,8 +673,11 @@ impl Orchestrator {
         // Resolved once and used twice: the event below (the live bubble's
         // header) and `GenSpawn.model_name` (the finished message's metadata).
         // One read, so the header cannot name a different model than the one
-        // the stored message will claim.
-        let model_name = self.config.engine.active_model_name();
+        // the stored message will claim. In `external` mode with no model named
+        // in settings this is what the engine said it is running (see
+        // `model_name::ModelDiscovery`) — the message records the model that
+        // actually answered, not a blank.
+        let model_name = self.effective_model_name();
         let _ = self.evt_tx.send(AppEvent::GenerationStarted {
             generation_id: id,
             model: model_name.clone(),

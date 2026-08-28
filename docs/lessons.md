@@ -1109,6 +1109,20 @@ composes a layer the harness constructs by hand, ask which of the two the live g
 actually testing.
 — *retry with backoff on transient cloud failures*.
 
+**A trait method with a default plus a decorator is a silent-`None` hole, and a
+comment will not close it.** `EngineBackend` answers three questions about itself
+— context window, vision, model name — each defaulting to "cannot say" so an
+arbitrary server need not implement them. Each time a new one was added,
+`RetryBackend` was left un-delegated and answered the default; each time the
+inner client's own tests passed, because they never went through the decorator.
+Twice the fix shipped with a comment saying it would happen again. It happened
+again. The failure is invisible by construction: the honest "I cannot say" and
+the bug "I forgot to ask" are the same value. Two things actually help — a
+delegation test per method that asserts a value the decorator *could not* have
+produced by falling through, and running the live gate, which is what caught the
+third one within a minute.
+— *the model's name in `external` mode*.
+
 **Run the live gate when the change touches engine, memory or tool paths — even when it
 looks local.** `build_request` and `effective_tool_ids` sit on *every* turn, so "it only
 affects a compacted chat" still warrants the full e2e set. Skip it for pure rendering,

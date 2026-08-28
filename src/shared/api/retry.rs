@@ -370,6 +370,15 @@ impl EngineBackend for RetryBackend {
     async fn vision(&self) -> VisionSupport {
         self.inner.vision().await
     }
+
+    /// The third of the same shape, and the same hole: `external` mode wraps its
+    /// client in this decorator, and `external` is the **only** mode where this
+    /// question is ever asked — a forgotten delegation here would answer `None`
+    /// for every real user of the feature while every stub test passed. Caught
+    /// exactly that way on the live gate (docs/research/external-model-name.md).
+    async fn model_id(&self) -> Option<String> {
+        self.inner.model_id().await
+    }
 }
 
 #[cfg(test)]
@@ -400,6 +409,7 @@ mod tests {
         calls: AtomicUsize,
         budget: Option<u32>,
         vision: VisionSupport,
+        model: Option<String>,
     }
 
     impl Scripted {
@@ -409,6 +419,7 @@ mod tests {
                 calls: AtomicUsize::new(0),
                 budget: None,
                 vision: VisionSupport::Unknown,
+                model: None,
             })
         }
 
@@ -445,6 +456,10 @@ mod tests {
 
         async fn vision(&self) -> VisionSupport {
             self.vision
+        }
+
+        async fn model_id(&self) -> Option<String> {
+            self.model.clone()
         }
     }
 
@@ -726,6 +741,20 @@ mod tests {
         Arc::get_mut(&mut scripted).unwrap().vision = VisionSupport::Unsupported;
         let backend = RetryBackend::wrap(scripted);
         assert_eq!(backend.vision().await, VisionSupport::Unsupported);
+    }
+
+    /// The third sibling. `external` mode wraps its client in this decorator, and
+    /// it is the only mode that asks at all — so this one delegation is the whole
+    /// feature for every real user of it.
+    #[tokio::test]
+    async fn the_model_name_is_delegated() {
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().model = Some("gemma-4-31B_q4_0-it".into());
+        let backend = RetryBackend::wrap(scripted);
+        assert_eq!(
+            backend.model_id().await.as_deref(),
+            Some("gemma-4-31B_q4_0-it")
+        );
     }
 
     /// An explicit policy is what lets a test pin the shape without waiting on the

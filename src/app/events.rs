@@ -554,6 +554,15 @@ pub enum AppEvent {
     /// existing input isn't overwritten — the text is prepended to it (UI), with a
     /// separating space when neither boundary has its own.
     RestoreInput(String),
+    /// The engine said what model it is running, or stopped being able to say.
+    ///
+    /// Only the **discovered** name travels: the screen already holds the
+    /// configuration and prefers it, so this value never has two meanings.
+    /// `None` — the engine cannot say, or was just replaced and has not been
+    /// asked yet; the caption then falls back to showing nothing, exactly as it
+    /// did before the engine was ever asked. See
+    /// docs/research/external-model-name.md §4.
+    EngineModel(Option<String>),
     /// The assistant's reply generation has started. `model` — the model the
     /// turn is going to, so the live bubble's header can name it right away
     /// (`interface.show_model_name`, spec §11.3); the very same value the

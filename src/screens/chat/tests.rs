@@ -4723,3 +4723,40 @@ fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
     assert_eq!(assistants[0].text, "Начало");
     assert!(assistants[0].streaming);
 }
+
+/// The title's caption in `external` mode: a name in settings wins, a blank
+/// field falls back to what the engine said it is running
+/// (`AppEvent::EngineModel`), and neither still means no caption at all — the
+/// header drawn before the engine was ever asked
+/// (docs/research/external-model-name.md §4).
+#[test]
+fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
+    use crate::shared::config::{AppConfig, ServerMode};
+    let settings = |s: &mut ChatScreen, named: Option<&str>| {
+        let mut cfg = AppConfig::default();
+        cfg.engine.mode = ServerMode::External;
+        cfg.engine.external.url = Some("http://127.0.0.1:8000/v1".into());
+        cfg.engine.external.model_name = named.map(String::from);
+        s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    };
+
+    let mut s = ChatScreen::new();
+    settings(&mut s, None);
+    assert_eq!(s.model_meta(), "", "nothing configured, nothing discovered");
+
+    s.set_engine_model(Some("gemma-4-31B_q4_0-it".into()));
+    assert_eq!(s.model_meta(), "gemma-4-31B_q4_0-it");
+
+    settings(&mut s, Some("qwen-3.6-27b"));
+    assert_eq!(
+        s.model_meta(),
+        "qwen-3.6-27b",
+        "a name the user typed outranks the server's opinion"
+    );
+
+    // The engine was replaced: the caption is cleared at once rather than
+    // keeping the previous server's model.
+    settings(&mut s, None);
+    s.set_engine_model(None);
+    assert_eq!(s.model_meta(), "");
+}

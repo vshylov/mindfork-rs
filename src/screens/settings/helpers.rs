@@ -44,6 +44,11 @@ pub(super) const DESC_API_KEY: &str = "ui.settings.desc.api_key";
 pub(super) const DESC_VIDEO_API_KEY: &str = "ui.settings.desc.video_api_key";
 /// Key: cloud model name (X/Ix/E).
 pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
+/// The same field on an **external** server, where it means something different:
+/// optional, sent to the server when set (a multi-model endpoint routes on it),
+/// and with it blank the app asks the server for the name instead. See
+/// docs/research/external-model-name.md.
+pub(super) const DESC_MODEL_NAME_EXTERNAL: &str = "ui.settings.desc.model_name_external";
 /// Key: the env-variable name holding the external-server key (optional).
 pub(super) const DESC_EXT_API_KEY_ENV: &str = "ui.settings.desc.ext_api_key_env";
 /// Key: the external server's own stored key (X/Ix/E/Tts) — optional, and it wins
