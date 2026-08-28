@@ -468,8 +468,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   landing, visible while it runs, and a tool call's card that opens when the
   call starts. Design: [docs/research/subagent-chats.md](research/subagent-chats.md),
   stage 2: [docs/history/subagent-live.md](history/subagent-live.md). What
-  stays open: the two-agent dialogue (research §3.14 — its own research
-  document when wanted), the sub-agent's text streaming token by token into
+  stays open: the two-agent dialogue (research §3.14 — **designed and probed
+  GO on both gate models**, forks confirmed 2026-08-28:
+  [two-agent-dialogue.md](research/two-agent-dialogue.md); PR 1 of that track
+  is the next step), the sub-agent's text streaming token by token into
   its transcript (rounds are the unit today), and a parent's JSON export not
   carrying its transcripts (the v1 import document has no place for tool
   calls).

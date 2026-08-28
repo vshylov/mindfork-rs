@@ -1,9 +1,12 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **forks confirmed; probe §5.1 — Gemma arm GO, cloud spot-checks
-> GO** (2026-08-29, every go bar met, two design rules found on the way; the
-> Qwen arm needs the stack rotated to Qwen 3.6 and is the one piece
-> pending). User's decision (2026-08-28):
+> Status: **research complete — probe GO on both gate models and both
+> strict-alternation clouds** (§5.1–§5.2, 2026-08-29: every go bar met,
+> 104/105 checkpoint verdicts parsed across the four backends, zero role
+> bleed, cache slots held, and
+> two executor rules found live — the muted re-ask for the all-thinking
+> empty turn, and the note→retry→rewrite ladder emerging unprompted).
+> Next: PR 1 (§7). User's decision (2026-08-28):
 > F1–F10 at their recommended options, **F6 amended** — the director carries
 > the **main agent's identity** (the chat's persona) and **knows the
 > conversation with the user**, delivered as a brief built by the `/compact`
@@ -597,8 +600,46 @@ not the mechanism, and the doc's §3.1 note (the tool description teaches the
 caller to write a line-format clause) is where that lives. Verdict
 compliance across every arm: **62/62**.
 
-Pending: the Qwen 3.6 arm (the stack rotates on request) — the checkpoint
-mute and the participant thinking budget are the things to watch there.
+### 5.2 Results — Qwen arm (2026-08-29): GO. Probe complete
+
+Stack rotated to `Qwen3.6-27B-Q4_K_M`, same server; all four local arms.
+
+| fixture | stopped by director | fallbacks | bleed | steering | empty→recovered |
+|---|---|---|---|---|---|
+| finite, n=5 | **5/5** (4–10 msgs) | 0/17 | 0 | 3 notes | 3/3 |
+| steering, n=5 | **4/5** (one cap; **one honest impasse stop** — Tomas walks, which the direction allows) | 1/20 | 0 | 9 notes, 1 retry, 1 rewrite | 17/17 |
+| editing, n=2 | **2/2**, in 3 msgs each | 0/6 | 0 | 2 retries, 2 rewrites | 4/4 |
+
+Cache slots: held, same shape as Gemma (B's revisits at 1.1–2.1 s on
+near-full reuse). Costs are thinking-model costs: participant line 21.8–26.6 s
+avg, a finite dialogue 101–324 s, steering runs to ~8 min; completion tokens
+roughly double the prompt side (thoughts dominate). Transcript quality read by
+eye: personas held, recovered lines indistinguishable from thinking ones, and
+run 3's ending is the scene *failing honestly* — the director stopped it as
+"a definitive impasse", the walk-away branch the direction names.
+
+What Qwen adds to the findings:
+
+1. **The deliberation spiral is broader than instruction conflict.** On Qwen
+   even unconflicted persona openers can spend the whole 1536-token cap in
+   `reasoning_content` (steering run 4 opened with three spirals in a row);
+   under steering pressure the rate reached ~29% of participant generations.
+   The muted re-ask recovered **24/24** across the arm, at the price of one
+   wasted capped generation each. The alternative the journal's ceiling data
+   suggests (a 4096 participant cap, measured 3/4 non-empty on open prompts)
+   is recorded, not taken: recovery at 1536 is cheaper than 4096-and-hope,
+   and it cannot be starved. A per-dialogue "mute participants' thinking"
+   knob stays a future option if the doubled cost ever bites.
+2. **The one fallback's anatomy** (1/96 checkpoints across both models,
+   98.96%): with reasoning muted the director can still deliberate in plain
+   text, and a messy script ran it past the 512-token verdict cap mid-word —
+   no call parsed, the fallback-to-continue rule absorbed it, the next
+   checkpoint acted. The rule stays; the verdict cap is not raised on one
+   occurrence.
+
+**Probe verdict: GO on both gate models and both strict-alternation clouds.**
+Every §5 bar met or exceeded; contingencies unused. Next: PR 1 (§7), with the
+probe's fixtures graduating into the live smoke.
 
 ## 6. Test plan
 

@@ -1203,6 +1203,19 @@ sequel is worth knowing too: raising it to 4096 moved the per-arm numbers and di
 **not** clear the empty turns, so the ceiling was necessary and not sufficient.)
 — *the code workspace — stage 5*.
 
+**An instruction conflict can spend a thinking model's whole reply cap in
+deliberation — and the turn comes back empty.** Two rules in the effective
+system that cannot both hold (a steering note saying "one sentence" against a
+persona clause saying "always three") sent Gemma 4 — a family that "does not
+think" until it does — into 1536/1536 tokens of `reasoning_content` with no
+text, four times; on Qwen 3.6 the same spiral fires even without a conflict,
+from role-play format pressure alone (~29% of generations in the tensest
+fixture). Raising the cap is a hope with a measured ceiling (§ above); the
+mechanism is to **re-ask that one generation with thinking muted** — 28/28
+recovered live, and the muted lines read no worse. Budget the recovery into
+any feature that composes system prompts from more than one author.
+— *the two-agent dialogue — stage-0 probe*.
+
 **In a smoke, remove the alternative rather than hope the model does not take it.**
 Enabling only the tools under test is what makes a live assertion mean something. Some
 claims can *only* be settled live: that a real model reaches for a tool at all, that a
