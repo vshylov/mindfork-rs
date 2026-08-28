@@ -1128,11 +1128,51 @@ mod tests {
         );
     }
 
+    /// Reads one HTTP request off `sock`: headers to their `\r\n\r\n` end, then
+    /// exactly `Content-Length` more bytes — a bounded single read would cut the
+    /// body under comparison. `(head, body)`, or `None` when the peer goes away
+    /// mid-headers.
+    fn read_request(sock: &mut std::net::TcpStream) -> Option<(String, String)> {
+        use std::io::Read;
+        let mut req = Vec::new();
+        let mut buf = [0u8; 1024];
+        let head_end = loop {
+            match sock.read(&mut buf) {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => req.extend_from_slice(&buf[..n]),
+            }
+            if let Some(i) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&req[..head_end]).to_string();
+        let len = content_length(&head);
+        while req.len() < head_end + len {
+            match sock.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => req.extend_from_slice(&buf[..n]),
+            }
+        }
+        let body = String::from_utf8_lossy(&req[head_end..]).to_string();
+        Some((head, body))
+    }
+
+    /// The `Content-Length` a request head announces; `0` when absent.
+    fn content_length(head: &str) -> usize {
+        head.lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .and_then(|v| v.trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+
     /// Answers connections until a `POST` arrives, and reports that request's
     /// body. The readiness probe's `GET /health` lands on the same stub and is
     /// answered and skipped — it is not the request under test.
     fn chat_body_stub() -> (String, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = std::thread::spawn(move || {
@@ -1140,43 +1180,15 @@ mod tests {
                 let Ok((mut sock, _)) = listener.accept() else {
                     return String::new();
                 };
-                let mut req = Vec::new();
-                let mut buf = [0u8; 1024];
-                // Headers first, then exactly `Content-Length` more bytes: a
-                // bounded single read would cut the body under comparison.
-                let head_end = loop {
-                    match sock.read(&mut buf) {
-                        Ok(0) | Err(_) => break None,
-                        Ok(n) => req.extend_from_slice(&buf[..n]),
-                    }
-                    if let Some(i) = req.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break Some(i + 4);
-                    }
-                };
-                let Some(head_end) = head_end else {
+                let Some((head, body)) = read_request(&mut sock) else {
                     continue;
                 };
-                let head = String::from_utf8_lossy(&req[..head_end]).to_string();
-                let len: usize = head
-                    .lines()
-                    .find_map(|l| {
-                        l.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .and_then(|v| v.trim().parse().ok())
-                    })
-                    .unwrap_or(0);
-                while req.len() < head_end + len {
-                    match sock.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => req.extend_from_slice(&buf[..n]),
-                    }
-                }
                 // Answer only after draining (lessons.md §2).
                 let _ = sock.write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 );
                 if head.starts_with("POST") {
-                    return String::from_utf8_lossy(&req[head_end..]).to_string();
+                    return body;
                 }
             }
         });

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -29,6 +29,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a gate for the one implementation of a list's scroll state (done)
 - Post-M9: SonarQube follow-up — the help dialog's table builder (done)
 - Post-M9: SonarQube follow-up — three complexity findings from the `/continue` merges (done)
+- Post-M9: SonarQube follow-up — the chat-body stub's complexity (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1059,3 +1060,34 @@ structure (AGENTS.md §3).
   (`merge_continuation`'s own tests included). **No live run required**
   (AGENTS.md §3) — a pure refactor, no engine, memory or tool surface changed.
   No CHANGELOG entry: nothing the user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — the chat-body stub's complexity (done)
+
+- **One `rust:S3776` issue open on `main`** after the external-model-name
+  merge (2026-08-28) — the `docs/lessons.md` §10 gap again: a green PR quality
+  gate judges new-code *ratings*, so the smell surfaced only on the next
+  `main` analysis. `chat_body_stub` (`src/app/supervisor.rs`, the test-module
+  helper that reports the first `POST` body an external turn puts on the wire)
+  landed at cognitive complexity **23** against the 15 allowed: one spawned
+  closure carried the accept loop, the read-to-`\r\n\r\n` loop, the
+  `Content-Length` scan and the drain-the-body loop, nested four deep.
+  Branch `refactor/sonar-chat-body-stub`.
+- **The stub lost its middle to two named mechanisms**: `read_request` (one
+  request off the socket — headers to their `\r\n\r\n` end, then exactly
+  `Content-Length` more bytes, `None` when the peer goes away mid-headers) and
+  `content_length` (the length a request head announces, `0` when absent).
+  The closure is now the loop its doc comment describes — accept, read,
+  answer after draining, return the first `POST` body — with a single-loop
+  depth on each side of the split, well under the bar.
+- **Behaviour is unchanged by construction** — every extracted body is the
+  same expressions in the same order; the one rewrite is that the body string
+  is now built for every request rather than only the `POST` one, an identity
+  in the returned value. The Sonar snippet pre-check takes no Rust
+  (lessons §10), so the PR analysis is the measurement that closes this.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2653 green, 120 `#[ignore]`, counts unchanged**: the stub is exercised by
+  the two model-name wire tests it serves (`external_chat_sends_the_configured_model`,
+  `a_blank_model_field_sends_no_model_key`). **No live run required**
+  (AGENTS.md §3) — a pure refactor of a test-module helper, no engine, memory
+  or tool surface changed. No CHANGELOG entry: nothing the user sees changed
+  (§4).
