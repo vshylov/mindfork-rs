@@ -213,6 +213,12 @@ build the moment they drift from what the app actually renders
   persona the assistant composes, with the assistant's own tools (minus
   sub-agents, history read-back and the self-model), no history of the chat,
   no recursion; its transcript is kept on the call and shows as a child chat.
+- **`run_dialogue`** — stage a dialogue between two personas the assistant
+  composes: each sees the other as its user, a director (the assistant's own
+  persona, briefed on your conversation) steers the scene — private notes,
+  retakes, outright rewrites — and stops it at the ending; the script lands
+  as a child chat with each side under its character's name. Deliberately
+  unhurried on local models: one engine session, requests strictly in turn.
 - **MCP plugins** — tools from any
   [Model Context Protocol](https://modelcontextprotocol.io) stdio server (git,
   GitHub, databases, browser, …), configured in settings or imported from

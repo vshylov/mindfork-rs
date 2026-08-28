@@ -1698,6 +1698,26 @@ Implementation notes:
   result text = the final reply + a `chat://` trailer (and why, when not
   completed); the run rides in `CallResult.subagent` onto the `ToolCallRecord`.
   The `Tool` impl's `invoke` only validates and refuses ("loop only").
+- **`run_dialogue`** (`TurnLoop::run_dialogue`, spec §9.13, ADR 0011) — the
+  second loop-executed run, on the same seams: recognised by name in
+  `resolve_call_result`, depth-guarded, landed as a `SubagentRun` with
+  `kind: Dialogue` and `participants`. Not a child `TurnLoop`: a scripted
+  sequential loop (`dialogue_loop`) over direct `stream_round` calls — two
+  persona contexts derived fresh per line from the role-encoded transcript
+  (`features/tools/dialogue.rs::participant_view` — the role swap, the `user`
+  prologue, the same-role merge; pure and unit-tested there) and a persistent
+  director context (parent persona + `conversation_brief` from
+  `TurnShared.compaction_summary` and the request tail + a localized
+  appendix). Checkpoint replies are parsed by `dialogue::parse_verdicts` and
+  applied by the loop itself (`continue`/`stop`/`note`/`retry`/`rewrite`);
+  an empty participant line is re-asked once muted
+  (`reasoning_budget: 0`). Streams ride a `RoundSink` with `mute_steps` —
+  the transcript grows per line via `ChildRoundFiled`, the token counter
+  still passes. Bounded by `tokio::time::timeout(dialogue_run_timeout)`
+  around the loop, with the state owned outside it so a timeout keeps the
+  partial transcript. Director interventions are `System` entries of the
+  run's messages — `FeedMessage::from_message` draws them as note rows, and
+  `visible_message_count` counts them the same way (the pinned pair).
 - **Conversation control tools** (`send_followup_message` /
   `rewrite_current_message`, `features/tools/control.rs`) — not ordinary
   tools but **control flow**: recognized by the agentic loop itself

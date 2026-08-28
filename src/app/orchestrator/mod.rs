@@ -1389,7 +1389,7 @@ impl Orchestrator {
                 child: Some(crate::app::events::ChildView {
                     parent: parent.id,
                     parent_title: parent.title.clone(),
-                    system_message: run.system_message.clone(),
+                    system_message: self.child_system_text(run),
                 }),
                 live_turn: live_turn.clone(),
             },
@@ -1440,6 +1440,22 @@ impl Orchestrator {
             return profile_names;
         };
         let loc = self.ui_locale();
+        // A dialogue transcript's sides are its participants (spec §9.13):
+        // `Assistant` is participant a, `User` is participant b — the
+        // role-encoded transcript of research §3.5.
+        if run.kind == crate::entities::subagent::RunKind::Dialogue {
+            let label = |i: usize, key: &str| {
+                run.participants
+                    .get(i)
+                    .and_then(|p| p.name.clone())
+                    .unwrap_or_else(|| loc.t(key).to_string())
+            };
+            return CharacterNames {
+                assistant: label(0, "ui.feed.role.participant_a"),
+                user: label(1, "ui.feed.role.participant_b"),
+                system: profile_names.system,
+            };
+        }
         CharacterNames {
             user: profile_names
                 .assistant_name()
@@ -1451,6 +1467,39 @@ impl Orchestrator {
                 .unwrap_or_else(|| loc.t("ui.feed.role.subagent").to_string()),
             system: profile_names.system,
         }
+    }
+
+    /// The text of a transcript's opening system bubble (spec §11.3). A
+    /// sub-agent's is its persona as the parent composed it; a dialogue's
+    /// composes both participants' personas and the director's brief
+    /// (spec §9.13) — the three texts a reader of the scene wants first.
+    fn child_system_text(&self, run: &crate::entities::subagent::SubagentRun) -> String {
+        if run.kind != crate::entities::subagent::RunKind::Dialogue {
+            return run.system_message.clone();
+        }
+        let loc = self.ui_locale();
+        let mut parts: Vec<String> = Vec::new();
+        for (i, p) in run.participants.iter().enumerate() {
+            let name = p.name.clone().unwrap_or_else(|| {
+                loc.t(if i == 0 {
+                    "ui.feed.role.participant_a"
+                } else {
+                    "ui.feed.role.participant_b"
+                })
+                .to_string()
+            });
+            parts.push(format!(
+                "{}\n{}",
+                loc.tf("ui.feed.dialogue.persona", &[("name", &name)]),
+                p.system_message
+            ));
+        }
+        parts.push(format!(
+            "{}\n{}",
+            loc.t("ui.feed.dialogue.direction"),
+            run.system_message
+        ));
+        parts.join("\n\n")
     }
 
     /// Remembers the last-open chat in `settings.json` so it can be restored

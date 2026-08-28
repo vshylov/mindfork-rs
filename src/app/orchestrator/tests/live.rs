@@ -4067,3 +4067,96 @@ async fn continue_e2e_live() {
         streamed.chars().count()
     );
 }
+
+/// `run_dialogue` stage-1 go/no-go (spec §9.13,
+/// docs/research/two-agent-dialogue.md §6): asked for a short finite scene,
+/// the model stages it through the tool — the probe's café fixture graduated
+/// into the smoke — and the landed record carries a role-encoded,
+/// strictly-alternating transcript that the director ended (or the cap
+/// backstopped). The profile is narrowed to the one tool under test
+/// ("remove the alternative", lessons §9); the ask is situation-shaped, not
+/// a numbered script.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn dialogue_e2e_live() {
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(AppConfig::default()) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_profile, chat_id) =
+        narrow_profile_to(&cmd_tx, &mut evt_rx, vec!["run_dialogue".into()]).await;
+    let ask = "I'm drafting a café scene. Stage it live with run_dialogue: \
+        barista Mara (warm, frazzled by the morning rush, remakes wrong drinks \
+        for free) and customer Jonas (in a hurry for his tram, got an oat \
+        latte instead of his double espresso; opens the dialogue politely \
+        asking to fix it). Tell each persona to reply with one spoken line \
+        only, no narration. Direct it yourself and stop once the mix-up is \
+        resolved and they part on good terms; cap it at 10 lines.";
+    let (reply, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, ask).await;
+    eprintln!(
+        "parent reply: {}",
+        reply.chars().take(300).collect::<String>()
+    );
+    // The tool was actually exercised (lessons §2 — a run that never calls it
+    // measures nothing).
+    assert!(
+        calls.iter().any(|(n, _)| n == "run_dialogue"),
+        "the model never called run_dialogue; calls: {calls:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = super::subagent::load(dir.path(), chat_id);
+    let record = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .find(|r| r.name == "run_dialogue")
+        .expect("the call's record");
+    let run = record.subagent.as_deref().expect("the run on the record");
+    assert_eq!(run.kind, crate::entities::subagent::RunKind::Dialogue);
+    assert_eq!(run.participants.len(), 2);
+    let outcome = run.outcome.expect("the run reported how it ended");
+    assert!(
+        matches!(
+            outcome,
+            crate::entities::subagent::RunOutcome::Completed
+                | crate::entities::subagent::RunOutcome::RoundLimit
+        ),
+        "unexpected outcome: {outcome:?}"
+    );
+    // The transcript: at least one exchange, spoken lines strictly
+    // alternating around the director's System rows.
+    let spoken: Vec<MessageRole> = run
+        .messages
+        .iter()
+        .filter(|m| m.role != MessageRole::System)
+        .map(|m| m.role)
+        .collect();
+    assert!(
+        spoken.len() >= 3,
+        "too short: {} spoken lines",
+        spoken.len()
+    );
+    for pair in spoken.windows(2) {
+        assert_ne!(pair[0], pair[1], "two consecutive lines by one side");
+    }
+    println!(
+        "dialogue landed: {:?}, {} spoken lines, {} tokens, title {:?}",
+        outcome,
+        spoken.len(),
+        run.tokens,
+        run.title
+    );
+    for m in &run.messages {
+        let side = match m.role {
+            MessageRole::Assistant => "A",
+            MessageRole::User => "B",
+            _ => "D",
+        };
+        println!(
+            "  [{side}] {}",
+            m.text.chars().take(120).collect::<String>()
+        );
+    }
+}

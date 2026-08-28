@@ -366,6 +366,7 @@ pub fn reviewer_run() -> SubagentRun {
         messages: vec![ask, verdict],
         outcome: Some(RunOutcome::Completed),
         tokens: 412,
+        participants: Vec::new(),
     }
 }
 

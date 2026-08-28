@@ -382,16 +382,18 @@ impl Chat {
 /// strictly downward, and `entities` cannot import `widgets`. Two statements
 /// of one rule is the drift the lessons warn about, so the
 /// `bubble_count_agrees_with_the_list_counter` test next to the feed pins
-/// them together: tool and system messages draw no bubble of their own, and
-/// consecutive assistant rounds are one bubble unless a round opts out via
+/// them together: tool messages draw no bubble of their own, a `System`
+/// entry draws a note row (a dialogue transcript's director intervention,
+/// spec §9.13) that also ends any assistant stitching, and consecutive
+/// assistant rounds are one bubble unless a round opts out via
 /// [`Message::new_bubble`].
 pub fn visible_message_count(messages: &[Message]) -> usize {
     let mut count = 0;
     let mut in_assistant_bubble = false;
     for m in messages {
         match m.role {
-            MessageRole::Tool | MessageRole::System => {}
-            MessageRole::User => {
+            MessageRole::Tool => {}
+            MessageRole::User | MessageRole::System => {
                 count += 1;
                 in_assistant_bubble = false;
             }
@@ -695,8 +697,10 @@ mod tests {
     /// spec §11.2: the card counts the feed's bubbles, not storage rows. An
     /// agentic exchange — the question, a pure tool-call round, its result,
     /// the answering round — reads as two messages, not four; a followup
-    /// flagged `new_bubble` (spec §9.3) opens a third; system rows, like tool
-    /// rows, draw nothing; the next question starts a new bubble again.
+    /// flagged `new_bubble` (spec §9.3) opens a third; a system row is a note
+    /// row (a dialogue's director intervention, spec §9.13) and counts, also
+    /// ending the assistant's stitching; tool rows draw nothing; the next
+    /// question starts a new bubble again.
     #[test]
     fn visible_message_count_folds_rounds_and_tool_results() {
         let mut messages = vec![
@@ -713,11 +717,16 @@ mod tests {
         assert_eq!(visible_message_count(&messages), 3);
 
         messages.push(Message::new(MessageRole::System, "sys"));
-        assert_eq!(visible_message_count(&messages), 3);
+        assert_eq!(visible_message_count(&messages), 4);
+
+        // The note row broke the stitching: another assistant round after it
+        // is a new bubble even without `new_bubble`.
+        messages.push(Message::assistant("post-note"));
+        assert_eq!(visible_message_count(&messages), 5);
 
         messages.push(Message::user("q2"));
         messages.push(Message::assistant("a2"));
-        assert_eq!(visible_message_count(&messages), 5);
+        assert_eq!(visible_message_count(&messages), 7);
     }
 
     /// Both cards go through [`visible_message_count`]: the chat's own and

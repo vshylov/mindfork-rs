@@ -570,6 +570,7 @@ mod chats;
 mod compaction;
 mod confirm;
 mod demo;
+mod dialogue;
 mod generation;
 mod images;
 mod impersonation;

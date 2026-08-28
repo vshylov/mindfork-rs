@@ -16,6 +16,7 @@ pub mod code;
 pub mod confirm;
 pub mod control;
 pub mod datetime;
+pub mod dialogue;
 pub mod fetch;
 pub mod fs;
 pub mod history;
@@ -722,6 +723,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // profile toggle; the agentic loop runs it, with the limits it reads from
     // `config.tools` itself — so nothing here to parameterize.
     reg.register(Arc::new(subagent::CallSubagent));
+    reg.register(Arc::new(dialogue::RunDialogue));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);

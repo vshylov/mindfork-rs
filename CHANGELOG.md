@@ -16,6 +16,24 @@ split by subsystem.
 
 ### Added
 
+- **A dialogue of two personas, staged and directed by the assistant**
+  (`run_dialogue`). Ask for a scene and the assistant composes two characters,
+  writes the opening line, and directs the dialogue as it unfolds — sending a
+  character private stage directions, asking for a retake, rewriting a line
+  outright — and stops it when the scene reaches its ending. The script shows
+  as a child chat under the conversation, each side under its character's
+  name, with the director's interventions visible as notes; the assistant's
+  reply carries the transcript's `chat://` address. One engine session, one
+  request at a time — no extra VRAM on a local model; a new "Dialogue: run
+  time limit" setting bounds a runaway scene (30 minutes by default).
+
+### Data
+
+- Chat files move to schema **v3** (a version stamp, no shape change): a chat
+  may now carry a dialogue transcript, and an older mindfork refuses such a
+  file with a clear message instead of failing to read it. Existing chats are
+  re-stamped at first launch through the usual backup-then-migrate path.
+
 - **`/continue` — resume an interrupted reply from where it stopped.** A reply
   cut by `Esc`, by a connection failure, or by the length/context limit can now
   be continued in place: the model picks up exactly at the cut, the text grows

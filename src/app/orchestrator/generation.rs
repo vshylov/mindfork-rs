@@ -15,6 +15,7 @@ use crate::entities::message::{
     Message, MessageFinish, MessageMetadata, MessageRole, ToolCallRecord,
 };
 use crate::entities::profile::ToolId;
+use crate::entities::sampling::SamplingConfig;
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::tools::subagent::{CALL_SUBAGENT_ID, SubagentArgs, withheld_from_subagent};
 use crate::features::tools::{
@@ -714,6 +715,12 @@ impl Orchestrator {
             max_rounds: self.config.max_tool_rounds,
             workspace_max_rounds: self.config.workspace.max_rounds,
             subagent: SubagentLimits::from_config(&self.config.tools),
+            compaction_summary: self
+                .chats
+                .iter()
+                .find(|c| c.id == active_id)
+                .and_then(|c| c.compaction_view(self.config.compaction.enabled))
+                .map(|(s, _)| s.to_string()),
             allowed,
             self_model,
             self_model_params,
@@ -965,6 +972,10 @@ struct GenSpawn {
     workspace_max_rounds: u32,
     /// A sub-agent run's limits (`config.tools`, spec §9.3.2).
     subagent: SubagentLimits,
+    /// The chat's rolling summary when one is in force (`Chat::compaction_view`)
+    /// — the folded half of the dialogue director's conversation brief
+    /// (spec §9.13, fork F6); the unfolded half is the request's own tail.
+    compaction_summary: Option<String>,
     /// Effectively allowed tools (protection against calling a disabled one).
     allowed: Vec<ToolId>,
     /// The profile's "self-model" (a snapshot at the start of the turn) + injection
@@ -1144,6 +1155,7 @@ fn spawn_generation(spawn: GenSpawn) {
         model_name,
         ui_loc,
         compaction_enabled,
+        compaction_summary,
         continuation,
         evt_tx,
         done_tx,
@@ -1202,6 +1214,7 @@ fn spawn_generation(spawn: GenSpawn) {
             done_tx: done_tx.clone(),
             allowed_for_turn: HashSet::new(),
             compaction_enabled,
+            compaction_summary,
         };
         let mut turn = TurnLoop {
             shared: &mut shared,
@@ -1298,6 +1311,9 @@ struct TurnShared {
     /// `compaction.enabled` — picks which advice a context-overflow error gives
     /// (see [`GenSpawn::compaction_enabled`]).
     compaction_enabled: bool,
+    /// The chat's rolling summary, for the dialogue director's brief
+    /// (see [`GenSpawn::compaction_summary`]).
+    compaction_summary: Option<String>,
 }
 
 /// One agentic loop's state: the turn's own, or a sub-agent's run inside it.
@@ -1367,10 +1383,15 @@ struct TurnLoop<'a> {
 /// rest of the turn's configuration (spec §9.3.2, docs/research/subagent-chats.md §3.12).
 #[derive(Debug, Clone, Copy)]
 struct SubagentLimits {
-    /// The per-round reply cap, min'ed with the effective `max_tokens`.
+    /// The per-round reply cap, min'ed with the effective `max_tokens` —
+    /// a dialogue participant's line rides the same cap (spec §9.13).
     max_tokens: usize,
     /// The whole run — every round and tool call of it.
     run_timeout: std::time::Duration,
+    /// The whole dialogue run (`run_dialogue`) — every participant line and
+    /// director checkpoint of it. Its own knob: the honest default differs
+    /// from the sub-agent's by an order of magnitude (spec §9.13).
+    dialogue_run_timeout: std::time::Duration,
 }
 
 impl SubagentLimits {
@@ -1378,6 +1399,7 @@ impl SubagentLimits {
         Self {
             max_tokens: tools.subagent_max_tokens,
             run_timeout: std::time::Duration::from_secs(tools.subagent_run_timeout_secs),
+            dialogue_run_timeout: std::time::Duration::from_secs(tools.dialogue_run_timeout_secs),
         }
     }
 }
@@ -1398,6 +1420,13 @@ struct RoundSink<'a> {
     /// sub-agent's, whose stream goes to the orchestrator only (the base is
     /// subtracted from the re-based counter to get the run's own).
     child: Option<u64>,
+    /// A dialogue's streams grow the open transcript **per message**, not per
+    /// token (research §3.7): the token-level partial has no speaker side yet,
+    /// and half the lines land on the `User` side — streaming them into the
+    /// assistant-side partial would draw every other line in the wrong bubble.
+    /// `true` drops a child's stream steps and keeps only the token counter;
+    /// the filed messages (`ChildRoundFiled`) carry the transcript's growth.
+    mute_steps: bool,
 }
 
 impl RoundSink<'_> {
@@ -1434,10 +1463,15 @@ impl RoundSink<'_> {
                 }
                 // A retry or an error inside the run: the parent's result
                 // text says how the run ended; nothing to draw meanwhile.
-                other => match stream_step(&other) {
-                    Some(step) => TurnProgress::ChildStep(step),
-                    None => return,
-                },
+                other => {
+                    if self.mute_steps {
+                        return;
+                    }
+                    match stream_step(&other) {
+                        Some(step) => TurnProgress::ChildStep(step),
+                        None => return,
+                    }
+                }
             },
         };
         let _ = self.done_tx.send(GenMessage::Progress {
@@ -1535,6 +1569,7 @@ impl TurnLoop<'_> {
             done_tx: &self.shared.done_tx,
             turn: self.shared.id,
             child: (!self.live).then_some(self.token_base),
+            mute_steps: false,
         }
     }
 
@@ -1950,6 +1985,10 @@ impl TurnLoop<'_> {
             // A loop-executed tool (spec §9.3.2): the sub-agent is a nested
             // loop over this turn's shared part, not a registry call.
             self.run_subagent(args).await
+        } else if call.name == crate::features::tools::dialogue::RUN_DIALOGUE_ID {
+            // The second loop-executed tool (spec §9.13): a directed dialogue
+            // of two personas, driven by this loop over the same shared part.
+            self.run_dialogue(args).await
         } else {
             // Execution under a `select!` with the cancellation token: Esc
             // doesn't wait for a long-running tool (MCP/network) to finish.
@@ -2072,6 +2111,7 @@ impl TurnLoop<'_> {
             messages: vec![user.clone()],
             outcome: None,
             tokens: 0,
+            participants: Vec::new(),
         })));
         let request = build_request_in(
             &parsed.system_message,
@@ -2169,6 +2209,7 @@ impl TurnLoop<'_> {
             messages: std::iter::once(user).chain(child_messages).collect(),
             outcome: Some(outcome),
             tokens: child_tokens,
+            participants: Vec::new(),
         };
         for effect in child_effects {
             match effect {
@@ -2220,6 +2261,699 @@ impl TurnLoop<'_> {
             images: Vec::new(),
             subagent: Some(Box::new(run)),
         }
+    }
+}
+
+/// How a dialogue loop ended, before it maps onto [`RunOutcome`]
+/// (spec §9.13). `Cancelled` is the parent's `Esc` through the child token;
+/// `Failed` names whose generation the engine gave nothing usable for — a
+/// participant's line (empty even after the muted re-ask, research §5.1) or
+/// a checkpoint the director's engine failed on.
+enum DialogueEnd {
+    Stopped {
+        reason: String,
+        summary: Option<String>,
+    },
+    Cap,
+    Cancelled,
+    Failed {
+        who: String,
+    },
+}
+
+/// One dialogue run's mutable state, owned **outside** the timed loop so a
+/// timeout keeps the partial transcript (the future is dropped, the state
+/// survives — the same shape `run_subagent` gets from its child loop).
+struct DialogueState {
+    /// The role-encoded transcript (research §3.5): participant `a` is
+    /// `Assistant`, `b` is `User`, director interventions are `System`.
+    transcript: Vec<Message>,
+    /// Standing director notes per participant — each participant's system
+    /// appendix from the moment it was issued (identity stays with the run,
+    /// research §3.4).
+    notes_a: Vec<String>,
+    notes_b: Vec<String>,
+    /// Generated lines, retried ones included — the `max_messages` meter.
+    generated: usize,
+    next_checkpoint: usize,
+    /// How much of the transcript the director has been shown.
+    rendered: usize,
+    /// The director's persistent conversation: script increments as `user`
+    /// turns, its verdicts as its own tool-call turns (research §3.2) — which
+    /// keeps its context append-only, the cache-friendly shape §5.1 measured.
+    director_msgs: Vec<ApiMessage>,
+    tokens: u64,
+    reasoning: u32,
+}
+
+/// The director's conversation brief (fork F6): the chat's rolling summary
+/// when one is in force, then the tail of the parent request's own
+/// conversation — most recent turns within a fixed budget. Empty on a chat
+/// with no history yet.
+fn conversation_brief(
+    summary: Option<&str>,
+    messages: &[ApiMessage],
+    loc: &'static crate::shared::i18n::Locale,
+) -> String {
+    const BRIEF_BUDGET: usize = 4000;
+    let mut tail: Vec<String> = Vec::new();
+    let mut spent = 0usize;
+    for m in messages.iter().rev() {
+        let label = match m.role {
+            crate::shared::api::contract::ApiRole::User => loc.t("prompt.dialogue.role_user"),
+            crate::shared::api::contract::ApiRole::Assistant => {
+                loc.t("prompt.dialogue.role_assistant")
+            }
+            _ => continue,
+        };
+        let text = m.content.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let line = format!("{label}: {text}");
+        if spent + line.len() > BRIEF_BUDGET && !tail.is_empty() {
+            break;
+        }
+        spent += line.len();
+        tail.push(line);
+        if spent > BRIEF_BUDGET {
+            break;
+        }
+    }
+    tail.reverse();
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(s) = summary.map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(s.to_string());
+    }
+    if !tail.is_empty() {
+        parts.push(tail.join("\n"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("{}\n{}", loc.t("prompt.dialogue.brief"), parts.join("\n\n"))
+}
+
+impl TurnLoop<'_> {
+    /// Runs a directed dialogue (spec §9.13, docs/research/two-agent-dialogue.md):
+    /// two persona contexts and a director context taking strictly sequential
+    /// turns on the turn's one backend — at most one request in flight, which
+    /// is the feature's VRAM contract (research §3.9). Returns the result text
+    /// and the run for the record, exactly as `run_subagent` does.
+    async fn run_dialogue(&mut self, args: &serde_json::Value) -> CallResult {
+        use crate::features::tools::dialogue::{self, RUN_DIALOGUE_ID};
+        let loc = self.ctx.loc;
+        let parsed = match dialogue::DialogueArgs::parse(args, loc) {
+            Ok(a) => a,
+            Err(err) => {
+                return loc
+                    .tf(
+                        "loop.tool_error",
+                        &[("name", RUN_DIALOGUE_ID), ("err", &err.to_string())],
+                    )
+                    .into();
+            }
+        };
+        // No nesting, whatever the allowed set says — the same second lock
+        // `run_subagent` keeps on its own door.
+        if self.depth > 0 {
+            return loc
+                .tf("loop.tool_disabled", &[("name", RUN_DIALOGUE_ID)])
+                .into();
+        }
+        let started = chrono::Utc::now();
+        let limits = self.shared.subagent;
+        let a_label = parsed.label(true, loc);
+        let b_label = parsed.label(false, loc);
+
+        // Participants ride the chat's sampling under the shared per-line cap;
+        // the director's checkpoints run with thinking muted (the probe's
+        // empty-turn rule, research §5.1) and a small verdict cap.
+        let mut sampling = self.ctx.effective_sampling.clone();
+        sampling.max_tokens = Some(
+            sampling
+                .max_tokens
+                .map_or(limits.max_tokens, |m| m.min(limits.max_tokens)),
+        );
+        let mut muted = sampling.clone();
+        muted.reasoning_budget = Some(0);
+        let mut director_sampling = muted.clone();
+        director_sampling.max_tokens = Some(512.min(limits.max_tokens));
+
+        let direction = parsed
+            .direction
+            .clone()
+            .unwrap_or_else(|| loc.t("prompt.dialogue.direction_default").to_string());
+        let appendix = loc.tf(
+            "prompt.dialogue.director",
+            &[("a", &a_label), ("b", &b_label), ("direction", &direction)],
+        );
+        // The director is the main agent directing (fork F6): the parent
+        // turn's own persona, the conversation brief, then the appendix. The
+        // self-model injection stays top-turn-only (ADR 0010 F3).
+        let brief = conversation_brief(
+            self.shared.compaction_summary.as_deref(),
+            &self.request.messages,
+            loc,
+        );
+        let director_system = [self.ctx.system_message.as_str(), &brief, &appendix]
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let verdict_schemas = dialogue::verdict_tools(loc, &a_label, &b_label);
+
+        let participants = vec![
+            crate::entities::subagent::Participant {
+                name: parsed.a.name.clone(),
+                system_message: parsed.a.system_message.clone(),
+            },
+            crate::entities::subagent::Participant {
+                name: parsed.b.name.clone(),
+                system_message: parsed.b.system_message.clone(),
+            },
+        ];
+        let opening = if parsed.opening_by_a {
+            Message::assistant(parsed.opening.clone())
+        } else {
+            Message::user(parsed.opening.clone())
+        };
+        let run_id = Uuid::new_v4();
+        let cancel = self.cancel.child_token();
+        self.progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
+            id: run_id,
+            kind: RunKind::Dialogue,
+            title: parsed.initial_title(loc),
+            renamed_manually: false,
+            name: None,
+            created_at: started,
+            finished_at: None,
+            system_message: appendix.clone(),
+            sampling_override: None,
+            messages: vec![opening.clone()],
+            outcome: None,
+            tokens: 0,
+            participants: participants.clone(),
+        })));
+
+        let run_base = self.token_base + self.total_tokens;
+        let mut st = DialogueState {
+            transcript: vec![opening],
+            notes_a: Vec::new(),
+            notes_b: Vec::new(),
+            generated: 0,
+            next_checkpoint: parsed.moderate_every,
+            rendered: 0,
+            director_msgs: Vec::new(),
+            tokens: 0,
+            reasoning: 0,
+        };
+        let finished = tokio::time::timeout(
+            limits.dialogue_run_timeout,
+            Box::pin(self.dialogue_loop(
+                &mut st,
+                &parsed,
+                (&a_label, &b_label),
+                &director_system,
+                &director_sampling,
+                &verdict_schemas,
+                &sampling,
+                &muted,
+                &cancel,
+                run_base,
+            )),
+        )
+        .await;
+        let end = match finished {
+            Err(_) => {
+                // The run's own token, so the parent's turn goes on.
+                cancel.cancel();
+                None
+            }
+            Ok(end) => Some(end),
+        };
+        let outcome = match &end {
+            None => RunOutcome::TimedOut,
+            Some(DialogueEnd::Cancelled) => RunOutcome::Cancelled,
+            Some(DialogueEnd::Failed { .. }) => RunOutcome::Failed,
+            Some(DialogueEnd::Cap) => RunOutcome::RoundLimit,
+            Some(DialogueEnd::Stopped { .. }) => RunOutcome::Completed,
+        };
+        let finished_at = chrono::Utc::now();
+        self.progress(TurnProgress::ChildEnded {
+            outcome,
+            finished_at,
+            tokens: st.tokens,
+        });
+        self.total_tokens += st.tokens;
+        self.total_reasoning += st.reasoning;
+        let run = SubagentRun {
+            id: run_id,
+            kind: RunKind::Dialogue,
+            title: parsed.initial_title(loc),
+            renamed_manually: false,
+            name: None,
+            created_at: started,
+            finished_at: Some(finished_at),
+            system_message: appendix,
+            sampling_override: None,
+            messages: st.transcript,
+            outcome: Some(outcome),
+            tokens: st.tokens,
+            participants,
+        };
+
+        // The result closes the door (docs/lessons.md §4): how it ended, and
+        // the one route to the words — the transcript's address.
+        let generated = st.generated.to_string();
+        let mut status = match &end {
+            Some(DialogueEnd::Stopped { reason, summary }) => {
+                let mut s = loc.tf(
+                    "tool.run_dialogue.result.completed",
+                    &[
+                        ("a", &a_label),
+                        ("b", &b_label),
+                        ("messages", &generated),
+                        ("reason", reason),
+                    ],
+                );
+                if let Some(summary) = summary {
+                    s.push('\n');
+                    s.push_str(
+                        &loc.tf("tool.run_dialogue.result.summary", &[("summary", summary)]),
+                    );
+                }
+                s
+            }
+            Some(DialogueEnd::Cap) => loc.tf(
+                "tool.run_dialogue.result.cap",
+                &[
+                    ("a", &a_label),
+                    ("b", &b_label),
+                    ("max_messages", &parsed.max_messages.to_string()),
+                ],
+            ),
+            Some(DialogueEnd::Cancelled) => loc.t("tool.run_dialogue.result.cancelled").to_string(),
+            Some(DialogueEnd::Failed { who }) => {
+                loc.tf("tool.run_dialogue.result.failed", &[("who", who)])
+            }
+            None => loc.tf(
+                "tool.run_dialogue.result.timeout",
+                &[("secs", &limits.dialogue_run_timeout.as_secs().to_string())],
+            ),
+        };
+        status.push_str("\n\n");
+        status.push_str(&loc.tf(
+            "tool.run_dialogue.result.transcript",
+            &[("address", &crate::features::chat_links::uri(run.id))],
+        ));
+        CallResult {
+            text: status,
+            images: Vec::new(),
+            subagent: Some(Box::new(run)),
+        }
+    }
+
+    /// The dialogue's main loop (research §3.3): participant turns in strict
+    /// alternation, a director checkpoint every `moderate_every` generated
+    /// lines, until the director stops it or the cap fires.
+    #[allow(clippy::too_many_arguments)] // one internal seam; a struct would re-group what DialogueState already holds
+    async fn dialogue_loop(
+        &mut self,
+        st: &mut DialogueState,
+        parsed: &crate::features::tools::dialogue::DialogueArgs,
+        labels: (&str, &str),
+        director_system: &str,
+        director_sampling: &SamplingConfig,
+        verdict_schemas: &[crate::shared::api::contract::ToolSchema],
+        sampling: &SamplingConfig,
+        muted: &SamplingConfig,
+        cancel: &CancellationToken,
+        run_base: u64,
+    ) -> DialogueEnd {
+        use crate::features::tools::dialogue;
+        loop {
+            if st.generated >= parsed.max_messages {
+                return DialogueEnd::Cap;
+            }
+            if st.generated >= st.next_checkpoint {
+                st.next_checkpoint += parsed.moderate_every;
+                match self
+                    .dialogue_checkpoint(
+                        st,
+                        parsed,
+                        labels,
+                        director_system,
+                        director_sampling,
+                        verdict_schemas,
+                        sampling,
+                        muted,
+                        cancel,
+                        run_base,
+                    )
+                    .await
+                {
+                    Ok(Some((reason, summary))) => {
+                        return DialogueEnd::Stopped { reason, summary };
+                    }
+                    Ok(None) => continue,
+                    Err(end) => return end,
+                }
+            }
+            let speaker_a =
+                dialogue::next_speaker_a(&st.transcript).unwrap_or(!parsed.opening_by_a);
+            let line = match self
+                .dialogue_line(
+                    st, parsed, labels, speaker_a, None, sampling, muted, cancel, run_base,
+                )
+                .await
+            {
+                Ok(line) => line,
+                Err(end) => return end,
+            };
+            self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
+            st.transcript.push(line);
+            st.generated += 1;
+        }
+    }
+
+    /// One participant's line: the derived view (research §3.2), one streamed
+    /// generation, and the muted re-ask when the reply came back empty — the
+    /// all-thinking spiral the probe measured (research §5.1).
+    #[allow(clippy::too_many_arguments)]
+    async fn dialogue_line(
+        &mut self,
+        st: &mut DialogueState,
+        parsed: &crate::features::tools::dialogue::DialogueArgs,
+        labels: (&str, &str),
+        speaker_a: bool,
+        one_shot: Option<&str>,
+        sampling: &SamplingConfig,
+        muted: &SamplingConfig,
+        cancel: &CancellationToken,
+        run_base: u64,
+    ) -> Result<Message, DialogueEnd> {
+        use crate::features::tools::dialogue;
+        let loc = self.ctx.loc;
+        let persona = if speaker_a { &parsed.a } else { &parsed.b };
+        let notes = if speaker_a { &st.notes_a } else { &st.notes_b };
+        let who = if speaker_a { labels.0 } else { labels.1 };
+        let (system, messages) = dialogue::participant_view(
+            &st.transcript,
+            speaker_a,
+            &persona.system_message,
+            notes,
+            one_shot,
+            &dialogue::ViewText {
+                scene: parsed.scene.as_deref(),
+                begins: loc.t("prompt.dialogue.begins"),
+                note_prefix: loc.t("prompt.dialogue.note_prefix"),
+            },
+        );
+        let request = |s: SamplingConfig| ChatRequest {
+            system: Some(system.clone()),
+            messages: messages.clone(),
+            sampling: s,
+            tools: Vec::new(),
+            ..Default::default()
+        };
+        let mut out = self
+            .dialogue_stream(request(sampling.clone()), cancel, st, run_base)
+            .await;
+        match out.reason {
+            FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
+            FinishReason::Error => {
+                return Err(DialogueEnd::Failed {
+                    who: who.to_string(),
+                });
+            }
+            _ => {}
+        }
+        if out.text.trim().is_empty() {
+            // The whole cap went into reasoning — re-ask once with thinking
+            // muted; a second empty reply fails the run honestly.
+            out = self
+                .dialogue_stream(request(muted.clone()), cancel, st, run_base)
+                .await;
+            match out.reason {
+                FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
+                FinishReason::Error => {
+                    return Err(DialogueEnd::Failed {
+                        who: who.to_string(),
+                    });
+                }
+                _ => {}
+            }
+            if out.text.trim().is_empty() {
+                return Err(DialogueEnd::Failed {
+                    who: who.to_string(),
+                });
+            }
+        }
+        let Some(mut m) = finalize_message(
+            &out,
+            &self.ctx,
+            self.shared.engine_mode,
+            &self.shared.model_name,
+        ) else {
+            return Err(DialogueEnd::Failed {
+                who: who.to_string(),
+            });
+        };
+        if !speaker_a {
+            // The role-encoded transcript (research §3.5): b's side is `User`.
+            m.role = MessageRole::User;
+        }
+        Ok(m)
+    }
+
+    /// One director checkpoint: the incremental script, the verdict request
+    /// (thinking muted), and the verdicts applied in call order
+    /// (research §3.3–§3.4). `Ok(Some(..))` — the director stopped the
+    /// dialogue; `Ok(None)` — it goes on. A reply with no tool call counts as
+    /// `continue` — the dialogue proceeds toward its cap rather than stalling.
+    #[allow(clippy::too_many_arguments)]
+    async fn dialogue_checkpoint(
+        &mut self,
+        st: &mut DialogueState,
+        parsed: &crate::features::tools::dialogue::DialogueArgs,
+        labels: (&str, &str),
+        director_system: &str,
+        director_sampling: &SamplingConfig,
+        verdict_schemas: &[crate::shared::api::contract::ToolSchema],
+        sampling: &SamplingConfig,
+        muted: &SamplingConfig,
+        cancel: &CancellationToken,
+        run_base: u64,
+    ) -> Result<Option<(String, Option<String>)>, DialogueEnd> {
+        use crate::features::tools::dialogue::{self, Verdict};
+        let loc = self.ctx.loc;
+        let new_lines: Vec<String> = st.transcript[st.rendered..]
+            .iter()
+            .filter(|m| m.role != MessageRole::System)
+            .map(|m| {
+                let who = if m.role == MessageRole::Assistant {
+                    labels.0
+                } else {
+                    labels.1
+                };
+                format!("{who}: {}", m.text)
+            })
+            .collect();
+        st.rendered = st.transcript.len();
+        let header = if st.director_msgs.is_empty() {
+            loc.t("prompt.dialogue.script_opening")
+        } else {
+            loc.t("prompt.dialogue.script_more")
+        };
+        let user = format!(
+            "{header}\n\n{}\n\n{}",
+            new_lines.join("\n\n"),
+            loc.t("prompt.dialogue.ask")
+        );
+        st.director_msgs.push(ApiMessage::user(user));
+        let request = ChatRequest {
+            system: Some(director_system.to_string()),
+            messages: st.director_msgs.clone(),
+            sampling: director_sampling.clone(),
+            tools: verdict_schemas.to_vec(),
+            ..Default::default()
+        };
+        let out = self.dialogue_stream(request, cancel, st, run_base).await;
+        match out.reason {
+            FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
+            FinishReason::Error => {
+                return Err(DialogueEnd::Failed {
+                    who: loc.t("tool.run_dialogue.director_label").to_string(),
+                });
+            }
+            _ => {}
+        }
+        // The verdicts stay in the director's own conversation, so it
+        // remembers what it already directed (research §3.2).
+        st.director_msgs.push(
+            crate::shared::api::contract::ApiMessage::assistant_tool_calls(
+                out.text.clone(),
+                out.calls.clone(),
+            ),
+        );
+        for call in &out.calls {
+            st.director_msgs.push(ApiMessage::tool(
+                call.id.clone(),
+                loc.t("prompt.dialogue.noted"),
+            ));
+        }
+        let (verdicts, _unknown) = dialogue::parse_verdicts(&out.calls);
+        for verdict in verdicts {
+            match verdict {
+                Verdict::Continue => {}
+                Verdict::Stop { reason, summary } => {
+                    let line = match &summary {
+                        Some(s) => loc.tf(
+                            "tool.run_dialogue.stop_line_summary",
+                            &[("reason", &reason), ("summary", s)],
+                        ),
+                        None => loc.tf("tool.run_dialogue.stop_line", &[("reason", &reason)]),
+                    };
+                    self.dialogue_intervention(st, line);
+                    return Ok(Some((reason, summary)));
+                }
+                Verdict::Note { to_a, to_b, text } => {
+                    let to = match (to_a, to_b) {
+                        (true, false) => labels.0.to_string(),
+                        (false, true) => labels.1.to_string(),
+                        _ => format!("{}, {}", labels.0, labels.1),
+                    };
+                    self.dialogue_intervention(
+                        st,
+                        loc.tf(
+                            "tool.run_dialogue.note_line",
+                            &[("to", &to), ("text", &text)],
+                        ),
+                    );
+                    if to_a {
+                        st.notes_a.push(text.clone());
+                    }
+                    if to_b {
+                        st.notes_b.push(text);
+                    }
+                }
+                Verdict::Retry { note } => {
+                    // Only a generated line can be retried, and the retry's
+                    // regeneration spends a `max_messages` slot of its own.
+                    if st.generated == 0 || st.generated >= parsed.max_messages {
+                        continue;
+                    }
+                    let Some(last) = st
+                        .transcript
+                        .iter()
+                        .rposition(|m| m.role != MessageRole::System)
+                    else {
+                        continue;
+                    };
+                    let speaker_a = st.transcript[last].role == MessageRole::Assistant;
+                    let who = if speaker_a { labels.0 } else { labels.1 };
+                    // The open live transcript grew by appending and cannot
+                    // un-file the discarded line; the landed record is the
+                    // truth, and the intervention row says what happened.
+                    st.transcript.remove(last);
+                    st.rendered = st.rendered.min(st.transcript.len());
+                    let line = match &note {
+                        Some(n) => loc.tf(
+                            "tool.run_dialogue.retry_line_note",
+                            &[("who", who), ("note", n)],
+                        ),
+                        None => loc.tf("tool.run_dialogue.retry_line", &[("who", who)]),
+                    };
+                    self.dialogue_intervention(st, line);
+                    let line = self
+                        .dialogue_line(
+                            st,
+                            parsed,
+                            labels,
+                            speaker_a,
+                            note.as_deref(),
+                            sampling,
+                            muted,
+                            cancel,
+                            run_base,
+                        )
+                        .await?;
+                    self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
+                    st.transcript.push(line);
+                    st.generated += 1;
+                }
+                Verdict::Rewrite { text } => {
+                    let Some(last) = st
+                        .transcript
+                        .iter()
+                        .rposition(|m| m.role != MessageRole::System)
+                    else {
+                        continue;
+                    };
+                    let who = if st.transcript[last].role == MessageRole::Assistant {
+                        labels.0
+                    } else {
+                        labels.1
+                    };
+                    let line = loc.tf("tool.run_dialogue.rewrite_line", &[("who", who)]);
+                    // The final cut replaces the words; the original's
+                    // thoughts described a line that no longer exists.
+                    st.transcript[last].text = text;
+                    st.transcript[last].thoughts = None;
+                    self.dialogue_intervention(st, line);
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Files one director intervention as a `System` entry of the transcript
+    /// (rendered as a note row, research §3.4) and mirrors it live.
+    fn dialogue_intervention(&mut self, st: &mut DialogueState, text: String) {
+        let m = Message::new(MessageRole::System, text);
+        self.progress(TurnProgress::ChildRoundFiled(vec![m.clone()]));
+        st.transcript.push(m);
+        // The director already knows what it did — its own tool-call turn
+        // carries it — so interventions are not re-rendered into the script.
+        st.rendered = st.transcript.len();
+    }
+
+    /// One streamed dialogue generation through the muted child sink
+    /// (research §3.7: the transcript grows per message in this stage), with
+    /// the run's tokens accounted.
+    async fn dialogue_stream(
+        &mut self,
+        request: ChatRequest,
+        cancel: &CancellationToken,
+        st: &mut DialogueState,
+        run_base: u64,
+    ) -> RoundOutput {
+        let sink = RoundSink {
+            evt_tx: &self.shared.evt_tx,
+            done_tx: &self.shared.done_tx,
+            turn: self.shared.id,
+            child: Some(run_base),
+            mute_steps: true,
+        };
+        let out = stream_round(
+            &self.shared.backend,
+            request,
+            cancel,
+            self.shared.id,
+            &sink,
+            run_base + st.tokens,
+            self.total_reasoning + st.reasoning,
+            self.shared.ui_loc,
+            self.shared.compaction_enabled,
+            false,
+            None,
+        )
+        .await;
+        st.tokens += out.tokens;
+        st.reasoning += out.reasoning_tokens;
+        out
     }
 }
 

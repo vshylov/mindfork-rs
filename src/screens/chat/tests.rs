@@ -288,8 +288,9 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     assert_eq!(s.gen_tokens, 0);
     assert!(s.gen_context.is_none());
     assert!(!s.gen_context_exact);
-    // the system message doesn't land in the feed
-    assert_eq!(s.feed.len(), 2);
+    // a system entry in the list draws as a note row (a dialogue transcript's
+    // director intervention, spec §9.13) — three rows, not two
+    assert_eq!(s.feed.len(), 3);
 }
 
 /// A jump from a search hit (`AppCommand::OpenChatAt`): the feed opens on the

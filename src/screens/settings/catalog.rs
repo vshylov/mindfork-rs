@@ -659,6 +659,12 @@ impl SettingsScreen {
                     FieldKind::Text(t.subagent_run_timeout_secs.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.sub_timeout")),
+                row(
+                    FieldId::TDialogueTimeout,
+                    loc.t("ui.settings.field.dialogue_timeout"),
+                    FieldKind::Text(t.dialogue_run_timeout_secs.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.dialogue_timeout")),
             ],
         );
         rows.extend(grouped(

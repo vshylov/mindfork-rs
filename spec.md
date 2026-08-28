@@ -721,6 +721,7 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `set_system_message` | `{ system_message }` | Returns `ChatEffect::SetSystemMessage`; applied starting from the next request build. The only tool that invalidates the chat's prefix cache (justified). |
 | `get_last_user_message_time` | `{}` | Returns the last user message's timestamp (ISO 8601) + elapsed time. |
 | `call_subagent` | `{ name?, system_message, message }` | **The key feature** — a sub-agent with this turn's tools, run as a nested turn; its transcript stays on the call's record. See [9.3.2](#932-call_subagent). |
+| `run_dialogue` | `{ a, b, opening, scene?, direction?, max_messages?, moderate_every? }` | A **directed dialogue** of two personas the caller composes, written by the same model and steered by a model-driven director that decides when it ends; the transcript stays on the call's record like a sub-agent's. See [9.13](#913-the-directed-dialogue-run_dialogue). |
 | `send_followup_message` | `{}` | **Control** (opt., off by default) — write one more message as a separate reply. See [9.3.3](#933-conversation-control-tools). |
 | `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
 | `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
@@ -1733,6 +1734,88 @@ exist at all.
   assistant can now do; `/project status` with nothing attached names the command
   that attaches something; setting a slot echoes the line, and clearing one that
   was already empty says so rather than answering with silence.
+
+### 9.13. The directed dialogue: `run_dialogue`
+
+Two personas with caller-written system messages talk **to each other** —
+each sees the other's lines as `user` turns, the shape a chat model plays a
+role best in — while a model-driven **director** steers the scene and decides
+when it is over. Design, the confirmed forks and the stage-0 probe's
+measurements: [docs/research/two-agent-dialogue.md](docs/research/two-agent-dialogue.md);
+the record shape was left for it by the sub-agent track (research §3.14,
+[ADR 0011](docs/decisions/0011-dialogue-directed-run.md)).
+
+- **A loop-executed tool**, exactly like `call_subagent` ([9.3.2](#932-call_subagent)):
+  the `Tool` impl carries the schema, the catalog entry and the profile
+  toggle; the agentic loop recognises the name and runs the dialogue itself.
+  Withheld from sub-agent runs and refused below the top loop — no nesting.
+- **Arguments.** `a`/`b` — the personas: an optional display `name` and a
+  required `system_message`, exactly as the caller wrote it (the persona
+  **is** the role instrument, and the tool's description tells the calling
+  model to include a line-format clause in it); `opening` — the first line,
+  authored by the caller in one persona's voice (`speaker`: `a` default);
+  `scene` — an optional shared setting both personas see before the first
+  line; `direction` — the caller's brief to the director; `max_messages`
+  (default 16, cap 64) and `moderate_every` (default 2, cap 8).
+- **Three contexts, strictly in turn.** The canonical state is one
+  **role-encoded transcript** on the run: participant `a`'s lines are stored
+  `Assistant`, `b`'s are `User`, the director's interventions are `System`
+  entries. Every request is **derived** from it fresh: own lines
+  `assistant`, the other's `user`, a `user` prologue (the scene, else a
+  localized marker) wherever the first mapped line would be `assistant`,
+  adjacent same-role entries merged — so every view is strictly alternating,
+  which the strictest chat template requires and both merging cloud wires
+  accept (measured, research §5.1–§5.2). At most **one request is ever in
+  flight**: participant lines and director checkpoints take turns on the
+  turn's one backend — the feature's VRAM contract; on a local server each
+  context's prefix is append-only and keeps its cache slot (measured).
+- **The director is the main agent directing** (fork F6, the user's
+  decision): its system is the parent turn's own persona, then a
+  **conversation brief** — the chat's rolling summary when one is in force
+  plus the tail of the parent's own conversation within a fixed budget —
+  then a localized appendix carrying `direction` (or a default "stop at a
+  natural end"). The self-model injection stays top-turn-only (ADR 0010).
+  Its conversation is persistent across checkpoints: script increments as
+  `user` turns, its verdicts as its own tool-call turns.
+- **The verdicts** (sent only inside checkpoint requests, thinking muted):
+  `dialogue_continue`; `dialogue_stop { reason, summary? }`;
+  `dialogue_note { to, text }` — a standing stage direction appended to the
+  target's system from the next line on; `dialogue_retry { note? }` — the
+  last line discarded and regenerated by its author under a one-shot note;
+  `dialogue_rewrite { text }` — the last line's words replaced outright (a
+  note argues *against* the persona; the rewrite is the strong edit —
+  measured, research §5.1). Verdicts apply in call order; a reply with no
+  call counts as `continue`, so the dialogue proceeds toward its cap rather
+  than stalling. Every intervention stays visible in the transcript as a
+  `System` entry, drawn as a note row ([11.3](#113-the-message-feed)).
+- **The empty-line recovery** (a probe finding): an instruction conflict —
+  or, on a thinking model, role-play format pressure alone — can spend the
+  whole reply cap in reasoning with no text; such a generation is re-asked
+  once with thinking muted, and a second empty reply fails the run. Both
+  generations count against `max_messages`, so a spiral cannot loop.
+- **The record.** The run lands on the call's `ToolCallRecord` as a
+  `SubagentRun` with `kind: dialogue` and `participants` ([5.1](#51-core-entities-entities));
+  every transcript surface — the list nesting, the read-only screen, search,
+  `chat://`, deletion with the exchange, `/export` — keys off "the record
+  has a run" and works unchanged. The transcript's role headers are the
+  participants' names (`Assistant` = a, `User` = b), its opening system
+  bubble composes both personas and the director's brief, and its initial
+  title is `A ↔ B`. Writing the new record kind is why the chat file is at
+  `CHAT_SCHEMA` 3 ([12](#12-persistence-backup-and-migrations)): an older
+  binary refuses the file politely instead of failing on the unknown variant.
+- **The result** the caller gets is compact and closes the door: the
+  participants, how many lines, how it ended — the director's reason and
+  summary, the cap, the timeout, a cancellation, or whose line failed — and
+  the transcript's `chat://` address; the full text is read back with
+  `chat_read`, not returned inline.
+- **Limits**: `max_messages` counts every generated line, retried ones
+  included (`round_limit` when it fires); `tools.subagent_max_tokens` caps
+  each line; `tools.dialogue_run_timeout_secs` (default 1800 s — a dialogue
+  on a local thinking model is ~25 sequential requests) bounds the whole run,
+  landing the partial transcript as `timed_out`. `Esc` cancels the run with
+  the turn; each call spends one round of the parent's budget. In this stage
+  the open transcript grows **per line** (the streamed partial has no speaker
+  side yet — the stage-2 item of the research doc).
 
 ## 10. AI-companion profiles
 

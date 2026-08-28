@@ -24,6 +24,16 @@ const SUBAGENT_NS: Uuid = Uuid::from_u128(0x6d66_5f73_7562_6167_656e_745f_7631_0
 /// step describes the past, and `shared` cannot reach `features` anyway (FSD).
 const CALL_SUBAGENT: &str = "call_subagent";
 
+/// `chats/<id>.json` 2 → 3: no shape change. The step exists so every file is
+/// stamped with a version an older binary **refuses politely** — a file may
+/// now carry a `RunKind::Dialogue` run (spec §9.13), which is a new serde
+/// variant, and without the bump an old binary would fail parsing the whole
+/// file instead of reporting "data from a newer version" (ADR 0006).
+pub(super) fn chat_to_v3(mut v: Value) -> Result<Value> {
+    v["v"] = json!(3);
+    Ok(v)
+}
+
 /// `chats/<id>.json` 1 → 2. See the module doc.
 pub(super) fn chat_to_v2(mut v: Value) -> Result<Value> {
     let chat_id = v

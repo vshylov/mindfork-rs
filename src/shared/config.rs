@@ -730,6 +730,11 @@ pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 4096;
 /// Default time limit for a **whole** sub-agent run (seconds) — every round and
 /// every tool call of it. One knob, since the run is unattended inside a turn.
 pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
+/// Default time limit for a whole dialogue run (`run_dialogue`, spec §9.13).
+/// An order of magnitude above the sub-agent's on purpose: a 16-message
+/// dialogue on a local thinking model is ~25 sequential requests, measured at
+/// up to ~8 minutes in the stage-0 probe (two-agent-dialogue.md §5.2).
+pub const DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS: u64 = 1800;
 /// Default code-execution timeout in the Wasmer sandbox (seconds). More generous
 /// than the local interpreter's (10s): WASM interpretation is ~2–5× slower than native.
 /// See docs/research/python-wasmer-sandbox.md.
@@ -877,6 +882,9 @@ pub struct ToolSettings {
     /// together. Replaced `subagent_timeout_secs` (one request) when the
     /// sub-agent gained tools — settings step 1→2 carries a changed value over.
     pub subagent_run_timeout_secs: u64,
+    /// Time limit for a whole dialogue run (`run_dialogue`, spec §9.13):
+    /// every participant line and director checkpoint of it.
+    pub dialogue_run_timeout_secs: u64,
     /// Ask the user before the agentic loop runs a tool marked dangerous
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
@@ -910,6 +918,7 @@ impl Default for ToolSettings {
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_run_timeout_secs: DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS,
+            dialogue_run_timeout_secs: DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS,
             confirm_dangerous: false,
             mcp_images: true,
         }
@@ -2175,6 +2184,10 @@ mod tests {
         assert_eq!(
             c.tools.subagent_run_timeout_secs,
             DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS
+        );
+        assert_eq!(
+            c.tools.dialogue_run_timeout_secs,
+            DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS
         );
         // Confirmation of dangerous tool calls is opt-in: off until turned on.
         assert!(!c.tools.confirm_dangerous);

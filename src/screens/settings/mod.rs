@@ -599,6 +599,9 @@ enum FieldId {
     McpMaxResult,
     TSubMaxTokens,
     TSubTimeout,
+    /// The whole-run time limit of a dialogue (`tools.dialogue_run_timeout_secs`,
+    /// spec §9.13).
+    TDialogueTimeout,
     /// Ask before the agentic loop runs a tool marked dangerous
     /// (`tools.confirm_dangerous`, spec §9.8).
     TConfirmDangerous,

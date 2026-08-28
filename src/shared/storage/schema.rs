@@ -26,7 +26,7 @@ pub const SETTINGS_SCHEMA: u32 = 2;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 2;
+pub const CHAT_SCHEMA: u32 = 3;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -175,11 +175,18 @@ pub fn profiles_artifact() -> JsonArtifact {
     }
 }
 
-const CHAT_STEPS: &[Step] = &[Step {
-    to: 2,
-    summary: "a transcript is synthesized for every old call_subagent record",
-    apply: super::chat_steps::chat_to_v2,
-}];
+const CHAT_STEPS: &[Step] = &[
+    Step {
+        to: 2,
+        summary: "a transcript is synthesized for every old call_subagent record",
+        apply: super::chat_steps::chat_to_v2,
+    },
+    Step {
+        to: 3,
+        summary: "chat files may carry dialogue runs (RunKind::Dialogue)",
+        apply: super::chat_steps::chat_to_v3,
+    },
+];
 
 pub fn chat_artifact() -> JsonArtifact {
     JsonArtifact {
@@ -283,12 +290,17 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings and chats took their first real step; profiles are still dormant.
-        for a in [settings_artifact(), chat_artifact()] {
-            assert_eq!(a.current, 2, "{}", a.name);
-            assert_eq!(a.steps.len(), 1, "{}", a.name);
-            assert_eq!(a.steps[0].to, 2);
-        }
+        // Settings took one real step; chats took two (the second is the
+        // dialogue-run stamp, spec §9.13); profiles are still dormant.
+        let settings = settings_artifact();
+        assert_eq!(settings.current, 2);
+        assert_eq!(settings.steps.len(), 1);
+        assert_eq!(settings.steps[0].to, 2);
+        let chats = chat_artifact();
+        assert_eq!(chats.current, 3);
+        assert_eq!(chats.steps.len(), 2);
+        assert_eq!(chats.steps[0].to, 2);
+        assert_eq!(chats.steps[1].to, 3);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());

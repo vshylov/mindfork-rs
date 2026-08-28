@@ -1,12 +1,15 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **research complete — probe GO on both gate models and both
-> strict-alternation clouds** (§5.1–§5.2, 2026-08-29: every go bar met,
-> 104/105 checkpoint verdicts parsed across the four backends, zero role
-> bleed, cache slots held, and
-> two executor rules found live — the muted re-ask for the all-thinking
-> empty turn, and the note→retry→rewrite ladder emerging unprompted).
-> Next: PR 1 (§7). User's decision (2026-08-28):
+> Status: **stage 1 implemented** (2026-08-29, `feat/dialogue-run`: spec
+> §9.13, [ADR 0011](../decisions/0011-dialogue-directed-run.md), journal
+> [tools.md](../journal/tools.md); smoke GO on Qwen 3.6, the probe's café
+> fixture graduated into `dialogue_e2e_live`). Stage 2 — the transcript's
+> token-level streaming with a speaker side (§3.7). The probe: **GO on both
+> gate models and both strict-alternation clouds** (§5.1–§5.2: every go bar
+> met, 104/105 checkpoint verdicts parsed across the four backends, zero
+> role bleed, cache slots held, and two executor rules found live — the
+> muted re-ask for the all-thinking empty turn, and the note→retry→rewrite
+> ladder emerging unprompted). User's decision (2026-08-28):
 > F1–F10 at their recommended options, **F6 amended** — the director carries
 > the **main agent's identity** (the chat's persona) and **knows the
 > conversation with the user**, delivered as a brief built by the `/compact`
