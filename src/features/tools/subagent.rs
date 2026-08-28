@@ -25,13 +25,14 @@ use super::{Tool, ToolContext, ToolOutcome};
 pub const CALL_SUBAGENT_ID: &str = "call_subagent";
 
 /// Whether a tool of the turn is **withheld** from a sub-agent
-/// (docs/research/subagent-chats.md §3.3): the tool itself (no nesting), the
-/// read-back pair over the *parent's* folded history, and the self-model
-/// family — the profile persona's identity, which a persona the parent
-/// composed must not write into. Everything else the turn offers, the
-/// sub-agent gets.
+/// (docs/research/subagent-chats.md §3.3): the nested-run pair itself (no
+/// nesting — `run_dialogue` included, spec §9.13), the read-back pair over
+/// the *parent's* folded history, and the self-model family — the profile
+/// persona's identity, which a persona the parent composed must not write
+/// into. Everything else the turn offers, the sub-agent gets.
 pub fn withheld_from_subagent(id: &str) -> bool {
     id == CALL_SUBAGENT_ID
+        || id == super::dialogue::RUN_DIALOGUE_ID
         || id == super::history::HISTORY_READ_ID
         || id == super::history::HISTORY_SEARCH_ID
         || super::self_model::is_self_model_tool(id)

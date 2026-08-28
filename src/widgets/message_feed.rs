@@ -145,7 +145,12 @@ impl FeedMessage {
         let role = match msg.role {
             MessageRole::User => FeedRole::User,
             MessageRole::Assistant => FeedRole::Assistant,
-            MessageRole::Tool | MessageRole::System => return None,
+            // A `System` entry inside a message list is a director's
+            // intervention in a dialogue transcript (spec §9.13) — drawn as a
+            // note row. Top chats keep their system message on the chat, never
+            // in the list, so nothing else reaches this arm.
+            MessageRole::System => FeedRole::Note,
+            MessageRole::Tool => return None,
         };
         let off = msg.text.len();
         // Conversation control tools (followup/rewrite) are control signals,
@@ -3168,10 +3173,16 @@ mod tests {
         }
     }
 
+    /// A `System` entry in a message list is a dialogue transcript's director
+    /// intervention (spec §9.13) and draws as a note row; tool messages still
+    /// draw nothing of their own.
     #[test]
-    fn from_message_skips_system() {
-        let sys = Message::new(MessageRole::System, "s");
-        assert!(FeedMessage::from_message(&sys).is_none());
+    fn from_message_projects_system_as_a_note() {
+        let sys = Message::new(MessageRole::System, "Director: wrap up");
+        let note = FeedMessage::from_message(&sys).unwrap();
+        assert_eq!(note.role, FeedRole::Note);
+        assert_eq!(note.text, "Director: wrap up");
+        assert!(FeedMessage::from_message(&Message::new(MessageRole::Tool, "r")).is_none());
         let user = Message::user("hi");
         assert_eq!(
             FeedMessage::from_message(&user).unwrap().role,

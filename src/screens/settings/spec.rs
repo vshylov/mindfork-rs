@@ -458,6 +458,11 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.tools.subagent_run_timeout_secs = v;
             }
         }),
+        TDialogueTimeout => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.tools.dialogue_run_timeout_secs = v;
+            }
+        }),
         RagTarget => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.rag.chunk_target_chars = v;

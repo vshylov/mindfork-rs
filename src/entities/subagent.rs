@@ -13,14 +13,33 @@ use uuid::Uuid;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::sampling::SamplingConfig;
 
-/// What kind of run a record carries. `Subagent` today; the director-led
-/// dialogue of two personas is the planned second kind (research §3.14) — the
-/// list, the read-only screen and the deletion rule key off "this record has a
-/// run", never off the kind.
+/// What kind of run a record carries. The list, the read-only screen and the
+/// deletion rule key off "this record has a run", never off the kind; what
+/// *does* key off it is the feed's role labels and the transcript's system
+/// bubble (spec §9.13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunKind {
+    /// One `call_subagent` delegation (spec §9.3.2).
     Subagent,
+    /// A director-led dialogue of two personas (`run_dialogue`, spec §9.13,
+    /// docs/research/two-agent-dialogue.md). Writing this variant is what the
+    /// `CHAT_SCHEMA` 2→3 bump exists for: an older binary fails to parse it,
+    /// and the version guard turns that into a polite refusal.
+    Dialogue,
+}
+
+/// One of a dialogue run's two speakers (spec §9.13): the display name the
+/// feed labels their side with, and the persona the caller composed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Participant {
+    /// The display name (the call's optional `name`); `None` → a localized
+    /// fallback label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The persona's system message, exactly as the caller wrote it
+    /// (director notes are appended at request-derivation time, never here).
+    pub system_message: String,
 }
 
 /// How a run ended. `None` on the record means the run never reported — the
@@ -62,8 +81,14 @@ pub struct SubagentRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<DateTime<Utc>>,
     /// The persona the parent composed; `set_system_message` inside the run
-    /// replaces it, like any chat's.
+    /// replaces it, like any chat's. For a dialogue run this holds the
+    /// **director's resolved brief** — the personas live in `participants`.
     pub system_message: String,
+    /// A dialogue run's two speakers, in order: `[0]` is stored as the
+    /// `Assistant` role of `messages`, `[1]` as `User` (research §3.5, fork
+    /// F2 — the role-encoded transcript). Empty for a sub-agent run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participants: Vec<Participant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampling_override: Option<SamplingConfig>,
     /// `User(instruction)`, then the run's rounds exactly as any chat stores
@@ -107,6 +132,7 @@ impl SubagentRun {
             messages,
             outcome: Some(RunOutcome::Completed),
             tokens: 0,
+            participants: Vec::new(),
         }
     }
 
@@ -150,6 +176,7 @@ mod tests {
             messages: vec![Message::user("Оцени X."), Message::assistant("X слаб.")],
             outcome: Some(RunOutcome::Completed),
             tokens: 12,
+            participants: Vec::new(),
         }
     }
 
