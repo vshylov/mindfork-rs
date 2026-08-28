@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 2 — the sub-agent with the agent's tools (done)
 - Post-M9: `web_search` said "no results" while it was blocked, again (done)
 - Post-M9: `web_search` keyed providers — Tavily (done)
+- Post-M9: the two-agent dialogue — research and the stage-0 live probe (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2698,3 +2699,52 @@ the probe lives on `spike/code-search-probe`, unmerged.
   that does (`live_tavily_returns_page_text_so_the_tool_need_not_fetch_it`):
   **GO** — results carry text, and `needs_content` selects fewer pages than there
   are results, which is the saving stated as an assertion rather than a hope.
+
+### Post-M9: the two-agent dialogue — research and the stage-0 live probe (done)
+
+- **What/why**: the feature the sub-agent track left open (research §3.14,
+  roadmap) — `run_dialogue`: two personas with caller-written system messages
+  talking to each other via the role swap, one call / one transcript on the
+  record (`RunKind::Dialogue`), and a model-driven director deciding when the
+  dialogue is over. Design doc with every fork:
+  [docs/research/two-agent-dialogue.md](../research/two-agent-dialogue.md).
+  Forks F1–F10 confirmed at the recommended options; **F6 amended by the
+  user**: the director carries the parent chat's persona and a conversation
+  brief built by the `/compact` summarizer's mechanism — the neutral built-in
+  director was rejected because the stop/steer judgment should know *why* the
+  user wanted the dialogue.
+- **The probe** (`spike/dialogue-probe`, `src/shared/api/dialogue_probe.rs`):
+  the §3.2 derivation (swap + user prologue + same-role merge) and §3.3
+  checkpoint shape inlined over the app's own clients, wrapped in
+  `RetryBackend` exactly as `live_backend()` wraps the e2e set — the first
+  run's "failure" was a stale pooled connection (lessons §9's back-to-back
+  flake), an instrument fault, not a finding. Three fixtures (a finite café
+  scene; a haggle engineered near-impasse for steering; a poet verbose by
+  construction to force edits), a raw-request arm reading `timings.cache_n`,
+  and one cloud run each on the strict-alternation wires.
+- **Results — GO everywhere** (details §5.1–§5.2 of the doc). Gemma 4 31B:
+  11/12 director stops at real endings, 53/53 verdicts parsed, 0 role bleed,
+  a finite dialogue in 42–59 s. Qwen 3.6 27B: 11/12 stops (one an *honest
+  impasse* — the walk-away branch the direction allows), 42/43 verdicts,
+  0 bleed, thinking-model costs (a line 22–27 s avg). haiku-4-5 and
+  gemini-2.5-flash: 1/1 each, the swap survives both merging wires. Across
+  all four backends: **104/105 checkpoint verdicts parsed**. The unprompted
+  find: the intended escalation ladder emerged by itself — notes while
+  steering preferences (15 on Gemma, obeyed), retry against a style, and
+  rewrite in the character's voice when the persona won anyway.
+- **Cache slots — the §3.9 fear did not materialize**: on the default
+  4-slot server all three contexts keep their prefixes from the second visit
+  (A `cache_n=146/161`, B 145, D 106; same shape on Qwen), so alternation
+  costs the appended tail, not a full re-prefill.
+- **Two executor rules found live, folded into the design**: (1) the
+  all-thinking empty turn — an instruction conflict (a director note against
+  a persona's format rule) spends the whole 1536-token cap in
+  `reasoning_content`; on Qwen even unconflicted openers can spiral (~29% of
+  generations under steering pressure). The muted re-ask
+  (`reasoning_budget: 0`) recovered **28/28** across both models; the 4096
+  ceiling alternative is recorded, not taken. (2) A muted director can still
+  deliberate in plain text past the 512-token verdict cap — the
+  no-call-means-continue fallback absorbed the one occurrence.
+- **Tests**: 2653 unit tests green (unchanged), `#[ignore]` 120 → 125 (the
+  five probe arms). Live: the full probe on both gate models on the LAN
+  stack, plus the two cloud spot-checks.

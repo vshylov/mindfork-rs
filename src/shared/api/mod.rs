@@ -23,6 +23,11 @@ pub mod mock;
 #[cfg(test)]
 mod continue_probe;
 
+// Stage-0 live probe for the two-agent dialogue
+// (docs/research/two-agent-dialogue.md §5).
+#[cfg(test)]
+mod dialogue_probe;
+
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
