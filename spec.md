@@ -1913,7 +1913,16 @@ A direct requirement from the task:
   background turns — where the requested action reports into the overlay the user is looking
   at ([§6.8](#68-transient-engine-failures-and-what-the-user-is-told)). See
   [docs/history/auto-chat-title.md](docs/history/auto-chat-title.md).
-- Contextual actions: create (with a profile picker), clone, delete (soft).
+- **The row's message counter counts what the feed draws** (`{n} msg`): user
+  messages and assistant replies, one per bubble — an agentic loop's rounds and
+  their tool/system rows fold into the reply they belong to, exactly as the
+  conversation reads when opened ([§11.3](#113-the-message-feed)). One
+  implementation, `entities::chat::visible_message_count`, feeds a chat's card
+  and a sub-agent transcript's alike ([§9.3.2](#932-call_subagent)), and an
+  every-prefix equality test beside the feed pins it to the feed's projection.
+  The raw row count it replaced included every stored tool result and loop
+  round, so a one-exchange chat with a busy tool loop said "34 msg" — a number
+  with no referent on any screen.
 - **Sub-agent transcripts are rows of the list, nested under the chat whose
   call made them** ([§9.3.2](#932-call_subagent); docs/research/subagent-chats.md
   §3.7): indented with a `└` in place of the dot, in **call order** under their
@@ -1956,7 +1965,7 @@ A direct requirement from the task:
   under fresh ids (two chats answering to one `chat://` prefix would make the
   reference ambiguous). **A sub-agent that is running right now is a row too**
   ([§9.3.2](#932-call_subagent)): under its parent, marked *running* beside a
-  count that grows as its rounds file, openable, renameable. **Switching chats
+  count updated as its rounds file, openable, renameable. **Switching chats
   cancels a running turn** — except between the running turn's chat and that
   transcript, in either direction: looking at the run is not leaving it. Back
   on the parent, its feed holds the rounds the turn has filed so far **and

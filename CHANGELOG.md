@@ -39,6 +39,15 @@ split by subsystem.
   yourself always wins; a server that cannot say leaves the caption empty, as
   before.
 
+### Changed
+
+- **The chat list counts messages the way the conversation reads.** The row's
+  `N msg` is now the number of messages you see when you open the chat — your
+  questions and the assistant's replies. It used to count every stored row,
+  including each tool call's result and each round of an agentic loop, so a
+  chat with one question and one tool-assisted answer could say "34 msg".
+  Sub-agent transcript rows count the same way.
+
 ### Fixed
 
 - **The external server's "Model (opt.)" field is now actually sent to it.** It

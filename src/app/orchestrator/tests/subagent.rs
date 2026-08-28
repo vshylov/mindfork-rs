@@ -506,7 +506,9 @@ async fn subagent_with_an_empty_message_is_a_tool_error_without_a_run() {
 
 /// Starts a delegation whose child does one tool round and then hangs, and
 /// waits until the list shows the transcript **running with that round
-/// filed** (3 messages). Returns everything the caller needs to go on.
+/// filed** — 2 visible messages: the instruction plus the round's reply, its
+/// tool row folded in (`visible_message_count`, spec §11.2). Returns
+/// everything the caller needs to go on.
 async fn running_delegation() -> (
     tempfile::TempDir,
     Arc<ScriptRecorder>,
@@ -556,7 +558,7 @@ async fn running_delegation() -> (
     let list = wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::ChatList(chats)
             if chats.iter().any(|c| c.id == chat_id
-                && c.children.iter().any(|r| r.running && r.message_count == 3)))
+                && c.children.iter().any(|r| r.running && r.message_count == 2)))
     })
     .await
     .expect("the running transcript with its first round on the list");
@@ -570,7 +572,7 @@ async fn running_delegation() -> (
 }
 
 /// The running transcript is a row of the list (marked *running*, its count
-/// growing as rounds file), opens read-only with the rounds so far, and the
+/// updated as rounds file), opens read-only with the rounds so far, and the
 /// parent ↔ child switch — both ways — does **not** cancel the turn: the
 /// turn ends only when `Esc` says so, the parent's feed is re-activated whole
 /// at landing, and the landed row is the same transcript, no longer running.

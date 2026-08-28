@@ -167,7 +167,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-28, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2650 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2653 unit tests
 green, 120 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -179,6 +179,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The chat list counts messages as the conversation reads** — the row's
+  `N msg` was `messages.len()`, and an agentic loop stores a row per round and
+  per tool result, so one tool-assisted exchange said "34 msg"; now one rule,
+  `entities::chat::visible_message_count`, counts the feed's bubbles for chat
+  and transcript cards alike, pinned to the feed's projection by an
+  every-prefix equality test
+  ([docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.2).
 - **The model's name in `external` mode — asked of the server, and sent to it** —
   connect by URL with the "Model (opt.)" field blank and the engine is now asked
   what it is running (`EngineBackend::model_id`: `GET /v1/models` when it lists
