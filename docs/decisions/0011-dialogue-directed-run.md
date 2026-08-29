@@ -1,4 +1,4 @@
-# ADR 0011 — The directed dialogue as a scripted multi-context run on the sub-agent's record
+# ADR 0011 — The directed dialogue as a scripted multi-context run on the subagent's record
 
 **Status:** accepted (2026-08-29). Design, the confirmed forks and the
 stage-0 probe's measurements —
@@ -16,7 +16,7 @@ loop-executed pattern this extends), [ADR 0006](0006-data-schema-versioning.md)
 
 ## Context
 
-The sub-agent track left the two-agent dialogue as its named next feature
+The subagent track left the two-agent dialogue as its named next feature
 (research §3.14): two personas with caller-written system messages talking to
 each other — each seeing the other as the user, the shape a chat model plays
 a role best in — with the transcript viewable as an ordinary child chat. The
@@ -35,7 +35,7 @@ escalation ladder emerging unprompted.
 
 ## Decision
 
-1. **The record is the sub-agent's.** A dialogue lands as `SubagentRun` with
+1. **The record is the subagent's.** A dialogue lands as `SubagentRun` with
    `kind: Dialogue` and an additive `participants: Vec<Participant>`, on the
    call's `ToolCallRecord` — one call, one transcript. Every transcript
    surface (list nesting, the read-only screen, search, titles, `chat://`,
@@ -70,9 +70,9 @@ escalation ladder emerging unprompted.
    honestly), and a checkpoint reply with no verdict call counts as
    `continue`. Both generations of a recovery count against `max_messages`.
 6. **Budgets**: `max_messages` (argument, default 16) is the cap and the
-   retry meter; the per-line cap is the sub-agent's `subagent_max_tokens`;
+   retry meter; the per-line cap is the subagent's `subagent_max_tokens`;
    the whole run is bounded by its own `tools.dialogue_run_timeout_secs`
-   (1800 s — an order past the sub-agent's, from the probe's measured
+   (1800 s — an order past the subagent's, from the probe's measured
    costs), with the state owned outside the timed future so a timeout lands
    the partial transcript. The five existing `RunOutcome`s cover every
    ending; no new variant was needed.

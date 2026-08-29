@@ -28,7 +28,7 @@ desc = "Attach a code project to a chat: the assistant reads, searches and edits
 
 [[extra.features]]
 title = "It can delegate"
-desc = "The assistant can hand a side-task to a sub-agent with the same tools. The transcript is a conversation of its own — nested in the chat list, searchable, and streaming live while it runs."
+desc = "The assistant can hand a side-task to a subagent with the same tools. The transcript is a conversation of its own — nested in the chat list, searchable, and streaming live while it runs."
 
 [[extra.features]]
 title = "A real TUI"
@@ -40,7 +40,7 @@ desc = "Attach a screenshot, a photo or a diagram to your message — from a fil
 
 [[extra.features]]
 title = "Find anything you said"
-desc = "Search inside the open conversation, or across every chat's messages — a hit opens the chat at the matching message, highlighted. Sub-agent transcripts are searched too."
+desc = "Search inside the open conversation, or across every chat's messages — a hit opens the chat at the matching message, highlighted. Subagent transcripts are searched too."
 
 [[extra.features]]
 title = "Long chats keep working"

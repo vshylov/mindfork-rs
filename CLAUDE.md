@@ -66,7 +66,7 @@ embedding server · 0003 own markdown renderer · 0004 engine contract and
 multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 0006 data schema versioning and migrations · 0007 plugins — MCP tool host and a
 neutral import format · 0008 API keys with machine-bound encryption · 0009
-message speech (TTS) · 0010 the sub-agent as a nested turn · 0011 the
+message speech (TTS) · 0010 the subagent as a nested turn · 0011 the
 directed dialogue as a scripted multi-context run.
 
 ## Key architectural decisions
@@ -181,7 +181,7 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 - **`run_dialogue` — a dialogue of two personas, directed by the assistant** —
-  the sub-agent track's promised next feature, **complete (both stages)**: a
+  the subagent track's promised next feature, **complete (both stages)**: a
   loop-executed
   sibling of `call_subagent` where two caller-composed personas talk (each
   sees the other as the user, the role-encoded transcript on the call's
@@ -248,7 +248,7 @@ being recent is dropped, not shortened.
   section, and each screen owns its section table next to its key handler
   ([docs/history/help-hotkeys-context.md](docs/history/help-hotkeys-context.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.7).
-- **Sub-agent transcripts fold under their chat in the list** — collapsed by
+- **Subagent transcripts fold under their chat in the list** — collapsed by
   default with a `▸ n` mark on the row; `Ctrl+O` in the list / `/subagents` in
   the chat, remembered per chat (`Chat.children_expanded`, additive), and a
   search match still surfaces a transcript
@@ -266,7 +266,7 @@ being recent is dropped, not shortened.
   each got a typed route through the settings paths they mirror, and the
   draft flush now precedes the intent, so a spent command no longer resurfaces
   in the box ([docs/history/commands-stage3.md](docs/history/commands-stage3.md)).
-- **Sub-agent chats, PRs 2–7 of 7 — the sub-agent with the agent's tools,
+- **Subagent chats, PRs 2–7 of 7 — the subagent with the agent's tools,
   the migration of old calls, the transcript in the list, in search, titled,
   and live while it runs** — `call_subagent` runs as a nested turn with the
   turn's tools (minus itself, `history_*`, the self-model), its transcript

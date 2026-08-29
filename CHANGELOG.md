@@ -68,7 +68,7 @@ split by subsystem.
   questions and the assistant's replies. It used to count every stored row,
   including each tool call's result and each round of an agentic loop, so a
   chat with one question and one tool-assisted answer could say "34 msg".
-  Sub-agent transcript rows count the same way.
+  Subagent transcript rows count the same way.
 
 - **One word for a subagent, in both languages.** Each interface spelled it
   more than one way, and two spellings could show on the same screen: the role

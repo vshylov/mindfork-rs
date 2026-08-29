@@ -1,4 +1,4 @@
-# ADR 0010 — The sub-agent as a nested turn, its transcript on the call's record
+# ADR 0010 — The subagent as a nested turn, its transcript on the call's record
 
 **Status:** accepted (2026-08-23). Design and the decided forks —
 [docs/research/subagent-chats.md](../research/subagent-chats.md). Implemented
@@ -15,8 +15,8 @@ schema-only tool). Related: [ADR 0004](0004-engine-contract-multi-provider.md)
 
 `call_subagent` (spec §9.3.2) was one request with a system message and a
 single user message — no history, no tools, a token cap, a 60-second timeout —
-returning a string. The user asked for a sub-agent with **every tool and
-capability of the main agent except creating sub-agents**, whose call shows in
+returning a string. The user asked for a subagent with **every tool and
+capability of the main agent except creating subagents**, whose call shows in
 the chat list **as a chat nested under the one that made it**, renameable,
 searchable, openable read-only, and **inseparable from the parent**: stored in
 the parent's file, removed only when the spawning exchange is taken back or
@@ -26,7 +26,7 @@ Two facts of the codebase decided the shape. First, a `Tool` sees only
 `ToolContext`; the registry, the dangerous-call confirmation channel, the UI
 sender and the round budgets live in the orchestrator's agentic loop
 (`TurnLoop`), which is `app`-layer code that `features` cannot reach (FSD). A
-tool-using sub-agent therefore cannot be implemented *inside* the tool. Second,
+tool-using subagent therefore cannot be implemented *inside* the tool. Second,
 while a turn runs its messages exist only inside the generation task and land
 on `Chat` in one piece at the end; a child that is part of the turn is part of
 that.
@@ -35,12 +35,12 @@ that.
 
 1. **A loop-executed tool.** `call_subagent` keeps a `Tool` impl for the
    schema, the catalog and the profile toggle; the loop recognises the name in
-   `resolve_call_result` and runs the sub-agent itself — after the disabled
+   `resolve_call_result` and runs the subagent itself — after the disabled
    gate and the confirmation gate, inside the turn's cancellation, with a
    `ToolCall` card and a `ToolCallRecord` like any call. The precedent is the
    conversation-control pair (spec §9.3.3); the difference is that this tool
    still goes through every ordinary gate.
-2. **The sub-agent is a child `TurnLoop` over the turn's shared part.** What
+2. **The subagent is a child `TurnLoop` over the turn's shared part.** What
    every loop of one turn shares — backend, registry, the UI sender, the
    confirmation receiver and the "approved for this turn" set, the generation
    id, the limits — is `TurnShared`, owned by the task; the parent's loop
@@ -50,7 +50,7 @@ that.
    token and a **muted event sink** (`RoundSink`): nothing of its stream
    reaches the parent's bubble except the token counter, re-based on the
    parent's. Every behaviour of the main loop — confirmation popups, thinking
-   signatures, control tools, effects, images — is therefore the sub-agent's
+   signatures, control tools, effects, images — is therefore the subagent's
    too, with no second loop to keep in step. A third loop beside the silent
    background one was rejected for exactly that reason.
 3. **Tools and environment inherited, history not.** The child's set is the
@@ -94,7 +94,7 @@ that.
   The chat-file migration the track does carry (`CHAT_SCHEMA` 2, PR 3) is for
   **old calls**: it synthesizes a run from what the record already holds, so
   the migrated file is a superset of the old one.
-- The sub-agent's cost is visible: the counter grows with its tokens, the run
+- The subagent's cost is visible: the counter grows with its tokens, the run
   records them, and the settings say `max_tool_rounds` applies to each run.
 - `Message` is a recursive type (a run holds messages that hold records);
   `ChatActivated` and every save clone the run with the parent — the same

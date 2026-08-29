@@ -36,7 +36,7 @@ Two of those tools deserve their own sentence. A chat can have a **code
 project** attached: the assistant reads, searches and edits it, and runs
 the build and test command lines you typed — never ones it composed — with
 every change reviewable as a diff and revertible per file. And it can
-**delegate**: a sub-agent runs as a nested turn with the same tools, and
+**delegate**: a subagent runs as a nested turn with the same tools, and
 its transcript lands in the chat list as a read-only conversation of its
 own — searchable, and streaming live while it runs.
 

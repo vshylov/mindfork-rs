@@ -47,7 +47,7 @@ The document's purpose is to serve as the implementation baseline; it records th
 
 ### 1.1. Vision
 
-`mindfork-rs` is a cross-platform (**Windows, Linux**) console application for talking to local LLMs from the **Gemma** (3, 4) and **Qwen** (3.5, 3.6) families. The key idea carries over from attempt #1: instead of broad, shallow model support — **narrow but high-quality** support for two families, plus a set of **tools** that make the assistant smarter, more self-aware, and "more alive": RAG, notes, Python execution, web search (DuckDuckGo), introspection (reading/changing its own system message and sampling parameters, a sense of time) and — most importantly — `call_subagent` (spinning up a temporary sub-agent for a second opinion).
+`mindfork-rs` is a cross-platform (**Windows, Linux**) console application for talking to local LLMs from the **Gemma** (3, 4) and **Qwen** (3.5, 3.6) families. The key idea carries over from attempt #1: instead of broad, shallow model support — **narrow but high-quality** support for two families, plus a set of **tools** that make the assistant smarter, more self-aware, and "more alive": RAG, notes, Python execution, web search (DuckDuckGo), introspection (reading/changing its own system message and sampling parameters, a sense of time) and — most importantly — `call_subagent` (spinning up a temporary subagent for a second opinion).
 
 Why TUI: the interface ends up fast, predictable, and portable; the application can run in an ordinary terminal and in a **JupyterLab** terminal. That's why markdown rendering is **text-only** (no rendering to images), with **unicode approximation of LaTeX** (arrows and simple formulas stay readable). Mermaid diagrams aren't required yet.
 
@@ -323,7 +323,7 @@ pub struct ToolCallRecord {                 // for rendering collapsible tool bl
     pub subagent: Option<Box<SubagentRun>>, // a `call_subagent` call's transcript (§9.3.2); additive
 }
 
-// A sub-agent run — a chat-shaped transcript that belongs to the call that made it
+// A subagent run — a chat-shaped transcript that belongs to the call that made it
 // (§9.3.2, ADR 0010). `messages` holds the run's rounds exactly as a chat stores them.
 pub struct SubagentRun {
     pub id: Uuid,                           // for chat:// references, the list, search
@@ -485,7 +485,7 @@ loop:
 - **Cancellation**: a `CancellationToken` aborts the current HTTP stream; the partial response is kept; the chat goes `Cancelling → Idle`.
 - **Regenerating the last response**: delete the last assistant message (and any tool messages from that turn) and repeat the request with the same context (a new seed, if a random seed is enabled).
 - **Continuing a response** (`/continue`, [§11.7](#117-commands); design and measurements — [docs/research/continue-generation.md](docs/research/continue-generation.md)): the history is re-sent with the partial as its **trailing assistant message** and the engine continues it **in place** (assistant prefill). Everything that arrives appends into the same `Message` — same id, same bubble, no separator; the seam is the model's own.
-  - **Eligibility** is read off the tail. An assistant message with visible text whose recorded end state (`MessageMetadata.finish`: `stop`/`length`/`cancelled`/`error`; additive — older messages read as absent) is an interruption — or absent — is continued via prefill. A tail of **tool results** (a turn interrupted between rounds) resumes the agentic loop instead: an ordinary next round, no prefill. A reply that ended in `stop`, a thoughts-only fragment (no provider can resume a reasoning trace over a chat API), an unsupported mode, and a sub-agent transcript are each refused with a note naming the route that works.
+  - **Eligibility** is read off the tail. An assistant message with visible text whose recorded end state (`MessageMetadata.finish`: `stop`/`length`/`cancelled`/`error`; additive — older messages read as absent) is an interruption — or absent — is continued via prefill. A tail of **tool results** (a turn interrupted between rounds) resumes the agentic loop instead: an ordinary next round, no prefill. A reply that ended in `stop`, a thoughts-only fragment (no provider can resume a reasoning trace over a chat API), an unsupported mode, and a subagent transcript are each refused with a note naming the route that works.
   - **Capability is per mode — and, for Anthropic, per model** (`ServerMode::supports_continuation`, the `supported_sampling_fields` pattern). Managed/external: llama.cpp continues a trailing assistant message by default; the wire also sends `continue_final_message: true` + `add_generation_prompt: false` (vLLM's explicit opt-in, ignored by llama.cpp builds that predate it) and `chat_template_kwargs {"enable_thinking": false}` — resuming a visible reply must not re-open reasoning, and on older llama.cpp builds the kwarg lifts the prefill-vs-thinking rejection. **Gemini** continues a trailing `model` turn (measured live; undocumented, so the probe stays in the smoke set — the wire adds nothing). **Anthropic** continues on models up to the **4.5 generation** and rejects from 4.6 on — the gate is an allowlist by version read off the model id, refusing what it cannot parse; the continuation request drops the extended-thinking block (prefill and thinking are incompatible) and right-trims the trailing prefill in the wire copy (Anthropic rejects trailing whitespace — the stored message keeps its bytes). **OpenAI** never continues a trailing assistant message and **Grok** measurably restarts — both refuse (research §2, §7.1).
   - **The echo**: llama.cpp returns *prefill + continuation*; a byte-prefix filter withholds the echoed seed from the stream (screen, mirror and stored message alike) and passes everything through unchanged the moment the stream diverges from the seed — a non-echoing server loses nothing. Measured live: the concatenation of both turns' streamed chunks equals the stored text byte-for-byte.
   - The continued turn is a full citizen of the agentic loop — the resumed round may call tools, and later rounds file as separate messages, as always. The interruption notes (cancelled, cut-short, and the `length` note this feature added — a length-cut reply used to stop silently) name `/continue` only when it would actually work in the current mode.
@@ -720,8 +720,8 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `get_system_message` | `{}` | Returns `ctx.system_message`. |
 | `set_system_message` | `{ system_message }` | Returns `ChatEffect::SetSystemMessage`; applied starting from the next request build. The only tool that invalidates the chat's prefix cache (justified). |
 | `get_last_user_message_time` | `{}` | Returns the last user message's timestamp (ISO 8601) + elapsed time. |
-| `call_subagent` | `{ name?, system_message, message }` | **The key feature** — a sub-agent with this turn's tools, run as a nested turn; its transcript stays on the call's record. See [9.3.2](#932-call_subagent). |
-| `run_dialogue` | `{ a, b, opening, scene?, direction?, max_messages?, moderate_every? }` | A **directed dialogue** of two personas the caller composes, written by the same model and steered by a model-driven director that decides when it ends; the transcript stays on the call's record like a sub-agent's. See [9.13](#913-the-directed-dialogue-run_dialogue). |
+| `call_subagent` | `{ name?, system_message, message }` | **The key feature** — a subagent with this turn's tools, run as a nested turn; its transcript stays on the call's record. See [9.3.2](#932-call_subagent). |
+| `run_dialogue` | `{ a, b, opening, scene?, direction?, max_messages?, moderate_every? }` | A **directed dialogue** of two personas the caller composes, written by the same model and steered by a model-driven director that decides when it ends; the transcript stays on the call's record like a subagent's. See [9.13](#913-the-directed-dialogue-run_dialogue). |
 | `send_followup_message` | `{}` | **Control** (opt., off by default) — write one more message as a separate reply. See [9.3.3](#933-conversation-control-tools). |
 | `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
 | `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
@@ -749,13 +749,13 @@ Since the inference server doesn't provide built-in web search, we implement it 
 
 #### 9.3.2. `call_subagent`
 
-- **Purpose**: delegate a task — or get a **second opinion** — to a **sub-agent**: the same model under a system message the main agent composes, with an optional display `name` for the persona. The response differs from the agent's own point of view, which (by hypothesis) increases self-awareness and quality; with tools, the sub-agent can also *do* the work it is asked. Design and the decided forks: [docs/research/subagent-chats.md](docs/research/subagent-chats.md), [ADR 0010](docs/decisions/0010-subagent-nested-turn.md).
-- **A loop-executed tool.** Like the conversation-control pair ([9.3.3](#933-conversation-control-tools-send_followup_message--rewrite_current_message)), the `Tool` impl exists for the schema, the catalog and the profile toggle; the agentic loop ([6.3](#63-client-side-agentic-loop)) recognises the name and runs the sub-agent itself — after the disabled gate and the confirmation gate ([9.8](#98-confirmation-for-dangerous-tool-calls)), inside the turn's cancellation, with a tool card and a record like any call. A tool sees only `ToolContext`; the registry, the confirmation channel and the UI sender a tool-using sub-agent needs live in the loop.
-- **A nested turn.** The sub-agent is a child agentic loop of the same type as the turn's own, sharing the turn's engine, registry, confirmation round trip (a dangerous call inside the run asks the user exactly as outside; "allow for this turn" covers both), generation id and limits. It has its own request — `system = system_message`, one user message = `message` — its own context, round counters and a child cancellation token, and a **muted** event stream: nothing of it reaches the parent's bubble except the token counter, which continues the parent's — and a quiet status-bar chip, *"sub-agent «name» · round N · tool"*, reported around the muted sink at each round's start and each tool's entry and cleared when the run ends, so a parent turn parked inside a delegation for minutes never reads as a stuck "generating" (docs/lessons.md §4). The chip is worded by the screen in the interface language, guarded by the generation id, and goes with the turn. **The transcript is visible while it runs** ([docs/history/subagent-live.md](docs/history/subagent-live.md)): the generation task reports its progress to the orchestrator on the same channel the result travels (so progress and result arrive in order) — each filed round of the parent and of the sub-agent, the run's start (its id minted up front and kept by the landed record) and its end — and the orchestrator mirrors the turn in an in-flight table that every transcript path resolves through. So a running run is a row of the list under its parent, marked *running*, with its count growing as rounds file; it opens read-only with the rounds so far and grows as more file; it can be renamed (the title lands on the record as a manual one); and moving between the parent and that transcript — either way — **does not cancel the turn**, the one exception to "a switch cancels" ([11.2](#112-the-chat-list-an-overlay)). Nothing of this is persisted: the mirror is dropped at landing, and a crash loses the turn as before. **The sub-agent's text streams into its open transcript** (history plan §8): its loop's stream — text, thoughts, tool cards, its own token count — travels to the orchestrator as progress on the same channel as its filed rounds (so it can never arrive out of order with them), is kept as the round in progress, and is forwarded to the screen under the run's own stream id while the transcript is the open conversation; a transcript opened mid-round starts with what has already streamed.
-- **What it gets.** The turn's effective tool set **minus** `call_subagent` (no nesting — a loop below the top refuses the name regardless of the set), `history_read`/`history_search` (the *parent's* folded history) and the self-model family with its injection (the profile persona's identity, not the sub-agent's). The turn's environment otherwise: the same attached files (`attachment_read`/`attachment_search`, under the parent's index), the same project and change journal (`code_*` edits show in the parent's `F4`), notes, RAG, web, Python, `fs_*`, MCP, the control tools; its system prompt carries the parent's attachment and workspace blocks. **Never the parent's messages** — the main agent decides what to pass.
+- **Purpose**: delegate a task — or get a **second opinion** — to a **subagent**: the same model under a system message the main agent composes, with an optional display `name` for the persona. The response differs from the agent's own point of view, which (by hypothesis) increases self-awareness and quality; with tools, the subagent can also *do* the work it is asked. Design and the decided forks: [docs/research/subagent-chats.md](docs/research/subagent-chats.md), [ADR 0010](docs/decisions/0010-subagent-nested-turn.md).
+- **A loop-executed tool.** Like the conversation-control pair ([9.3.3](#933-conversation-control-tools-send_followup_message--rewrite_current_message)), the `Tool` impl exists for the schema, the catalog and the profile toggle; the agentic loop ([6.3](#63-client-side-agentic-loop)) recognises the name and runs the subagent itself — after the disabled gate and the confirmation gate ([9.8](#98-confirmation-for-dangerous-tool-calls)), inside the turn's cancellation, with a tool card and a record like any call. A tool sees only `ToolContext`; the registry, the confirmation channel and the UI sender a tool-using subagent needs live in the loop.
+- **A nested turn.** The subagent is a child agentic loop of the same type as the turn's own, sharing the turn's engine, registry, confirmation round trip (a dangerous call inside the run asks the user exactly as outside; "allow for this turn" covers both), generation id and limits. It has its own request — `system = system_message`, one user message = `message` — its own context, round counters and a child cancellation token, and a **muted** event stream: nothing of it reaches the parent's bubble except the token counter, which continues the parent's — and a quiet status-bar chip, *"subagent «name» · round N · tool"*, reported around the muted sink at each round's start and each tool's entry and cleared when the run ends, so a parent turn parked inside a delegation for minutes never reads as a stuck "generating" (docs/lessons.md §4). The chip is worded by the screen in the interface language, guarded by the generation id, and goes with the turn. **The transcript is visible while it runs** ([docs/history/subagent-live.md](docs/history/subagent-live.md)): the generation task reports its progress to the orchestrator on the same channel the result travels (so progress and result arrive in order) — each filed round of the parent and of the subagent, the run's start (its id minted up front and kept by the landed record) and its end — and the orchestrator mirrors the turn in an in-flight table that every transcript path resolves through. So a running run is a row of the list under its parent, marked *running*, with its count growing as rounds file; it opens read-only with the rounds so far and grows as more file; it can be renamed (the title lands on the record as a manual one); and moving between the parent and that transcript — either way — **does not cancel the turn**, the one exception to "a switch cancels" ([11.2](#112-the-chat-list-an-overlay)). Nothing of this is persisted: the mirror is dropped at landing, and a crash loses the turn as before. **The subagent's text streams into its open transcript** (history plan §8): its loop's stream — text, thoughts, tool cards, its own token count — travels to the orchestrator as progress on the same channel as its filed rounds (so it can never arrive out of order with them), is kept as the round in progress, and is forwarded to the screen under the run's own stream id while the transcript is the open conversation; a transcript opened mid-round starts with what has already streamed.
+- **What it gets.** The turn's effective tool set **minus** `call_subagent` (no nesting — a loop below the top refuses the name regardless of the set), `history_read`/`history_search` (the *parent's* folded history) and the self-model family with its injection (the profile persona's identity, not the subagent's). The turn's environment otherwise: the same attached files (`attachment_read`/`attachment_search`, under the parent's index), the same project and change journal (`code_*` edits show in the parent's `F4`), notes, RAG, web, Python, `fs_*`, MCP, the control tools; its system prompt carries the parent's attachment and workspace blocks. **Never the parent's messages** — the main agent decides what to pass.
 - **Effects** go to the chat they describe: `set_system_message`/`set_sampling` to the run, an attachment a tool produced to the parent (and into both loops' snapshots).
 - **The transcript** — the persona, `User(message)` and the run's rounds exactly as any chat stores them — lives **on the call's `ToolCallRecord`** (`subagent: SubagentRun`, [5.1](#51-core-entities-entities)), inside the parent's file: it is part of the exchange that made it, travels with it into `Chat.deleted` on `Ctrl+E`/`Ctrl+R`, is hidden with the parent, and is ignored by request replay (a request with a stored run is byte-identical to one without). It carries a title (the `name`, else the first line of `message`, until a person or the model names it — **the automatic titling fires at landing** for every run with a substantive reply, under *either* `interface.auto_title` point, since a transcript's question and reply arrive together; `Off` is quiet, and a hand-named run is left alone, [11.2](#112-the-chat-list-an-overlay)), an outcome (`completed`/`cancelled`/`timed_out`/`failed`/`round_limit`), the tokens it cost, and an id for a `chat://` reference ([11.3](#113-the-message-feed)).
-- **The result** the main agent gets: the sub-agent's final reply, then one line naming the transcript's `chat://` address and — when the run did not complete — why. The run lands on the record together with the turn; until the list snapshot carries it, the address in the card is plain text (the "resolves or it is not a reference" rule).
+- **The result** the main agent gets: the subagent's final reply, then one line naming the transcript's `chat://` address and — when the run did not complete — why. The run lands on the record together with the turn; until the list snapshot carries it, the address in the card is plain text (the "resolves or it is not a reference" rule).
 - **Limits**: `max_tool_rounds` and `workspace.max_rounds` apply to the run as to the turn (each run spends one round of the parent's budget, as before); `tools.subagent_max_tokens` caps each of its replies (min'ed with the effective `max_tokens`); `tools.subagent_run_timeout_secs` bounds the whole run. `Esc` on the turn cancels the run with it; the partial transcript lands as `cancelled`.
 
 #### 9.3.3. Conversation control tools (`send_followup_message` / `rewrite_current_message`)
@@ -1509,11 +1509,11 @@ this in another chat"). Design and the decided forks —
   place (`snapshot_other_chats`): the current profile's chats only (§9.5),
   the **current chat excluded** (its visible half is the model's own context;
   its folded half belongs to `history_search`, §6.7), hidden chats dropped.
-  **Sub-agent transcripts are in** ([§9.3.2](#932-call_subagent);
+  **Subagent transcripts are in** ([§9.3.2](#932-call_subagent);
   docs/research/subagent-chats.md F4): every transcript of those chats *and
   of the current one* — its transcripts are not in the model's context — is
   a conversation of its own in the snapshot, with its own `chat://` address
-  and a label naming it as a sub-agent transcript of its parent; the index
+  and a label naming it as a subagent transcript of its parent; the index
   scopes a transcript by its own id (§11.2.1), and `chat_read` reads it out
   of the parent's file. `chat_read` re-checks the loaded file against the
   same boundary, so a stale snapshot cannot leak across profiles — and a
@@ -1742,13 +1742,13 @@ each sees the other's lines as `user` turns, the shape a chat model plays a
 role best in — while a model-driven **director** steers the scene and decides
 when it is over. Design, the confirmed forks and the stage-0 probe's
 measurements: [docs/research/two-agent-dialogue.md](docs/research/two-agent-dialogue.md);
-the record shape was left for it by the sub-agent track (research §3.14,
+the record shape was left for it by the subagent track (research §3.14,
 [ADR 0011](docs/decisions/0011-dialogue-directed-run.md)).
 
 - **A loop-executed tool**, exactly like `call_subagent` ([9.3.2](#932-call_subagent)):
   the `Tool` impl carries the schema, the catalog entry and the profile
   toggle; the agentic loop recognises the name and runs the dialogue itself.
-  Withheld from sub-agent runs and refused below the top loop — no nesting.
+  Withheld from subagent runs and refused below the top loop — no nesting.
 - **Arguments.** `a`/`b` — the personas: an optional display `name` and a
   required `system_message`, exactly as the caller wrote it (the persona
   **is** the role instrument, and the tool's description tells the calling
@@ -2009,12 +2009,12 @@ A direct requirement from the task:
   their tool/system rows fold into the reply they belong to, exactly as the
   conversation reads when opened ([§11.3](#113-the-message-feed)). One
   implementation, `entities::chat::visible_message_count`, feeds a chat's card
-  and a sub-agent transcript's alike ([§9.3.2](#932-call_subagent)), and an
+  and a subagent transcript's alike ([§9.3.2](#932-call_subagent)), and an
   every-prefix equality test beside the feed pins it to the feed's projection.
   The raw row count it replaced included every stored tool result and loop
   round, so a one-exchange chat with a busy tool loop said "34 msg" — a number
   with no referent on any screen.
-- **Sub-agent transcripts are rows of the list, nested under the chat whose
+- **Subagent transcripts are rows of the list, nested under the chat whose
   call made them** ([§9.3.2](#932-call_subagent); docs/research/subagent-chats.md
   §3.7): indented with a `└` in place of the dot, in **call order** under their
   parent (they are the steps of its work, so "newest first" would read them
@@ -2054,7 +2054,7 @@ A direct requirement from the task:
   orchestrator refuses `DeleteChat`/`CloneChat` for a transcript's id as well,
   whatever route sent them; cloning a **parent** copies its transcripts along
   under fresh ids (two chats answering to one `chat://` prefix would make the
-  reference ambiguous). **A sub-agent that is running right now is a row too**
+  reference ambiguous). **A subagent that is running right now is a row too**
   ([§9.3.2](#932-call_subagent)): under its parent, marked *running* beside a
   count updated as its rounds file, openable, renameable. **Switching chats
   cancels a running turn** — except between the running turn's chat and that
@@ -2093,7 +2093,7 @@ this?"*; this screen answers *"where exactly, and take me there."*
   and it reads well when one chat holds many hits,
   which is the common case (a common word matched 163 messages across 50 chats on a
   real 171-chat corpus).
-- **Sub-agent transcripts are groups of their own, under their parent's**
+- **Subagent transcripts are groups of their own, under their parent's**
   ([§9.3.2](#932-call_subagent); docs/research/subagent-chats.md §3.9). The
   index (`cache.db`, §5.2) marks a transcript's messages with the run's id
   (`messages.sub_id`, `CACHE_SCHEMA` 2 — the file rebuilds itself), indexed
@@ -2177,10 +2177,10 @@ this?"*; this screen answers *"where exactly, and take me there."*
 - **A tool call's card opens the moment the call starts**, marked *running…*
   where its result will go, and is completed in place when the result arrives
   (`AppEvent::ToolCallStarted` → `ToolCall`, matched by the call's id). A long
-  call — a sub-agent run, a project build, a `python_exec` — is therefore
+  call — a subagent run, a project build, a `python_exec` — is therefore
   visible where it happens, not only as a status-bar chip, and a turn inside
   one never looks idle. A control call and a call discarded by a rewrite open
-  no card, as before; a sub-agent's own calls stay in its transcript; a turn
+  no card, as before; a subagent's own calls stay in its transcript; a turn
   that ends mid-call (cancelled, timed out) clears the mark.
 - **Collapsible blocks**: "thoughts" (CoT, `Ctrl+T`) and tool calls (`Ctrl+O`).
   Both are **collapsed by default** — the feed is scanned for the reply, and
@@ -2287,14 +2287,14 @@ this?"*; this screen answers *"where exactly, and take me there."*
   (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
   — returns the view to the message rather than to a stale row. A message the feed
   doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
-- **A sub-agent transcript opened from the list is read-only** ([§9.3.2](#932-call_subagent),
+- **A subagent transcript opened from the list is read-only** ([§9.3.2](#932-call_subagent),
   docs/research/subagent-chats.md §3.8). It looks like a chat with a system
   message: the persona the parent composed is drawn **first, as a system bubble**
   (headed by the profile's system name, else `SYSTEM`; muted rail) — the one
   thing a reader of a transcript wants first, and a chat never shows; the
   instruction's header is the **parent persona** (the profile's assistant name,
   else the assistant label — it wrote the instruction), the replies' header the
-  sub-agent's `name`, else `SUB-AGENT`; both resolved at activation, so a profile
+  subagent's `name`, else `SUBAGENT`; both resolved at activation, so a profile
   rename shows at once. The input box is titled *read-only · commands only* and a
   quiet status-bar chip says *transcript*. **Sending refuses with a note** that
   names the parent and the way a transcript goes away (and leaves the line in
@@ -2310,15 +2310,15 @@ this?"*; this screen answers *"where exactly, and take me there."*
   with the rounds filed so far and grows as the next ones file (the feed is
   rebuilt from every message so far, so rounds stitch exactly as they will once
   landed; the scroll follows the tail only if it already did) **and streams
-  between them**: the sub-agent's text and thoughts arrive token by token into
+  between them**: the subagent's text and thoughts arrive token by token into
   a bubble seeded with the round so far, its own tool calls open running cards,
-  and the counter shows the run's own tokens; the sub-agent chip stays in the
+  and the counter shows the run's own tokens; the subagent chip stays in the
   status bar, the parent's stream never reaches this feed, the run's end
   closes the bubble, and `Esc` is navigation here — cancelling the turn is the
   parent's `Esc`.
 - **`chat://` references** ([§9.11](#911-cross-chat-search-chat_search-and-chat_read)).
   An address for a conversation of the **current profile** — a chat or one of
-  its sub-agent transcripts — is drawn in the link style wherever it appears in the feed — an assistant's answer, a user's
+  its subagent transcripts — is drawn in the link style wherever it appears in the feed — an assistant's answer, a user's
   message, a tool card, "thoughts" — and **`Ctrl+L`** opens a picker of the
   ones this chat holds (newest first, deduplicated, title + date), `Enter`
   follows the chosen one. **With mouse capture on (`Ctrl+W`), a left click on
@@ -2620,7 +2620,7 @@ section and subsection), `Esc` — cancel.
   *DRY (anti-repeat)*, *Mirostat*, *Sampler order*, *Reasoning* (thinking,
   reasoning_effort). In a cloud mode, parameters unsupported by the provider are hidden.
 - **Tools**: only gates/parameters for tools — *Agentic loop*
-  (`max_tool_rounds`, the sub-agent's per-reply token cap and whole-run time
+  (`max_tool_rounds`, the subagent's per-reply token cap and whole-run time
   limit — `subagent_max_tokens`, `subagent_run_timeout_secs`), *Web search*,
   *Python* (a switch + the path), *Files* (access + a sandbox directory).
 - **Memory**: *Knowledge base (RAG)* (chunk/overlap/cap sizes), *Notes*
@@ -2633,7 +2633,7 @@ section and subsection), `Esc` — cancel.
   profile picker, name,
   the *Persona* group (system message, greeting) and **tool toggles grouped by
   meaning** (`features/tools/meta.rs`: Introspection / Memory and Knowledge /
-  Outside World / Files / Utilities / Sub-agent / Conversation Control /
+  Outside World / Files / Utilities / Subagent / Conversation Control /
   Self-Model) with a short inline description and an "on/total" count in the group
   header. A tool that's **disabled by a global gate** (web/python/files) but
   enabled in the profile is marked in the warning color with a "disabled
@@ -2824,7 +2824,7 @@ docs/history/external-api-key.md.
 | `Home`/`End` | a ladder of stops (§11.5): `Home` — the row's text, its start, then the whole line's; `End` — the row's end, then the line's |
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
 | `Ctrl+T` | collapse/expand "thoughts" in the feed (per chat, §11.3) |
-| `Ctrl+O` | in a chat: collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3); in the chat list: fold/unfold the selected chat's sub-agent transcripts (per chat, collapsed by default, §11.2 — `/subagents` is the typed route) |
+| `Ctrl+O` | in a chat: collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3); in the chat list: fold/unfold the selected chat's subagent transcripts (per chat, collapsed by default, §11.2 — `/subagents` is the typed route) |
 | `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
 | click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
 | click on a `chat://` reference in the feed | follow it (with `Ctrl+W` capture on; `Ctrl+L` is the route that needs no mouse) |
@@ -3115,9 +3115,9 @@ terminal, where the escape below is dropped and the pty is server-side anyway.
   overwritten. Empty conversations are refused too, as `F5` already does.
 - Attachments and images are not included; the chat list's own selection has no
   export route yet (it has `F5`).
-- **A chat's copy or export does not carry its sub-agent transcripts**
+- **A chat's copy or export does not carry its subagent transcripts**
   ([§9.3.2](#932-call_subagent)): Markdown includes a `call_subagent` card's
-  *result* text under `copy_tool_results` — the sub-agent's final reply and the
+  *result* text under `copy_tool_results` — the subagent's final reply and the
   transcript's address — and the JSON document has nowhere for tool calls at
   all. A transcript is copied or exported from its own row (`F5`) or its own
   read-only view (`/copy`, `/export`), where it is a conversation like any
@@ -3366,7 +3366,7 @@ a quiet "♪ speaking" chip is shown in the status bar.
 
 - **The neutral exchange format `mindfork-import`** ([docs/import-format.md](docs/import-format.md), stage 1 of the "plugins" track — [docs/research/plugin-system.md §5](docs/research/plugin-system.md)): an external (possibly private) **converter** reads the source application's format and emits one JSON file (profiles + chats + optional global sampling/interface settings); the application imports it via the `mindfork import <file>` command (`features/import.rs`). Knowledge of non-public source applications (LameLLaMA) lives in the converters, not in the monolith. Properties: **idempotency** (deterministic UUIDv5s derived from stable `key`s; an optional explicit `id` — continuity with what was previously imported), strictness about structure (a wrong `format`/duplicate keys/a reference to a missing profile/an unknown role → a clear error) with tolerance for extension (unknown fields are ignored), a downgrade guard on `version`, tolerance for a BOM. Source settings are applied partially (only the fields that are set). The former `import-lamellama` command (an importer baked into the monolith) has been **removed** — its role is now played by the "converter → `import`" pair.
 
-**The first real step** (2026-08-23): `SETTINGS_SCHEMA` 1→2 — when the sub-agent gained tools ([§9.3.2](#932-call_subagent)) its one-request timeout `tools.subagent_timeout_secs` became the whole-run `subagent_run_timeout_secs` (600 s) and the per-reply cap's default rose to 4096; the step renames the key, drops a value left at the old default (so the new one applies) and carries a changed value over. **`CHAT_SCHEMA` 1→2** (the same track, next stage): every old `call_subagent` record — in `messages` and in the `deleted` archive alike — gets a transcript synthesized from what it already holds (the persona and the message from `arguments`, the reply from `result`, the reply's time from the `Tool` message that answered the call; a record with no result becomes an instruction with no reply and no outcome), under a deterministic id (`Uuid::new_v5` over chat id + call id, so a restored backup migrates to the same `chat://` addresses), and the file is stamped `v = 2` — which `Chat` now **writes on every save**, so a migrated file is never handed to the step again. Nothing existing is removed or rewritten: the migrated file is a superset of the old one. `profiles.json` stays at 1.
+**The first real step** (2026-08-23): `SETTINGS_SCHEMA` 1→2 — when the subagent gained tools ([§9.3.2](#932-call_subagent)) its one-request timeout `tools.subagent_timeout_secs` became the whole-run `subagent_run_timeout_secs` (600 s) and the per-reply cap's default rose to 4096; the step renames the key, drops a value left at the old default (so the new one applies) and carries a changed value over. **`CHAT_SCHEMA` 1→2** (the same track, next stage): every old `call_subagent` record — in `messages` and in the `deleted` archive alike — gets a transcript synthesized from what it already holds (the persona and the message from `arguments`, the reply from `result`, the reply's time from the `Tool` message that answered the call; a record with no result becomes an instruction with no reply and no outcome), under a deterministic id (`Uuid::new_v5` over chat id + call id, so a restored backup migrates to the same `chat://` addresses), and the file is stamped `v = 2` — which `Chat` now **writes on every save**, so a migrated file is never handed to the step again. Nothing existing is removed or rewritten: the migrated file is a superset of the old one. `profiles.json` stays at 1.
 
 ### 12.3. Backup and deletion
 
@@ -3394,7 +3394,7 @@ a quiet "♪ speaking" chip is shown in the status bar.
 - **The local interpreter** — running code in a **separate process** of the system Python (the path is in settings; a venv is recommended), capturing stdout/stderr, a **timeout**, output truncation. **No OS-level sandbox** (the code runs on the user's own machine) — hence the sandbox being the default mode.
 - **Sandbox resource limits:** a timeout (CPU) + wasm32 (~4 GB of address space) + a "one task" gate + an **optional hard RAM cap** (`tools.python_wasm_memory_mb`, off by default). The RAM cap is **Windows-only** (a Job Object; exceeding it kills the process, protecting the host from OOM; a minimum of ~1024 MB); not applied on Unix (rlimit is unreliable with V8). The tool's contract (`python_exec`, `{ code }`) doesn't depend on the mode/implementation.
 
-### 13.3. Sub-agent and recursion
+### 13.3. Subagent and recursion
 
 - `call_subagent` runs as a nested turn with the turn's tools **minus itself** — a loop below the top refuses the name whatever the set says, so there is no recursion; every dangerous call inside the run goes through the same confirmation as outside ([9.8](#98-confirmation-for-dangerous-tool-calls)); the run is bounded by `max_tool_rounds`, a per-reply token cap and a whole-run time limit ([9.3.2](#932-call_subagent)).
 
@@ -3463,7 +3463,7 @@ Idiomatic for Rust: `cargo test`, unit tests next to the code (`#[cfg(test)]`), 
 | **M3. Chat UI** | Screens/widgets: the chat list (search, 2 sort modes, renaming), the feed (markdown, thoughts, tool blocks, scrolling), our own input widget, spellcheck | The full chat loop works in the TUI; chat operations; spelling errors are visible, suggestions work (en+ru) |
 | **M4. Profiles + isolation** | `Profile` with an id, chat linkage, notes/rag isolation, a greeting | A chat is created from a profile; data is isolated by `profile_id` |
 | **M5. Tools (basic)** | Registry, the client-side agentic loop, notes + RAG (+ embeddings on demand) + introspection (sampling/system_message/time) | The assistant saves/retrieves notes and knowledge, changes the system message and sampling; tool blocks in the UI |
-| **M6. call_subagent** | A sub-agent with no nesting and with limits | The model calls the sub-agent, gets a string result; no recursion |
+| **M6. call_subagent** | A subagent with no nesting and with limits | The model calls the subagent, gets a string result; no recursion |
 | **M7. Web + Python** | Our own web search (DuckDuckGo + content extraction) + Python (subprocess) | Search and code execution are behind switches; Python is off by default on Windows |
 | **M8. Settings screen** | All sections, profile CRUD, server/model management | Settings and `llama-server` launch parameters are editable; changing the model restarts the server |
 | **M9. Gemma + polish** | Verifying Gemma 3/4 (templates/EOS/tool-calling/"thoughts"), themes, migration, backups, a release build | Chat and tools work on Gemma the same as on Qwen; old data imports; a release for Windows and Linux |
