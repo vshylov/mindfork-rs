@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (53)
+## Entries (54)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -65,6 +65,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the confirmation toggle is named by what it does (done)
 - Post-M9: the build date on the "About" tab (done)
 - Post-M9: the chat list counts messages as the conversation reads (done)
+- Post-M9: the self-model screen reads as two named halves (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2771,3 +2772,46 @@ storage or tool surface is touched.
   projection. The demo dumps are untouched: the gallery counts are fixture
   literals, and the demo transcript is user+assistant, which counts `2`
   either way.
+
+### Post-M9: the self-model screen reads as two named halves (done)
+- **The `F3` screen now says whose side each half is** (spec §17.7). It listed
+  the self-description, the goals, then a bold "Interlocutor" header over
+  traits/interests/relationship — so the top half was headed by nothing at all,
+  and the one header that existed named a role rather than a person. The screen
+  now opens with an **"Assistant"** header over the self-description and goals,
+  and the second half is headed **"User"**; where the profile has set a
+  `character_names` field (spec §5.1), the name replaces the label — the same
+  rule the feed's role headers follow, so the two surfaces call the same two
+  parties the same thing. The `ui.self_model.interlocutor` key retired in favour
+  of `ui.self_model.assistant`/`ui.self_model.user`.
+- **Blank rows between every section, and between the observations.** The values
+  here are free prose the model writes: the demo self-description alone wraps
+  over four rows, and with the fields stacked flush the description ran into the
+  goals, `Traits:`/`Interests:`/`Relationship:` read as one paragraph, and the
+  observations were an undifferentiated wall. A spacer row now separates the
+  summary from the goals, each of the user half's three fields from the next, the
+  header from what it heads, and each observation from the one below it.
+  Decorations were already a row kind the cursor skips (`RowAction::Decoration`),
+  so navigation, editing and the scroll rule needed no change — but row 0 is now
+  a header, so `SelfModelScreen::new` moves the selection off it, the way
+  `set_model` already did for a re-emitted snapshot.
+- **The names come from the profile, not from the active chat.** The obvious
+  source was `ChatScreen`'s `CharacterNames`, which is wrong for the one case
+  where the two diverge: `Orchestrator::names_of` re-labels a subagent
+  transcript's sides for the *run* (its `User` is the parent persona, its
+  `Assistant` the subagent's name), while the self-model belongs to the
+  **profile**. So the names ride the snapshot instead — `AppEvent::SelfModelView`
+  became a struct variant `{ model, names }`, and the three emit sites collapsed
+  into one `emit_self_model_view(pid)` that reads both from the same `pid`; a
+  path that forgets the names is now unrepresentable.
+- **The demo gallery lost one observation and kept its meaning.** The separators
+  cost the 30-row `F3` capture a row each, so the third observation ("the 12 GB
+  VRAM budget") scrolled out of the frame; the showcase needle `"VRAM"` was
+  dropped and `"Assistant"`/`"User"` added in its place — every section of the
+  screen is still pinned as visible, now including the two new headers. Dumps and
+  images regenerated (`dump_demo_frames`, `tools/screenshots.py`).
+- **Tests** (2679 green, +3): the section/blank-row geometry over a two-
+  observation model, the profile names replacing both labels, and the selection
+  landing below the first header on open and on a fresh snapshot. A live run is
+  not required (AGENTS.md §3) — pure UI; verified against the real render through
+  the screenshot pipeline, which draws the actual screen headlessly.

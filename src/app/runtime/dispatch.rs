@@ -4,7 +4,7 @@
 use super::*;
 
 use crate::entities::chat::ChatSummary;
-use crate::entities::profile::Profile;
+use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::self_model::SelfModel;
 use crate::features::chat_search::SearchGroup;
 use crate::features::chat_search_sort::SortMode;
@@ -180,7 +180,7 @@ pub(super) fn apply_event(
         AppEvent::StagedImages(items) => screen.set_staged_images(items),
         // A reply to a self-model request/edit (`F3`): open the screen or refresh
         // the already-open one in place (keeping the selection — important during edits).
-        AppEvent::SelfModelView(model) => show_self_model(screen, active, *model),
+        AppEvent::SelfModelView { model, names } => show_self_model(screen, active, *model, names),
         AppEvent::WorkspaceChanges(set) => show_changes(screen, active, *set),
         // The "self-model" changed in the background/via tools — refresh ONLY the open
         // `F3` screen (re-request a fresh snapshot); ignored when closed.
@@ -368,14 +368,19 @@ fn close_or_mark_chat_list(active: &mut ActiveScreen, id: Uuid) {
 
 /// The `SelfModelView` arm of [`apply_event`]: opens the `F3` screen or
 /// refreshes the already-open one in place.
-fn show_self_model(screen: &mut ChatScreen, active: &mut ActiveScreen, model: Option<SelfModel>) {
+fn show_self_model(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    model: Option<SelfModel>,
+    names: CharacterNames,
+) {
     // Deliberately exhaustive by variant rather than a `_` catch-all: this
     // match *replaces* the active screen, so a new screen that forgot about
     // it would be silently stolen by an unrelated late event
     // (docs/history/chat-search-stage2.md §1.6). Every future variant has to say
     // whether it may be replaced.
     match active {
-        ActiveScreen::SelfModel(view) => view.set_model(model),
+        ActiveScreen::SelfModel(view) => view.set_model(model, names),
         // A results list the user is reading must not be swapped out from
         // under them by a stale reply to a request they have left behind — and
         // neither must a diff the user is reading.
@@ -383,6 +388,7 @@ fn show_self_model(screen: &mut ChatScreen, active: &mut ActiveScreen, model: Op
         ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
             *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                 model,
+                names,
                 screen.palette(),
                 screen.loc(),
             )))

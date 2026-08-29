@@ -3628,6 +3628,20 @@ for viewing and **manual editing**:
   separated list, the relationship dynamic), deleting insights (`Del`), clearing the whole model
   (`Ctrl+K` twice — with confirmation; **`/self clear`** from the chat is the
   same wipe behind the same confirmation, §11.7);
+- **two named halves, then the observations.** The screen opens with an
+  **"Assistant"** header over the self-description and the goals, and heads the
+  traits/interests/relationship with **"User"**; where the profile sets a name
+  for a side (`character_names`, §5.1) that name replaces the label, so the
+  screen and the feed's role headers call the two parties the same thing. The
+  names are the **profile's** — not the active chat's, which a subagent
+  transcript re-labels for the run (§11.3) — so they ride the `SelfModelView`
+  snapshot rather than the chat screen. A blank row separates every section from
+  the next (the summary from the goals, each of the user half's three fields, a
+  header from what it heads) and every observation from the one below it: these
+  values are prose the model writes, and stacked flush they read as one
+  paragraph. Headers and blank rows are the same `Decoration` row kind the
+  cursor skips, so the selection opens on the self-description, never on the
+  header above it;
 - navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
   Both panes scroll by the rule in [§11.2](#112-the-chat-list-an-overlay) (the window follows the
   selection, it is not dragged by it). The field pane additionally keeps **one
@@ -3641,9 +3655,11 @@ remaining height is shown **partially** (its top part is visible) rather than sk
 (scrolling keeps the selected row visible, pinning a long item to the top).
 
 The orchestrator owns the data: `F3` → `RequestSelfModel` → the reply `SelfModelView`
-(a snapshot) opens the screen; edits → `SelfModelIntent::Edit` → `AppCommand::
-UpdateSelfModel` → the orchestrator applies it (`apply_edit`), saves it, and **re-emits**
-`SelfModelView` — the open screen updates in place (the selection is preserved). FSD
+(a snapshot, plus the profile's role names) opens the screen; edits →
+`SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel` → the orchestrator applies it
+(`apply_edit`), saves it, and **re-emits** `SelfModelView` — the open screen updates in
+place (the selection is preserved). Every emit goes through one
+`emit_self_model_view(pid)`, so no path can send a snapshot without its names. FSD
 is respected: the screen doesn't know about `app`/`Storage`.
 
 ### 17.8. Status

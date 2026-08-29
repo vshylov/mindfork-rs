@@ -198,7 +198,10 @@ fn self_model_view_event_opens_screen() {
         &mut back,
         &mut clip,
         &cmd_tx,
-        AppEvent::SelfModelView(Box::new(Some(m))),
+        AppEvent::SelfModelView {
+            model: Box::new(Some(m)),
+            names: Default::default(),
+        },
     );
     assert!(matches!(active, ActiveScreen::SelfModel(_)));
 }
@@ -225,6 +228,7 @@ fn self_model_changed_refreshes_open_screen_only() {
     // The `F3` screen is open → re-request the snapshot.
     let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
         None,
+        Default::default(),
         screen.palette(),
         screen.loc(),
     )));
@@ -554,7 +558,10 @@ fn the_search_screen_survives_settings_and_self_model_events() {
         &mut back,
         &mut clip,
         &cmd_tx,
-        AppEvent::SelfModelView(Box::new(None)),
+        AppEvent::SelfModelView {
+            model: Box::new(None),
+            names: Default::default(),
+        },
     );
     assert!(
         matches!(active, ActiveScreen::Search(_)),
@@ -609,6 +616,7 @@ fn character_names_event_reaches_the_feed() {
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
         None,
+        Default::default(),
         screen.palette(),
         screen.loc(),
     )));
@@ -1402,6 +1410,7 @@ fn f1_opens_the_help_over_any_screen_and_owns_the_keys() {
     // `widgets::help_dialog::tests::a_non_chat_open_lands_on_its_section`.
     h.active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
         None,
+        Default::default(),
         Palette::default(),
         h.screen.loc(),
     )));

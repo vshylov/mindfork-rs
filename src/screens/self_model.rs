@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use uuid::Uuid;
 
+use crate::entities::profile::CharacterNames;
 use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -91,6 +92,13 @@ struct Editor {
 /// The "self-model" screen: a model snapshot + navigation/edit state.
 pub struct SelfModelScreen {
     model: Option<SelfModel>,
+    /// The **profile's** role names (they ride the `SelfModelView` event): the
+    /// two halves of the screen are headed by the assistant's and the user's
+    /// name, an unset one falling back to the localized label (spec §17.7).
+    /// Deliberately the profile's own, not the active chat's — a subagent
+    /// transcript re-labels its sides for the run, while the self-model
+    /// belongs to the profile.
+    names: CharacterNames,
     palette: Palette,
     /// Interface locale (updated on `Settings`). See docs/i18n-ui.md.
     loc: &'static Locale,
@@ -105,23 +113,34 @@ pub struct SelfModelScreen {
 }
 
 impl SelfModelScreen {
-    /// Opens the screen with a model snapshot.
-    pub fn new(model: Option<SelfModel>, palette: Palette, loc: &'static Locale) -> Self {
-        Self {
+    /// Opens the screen with a model snapshot and the profile's role names.
+    pub fn new(
+        model: Option<SelfModel>,
+        names: CharacterNames,
+        palette: Palette,
+        loc: &'static Locale,
+    ) -> Self {
+        let mut screen = Self {
             model,
+            names,
             palette,
             loc,
             selected: 0,
             scroll: 0,
             editor: None,
             confirm_clear: false,
-        }
+        };
+        // Row 0 is the "Assistant" header — a decoration. Land the cursor on
+        // the first selectable row instead of highlighting a header on open.
+        screen.move_selection(0);
+        screen
     }
 
     /// Updates the model snapshot (after an edit/reflection — the `SelfModelView` event),
     /// keeping the selection where possible and closing the clear confirmation.
-    pub fn set_model(&mut self, model: Option<SelfModel>) {
+    pub fn set_model(&mut self, model: Option<SelfModel>, names: CharacterNames) {
         self.model = model;
+        self.names = names;
         self.confirm_clear = false;
         let max = self.rows().len().saturating_sub(1);
         self.selected = self.selected.min(max);
@@ -141,6 +160,13 @@ impl SelfModelScreen {
 
     /// Builds navigable rows (a view + an action target). The base fields are always
     /// present (editing is possible even on an empty model); goals and insights — if present.
+    ///
+    /// The screen reads as two halves, each under a header naming whose side it
+    /// is — the assistant's (self-description + goals) and the user's
+    /// (traits/interests/relationship) — followed by the observations. Every
+    /// section, and every observation, is separated by a blank row: the values
+    /// are free prose that wraps over several rows, so without the gaps two
+    /// neighbouring fields read as one paragraph (spec §17.7).
     fn rows(&self) -> Vec<(Line<'static>, RowAction)> {
         let p = &self.palette;
         let empty = SelfModel::new(Uuid::nil());
@@ -162,6 +188,21 @@ impl SelfModelScreen {
         };
 
         let loc = self.loc;
+        // Whose half this is: the profile's name for the side, or the localized
+        // label when it is unset — the same rule the feed's role headers follow
+        // (spec §5.1).
+        let named = |custom: Option<&str>, key: &str| {
+            custom
+                .map(str::to_string)
+                .unwrap_or_else(|| loc.t(key).to_string())
+        };
+
+        // The assistant's half: who the model is, and what it is working toward.
+        rows.push(header(&named(
+            self.names.assistant_name(),
+            "ui.self_model.assistant",
+        )));
+        rows.push(spacer());
         // The self-description.
         let summary = if m.summary.trim().is_empty() {
             dim("—".into())
@@ -172,6 +213,7 @@ impl SelfModelScreen {
             Line::from(vec![label(loc.t("ui.self_model.summary")), summary]),
             RowAction::Summary,
         ));
+        rows.push(spacer());
 
         // Goals (with a status marker) + an "add" row. The date is in the local zone:
         // creation for an active one, the closing moment (`closed_at`) for a closed one.
@@ -207,9 +249,10 @@ impl SelfModelScreen {
             RowAction::AddGoal,
         ));
 
-        // The interlocutor model — separated from the "about self" section by a blank line and a header.
+        // The user's half — separated from the assistant's by a blank line and a header.
         rows.push(spacer());
-        rows.push(header(loc.t("ui.self_model.interlocutor")));
+        rows.push(header(&named(self.names.user_name(), "ui.self_model.user")));
+        rows.push(spacer());
         let u = &m.user_model;
         let join_or_dash = |v: &[String]| {
             if v.is_empty() {
@@ -225,6 +268,7 @@ impl SelfModelScreen {
             ]),
             RowAction::Traits,
         ));
+        rows.push(spacer());
         rows.push((
             Line::from(vec![
                 label(loc.t("ui.self_model.interests")),
@@ -232,6 +276,7 @@ impl SelfModelScreen {
             ]),
             RowAction::Interests,
         ));
+        rows.push(spacer());
         let rel = if u.relationship_dynamic.trim().is_empty() {
             dim("—".into())
         } else {
@@ -243,15 +288,19 @@ impl SelfModelScreen {
         ));
 
         // The narrative (newest on top) — deletable via `Del`. Also behind a separator and
-        // a header, so observations don't blend into the interlocutor model.
+        // a header, so observations don't blend into the user's half.
         if !m.narrative.is_empty() {
             rows.push(spacer());
             rows.push(header(&loc.tf(
                 "ui.self_model.observations",
                 &[("n", &m.narrative.len().to_string())],
             )));
+            rows.push(spacer());
         }
-        for seg in m.narrative.iter().rev() {
+        for (i, seg) in m.narrative.iter().rev().enumerate() {
+            if i > 0 {
+                rows.push(spacer());
+            }
             // The date is in the local zone: `created_at` is stored in UTC, and without
             // conversion an observation added after local midnight would show
             // yesterday's date (in zones ahead of UTC "yesterday" is still going on).
@@ -719,7 +768,7 @@ mod tests {
 
     #[test]
     fn esc_closes_ctrl_q_and_f10_quit() {
-        let mut s = SelfModelScreen::new(None, Palette::default(), ru());
+        let mut s = SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
         assert_eq!(
             s.handle_key(key(KeyCode::Esc)),
             Some(SelfModelIntent::Close)
@@ -736,7 +785,12 @@ mod tests {
 
     #[test]
     fn enter_on_summary_opens_editor_and_commits() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         // The first row is the self-description.
         assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
         assert!(s.editor.is_some());
@@ -754,7 +808,12 @@ mod tests {
     fn alt_enter_inserts_newline_in_editor() {
         // A fallback line break for terminals with no kitty protocol (there Shift+Enter is
         // indistinguishable from Enter). See item 11 of the InputBox audit.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         s.handle_key(key(KeyCode::Enter)); // open the self-description editor
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
@@ -769,7 +828,12 @@ mod tests {
 
     #[test]
     fn space_cycles_goal_delete_removes() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         s.handle_key(key(KeyCode::Down)); // onto the goal
         assert!(matches!(s.selected_action(), Some(RowAction::Goal(_))));
         let cycle = s.handle_key(key(KeyCode::Char(' '))).unwrap();
@@ -786,10 +850,12 @@ mod tests {
 
     #[test]
     fn add_goal_commits_and_empty_is_noop() {
-        let mut s = SelfModelScreen::new(None, Palette::default(), ru());
-        // Rows of the empty model: [Summary, AddGoal, ·spacer·, ·Interlocutor·, Traits,
-        // Interests, Relationship] — the cursor skips decorations.
-        s.selected = 1; // AddGoal
+        let mut s = SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
+        // Rows of the empty model: [·Assistant·, ·spacer·, Summary, ·spacer·, AddGoal,
+        // ·spacer·, ·User·, ·spacer·, Traits, ·spacer·, Interests, ·spacer·,
+        // Relationship] — the cursor skips decorations, so one `Down` off the
+        // self-description lands on "add goal".
+        s.handle_key(key(KeyCode::Down));
         assert!(matches!(s.selected_action(), Some(RowAction::AddGoal)));
         s.handle_key(key(KeyCode::Enter));
         assert!(s.editor.is_some());
@@ -807,7 +873,12 @@ mod tests {
 
     #[test]
     fn ctrl_k_confirm_then_clear() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
             None
@@ -823,7 +894,12 @@ mod tests {
 
     #[test]
     fn ctrl_k_confirm_cancelled_by_other_key() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
         assert_eq!(s.handle_key(key(KeyCode::Down)), None); // cancel
@@ -853,12 +929,107 @@ mod tests {
         }
     }
 
+    /// The row texts, decorations included — what the reader actually sees.
+    fn row_texts(s: &SelfModelScreen) -> Vec<String> {
+        s.rows()
+            .iter()
+            .map(|(l, _)| l.spans.iter().map(|sp| sp.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn sections_are_headed_and_separated_by_blank_rows() {
+        // Every section is a header (or a field) with a blank row around it, so two
+        // fields of wrapped prose never read as one paragraph (spec §17.7).
+        let mut m = model();
+        push_insight(&mut m, "второе наблюдение");
+        let s = SelfModelScreen::new(Some(m), CharacterNames::default(), Palette::default(), ru());
+        let texts = row_texts(&s);
+        let at = |needle: &str| {
+            texts
+                .iter()
+                .position(|t| t.starts_with(needle))
+                .unwrap_or_else(|| panic!("no row starting with {needle:?}: {texts:?}"))
+        };
+        let blank_before = |i: usize| {
+            assert!(
+                i > 0 && texts[i - 1].is_empty(),
+                "no blank row before {i}: {texts:?}"
+            )
+        };
+        let blank_after = |i: usize| {
+            assert!(
+                texts.get(i + 1).is_some_and(String::is_empty),
+                "no blank row after {i}: {texts:?}"
+            )
+        };
+        // The assistant's half heads the screen, its header set off from "About me".
+        assert_eq!(texts[0], "Ассистент");
+        blank_after(0);
+        blank_after(at("О себе: ")); // ...and off the goals below it
+        // The user's half: a header with blank rows on both sides.
+        let user = at("Пользователь");
+        blank_before(user);
+        blank_after(user);
+        // Its three fields stand apart from each other.
+        blank_after(at("Черты: "));
+        blank_after(at("Интересы: "));
+        // The observations: a blank row under the header, and one between the two.
+        let obs = at("Наблюдения");
+        blank_before(obs);
+        blank_after(obs);
+        assert!(
+            texts[obs + 2..].iter().filter(|t| t.is_empty()).count() == 1,
+            "exactly one blank row separates the two observations: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn headers_take_the_profile_names_when_set() {
+        // A named profile heads the halves with its own names; an unset one falls
+        // back to the localized labels (checked above).
+        let s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames {
+                user: "Владимир".into(),
+                assistant: "Гайя".into(),
+                system: String::new(),
+            },
+            Palette::default(),
+            ru(),
+        );
+        let texts = row_texts(&s);
+        assert_eq!(texts[0], "Гайя");
+        assert!(texts.contains(&"Владимир".to_string()), "{texts:?}");
+        assert!(!texts.contains(&"Пользователь".to_string()), "{texts:?}");
+    }
+
+    #[test]
+    fn selection_opens_below_the_first_header() {
+        // Row 0 is now a decoration: opening must not highlight it (`new` moves the
+        // cursor onto the first selectable row), and neither must a fresh snapshot.
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
+        assert!(matches!(s.selected_action(), Some(RowAction::Summary)));
+        s.set_model(None, CharacterNames::default());
+        assert!(matches!(s.selected_action(), Some(RowAction::Summary)));
+    }
+
     #[test]
     fn navigation_skips_decoration_rows() {
         // A model with a goal and an insight: between AddGoal and Traits — spacer+header,
         // between Relationship and the insight — another spacer+header. `Down`
         // navigation must skip decorations and never land on them.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         let mut seen = Vec::new();
         loop {
             seen.push(s.selected_action().unwrap());
@@ -880,9 +1051,15 @@ mod tests {
     #[test]
     fn render_empty_and_populated_do_not_panic() {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        let mut empty = SelfModelScreen::new(None, Palette::default(), ru());
+        let mut empty =
+            SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
         term.draw(|f| empty.render(f)).unwrap();
-        let mut full = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut full = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         term.draw(|f| full.render(f)).unwrap();
     }
 
@@ -892,7 +1069,12 @@ mod tests {
         // column 0 (the panel's left border is a border character, so its rows don't start
         // with a space). Count the trailing hotkey rows.
         let rows = |w: u16, h: u16| -> Vec<String> {
-            let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+            let mut s = SelfModelScreen::new(
+                Some(model()),
+                CharacterNames::default(),
+                Palette::default(),
+                ru(),
+            );
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
             let buf = term.backend().buffer().clone();
@@ -928,7 +1110,12 @@ mod tests {
     #[test]
     fn confirm_clear_shows_prompt_in_status_area() {
         // The clear confirmation occupies the bottom area (outside the border) as one line.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+        );
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -962,7 +1149,8 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "описание".into();
         push_insight(&mut m, &"очень длинное наблюдение ".repeat(40));
-        let mut s = SelfModelScreen::new(Some(m), Palette::default(), ru());
+        let mut s =
+            SelfModelScreen::new(Some(m), CharacterNames::default(), Palette::default(), ru());
         let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         // Move all the way to the bottom (onto the long insight) and redraw — scroll should

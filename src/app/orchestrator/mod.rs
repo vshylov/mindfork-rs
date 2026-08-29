@@ -811,13 +811,28 @@ impl Orchestrator {
         Some(m)
     }
 
+    /// Sends the `F3` screen a fresh snapshot of `pid`'s self-model together with
+    /// that profile's role names — the screen heads its two halves with them
+    /// (spec §17.7). The single place emitting `SelfModelView`: every path (the
+    /// request, and each re-emit after an edit) goes through it, so the names can
+    /// never be forgotten on one of them.
+    fn emit_self_model_view(&self, pid: Option<Uuid>) {
+        let model = pid.and_then(|pid| self.self_model_view_snapshot(pid));
+        // The **profile's** own names, not `names_of`: that one re-labels a
+        // subagent transcript's sides for the run, and the self-model is the
+        // profile's.
+        let names = pid
+            .and_then(|pid| self.profiles.iter().find(|p| p.id == pid))
+            .map(|p| p.character_names.clone())
+            .unwrap_or_default();
+        let _ = self.evt_tx.send(AppEvent::SelfModelView {
+            model: Box::new(model),
+            names,
+        });
+    }
+
     fn handle_request_self_model(&self) {
-        let snapshot = self
-            .active_profile_id()
-            .and_then(|pid| self.self_model_view_snapshot(pid));
-        let _ = self
-            .evt_tx
-            .send(AppEvent::SelfModelView(Box::new(snapshot)));
+        self.emit_self_model_view(self.active_profile_id());
     }
 
     /// Applies a manual edit to the active profile's "self-model" (the `F3`
@@ -835,10 +850,7 @@ impl Orchestrator {
         match &edit {
             SelfModelEdit::DeleteInsight(id) => {
                 let _ = self.storage.db().note_delete(pid, *id);
-                let snapshot = self.self_model_view_snapshot(pid);
-                let _ = self
-                    .evt_tx
-                    .send(AppEvent::SelfModelView(Box::new(snapshot)));
+                self.emit_self_model_view(Some(pid));
                 return;
             }
             SelfModelEdit::Clear => {
@@ -878,10 +890,7 @@ impl Orchestrator {
             let _ = self.storage.db().note_insert(&note);
         }
         // Re-emit the authoritative snapshot (the model + observations from self-notes).
-        let snapshot = self.self_model_view_snapshot(pid);
-        let _ = self
-            .evt_tx
-            .send(AppEvent::SelfModelView(Box::new(snapshot)));
+        self.emit_self_model_view(Some(pid));
     }
 
     /// Emits the full settings snapshot (config + full profiles) for the settings screen.
