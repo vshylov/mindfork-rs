@@ -1321,6 +1321,31 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Re-verified**: the ten repairs against fresh H200s — all green. The
   supervisor smoke's control arm still gets its `401` without a key, so the
   authenticated arm still proves what it claims.
-- **Cost**: **≈$2.75** for the whole track — the probes, the dispatch and two
-  re-verifications, across eight throwaway endpoints, none left running. A routine
-  dispatch on this model is ~$2.50 against ~$1.00 for a Gemma or Qwen run.
+- **The CI dispatch, after the merge — 124 passed, 1 failed**
+  ([run 33276655992](https://github.com/vshylov/mindfork-rs/actions/runs/33276655992),
+  `model: gpt-oss-120b`, instance left at `model-default`): 20 min 41 s wall,
+  endpoints ready in 320 s, suite 859 s, all three endpoints deleted and the
+  evidence step reporting `(no endpoints)`. This is the half a local run cannot
+  cover — the workflow's own path — and it holds: the log says
+  `chat hardware: nvidia-h200 x1 @ aws/us-west-2` and `variant Q8_0/*`, so
+  `model-default` resolved through the model record to a GPU *and the region that
+  GPU lives in*, and both declarations were derived and printed. Ready-in-320 s
+  against 106 s locally is HF-side variance on three concurrent deploys, well
+  inside the 45-minute job timeout.
+- **That one failure is not this track's**: `runs_real_python_in_sandbox`
+  provisioned its own sandbox on the runner and then died inside it —
+  `Validate("Failed to create V8 module: null module reference returned from
+  V8")`. The smoke never speaks to the engine, so it is model-independent by
+  construction and would fail the same way on a Gemma dispatch today. It is also
+  *not* the old "no wasmer on this machine" note (remote-e2e-hf.md §3): the smoke
+  has since learned to install one, so an absent sandbox became a broken one.
+  Spun out as its own problem.
+- **And one correction the dispatch forces**: `fetch_url_address_policy_e2e_live`
+  **passed** in CI. The prediction of "127 passed, 1 failed", reasoned from a
+  single local run, was wrong — the smoke is a *flake* on this model (refuses
+  sometimes, calls the tool sometimes), not a standing red. Which strengthens the
+  decision to leave it alone: there is no permanent red to get used to.
+- **Cost**: **≈$4.65** for the whole track — the probes, the local dispatch, two
+  re-verifications and the CI dispatch, across eleven throwaway endpoints, none
+  left running. A routine dispatch on this model is ~$2.00 against ~$1.00 for a
+  Gemma or Qwen run.
