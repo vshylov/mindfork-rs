@@ -1136,6 +1136,26 @@ produced by falling through, and running the live gate, which is what caught the
 third one within a minute.
 — *the model's name in `external` mode*.
 
+**A live assertion on a literal the model must echo is a typography bet — fold the
+dashes.** Every planted-fact smoke checks that the reply contains `ZARYA-8823`, and
+`gpt-oss-120b` renders that code with a **non-breaking hyphen** (U+2011): three smokes
+went red while the model was answering perfectly. It was never a property of that model
+— 8 of 18 occurrences in a single run, *the same model producing both glyphs*, so these
+were latent flakes waiting for any model to reach for the prettier character. The fact
+under test is the code; the glyph is typography. Normalize the dashes on both sides and
+keep everything else (case, spacing, digits) strict.
+— *gpt-oss-120b on the live gate*.
+
+**A probe module written against the LAN stand has never met an authenticated server.**
+Stage 1 of the remote gate routed six files through `live_client` so the smokes carry a
+Bearer key; every module added *after* that quietly went back to `OpenAiClient::new` and
+raw `reqwest` posts, and answered `401` the first time it was dispatched — which took
+months to discover, because those modules had only ever been run by hand against an
+unauthenticated `llama-server`. When a shared helper exists for reaching the live stack,
+a new module using the raw constructor is a bug with a delayed fuse; the review question
+is "does this new live code go through `live_client` / `live_bearer`?"
+— *gpt-oss-120b on the live gate*.
+
 **Run the live gate when the change touches engine, memory or tool paths — even when it
 looks local.** `build_request` and `effective_tool_ids` sit on *every* turn, so "it only
 affects a compacted chat" still warrants the full e2e set. Skip it for pure rendering,

@@ -37,7 +37,7 @@ use crate::shared::api::contract::{
     ToolSchema,
 };
 use crate::shared::api::retry::RetryBackend;
-use crate::shared::api::{AnthropicClient, GeminiClient, OpenAiClient};
+use crate::shared::api::{AnthropicClient, GeminiClient};
 
 /// A hung server must fail the arm loudly, not sit forever (lessons §2).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
@@ -799,7 +799,14 @@ async fn engine() -> Option<(Arc<dyn EngineBackend>, String)> {
         return None;
     };
     let base = url.trim_end_matches('/').to_string();
-    let client = RetryBackend::wrap(Arc::new(OpenAiClient::new(base.clone())));
+    // Keyed. Built with `OpenAiClient::new` alone, every request against the
+    // rented gate is a `401` — which is how all four of this module's smokes
+    // failed on the first gpt-oss dispatch, having only ever met an
+    // unauthenticated LAN stand (docs/research/e2e-gpt-oss-120b.md).
+    let client = RetryBackend::wrap(Arc::new(
+        crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
+            .expect("the URL variable was just read"),
+    ));
     let model = client
         .model_id()
         .await
@@ -919,17 +926,20 @@ async fn dialogue_probe_cache_slots_live() {
             "temperature": 0.7, "seed": 42, "max_tokens": 256,
         });
         let started = Instant::now();
-        let resp: serde_json::Value = http
-            .post(format!("{base}/chat/completions"))
-            .json(&body)
-            .send()
-            .await
-            .expect("the raw request must reach the server")
-            .error_for_status()
-            .expect("the raw request must be accepted")
-            .json()
-            .await
-            .expect("the response must be JSON");
+        // Keyed like every other live request: this arm talks to the server
+        // directly (the app's client drops `timings`), so it needs the header the
+        // client would have added.
+        let resp: serde_json::Value =
+            crate::shared::api::live_bearer(http.post(format!("{base}/chat/completions")))
+                .json(&body)
+                .send()
+                .await
+                .expect("the raw request must reach the server")
+                .error_for_status()
+                .expect("the raw request must be accepted")
+                .json()
+                .await
+                .expect("the response must be JSON");
         let text = resp["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("")

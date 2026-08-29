@@ -52,6 +52,23 @@ pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> 
     Some(OpenAiClient::new(url).with_api_key(std::env::var(key_var).ok()))
 }
 
+/// The `Authorization` header for a smoke that speaks to the engine **directly**
+/// rather than through [`OpenAiClient`] — a probe reading a field the client
+/// drops (`timings`), or one composing a request body by hand.
+///
+/// The same rule as [`live_client`]: no key variable, no header, i.e. byte for
+/// byte the previous behaviour against a local `llama-server`. It exists because
+/// the first gpt-oss dispatch found four such smokes answering `401` on the
+/// rented gate — they had been written against an unauthenticated LAN stand and
+/// had never met an authenticated server (docs/research/e2e-gpt-oss-120b.md).
+#[cfg(test)]
+pub(crate) fn live_bearer(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match std::env::var("MINDFORK_ENGINE_KEY") {
+        Ok(k) if !k.is_empty() => rb.bearer_auth(k),
+        _ => rb,
+    }
+}
+
 /// The stack under test has **no vision projector to give**, and the run says so
 /// in writing.
 ///

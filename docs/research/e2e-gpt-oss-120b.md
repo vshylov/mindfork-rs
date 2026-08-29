@@ -1,8 +1,10 @@
 # Research: gpt-oss-120b (split Q8_0) on the live e2e gate
 
-**Status:** **stage 0 done — GO.** Forks F1–F6 resolved (*user's decision,
-2026-08-29*); the runner, the workflow and the three tests are built on
-`feat/e2e-gpt-oss-120b`. What remains is one full dispatch.
+**Status:** **done, with three open questions.** Forks F1–F6 resolved
+(*user's decision, 2026-08-29*); the runner, the workflow and the tests are built
+on `feat/e2e-gpt-oss-120b`, and the full suite has been dispatched against the
+model — **117 passed, 11 failed, none of them a product defect** (§10). Eight of
+the eleven are fixed and re-verified live; three need a decision (§10.2).
 **Date:** 2026-08-29.
 **Extends:** [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md) (the
 gate itself, stages 0–3) and
@@ -10,8 +12,9 @@ gate itself, stages 0–3) and
 (how a second chat model was added — the shape this one follows).
 **Journal:** [docs/journal/ci.md](../journal/ci.md).
 
-**Probe spend: ≈$0.42 in total**, across five throwaway endpoints, every one
-deleted and the deletion verified.
+**Total spend: ≈$2.56**, across seven throwaway endpoints — the probes, one
+full dispatch and one re-verification. Every endpoint deleted, every deletion
+verified.
 
 ## 1. Why this model, and not just a third of the same kind
 
@@ -344,11 +347,57 @@ one idle quarter-hour, ≈$1.25.
    `tools/hf_api.py`, the two derived declarations and the plan line in
    `tools/e2e_hf.py`, the workflow's third choice and its `model-default`
    instance, T1 and T2, and the docs.
-3. **What is left: one full dispatch** of
-   `.github/workflows/e2e-live.yml` with `model: gpt-oss-120b`, and its result —
-   the model, the instance, the timings and every smoke that moved — recorded in
-   [docs/journal/ci.md](../journal/ci.md).
+3. **Stage 2 — the dispatch, done** (§10), and its eight repairs re-verified
+   live. Three questions left open, listed in §10.2.
 
 **Definition of done** — AGENTS.md §4 plus: `cargo fmt --check`,
 `clippy -D warnings`, `cargo test`, `cyrillic_scan.py` green; the dispatch
-above, recorded.
+recorded in [docs/journal/ci.md](../journal/ci.md).
+
+## 10. The first full dispatch — 117 passed, 11 failed
+
+`python tools/e2e_hf.py run --chat-model gpt-oss-120b`, 2026-08-29: three
+endpoints, ready in 106 s, suite 906 s, all three deleted and verified. ≈$1.69.
+
+**Not one of the eleven is a product defect.** That is the result this model was
+added for: every failure is an assumption the two existing models happened to
+satisfy.
+
+### 10.1. Fixed, and re-verified live
+
+| Cause | Smokes | What it was |
+|---|---|---|
+| **U+2011 instead of `-`** | `attachment_read`, `attachment_search`, `cross_chat_search` | The model found the planted fact and printed `ZARYA‑8823` with a **non-breaking hyphen**; the assertion was a literal `contains("ZARYA-8823")`. 8 of 18 occurrences in one run, **the same model producing both glyphs** — so these were latent flakes on any model, not a property of this one. Fixed by `mentions_code`, which folds the Unicode dashes on both sides and stays strict about everything else. |
+| **A probe module with no key** | `dialogue_probe` ×4 | `engine()` built its client with `OpenAiClient::new` and the `cache_slots` arm posted raw — neither carried `MINDFORK_ENGINE_KEY`, so every request was a `401`. Written against an unauthenticated LAN stand *after* stage 1 routed six other files through `live_client`, and never dispatched since: it would have failed identically on Gemma. Fixed via `live_client` and a new shared `live_bearer`, which also replaces `continue_probe`'s private copy of the same four lines. |
+| **A 16-token ceiling** | `external_authenticated_server_takes_the_stored_key_live` | `"Say OK."` with `max_tokens: 16`: on a reasoning model the whole budget goes to the thinking channel, leaving empty text and a red smoke that says nothing about keys. The same shape as the Qwen ceiling (e2e-second-chat-model.md §2); raised to 512. Muting is not available here — §4, U5. |
+
+Re-verified against a fresh H200, 2026-08-29: **all eight green** (5 min, ≈$0.45).
+The supervisor smoke's control arm still gets its `401` without a key, so the
+authenticated arm still proves what it claims.
+
+### 10.2. Open — each changes what a test asserts *for every model*
+
+- **`code_workspace_navigate_e2e_live`** — turn 2 asks how many lines
+  `src/config.rs` has; the model answered **correctly** — six lines, and the first one quoted
+  verbatim — without calling `code_read`, because turn 1's `code_search`
+  had already put the file in the conversation. This is the *second* instance of
+  a pattern already recorded for `attachment_read` in remote-e2e-hf.md §3: an
+  assertion that a specific tool must be used holds only when the earlier turn
+  happens not to have answered it. The fix proposed there — run the smoke in a
+  configuration where the tool is the only route — applies here too, and is a
+  test redesign rather than a patch.
+- **`fetch_url_address_policy_e2e_live`** — "I'm unable to fetch that URL", with
+  no tool call, so the address policy was never exercised. gpt-oss refuses
+  markedly more readily than the other two (`file_attachment_e2e_live`'s baseline
+  arm answered "I'm sorry, but I can't help with that" and still passed, because
+  there a refusal *is* the control). Firming the prompt would change what the
+  smoke asks of Gemma and Qwen as well.
+- **`continue_probe::prefill_coexists_with_the_tool_grammar`** — after a prefill,
+  the model emitted the tool call as JSON **text** rather than a parsed call. Its
+  own message calls that "F5 no-go evidence": this is a stage-0 research probe
+  recording a capability, and the capability is genuinely absent on this
+  template. Its sibling in the same module already skips on a model it does not
+  apply to (`thinking_model_rejects_prefill_and_the_kwarg_lifts_it` printed
+  *"server model is …gpt-oss…, not a Qwen thinking model"*), which is the shape
+  this one probably wants — but turning a red into a skip is exactly the move
+  that needs a decision rather than an edit.

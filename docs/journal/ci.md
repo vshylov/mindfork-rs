@@ -1263,7 +1263,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   single-file stack, reusing `gguf::parse_shard` rather than re-implementing the
   tail shape), and one new smoke,
   `a_split_model_is_named_by_the_model_not_the_part_live`, which asserts **both**
-  that the server really reported a part and that `model_id` stripped it. 2696
+  that the server really reported a part and that `model_id` stripped it. 2697
   unit tests green, 128 `#[ignore]`.
 - **The model is one decision, still.** The third `CHAT_MODELS` record carries
   its repository, weights, `variant`, absent projector, `nGpuLayers`, instance
@@ -1278,7 +1278,38 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   (`--chat-model gpt-oss-120b --no-embed`): ready in 83 s, both declarations
   printed and honoured, the split smoke green, the vision smoke skipped naming
   the variable, endpoint deleted and verified.
-- **Cost**: stage 0 plus the verification came to **≈$0.42** across five
-  throwaway endpoints, none left running. A full dispatch is ~$2.50 (H200
-  $5.00/hr + two T4s) against ~$1.00 for a Gemma or Qwen run. Still outstanding:
-  that full dispatch.
+- **The dispatch: 117 passed, 11 failed, and not one a product defect.** Three
+  endpoints, ready in 106 s, suite 906 s. Every failure was an assumption the
+  other two models happened to satisfy:
+  - **three smokes met a non-breaking hyphen.** The model found the planted fact
+    and wrote `ZARYA‑8823` with **U+2011**; the assertion was a literal
+    `contains("ZARYA-8823")`. 8 of 18 occurrences in the run, *the same model
+    producing both glyphs* — so these were latent flakes on every model, and had
+    simply never been dealt the other glyph. One helper, `mentions_code`, folds
+    the Unicode dashes on both sides and stays exactly as strict about case,
+    spacing and digits.
+  - **four smokes answered `401`.** `dialogue_probe` built its client with
+    `OpenAiClient::new` and posted its raw arm without a header — written against
+    an unauthenticated LAN stand *after* stage 1 had routed six other files
+    through `live_client`, and never dispatched since. It would have failed
+    identically on Gemma; the gate had simply never run it. Fixed through
+    `live_client` plus a shared `live_bearer`, which also replaced
+    `continue_probe`'s private copy of the same four lines.
+  - **one smoke had a 16-token ceiling.** `"Say OK."` with `max_tokens: 16`: on a
+    reasoning model that budget is spent in the thinking channel, so the text is
+    empty and a smoke about *keys* goes red for a reason unrelated to keys. Same
+    shape as the Qwen ceiling above; raised to 512, since muting does not work on
+    this template.
+  - **three are open**, because each changes what a test asserts for every model:
+    `code_workspace_navigate` answered turn 2 correctly *without* the tool (the
+    second instance of the `attachment_read` pattern in remote-e2e-hf.md §3),
+    `fetch_url_address_policy` refused before calling anything ("I'm unable to
+    fetch that URL" — this family refuses more readily), and
+    `continue_probe::prefill_coexists_with_the_tool_grammar` recorded genuine
+    no-go evidence (the tool call came back as JSON text after a prefill).
+- **Re-verified**: the eight repairs against a fresh H200 — all green, 5 min. The
+  supervisor smoke's control arm still gets its `401` without a key, so the
+  authenticated arm still proves what it claims.
+- **Cost**: **≈$2.56** for the whole track — the probes, the dispatch and the
+  re-verification, across seven throwaway endpoints, none left running. A routine
+  dispatch on this model is ~$2.50 against ~$1.00 for a Gemma or Qwen run.

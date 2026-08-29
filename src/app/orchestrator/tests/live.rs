@@ -5,6 +5,51 @@ use super::*;
 use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::EmbedRole;
 
+/// Does the reply carry the planted code — whichever dash the model felt like
+/// typing?
+///
+/// Every smoke that plants a fact plants it as `ZARYA-8823`, and the assertion
+/// used to be a plain `contains`. On `gpt-oss-120b` that turned three green
+/// smokes red while the model was answering *correctly*: it renders the code
+/// with a **non-breaking hyphen** (U+2011). Not always, either — 8 of 18
+/// occurrences in one run, the same model producing both glyphs, so these were
+/// latent flakes on any model rather than a property of this one.
+///
+/// The fact under test is the code; which dash glyph a model chose to render it
+/// with is typography. So both sides are compared with the Unicode dashes folded
+/// to ASCII `-`. Nothing else is normalized: case, spacing and the digits stay
+/// exactly as strict as they were.
+fn mentions_code(haystack: &str, code: &str) -> bool {
+    fn fold_dashes(s: &str) -> String {
+        s.chars()
+            .map(|c| match c {
+                // The hyphen/dash block (U+2010 hyphen … U+2015 horizontal bar),
+                // the minus sign, and the compatibility forms.
+                '\u{2010}'..='\u{2015}' | '\u{2212}' | '\u{FE58}' | '\u{FE63}' | '\u{FF0D}' => '-',
+                other => other,
+            })
+            .collect()
+    }
+    fold_dashes(haystack).contains(&fold_dashes(code))
+}
+
+/// Not ceremony: this helper is the only thing standing between eight live
+/// assertions and a typographic hyphen, and "why is this not just `contains`?"
+/// is a question a future reader will ask. The answer is a test.
+#[test]
+fn a_planted_code_survives_the_dash_a_model_chose() {
+    assert!(mentions_code("the code is ZARYA-8823.", "ZARYA-8823"));
+    // U+2011, measured on gpt-oss-120b; U+2013 and U+2212 are the neighbours a
+    // different model would reach for.
+    assert!(mentions_code("**ZARYA\u{2011}8823**", "ZARYA-8823"));
+    assert!(mentions_code("ZARYA\u{2013}8823", "ZARYA-8823"));
+    assert!(mentions_code("ZARYA\u{2212}8823", "ZARYA-8823"));
+    // Still strict about everything that is not a dash.
+    assert!(!mentions_code("ZARYA 8823", "ZARYA-8823"));
+    assert!(!mentions_code("zarya-8823", "ZARYA-8823"));
+    assert!(!mentions_code("ZARYA-8824", "ZARYA-8823"));
+}
+
 /// Runs `topics` as ordinary turns, then folds the conversation with `/compact`
 /// and returns `(summary, folded)`.
 ///
@@ -176,7 +221,7 @@ async fn attachment_search_e2e_live() {
         "the model must find the place by meaning, called: {names:?}"
     );
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the code sits deep in the file and must be found: {answer}"
     );
 }
@@ -255,7 +300,7 @@ async fn attachment_read_e2e_live() {
     eprintln!("turn 1 tool calls: {names:#?}");
     eprintln!("turn 1 reply: {answer}");
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the answer sits on a late page and must be found: {answer}"
     );
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -352,11 +397,11 @@ async fn file_attachment_e2e_live() {
     handle.await.unwrap();
 
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the model must answer from the attached file, got: {answer}"
     );
     assert!(
-        !baseline.contains(CODE),
+        !mentions_code(&baseline, CODE),
         "the baseline must not know the invented code (otherwise the test proves nothing): {baseline}"
     );
 }
@@ -2385,7 +2430,7 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
     .await;
     eprintln!("control answer: {before}");
     assert!(
-        before.contains(CODE),
+        mentions_code(&before, CODE),
         "control failed — the model cannot answer even with the full history,          so this run says nothing about compression: {before}"
     );
 
@@ -2421,11 +2466,11 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
         "the seed and control exchanges must be behind the boundary, folded {folded}"
     );
     assert!(
-        summary.contains(CODE),
+        mentions_code(&summary, CODE),
         "the summary must carry the identifier verbatim: {summary}"
     );
     assert!(
-        after.contains(CODE),
+        mentions_code(&after, CODE),
         "the fact is now reachable only through the summary and must survive it: {after}"
     );
 }
@@ -2717,7 +2762,7 @@ async fn cross_chat_search_answers_from_another_chat_live() {
          guess: {calls:?}"
     );
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the fact lives only in the other chat and must come back: {answer}"
     );
     // Spec §11.3: the model is *taught* the address form by the pair's

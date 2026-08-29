@@ -163,13 +163,6 @@ fn strip_think_residue(content: &str) -> (&str, bool) {
     }
 }
 
-fn bearer(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-    match std::env::var("MINDFORK_ENGINE_KEY") {
-        Ok(k) if !k.is_empty() => rb.bearer_auth(k),
-        _ => rb,
-    }
-}
-
 /// The feature's gate: a llama.cpp server continues a word-boundary assistant
 /// tail through the app's own client, with no extra request fields — the
 /// documented default (`--prefill-assistant`, server README). The mid-word arm
@@ -255,13 +248,14 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
     };
     let base = url.trim_end_matches('/').to_string();
     let http = reqwest::Client::new();
-    let models: serde_json::Value = bearer(http.get(format!("{base}/models")))
-        .send()
-        .await
-        .expect("GET /v1/models")
-        .json()
-        .await
-        .expect("/v1/models body must be JSON");
+    let models: serde_json::Value =
+        crate::shared::api::live_bearer(http.get(format!("{base}/models")))
+            .send()
+            .await
+            .expect("GET /v1/models")
+            .json()
+            .await
+            .expect("/v1/models body must be JSON");
     let model_id = models["data"][0]["id"]
         .as_str()
         .unwrap_or("")
@@ -311,10 +305,11 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
         "stream": false,
         "chat_template_kwargs": {"enable_thinking": false},
     });
-    let resp = bearer(http.post(format!("{base}/chat/completions")).json(&body))
-        .send()
-        .await
-        .expect("POST /v1/chat/completions (arm B)");
+    let resp =
+        crate::shared::api::live_bearer(http.post(format!("{base}/chat/completions")).json(&body))
+            .send()
+            .await
+            .expect("POST /v1/chat/completions (arm B)");
     let status = resp.status();
     let v: serde_json::Value = resp.json().await.expect("arm B body must be JSON");
     assert!(
@@ -421,10 +416,12 @@ async fn explicit_continuation_knobs_probe() {
         "messages": messages, "temperature": 0.0, "max_tokens": 256, "stream": false,
         "continue_final_message": true, "add_generation_prompt": false,
     });
-    let resp = bearer(http.post(format!("{base}/chat/completions")).json(&body_on))
-        .send()
-        .await
-        .expect("POST (knobs on)");
+    let resp = crate::shared::api::live_bearer(
+        http.post(format!("{base}/chat/completions")).json(&body_on),
+    )
+    .send()
+    .await
+    .expect("POST (knobs on)");
     let status_on = resp.status();
     let v: serde_json::Value = resp.json().await.expect("knobs-on body must be JSON");
     let content_on = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
@@ -449,7 +446,7 @@ async fn explicit_continuation_knobs_probe() {
         "messages": messages, "temperature": 0.0, "max_tokens": 256, "stream": false,
         "continue_final_message": false, "add_generation_prompt": true,
     });
-    let resp = bearer(
+    let resp = crate::shared::api::live_bearer(
         http.post(format!("{base}/chat/completions"))
             .json(&body_off),
     )
@@ -477,7 +474,7 @@ async fn explicit_continuation_knobs_probe() {
         "messages": messages, "temperature": 0.0, "max_tokens": 16, "stream": false,
         "continue_final_message": "banana",
     });
-    let resp = bearer(
+    let resp = crate::shared::api::live_bearer(
         http.post(format!("{base}/chat/completions"))
             .json(&body_bad),
     )
