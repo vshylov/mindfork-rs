@@ -2905,24 +2905,23 @@ async fn llm_name_and_history_e2e_live() {
     };
 
     // The bootstrap profile/chat and the engine's answer arrive in any order.
-    let (profile, discovered) =
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let (mut profile, mut chat, mut model) = (None, None, None);
-            while profile.is_none() || chat.is_none() || model.is_none() {
-                match evt_rx.recv().await {
-                    Some(AppEvent::ProfileList(ps)) => {
-                        profile = profile.or_else(|| ps.first().map(|p| p.id));
-                    }
-                    Some(AppEvent::ChatActivated { id, .. }) => chat = Some(id),
-                    Some(AppEvent::EngineModel(Some(m))) => model = Some(m),
-                    Some(_) => {}
-                    None => break,
+    let (profile, discovered) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (mut profile, mut chat, mut model) = (None, None, None);
+        while profile.is_none() || chat.is_none() || model.is_none() {
+            match evt_rx.recv().await {
+                Some(AppEvent::ProfileList(ps)) => {
+                    profile = profile.or_else(|| ps.first().map(|p| p.id));
                 }
+                Some(AppEvent::ChatActivated { id, .. }) => chat = Some(id),
+                Some(AppEvent::EngineModel(Some(m))) => model = Some(m),
+                Some(_) => {}
+                None => break,
             }
-            (profile, model)
-        })
-        .await
-        .expect("the engine must name its model within 30s of connecting");
+        }
+        (profile, model)
+    })
+    .await
+    .expect("the engine must name its model within 30s of connecting");
     let profile = profile.expect("the bootstrap profile");
     let discovered = discovered.expect("the engine's own name for the model");
     eprintln!("discovered: {discovered}");
@@ -2951,7 +2950,10 @@ async fn llm_name_and_history_e2e_live() {
     let name_calls: Vec<&(String, String)> =
         calls.iter().filter(|(n, _)| n == "get_llm_name").collect();
     eprintln!("get_llm_name calls: {name_calls:#?}");
-    assert!(!name_calls.is_empty(), "the tool was never called: {calls:#?}");
+    assert!(
+        !name_calls.is_empty(),
+        "the tool was never called: {calls:#?}"
+    );
     assert!(
         name_calls.iter().any(|(_, r)| r.contains(&discovered)),
         "the tool's answer must carry the discovered name {discovered:?}: {name_calls:#?}"
@@ -2968,10 +2970,15 @@ async fn llm_name_and_history_e2e_live() {
     .await;
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
-    let hist_calls: Vec<&(String, String)> =
-        calls.iter().filter(|(n, _)| n == "get_llm_history").collect();
+    let hist_calls: Vec<&(String, String)> = calls
+        .iter()
+        .filter(|(n, _)| n == "get_llm_history")
+        .collect();
     eprintln!("get_llm_history calls: {hist_calls:#?}");
-    assert!(!hist_calls.is_empty(), "the tool was never called: {calls:#?}");
+    assert!(
+        !hist_calls.is_empty(),
+        "the tool was never called: {calls:#?}"
+    );
     assert!(
         hist_calls
             .iter()
