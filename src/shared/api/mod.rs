@@ -52,6 +52,76 @@ pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> 
     Some(OpenAiClient::new(url).with_api_key(std::env::var(key_var).ok()))
 }
 
+/// The `Authorization` header for a smoke that speaks to the engine **directly**
+/// rather than through [`OpenAiClient`] — a probe reading a field the client
+/// drops (`timings`), or one composing a request body by hand.
+///
+/// The same rule as [`live_client`]: no key variable, no header, i.e. byte for
+/// byte the previous behaviour against a local `llama-server`. It exists because
+/// the first gpt-oss dispatch found four such smokes answering `401` on the
+/// rented gate — they had been written against an unauthenticated LAN stand and
+/// had never met an authenticated server (docs/research/e2e-gpt-oss-120b.md).
+#[cfg(test)]
+pub(crate) fn live_bearer(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match std::env::var("MINDFORK_ENGINE_KEY") {
+        Ok(k) if !k.is_empty() => rb.bearer_auth(k),
+        _ => rb,
+    }
+}
+
+/// The stack under test has **no vision projector to give**, and the run says so
+/// in writing.
+///
+/// Three smokes need a projector and *fail loudly rather than skip* against a
+/// text-only server, deliberately: a vision smoke that quietly passes on a blind
+/// model is worse than none ([docs/lessons.md](../../../docs/lessons.md) §9).
+/// That rule assumes the stack could have been given one — the gate's two chat
+/// models both ship a projector in the same repository as their weights, so a
+/// blind run there is a misconfiguration, which is exactly what the rule is
+/// meant to catch.
+///
+/// A gate model that has no projector in existence (`gpt-oss-120b` is text-only)
+/// falls outside the assumption rather than outside the rule. So it is declared:
+/// `MINDFORK_LIVE_TEXT_ONLY=1` turns those three smokes into skips and changes
+/// nothing else. It is set by the model record that knows it is blind, never by
+/// the standard gate, and every skip prints the variable's name — a skip the run
+/// has to ask for, by name, in the log, is not the silent pass the rule guards
+/// against. See docs/research/e2e-gpt-oss-120b.md §7 (fork F3).
+#[cfg(test)]
+pub(crate) fn live_text_only() -> bool {
+    // Any non-empty value that is not an explicit denial: this is read from a CI
+    // workflow's environment block, where "true" and "1" are equally idiomatic
+    // and an accidental "0" should not silently disable three smokes.
+    match std::env::var("MINDFORK_LIVE_TEXT_ONLY") {
+        Ok(v) => !matches!(v.trim(), "" | "0" | "false"),
+        Err(_) => false,
+    }
+}
+
+/// The stack under test serves a model whose weights are **split across several
+/// files**, and the run says so.
+///
+/// The declaration is what makes the check worth anything. A smoke that merely
+/// asserted "the reported name has no part number" would pass on every
+/// single-file stack without ever meeting a split one — which is where the
+/// gate stood until `gpt-oss-120b` joined it: [`crate::shared::gguf`] parses,
+/// rebuilds and strips the `-00001-of-00002` tail, and every assertion about it
+/// was a unit test over strings.
+///
+/// So `MINDFORK_LIVE_SPLIT_MODEL=1` says "this server is holding a split model",
+/// and the smoke that reads it **fails rather than skips** if the server turns
+/// out to report a plain file — the same discipline as the vision smokes
+/// ([docs/lessons.md](../../../docs/lessons.md) §9), for the same reason: a
+/// declaration that is quietly wrong is worse than no declaration.
+/// See docs/research/e2e-gpt-oss-120b.md §6 (T2).
+#[cfg(test)]
+pub(crate) fn live_split_model() -> bool {
+    match std::env::var("MINDFORK_LIVE_SPLIT_MODEL") {
+        Ok(v) => !matches!(v.trim(), "" | "0" | "false"),
+        Err(_) => false,
+    }
+}
+
 /// The fixture every provider's vision smoke sends: a 512×512 blue field with a large
 /// white square in the middle, as base64 png (spec §9.10).
 ///

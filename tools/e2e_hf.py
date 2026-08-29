@@ -7,7 +7,8 @@ probe: tools/hf_api.py.
 
 One entry point, identical locally and in CI (the precedent is
 `packaging/linux/build-packages.sh`). It creates three endpoints — chat
-(llama.cpp, `--chat-model`, L40S), embeddings (the same engine in
+(llama.cpp, `--chat-model`, on the GPU that model's record names), embeddings
+(the same engine in
 `embeddings` mode, bge-m3 Q8_0, T4) and a *second, different* embedding model
 (multilingual-e5-large-instruct q8_0, T4) for the smokes that guard the
 embedding-model-change track — waits for all of them, runs the `#[ignore]`
@@ -26,6 +27,7 @@ which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
     set HF_TOKEN=hf_...
     python tools/e2e_hf.py run                  # the full remote gate
     python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
+    python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, H200, text-only
     python tools/e2e_hf.py run --dry-run        # payloads only, spends nothing
     python tools/e2e_hf.py run --filter e2e_live --no-prebuild
     python tools/e2e_hf.py run --reuse-chat e2e-chat-0728-2010   # iterate, no deploy
@@ -105,7 +107,9 @@ def prebuild(args):
     return code
 
 
-def run_suite(command, chat_url, embed_url, alt_embed_url, keepalive_every):
+def run_suite(
+    command, chat_url, embed_url, alt_embed_url, keepalive_every, text_only=False, split_model=False
+):
     """Run the suite with the endpoint env set.
 
     The lifecycle stays inside this process on purpose: creating the endpoints
@@ -127,10 +131,30 @@ def run_suite(command, chat_url, embed_url, alt_embed_url, keepalive_every):
             # server this run does not control.
             env.pop(url_var, None)
             env.pop(key_var, None)
+    # A model with no projector *in existence* declares itself text-only, and the
+    # three vision smokes skip instead of failing for a reason that is not about
+    # the code. Derived from the deployed model rather than taken as a flag, so it
+    # can never disagree with what is actually running; `--no-mmproj` deliberately
+    # does not set it (hf_api.text_only, docs/research/e2e-gpt-oss-120b.md fork F3).
+    if text_only:
+        env["MINDFORK_LIVE_TEXT_ONLY"] = "1"
+    else:
+        env.pop("MINDFORK_LIVE_TEXT_ONLY", None)
+    # ...and, the other way round, a model that *is* split turns on the smoke
+    # that would otherwise never meet one. Same principle: derived from what was
+    # deployed, so the declaration cannot drift from the stack.
+    if split_model:
+        env["MINDFORK_LIVE_SPLIT_MODEL"] = "1"
+    else:
+        env.pop("MINDFORK_LIVE_SPLIT_MODEL", None)
     print("\n=== suite ===", flush=True)
     print(f"  MINDFORK_ENGINE_URL={env['MINDFORK_ENGINE_URL']}")
     print(f"  MINDFORK_EMBED_URL={env.get('MINDFORK_EMBED_URL', '(unset — memory smokes will skip)')}")
     print(f"  MINDFORK_EMBED_URL_ALT={env.get('MINDFORK_EMBED_URL_ALT', '(unset — model-change smokes will skip)')}")
+    if text_only:
+        print("  MINDFORK_LIVE_TEXT_ONLY=1 (no projector exists for this model: the 3 vision smokes will SKIP)")
+    if split_model:
+        print("  MINDFORK_LIVE_SPLIT_MODEL=1 (the weights are split across files)")
     print(f"  $ {command}\n", flush=True)
     started = time.time()
     with KeepAlive(chat_url, [embed_url, alt_embed_url], every=keepalive_every):
@@ -244,8 +268,19 @@ def print_plan(plan, args):
     # ASCII on purpose: a piped stdout on Windows is cp1252, and `init` only
     # keeps a stray character from killing a run that is holding a GPU -- it does
     # not make the log readable.
-    projector = "(none - the 3 vision smokes will FAIL)" if args.no_mmproj else (args.mmproj or plan.model["mmproj"])
+    if args.no_mmproj:
+        projector = "(none - asked for; the 3 vision smokes will FAIL)"
+    elif hf.text_only(args):
+        projector = "(none exists for this model; the 3 vision smokes will SKIP)"
+    else:
+        projector = args.mmproj or plan.model["mmproj"]
     print(f"                  mmproj  {projector}")
+    variant = args.variant or plan.model.get("variant")
+    if variant:
+        # Which .gguf files the endpoint pulls at all. On a repository that holds
+        # every quantization it is the difference between 63 GB and 1010 GB.
+        print(f"                  variant {variant}")
+    print(f"  chat  hardware: {hf.chat_instance(args)} {args.instance_size} @ {args.vendor}/{hf.chat_region(args)}")
     print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if plan.want_embed:
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
@@ -321,7 +356,13 @@ def cmd_run(args):
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
     code, suite_time = run_suite(
-        cargo_command(args), chat_url, embed_url, alt_embed_url, args.keepalive_seconds
+        cargo_command(args),
+        chat_url,
+        embed_url,
+        alt_embed_url,
+        args.keepalive_seconds,
+        text_only=hf.text_only(args),
+        split_model=hf.split_model(args),
     )
 
     print("\n=== summary ===")

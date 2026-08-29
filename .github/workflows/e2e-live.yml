@@ -23,18 +23,29 @@ on:
       # F2): both families in one job would run the suite twice, ~50 min against the
       # 45-minute timeout below — which cannot rise without crowding the
       # sweeper's 90-minute threshold.
+      #
+      # `gpt-oss-120b` is the third: a **split** model (two files, 63.39 GB), an
+      # OpenAI open-weights model (the harmony template), and the only text-only
+      # one — so it brings its own GPU (H200 141 GB, us-west-2), its own download
+      # filter and a declared skip for the three vision smokes, all from its
+      # record in tools/hf_api.py. It costs about three times a Gemma dispatch;
+      # docs/research/e2e-gpt-oss-120b.md.
       model:
         description: "Chat model to rent for this run"
         required: false
         default: gemma-4-31b
         type: choice
-        options: [gemma-4-31b, qwen-3.6-27b]
+        options: [gemma-4-31b, qwen-3.6-27b, gpt-oss-120b]
+      # `model-default` is the normal answer: the model record names the card that
+      # fits it, and the region follows the card. Overriding it is for measuring a
+      # cheaper instance, not for routine use — a 63 GB model on a 48 GB L40S
+      # fails after the deploy, not before it.
       chat_instance:
-        description: "GPU for the chat endpoint"
+        description: "GPU for the chat endpoint (model-default = the model's own)"
         required: false
-        default: nvidia-l40s
+        default: model-default
         type: choice
-        options: [nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100]
+        options: [model-default, nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100, nvidia-h200]
       no_embed:
         description: "Skip the embedding endpoints (the memory smokes then skip too)"
         required: false
@@ -102,7 +113,11 @@ jobs:
           NO_EMBED: ${{ inputs.no_embed }}
           NO_ALT_EMBED: ${{ inputs.no_alt_embed }}
         run: |
-          args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --chat-instance "$CHAT_INSTANCE")
+          args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          # Unset means "the model's own", which is also what picks its region.
+          if [ -n "$CHAT_INSTANCE" ] && [ "$CHAT_INSTANCE" != "model-default" ]; then
+            args+=(--chat-instance "$CHAT_INSTANCE")
+          fi
           if [ -n "$CHAT_MODEL" ]; then args+=(--chat-model "$CHAT_MODEL"); fi
           if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
           if [ "$NO_EMBED" = "true" ]; then args+=(--no-embed); fi

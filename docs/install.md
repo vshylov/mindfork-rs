@@ -843,7 +843,8 @@ cargo test -- --ignored --nocapture --test-threads=1
 
 `tools/e2e_hf.py` runs the same suite against **ephemeral Hugging Face Inference
 Endpoints**, so the live gate no longer requires a machine with a GPU. It rents
-three: a real `llama-server` (HF's llama.cpp engine, the model on an L40S), an
+three: a real `llama-server` (HF's llama.cpp engine, on the GPU the chosen
+model's record names), an
 embedding endpoint (the same engine in `embeddings` mode, bge-m3 Q8_0 on a T4),
 and a *second, different* embedding model (multilingual-e5-large-instruct q8_0)
 for the smokes that guard against an embedding-model change. All deliberately
@@ -851,17 +852,34 @@ the same GGUFs and quantizations as the local stack, because the memory gates'
 similarity thresholds are calibrated against exactly those models.
 
 The chat endpoint runs **one model per run**, chosen with `--chat-model`:
-`gemma-4-31b` (the default, and what the thresholds were calibrated against) or
-`qwen-3.6-27b`. The name is one decision — it carries the repository, the
-weights and the vision projector together, so an impossible combination cannot
-be typed. The projector is deployed with the model: three smokes require one and
-**fail rather than skip** on a text-only server, by design.
+
+| `--chat-model` | What it is | GPU |
+|---|---|---|
+| `gemma-4-31b` | the default, and what the memory thresholds were calibrated against | L40S 48 GB, us-east-1 |
+| `qwen-3.6-27b` | a second model family, so a Gemma-shaped assumption is caught here | L40S 48 GB, us-east-1 |
+| `gpt-oss-120b` | weights **split across two files** (63.39 GB, Q8_0), OpenAI open-weights, text-only | H200 141 GB, us-west-2 |
+
+The name is one decision — it carries the repository, the weights, the vision
+projector, the download filter and the hardware together, so an impossible
+combination cannot be typed and a 63 GB model cannot be sent to a 48 GB card.
+The projector is deployed with the model: three smokes require one and **fail
+rather than skip** on a text-only server, by design.
+
+`gpt-oss-120b` is the exception that proves that rule, and it is handled by
+declaration rather than by exception. It has no projector *in existence*, so the
+runner sets `MINDFORK_LIVE_TEXT_ONLY=1` and those three skip, saying so in the
+log; and its weights are split, so it sets `MINDFORK_LIVE_SPLIT_MODEL=1`, which
+turns on the smoke that checks a part number (`-00001-of-00002`) never reaches a
+chat header. Both are **derived from the model that was deployed**, never passed
+as flags, so neither can disagree with the stack. `--no-mmproj` deliberately
+does not set the first: that flag exists to deploy a *sighted* model blind.
 
 ```powershell
 $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
 python tools/e2e_hf.py run        # create, run the suite, delete
 python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
 python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
+python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, H200, text-only
 python tools/e2e_hf.py run --filter e2e_live  # a subset
 python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
 python tools/e2e_hf.py list                   # what is running right now
@@ -876,19 +894,23 @@ which one is missing, and distinguishes that from the other causes of a 403 (no
 payment method on the account, or an org token pending approval).
 
 **Cost and the guarantee.** A run is ~25 minutes and ~$1 (L40S $1.80/hr + two
-T4s at $0.50/hr, billed by the minute). The endpoints are deleted from `finally`, from
+T4s at $0.50/hr, billed by the minute); on `gpt-oss-120b` it is ~$2.50, because
+the H200 that holds it is $5.00/hr. The endpoints are deleted from `finally`, from
 `atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
 a failed delete exits non-zero even when the tests passed. If the process is
 killed outright, the endpoints scale to zero after their idle window (15 min, so
 ≈ $0.57 worst case) and the sweeper removes them, which also reclaims
-endpoint quota. Use `--keep` only when debugging, and delete by hand afterwards.
+endpoint quota (≈$1.25 on an H200). Use `--keep` only when debugging, and
+delete by hand afterwards.
 
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
 test-filter, model and GPU inputs; it needs the `HF_TOKEN` repository secret. **Live e2e
 sweeper** runs every six hours as the backstop (hourly until 2026-08-21; the cadence
 bounds how long an orphan holds endpoint quota, not money). Design and decisions:
 [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),
-[docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md).
+[docs/research/remote-e2e-gpu.md](research/remote-e2e-gpu.md); the third model
+and what it exists to cover:
+[docs/research/e2e-gpt-oss-120b.md](research/e2e-gpt-oss-120b.md).
 
 Two smoke groups still need the local machine and are **not** covered remotely:
 the managed-server smoke (`MINDFORK_LLAMA_BIN` — it needs a child process of

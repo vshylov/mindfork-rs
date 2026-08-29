@@ -5,6 +5,51 @@ use super::*;
 use crate::features::tools::confirm::ToolDecision;
 use crate::shared::api::EmbedRole;
 
+/// Does the reply carry the planted code — whichever dash the model felt like
+/// typing?
+///
+/// Every smoke that plants a fact plants it as `ZARYA-8823`, and the assertion
+/// used to be a plain `contains`. On `gpt-oss-120b` that turned three green
+/// smokes red while the model was answering *correctly*: it renders the code
+/// with a **non-breaking hyphen** (U+2011). Not always, either — 8 of 18
+/// occurrences in one run, the same model producing both glyphs, so these were
+/// latent flakes on any model rather than a property of this one.
+///
+/// The fact under test is the code; which dash glyph a model chose to render it
+/// with is typography. So both sides are compared with the Unicode dashes folded
+/// to ASCII `-`. Nothing else is normalized: case, spacing and the digits stay
+/// exactly as strict as they were.
+fn mentions_code(haystack: &str, code: &str) -> bool {
+    fn fold_dashes(s: &str) -> String {
+        s.chars()
+            .map(|c| match c {
+                // The hyphen/dash block (U+2010 hyphen … U+2015 horizontal bar),
+                // the minus sign, and the compatibility forms.
+                '\u{2010}'..='\u{2015}' | '\u{2212}' | '\u{FE58}' | '\u{FE63}' | '\u{FF0D}' => '-',
+                other => other,
+            })
+            .collect()
+    }
+    fold_dashes(haystack).contains(&fold_dashes(code))
+}
+
+/// Not ceremony: this helper is the only thing standing between eight live
+/// assertions and a typographic hyphen, and "why is this not just `contains`?"
+/// is a question a future reader will ask. The answer is a test.
+#[test]
+fn a_planted_code_survives_the_dash_a_model_chose() {
+    assert!(mentions_code("the code is ZARYA-8823.", "ZARYA-8823"));
+    // U+2011, measured on gpt-oss-120b; U+2013 and U+2212 are the neighbours a
+    // different model would reach for.
+    assert!(mentions_code("**ZARYA\u{2011}8823**", "ZARYA-8823"));
+    assert!(mentions_code("ZARYA\u{2013}8823", "ZARYA-8823"));
+    assert!(mentions_code("ZARYA\u{2212}8823", "ZARYA-8823"));
+    // Still strict about everything that is not a dash.
+    assert!(!mentions_code("ZARYA 8823", "ZARYA-8823"));
+    assert!(!mentions_code("zarya-8823", "ZARYA-8823"));
+    assert!(!mentions_code("ZARYA-8824", "ZARYA-8823"));
+}
+
 /// Runs `topics` as ordinary turns, then folds the conversation with `/compact`
 /// and returns `(summary, folded)`.
 ///
@@ -65,6 +110,23 @@ async fn narrow_profile_to(
             _ => None,
         })
         .expect("the bootstrap chat");
+    set_profile_tools(cmd_tx, profile, tools);
+    (profile, chat)
+}
+
+/// Change a profile's tool set **mid-conversation**, for a smoke whose second
+/// turn needs a different set from its first.
+///
+/// Split out of [`narrow_profile_to`], which can only run once: it waits for the
+/// bootstrap's `ProfileList` and `ChatActivated`, and those do not come round
+/// again. Ordering is safe without an acknowledgement — this command and the
+/// next turn's `SendMessage` travel the same channel, so the orchestrator
+/// applies them in that order.
+fn set_profile_tools(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    profile: Uuid,
+    tools: Vec<crate::entities::profile::ToolId>,
+) {
     cmd_tx
         .send(AppCommand::UpdateProfile {
             id: profile,
@@ -74,7 +136,6 @@ async fn narrow_profile_to(
             }),
         })
         .unwrap();
-    (profile, chat)
 }
 
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
@@ -176,7 +237,7 @@ async fn attachment_search_e2e_live() {
         "the model must find the place by meaning, called: {names:?}"
     );
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the code sits deep in the file and must be found: {answer}"
     );
 }
@@ -255,7 +316,7 @@ async fn attachment_read_e2e_live() {
     eprintln!("turn 1 tool calls: {names:#?}");
     eprintln!("turn 1 reply: {answer}");
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the answer sits on a late page and must be found: {answer}"
     );
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -352,11 +413,11 @@ async fn file_attachment_e2e_live() {
     handle.await.unwrap();
 
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the model must answer from the attached file, got: {answer}"
     );
     assert!(
-        !baseline.contains(CODE),
+        !mentions_code(&baseline, CODE),
         "the baseline must not know the invented code (otherwise the test proves nothing): {baseline}"
     );
 }
@@ -424,6 +485,10 @@ async fn attach_image_live(
 #[tokio::test]
 #[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
 async fn image_attachment_e2e_live() {
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
     let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -2381,7 +2446,7 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
     .await;
     eprintln!("control answer: {before}");
     assert!(
-        before.contains(CODE),
+        mentions_code(&before, CODE),
         "control failed — the model cannot answer even with the full history,          so this run says nothing about compression: {before}"
     );
 
@@ -2417,11 +2482,11 @@ async fn compaction_preserves_a_planted_fact_e2e_live() {
         "the seed and control exchanges must be behind the boundary, folded {folded}"
     );
     assert!(
-        summary.contains(CODE),
+        mentions_code(&summary, CODE),
         "the summary must carry the identifier verbatim: {summary}"
     );
     assert!(
-        after.contains(CODE),
+        mentions_code(&after, CODE),
         "the fact is now reachable only through the summary and must survive it: {after}"
     );
 }
@@ -2713,7 +2778,7 @@ async fn cross_chat_search_answers_from_another_chat_live() {
          guess: {calls:?}"
     );
     assert!(
-        answer.contains(CODE),
+        mentions_code(&answer, CODE),
         "the fact lives only in the other chat and must come back: {answer}"
     );
     // Spec §11.3: the model is *taught* the address form by the pair's
@@ -2783,6 +2848,20 @@ async fn the_engine_names_the_model_it_is_running_live() {
     assert!(
         !name.contains('\\') && !name.contains('/'),
         "a path reached the header instead of a model name: {name}"
+    );
+    // …and not a *part* of one. A model too large for a single file is served
+    // from `<name>-00001-of-00002.gguf`, and an un-aliased server reports that
+    // file — so the name a header shows must have lost the tail as well as the
+    // extension (docs/research/e2e-gpt-oss-120b.md §6, T1). Vacuously true on a
+    // single-file stack, which is the point: it costs nothing to carry and it is
+    // the one assertion a split model would break.
+    //
+    // The extension is put back on to ask the question, because `parse_shard` is
+    // the *only* place this project recognizes the tail shape and a second
+    // implementation of it here is exactly what that module exists to prevent.
+    assert!(
+        crate::shared::gguf::parse_shard(&format!("{name}{}", crate::shared::gguf::EXT)).is_none(),
+        "a part number reached the header instead of a model name: {name}"
     );
 }
 
@@ -3209,6 +3288,10 @@ async fn impersonation_after_compaction_still_writes_live() {
 async fn image_url_attachment_e2e_live() {
     use crate::features::image_fetch::stub::{ok_response, serve};
 
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
     let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -3395,7 +3478,7 @@ async fn code_workspace_navigate_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let _ = narrow_profile_to(
+    let (profile, _chat) = narrow_profile_to(
         &cmd_tx,
         &mut evt_rx,
         vec![
@@ -3456,12 +3539,21 @@ async fn code_workspace_navigate_e2e_live() {
         "the reconnect delay is not the request timeout: {answer}"
     );
 
-    // Turn 2 — something no search result can carry: the file's own shape.
-    // `code_read` is the only route to it, which is what keeps it covered live.
+    // Turn 2 — `code_read`, covered on its own. Two things make that
+    // deterministic rather than hopeful, and both were learned the hard way: the
+    // question is about a file **turn 1 never opened** (asked about
+    // `src/config.rs`, `gpt-oss-120b` answered correctly with no tool at all,
+    // because its turn-1 `code_read` had already put that file in the
+    // conversation), and the profile is narrowed to `code_read` alone, so no
+    // other route exists. The second instance of this pattern — the first is
+    // `attachment_read` in docs/history/remote-e2e-hf.md §3; an assertion that a
+    // *particular* tool must be chosen is only ever true until a model finds a
+    // better route, so the smoke has to remove the routes instead of hoping.
+    set_profile_tools(&cmd_tx, profile, vec![CODE_READ_ID.into()]);
     let (answer2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
-        "Сколько всего строк в файле src/config.rs и что написано в первой?",
+        "Что написано в первой строке файла README.md в прикреплённом проекте?",
     )
     .await;
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -3473,9 +3565,13 @@ async fn code_workspace_navigate_e2e_live() {
         calls2.iter().any(|(n, _)| n == CODE_READ_ID),
         "only a read can answer this: {names2:?}"
     );
+    // The heading of README.md, which appears nowhere else in the workspace and
+    // is not in the conversation before this turn. The line count is
+    // deliberately *not* asserted: a trailing newline makes "how many lines" a
+    // question two readers answer differently.
     assert!(
-        answer2.contains('6'),
-        "src/config.rs has 6 lines: {answer2}"
+        answer2.to_lowercase().contains("probe"),
+        "the first line of README.md is `# probe`: {answer2}"
     );
 }
 

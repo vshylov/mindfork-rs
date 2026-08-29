@@ -168,8 +168,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-29, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2696 unit tests
-green, 127 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2697 unit tests
+green, 128 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -180,6 +180,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **A third model on the live gate: gpt-oss-120b, split across two files** —
+  the gate had only ever run single-file models, so `shared/gguf.rs` (which
+  exists to strip a `-00001-of-00002` tail off a name) had met nothing but
+  fixtures; now `--chat-model gpt-oss-120b` deploys 63.39 GB of Q8_0 out of a
+  **1010 GB** repository — the undocumented `variant` field is what keeps the
+  other 946 GB on the Hub — onto an H200 the model's own record names, and the
+  live chain reports `gpt-oss-120b-Q8_0` from `/v1/models` through the header
+  to the `llm_history` record. Text-only and split are **declarations derived
+  from what was deployed**, never flags, so the three vision smokes skip in
+  writing and a new smoke checks a part number never reaches a header. On this
+  platform the H100 is neither available (quota 0) nor cheap ($10/hr against
+  the H200's $5)
+  ([docs/research/e2e-gpt-oss-120b.md](docs/research/e2e-gpt-oss-120b.md),
+  [docs/journal/ci.md](docs/journal/ci.md)).
 - **`get_llm_name`/`get_llm_history` — the language model, named and dated** —
   the assistant can say which **LLM** is running it (from the turn's own
   frozen name — header, metadata and tool answer share one read) and read the

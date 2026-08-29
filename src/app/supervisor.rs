@@ -1465,7 +1465,16 @@ mod tests {
                     system: None,
                     messages: vec![crate::shared::api::ApiMessage::user("Say OK.".to_string())],
                     sampling: crate::entities::sampling::SamplingConfig {
-                        max_tokens: Some(16),
+                        // Not 16. What is under test is whether the *stored key*
+                        // authenticates the turn, and on a reasoning model a
+                        // ceiling that tight is spent entirely in the thinking
+                        // channel, leaving empty text and a red smoke that says
+                        // nothing about keys (measured on gpt-oss-120b; the same
+                        // shape as the Qwen ceiling in
+                        // docs/history/e2e-second-chat-model.md §2). Muting is not
+                        // the fix here: `reasoning_budget: 0` is a no-op on the
+                        // harmony template.
+                        max_tokens: Some(512),
                         ..Default::default()
                     },
                     tools: Vec::new(),
