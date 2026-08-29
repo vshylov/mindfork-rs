@@ -1326,6 +1326,11 @@ impl Orchestrator {
                 workspace_journal: None,
                 lang,
                 cancel,
+                // The same resolver the turn path reads (config first, then
+                // the discovered name) — a background turn answers about the
+                // same engine a foreground one would.
+                model_name: self.effective_model_name(),
+                engine_mode: self.config.engine.mode,
             },
         )
     }

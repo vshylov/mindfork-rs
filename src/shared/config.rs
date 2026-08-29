@@ -124,6 +124,35 @@ impl ServerMode {
         }
     }
 
+    /// Stable string key for storage and tool results — the serde spelling of
+    /// the variant (pinned by `server_mode_key_matches_serde`). Values persist
+    /// in `data.db` (`llm_history.mode`, spec §9.14) — do not rename.
+    pub fn key(self) -> &'static str {
+        match self {
+            ServerMode::Managed => "managed",
+            ServerMode::External => "external",
+            ServerMode::OpenAi => "openai",
+            ServerMode::Gemini => "gemini",
+            ServerMode::Claude => "claude",
+            ServerMode::Grok => "grok",
+        }
+    }
+
+    /// The inverse of [`Self::key`] (`None` — not a mode this build knows).
+    pub fn from_key(key: &str) -> Option<Self> {
+        ServerMode::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// Every mode, in the settings UI's order.
+    pub const ALL: [ServerMode; 6] = [
+        ServerMode::Managed,
+        ServerMode::External,
+        ServerMode::OpenAi,
+        ServerMode::Gemini,
+        ServerMode::Claude,
+        ServerMode::Grok,
+    ];
+
     /// Whether `/continue` can resume a partial reply in this mode and, for
     /// Anthropic, on this model — i.e. the server continues a trailing
     /// assistant message in place (assistant prefill / continue-final-message).
@@ -2137,6 +2166,19 @@ mod tests {
         // An empty name is treated as unset.
         e.openai.model_name = Some(String::new());
         assert_eq!(e.active_model_name(), None);
+    }
+
+    #[test]
+    fn server_mode_key_matches_serde() {
+        // `key()` promises the serde spelling (it persists in `data.db`,
+        // spec §9.14): a drift between the two would make stored history
+        // rows unreadable, so pin them to each other, and pin the inverse.
+        for mode in ServerMode::ALL {
+            let serde_name = serde_json::to_value(mode).unwrap();
+            assert_eq!(serde_name.as_str(), Some(mode.key()));
+            assert_eq!(ServerMode::from_key(mode.key()), Some(mode));
+        }
+        assert_eq!(ServerMode::from_key("no-such-mode"), None);
     }
 
     #[test]

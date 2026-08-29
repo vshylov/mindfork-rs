@@ -16,6 +16,15 @@ split by subsystem.
 
 ### Added
 
+- **The assistant can name its language model — and tell you when it changed.**
+  Two new tools, on by default: `get_llm_name` answers "which model are you?"
+  with the model actually generating the reply (or says honestly that the
+  engine does not report a name), and `get_llm_history` lists the profile's
+  dated history of model changes — recorded automatically after each exchange
+  whose model differs from the last recorded one. The names are deliberately
+  distinct from the `get_self_model` family: the LLM is not the assistant's
+  stored personality.
+
 - **A dialogue of two personas, staged and directed by the assistant**
   (`run_dialogue`). Ask for a scene and the assistant composes two characters,
   writes the opening line, and directs the dialogue as it unfolds — sending a

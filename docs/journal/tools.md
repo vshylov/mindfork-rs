@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the two-agent dialogue — research and the stage-0 live probe (done)
 - Post-M9: `run_dialogue` — the directed dialogue, stage 1 (done)
 - Post-M9: `run_dialogue` — the live transcript, stage 2, track complete (done)
+- Post-M9: `get_llm_name`/`get_llm_history` — the language model, named and dated (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2838,3 +2839,61 @@ the probe lives on `spike/code-search-probe`, unmerged.
   own wording is the model's judgment, not the mechanism's). This run the
   model also passed both persona names, so the title and headers carried
   them.
+
+### Post-M9: `get_llm_name`/`get_llm_history` — the language model, named and dated (done)
+- **The ask** (docs/research/language-model-history.md, forks confirmed
+  2026-08-29): the assistant can learn the name of the **LLM** running it, and
+  each profile keeps a dated history of model changes the assistant can read —
+  with tool names that cannot be confused with the self-model. The survey
+  reshaped the task the usual way (lessons §3): the name is already resolved
+  once per turn (`effective_model_name`, the external-model-name track) and
+  frozen into every reply's `MessageMetadata`; `handle_done` is the single
+  point where a completed exchange lands; what was missing was exposure to the
+  model and the per-profile aggregate.
+- **Names, by the user's choice (F1)**: `get_llm_name`/`get_llm_history`, in a
+  `features/tools/llm.rs` that mirrors `self_model.rs` — "model" alone was
+  already claimed three ways (self_model, user_model, `*_model_name`), so the
+  pair's prefix is `llm_` and neither family's names contain a bare "model"
+  the other could be mistaken for. Both in `Introspection`, both **on by
+  default** (F7) — read-only, no abuse surface, unlike the off-by-default
+  self-model precedent.
+- **Key decisions**: the name tool answers from **new turn-snapshot fields**
+  (`ToolContext.model_name`/`engine_mode` — the single `effective_model_name`
+  read moved above the context build, so header, stored metadata and tool
+  answer cannot disagree), never by asking `ctx.engine` mid-turn; the history
+  lives in a **`data.db` table** (F3 — the user's call: not precious enough
+  for `profiles.json`; additive `CREATE TABLE IF NOT EXISTS`, explicit
+  `rowid INTEGER PRIMARY KEY` so VACUUM keeps insertion order, no `DB_SCHEMA`
+  bump) as `{changed_at, model, mode}` (F4 — mode included, stored as
+  `ServerMode`'s serde key with `key()`/`from_key()` pinned to serde by test);
+  the recorder in `handle_done` reads the turn's newest metadata **before**
+  the messages move into the chat (the `is_first_reply` position — a
+  `/continue` tail is folded away by `land_continuation` right after) and
+  `Db::llm_history_note` appends under one mutex acquisition only when the
+  **pair (name, mode)** differs from the newest record — dedup by name alone
+  would let the stored mode go stale. A record from any landed reply,
+  cancelled/errored included (F5a); baseline record on first exchange (F6);
+  a turn whose engine named no model records nothing, and the tool's unknown
+  text closes the door (lessons §4: names the mode, says no other route
+  exists this turn, points at the engine settings).
+- **Not predicted by the plan**: the first live run failed on the *fixture*,
+  not the feature (lessons §9) — the live harness injects the backend through
+  `MockSupervisor` and leaves `config.engine.mode` at the default `Managed`,
+  so a server reached by URL recorded `(managed)`; the smoke now sets the
+  mode to what the setup actually is. The settings demo dumps rot-gate fired
+  on the two new toggle rows (`settings-model`/`settings-tools` frames —
+  regenerated, PNGs re-rendered).
+- **Tests**: suite at **2696 unit / 127 `#[ignore]`** (+16 / +1): the
+  `ServerMode` key↔serde pin, the storage round trip/isolation/dedup, the
+  tools' catalog+defaults membership, ru≠en descriptions, snapshot/degraded/
+  empty/ordering renders, and seven orchestrator recorder tests (baseline,
+  dedup, mode-change record, unknown-name silence, cancelled-partial counts,
+  newest-metadata extraction, profile isolation, vanished-chat best-effort).
+- **Smoke — GO, Gemma 4 31B Q4_0 (llama.cpp, external)**:
+  `llm_name_and_history_e2e_live` — both tools called on the first ask (the
+  "tool was actually called" assertion guards against a refusal reading as a
+  pass), `get_llm_name` answered with the discovered name and mode, and the
+  second turn's `get_llm_history` read back the baseline record the first
+  exchange's recorder had just written. Full `orchestrator::tests::live` set
+  re-run for the turn-path change (the single-read move sits on every turn):
+  **48/48 green in one sweep**, 22 min on the same stack.

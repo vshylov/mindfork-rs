@@ -168,8 +168,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-29, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2679 unit tests
-green, 126 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2696 unit tests
+green, 127 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -180,6 +180,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **`get_llm_name`/`get_llm_history` — the language model, named and dated** —
+  the assistant can say which **LLM** is running it (from the turn's own
+  frozen name — header, metadata and tool answer share one read) and read the
+  profile's dated history of model changes, recorded in `data.db` after each
+  landed exchange when the pair (name, mode) differs from the newest record;
+  `llm_*` deliberately mirrors the `self_model` family it must never be
+  confused with, and an engine that names no model records nothing and says so
+  ([docs/research/language-model-history.md](docs/research/language-model-history.md),
+  spec §9.14, [docs/journal/tools.md](docs/journal/tools.md)).
 - **`run_dialogue` — a dialogue of two personas, directed by the assistant** —
   the subagent track's promised next feature, **complete (both stages)**: a
   loop-executed

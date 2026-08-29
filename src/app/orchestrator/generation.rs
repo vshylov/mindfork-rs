@@ -601,6 +601,16 @@ impl Orchestrator {
         // are interrupted via Esc).
         let cancel = CancellationToken::new();
 
+        // Resolved once and used three times: `ToolContext.model_name` (what
+        // `get_llm_name` answers, spec §9.14), the `GenerationStarted` event
+        // below (the live bubble's header) and `GenSpawn.model_name` (the
+        // finished message's metadata). One read, so no pair of them can
+        // disagree. In `external` mode with no model named in settings this is
+        // what the engine said it is running (see `model_name::ModelDiscovery`)
+        // — the message records the model that actually answered, not a blank.
+        let model_name = self.effective_model_name();
+        let engine_mode = self.config.engine.mode;
+
         // Build the request/context + take the last user message (for relevance-
         // based injection of observations in the task).
         let mut request;
@@ -664,6 +674,8 @@ impl Orchestrator {
                 workspace_journal,
                 lang: profile_lang,
                 cancel: cancel.clone(),
+                model_name: model_name.clone(),
+                engine_mode,
             };
             ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
@@ -678,14 +690,6 @@ impl Orchestrator {
         request.continue_final = continuation.is_some();
 
         let id = Uuid::new_v4();
-        // Resolved once and used twice: the event below (the live bubble's
-        // header) and `GenSpawn.model_name` (the finished message's metadata).
-        // One read, so the header cannot name a different model than the one
-        // the stored message will claim. In `external` mode with no model named
-        // in settings this is what the engine said it is running (see
-        // `model_name::ModelDiscovery`) — the message records the model that
-        // actually answered, not a blank.
-        let model_name = self.effective_model_name();
         let _ = self.evt_tx.send(AppEvent::GenerationStarted {
             generation_id: id,
             model: model_name.clone(),
@@ -735,7 +739,7 @@ impl Orchestrator {
             inject_enabled,
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             last_user,
-            engine_mode: self.config.engine.mode,
+            engine_mode,
             model_name,
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
@@ -795,6 +799,21 @@ impl Orchestrator {
         // Read before the apply below — afterwards the reply is part of the
         // history and the question can no longer be asked.
         let first_reply = self.is_first_reply(&res);
+        // The exchange's language model, for the profile's history (spec
+        // §9.14). Also read before the apply: the messages move into the chat
+        // below, and a `/continue` tail is folded away by `land_continuation`.
+        // Every round of one turn carries the same frozen name (the single
+        // `effective_model_name` read), so the newest metadata suffices; a
+        // turn whose engine did not say a name records nothing (`model: None`).
+        let turn_llm: Option<(String, crate::shared::config::ServerMode)> = res
+            .messages
+            .iter()
+            .rev()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .find_map(|m| {
+                let md = m.metadata.as_ref()?;
+                Some((md.model.clone()?, md.mode))
+            });
         // Sub-agent runs that landed with this turn and have a reply to name
         // themselves by — titled below, once they are part of the chat
         // (docs/research/subagent-chats.md §3.10).
@@ -831,6 +850,12 @@ impl Orchestrator {
         for a in attached {
             self.insert_attachment(res.chat_id, a);
         }
+        // The profile's language-model history (spec §9.14): an exchange just
+        // completed, so append a record when the model differs — by name or
+        // mode — from the newest one (the store decides, `llm_history_note`).
+        if let Some((model, mode)) = turn_llm {
+            self.record_llm_history(res.chat_id, model, mode);
+        }
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
@@ -860,6 +885,37 @@ impl Orchestrator {
         // (spec §6.7). Last of the four deliberately: it reads what this turn
         // actually cost, which is the freshest measurement available.
         self.maybe_auto_compact(res.chat_id, res.usage);
+    }
+
+    /// Appends a record to the chat's profile's language-model history when
+    /// the exchange's model differs from the newest record (spec §9.14; the
+    /// dedup lives in [`crate::shared::storage::Db::llm_history_note`]).
+    /// Best-effort, like the reflection follow-ups around its call site: a
+    /// failed write is logged and never fails the turn (docs/lessons.md §8 —
+    /// prefer best-effort on paths that protect data).
+    fn record_llm_history(
+        &self,
+        chat_id: Uuid,
+        model: String,
+        mode: crate::shared::config::ServerMode,
+    ) {
+        let Some(profile_id) = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .map(|c| c.profile_id)
+        else {
+            return;
+        };
+        let rec = crate::entities::profile::LlmChange {
+            changed_at: chrono::Utc::now(),
+            model,
+            mode,
+        };
+        if let Err(err) = self.storage.db().llm_history_note(profile_id, &rec) {
+            tracing::warn!(error = %err, profile = %profile_id,
+                "failed to record the language-model history");
+        }
     }
 
     /// Retires the in-flight mirror (docs/history/subagent-live.md §3.6): every

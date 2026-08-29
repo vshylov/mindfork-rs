@@ -720,6 +720,8 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `get_system_message` | `{}` | Returns `ctx.system_message`. |
 | `set_system_message` | `{ system_message }` | Returns `ChatEffect::SetSystemMessage`; applied starting from the next request build. The only tool that invalidates the chat's prefix cache (justified). |
 | `get_last_user_message_time` | `{}` | Returns the last user message's timestamp (ISO 8601) + elapsed time. |
+| `get_llm_name` | `{}` | The name of the **language model** generating this turn, plus the engine mode — from the turn snapshot, never asked of the engine mid-turn. Honest "the engine does not say" when no name is known. See [9.14](#914-the-language-model-tools-get_llm_name-and-get_llm_history). |
+| `get_llm_history` | `{}` | The profile's dated history of language-model changes, oldest first — recorded by the orchestrator after completed exchanges. See [9.14](#914-the-language-model-tools-get_llm_name-and-get_llm_history). |
 | `call_subagent` | `{ name?, system_message, message }` | **The key feature** — a subagent with this turn's tools, run as a nested turn; its transcript stays on the call's record. See [9.3.2](#932-call_subagent). |
 | `run_dialogue` | `{ a, b, opening, scene?, direction?, max_messages?, moderate_every? }` | A **directed dialogue** of two personas the caller composes, written by the same model and steered by a model-driven director that decides when it ends; the transcript stays on the call's record like a subagent's. See [9.13](#913-the-directed-dialogue-run_dialogue). |
 | `send_followup_message` | `{}` | **Control** (opt., off by default) — write one more message as a separate reply. See [9.3.3](#933-conversation-control-tools). |
@@ -1824,6 +1826,57 @@ the record shape was left for it by the subagent track (research §3.14,
   inside a long dialogue never reads as a stuck "generating"
   (docs/lessons.md §4). The director's own deliberation never streams: it is
   not a line of the scene.
+
+### 9.14. The language-model tools: `get_llm_name` and `get_llm_history`
+
+Two read-only introspection tools about the **LLM running the assistant** —
+deliberately named `llm_*`, the counterpart of the `get_self_model` family
+(section [17](#17-self-model-selfmodel)) they must never be confused with: the
+`llm_*` pair is about the engine's model, `*_self_model` about the stored
+personality, and neither name contains a bare "model" the other could be
+mistaken for. Design and forks —
+docs/research/language-model-history.md.
+
+- **`get_llm_name { }`** — the name of the language model generating this
+  turn, plus the engine mode (`managed`/`external`/cloud provider). The answer
+  comes from the **turn snapshot** (`ToolContext.model_name`/`engine_mode`) —
+  the same single `effective_model_name()` read that names the live bubble's
+  header and the stored `MessageMetadata.model` (section
+  [11.3](#113-the-message-feed)), resolved once per turn so no pair of the three
+  can disagree. The tool never asks the engine mid-turn: the orchestrator-side
+  resolver owns the typed-name-wins precedence
+  (docs/research/external-model-name.md).
+- **`get_llm_history { }`** — the profile's history of language-model changes:
+  dated records "date — model (mode)", oldest first, read live from `data.db`
+  through the turn's storage handle (like every DB-backed organ) and scoped by
+  `profile_id` (section [9.5](#95-per-profile-isolation)).
+- **The recorder.** The history is written by the **orchestrator**, not by the
+  tools: when a completed exchange lands (`handle_done` — send, regenerate and
+  `/continue` alike, and a cancelled or errored turn that still produced a
+  reply; a turn that produced nothing never gets there), the newest assistant
+  message's metadata names the exchange's model, and `Db::llm_history_note`
+  appends a `{ changed_at, model, mode }` record **when the pair (name, mode)
+  differs from the newest record** — a mode change with the same name is
+  recorded too, or the stored mode would go stale. An empty history gets a
+  baseline record on the first qualifying exchange (the original model would
+  otherwise be unrecoverable). Best-effort: a failed write is logged and never
+  fails the turn.
+- **When the engine does not say.** A turn whose model name is unknown
+  (`MessageMetadata.model = None` — an external server with no typed name and
+  no discovery answer) records nothing, and `get_llm_name` answers honestly
+  that the engine does not report a name, naming the route that works (the
+  engine settings). The first turn after bootstrap in external mode can
+  legitimately be such a turn: discovery is a network round trip
+  (docs/research/external-model-name.md §9).
+- **Storage.** `data.db` table `llm_history(rowid, profile_id, changed_at,
+  model, mode)` — additive `CREATE TABLE IF NOT EXISTS`, no `DB_SCHEMA` bump
+  (ADR 0006 F12); `mode` is stored as `ServerMode`'s stable serde key, pinned
+  by test. Deliberately **not** in `profiles.json` (fork F3): the history is
+  bookkeeping, not precious data, and the ask's dedup makes its growth
+  bounded by actual switches.
+- **On by default** (fork F7), like the rest of the Introspection group: both
+  tools are read-only and reveal only what the chat header may already show;
+  `reconcile_tools` adds them to existing profiles on first launch.
 
 ## 10. AI-companion profiles
 

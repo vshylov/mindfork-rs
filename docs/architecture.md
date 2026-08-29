@@ -332,6 +332,9 @@ src/
 │  │  │  ├─ overview.rs     consolidate_notes + consolidation overviews (user/@self)
 │  │  │  └─ self_notes.rs   self-note (@self) subsystem: recent/relevant, graph
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
+│  │  ├─ llm.rs             get_llm_name/get_llm_history — the language model's
+│  │  │                     name and the profile's history of model changes
+│  │  │                     (spec §9.14); the naming mirror of self_model.rs
 │  │  ├─ python.rs          python_exec (subprocess, timeout)
 │  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot,
 │  │  │                     incl. a captcha served behind HTTP 200) + two
@@ -1376,6 +1379,7 @@ flowchart LR
         RAGD["rag_documents (profile_id)"]
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
+        LLMH["llm_history (profile_id)<br/>dated LLM-change records, spec §9.14"]
     end
     subgraph CACHE["SQLite FTS5 (cache/) — derived, disposable"]
         MSG["messages (chat_id, message_id, text_hash)"]
@@ -1657,7 +1661,7 @@ by `ToolGroup` (`Ord`).
 | Group          | Tools                                                          |
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
-| Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
+| Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |

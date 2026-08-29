@@ -48,6 +48,21 @@ fn non_empty(s: &str) -> Option<&str> {
     (!s.is_empty()).then_some(s)
 }
 
+/// One record of the profile's language-model history (spec §9.14): from
+/// `changed_at` on, the profile's exchanges were answered by `model` in
+/// engine mode `mode`. Appended by the orchestrator after a completed
+/// exchange whose model name is known and differs — by name *or* mode —
+/// from the newest record (a record whose stored mode went stale would lie
+/// about it). Lives in `data.db` (`llm_history`), not in `profiles.json`;
+/// deliberately named `Llm*`, never `*Model*` alone — "model" by itself is
+/// already claimed by the self-model (spec §17).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmChange {
+    pub changed_at: chrono::DateTime<chrono::Utc>,
+    pub model: String,
+    pub mode: crate::shared::config::ServerMode,
+}
+
 /// The AI interlocutor's profile: system message, names, tools, defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {

@@ -226,6 +226,8 @@ async fn attachment_read_sees_the_chat_files_through_the_turn_snapshot() {
             other_chats: Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
+            model_name: None,
+            engine_mode: Default::default(),
         },
     );
 
@@ -428,6 +430,8 @@ fn turn_ctx(
             other_chats: Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
             cancel: CancellationToken::new(),
+            model_name: None,
+            engine_mode: Default::default(),
         },
     )
 }
