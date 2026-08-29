@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `run_dialogue` — the directed dialogue, stage 1 (done)
 - Post-M9: `run_dialogue` — the live transcript, stage 2, track complete (done)
 - Post-M9: `get_llm_name`/`get_llm_history` — the language model, named and dated (done)
+- Post-M9: the Python package pinned exactly — a selector is a range (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2898,3 +2899,48 @@ the tag `probe/code-search-stage5`.
   exchange's recorder had just written. Full `orchestrator::tests::live` set
   re-run for the turn-path change (the single-read move sits on every turn):
   **48/48 green in one sweep**, 22 min on the same stack.
+
+### Post-M9: the Python package pinned exactly — a selector is a range (done)
+- **Trigger**: the live e2e gate's CI dispatch
+  ([run 33276655992](https://github.com/vshylov/mindfork-rs/actions/runs/33276655992))
+  came back 124 passed / 1 failed, and the one red was
+  `runs_real_python_in_sandbox` — a smoke that never speaks to the engine, so it
+  had nothing to do with the model under test. It looked like a runner quirk.
+  It was not.
+- **What it actually was**: `mindfork sandbox setup` downloaded
+  `python/python` — **no version** — while the runtime beside it
+  (`WASMER_VERSION`) had been pinned exactly all along. The registry published
+  3.13.15/16/17 on 18–21 August 2026, whose payload is **155,874,883 bytes**
+  against 3.13.5's **44,680,028**, and `wasmer` 7.2.0 cannot compile the new
+  build: `Validate("Failed to create V8 module: null module reference returned
+  from V8")`. So this was never a test defect — **every fresh
+  `sandbox setup` since 18 August produced a sandbox that could not run
+  Python**, and the gate's red was the only thing saying so.
+- **Two hypotheses killed by measurement before the right one was reached.**
+  *Not the CI runner*: it reproduced on Windows with a byte-identical error.
+  *Not the compilation cache*: hiding the working sandbox's 180 MB `cache` left
+  it passing anyway (2.33 s instead of 0.52 s — it recompiled fine). The
+  differentiator was the payload itself, found by comparing the two
+  `python.webc` files: 44.7 MB against 155.9 MB, different sha256, **identical
+  `wasmer` binaries**.
+- **The fix is one character, and it is the interesting part.** A wasmer package
+  selector is a semver **range**, not a pin. Measured against the live registry:
+
+  | Selector | Resolves to |
+  |---|---|
+  | `python/python` | 3.13.17 |
+  | `python/python@3.13.5` | **3.13.17** |
+  | `python/python@=3.13.5` | 3.13.5 |
+
+  A "pinned" `@3.13.5` would have fixed nothing while looking fixed. `@=3.13.5`
+  downloads 44,680,028 bytes, sha256 `c03ebe09…bdcab` — **byte for byte** the
+  payload every working sandbox in this project already held.
+- **Verified where it actually breaks.** An existing sandbox passes across a bad
+  publish, so only a *freshly provisioned* one can tell you anything: the smoke
+  was run against an empty `MINDFORK_SANDBOX_DIR` before the change (red) and
+  after (green, 46 s including the ~250 MB provision). The setup's own warm-up
+  went from `Warm-up completed partially (not critical)` to `Cache warmed up.` —
+  the earliest signal, and it had been swallowed as non-critical.
+- **Guarded**: `the_python_package_is_pinned_exactly` fails if the `=` is ever
+  tidied away, because without it the constant silently becomes a range again.
+  2698 unit tests green, 128 `#[ignore]`.

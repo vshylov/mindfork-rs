@@ -1136,6 +1136,26 @@ produced by falling through, and running the live gate, which is what caught the
 third one within a minute.
 — *the model's name in `external` mode*.
 
+**A version selector is a range until you prove otherwise — and a "pinned" range
+looks exactly like a pin.** `mindfork sandbox setup` fetched `python/python` unversioned
+and a registry publish broke every fresh install; the obvious repair,
+`python/python@3.13.5`, **resolves to 3.13.17**, because a wasmer selector is semver
+range syntax. Only `@=3.13.5` pins. The failure mode is the worst kind: the diff looks
+like a fix, the code review reads like a fix, and the behaviour is unchanged. Whenever
+you pin an external artifact, *verify the pin resolved* — `wasmer package get`, `pip
+download`, whatever the tool's "what would I actually get" command is — and compare the
+bytes to the artifact you know works. The runtime beside this one (`WASMER_VERSION`) had
+been pinned exactly for a year; only the package it ran was left loose.
+— *the Python sandbox package pin*.
+
+**An existing install passes across a bad publish — provision fresh, or you are testing
+nothing.** The same sandbox smoke was green on the developer's machine and red in CI, and
+the difference was not the OS: the local sandbox had been installed months earlier and
+kept working, while a fresh install was broken. Any smoke that depends on a provisioned
+external artifact has two states, and the one that survives is not the one your users
+get. Point it at an empty directory when you want the truth.
+— *the Python sandbox package pin*.
+
 **A live assertion on a literal the model must echo is a typography bet — fold the
 dashes.** Every planted-fact smoke checks that the reply contains `ZARYA-8823`, and
 `gpt-oss-120b` renders that code with a **non-breaking hyphen** (U+2011): three smokes
