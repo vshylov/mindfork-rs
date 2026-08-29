@@ -178,9 +178,8 @@ pub fn hotkey_lines(
 /// the left/middle part of the window.
 ///
 /// Whether the pill shares the top row with the grid is decided by
-/// [`top_row_cols`] — it does when that costs the grid no row; a long pill
-/// otherwise leaves it too little width and the hints stack into one tall
-/// column. See spec §11.1, §11.3.
+/// [`top_row_cols`]: a long pill leaves the grid too little width, and the
+/// hints end up stacked in one tall column. See spec §11.1, §11.3.
 fn lines(
     width: usize,
     model: &StatusModel,
@@ -223,18 +222,23 @@ fn lines(
     out
 }
 
+/// The share of the width past which the status pill counts as **crowding** the
+/// hotkey grid: with less than 40% of the line left, the grid is a couple of
+/// narrow columns at best, and every hint the pill costs it is a whole extra
+/// row. Only decides ties (see [`top_row_cols`]) — a layout that saves a line
+/// wins whatever the pill's share.
+const STATE_SHARE_MAX_PCT: usize = 60;
+
 /// How many columns the hotkey grid gets on the pill's own row — `None` when the
 /// grid should go **below** the pill instead, over the full width.
 ///
-/// One rule: **the pill shares the top row only when it costs the grid nothing**
-/// — when the grid beside it is no deeper than the same grid would be on a
-/// full-width line of its own. Sharing takes `state_w + GAP` away from the grid,
-/// and a pill busy enough (generating + tokens + attachments, in a wordy locale)
-/// squeezes it down to a single column, i.e. one row per hint — six lines of
-/// status bar out of the feed where two would do. As soon as the pill costs a
-/// row, giving it the whole top line costs one too and buys a grid on the full
-/// width, which reads better; so the tie goes down, and the bar is never taller
-/// than `1 + the full-width grid`.
+/// Both layouts are laid out and the shorter one wins: sharing the row costs the
+/// grid `state_w + GAP` of width, and a pill busy enough (generating + tokens +
+/// attachments, in a wordy locale) squeezes it down to a single column, i.e. one
+/// row per hint — six lines of status bar taken out of the feed where two would
+/// do. On a tie the pill keeps the top row, unless it is already past
+/// [`STATE_SHARE_MAX_PCT`] of the width: then the hints read better as one wide
+/// grid on a line of their own.
 fn top_row_cols(cell_w: &[usize], state_w: usize, width: usize) -> Option<usize> {
     let n = cell_w.len();
     // The most columns (→ the fewest rows) that fit beside the pill, and on a
@@ -242,7 +246,9 @@ fn top_row_cols(cell_w: &[usize], state_w: usize, width: usize) -> Option<usize>
     // even when it overflows — there is nothing narrower to fall back to.
     let shared = widest_grid(cell_w, width.saturating_sub(state_w + GAP))?;
     let below = widest_grid(cell_w, width).unwrap_or(1);
-    (n.div_ceil(shared) <= n.div_ceil(below)).then_some(shared)
+    let (shared_h, below_h) = (n.div_ceil(shared), 1 + n.div_ceil(below));
+    let crowded = state_w * 100 > width * STATE_SHARE_MAX_PCT;
+    (shared_h < below_h || (shared_h == below_h && !crowded)).then_some(shared)
 }
 
 /// The most columns whose grid fits into `avail` (→ the fewest rows); `None`
@@ -966,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pill_shares_the_top_row_only_when_it_costs_no_row() {
+    fn crowded_pill_gives_the_hotkey_grid_a_line_of_its_own() {
         // The cell widths of the chat's six hotkeys in the ru bundle: one wide
         // cell (the mouse toggle) and five short ones. Synthetic on purpose —
         // the rule is about widths, and shouldn't be re-measured against wording.
@@ -976,15 +982,12 @@ mod tests {
         // The busy pill of the screenshot: beside it a single column fits (six
         // rows of status bar), below it all six (two lines) — it goes below.
         assert_eq!(top_row_cols(&cells, 85, 120), None);
-        // Two lines either way — the tie goes down, where the grid is wider
-        // (one row of six against the pill's 4 + 2).
-        assert_eq!(top_row_cols(&cells, 40, 120), None);
+        // Two lines either way, pill under 60% of the width — it keeps the top row.
+        assert_eq!(top_row_cols(&cells, 40, 120), Some(4));
+        // The same tie past 60% — the hints read better as one grid of their own.
         assert_eq!(top_row_cols(&cells, 120, 190), None);
-        // A wide pill that still costs the grid nothing keeps the top row: 107
-        // columns is the one-row grid, and 280 - 170 - GAP leaves exactly that.
+        // Saving a line always wins, however crowded: both layouts are one grid row.
         assert_eq!(top_row_cols(&cells, 170, 280), Some(6));
-        // Narrower than a single column beside the pill — the old fallback.
-        assert_eq!(top_row_cols(&cells, 100, 120), None);
     }
 
     #[test]
