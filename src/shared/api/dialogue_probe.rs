@@ -441,6 +441,229 @@ struct RunReport {
     director_wall: Vec<Duration>,
 }
 
+/// The mutable state of one dialogue run — what the loop, the checkpoint and
+/// the verdicts all read and write. `issued` is the list of directions already
+/// given, restated in every checkpoint: the probe's checkpoints are stateless
+/// (see the module header), so the script has to carry them.
+struct RunState {
+    transcript: Vec<Line>,
+    notes_a: Vec<String>,
+    notes_b: Vec<String>,
+    issued: Vec<String>,
+    rep: RunReport,
+    /// Walked forward one request at a time, so a retried line is not the
+    /// same sample again.
+    seed: i64,
+    next_checkpoint_at: usize,
+}
+
+/// What a checkpoint leaves the run to do.
+enum Checkpoint {
+    /// The scene goes on.
+    Continue,
+    /// It ends here — the director stopped it, or a retry spent the last
+    /// `max_messages` slot.
+    Stop,
+}
+
+/// One participant request accounted into the run's report.
+fn account_participant(rep: &mut RunReport, reply: &Reply) {
+    rep.requests += 1;
+    rep.transport_retries += reply.retries;
+    rep.prompt_tokens += u64::from(reply.prompt_tokens);
+    rep.completion_tokens += u64::from(reply.completion_tokens);
+    rep.participant_wall.push(reply.wall);
+}
+
+/// One participant line: the speaker's own view of the transcript (§3.2), its
+/// standing notes, and the director's one-shot instruction when this line is
+/// a retry. The role-bleed heuristic is counted here, on the text as spoken.
+async fn speak(
+    client: &dyn EngineBackend,
+    fx: &Fixture,
+    st: &mut RunState,
+    speaker_a: bool,
+    one_shot: Option<&str>,
+) -> Result<Line, String> {
+    let notes = if speaker_a { &st.notes_a } else { &st.notes_b };
+    let (system, messages) = participant_view(fx, &st.transcript, speaker_a, notes, one_shot);
+    let name = if speaker_a { fx.a.name } else { fx.b.name };
+    let req = ChatRequest {
+        system: Some(system),
+        messages,
+        sampling: SamplingConfig {
+            max_tokens: Some(1536),
+            temperature: Some(0.7),
+            seed: Some(st.seed),
+            ..Default::default()
+        },
+        tools: Vec::new(),
+        ..Default::default()
+    };
+    let req_muted = {
+        let mut r = req.clone();
+        r.sampling.reasoning_budget = Some(0);
+        r
+    };
+    let mut reply = ask(client, req, &format!("{name} line")).await?;
+    account_participant(&mut st.rep, &reply);
+    // The all-thinking empty turn, found live by this very probe: an
+    // instruction conflict (a director's note against a persona's format
+    // rule) sends Gemma 4 into unbounded deliberation — 1536 tokens of
+    // `reasoning_content`, no text. The recovery the compliance probes
+    // established (lessons §9): re-ask once with thinking muted. The
+    // product executor adopts this rule (research §5.1).
+    if reply.text.trim().is_empty() {
+        println!(
+            "  [{name}] empty line ({} completion tokens, all thoughts) — re-asking muted",
+            reply.completion_tokens
+        );
+        st.rep.empty_recoveries += 1;
+        reply = ask(client, req_muted, &format!("{name} line, muted")).await?;
+        account_participant(&mut st.rep, &reply);
+    }
+    let other = if speaker_a { fx.b.name } else { fx.a.name };
+    let text = reply.text.trim().to_string();
+    if text.contains(&format!("{other}:")) {
+        st.rep.bleed_hits += 1;
+    }
+    if text.is_empty() {
+        return Err(format!(
+            "{name} produced an empty line even with thinking muted ({} completion \
+             tokens; thoughts, first 300 chars: {:?})",
+            reply.completion_tokens,
+            reply.thoughts.chars().take(300).collect::<String>()
+        ));
+    }
+    println!("  {name}: {text}");
+    Ok(Line {
+        by_a: speaker_a,
+        text,
+    })
+}
+
+/// The `dialogue_stop` verdict: the scene ends, with the director's reason
+/// recorded — go/no-go metric 3 reads it.
+fn verdict_stop(rep: &mut RunReport, args: &serde_json::Value) {
+    let reason = args["reason"].as_str().unwrap_or("").to_string();
+    let summary = args["summary"].as_str().unwrap_or("");
+    println!("  [director] STOP: {reason} — {summary}");
+    rep.stopped_by_director = true;
+    rep.stop_reason = Some(reason);
+}
+
+/// The `dialogue_note` verdict: a standing direction, appended to each
+/// addressed participant's notes and to the restated script.
+fn verdict_note(st: &mut RunState, args: &serde_json::Value) {
+    let to = args["to"].as_str().unwrap_or("both");
+    let text = args["text"].as_str().unwrap_or("").to_string();
+    println!("  [director] note to {to}: {text}");
+    st.rep.notes += 1;
+    st.issued.push(format!("note to {to}: {text}"));
+    if to != "b" {
+        st.notes_a.push(text.clone());
+    }
+    if to != "a" {
+        st.notes_b.push(text);
+    }
+}
+
+/// The `dialogue_retry` verdict: discard the last line and speak it again
+/// under the director's note. `Checkpoint::Stop` when the regeneration would
+/// pass `max_messages` — the cap ends the run there rather than overrunning it.
+async fn verdict_retry(
+    client: &dyn EngineBackend,
+    fx: &Fixture,
+    st: &mut RunState,
+    args: &serde_json::Value,
+) -> Result<Checkpoint, String> {
+    // Only a generated line can be retried; the fixtures' opening is
+    // caller-authored, and generated >= 1 here.
+    let note = args["note"].as_str().map(str::to_string);
+    println!("  [director] retry last line (note: {note:?})");
+    st.rep.retries += 1;
+    st.issued.push("retried the last line".into());
+    if st.rep.generated == 0 {
+        println!("  [director] retry ignored: nothing generated yet");
+        return Ok(Checkpoint::Continue);
+    }
+    let speaker_a = st.transcript.last().map(|l| l.by_a).unwrap_or(false);
+    st.transcript.pop();
+    if st.rep.generated >= fx.max_messages {
+        return Ok(Checkpoint::Stop);
+    }
+    st.seed += 1;
+    let line = speak(client, fx, st, speaker_a, note.as_deref()).await?;
+    st.transcript.push(line);
+    st.rep.generated += 1;
+    Ok(Checkpoint::Continue)
+}
+
+/// The `dialogue_rewrite` verdict: the director's own words replace the last
+/// line. An empty rewrite is ignored.
+fn verdict_rewrite(st: &mut RunState, args: &serde_json::Value) {
+    let text = args["text"].as_str().unwrap_or("").to_string();
+    println!("  [director] rewrite last line: {text}");
+    st.rep.rewrites += 1;
+    st.issued.push("rewrote the last line".into());
+    if let (Some(last), false) = (st.transcript.last_mut(), text.is_empty()) {
+        last.text = text;
+    }
+}
+
+/// One director checkpoint: the script re-sent whole, then the verdicts of
+/// the reply applied in call order. A reply with no tool call is counted as a
+/// fallback and read as `continue` — the run walks on toward its cap.
+async fn checkpoint(
+    client: &dyn EngineBackend,
+    fx: &Fixture,
+    st: &mut RunState,
+) -> Result<Checkpoint, String> {
+    st.next_checkpoint_at += fx.moderate_every;
+    st.rep.checkpoints += 1;
+    st.seed += 1;
+    let reply = ask(
+        client,
+        director_request(fx, &st.transcript, &st.issued, st.seed),
+        "director checkpoint",
+    )
+    .await?;
+    st.rep.requests += 1;
+    st.rep.transport_retries += reply.retries;
+    st.rep.prompt_tokens += u64::from(reply.prompt_tokens);
+    st.rep.completion_tokens += u64::from(reply.completion_tokens);
+    st.rep.director_wall.push(reply.wall);
+    if reply.calls.is_empty() {
+        st.rep.fallbacks += 1;
+        println!(
+            "  [director] no tool call — fallback to continue; prose: {:?}",
+            reply.text.trim()
+        );
+    }
+    for call in &reply.calls {
+        let args: serde_json::Value =
+            serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        match call.name.as_str() {
+            "dialogue_continue" => println!("  [director] continue"),
+            "dialogue_stop" => {
+                verdict_stop(&mut st.rep, &args);
+                return Ok(Checkpoint::Stop);
+            }
+            "dialogue_note" => verdict_note(st, &args),
+            "dialogue_retry" => match verdict_retry(client, fx, st, &args).await? {
+                Checkpoint::Stop => return Ok(Checkpoint::Stop),
+                Checkpoint::Continue => {}
+            },
+            "dialogue_rewrite" => verdict_rewrite(st, &args),
+            other => {
+                st.rep.fallbacks += 1;
+                println!("  [director] unknown tool {other:?} — counted as fallback");
+            }
+        }
+    }
+    Ok(Checkpoint::Continue)
+}
+
 /// One full dialogue run. Any request failure that survives the retry
 /// decorator aborts the run with `Err` — template acceptance is go/no-go
 /// metric 1, and a *persistent* refusal is what fails it; transient
@@ -450,210 +673,42 @@ async fn run_dialogue(
     fx: &Fixture,
     run: usize,
 ) -> Result<RunReport, String> {
-    let mut transcript = vec![Line {
-        by_a: fx.opening_by_a,
-        text: fx.opening.to_string(),
-    }];
-    let mut notes_a: Vec<String> = Vec::new();
-    let mut notes_b: Vec<String> = Vec::new();
-    let mut issued: Vec<String> = Vec::new();
-    let mut rep = RunReport::default();
-    let started = Instant::now();
-    let mut seed = (1000 + run * 100) as i64;
-    let mut next_checkpoint_at = fx.moderate_every;
-
-    let speak = async |transcript: &[Line],
-                       speaker_a: bool,
-                       one_shot: Option<&str>,
-                       notes_a: &[String],
-                       notes_b: &[String],
-                       seed: i64,
-                       rep: &mut RunReport|
-           -> Result<Line, String> {
-        let notes = if speaker_a { notes_a } else { notes_b };
-        let (system, messages) = participant_view(fx, transcript, speaker_a, notes, one_shot);
-        let name = if speaker_a { fx.a.name } else { fx.b.name };
-        let req = ChatRequest {
-            system: Some(system),
-            messages,
-            sampling: SamplingConfig {
-                max_tokens: Some(1536),
-                temperature: Some(0.7),
-                seed: Some(seed),
-                ..Default::default()
-            },
-            tools: Vec::new(),
-            ..Default::default()
-        };
-        let account = |rep: &mut RunReport, reply: &Reply| {
-            rep.requests += 1;
-            rep.transport_retries += reply.retries;
-            rep.prompt_tokens += u64::from(reply.prompt_tokens);
-            rep.completion_tokens += u64::from(reply.completion_tokens);
-            rep.participant_wall.push(reply.wall);
-        };
-        let req_muted = {
-            let mut r = req.clone();
-            r.sampling.reasoning_budget = Some(0);
-            r
-        };
-        let mut reply = ask(client, req, &format!("{name} line")).await?;
-        account(rep, &reply);
-        // The all-thinking empty turn, found live by this very probe: an
-        // instruction conflict (a director's note against a persona's format
-        // rule) sends Gemma 4 into unbounded deliberation — 1536 tokens of
-        // `reasoning_content`, no text. The recovery the compliance probes
-        // established (lessons §9): re-ask once with thinking muted. The
-        // product executor adopts this rule (research §5.1).
-        if reply.text.trim().is_empty() {
-            println!(
-                "  [{name}] empty line ({} completion tokens, all thoughts) — re-asking muted",
-                reply.completion_tokens
-            );
-            rep.empty_recoveries += 1;
-            reply = ask(client, req_muted, &format!("{name} line, muted")).await?;
-            account(rep, &reply);
-        }
-        let other = if speaker_a { fx.b.name } else { fx.a.name };
-        let text = reply.text.trim().to_string();
-        if text.contains(&format!("{other}:")) {
-            rep.bleed_hits += 1;
-        }
-        if text.is_empty() {
-            return Err(format!(
-                "{name} produced an empty line even with thinking muted ({} completion \
-                 tokens; thoughts, first 300 chars: {:?})",
-                reply.completion_tokens,
-                reply.thoughts.chars().take(300).collect::<String>()
-            ));
-        }
-        println!("  {name}: {text}");
-        Ok(Line {
-            by_a: speaker_a,
-            text,
-        })
+    let mut st = RunState {
+        transcript: vec![Line {
+            by_a: fx.opening_by_a,
+            text: fx.opening.to_string(),
+        }],
+        notes_a: Vec::new(),
+        notes_b: Vec::new(),
+        issued: Vec::new(),
+        rep: RunReport::default(),
+        seed: (1000 + run * 100) as i64,
+        next_checkpoint_at: fx.moderate_every,
     };
-
-    'dialogue: loop {
-        if rep.generated >= fx.max_messages {
+    let started = Instant::now();
+    loop {
+        if st.rep.generated >= fx.max_messages {
             println!("  [cap] max_messages={} reached", fx.max_messages);
             break;
         }
-        if rep.generated >= next_checkpoint_at {
-            next_checkpoint_at += fx.moderate_every;
-            rep.checkpoints += 1;
-            seed += 1;
-            let reply = ask(
-                client,
-                director_request(fx, &transcript, &issued, seed),
-                "director checkpoint",
-            )
-            .await?;
-            rep.requests += 1;
-            rep.transport_retries += reply.retries;
-            rep.prompt_tokens += u64::from(reply.prompt_tokens);
-            rep.completion_tokens += u64::from(reply.completion_tokens);
-            rep.director_wall.push(reply.wall);
-            if reply.calls.is_empty() {
-                rep.fallbacks += 1;
-                println!(
-                    "  [director] no tool call — fallback to continue; prose: {:?}",
-                    reply.text.trim()
-                );
+        if st.rep.generated >= st.next_checkpoint_at {
+            match checkpoint(client, fx, &mut st).await? {
+                Checkpoint::Stop => break,
+                Checkpoint::Continue => continue,
             }
-            for call in &reply.calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                match call.name.as_str() {
-                    "dialogue_continue" => println!("  [director] continue"),
-                    "dialogue_stop" => {
-                        let reason = args["reason"].as_str().unwrap_or("").to_string();
-                        let summary = args["summary"].as_str().unwrap_or("");
-                        println!("  [director] STOP: {reason} — {summary}");
-                        rep.stopped_by_director = true;
-                        rep.stop_reason = Some(reason);
-                        break 'dialogue;
-                    }
-                    "dialogue_note" => {
-                        let to = args["to"].as_str().unwrap_or("both");
-                        let text = args["text"].as_str().unwrap_or("").to_string();
-                        println!("  [director] note to {to}: {text}");
-                        rep.notes += 1;
-                        issued.push(format!("note to {to}: {text}"));
-                        if to != "b" {
-                            notes_a.push(text.clone());
-                        }
-                        if to != "a" {
-                            notes_b.push(text);
-                        }
-                    }
-                    "dialogue_retry" => {
-                        // Only a generated line can be retried; the fixtures'
-                        // opening is caller-authored, and generated >= 1 here.
-                        let note = args["note"].as_str().map(str::to_string);
-                        println!("  [director] retry last line (note: {note:?})");
-                        rep.retries += 1;
-                        issued.push("retried the last line".into());
-                        if rep.generated == 0 {
-                            println!("  [director] retry ignored: nothing generated yet");
-                            continue;
-                        }
-                        let speaker_a = transcript.last().map(|l| l.by_a).unwrap_or(false);
-                        transcript.pop();
-                        if rep.generated >= fx.max_messages {
-                            break 'dialogue;
-                        }
-                        seed += 1;
-                        let line = speak(
-                            &transcript,
-                            speaker_a,
-                            note.as_deref(),
-                            &notes_a,
-                            &notes_b,
-                            seed,
-                            &mut rep,
-                        )
-                        .await?;
-                        transcript.push(line);
-                        rep.generated += 1;
-                    }
-                    "dialogue_rewrite" => {
-                        let text = args["text"].as_str().unwrap_or("").to_string();
-                        println!("  [director] rewrite last line: {text}");
-                        rep.rewrites += 1;
-                        issued.push("rewrote the last line".into());
-                        if let (Some(last), false) = (transcript.last_mut(), text.is_empty()) {
-                            last.text = text;
-                        }
-                    }
-                    other => {
-                        rep.fallbacks += 1;
-                        println!("  [director] unknown tool {other:?} — counted as fallback");
-                    }
-                }
-            }
-            continue;
         }
-        let speaker_a = !transcript
+        let speaker_a = !st
+            .transcript
             .last()
             .map(|l| l.by_a)
             .unwrap_or(!fx.opening_by_a);
-        seed += 1;
-        let line = speak(
-            &transcript,
-            speaker_a,
-            None,
-            &notes_a,
-            &notes_b,
-            seed,
-            &mut rep,
-        )
-        .await?;
-        transcript.push(line);
-        rep.generated += 1;
+        st.seed += 1;
+        let line = speak(client, fx, &mut st, speaker_a, None).await?;
+        st.transcript.push(line);
+        st.rep.generated += 1;
     }
-    rep.wall = started.elapsed();
-    Ok(rep)
+    st.rep.wall = started.elapsed();
+    Ok(st.rep)
 }
 
 fn avg_secs(walls: &[Duration]) -> f64 {
