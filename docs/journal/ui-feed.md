@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a tool card lists its arguments in the tool's own order (done)
 - Post-M9: a tool call's card opens when the call starts (done)
 - Post-M9: `Theme::Auto` follows the terminal, over OSC 11 (done)
+- Post-M9: a busy status line stops stacking the hotkeys into a column (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2157,3 +2158,40 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   a limitation tolerated, and the one case where the dark fallback would have
   been wrong — a tmux session inside a light terminal — does not arise. conhost
   is the only silent host, and the safe one to be.
+
+### Post-M9: a busy status line stops stacking the hotkeys into a column (done)
+- **Symptom**: mid-turn — generating, a token counter carrying thoughts, files
+  attached — the status pill ran ~85 columns wide, and the hint grid was offered
+  whatever was left of the line: at a 120-column window, 32. One column fits in
+  32, so the six hints became **six rows** — a status bar eating a sixth of the
+  screen in a window where those same six hints fit on one line with 13 columns
+  to spare. The quiet bar (one chip) was always fine, which is why this only
+  surfaces while a turn runs.
+- **Cause** (`widgets/status_bar.rs`, `lines`): the column count was picked
+  *only* out of the width left beside the pill (`state_w + GAP + block ≤ width`),
+  and the "pill on a line of its own" branch was reached only when not even one
+  column fit there. Sharing the top row was therefore preferred without limit —
+  five extra rows still counted as "it fits".
+- **Fix** (`top_row_cols`): both layouts are laid out and the shorter one wins.
+  Sharing costs the grid `state_w + GAP` of width; below the pill it gets the
+  full width, so a grid that was one column wide beside a busy pill is six
+  columns wide under it. On a tie the pill keeps the top row — the established
+  look — unless it is already past `STATE_SHARE_MAX_PCT` (60%) of the width,
+  where the hints read better as one wide grid of their own. The threshold is
+  the user's, and it only ever decides ties: a layout that saves a line wins
+  whatever share the pill takes (that case is real — when both grids come out
+  the same depth, the pill is free).
+- **The invariant it buys**, and the test that states it: a fuller pill costs the
+  bar **at most one row** over an empty one — at every width 40..=240 and in
+  every language. It holds by construction: the below layout is `1 + rows at full
+  width`, and no layout the quiet pill gets can have fewer rows than the grid at
+  full width. Before the fix a busy pill cost five.
+- **Measured** (ru, the screenshot's state): at 120 columns 6 lines → 2; at 100
+  columns 6 → 3 (two grid rows are all that fits under the pill either way).
+  Where nothing was wrong nothing moved: a quiet bar at 160 is one line, and at
+  100 still wraps with the pill on the top row and `Ctrl+Q` landing exactly under
+  the `Ctrl+P` column — the older layout test, unchanged.
+- **Tests**: `top_row_cols` on synthetic cell widths (quiet pill, the crowded
+  screenshot, both tie directions, and crowded-but-saves-a-line), the screenshot
+  state rendered in `TestBackend` at 120 columns, and the "at most one row" sweep
+  over widths × languages. Pure UI — no live run needed. 2701 green.

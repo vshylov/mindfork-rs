@@ -1972,6 +1972,20 @@ Two main screens + overlays (modals):
   characters longer costs a whole extra row at common widths — the alternative label is
   a short **directional** one ("to search"), which also can't be misread as
   "`Esc` opens search".
+- **The bar's own layout** is picked per frame between two arrangements: the
+  indicators (server chips, generation, the token counter, the quiet
+  background/speech/attachment chips) on the left of the **top** row with the
+  hint grid right-aligned beside them — or the indicators alone on the top row
+  and the grid right-aligned across the **full width below**. The shorter of the
+  two wins. Sharing a row costs the grid the indicators' width, and that width is
+  not fixed: mid-turn the line carries a generation indicator, a token counter
+  with thoughts and the attachment chips, which at common widths squeezes the
+  grid down to a single column — one hint per line, six rows of status bar taken
+  out of the feed where two would do. On a tie the indicators keep the top row
+  (the compact, ordinary look) unless they already take more than **60%** of the
+  width, where the hints read better as one wide grid on a line of their own. The
+  consequence worth stating, because it is what the rule is for: **a fuller
+  status line costs at most one extra row**, whatever it carries.
 
 ### 11.2. The chat list (an overlay)
 
