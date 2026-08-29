@@ -1300,16 +1300,27 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
     empty and a smoke about *keys* goes red for a reason unrelated to keys. Same
     shape as the Qwen ceiling above; raised to 512, since muting does not work on
     this template.
-  - **three are open**, because each changes what a test asserts for every model:
-    `code_workspace_navigate` answered turn 2 correctly *without* the tool (the
-    second instance of the `attachment_read` pattern in remote-e2e-hf.md §3),
-    `fetch_url_address_policy` refused before calling anything ("I'm unable to
-    fetch that URL" — this family refuses more readily), and
-    `continue_probe::prefill_coexists_with_the_tool_grammar` recorded genuine
-    no-go evidence (the tool call came back as JSON text after a prefill).
-- **Re-verified**: the eight repairs against a fresh H200 — all green, 5 min. The
+  - **two were asserting what is not the code's to guarantee**, and were reworked
+    rather than patched. `code_workspace_navigate` answered turn 2 correctly
+    *without* the tool, because turn 1's own `code_read` had already put
+    `src/config.rs` in the conversation — the second instance of the
+    `attachment_read` pattern in remote-e2e-hf.md §3, and the same lesson: an
+    assertion that a *particular* tool must be chosen is true only until a model
+    finds a better route. Turn 2 now asks about a file turn 1 never opened, with
+    the profile narrowed to `code_read` alone; the route is removed rather than
+    hoped for. And `continue_probe::prefill_coexists_with_the_tool_grammar` now
+    **prints** its F5 verdict instead of failing on it — whether a template pairs
+    a prefill with the tool grammar is a property of the model, and the mid-word
+    arm of the same probe was already recorded-not-asserted for that reason.
+  - **one is left red on purpose**: `fetch_url_address_policy` refused before
+    calling anything ("I'm unable to fetch that URL"), so the policy went
+    untested. This family refuses more readily than the other two; firming the
+    prompt would change what the smoke asks of Gemma and Qwen, where it is green,
+    to fix a model that is arguably behaving well. Known, written down, and a
+    dispatch here is expected at 127 passed, 1 failed.
+- **Re-verified**: the ten repairs against fresh H200s — all green. The
   supervisor smoke's control arm still gets its `401` without a key, so the
   authenticated arm still proves what it claims.
-- **Cost**: **≈$2.56** for the whole track — the probes, the dispatch and the
-  re-verification, across seven throwaway endpoints, none left running. A routine
+- **Cost**: **≈$2.75** for the whole track — the probes, the dispatch and two
+  re-verifications, across eight throwaway endpoints, none left running. A routine
   dispatch on this model is ~$2.50 against ~$1.00 for a Gemma or Qwen run.

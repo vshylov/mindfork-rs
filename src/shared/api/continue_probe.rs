@@ -331,8 +331,21 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
     );
 }
 
-/// Fork F5: a continuation request carries the turn's tools; the continued
-/// round must still be able to end in a *parsed* tool call (not prose).
+/// Fork F5: a continuation request carries the turn's tools, and the continued
+/// round is watched for a *parsed* tool call.
+///
+/// **The verdict is recorded, not asserted** — the same treatment the mid-word
+/// arm gets, and for the same reason: whether a chat template pairs a prefill
+/// with the tool grammar is a property of the **model**, not of this code.
+/// llama.cpp on the gate's Gemma and Qwen stacks returns a parsed call (F5 go);
+/// `gpt-oss-120b`'s harmony template returns the call as JSON *text* inside the
+/// continuation instead (measured 2026-08-29,
+/// docs/research/e2e-gpt-oss-120b.md §10.2). Turning that into a red gate would
+/// make a stage-0 probe a permanent failure over someone else's template.
+///
+/// What is still asserted is what is ours: the request is accepted, the stream
+/// opens, and the round produces *something* — an empty continuation would be a
+/// real defect on any model.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn prefill_coexists_with_the_tool_grammar() {
@@ -383,10 +396,20 @@ async fn prefill_coexists_with_the_tool_grammar() {
         }
     }
     let calls = acc.finish();
+    let parsed = calls.iter().any(|c| c.name == "get_weather");
     println!("prefill+tools: finish={finish:?} calls={calls:?}\ncontinued text={text:?}");
+    println!(
+        "F5 on this server: {}",
+        match parsed {
+            true => "GO - the continued round ended in a parsed tool call",
+            false =>
+                "no-go - no parsed tool call; the call, if the model made one, is in the text above",
+        }
+    );
     assert!(
-        calls.iter().any(|c| c.name == "get_weather"),
-        "the continued round produced no parsed tool call (F5 no-go evidence): finish={finish:?} text={text:?}"
+        parsed || !text.trim().is_empty(),
+        "a trailing-assistant request with tools produced neither a parsed call \
+         nor any text at all: finish={finish:?}"
     );
 }
 

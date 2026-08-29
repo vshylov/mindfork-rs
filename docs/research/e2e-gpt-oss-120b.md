@@ -1,10 +1,11 @@
 # Research: gpt-oss-120b (split Q8_0) on the live e2e gate
 
-**Status:** **done, with three open questions.** Forks F1–F6 resolved
-(*user's decision, 2026-08-29*); the runner, the workflow and the tests are built
-on `feat/e2e-gpt-oss-120b`, and the full suite has been dispatched against the
-model — **117 passed, 11 failed, none of them a product defect** (§10). Eight of
-the eleven are fixed and re-verified live; three need a decision (§10.2).
+**Status:** **done.** Forks F1–F6 resolved (*user's decision, 2026-08-29*); the
+runner, the workflow and the tests are on `feat/e2e-gpt-oss-120b`
+([PR #417](https://github.com/vshylov/mindfork-rs/pull/417)), and the full suite
+has been dispatched against the model — **117 passed, 11 failed, none of them a
+product defect** (§10). **Ten of the eleven are repaired and re-verified live**;
+one is left deliberately (§10.2).
 **Date:** 2026-08-29.
 **Extends:** [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md) (the
 gate itself, stages 0–3) and
@@ -12,8 +13,8 @@ gate itself, stages 0–3) and
 (how a second chat model was added — the shape this one follows).
 **Journal:** [docs/journal/ci.md](../journal/ci.md).
 
-**Total spend: ≈$2.56**, across seven throwaway endpoints — the probes, one
-full dispatch and one re-verification. Every endpoint deleted, every deletion
+**Total spend: ≈$2.75**, across eight throwaway endpoints — the probes, one
+full dispatch and two re-verifications. Every endpoint deleted, every deletion
 verified.
 
 ## 1. Why this model, and not just a third of the same kind
@@ -347,8 +348,8 @@ one idle quarter-hour, ≈$1.25.
    `tools/hf_api.py`, the two derived declarations and the plan line in
    `tools/e2e_hf.py`, the workflow's third choice and its `model-default`
    instance, T1 and T2, and the docs.
-3. **Stage 2 — the dispatch, done** (§10), and its eight repairs re-verified
-   live. Three questions left open, listed in §10.2.
+3. **Stage 2 — the dispatch, done** (§10), and its ten repairs re-verified
+   live. One smoke left red on purpose, in §10.2.
 
 **Definition of done** — AGENTS.md §4 plus: `cargo fmt --check`,
 `clippy -D warnings`, `cargo test`, `cyrillic_scan.py` green; the dispatch
@@ -375,29 +376,31 @@ Re-verified against a fresh H200, 2026-08-29: **all eight green** (5 min, ≈$0.
 The supervisor smoke's control arm still gets its `401` without a key, so the
 authenticated arm still proves what it claims.
 
-### 10.2. Open — each changes what a test asserts *for every model*
+Two more were reworked after the dispatch (*user's decision, 2026-08-30*), each
+because it was asserting something that is not the code's to guarantee:
 
-- **`code_workspace_navigate_e2e_live`** — turn 2 asks how many lines
-  `src/config.rs` has; the model answered **correctly** — six lines, and the first one quoted
-  verbatim — without calling `code_read`, because turn 1's `code_search`
-  had already put the file in the conversation. This is the *second* instance of
-  a pattern already recorded for `attachment_read` in remote-e2e-hf.md §3: an
-  assertion that a specific tool must be used holds only when the earlier turn
-  happens not to have answered it. The fix proposed there — run the smoke in a
-  configuration where the tool is the only route — applies here too, and is a
-  test redesign rather than a patch.
-- **`fetch_url_address_policy_e2e_live`** — "I'm unable to fetch that URL", with
-  no tool call, so the address policy was never exercised. gpt-oss refuses
-  markedly more readily than the other two (`file_attachment_e2e_live`'s baseline
-  arm answered "I'm sorry, but I can't help with that" and still passed, because
-  there a refusal *is* the control). Firming the prompt would change what the
-  smoke asks of Gemma and Qwen as well.
-- **`continue_probe::prefill_coexists_with_the_tool_grammar`** — after a prefill,
-  the model emitted the tool call as JSON **text** rather than a parsed call. Its
-  own message calls that "F5 no-go evidence": this is a stage-0 research probe
-  recording a capability, and the capability is genuinely absent on this
-  template. Its sibling in the same module already skips on a model it does not
-  apply to (`thinking_model_rejects_prefill_and_the_kwarg_lifts_it` printed
-  *"server model is …gpt-oss…, not a Qwen thinking model"*), which is the shape
-  this one probably wants — but turning a red into a skip is exactly the move
-  that needs a decision rather than an edit.
+| Smoke | What it was asserting | What it asserts now |
+|---|---|---|
+| `code_workspace_navigate_e2e_live` | that the model *chooses* `code_read` on turn 2 | turn 2 now asks about a file turn 1 never opened (`README.md`), with the profile narrowed to `code_read` alone — the route is removed, not hoped for |
+| `continue_probe::prefill_coexists_with_the_tool_grammar` | that a prefill and the tool grammar coexist | the F5 verdict is **printed**, the way the mid-word arm already was; what is asserted is that the round produced *something*, which is the part that is ours |
+
+`code_workspace_navigate` is the **second** instance of the pattern first
+recorded for `attachment_read` in remote-e2e-hf.md §3: turn 1's own `code_read`
+had put `src/config.rs` in the conversation, so turn 2 legitimately needed no
+tool and answered correctly — six lines, the first quoted verbatim. An assertion
+that a *particular* tool must be chosen is only true until a model finds a better
+route; the smoke now removes the other routes instead. Re-verified live,
+2026-08-30: `turn 2 tool calls: ["code_read"]`, and
+`F5 on this server: no-go - no parsed tool call` printed as the evidence it is.
+
+### 10.2. Left red on purpose
+
+**`fetch_url_address_policy_e2e_live`** — "I'm unable to fetch that URL", with no
+tool call, so the address policy was never exercised. gpt-oss refuses markedly
+more readily than the other two families (`file_attachment_e2e_live`'s baseline
+arm answered "I'm sorry, but I can't help with that" and *passed*, because there
+a refusal is the control). Firming the prompt into "you must call `fetch_url`"
+would change what the smoke asks of Gemma and Qwen, where it is green today, to
+fix a model that is arguably behaving well — so it stays as it is, known and
+written down (*user's decision, 2026-08-30*). A dispatch on this model is
+therefore expected at **127 passed, 1 failed**.

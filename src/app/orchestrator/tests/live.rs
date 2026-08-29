@@ -110,6 +110,23 @@ async fn narrow_profile_to(
             _ => None,
         })
         .expect("the bootstrap chat");
+    set_profile_tools(cmd_tx, profile, tools);
+    (profile, chat)
+}
+
+/// Change a profile's tool set **mid-conversation**, for a smoke whose second
+/// turn needs a different set from its first.
+///
+/// Split out of [`narrow_profile_to`], which can only run once: it waits for the
+/// bootstrap's `ProfileList` and `ChatActivated`, and those do not come round
+/// again. Ordering is safe without an acknowledgement — this command and the
+/// next turn's `SendMessage` travel the same channel, so the orchestrator
+/// applies them in that order.
+fn set_profile_tools(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    profile: Uuid,
+    tools: Vec<crate::entities::profile::ToolId>,
+) {
     cmd_tx
         .send(AppCommand::UpdateProfile {
             id: profile,
@@ -119,7 +136,6 @@ async fn narrow_profile_to(
             }),
         })
         .unwrap();
-    (profile, chat)
 }
 
 /// Chat attachments, stage 3 go/no-go (docs/file-attachments.md): on a **large**
@@ -3462,7 +3478,7 @@ async fn code_workspace_navigate_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let _ = narrow_profile_to(
+    let (profile, _chat) = narrow_profile_to(
         &cmd_tx,
         &mut evt_rx,
         vec![
@@ -3523,12 +3539,21 @@ async fn code_workspace_navigate_e2e_live() {
         "the reconnect delay is not the request timeout: {answer}"
     );
 
-    // Turn 2 — something no search result can carry: the file's own shape.
-    // `code_read` is the only route to it, which is what keeps it covered live.
+    // Turn 2 — `code_read`, covered on its own. Two things make that
+    // deterministic rather than hopeful, and both were learned the hard way: the
+    // question is about a file **turn 1 never opened** (asked about
+    // `src/config.rs`, `gpt-oss-120b` answered correctly with no tool at all,
+    // because its turn-1 `code_read` had already put that file in the
+    // conversation), and the profile is narrowed to `code_read` alone, so no
+    // other route exists. The second instance of this pattern — the first is
+    // `attachment_read` in docs/history/remote-e2e-hf.md §3; an assertion that a
+    // *particular* tool must be chosen is only ever true until a model finds a
+    // better route, so the smoke has to remove the routes instead of hoping.
+    set_profile_tools(&cmd_tx, profile, vec![CODE_READ_ID.into()]);
     let (answer2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
-        "Сколько всего строк в файле src/config.rs и что написано в первой?",
+        "Что написано в первой строке файла README.md в прикреплённом проекте?",
     )
     .await;
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -3540,9 +3565,13 @@ async fn code_workspace_navigate_e2e_live() {
         calls2.iter().any(|(n, _)| n == CODE_READ_ID),
         "only a read can answer this: {names2:?}"
     );
+    // The heading of README.md, which appears nowhere else in the workspace and
+    // is not in the conversation before this turn. The line count is
+    // deliberately *not* asserted: a trailing newline makes "how many lines" a
+    // question two readers answer differently.
     assert!(
-        answer2.contains('6'),
-        "src/config.rs has 6 lines: {answer2}"
+        answer2.to_lowercase().contains("probe"),
+        "the first line of README.md is `# probe`: {answer2}"
     );
 }
 
