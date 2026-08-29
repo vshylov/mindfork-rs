@@ -2172,26 +2172,37 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   and the "pill on a line of its own" branch was reached only when not even one
   column fit there. Sharing the top row was therefore preferred without limit —
   five extra rows still counted as "it fits".
-- **Fix** (`top_row_cols`): both layouts are laid out and the shorter one wins.
-  Sharing costs the grid `state_w + GAP` of width; below the pill it gets the
-  full width, so a grid that was one column wide beside a busy pill is six
-  columns wide under it. On a tie the pill keeps the top row — the established
-  look — unless it is already past `STATE_SHARE_MAX_PCT` (60%) of the width,
-  where the hints read better as one wide grid of their own. The threshold is
-  the user's, and it only ever decides ties: a layout that saves a line wins
-  whatever share the pill takes (that case is real — when both grids come out
-  the same depth, the pill is free).
+- **Fix** (`top_row_cols`): one rule — the pill shares the top row only when it
+  **costs the grid no row**, i.e. when the grid beside it comes out no deeper
+  than the same grid on a full-width line of its own. Sharing costs the grid
+  `state_w + GAP` of width; below the pill it gets the whole line, so a grid that
+  was one column wide beside a busy pill is six columns wide under it. A wide
+  pill still keeps the top row when it happens to cost nothing (at 200 columns
+  the screenshot's state does).
+- **The tie was the one fork**, and it was the user's call (2026-08-30). A 60%
+  threshold went in first — share the row unless the pill already covers more
+  than 60% of the width — and was then dropped. A tie means the shared grid is
+  exactly one row deeper than the full-width one, so handing the pill its own
+  line costs the same total height and always buys the wider grid: there is
+  nothing left for a threshold to decide, and the rule collapses to a single
+  comparison with no magic number. Where it shows: at 160 columns the busy pill
+  is 53% of the width — under the threshold — and used to split the hints across
+  two rows beside itself; now they are one row of six under it, at the same
+  height.
 - **The invariant it buys**, and the test that states it: a fuller pill costs the
   bar **at most one row** over an empty one — at every width 40..=240 and in
   every language. It holds by construction: the below layout is `1 + rows at full
   width`, and no layout the quiet pill gets can have fewer rows than the grid at
   full width. Before the fix a busy pill cost five.
 - **Measured** (ru, the screenshot's state): at 120 columns 6 lines → 2; at 100
-  columns 6 → 3 (two grid rows are all that fits under the pill either way).
-  Where nothing was wrong nothing moved: a quiet bar at 160 is one line, and at
-  100 still wraps with the pill on the top row and `Ctrl+Q` landing exactly under
-  the `Ctrl+P` column — the older layout test, unchanged.
+  columns 6 → 3 (two grid rows are all that fits either way); at 160 the pill
+  takes the top line and the six hints are one row under it; at 200 the pill is
+  back on the shared row, where it costs the grid nothing. Where nothing was
+  wrong nothing moved: a quiet bar is one line from 120 columns up, and at 100
+  still wraps with the pill on the top row and `Ctrl+Q` landing exactly under the
+  `Ctrl+P` column — the older layout test, unchanged.
 - **Tests**: `top_row_cols` on synthetic cell widths (quiet pill, the crowded
-  screenshot, both tie directions, and crowded-but-saves-a-line), the screenshot
-  state rendered in `TestBackend` at 120 columns, and the "at most one row" sweep
-  over widths × languages. Pure UI — no live run needed. 2701 green.
+  screenshot, two ties, a wide pill that still costs nothing, and narrower than
+  one column beside the pill), the screenshot state rendered in `TestBackend` at
+  120 columns, and the "at most one row" sweep over widths × languages. Pure UI
+  — no live run needed. 2701 green.
