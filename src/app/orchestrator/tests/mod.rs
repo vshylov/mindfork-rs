@@ -575,6 +575,7 @@ mod generation;
 mod images;
 mod impersonation;
 mod live;
+mod llm_history;
 mod mcp;
 mod model_name;
 mod profiles;

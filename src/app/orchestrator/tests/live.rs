@@ -2878,6 +2878,108 @@ async fn a_reply_records_the_discovered_model_live() {
     );
 }
 
+/// The `llm_*` pair end to end (spec §9.14): the assistant, asked what model it
+/// is, reaches for `get_llm_name` and answers with the name the engine itself
+/// reported; and after that first exchange the recorder has written the
+/// profile's baseline record, which `get_llm_history` reads back in the next
+/// turn. External mode with a blank model field — the discovered-name path,
+/// the same setup as the metadata smoke above, and the wait for `EngineModel`
+/// matters for the same reason: a turn sent before discovery lands genuinely
+/// has no name to answer or record with.
+///
+/// Both turns assert the tool **was actually called** — a model answering from
+/// its own beliefs would otherwise read as a pass (docs/lessons.md §9).
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn llm_name_and_history_e2e_live() {
+    let mut cfg = no_auto_cfg();
+    // The harness injects the live backend directly, so the config's default
+    // `Managed` would survive into the turn snapshot and the history records
+    // unless the mode is set to what the setup actually is — the first live
+    // run recorded `(managed)` for a server reached by URL exactly this way.
+    cfg.engine.mode = crate::shared::config::ServerMode::External;
+    cfg.engine.external.model_name = None;
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+
+    // The bootstrap profile/chat and the engine's answer arrive in any order.
+    let (profile, discovered) =
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let (mut profile, mut chat, mut model) = (None, None, None);
+            while profile.is_none() || chat.is_none() || model.is_none() {
+                match evt_rx.recv().await {
+                    Some(AppEvent::ProfileList(ps)) => {
+                        profile = profile.or_else(|| ps.first().map(|p| p.id));
+                    }
+                    Some(AppEvent::ChatActivated { id, .. }) => chat = Some(id),
+                    Some(AppEvent::EngineModel(Some(m))) => model = Some(m),
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            (profile, model)
+        })
+        .await
+        .expect("the engine must name its model within 30s of connecting");
+    let profile = profile.expect("the bootstrap profile");
+    let discovered = discovered.expect("the engine's own name for the model");
+    eprintln!("discovered: {discovered}");
+
+    // Only the pair under test — nothing else to reach for.
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(vec![
+                    crate::features::tools::llm::GET_LLM_NAME_ID.to_string(),
+                    crate::features::tools::llm::GET_LLM_HISTORY_ID.to_string(),
+                ]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+
+    let (_text, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Which language model are you running on right now? Check with your \
+         get_llm_name tool and tell me.",
+    )
+    .await;
+    let name_calls: Vec<&(String, String)> =
+        calls.iter().filter(|(n, _)| n == "get_llm_name").collect();
+    eprintln!("get_llm_name calls: {name_calls:#?}");
+    assert!(!name_calls.is_empty(), "the tool was never called: {calls:#?}");
+    assert!(
+        name_calls.iter().any(|(_, r)| r.contains(&discovered)),
+        "the tool's answer must carry the discovered name {discovered:?}: {name_calls:#?}"
+    );
+
+    // The first exchange has landed, so the recorder has written the baseline
+    // record (fork F6) — the next turn's history tool must read it back.
+    let (_text, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "When did your language model last change? Check with your \
+         get_llm_history tool and quote the records.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let hist_calls: Vec<&(String, String)> =
+        calls.iter().filter(|(n, _)| n == "get_llm_history").collect();
+    eprintln!("get_llm_history calls: {hist_calls:#?}");
+    assert!(!hist_calls.is_empty(), "the tool was never called: {calls:#?}");
+    assert!(
+        hist_calls
+            .iter()
+            .any(|(_, r)| r.contains(&discovered) && r.contains("(external)")),
+        "the history must hold the baseline record for {discovered:?}: {hist_calls:#?}"
+    );
+}
+
 /// Stage 2 end to end: nobody types `/compact`, and the conversation is folded
 /// anyway once it approaches the window.
 ///

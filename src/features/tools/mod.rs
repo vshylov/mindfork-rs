@@ -21,6 +21,7 @@ pub mod fetch;
 pub mod fs;
 pub mod history;
 pub mod introspection;
+pub mod llm;
 pub mod mcp;
 pub mod meta;
 pub mod notes;
@@ -141,6 +142,17 @@ pub struct ToolContext {
     /// `select!` with the same token — a safety net for tools that don't read the
     /// token. See docs/research/plugin-system.md §4.4 ("Cancellation").
     pub cancel: tokio_util::sync::CancellationToken,
+    /// The turn's language-model name — the same single `effective_model_name`
+    /// read that names the live bubble's header and the stored
+    /// `MessageMetadata.model`, so `get_llm_name` cannot disagree with either
+    /// (spec §9.14). `None` — the engine does not say (an external server with
+    /// no typed name and no discovery answer). Deliberately **not** asked of
+    /// `ctx.engine` from inside a tool: the orchestrator-side resolver owns the
+    /// typed-name-wins precedence.
+    pub model_name: Option<String>,
+    /// The turn's engine mode (`config.engine.mode` snapshot) — the context
+    /// half of `get_llm_name`'s answer and of an `llm_history` record.
+    pub engine_mode: crate::shared::config::ServerMode,
 }
 
 /// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
@@ -222,6 +234,10 @@ pub struct TurnInfo {
     /// Cancellation token for the turn (a clone of the generation task's /
     /// background loop's token).
     pub cancel: tokio_util::sync::CancellationToken,
+    /// The turn's language-model name. See [`ToolContext::model_name`].
+    pub model_name: Option<String>,
+    /// The turn's engine mode. See [`ToolContext::engine_mode`].
+    pub engine_mode: crate::shared::config::ServerMode,
 }
 
 impl ToolContext {
@@ -252,6 +268,8 @@ impl ToolContext {
             recall_includes_self: params.recall_includes_self,
             loc: crate::shared::i18n::locale(turn.lang),
             cancel: turn.cancel,
+            model_name: turn.model_name,
+            engine_mode: turn.engine_mode,
         }
     }
 }
@@ -708,6 +726,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(introspection::GetSystemMessage));
     reg.register(Arc::new(introspection::SetSystemMessage));
     reg.register(Arc::new(introspection::GetLastUserMessageTime));
+    // Language-model introspection (spec §9.14): the LLM's name and the
+    // profile's history of model changes — deliberately named `llm_*`, the
+    // counterpart of the `self_model` family it must never be confused with.
+    reg.register(Arc::new(llm::GetLlmName));
+    reg.register(Arc::new(llm::GetLlmHistory));
     reg.register(Arc::new(notes::NoteSave));
     reg.register(Arc::new(notes::NoteRecall));
     reg.register(Arc::new(notes::NoteRevise));
@@ -905,6 +928,9 @@ pub(crate) mod testkit {
             workspace_journal: None,
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
+            // No engine name by default; tests that need one set `ctx.model_name`.
+            model_name: None,
+            engine_mode: crate::shared::config::ServerMode::default(),
         }
     }
 

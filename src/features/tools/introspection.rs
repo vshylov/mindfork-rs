@@ -371,7 +371,8 @@ fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConf
 }
 
 /// The JSON Schema of an empty parameters object (a tool with no arguments).
-fn empty_object() -> serde_json::Value {
+/// `pub(crate)` — shared with the `llm` tools, whose schemas are just as empty.
+pub(crate) fn empty_object() -> serde_json::Value {
     serde_json::json!({"type": "object", "properties": {}})
 }
 

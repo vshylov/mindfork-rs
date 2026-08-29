@@ -333,6 +333,15 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_note_rag_note ON note_rag_links(profile_id, note_id);
          CREATE INDEX IF NOT EXISTS idx_note_rag_source ON note_rag_links(profile_id, source);
 
+         CREATE TABLE IF NOT EXISTS llm_history (
+             rowid       INTEGER PRIMARY KEY,
+             profile_id  TEXT NOT NULL,
+             changed_at  TEXT NOT NULL,
+             model       TEXT NOT NULL,
+             mode        TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_llm_history_profile ON llm_history(profile_id);
+
          CREATE TABLE IF NOT EXISTS attachment_documents (
              rowid          INTEGER PRIMARY KEY,
              id             TEXT NOT NULL UNIQUE,
@@ -592,6 +601,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
 mod attachments;
 mod embed_gen;
 mod graph;
+mod llm_history;
 mod notes;
 mod rag;
 mod self_model;
