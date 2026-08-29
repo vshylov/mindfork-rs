@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
-use crate::entities::message::Message;
+use crate::entities::message::{Message, MessageRole};
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 pub use crate::features::chat_search::FeedFocus;
@@ -399,6 +399,11 @@ pub struct LiveTurn {
     /// (`/continue` before its first tool round): the partial is appended
     /// there, with no separator, instead of opening a bubble of its own.
     pub continues: bool,
+    /// Which side of the conversation the round in progress streams into:
+    /// `Assistant` for a turn's own chat and a sub-agent's transcript; a
+    /// dialogue's line carries its speaker's side (spec §9.13 — participant
+    /// `b`'s lines are the transcript's `User` role).
+    pub role: MessageRole,
 }
 
 /// A round in progress (see [`LiveTurn::partial`]): its text and thoughts
@@ -421,15 +426,30 @@ pub struct LiveTool {
     pub result: Option<(String, usize)>,
 }
 
-/// One sub-agent run's position, for the status-bar chip
+/// Which kind of nested run the chip describes — the screen words each in the
+/// interface language ([`SubagentProgress`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunProgressKind {
+    /// A `call_subagent` run: `round` is its tool round, `tool` the tool it
+    /// is inside, if any (spec §9.3.2).
+    Subagent,
+    /// A dialogue's participant line being written: `round` is the line
+    /// number (spec §9.13).
+    DialogueLine,
+    /// A dialogue's director checkpoint — the scene is being judged.
+    DialogueDirector,
+}
+
+/// One nested run's position, for the status-bar chip
 /// ([`AppEvent::SubagentProgress`]): the persona's name (the `name` argument,
-/// else the run's title), the round it is on, and the tool it is inside, if
-/// any. Raw data — the screen words it in the interface language.
+/// else the run's title), the round/line it is on, and the tool it is inside,
+/// if any. Raw data — the screen words it in the interface language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentProgress {
     pub name: String,
     pub round: u32,
     pub tool: Option<String>,
+    pub kind: RunProgressKind,
 }
 
 /// projection.
@@ -548,6 +568,18 @@ pub enum AppEvent {
     /// conversation (docs/subagent-live.md §3.4): the messages to append to
     /// the feed. Guarded by `id` — a round for another conversation is dropped.
     TranscriptGrew { id: Uuid, messages: Vec<Message> },
+    /// A running dialogue starts its next line while its transcript is the
+    /// open conversation (spec §9.13): the side the coming stream belongs to,
+    /// under the transcript's stream id — so participant `b`'s tokens draw in
+    /// a `User` bubble, not the assistant's.
+    TranscriptLine {
+        generation_id: Uuid,
+        role: MessageRole,
+    },
+    /// A running dialogue **edited** its open transcript — the director
+    /// discarded or rewrote a line (spec §9.13) — so appending cannot express
+    /// it: the feed is rebuilt from this full replacement. Guarded by `id`.
+    TranscriptReset { id: Uuid, messages: Vec<Message> },
     /// The user's message was accepted (an echo for the feed).
     UserMessage(String),
     /// Restore text into the input box (after deleting the last exchange). A non-empty

@@ -2151,6 +2151,8 @@
   "ui.chat.bg.compact": "сжатие",
   "ui.chat.bg.subagent": "саб-агент «{name}» · раунд {round}",
   "ui.chat.bg.subagent_tool": "саб-агент «{name}» · раунд {round} · {tool}",
+  "ui.chat.bg.dialogue": "диалог «{name}» · реплика {line}",
+  "ui.chat.bg.dialogue_director": "диалог «{name}» · режиссёр оценивает сцену",
   "ui.chat.bg.retry": "повтор {attempt}/{max} через {secs} с",
   "ui.help.compact": "свернуть раннюю часть переписки в резюме",
   "ui.settings.group.context": "Контекст",

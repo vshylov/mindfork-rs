@@ -26,6 +26,10 @@ split by subsystem.
   reply carries the transcript's `chat://` address. One engine session, one
   request at a time — no extra VRAM on a local model; a new "Dialogue: run
   time limit" setting bounds a runaway scene (30 minutes by default).
+  **The open transcript is live**: each line streams in token by token on its
+  speaker's side, a director's retake or rewrite updates the view in place,
+  and the status bar shows which line is being written — or that the director
+  is judging the scene — while the dialogue runs.
 
 ### Data
 

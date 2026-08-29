@@ -468,14 +468,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   landing, visible while it runs, and a tool call's card that opens when the
   call starts. Design: [docs/research/subagent-chats.md](research/subagent-chats.md),
   stage 2: [docs/history/subagent-live.md](history/subagent-live.md). What
-  stays open: **the two-agent dialogue shipped its stage 1** (`run_dialogue`,
-  spec §9.13, [ADR 0011](decisions/0011-dialogue-directed-run.md), design
-  [two-agent-dialogue.md](research/two-agent-dialogue.md)) — its own stage 2
-  is the transcript's token-level streaming with a speaker side (today a
-  dialogue grows per line), the sub-agent's text streaming token by token into
-  its transcript (rounds are the unit today), and a parent's JSON export not
-  carrying its transcripts (the v1 import document has no place for tool
-  calls).
+  stays open: a parent's JSON export not carrying its transcripts (the v1
+  import document has no place for tool calls). **The two-agent dialogue is
+  complete, both stages** (`run_dialogue`, spec §9.13,
+  [ADR 0011](decisions/0011-dialogue-directed-run.md), design
+  [two-agent-dialogue.md](research/two-agent-dialogue.md)); the sub-agent's
+  token-by-token transcript streaming, which this list still carried as open,
+  had in fact shipped with the live track's addendum (subagent-live.md §8,
+  spec §9.3.2) — corrected here rather than left to rot.
 - **Model-compliance probes vs the gate** (complete): opened when
   `rewrite_tool_e2e_live` took down a Gemma dispatch of the live gate, and
   expected to need a split — a deterministic mechanism test for the gate, the

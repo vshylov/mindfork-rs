@@ -1,10 +1,14 @@
 # Two personas in dialogue, directed by the model (`run_dialogue`) — research
 
-> Status: **stage 1 implemented** (2026-08-29, `feat/dialogue-run`: spec
-> §9.13, [ADR 0011](../decisions/0011-dialogue-directed-run.md), journal
+> Status: **track complete — both stages** (2026-08-29). Stage 1
+> (`feat/dialogue-run`): spec §9.13,
+> [ADR 0011](../decisions/0011-dialogue-directed-run.md), journal
 > [tools.md](../journal/tools.md); smoke GO on Qwen 3.6, the probe's café
-> fixture graduated into `dialogue_e2e_live`). Stage 2 — the transcript's
-> token-level streaming with a speaker side (§3.7). The probe: **GO on both
+> fixture graduated into `dialogue_e2e_live`. Stage 2 (`feat/dialogue-live`):
+> the open transcript streams each line token by token on its speaker's side,
+> a director's retake/rewrite replaces the open view in place, and the parent
+> chat carries a status chip for the running scene (§3.7 delivered). The
+> probe: **GO on both
 > gate models and both strict-alternation clouds** (§5.1–§5.2: every go bar
 > met, 104/105 checkpoint verdicts parsed across the four backends, zero
 > role bleed, cache slots held, and two executor rules found live — the
@@ -340,15 +344,19 @@ title is "«A» ↔ «B»" from the participants' names/fallbacks.
 - **Landed**: list nesting under the parent (fold state, `▸ n` mark), the
   read-only screen with refusals-with-a-note, search as a conversation of its
   own, `/export` of the open transcript — all free (they key off "has a run").
-- **Live (stage 2)**: `ChildStarted(run)` fires at dialogue start (the run
-  carries `participants`, so the viewer labels sides immediately);
-  `ChildRoundFiled` per landed message; the token-level partial
-  (`ChildStep`/`child_partial`) gains one bit — **which side is streaming** —
-  so the in-flight bubble renders on the correct side with the correct name.
-  That is the only new event surface; everything else (`view()`'s third arm,
-  `switch_within_turn`, `TranscriptGrew`) is already generic over the child.
-  Stage 1 lands the whole run at `handle_done` exactly as `call_subagent`'s
-  stage 1 did; a cancel lands the partial transcript with
+- **Live (stage 2 — delivered)**: `ChildStarted(run)` fires at dialogue start
+  (the run carries `participants`, so the viewer labels sides immediately);
+  `ChildRoundFiled` per landed message; and the token-level stream carries
+  **which side is speaking** — `ChildLineStarted { role }` before each line,
+  mirrored as `child_line_role`/`LiveTurn.role`, so the in-flight bubble
+  renders on the correct side with the correct name, a transcript opened
+  mid-line included. A director's retry/rewrite replaces the open view whole
+  (`ChildTranscript` → `TranscriptReset` — appending cannot express an
+  edit), the checkpoints stay muted (deliberation is not a line), and the
+  parent's status bar carries the scene chip
+  (`RunProgressKind::DialogueLine`/`DialogueDirector`). Everything else
+  (`view()`'s third arm, `switch_within_turn`, `TranscriptGrew`) was already
+  generic over the child; a cancel lands the partial transcript with
   `outcome = Cancelled`.
 
 ### 3.8 Budgets, limits, outcomes

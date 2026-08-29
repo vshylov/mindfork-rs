@@ -449,6 +449,10 @@ struct InflightTurn {
     /// The sub-agent's round in progress: text and thoughts streamed since
     /// the last filed round, so a transcript opened mid-round starts whole.
     child_partial: crate::app::events::LivePartial,
+    /// Which side of the transcript the round in progress belongs to:
+    /// `Assistant` for a sub-agent's rounds; a dialogue's line carries its
+    /// speaker's side (spec §9.13), set by [`TurnProgress::ChildLineStarted`].
+    child_line_role: crate::entities::message::MessageRole,
     /// The turn continues the chat's trailing assistant message in place
     /// (`/continue`, spec §6.4): a mid-turn rebuild folds the filed first
     /// round into that message's view and appends the live partial there.
@@ -1089,6 +1093,36 @@ impl Orchestrator {
                 turn.child = Some(*run);
                 turn.child_stream = Uuid::new_v4();
                 turn.child_partial = Default::default();
+                turn.child_line_role = crate::entities::message::MessageRole::Assistant;
+                self.emit_chat_list();
+            }
+            // A dialogue's next line (spec §9.13): the partial starts over on
+            // the given side; the open transcript is told which bubble the
+            // coming stream belongs to.
+            TurnProgress::ChildLineStarted { role } => {
+                turn.child_partial = Default::default();
+                turn.child_line_role = role;
+                self.forward_child(|stream| AppEvent::TranscriptLine {
+                    generation_id: stream,
+                    role,
+                });
+            }
+            // A dialogue edited its transcript (a discarded or rewritten
+            // line): the mirror takes the full replacement, and so does the
+            // open transcript — appending cannot express an edit.
+            TurnProgress::ChildTranscript(messages) => {
+                let Some(run) = turn.child.as_mut() else {
+                    return;
+                };
+                run.messages = messages.clone();
+                turn.child_partial = Default::default();
+                if self.active_id == Some(run.id) {
+                    let _ = self.evt_tx.send(AppEvent::TranscriptReset {
+                        id: run.id,
+                        messages,
+                    });
+                }
+                // The count on the row.
                 self.emit_chat_list();
             }
             TurnProgress::ChildRoundFiled(messages) => {
@@ -1321,6 +1355,7 @@ impl Orchestrator {
                 Some(Box::new(crate::app::events::LiveTurn {
                     turn: t.generation,
                     stream: t.generation,
+                    role: crate::entities::message::MessageRole::Assistant,
                     partial: Some(t.partial.clone()),
                     // Only until the first round files: what files after a
                     // tool round is a message of its own, and the filed
@@ -1331,6 +1366,7 @@ impl Orchestrator {
                 Some(Box::new(crate::app::events::LiveTurn {
                     turn: t.generation,
                     stream: t.child_stream,
+                    role: t.child_line_role,
                     partial: Some(t.child_partial.clone()),
                     continues: false,
                 }))

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `web_search` keyed providers — Tavily (done)
 - Post-M9: the two-agent dialogue — research and the stage-0 live probe (done)
 - Post-M9: `run_dialogue` — the directed dialogue, stage 1 (done)
+- Post-M9: `run_dialogue` — the live transcript, stage 2, track complete (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2796,3 +2797,44 @@ the probe lives on `spike/code-search-probe`, unmerged.
   and the title, which is exactly what the fallbacks exist for. The Gemma
   arm of the same scene ran shape-identical in the stage-0 probe; the pair
   stands.
+
+### Post-M9: `run_dialogue` — the live transcript, stage 2, track complete (done)
+
+- **What**: the stage the research doc's §3.7 named — the open dialogue
+  transcript is live. A participant's line streams into it token by token
+  **on its speaker's side**: `TurnProgress::ChildLineStarted { role }` before
+  each line (the muted re-ask included), the mirror's `child_line_role` +
+  `LiveTurn.role` for a transcript opened mid-line, and the screen's
+  `stream_role` retargeting the streaming bubble
+  (`AppEvent::TranscriptLine`). A director's retry/rewrite **replaces the
+  open view in place** — `ChildTranscript` → `AppEvent::TranscriptReset`,
+  because appending cannot express an edit — and the parent's status bar
+  carries a scene chip (`RunProgressKind::DialogueLine`/`DialogueDirector`,
+  the lessons-§4 rule: a turn parked in a long dialogue must not read as a
+  stuck "generating"). Director checkpoints stay muted: deliberation is not
+  a line.
+- **Key decisions**: the side travels **per line**, not per token —
+  `ChildLineStarted` resets the round partial and sets the side once, so the
+  existing `ChildStep`/`child_partial` machinery needed no per-event field;
+  the streaming bubble is retargeted only while **empty** (a bubble
+  mid-content keeps its side; the next chunk opens a new one); and the chip
+  gained a `kind` on the shared `SubagentProgress` payload rather than a
+  second event — one chip, three wordings, worded by the screen (axis B).
+- **Not predicted**: the first smoke run of the stage failed with the
+  parent's turn spending itself entirely in `reasoning_content` — zero text,
+  zero calls — which is the documented Qwen empty-turn mode (lessons §9),
+  not a regression: the stage's diff never touches the parent request path.
+  Re-run per the union-of-runs rule; recorded rather than hidden.
+- **Tests**: 2676 unit green (+4: the speaker-side streaming, the in-place
+  reset, the chip wordings, and an orchestrator test that opens a running
+  dialogue mid-line and asserts the activation carries the line's side and
+  streamed partial), 126 `#[ignore]` (unchanged). Live: `dialogue_e2e_live`
+  **GO, Qwen 3.6 27B Q4_K_M** — a 10-line scene to the cap (`RoundLimit`,
+  the polite loop the cap exists for), 14 370 tokens in 840 s, and the
+  steering ladder fired **in the wild** this run: a `dialogue_retry` with a
+  note to one participant and a `dialogue_rewrite` of a line that had
+  drifted into the other character's voice — both visible in the landed
+  transcript as the intervention rows stage 1 built for them (the rewrite's
+  own wording is the model's judgment, not the mechanism's). This run the
+  model also passed both persona names, so the title and headers carried
+  them.

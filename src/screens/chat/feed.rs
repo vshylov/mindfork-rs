@@ -71,6 +71,7 @@ impl ChatScreen {
         self.current_gen = None;
         self.generating = false;
         self.live_turn = None;
+        self.stream_role = FeedRole::Assistant;
         // Only a transcript can grow in place (see `grow_transcript`); a
         // chat's feed is rebuilt by activation alone.
         self.transcript = if self.child.is_some() {
@@ -262,6 +263,7 @@ impl ChatScreen {
     fn begin_turn(&mut self, generation_id: Uuid, model: Option<String>) {
         self.current_gen = Some(generation_id);
         self.generating = true;
+        self.stream_role = FeedRole::Assistant;
         self.gen_tokens = 0;
         self.gen_context = None;
         self.gen_context_exact = false;
@@ -405,11 +407,11 @@ impl ChatScreen {
     fn ensure_streaming_bubble(&mut self) {
         let ok = matches!(
             self.feed.last(),
-            Some(m) if m.role == FeedRole::Assistant && m.streaming
+            Some(m) if m.role == self.stream_role && m.streaming
         );
         if !ok {
             self.feed.push(FeedMessage {
-                role: FeedRole::Assistant,
+                role: self.stream_role,
                 text: String::new(),
                 thoughts: String::new(),
                 tools: Vec::new(),
@@ -417,6 +419,42 @@ impl ChatScreen {
                 message_ids: Vec::new(),
                 model: self.gen_model.clone(),
             });
+        }
+    }
+
+    /// The open dialogue transcript's next line (`AppEvent::TranscriptLine`,
+    /// spec §9.13): the coming stream draws on `role`'s side. An empty
+    /// streaming bubble is retargeted in place; otherwise the next chunk
+    /// opens a bubble of that side.
+    pub fn set_transcript_line(
+        &mut self,
+        generation_id: Uuid,
+        role: crate::entities::message::MessageRole,
+    ) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        let role = match role {
+            crate::entities::message::MessageRole::User => FeedRole::User,
+            _ => FeedRole::Assistant,
+        };
+        self.set_stream_role(role);
+    }
+
+    /// Sets the current stream's side and retargets an empty streaming
+    /// bubble in place (a bubble mid-content keeps its side; the next chunk
+    /// after a role change opens a new one).
+    pub(super) fn set_stream_role(&mut self, role: FeedRole) {
+        self.stream_role = role;
+        if let Some(last) = self.feed.last_mut()
+            && last.streaming
+            && last.role != role
+            && last.text.is_empty()
+            && last.thoughts.is_empty()
+            && last.tools.is_empty()
+        {
+            last.role = role;
+            self.mark_feed_changed();
         }
     }
 
@@ -457,16 +495,26 @@ impl ChatScreen {
             return;
         }
         self.subagent = progress.map(|p| {
+            use crate::app::events::RunProgressKind;
             let round = p.round.to_string();
-            match p.tool {
-                Some(tool) => self.loc.tf(
-                    "ui.chat.bg.subagent_tool",
-                    &[("name", &p.name), ("round", &round), ("tool", &tool)],
+            match p.kind {
+                RunProgressKind::DialogueLine => self.loc.tf(
+                    "ui.chat.bg.dialogue",
+                    &[("name", &p.name), ("line", &round)],
                 ),
-                None => self.loc.tf(
-                    "ui.chat.bg.subagent",
-                    &[("name", &p.name), ("round", &round)],
-                ),
+                RunProgressKind::DialogueDirector => self
+                    .loc
+                    .tf("ui.chat.bg.dialogue_director", &[("name", &p.name)]),
+                RunProgressKind::Subagent => match p.tool {
+                    Some(tool) => self.loc.tf(
+                        "ui.chat.bg.subagent_tool",
+                        &[("name", &p.name), ("round", &round), ("tool", &tool)],
+                    ),
+                    None => self.loc.tf(
+                        "ui.chat.bg.subagent",
+                        &[("name", &p.name), ("round", &round)],
+                    ),
+                },
             }
         });
     }

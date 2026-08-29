@@ -1813,9 +1813,17 @@ the record shape was left for it by the sub-agent track (research §3.14,
   each line; `tools.dialogue_run_timeout_secs` (default 1800 s — a dialogue
   on a local thinking model is ~25 sequential requests) bounds the whole run,
   landing the partial transcript as `timed_out`. `Esc` cancels the run with
-  the turn; each call spends one round of the parent's budget. In this stage
-  the open transcript grows **per line** (the streamed partial has no speaker
-  side yet — the stage-2 item of the research doc).
+  the turn; each call spends one round of the parent's budget.
+- **The open transcript is live** (the track's stage 2). A participant's line
+  streams into it token by token **on its speaker's side** — the mirror
+  carries the current line's side, so a transcript opened mid-line seeds the
+  right bubble with what has already streamed — and a director's retake or
+  rewrite **replaces the open view in place** (appending cannot express an
+  edit). The parent's status bar carries a chip meanwhile — which line is
+  being written, or that the director is judging the scene — so a turn parked
+  inside a long dialogue never reads as a stuck "generating"
+  (docs/lessons.md §4). The director's own deliberation never streams: it is
+  not a line of the scene.
 
 ## 10. AI-companion profiles
 

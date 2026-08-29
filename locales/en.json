@@ -1881,6 +1881,8 @@
   "ui.chat.bg.compact": "compressing",
   "ui.chat.bg.subagent": "sub-agent \"{name}\" · round {round}",
   "ui.chat.bg.subagent_tool": "sub-agent \"{name}\" · round {round} · {tool}",
+  "ui.chat.bg.dialogue": "dialogue \"{name}\" · line {line}",
+  "ui.chat.bg.dialogue_director": "dialogue \"{name}\" · the director is judging the scene",
   "ui.chat.bg.retry": "retrying {attempt}/{max} in {secs} s",
   "ui.help.compact": "compress the earlier part of the conversation into a summary",
   "ui.settings.group.context": "Context",

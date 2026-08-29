@@ -2716,6 +2716,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         None,
     );
     s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+        role: MessageRole::Assistant,
         turn: generation,
         stream,
         partial: Some(crate::app::events::LivePartial {
@@ -2734,6 +2735,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
     s.set_subagent_progress(
         generation,
         Some(SubagentProgress {
+            kind: crate::app::events::RunProgressKind::Subagent,
             name: "Критик".into(),
             round: 2,
             tool: None,
@@ -2773,6 +2775,142 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
     assert!(!s.feed.iter().any(|m| m.role == FeedRole::Note));
 }
 
+/// A dialogue's line streams on its speaker's side (spec §9.13, stage 2):
+/// a `LiveTurn` opened mid-line seeds a bubble of that side, the next line's
+/// `TranscriptLine` retargets the stream, and a stale generation is ignored.
+#[test]
+fn a_dialogue_line_streams_on_its_speakers_side() {
+    use crate::app::events::ChildView;
+    let mut s = ChatScreen::new();
+    let run_id = Uuid::new_v4();
+    let stream = Uuid::new_v4();
+    s.set_child_view(Some(ChildView {
+        parent: Uuid::new_v4(),
+        parent_title: "Родитель".into(),
+        system_message: "personas".into(),
+    }));
+    s.activate_chat(
+        run_id,
+        "Mara ↔ Jonas".into(),
+        &[Message::assistant("Your espresso!")],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    // Opened mid-line: participant b is speaking — the seeded partial is a
+    // **user-side** streaming bubble.
+    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+        turn: Uuid::new_v4(),
+        stream,
+        role: MessageRole::User,
+        partial: Some(crate::app::events::LivePartial {
+            text: "hmm".into(),
+            thoughts: String::new(),
+            tools: Vec::new(),
+        }),
+        continues: false,
+    })));
+    let last = s.feed.last().unwrap();
+    assert_eq!(
+        last.role,
+        FeedRole::User,
+        "b's line streams on the user side"
+    );
+    assert!(last.streaming && last.text == "hmm");
+    s.push_chunk(stream, ", that is a latte");
+    assert_eq!(s.feed.last().unwrap().text, "hmm, that is a latte");
+
+    // The line files; the next one is a's — the stream retargets.
+    s.grow_transcript(run_id, &[Message::user("hmm, that is a latte")]);
+    s.set_transcript_line(stream, MessageRole::Assistant);
+    s.push_chunk(stream, "So sorry!");
+    let last = s.feed.last().unwrap();
+    assert_eq!(last.role, FeedRole::Assistant, "a's line is assistant-side");
+    assert_eq!(last.text, "So sorry!");
+
+    // A stale generation's line marker changes nothing.
+    s.set_transcript_line(Uuid::new_v4(), MessageRole::User);
+    s.push_chunk(stream, " Remaking it.");
+    assert_eq!(s.feed.last().unwrap().role, FeedRole::Assistant);
+}
+
+/// A running dialogue edited its transcript (`reset_transcript`, spec §9.13):
+/// the feed is rebuilt from the replacement — the persona bubble stays on
+/// top, the discarded line is gone — and a foreign id is ignored.
+#[test]
+fn reset_transcript_replaces_the_feed_in_place() {
+    use crate::app::events::ChildView;
+    let mut s = ChatScreen::new();
+    let run_id = Uuid::new_v4();
+    s.set_child_view(Some(ChildView {
+        parent: Uuid::new_v4(),
+        parent_title: "Родитель".into(),
+        system_message: "personas".into(),
+    }));
+    s.activate_chat(
+        run_id,
+        "Сцена".into(),
+        &[
+            Message::assistant("открывающая"),
+            Message::user("плохая реплика"),
+        ],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let replaced = vec![
+        Message::assistant("открывающая"),
+        Message::new(MessageRole::System, "Режиссёр попросил переписать"),
+    ];
+    s.reset_transcript(run_id, &replaced);
+    assert!(!s.feed.iter().any(|m| m.text.contains("плохая")));
+    assert_eq!(s.feed[0].role, FeedRole::System, "the persona stays on top");
+    assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+
+    s.reset_transcript(Uuid::new_v4(), &[Message::user("чужое")]);
+    assert!(!s.feed.iter().any(|m| m.text.contains("чужое")));
+}
+
+/// The dialogue chip's wordings (spec §9.13): the line being written and the
+/// director judging the scene — keyed by the progress kind.
+#[test]
+fn the_dialogue_chip_names_the_line_and_the_director() {
+    use crate::app::events::{RunProgressKind, SubagentProgress};
+    let mut s = ChatScreen::new();
+    let generation = gen_id();
+    s.begin_generation(generation, None);
+    s.set_subagent_progress(
+        generation,
+        Some(SubagentProgress {
+            name: "Mara ↔ Jonas".into(),
+            round: 3,
+            tool: None,
+            kind: RunProgressKind::DialogueLine,
+        }),
+    );
+    let hint = s.background_hint().unwrap();
+    assert!(
+        hint.contains("Mara ↔ Jonas") && hint.contains('3'),
+        "{hint}"
+    );
+    s.set_subagent_progress(
+        generation,
+        Some(SubagentProgress {
+            name: "Mara ↔ Jonas".into(),
+            round: 3,
+            tool: None,
+            kind: RunProgressKind::DialogueDirector,
+        }),
+    );
+    let hint = s.background_hint().unwrap();
+    assert!(
+        hint.contains("режиссёр") || hint.contains("director"),
+        "{hint}"
+    );
+}
+
 /// Back on the running turn's chat (docs/subagent-live.md §3.5): `live_turn`
 /// restores the generation, so the stream and the chip resume into its feed.
 #[test]
@@ -2791,6 +2929,7 @@ fn returning_to_the_running_chat_resumes_its_generation() {
         None,
     );
     s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+        role: MessageRole::Assistant,
         turn: generation,
         stream: generation,
         partial: Some(crate::app::events::LivePartial {
@@ -2851,6 +2990,7 @@ fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
     s.begin_generation(gen_id, None);
     let at = |round: u32, tool: Option<&str>| {
         Some(SubagentProgress {
+            kind: crate::app::events::RunProgressKind::Subagent,
             name: "Критик".into(),
             round,
             tool: tool.map(str::to_string),
@@ -4705,6 +4845,7 @@ fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
         None,
     );
     s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+        role: MessageRole::Assistant,
         turn: generation,
         stream: generation,
         partial: Some(crate::app::events::LivePartial {
