@@ -462,7 +462,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [docs/research/continue-generation.md](research/continue-generation.md).
   What stays open: nothing recorded — external non-llama.cpp/vLLM servers
   keep the documented-fields-plus-honest-note stance (research §10).
-- **Sub-agent chats** (complete, 8 PRs): `call_subagent` as a nested turn with
+- **Subagent chats** (complete, 8 PRs): `call_subagent` as a nested turn with
   the agent's tools (ADR 0010), the transcript on the call's record, the
   migration of old calls, the transcript in the list, in search, titled at
   landing, visible while it runs, and a tool call's card that opens when the
@@ -472,7 +472,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   import document has no place for tool calls). **The two-agent dialogue is
   complete, both stages** (`run_dialogue`, spec §9.13,
   [ADR 0011](decisions/0011-dialogue-directed-run.md), design
-  [two-agent-dialogue.md](research/two-agent-dialogue.md)); the sub-agent's
+  [two-agent-dialogue.md](research/two-agent-dialogue.md)); the subagent's
   token-by-token transcript streaming, which this list still carried as open,
   had in fact shipped with the live track's addendum (subagent-live.md §8,
   spec §9.3.2) — corrected here rather than left to rot.

@@ -21,7 +21,7 @@ sources of truth:
   machine-bound encryption in the config; and
   [0009](decisions/0009-tts-speech-synthesis.md) — speech synthesis (TTS): cloud
   provider, our own speakable-text extractor, in-process `rodio` player; and
-  [0010](decisions/0010-subagent-nested-turn.md) — the sub-agent as a nested
+  [0010](decisions/0010-subagent-nested-turn.md) — the subagent as a nested
   turn with the turn's tools, its transcript on the call's record;
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
@@ -479,7 +479,7 @@ src/
    │  │                     chat message text: external-content FTS5, tokenize='trigram',
    │  │                     diffed per message (a streaming save rewrites one row) +
    │  │                     `indexed_chats` bookkeeping for the startup pass. A
-   │  │                     nullable `sub_id` marks a sub-agent transcript's rows
+   │  │                     nullable `sub_id` marks a subagent transcript's rows
    │  │                     (indexed under the parent's chat_id); every query that
    │  │                     names a conversation folds it through
    │  │                     COALESCE(sub_id, chat_id), and `IndexScope` picks one
@@ -667,7 +667,7 @@ M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ChatActivated` (which carries `feed_view` — the chat's stored collapse state,
 the counterpart of `draft` for the view — an optional `focus: Option<Uuid>` — the message to
 put the feed on; `None` for every activation but a jump — and `child: Option<ChildView>`,
-set when the activated "chat" is a sub-agent transcript, §10), `CharacterNames` (the active chat profile's role names for the
+set when the activated "chat" is a subagent transcript, §10), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCallStarted`/`ToolCall` (a call's card opens
@@ -679,7 +679,7 @@ attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
 screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
 status-bar indicator for background reflection/consolidation/compression),
-`SubagentProgress{generation_id, progress}` (where a sub-agent run stands —
+`SubagentProgress{generation_id, progress}` (where a subagent run stands —
 name, round, tool — for the status-bar chip while the parent's turn is inside
 `call_subagent`; `None` clears it; spec §9.3.2), `TtsActive`
 (speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
@@ -861,13 +861,13 @@ Details:
   the "approved for this turn" set, the generation id, the image and round
   limits — is one struct owned by the generation task; the loop itself holds
   only its own request, context, cancellation token, allowed set, accumulators
-  and a `depth`. A nested loop (a sub-agent run,
+  and a `depth`. A nested loop (a subagent run,
   [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
   same type borrowing the same shared part from its parent for the duration of
   the call. Likewise `build_request` is a wrapper over `build_request_in`, which
   takes the persona, the messages and a `RequestEnv` (attachments, project,
-  compaction view) separately — a sub-agent's request is its own persona over
-  its parent's environment. The sub-agent run itself is §8's `call_subagent`
+  compaction view) separately — a subagent's request is its own persona over
+  its parent's environment. The subagent run itself is §8's `call_subagent`
   note and [ADR 0010](decisions/0010-subagent-nested-turn.md). A child loop
   carries a `persona` and reports `AppEvent::SubagentProgress` **around** its
   muted `RoundSink` (`report_progress`, at each round's start and each tool's
@@ -1422,7 +1422,7 @@ Storage invariants:
   without `data.db`" case of spec §5.2: everything the database holds starts
   empty while the conversations are whole.
 - **The search index is derived, never authoritative.** `cache.db` answers only
-  *which conversations match* — a chat, or a sub-agent transcript inside one,
+  *which conversations match* — a chat, or a subagent transcript inside one,
   told apart by `messages.sub_id` and addressed by `COALESCE(sub_id, chat_id)`
   (spec §11.2.1); the chats themselves are always read from `chats/*.json`,
   and nothing is ever recovered from the index. A transcript's rows are
@@ -1501,7 +1501,7 @@ Storage invariants:
 
 Each artifact has its own schema version (per-artifact — they change at
 different rates; `settings.json` and the chat files are at **2** since the
-sub-agent track's two steps, `profiles.json` at 1). Ownership map:
+subagent track's two steps, `profiles.json` at 1). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
   constants `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`,
@@ -1840,7 +1840,7 @@ Implementation notes:
   and includes the current chat, so the scope lives in a turn snapshot
   (`ToolContext::other_chats`, built by `snapshot_other_chats` in
   `start_generation` only when the pair is in the turn's tool set): current
-  profile, current chat excluded, hidden dropped — plus the sub-agent
+  profile, current chat excluded, hidden dropped — plus the subagent
   transcripts of all of those *and* of the current chat, as `ChatRef`s
   carrying a `ParentRef` (id and title: what `chat_read` opens and what the
   label names). The query is scoped **in SQL** (`CacheDb::search_messages_in`
@@ -2527,7 +2527,7 @@ regenerate's re-activation, clone's copy, new-chat's switch — never sees the
 spent command the loop's own top-of-iteration flush would have delivered one
 step late.
 
-**A sub-agent transcript as a chat of the list** (spec §9.3.2, §11.2,
+**A subagent transcript as a chat of the list** (spec §9.3.2, §11.2,
 docs/research/subagent-chats.md §3.7–§3.8). `ChatSummary.children` carries the
 transcripts' cards, built by `Chat::summary()` from the records; the list widget
 flattens the snapshot into `Row`s (a chat, or a transcript with `parent`,

@@ -22,7 +22,7 @@ it runs on **Windows** and **Linux**.
 > local Gemma or Qwen becomes **more self-aware and more interesting to talk
 > to** once it is given room to reflect: it keeps notes about you, maintains a
 > self-model it can revisit, reads and adjusts its own system message and
-> sampling mid-conversation, and can delegate work to a sub-agent that has
+> sampling mid-conversation, and can delegate work to a subagent that has
 > its own tools. The full story is in [spec.md](spec.md); the original idea,
 > in [docs/history/request.md](docs/history/request.md).
 
@@ -84,7 +84,7 @@ build the moment they drift from what the app actually renders
   by full message text, down to the individual message opened right at the
   match (`Ctrl+G` from the chat list).
 - A full-screen **chat list** (`Esc`): search, two sort orders; `F2` rename ·
-  `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. A sub-agent's
+  `Ctrl+N` new · `Ctrl+D` clone · `Del` delete · `F5` copy. A subagent's
   transcript sits **nested under the chat that delegated to it** (`└`), opens
   read-only with its persona on top, can be renamed and copied, and goes away
   only with the exchange that made it. The transcripts are **folded away by
@@ -209,9 +209,9 @@ build the moment they drift from what the app actually renders
   command). A local-interpreter mode exists for those who want it.
 - **Files** — `fs_read` / `fs_write` / `fs_list`, optionally jailed to one
   directory (escaping via `..` is blocked).
-- **`call_subagent`** — delegate a task to a sub-agent: the same model under a
+- **`call_subagent`** — delegate a task to a subagent: the same model under a
   persona the assistant composes, with the assistant's own tools (minus
-  sub-agents, history read-back and the self-model), no history of the chat,
+  subagents, history read-back and the self-model), no history of the chat,
   no recursion; its transcript is kept on the call and shows as a child chat.
 - **`run_dialogue`** — stage a dialogue between two personas the assistant
   composes: each sees the other as its user, a director (the assistant's own
@@ -371,7 +371,7 @@ screen you were on, marked *you are here*. The highlights:
 | `F5` | copy the conversation to the clipboard (over SSH it also goes to your *own* machine's clipboard — see below) |
 | `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
 | `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
-| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's sub-agent transcripts |
+| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's subagent transcripts |
 | `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
 | `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
@@ -438,7 +438,7 @@ confirmations included:
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
-| `/subagents [expand\|collapse]` | `Ctrl+O` in the list | this chat's sub-agent transcripts in the chat list: bare — toggle, a word sets it outright (remembered per chat) |
+| `/subagents [expand\|collapse]` | `Ctrl+O` in the list | this chat's subagent transcripts in the chat list: bare — toggle, a word sets it outright (remembered per chat) |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
 | `/profile system [text\|clear]` · `/profile greeting [text\|clear]` | the settings editors | this chat's profile: its system message and its greeting, applied to new conversations. Bare — the current text comes back for editing; `clear` removes it |
 | `/impersonation list` · `new [name]` · `delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | the impersonation profiles — the user personas `Ctrl+U` writes as: list (the open chat's is marked), add, remove (asks first) |
