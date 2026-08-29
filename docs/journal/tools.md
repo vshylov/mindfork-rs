@@ -2895,4 +2895,5 @@ the probe lives on `spike/code-search-probe`, unmerged.
   pass), `get_llm_name` answered with the discovered name and mode, and the
   second turn's `get_llm_history` read back the baseline record the first
   exchange's recorder had just written. Full `orchestrator::tests::live` set
-  re-run for the turn-path change (the single-read move sits on every turn).
+  re-run for the turn-path change (the single-read move sits on every turn):
+  **48/48 green in one sweep**, 22 min on the same stack.
