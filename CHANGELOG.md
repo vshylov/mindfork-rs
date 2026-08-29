@@ -42,6 +42,13 @@ split by subsystem.
 
 ### Fixed
 
+- **The status bar no longer stacks the key hints into a column.** While a turn
+  was running, a status line full of indicators (generation, the token counter,
+  attached files) left the hints too little room and pushed them one per line —
+  up to six rows of status bar in a window where they fit on one. The hints now
+  move to a line of their own below the indicators whenever that is shorter, so
+  a busy status line costs at most one extra row.
+
 - **The Python sandbox installs and runs again.** `mindfork sandbox setup`
   fetched the Python package without a version, and a build published in the
   Wasmer registry on 18–21 August 2026 cannot be compiled by the runtime the
