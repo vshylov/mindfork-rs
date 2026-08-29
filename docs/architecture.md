@@ -1711,9 +1711,16 @@ Implementation notes:
   appendix). Checkpoint replies are parsed by `dialogue::parse_verdicts` and
   applied by the loop itself (`continue`/`stop`/`note`/`retry`/`rewrite`);
   an empty participant line is re-asked once muted
-  (`reasoning_budget: 0`). Streams ride a `RoundSink` with `mute_steps` —
-  the transcript grows per line via `ChildRoundFiled`, the token counter
-  still passes. Bounded by `tokio::time::timeout(dialogue_run_timeout)`
+  (`reasoning_budget: 0`). A participant's line **streams** through an
+  unmuted child `RoundSink`: `TurnProgress::ChildLineStarted` carries its
+  side, the mirror's `child_line_role` / `LiveTurn.role` seed a late opening,
+  and the screen's `stream_role` retargets the streaming bubble
+  (`AppEvent::TranscriptLine`); a director checkpoint stays muted
+  (`mute_steps` — its deliberation is not a line), and a retry/rewrite
+  replaces the open transcript whole (`ChildTranscript` →
+  `AppEvent::TranscriptReset`). The status-bar chip
+  (`RunProgressKind::DialogueLine`/`DialogueDirector`) names the scene's
+  position. Bounded by `tokio::time::timeout(dialogue_run_timeout)`
   around the loop, with the state owned outside it so a timeout keeps the
   partial transcript. Director interventions are `System` entries of the
   run's messages — `FeedMessage::from_message` draws them as note rows, and

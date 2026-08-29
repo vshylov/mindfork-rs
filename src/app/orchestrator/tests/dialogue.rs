@@ -329,6 +329,125 @@ async fn dialogue_timeout_lands_partial_as_timed_out() {
     assert!(chat.messages.iter().any(|m| m.text == "done"));
 }
 
+/// Opening a **running** dialogue's transcript (stage 2): the activation
+/// carries the current line's **side** and its streamed partial, the status
+/// chip names the scene and the line, and a cancel lands the partial run.
+#[tokio::test]
+async fn opening_a_running_dialogue_carries_the_lines_side_and_partial() {
+    let args = r#"{"a":{"name":"Mara","system_message":"barista"},
+        "b":{"name":"Jonas","system_message":"customer"},
+        "opening":{"speaker":"a","text":"Your espresso, Jonas!"},
+        "max_messages":6,"moderate_every":4}"#;
+    let backend = super::subagent::ScriptRecorder::new(vec![
+        call("c1", "run_dialogue", args),
+        super::subagent::hang("hmm, that is an oat latte"),
+    ]);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated { id: chat_id, .. } = active else {
+        unreachable!()
+    };
+    cmd_tx
+        .send(AppCommand::SendMessage("stage it".into()))
+        .unwrap();
+    // The running child appears on the list, and the chip names the scene's
+    // first line.
+    let mut child_id = None;
+    let mut chip_line = false;
+    while child_id.is_none() || !chip_line {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), evt_rx.recv())
+            .await
+            .expect("the running child and its chip within 5 s")
+            .expect("the event channel");
+        match &ev {
+            AppEvent::ChatList(chats) => {
+                if let Some(child) = chats
+                    .iter()
+                    .find(|c| c.id == chat_id)
+                    .and_then(|c| c.children.first())
+                    .filter(|c| c.running)
+                {
+                    child_id = Some(child.id);
+                }
+            }
+            AppEvent::SubagentProgress {
+                progress: Some(p), ..
+            } if p.kind == crate::app::events::RunProgressKind::DialogueLine => {
+                assert_eq!(p.name, "Mara ↔ Jonas");
+                assert_eq!(p.round, 1);
+                chip_line = true;
+            }
+            _ => {}
+        }
+    }
+    // Let the hanging line's prefix reach the wire and the mirror.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while backend.requests().len() < 2 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the line never started"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    cmd_tx
+        .send(AppCommand::SwitchChat(child_id.unwrap()))
+        .unwrap();
+    let ev = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if Some(*id) == child_id),
+    )
+    .await
+    .unwrap();
+    let AppEvent::ChatActivated {
+        messages,
+        child,
+        live_turn,
+        ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    assert!(child.is_some(), "a transcript announces its parent");
+    assert_eq!(
+        messages.len(),
+        1,
+        "the opening landed; the hanging line is the partial"
+    );
+    let live = *live_turn.expect("a running transcript answers with its stream");
+    assert_eq!(
+        live.role,
+        MessageRole::User,
+        "Jonas's line streams on the user side"
+    );
+    let partial = live.partial.expect("the streamed prefix rides along");
+    assert!(partial.text.contains("oat latte"), "{:?}", partial.text);
+
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    let run = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .find(|r| r.name == "run_dialogue")
+        .unwrap()
+        .subagent
+        .as_deref()
+        .unwrap();
+    assert_eq!(run.outcome, Some(RunOutcome::Cancelled));
+    assert_eq!(run.messages.len(), 1, "the unfinished line never landed");
+}
+
 /// Opening a landed dialogue transcript: the sides are the participants'
 /// names (spec §9.13), and the system bubble composes both personas and the
 /// director's brief.

@@ -74,6 +74,13 @@ pub(super) enum TurnProgress {
         completion: u64,
         reasoning: Option<u32>,
     },
+    /// A dialogue's next line begins (spec §9.13): which side of the
+    /// transcript the coming stream belongs to, so the open transcript draws
+    /// it in the right bubble. Also resets the round-in-progress partial.
+    ChildLineStarted { role: MessageRole },
+    /// A dialogue **edited** its transcript — the director discarded or
+    /// rewrote a line — so appending cannot express it: the full replacement.
+    ChildTranscript(Vec<Message>),
     /// The run returned; the landed run carries the same fields.
     ChildEnded {
         outcome: RunOutcome,
@@ -693,6 +700,7 @@ impl Orchestrator {
             child: None,
             child_stream: Uuid::nil(),
             child_partial: Default::default(),
+            child_line_role: MessageRole::Assistant,
             continuation: continuation.is_some(),
         });
         // The confirmation channel for this turn (fork F8). The sender is kept
@@ -1541,6 +1549,23 @@ impl TurnLoop<'_> {
                 name: name.clone(),
                 round,
                 tool: tool.map(str::to_string),
+                kind: crate::app::events::RunProgressKind::Subagent,
+            }),
+        });
+    }
+
+    /// The dialogue's own status-bar chip (spec §9.13): which line is being
+    /// written, or that the director is judging the scene — so a parent turn
+    /// parked inside a long dialogue never reads as a stuck "generating"
+    /// (docs/lessons.md §4). Worded by the screen; cleared with the run.
+    fn dialogue_chip(&self, title: &str, round: u32, kind: crate::app::events::RunProgressKind) {
+        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
+            generation_id: self.shared.id,
+            progress: Some(crate::app::events::SubagentProgress {
+                name: title.to_string(),
+                round,
+                tool: None,
+                kind,
             }),
         });
     }
@@ -2285,6 +2310,8 @@ enum DialogueEnd {
 /// timeout keeps the partial transcript (the future is dropped, the state
 /// survives — the same shape `run_subagent` gets from its child loop).
 struct DialogueState {
+    /// The run's title — the status-bar chip names the scene by it.
+    title: String,
     /// The role-encoded transcript (research §3.5): participant `a` is
     /// `Assistant`, `b` is `User`, director interventions are `System`.
     transcript: Vec<Message>,
@@ -2459,6 +2486,7 @@ impl TurnLoop<'_> {
 
         let run_base = self.token_base + self.total_tokens;
         let mut st = DialogueState {
+            title: parsed.initial_title(loc),
             transcript: vec![opening],
             notes_a: Vec::new(),
             notes_b: Vec::new(),
@@ -2500,6 +2528,11 @@ impl TurnLoop<'_> {
             Some(DialogueEnd::Cap) => RunOutcome::RoundLimit,
             Some(DialogueEnd::Stopped { .. }) => RunOutcome::Completed,
         };
+        // The chip goes with the run; the parent's turn is still generating.
+        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
+            generation_id: self.shared.id,
+            progress: None,
+        });
         let finished_at = chrono::Utc::now();
         self.progress(TurnProgress::ChildEnded {
             outcome,
@@ -2678,8 +2711,21 @@ impl TurnLoop<'_> {
             tools: Vec::new(),
             ..Default::default()
         };
+        // The coming stream's side, for the open transcript (stage 2): the
+        // line's tokens draw in the speaker's own bubble.
+        let role = if speaker_a {
+            MessageRole::Assistant
+        } else {
+            MessageRole::User
+        };
+        self.progress(TurnProgress::ChildLineStarted { role });
+        self.dialogue_chip(
+            &st.title,
+            (st.generated + 1) as u32,
+            crate::app::events::RunProgressKind::DialogueLine,
+        );
         let mut out = self
-            .dialogue_stream(request(sampling.clone()), cancel, st, run_base)
+            .dialogue_stream(request(sampling.clone()), cancel, st, run_base, true)
             .await;
         match out.reason {
             FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
@@ -2692,9 +2738,12 @@ impl TurnLoop<'_> {
         }
         if out.text.trim().is_empty() {
             // The whole cap went into reasoning — re-ask once with thinking
-            // muted; a second empty reply fails the run honestly.
+            // muted; a second empty reply fails the run honestly. The re-ask
+            // is the same line starting over: the open transcript's partial
+            // resets with it.
+            self.progress(TurnProgress::ChildLineStarted { role });
             out = self
-                .dialogue_stream(request(muted.clone()), cancel, st, run_base)
+                .dialogue_stream(request(muted.clone()), cancel, st, run_base, true)
                 .await;
             match out.reason {
                 FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
@@ -2780,7 +2829,14 @@ impl TurnLoop<'_> {
             tools: verdict_schemas.to_vec(),
             ..Default::default()
         };
-        let out = self.dialogue_stream(request, cancel, st, run_base).await;
+        self.dialogue_chip(
+            &st.title,
+            st.generated as u32,
+            crate::app::events::RunProgressKind::DialogueDirector,
+        );
+        let out = self
+            .dialogue_stream(request, cancel, st, run_base, false)
+            .await;
         match out.reason {
             FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
             FinishReason::Error => {
@@ -2854,11 +2910,10 @@ impl TurnLoop<'_> {
                     };
                     let speaker_a = st.transcript[last].role == MessageRole::Assistant;
                     let who = if speaker_a { labels.0 } else { labels.1 };
-                    // The open live transcript grew by appending and cannot
-                    // un-file the discarded line; the landed record is the
-                    // truth, and the intervention row says what happened.
+                    // A discard cannot be expressed by appending: the open
+                    // transcript gets the full replacement (stage 2), with
+                    // the intervention row saying what happened.
                     st.transcript.remove(last);
-                    st.rendered = st.rendered.min(st.transcript.len());
                     let line = match &note {
                         Some(n) => loc.tf(
                             "tool.run_dialogue.retry_line_note",
@@ -2866,7 +2921,9 @@ impl TurnLoop<'_> {
                         ),
                         None => loc.tf("tool.run_dialogue.retry_line", &[("who", who)]),
                     };
-                    self.dialogue_intervention(st, line);
+                    st.transcript.push(Message::new(MessageRole::System, line));
+                    st.rendered = st.transcript.len();
+                    self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
                     let line = self
                         .dialogue_line(
                             st,
@@ -2899,10 +2956,14 @@ impl TurnLoop<'_> {
                     };
                     let line = loc.tf("tool.run_dialogue.rewrite_line", &[("who", who)]);
                     // The final cut replaces the words; the original's
-                    // thoughts described a line that no longer exists.
+                    // thoughts described a line that no longer exists. An
+                    // in-place edit cannot be expressed by appending: the
+                    // open transcript gets the full replacement (stage 2).
                     st.transcript[last].text = text;
                     st.transcript[last].thoughts = None;
-                    self.dialogue_intervention(st, line);
+                    st.transcript.push(Message::new(MessageRole::System, line));
+                    st.rendered = st.transcript.len();
+                    self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
                 }
             }
         }
@@ -2920,22 +2981,24 @@ impl TurnLoop<'_> {
         st.rendered = st.transcript.len();
     }
 
-    /// One streamed dialogue generation through the muted child sink
-    /// (research §3.7: the transcript grows per message in this stage), with
-    /// the run's tokens accounted.
+    /// One streamed dialogue generation through the child sink, with the
+    /// run's tokens accounted. `steps` — whether the stream's tokens reach
+    /// the open transcript (a participant's line does, stage 2 of the track;
+    /// a director checkpoint stays muted — its deliberation is not a line).
     async fn dialogue_stream(
         &mut self,
         request: ChatRequest,
         cancel: &CancellationToken,
         st: &mut DialogueState,
         run_base: u64,
+        steps: bool,
     ) -> RoundOutput {
         let sink = RoundSink {
             evt_tx: &self.shared.evt_tx,
             done_tx: &self.shared.done_tx,
             turn: self.shared.id,
             child: Some(run_base),
-            mute_steps: true,
+            mute_steps: !steps,
         };
         let out = stream_round(
             &self.shared.backend,

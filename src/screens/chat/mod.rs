@@ -503,6 +503,11 @@ pub struct ChatScreen {
     statuses: ServerStatuses,
     current_gen: Option<Uuid>,
     generating: bool,
+    /// Which side of the feed the current stream's bubble belongs to:
+    /// `Assistant` everywhere but an open dialogue transcript, where each
+    /// line carries its speaker's side (spec §9.13,
+    /// `AppEvent::TranscriptLine`).
+    stream_role: FeedRole,
     /// The current/last generation's reply token counter (shown in the status
     /// bar). Reset when a new generation starts. See spec §11.1.
     gen_tokens: u64,
@@ -676,6 +681,7 @@ impl ChatScreen {
             },
             current_gen: None,
             generating: false,
+            stream_role: FeedRole::Assistant,
             gen_tokens: 0,
             gen_context: None,
             gen_context_exact: false,
@@ -923,8 +929,12 @@ impl ChatScreen {
             }
         } else {
             // A running transcript (docs/history/subagent-live.md §8): its own
-            // stream, into a bubble of its own.
+            // stream, into a bubble of its own — on the current line's side,
+            // when the run is a dialogue (spec §9.13).
             self.begin_generation(live.stream, None);
+            if live.role == crate::entities::message::MessageRole::User {
+                self.set_stream_role(FeedRole::User);
+            }
         }
         let Some(partial) = live.partial else {
             return;
@@ -964,6 +974,25 @@ impl ChatScreen {
             return;
         }
         self.transcript.extend(messages.iter().cloned());
+        self.feed = FeedMessage::from_messages(&self.transcript);
+        if let Some(child) = &self.child {
+            self.feed
+                .insert(0, FeedMessage::system(child.system_message.clone()));
+        }
+        self.feed_has_risky = self.feed.iter().any(feed::feed_msg_has_risky_glyph);
+        self.mark_feed_changed();
+        self.feed_view.scroll_to_bottom_if_following();
+    }
+
+    /// A running dialogue edited its open transcript
+    /// (`AppEvent::TranscriptReset`, spec §9.13): a discarded or rewritten
+    /// line cannot be expressed by appending, so the feed is rebuilt from the
+    /// full replacement.
+    pub fn reset_transcript(&mut self, id: Uuid, messages: &[Message]) {
+        if self.active_chat != Some(id) || self.child.is_none() {
+            return;
+        }
+        self.transcript = messages.to_vec();
         self.feed = FeedMessage::from_messages(&self.transcript);
         if let Some(child) = &self.child {
             self.feed

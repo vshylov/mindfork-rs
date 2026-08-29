@@ -102,6 +102,11 @@ pub(super) fn apply_event(
             screen.set_live_turn(live_turn);
         }
         AppEvent::TranscriptGrew { id, messages } => screen.grow_transcript(id, &messages),
+        AppEvent::TranscriptLine {
+            generation_id,
+            role,
+        } => screen.set_transcript_line(generation_id, role),
+        AppEvent::TranscriptReset { id, messages } => screen.reset_transcript(id, &messages),
         AppEvent::EngineModel(model) => screen.set_engine_model(model),
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),

@@ -767,6 +767,7 @@ fn a_filed_round_grows_the_open_transcript() {
         child: None,
         child_stream: Uuid::nil(),
         child_partial: Default::default(),
+        child_line_role: MessageRole::Assistant,
         continuation: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
@@ -865,6 +866,7 @@ fn the_parents_round_in_progress_is_mirrored_for_a_return() {
         child: None,
         child_stream: Uuid::nil(),
         child_partial: Default::default(),
+        child_line_role: MessageRole::Assistant,
         continuation: false,
     });
     let step = |s: StreamStep| TurnProgress::OwnStep(s);
@@ -967,6 +969,7 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
         child: None,
         child_stream: Uuid::nil(),
         child_partial: Default::default(),
+        child_line_role: MessageRole::Assistant,
         continuation: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
