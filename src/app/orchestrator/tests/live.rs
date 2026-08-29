@@ -424,6 +424,10 @@ async fn attach_image_live(
 #[tokio::test]
 #[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
 async fn image_attachment_e2e_live() {
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
     let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -2784,6 +2788,20 @@ async fn the_engine_names_the_model_it_is_running_live() {
         !name.contains('\\') && !name.contains('/'),
         "a path reached the header instead of a model name: {name}"
     );
+    // …and not a *part* of one. A model too large for a single file is served
+    // from `<name>-00001-of-00002.gguf`, and an un-aliased server reports that
+    // file — so the name a header shows must have lost the tail as well as the
+    // extension (docs/research/e2e-gpt-oss-120b.md §6, T1). Vacuously true on a
+    // single-file stack, which is the point: it costs nothing to carry and it is
+    // the one assertion a split model would break.
+    //
+    // The extension is put back on to ask the question, because `parse_shard` is
+    // the *only* place this project recognizes the tail shape and a second
+    // implementation of it here is exactly what that module exists to prevent.
+    assert!(
+        crate::shared::gguf::parse_shard(&format!("{name}{}", crate::shared::gguf::EXT)).is_none(),
+        "a part number reached the header instead of a model name: {name}"
+    );
 }
 
 /// …and it lands where the user sees it: the reply the turn stores carries the
@@ -3209,6 +3227,10 @@ async fn impersonation_after_compaction_still_writes_live() {
 async fn image_url_attachment_e2e_live() {
     use crate::features::image_fetch::stub::{ok_response, serve};
 
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
     let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;

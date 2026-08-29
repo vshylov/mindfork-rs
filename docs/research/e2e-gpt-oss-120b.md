@@ -1,15 +1,17 @@
 # Research: gpt-oss-120b (split Q8_0) on the live e2e gate
 
-**Status:** research, **forks F1–F6 open** — nothing is built and nothing has
-been deployed. Measured entirely from the Hugging Face APIs (model metadata,
-the endpoints provider catalogue, the account's quotas and the endpoints
-OpenAPI schema), 2026-08-29; **no endpoint was created, nothing was billed.**
+**Status:** **stage 0 done — GO.** Forks F1–F6 resolved (*user's decision,
+2026-08-29*); the runner, the workflow and the three tests are built on
+`feat/e2e-gpt-oss-120b`. What remains is one full dispatch.
 **Date:** 2026-08-29.
 **Extends:** [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md) (the
 gate itself, stages 0–3) and
 [docs/history/e2e-second-chat-model.md](../history/e2e-second-chat-model.md)
 (how a second chat model was added — the shape this one follows).
 **Journal:** [docs/journal/ci.md](../journal/ci.md).
+
+**Probe spend: ≈$0.42 in total**, across five throwaway endpoints, every one
+deleted and the deletion verified.
 
 ## 1. Why this model, and not just a third of the same kind
 
@@ -22,8 +24,8 @@ all three of them shipped code:
   [`src/shared/gguf.rs`](../../src/shared/gguf.rs) exists for exactly that case —
   it parses the `-00001-of-00002` tail, rebuilds every part's path for the
   launcher's preflight, and strips the tail for display. Its own doc comment
-  uses `gpt-oss-120b-Q8_0-00001-of-00003` as the example. It has **never met a
-  live split model**: every assertion about it is a unit test over strings.
+  uses `gpt-oss-120b-Q8_0-00001-of-00003` as the example. It had **never met a
+  live split model**: every assertion about it was a unit test over strings.
 - **The name a split model reports.** `EngineBackend::model_id` asks
   `GET /v1/models`, then `/props`, and passes the answer through
   `gguf::display_id` (docs/research/external-model-name.md). Against a split
@@ -36,7 +38,7 @@ all three of them shipped code:
   `reasoning_effort` knob in place of the `enable_thinking` /
   `reasoning_budget` pair that Gemma and Qwen answer to. The app sends all
   three fields (`shared/api/openai/wire.rs`); which of them this family
-  actually honours is unmeasured.
+  actually honours was unmeasured — §4, U5, where it turns out to matter.
 
 That is three uncovered dimensions in one dispatch, which is what makes the
 model worth the money rather than a fourth flavour of the same run.
@@ -65,7 +67,10 @@ Two facts worth having before choosing anything:
   (`gpt-oss-120b-MXFP4.gguf`). That is the natural **control arm**: if a smoke
   goes red on the split model, the same model as a single file separates
   "sharding broke it" from "gpt-oss broke it" for one more deploy. It is not
-  the primary, because a single file exercises nothing new.
+  the primary, because a single file exercises nothing new. (It also ships
+  `eagle3-*` draft models, i.e. the `specModelPath` field in the endpoint
+  schema has something to point at — an untried lever for a faster suite, noted
+  and not taken.)
 
 The 1010 GB is not trivia — see U1.
 
@@ -106,227 +111,244 @@ Two things also cut against the RunPod sizing:
   for. Neither caveat is fatal; both are unmeasured, and each costs a failed
   deploy to find out.
 
-Recommendation in F2: **H200 for the first run** (nothing about the hardware
-can then be the reason a smoke is red), and treat the A100 as the cost
-optimization to attempt *after* one green run exists to compare against.
+**Since an instance implies a region** (the H200 is only in `us-west-2`,
+`rtx-pro-6000` only in `us-east-2`), that mapping is in `tools/hf_api.py` as
+`INSTANCE_REGIONS`: naming a GPU is enough, and asking for an H200 in
+`us-east-1` is a failed deploy rather than a choice.
 
-Note the region: the H200 is `us-west-2`, while the gate's endpoints default
-to `us-east-1`. `--region` is a single flag shared by all three endpoints
-today, so either the model record carries its own region (F1) or the embedders
-move west with it. Cross-region is only latency, not correctness, but the flag
-has to be able to say it.
+## 4. Stage 0 — the unknowns, and what they measured
 
-## 4. Unknowns to settle before any product code (stage 0)
+Four throwaway endpoints, ≈$0.30, every one deleted and the deletion verified.
 
-The gate's own precedent is that a track of this shape starts with a probe
-that answers the schema questions against the live API rather than guessing
-them inside a PR (remote-e2e-hf.md §3). Six questions, in the order that can
-kill the idea:
-
-**U1 — does the download honour a file filter?** `LlamacppContainer` in the
-endpoints OpenAPI schema has an undocumented field:
+**U1 — does the download honour a file filter? YES, and it is the whole
+track.** `LlamacppContainer` in the endpoints OpenAPI schema carries an
+undocumented field:
 
 ```
 "variant": { "type": ["string","null"],
              "description": "Pattern of .gguf files to load", "example": "*" }
 ```
 
-The public documentation page does not mention it at all; it does document the
-failure this repository would otherwise produce — *"Workload evicted, storage
-limit exceeded"*. With 1010 GB in the repository and no filter, that is the
-likely outcome. **This is the blocking unknown**: if `variant` cannot restrict
-the pull to `Q8_0/*`, the fallback is mirroring the two shards into a
-single-quant repository under the user's namespace (a 63 GB upload, once), and
-that changes the cost and the shape of the track.
+HF's own documentation page never mentions it; it does document the failure a
+1010 GB repository would otherwise produce (*"Workload evicted, storage limit
+exceeded"*). Measured decisively, on `unsloth/gemma-3-270m-it-GGUF` (24 quants,
+6.4 GB, ~240 MB each) on a `intel-spr` CPU endpoint costing fractions of a cent:
 
-**U2 — does llama.cpp pick up part 2 by itself** from
-`/repository/Q8_0/…-00002-of-00002.gguf`, given only part 1 on `modelPath`?
-It does locally; what is unmeasured is whether both parts are *present* in the
-container, which is U1 wearing a different hat, and whether a `modelPath` with
-a directory component is accepted at all (every payload sent so far has been a
-bare file name).
+| `variant` | `modelPath` | Result |
+|---|---|---|
+| `*Q4_K_M*` | `…-Q4_K_M.gguf` | healthy in **22 s** |
+| `*Q2_K*` | `…-Q4_K_M.gguf` | **failed in 21 s**: `gguf_init_from_file: failed to open GGUF file '/repository/gemma-3-270m-it-Q4_K_M.gguf' (No such file or directory)` |
 
-**U3 — what does the server call itself?** The whole point of the run. The
-prediction is that `/v1/models` reports
-`/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf` and `display_id`
-turns it into `gpt-oss-120b-Q8_0`. It has to be *observed* before T2 (§6) can
-be written, because a test that asserts the raw shape is worthless if the
-image sets an alias of its own. **`LLAMA_ARG_ALIAS` is not on HF's reserved
-list**, so we could name the model ourselves — and deliberately will not:
-setting it would route around the exact normalization this run exists to
-exercise.
+The mismatch is the proof: a file that does not match `variant` **is not on
+disk**. So `variant` governs the pull, and `"Q8_0/*"` is what keeps a 1010 GB
+repository down to 63.39 GB.
 
-**U4 — deploy time and the timeout coupling.** Stage 0 measured 21 s to
-`running` for a 17.65 GB model, which implies a ~840 MB/s pull; 63.4 GB at that
-rate is ~75 s plus the load. If it is much worse, three numbers move together
-and must keep their order: the runner's `--timeout` (1500 s), the workflow's
-`timeout-minutes` (45) and the sweeper's `--max-age-minutes` (90). The
-invariant is that the sweeper's threshold stays above every job timeout, or the
-backstop starts deleting endpoints that are still in use (F4).
+**U2 — a directory in `modelPath`, and part two found by itself. YES.** The
+H200 deploy loaded `/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf`
+and `/props` reported `n_ctx=16384`: `variant: "Q8_0/*"` pulled both parts,
+a `modelPath` with a directory component is accepted (every payload before this
+one was a bare file name), and llama.cpp read part two out of the same
+directory on its own.
 
-**U5 — harmony.** Does `LLAMA_ARG_JINJA=1` give `finish_reason=tool_calls` on
-this template; does `analysis` arrive as `reasoning_content`; and — the one
-with teeth — **does `reasoning_budget=0` mute anything here?** Two client
-smokes (`control_tools_are_callable`, `tool_call_is_emitted_and_parsed`) were
-made deterministic on Qwen by muting thinking that way
-(e2e-second-chat-model.md §2). gpt-oss has no `enable_thinking`; it has
-`reasoning_effort`, which the app already sends. If the mute is a no-op on this
-family, those two smokes are the ones most likely to go red, and the fix is
-already sketched — send `reasoning_effort: low` where the mute is meant.
+**U3 — what the server calls itself.** No alias is set by the image, on any of
+the four probes: `/v1/models` reports the path as given.
 
-**U6 — `nGpuLayers`.** The field is optional and the schema says llama.cpp
-picks the value itself, with `--fit` sizing the context to free memory. On a
-63.4 GB model an automatic partial offload would not fail — it would run, ten
-times slower, and quietly turn a 20-minute suite into a timeout. Pin it.
+| Deployed | `/v1/models` id | After `gguf::display_id` |
+|---|---|---|
+| gemma-3-270m (flat) | `/repository/gemma-3-270m-it-Q4_K_M.gguf` | `gemma-3-270m-it-Q4_K_M` |
+| gpt-oss-20b (flat) | `/repository/gpt-oss-20b-Q8_0.gguf` | `gpt-oss-20b-Q8_0` |
+| **gpt-oss-120b (split, subdir)** | `/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf` | **`gpt-oss-120b-Q8_0`** |
 
-**How to answer them cheaply.** Split stage 0 in two:
+That last row is the point of the track, and it now runs end to end: the live
+smokes reported `live model name: Some("gpt-oss-120b-Q8_0")`, the stored
+reply's metadata snapshot carried the same string, and `get_llm_history`
+answered with one dated record — `2026-08-29 20:04 UTC — gpt-oss-120b-Q8_0
+(external)`.
 
-- **0a — cents, no GPU.** One `intel-spr` x1 CPU endpoint ($0.033/hr) against a
-  *small* multi-quantization repository, with `variant` set to one quant. Read
-  `GET /v2/endpoint/{ns}/{name}/logs` (the API has a logs route, which the
-  existing tooling has never used) to see which files were pulled and what
-  command line the image actually builds. That settles U1's semantics and most
-  of U6 for the price of nothing.
-- **0b — one H200 deploy, ~15 minutes, ≈$1.30.** The real model: `/health`,
-  `/props` (`n_ctx`), `/v1/models` (U3, recorded verbatim), one tool call and
-  one reasoning request (U5), then delete and verify. No suite yet.
+**`LLAMA_ARG_ALIAS` is not on HF's reserved list**, so the model could be given
+a clean name at the container. Deliberately not done: an alias would route
+around the exact normalization this run exists to exercise.
 
-## 5. What a full run would cover — and the three smokes it cannot
+**U4 — deploy time. 63.39 GB reaches `running` in 42 s and `/health` in 93 s.**
+Nothing about the timeouts has to move: the workflow's `timeout-minutes` (45)
+and the sweeper's threshold (90) keep their order and their headroom.
 
-Of the 128 `#[ignore]` smokes, the llama.cpp set is ~60 and would run as-is.
-Three cannot: `image_attachment_e2e_live`, `image_url_attachment_e2e_live` and
+**U5 — harmony, and the one finding with teeth.** `LLAMA_ARG_JINJA=1` gives
+`finish_reason: tool_calls` on this template, and the `analysis` channel
+arrives as `reasoning_content`. But **`reasoning_budget: 0` +
+`chat_template_kwargs.enable_thinking: false` mutes nothing here** — the pair
+the Qwen track used to make two client smokes deterministic
+(e2e-second-chat-model.md §2). `reasoning_effort` is the lever on this family:
+
+| Request | reasoning | text | 20b | 120b |
+|---|---|---|---|---|
+| plain | — | — | 160 ch | 201 ch |
+| `reasoning_budget=0` + `enable_thinking=false` | — | — | **324 ch** | **103 ch** |
+| `reasoning_effort: "low"` | — | — | **20 ch** | **25 ch** |
+
+Measured first on `gpt-oss-20b` (the same template, 12 GB, on an `nvidia-l4` at
+$0.80/hr) precisely so the expensive model would not be where this was
+discovered. It did not become a red smoke — `control_tools_are_callable` and
+`tool_call_is_emitted_and_parsed` are both green on the 120b, because gpt-oss
+deliberates briefly where Qwen would not stop — so **nothing was patched**. It
+is recorded because it is a live tripwire: if either goes flaky on this model,
+the fix is `reasoning_effort: low`, not a bigger token ceiling.
+
+**U6 — `nGpuLayers`.** The image runs llama.cpp's `--fit` when the field is
+absent (visible in the failure log as `common_fit_params`), which on a 63 GB
+model would not fail — it would quietly offload part of it to the CPU. Pinned
+to 9999 **in the model's record only**, so the two models the gate was measured
+on keep the payload they were measured with, byte for byte.
+
+Two more things the probes handed over for free: the API resolves
+`model.revision` to a commit SHA at create time (so a deploy is pinned to a
+revision without asking), and `GET /v2/endpoint/{ns}/{name}/logs` returns the
+container's log — which is how U1 was settled and is the fastest way to read a
+failed deploy.
+
+## 5. What a full run covers — and the three smokes it cannot
+
+Of the 128 `#[ignore]` smokes, the llama.cpp set is ~60 and runs as-is. Three
+cannot: `image_attachment_e2e_live`, `image_url_attachment_e2e_live` and
 `tool_result_image_is_seen_live` require a vision projector and **fail loudly
 rather than skip** against a text-only server, by design
-([lessons.md](../lessons.md) §9). gpt-oss is text-only and there is no
-projector to attach, so as things stand a dispatch on this model is red on
-three smokes for a reason that has nothing to do with the model. F3 decides
-what to do about it; note that "let them fail" is not free — a gate with three
-permanent reds stops being read.
+([lessons.md](../lessons.md) §9). gpt-oss is text-only and no projector for it
+exists — `/props` on the deployed endpoint reports
+`modalities: {vision: false}` — so without F3 a dispatch on this model would be
+red on three smokes for a reason that has nothing to do with the code.
 
-Expected model-sensitive results, from the Qwen precedent: the two thinking
-ceilings of U5, and any smoke whose assertion encodes how *chatty* a model is.
-The Qwen run found the product needed no change and only test-side assumptions
-moved; that is the outcome to expect here too, and finding otherwise is the
-point.
+Note that `/props` *could* be used to skip them automatically, and deliberately
+is not: a stand accidentally started without `--mmproj` reports exactly the same
+thing, and turning that into a silent skip is the failure the rule exists to
+prevent. The declaration is a property of the model, not of the server's answer.
 
-## 6. New tests worth adding
+**Rehearsed, 2026-08-29** — 27 of those smokes were run against the probe's own
+H200 endpoint before any of this was committed: the whole low-level client set
+(23, of which 13 are honest skips for want of cloud keys) plus
+`props_reports_the_context_window_live`,
+`the_engine_names_the_model_it_is_running_live`,
+`a_reply_records_the_discovered_model_live` and `llm_name_and_history_e2e_live`.
+**All green**, 53 s of test time, 187 s of endpoint life, ≈$0.26.
 
-**T1 — a name must not be a part number** (free, applies to every stack). The
-existing `the_engine_names_the_model_it_is_running_live` already refuses a
-name ending in `.gguf` or containing a path separator. One more assertion —
-that the displayed name carries no `-00001-of-00002` tail — costs a line, is
-vacuously true on every single-file stack, and is the exact regression this
-model would catch. It belongs on the existing smoke, not in a new one.
+**And then the built runner, end to end** —
+`python tools/e2e_hf.py run --chat-model gpt-oss-120b --no-embed`: ready in
+83 s, both declarations derived and printed
+(`MINDFORK_LIVE_TEXT_ONLY=1`, `MINDFORK_LIVE_SPLIT_MODEL=1`), the new split
+smoke green (`/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf` in,
+`gpt-oss-120b-Q8_0` out), the name smoke green, `image_attachment_e2e_live`
+skipping and naming the variable, endpoint deleted and verified. ≈$0.12.
 
-**T2 — the split model, declared.** A new `#[ignore]` smoke that asserts the
-*raw* id from `/v1/models` carries a shard tail **and** that `model_id()`
-strips it — i.e. that the live path from server to header really is normalized,
-not just our fixtures. It must be gated on a declaration
-(`MINDFORK_LIVE_SPLIT_MODEL=1`) and, when declared, **fail rather than skip** if
-the stack turns out not to be split: the same discipline as the vision smokes,
-for the same reason. Its exact assertion waits on U3.
+## 6. The three tests this adds
 
-**T3 — the recorded history row carries the normalized name.**
+**T1 — a name must not be a part number** (free, applies to every stack).
+`the_engine_names_the_model_it_is_running_live` already refused a name ending
+in `.gguf` or containing a path separator; it now also refuses one that still
+carries a `-00001-of-00002` tail. One assertion, vacuously true on every
+single-file stack, and the exact regression this model would catch. It reuses
+`gguf::parse_shard` (putting the extension back to ask the question) rather than
+re-implementing the tail shape, because that module is deliberately the only
+place the shape is known.
+
+**T2 — the split model, declared** —
+`a_split_model_is_named_by_the_model_not_the_part_live`, in the low-level client
+smokes. It asserts *both* halves: that `GET /v1/models` really did report a
+**part** (index 1 of >1), and that `model_id()` hands back a name with the
+directory, the extension and the part number gone. Gated on
+`MINDFORK_LIVE_SPLIT_MODEL=1` and, when declared, it **fails rather than skips**
+if the server turns out to report a plain file — a declaration that is quietly
+wrong is worse than none. Without the declaration a "no part number in the name"
+check would pass on every single-file stack forever, which is precisely the
+state this track found the gate in.
+
+**T3 — the recorded history row carries the normalized name.** No new test:
 `llm_name_and_history_e2e_live` already drives `get_llm_name` and
-`get_llm_history` end to end; against a split model it becomes the check that
-what lands in `data.db` is `gpt-oss-120b-Q8_0` and not a container path. Worth
-one added assertion on the record's text, not a new test.
+`get_llm_history` end to end, and against this model it *is* the check that what
+lands in `data.db` is `gpt-oss-120b-Q8_0` and not a container path. Verified in
+the rehearsal above.
 
-Not proposed, deliberately: a live smoke for the launcher's split-model
-preflight (all parts present next to part 1). That path is managed mode — a
-local child process — and cannot run against a rented endpoint at all
+Not added, deliberately: a live smoke for the launcher's split-model preflight
+(all parts present next to part one). That path is managed mode — a local child
+process — and cannot run against a rented endpoint at all
 (remote-e2e-hf.md §4).
 
-## 7. Forks
+**Neither declaration is a workflow input.** Both `MINDFORK_LIVE_TEXT_ONLY` and
+`MINDFORK_LIVE_SPLIT_MODEL` are derived by `tools/e2e_hf.py` from the model
+record it just deployed — from `mmproj: None` and from the `-00001-of-00002`
+tail on the weights file — so a declaration cannot disagree with the stack it
+describes. `--no-mmproj` pointedly does **not** set the first one: that flag
+exists to deploy a *sighted* model blind, and those three smokes failing is its
+entire purpose.
 
-**F1 — how the model is added.**
+## 7. Forks — all resolved (*user's decision, 2026-08-29*)
+
+**F1 — how the model is added → (a), as built.**
 - **(a) A third `CHAT_MODELS` record in `tools/hf_api.py`, carrying its own
-  defaults** (repository, `modelPath`, `variant`, no projector, instance,
-  region, ctx, timeouts), with the workflow's `model` input gaining a third
-  choice and `chat_instance` gaining an empty default meaning "whatever the
-  model says" — *recommended*. It extends fork F1 of the second-model track
-  ("a model is one decision, not three independent flags") to the two decisions
-  this model adds, and no caller can dispatch a 63 GB model onto an L40S.
+  defaults** (repository, `modelPath`, `variant`, no projector, `nGpuLayers`,
+  instance, region), with the workflow's `model` input gaining a third choice
+  and `chat_instance` gaining a `model-default` option. It extends fork F1 of
+  the second-model track ("a model is one decision, not three independent
+  flags") to the four decisions this model adds, and no caller can dispatch a
+  63 GB model onto an L40S.
 - (b) A separate `e2e-gpt-oss.yml` workflow. Duplicates the whole job — the
   toolchain, the ALSA dependency, the npm warm-up, the cleanup evidence step —
   to change four values.
 - (c) Keep the record minimal and pass the instance/region by hand at dispatch.
   Cheapest to write, and the first mis-dispatch costs a failed 63 GB deploy.
 
-**F2 — hardware for the first run.**
-- **(a) `nvidia-h200` x1, aws us-west-2, $5.00/hr** — *recommended*. 141 GB
-  removes memory, MXFP4 support and kernel-availability from the list of things
-  that could explain a red run.
-- (b) `nvidia-a100` x1, 80 GB, $2.50/hr. Half the price, fits on paper at
-  ctx 16 k, and adds "Ampere dequantizes MXFP4" as a variable to a run whose
-  purpose is to find variables elsewhere.
-- (c) `nvidia-rtx-pro-6000` x1, 96 GB, $2.75/hr. Same argument, plus an
-  unverified sm_120 in the pinned image.
-- Not an option: `nvidia-h100` — quota 0 on this account, and $10/hr.
+**F2 — hardware → (a) `nvidia-h200` x1, aws us-west-2, $5.00/hr.** 141 GB
+removes memory, MXFP4 support and kernel availability from the list of things
+that could explain a red run. (b) A100 80 GB at $2.50/hr and (c) RTX PRO 6000
+96 GB at $2.75/hr stay on the table as the cost optimization to attempt *after*
+a green run exists to compare against — each adds an unmeasured variable to a
+run whose purpose is to find variables elsewhere. Not an option:
+`nvidia-h100` — quota 0 on this account, and $10/hr.
 
-**F3 — the three vision smokes on a text-only stack.**
-- **(a) A declaration env var (`MINDFORK_LIVE_TEXT_ONLY=1`) that makes exactly
-  those three skip, printed loudly by the runner and by each skip** —
-  *recommended*. The hazard the current design guards against is a vision smoke
-  passing on a blind model; a skip that the run has to *ask for* and that is
-  named in the log is not that. Set only by the gpt-oss model record.
-- (b) Run a filtered subset instead. `cargo test` has no exclusion filter, so
-  this means either enumerating the ~60 wanted smokes or making two passes —
-  and a hand-maintained list is a list that silently stops covering new tests.
-- (c) Accept three permanent reds on this model. Honest, and it trains everyone
-  to read a red gate as normal.
+**F3 — the three vision smokes on a text-only stack → (a) a declaration.**
+`MINDFORK_LIVE_TEXT_ONLY=1` makes exactly those three skip, printed by the
+runner and by each skip. The hazard the current design guards against is a
+vision smoke *passing* on a blind model; a skip the run has to ask for, by name,
+in the log, is not that. (b) A filtered subset — `cargo test` has no exclusion
+filter, so it means enumerating ~60 smokes by hand, and a hand-maintained list
+silently stops covering new tests. (c) Three permanent reds — honest, and it
+trains everyone to read a red gate as normal.
 
-**F4 — the timeouts.** Only if U4 shows a slow deploy.
-- **(a) Leave 45/90 as they are** — *recommended if the probe shows a deploy
-  under ~5 minutes*.
-- (b) Make the job timeout depend on the model
-  (`timeout-minutes: ${{ inputs.model == 'gpt-oss-120b' && 75 || 45 }}`) and
-  raise the sweeper to 120, preserving the "sweeper above every job timeout"
-  invariant.
-- (c) Raise both flat. Weakens the backstop for the runs that do not need it.
+**F4 — the timeouts → (a) leave 45/90 unchanged.** U4 measured the 63.39 GB
+deploy at 93 s to healthy, so the conditional timeout of option (b) and the
+flat raise of (c) would both weaken a backstop to buy headroom nothing needs.
 
-**F5 — the embedders.** Keep both (the primary and the alternate) on this run
-too, at ~$0.5 extra — *recommended*, for the reason stage 3 gave: skipping them
-leaves memory-critical smokes reporting ok while testing nothing. The
-alternative is `--no-embed`, which turns a $2.6 run into a $2.1 one and drops
-roughly half the coverage.
+**F5 — the embedders → keep both**, at ~$0.5 extra, for the reason stage 3
+gave: skipping them leaves memory-critical smokes reporting ok while testing
+nothing.
 
-**F6 — scope.** Is gpt-oss-120b
-- **(a) a third first-class gate model**, dispatched like the other two when a
-  change warrants it — *recommended*; or
-- (b) a compatibility run kept for split-model / open-weights questions
-  specifically, dispatched a few times a year?
-This decides only how the docs describe it — the implementation is identical —
-but it is worth answering, because (a) implies keeping its assertions green and
-(b) does not.
+**F6 — scope → (a) a third first-class gate model**, dispatched like the other
+two when a change warrants it, and expected to stay green.
 
 ## 8. Cost
 
-Per full run, at the recommended options: H200 $5.00/hr × ~30 min ≈ **$2.50**,
-plus two T4 embedders (~$0.50/hr each × ~30 min) ≈ **$0.50** → **≈ $3.00**,
-against ≈$1.00 for a Gemma/Qwen dispatch. Stage 0 adds ≈$1.35 once. On an A100
-the same run is ≈$1.75.
+Per full run, at the resolved options: H200 $5.00/hr × ~25 min ≈ **$2.10**, plus
+two T4 embedders (~$0.50/hr each × ~25 min) ≈ **$0.40** → **≈ $2.50**, against
+≈$1.00 for a Gemma/Qwen dispatch. Stage 0 and the verification run cost ≈$0.42 in total. On an A100 the
+same run would be ≈$1.50.
 
 The leak ceiling is unchanged and is the reason this stays on this platform: a
 run that dies without cleaning up leaves endpoints idle, HF scales them to zero
 after 15 minutes, and the sweeper reclaims the quota. Worst case on an H200 is
 one idle quarter-hour, ≈$1.25.
 
-## 9. If the forks are confirmed
+## 9. State, and what is left
 
-One branch (`feat/e2e-gpt-oss-120b`), the probe and the implementation sharing
-it as stages 0–1 shared `spike/hf-endpoint-probe`:
+1. **Stage 0 — done, GO.** Four probe endpoints, U1–U6 answered above, ≈$0.30,
+   nothing left running.
+2. **Stage 1 — built** on `feat/e2e-gpt-oss-120b`: the `CHAT_MODELS` record and
+   the `variant` / `nGpuLayers` / per-model instance-and-region plumbing in
+   `tools/hf_api.py`, the two derived declarations and the plan line in
+   `tools/e2e_hf.py`, the workflow's third choice and its `model-default`
+   instance, T1 and T2, and the docs.
+3. **What is left: one full dispatch** of
+   `.github/workflows/e2e-live.yml` with `model: gpt-oss-120b`, and its result —
+   the model, the instance, the timings and every smoke that moved — recorded in
+   [docs/journal/ci.md](../journal/ci.md).
 
-1. **Stage 0** — `tools/hf_probe.py` runs 0a and 0b (§4); the answers land in
-   this document. Go/no-go on U1 and U2.
-2. **Stage 1** — the `CHAT_MODELS` record and the `variant` / `nGpuLayers` /
-   per-model instance-and-region plumbing in `tools/hf_api.py`, the workflow's
-   third choice, T1–T3, and the docs (install.md §7.2, journal/ci.md,
-   README env table if a new variable lands). One live dispatch, recorded.
-3. **Docs** — this file stays in `docs/research/`; the track's outcome goes to
-   the journal, and CLAUDE.md's Status list gains a line if F6 resolves to (a).
-
-**Definition of done** — AGENTS.md §4 plus: `cargo fmt --check`, `clippy -D
-warnings`, `cargo test`, `cyrillic_scan.py` green; one dispatched run whose
-result is recorded in [docs/journal/ci.md](../journal/ci.md) with the model,
-the instance, the timings and every smoke that moved.
+**Definition of done** — AGENTS.md §4 plus: `cargo fmt --check`,
+`clippy -D warnings`, `cargo test`, `cyrillic_scan.py` green; the dispatch
+above, recorded.

@@ -1070,6 +1070,10 @@ mod ignored_smoke {
     #[tokio::test]
     #[ignore = "requires a vision-capable OpenAI-compatible server (MINDFORK_ENGINE_URL + --mmproj)"]
     async fn tool_result_image_is_seen_live() {
+        if crate::shared::api::live_text_only() {
+            eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+            return;
+        }
         let Some(client) = client_from_env() else {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
@@ -1160,6 +1164,80 @@ mod ignored_smoke {
             finish,
             Some(FinishReason::Stop | FinishReason::Length)
         ));
+    }
+
+    /// A model too large for one file, end to end: the server reports the **part**
+    /// it was pointed at, and what a header may show is the *model*.
+    ///
+    /// Weights over ~50 GB ship as `<name>-00001-of-00002.gguf`, …; llama.cpp is
+    /// handed the first part and reads the rest itself, and an un-aliased
+    /// `llama-server` then reports that part's whole path as its model id. That
+    /// is the single input [`crate::shared::gguf::display_id`] exists for, and
+    /// until `gpt-oss-120b` joined the live gate it had only ever been given
+    /// fixtures.
+    ///
+    /// Both halves are asserted here because either alone is worthless: that the
+    /// server really did report a part (otherwise the stack is not what the run
+    /// declared, and the check is vacuous), and that `model_id` hands back a name
+    /// with the directory, the extension **and** the part number gone.
+    ///
+    /// Declared, not detected — `MINDFORK_LIVE_SPLIT_MODEL=1` — and it **fails
+    /// rather than skips** when the declaration turns out to be false
+    /// (docs/research/e2e-gpt-oss-120b.md §6, T2).
+    ///
+    /// Measured on `unsloth/gpt-oss-120b-GGUF` Q8_0 (two parts, 63.39 GB):
+    /// `/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf` in,
+    /// `gpt-oss-120b-Q8_0` out.
+    #[tokio::test]
+    #[ignore = "requires a live server holding a split GGUF (MINDFORK_LIVE_SPLIT_MODEL=1)"]
+    async fn a_split_model_is_named_by_the_model_not_the_part_live() {
+        if !crate::shared::api::live_split_model() {
+            eprintln!("skip: MINDFORK_LIVE_SPLIT_MODEL not set");
+            return;
+        }
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let listed = client
+            .listed_models()
+            .await
+            .expect("a live server must answer GET /v1/models");
+        eprintln!("listed models: {listed:?}");
+        let raw = listed
+            .first()
+            .expect("GET /v1/models listed nothing to check");
+        let shard = crate::shared::gguf::parse_shard(raw).unwrap_or_else(|| {
+            panic!(
+                "MINDFORK_LIVE_SPLIT_MODEL was declared, but the server reports a \
+                 plain file: {raw} — this stack cannot test what the run says it tests"
+            )
+        });
+        assert_eq!(
+            shard.index, 1,
+            "llama.cpp must be given the first part: {raw}"
+        );
+        assert!(
+            shard.total > 1,
+            "a split model has more than one part: {raw}"
+        );
+
+        let name = client
+            .model_id()
+            .await
+            .expect("the same server that lists a model must name it");
+        eprintln!("split model reported as {raw:?}, shown as {name:?}");
+        assert!(
+            crate::shared::gguf::parse_shard(&format!("{name}{}", crate::shared::gguf::EXT))
+                .is_none(),
+            "the part number survived into the name a header shows: {name}"
+        );
+        assert!(
+            !name.contains('/')
+                && !name.contains('\\')
+                && !name.ends_with(crate::shared::gguf::EXT),
+            "a path reached the header instead of a model name: {name}"
+        );
     }
 
     /// A real rejection from a real server, checked as a **typed** error rather

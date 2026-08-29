@@ -58,18 +58,65 @@ CHAT_MODELS = {
         "repo": "google/gemma-4-31B-it-qat-q4_0-gguf",
         "gguf": "gemma-4-31B_q4_0-it.gguf",  # 17.65 GB
         "mmproj": "gemma-4-31B-it-mmproj.gguf",  # 1.20 GB
+        "instance": "nvidia-l40s",  # 48 GB
+        "region": "us-east-1",
     },
     "qwen-3.6-27b": {
         "tag": "qwen",
         "repo": "ggml-org/Qwen3.6-27B-GGUF",
         "gguf": "Qwen3.6-27B-Q4_K_M.gguf",  # 19.10 GB
         "mmproj": "mmproj-Qwen3.6-27B-Q8_0.gguf",  # 0.63 GB
+        "instance": "nvidia-l40s",
+        "region": "us-east-1",
+    },
+    # The third model is not a third flavour of the first two: it is split
+    # across two files, it is an OpenAI open-weights model (the harmony
+    # template), and it is 63 GB. Each of those is a dimension the gate has
+    # never had (docs/research/e2e-gpt-oss-120b.md §1).
+    "gpt-oss-120b": {
+        "tag": "oss",
+        "repo": "unsloth/gpt-oss-120b-GGUF",
+        # Part **one** of two: llama.cpp is handed the first part and finds the
+        # rest by name in the same directory (src/shared/gguf.rs).
+        "gguf": "Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf",  # 49.61 + 13.78 GB
+        # Text-only, and no projector for it exists — which is a different thing
+        # from `--no-mmproj` and is treated differently (see `text_only`).
+        "mmproj": None,
+        # **Load-bearing.** That repository holds 13 quantizations, 1010 GB in
+        # total, and `variant` is what keeps the endpoint from pulling all of
+        # them: measured against the API, a file that does not match is simply
+        # not on disk ("No such file or directory" at load). Undocumented on
+        # HF's docs page; it is in the endpoints OpenAPI schema.
+        "variant": "Q8_0/*",
+        # 141 GB, aws us-west-2, $5.00/hr. The H100 is *not* the cheap option
+        # here: it exists only on gcp at $10.00/hr and this account's quota for
+        # it is 0 (research §3).
+        "instance": "nvidia-h200",
+        "region": "us-west-2",
+        # Pinned rather than left to `--fit`, which the image runs by default:
+        # on a 63 GB model an automatic partial offload does not fail, it just
+        # runs part of the model on the CPU (research §4, U6). The two smaller
+        # models keep the default they were measured on.
+        "gpu_layers": 9999,
     },
 }
 # Gemma stays the default: the memory gates' similarity thresholds are calibrated
 # against that stack, and it is the model every earlier live run was measured on
 # (fork F3). A second family is a dimension, not a new baseline.
 DEFAULT_CHAT_MODEL = "gemma-4-31b"
+
+# Where an endpoint goes when neither the caller nor the model says otherwise.
+DEFAULT_REGION = "us-east-1"
+
+# Where a GPU that is *not* in the default region actually exists (GET
+# /v2/provider, 2026-08-29). An instance implies its region: asking for an H200
+# in us-east-1 is not a choice, it is a failed deploy, and the catalogue is the
+# only thing that knows which is which. Listed here so that `--chat-instance`
+# alone stays a safe thing to pass.
+INSTANCE_REGIONS = {
+    "nvidia-h200": "us-west-2",
+    "nvidia-rtx-pro-6000": "us-east-2",
+}
 
 EMBED_REPO = "ggml-org/bge-m3-Q8_0-GGUF"  # the exact model the gates were calibrated on
 EMBED_GGUF = "bge-m3-q8_0.gguf"
@@ -224,8 +271,66 @@ def safe_name(name):
 # Create payloads
 # --------------------------------------------------------------------------
 def chat_model(args):
-    """The selected model's `(tag, repo, gguf, mmproj)`, as one record."""
+    """The selected model's record: repository, weights, projector, and the
+    hardware and download filter that go with them — one decision, not six."""
     return CHAT_MODELS[getattr(args, "chat_model", DEFAULT_CHAT_MODEL)]
+
+
+def chat_instance(args):
+    """The GPU for the chat endpoint: the caller's, else the model's own.
+
+    A model that does not fit its default instance is not a choice anyone should
+    have to remember to make — a 63 GB model dispatched onto a 48 GB L40S fails
+    after the deploy, not before it.
+    """
+    return args.chat_instance or chat_model(args)["instance"]
+
+
+def chat_region(args):
+    """The region for the chat endpoint: the caller's, else the one implied by an
+    explicitly named instance, else the model's own, else the default.
+
+    The middle case is the one that matters: a caller who overrides the instance
+    is not thereby asking for the model's region, and an H200 does not exist in
+    us-east-1.
+    """
+    if args.region:
+        return args.region
+    if args.chat_instance:
+        return INSTANCE_REGIONS.get(args.chat_instance, DEFAULT_REGION)
+    return chat_model(args).get("region") or DEFAULT_REGION
+
+
+def text_only(args):
+    """The selected model has **no projector in existence** — as opposed to a
+    projector this run chose not to deploy.
+
+    The difference is the whole of fork F3 (docs/research/e2e-gpt-oss-120b.md).
+    A model with no projector (`gpt-oss-120b`) makes the three vision smokes
+    meaningless, so the run declares `MINDFORK_LIVE_TEXT_ONLY=1` and they skip,
+    in writing. `--no-mmproj` deliberately does **not**: that flag exists to
+    deploy a *sighted* model blind, and those three failing is precisely its
+    point (docs/lessons.md §9).
+    """
+    return chat_model(args)["mmproj"] is None
+
+
+def split_model(args):
+    """The weights being deployed are **part one of several**.
+
+    Read off the file name, because that is where the fact lives: `gguf-split`
+    writes `<name>-00001-of-00002.gguf`, and llama.cpp is handed part one and
+    finds the rest. Declared to the suite as `MINDFORK_LIVE_SPLIT_MODEL=1`, which
+    turns on the smoke that checks a part number never reaches a chat header
+    (docs/research/e2e-gpt-oss-120b.md §6, T2).
+
+    The shape is duplicated from `src/shared/gguf.rs` rather than shared, because
+    there is no way to share it across the language boundary; that module remains
+    the one place the *meaning* of the tail is decided, and this is only asking
+    which file was deployed.
+    """
+    gguf = args.gguf or chat_model(args)["gguf"]
+    return bool(re.search(r"-\d{5}-of-\d{5}\.gguf$", gguf))
 
 
 def chat_payload(name, args):
@@ -250,10 +355,14 @@ def chat_payload(name, args):
     payload = {
         "name": name,
         "type": args.endpoint_type,
-        "provider": {"vendor": args.vendor, "region": args.region},
+        # The model's own region, unless the caller named one. A 63 GB model
+        # lives where the card that holds it lives (H200: us-west-2), and the
+        # embedders stay wherever `--region` puts them — three endpoints in two
+        # regions is latency, not correctness.
+        "provider": {"vendor": args.vendor, "region": chat_region(args)},
         "compute": {
             "accelerator": "gpu",
-            "instanceType": args.chat_instance,
+            "instanceType": chat_instance(args),
             "instanceSize": args.instance_size,
             "scaling": {
                 "minReplica": 0,
@@ -280,9 +389,19 @@ def chat_payload(name, args):
         },
     }
     # Added rather than set to null: the field is optional, and an explicit null
-    # is a different thing to send than an absent key.
+    # is a different thing to send than an absent key. Same for the two below.
     if mmproj:
         payload["model"]["image"]["llamacpp"]["mmprojModelPath"] = mmproj
+    variant = args.variant or model.get("variant")
+    if variant:
+        payload["model"]["image"]["llamacpp"]["variant"] = variant
+    gpu_layers = args.gpu_layers or model.get("gpu_layers")
+    if gpu_layers:
+        # Left unset, the image runs llama.cpp's `--fit`, which sizes what it
+        # offloads to the memory it finds. On a 63 GB model that does not fail —
+        # it quietly runs part of the model on the CPU and turns a 20-minute
+        # suite into a timeout. Pin it (research §4, U6).
+        payload["model"]["image"]["llamacpp"]["nGpuLayers"] = gpu_layers
     return payload
 
 
@@ -311,7 +430,7 @@ def embed_payload(name, args, repo=None, gguf=None):
     return {
         "name": name,
         "type": args.endpoint_type,
-        "provider": {"vendor": args.vendor, "region": args.region},
+        "provider": {"vendor": args.vendor, "region": args.region or DEFAULT_REGION},
         "compute": {
             "accelerator": "gpu",
             "instanceType": args.embed_instance,
@@ -359,8 +478,8 @@ def add_endpoint_args(parser):
     """The flags that describe *what to deploy* — shared so the two scripts
     cannot deploy subtly different endpoints."""
     parser.add_argument("--vendor", default="aws")
-    parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--chat-instance", default="nvidia-l40s", help="48 GB; `hf_probe.py hardware` lists them")
+    parser.add_argument("--region", default="", help=f"default: the chat model's own, else {DEFAULT_REGION}")
+    parser.add_argument("--chat-instance", default="", help="default: the model's own; `hf_probe.py hardware` lists them")
     parser.add_argument("--embed-instance", default="nvidia-t4")
     parser.add_argument("--instance-size", default="x1")
     parser.add_argument(
@@ -375,6 +494,17 @@ def add_endpoint_args(parser):
         "--no-mmproj",
         action="store_true",
         help="deploy without a projector (the 3 vision smokes then FAIL, not skip)",
+    )
+    parser.add_argument(
+        "--variant",
+        default="",
+        help="override the model's glob for which .gguf files the endpoint pulls",
+    )
+    parser.add_argument(
+        "--gpu-layers",
+        type=int,
+        default=0,
+        help="layers on the GPU; 0 = unset, i.e. llama.cpp's own --fit (research §4, U6)",
     )
     parser.add_argument("--ctx", type=int, default=16384, help="llama.cpp context (matches the local runs)")
     parser.add_argument("--parallel", type=int, default=1, help="llama.cpp slots; ctx is split between them")

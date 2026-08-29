@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -27,6 +27,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a containerised test environment — JupyterLab, the app, a CPU stack (done)
 - Post-M9: SSH into the lab container (done)
 - Post-M9: the lab stack's chat context raised to 16384 (done)
+- Post-M9: a third chat model on the live gate — gpt-oss-120b, split across two files (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1189,3 +1190,95 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Cost**: the KV cache scales linearly with the window, so it doubles; the
   README's ~9–10 GiB budget for the Docker VM already carried the headroom on a
   16 GiB host (the stack's design assumption, see the entry above).
+
+### Post-M9: a third chat model on the live gate — gpt-oss-120b, split across two files (done)
+- **Trigger**: the gate ran two dense multimodal models of the same size class,
+  each a single 17–19 GB file from a single-quantization repository. Three
+  shipped things therefore had no live coverage at all: a model whose **weights
+  are split across files** (`src/shared/gguf.rs` exists for exactly that, and
+  had met nothing but string fixtures — its own doc comment uses
+  `gpt-oss-120b-Q8_0-00001-of-00003` as the example), **the name such a model
+  reports** (`model_id` → `gguf::display_id` → the feed caption, the metadata
+  snapshot, `get_llm_name`, the `llm_history` records), and an **OpenAI
+  open-weights model** — the harmony template, three channels, `reasoning_effort`
+  in place of `enable_thinking`. Research and forks:
+  [docs/research/e2e-gpt-oss-120b.md](../research/e2e-gpt-oss-120b.md).
+- **What the Hub actually holds** (measured, 2026-08-29): `unsloth/gpt-oss-120b-GGUF`
+  is **31 files, 1010 GB**, and every quantization in it is 62–65 GB — Q2_K 62.6,
+  Q8_0 63.4, a 1.3 % spread — because gpt-oss ships its MoE experts in MXFP4
+  natively and the quantization only touches the dense tensors. Q8_0 is the
+  highest-fidelity member of the ladder at no size penalty, and "pick a smaller
+  quant to fit a smaller card" is not a lever that exists for this model.
+- **The blocking unknown, and the experiment that settled it.** `LlamacppContainer`
+  in the endpoints OpenAPI schema carries an undocumented `variant` —
+  *"Pattern of .gguf files to load"*. Whether it governs the **download** decided
+  the whole track (1010 GB against HF's own documented *"Workload evicted, storage
+  limit exceeded"*). Settled for fractions of a cent on a CPU endpoint and a tiny
+  24-quant repository, by deliberately **mismatching** it: `variant: "*Q2_K*"`
+  with `modelPath: …-Q4_K_M.gguf` failed in 21 s with `gguf_init_from_file: failed
+  to open GGUF file … (No such file or directory)`. A file that does not match is
+  not on disk. A matching pair was healthy in 22 s.
+- **The H100 was the wrong ask, and the catalogue said so before anything was
+  rented.** On HF the H100 exists only in `gcp/us-east4` at **$10.00/hr**, and
+  this account's quota for it is **0** — a create would have been rejected. The
+  141 GB **H200 in `aws/us-west-2` is $5.00/hr**, i.e. the bigger card is half the
+  price. A100 80 GB ($2.50) and RTX PRO 6000 96 GB ($2.75) are the cost
+  optimizations to try later; each adds an unmeasured variable (Ampere
+  dequantizes MXFP4; sm_120 kernels in the pinned image) to a run whose purpose
+  is to find variables elsewhere.
+- **What the real deploy measured** (H200 x1, `variant: "Q8_0/*"`, `nGpuLayers`
+  pinned, ctx 16384): `running` after **42 s**, `/health` after **93 s** for
+  63.39 GB — so nothing about the timeouts had to move, and the workflow's 45
+  against the sweeper's 90 keep their order. A `modelPath` with a directory
+  component is accepted, both parts arrive, and llama.cpp finds part two itself.
+  `/v1/models` reports `/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf`
+  → **`gpt-oss-120b-Q8_0`** in the header, in the stored reply's metadata, and in
+  the `get_llm_history` record. **`LLAMA_ARG_ALIAS` is not reserved by HF**, so
+  the container could have been told a clean name; deliberately not done, since
+  an alias routes around the one normalization this run exists to exercise.
+- **The finding recorded rather than patched.** `reasoning_budget: 0` +
+  `chat_template_kwargs.enable_thinking: false` — the pair that made two client
+  smokes deterministic on Qwen — **mutes nothing** on the harmony template
+  (120b: 201 ch of reasoning plain, 103 ch with the mute, **25 ch** with
+  `reasoning_effort: "low"`). Measured first on `gpt-oss-20b` on an L4 at
+  $0.80/hr, precisely so the expensive model would not be where it was
+  discovered. Both smokes are nonetheless green on the 120b — gpt-oss deliberates
+  briefly where Qwen would not stop — so nothing was changed. It is written down
+  as the tripwire: if either goes flaky here, the lever is `reasoning_effort`, not
+  a bigger ceiling.
+- **Two declarations, derived rather than passed.** The model is text-only and no
+  projector for it exists, so `tools/e2e_hf.py` sets `MINDFORK_LIVE_TEXT_ONLY=1`
+  and the three vision smokes skip **in writing**; its weights are split, so it
+  sets `MINDFORK_LIVE_SPLIT_MODEL=1`, which turns on the new smoke. Both are read
+  off the model record that was just deployed (`mmproj: None`, and the
+  `-00001-of-00002` tail on the weights file), so a declaration cannot disagree
+  with the stack it describes. `--no-mmproj` pointedly does **not** set the
+  first: that flag exists to deploy a *sighted* model blind, and those three
+  failing is its entire purpose (lessons.md §9). `/props` does report
+  `modalities: {vision: false}` and is deliberately **not** used to skip
+  automatically — a stand accidentally started without `--mmproj` says exactly
+  the same thing, and that is the case the rule protects.
+- **Tests**: one assertion added to `the_engine_names_the_model_it_is_running_live`
+  (a name must not still carry a part number — vacuously true on every
+  single-file stack, reusing `gguf::parse_shard` rather than re-implementing the
+  tail shape), and one new smoke,
+  `a_split_model_is_named_by_the_model_not_the_part_live`, which asserts **both**
+  that the server really reported a part and that `model_id` stripped it. 2696
+  unit tests green, 128 `#[ignore]`.
+- **The model is one decision, still.** The third `CHAT_MODELS` record carries
+  its repository, weights, `variant`, absent projector, `nGpuLayers`, instance
+  **and region**; `--chat-instance` defaults to the model's own, and an
+  explicitly named instance now implies its region (`INSTANCE_REGIONS`), because
+  asking for an H200 in `us-east-1` is a failed deploy rather than a choice. The
+  two existing models' payloads are byte-identical to before — checked by
+  `--dry-run`.
+- **Rehearsed before it was committed.** 27 smokes against the probe's own H200 —
+  the whole low-level client set plus the four model-name/history smokes — all
+  green, 187 s of endpoint life. Then the built runner end to end
+  (`--chat-model gpt-oss-120b --no-embed`): ready in 83 s, both declarations
+  printed and honoured, the split smoke green, the vision smoke skipped naming
+  the variable, endpoint deleted and verified.
+- **Cost**: stage 0 plus the verification came to **≈$0.42** across five
+  throwaway endpoints, none left running. A full dispatch is ~$2.50 (H200
+  $5.00/hr + two T4s) against ~$1.00 for a Gemma or Qwen run. Still outstanding:
+  that full dispatch.
