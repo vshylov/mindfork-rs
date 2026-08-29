@@ -436,7 +436,8 @@ qwen-3.6-27b **5/5** on each of the two arms, against a bar of 3 of 5. The
 criterion is per family precisely because docs/lessons.md §9 records the two
 families flaking for *different* reasons; here neither flaked at all.
 
-Branch `spike/code-workspace-probe`: throwaway `code_read`/`code_grep`/`code_edit`
+Branch `spike/code-workspace-probe` (deleted 2026-08-29; its two commits are in
+`main`'s history): throwaway `code_read`/`code_grep`/`code_edit`
 (`src/features/tools/code.rs`, root taken from `tools.fs_root`, all three off by
 default) plus two live smokes in `src/app/orchestrator/tests/live.rs`.
 
@@ -704,7 +705,10 @@ revert actually meet.
 ### 7.9. Stage 5 — the go/no-go, and why it is a no
 
 **Verdict: NO-GO** (user's decision, 2026-08-21). The semantic index does not
-ship. Branch `spike/code-search-probe` holds the probe and is not merged.
+ship. The probe was never merged: its branch `spike/code-search-probe` was
+deleted on 2026-08-29 and the code is frozen under the annotated tag
+`probe/code-search-stage5` (`git show probe/code-search-stage5` for the
+verdict, `git log probe/code-search-stage5` for the seven commits).
 
 **What was measured.** A throwaway `code_search` over an in-memory index of this
 repository (~21 000 windows, `.gitignore`-walked like `code_list`), against a

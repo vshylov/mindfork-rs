@@ -2235,7 +2235,8 @@ The track's last planned stage does not ship. Fork F4 made it conditional on a
 live measurement against `code_grep`; the measurement came back no, and the
 rejection is the deliverable. Full record —
 [docs/history/code-workspace.md](../../docs/history/code-workspace.md) §7.9;
-the probe lives on `spike/code-search-probe`, unmerged.
+the probe was never merged, and its branch is gone — the code is frozen under
+the tag `probe/code-search-stage5`.
 
 - **The verdict.** Over 48 turns per arm on gemma-4-31b, with the shipped tools
   as the control and the same plus `code_search` as the treatment: correct in
