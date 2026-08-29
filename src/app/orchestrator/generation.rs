@@ -2798,29 +2798,7 @@ impl TurnLoop<'_> {
     ) -> Result<Option<(String, Option<String>)>, DialogueEnd> {
         use crate::features::tools::dialogue::{self, Verdict};
         let loc = self.ctx.loc;
-        let new_lines: Vec<String> = st.transcript[st.rendered..]
-            .iter()
-            .filter(|m| m.role != MessageRole::System)
-            .map(|m| {
-                let who = if m.role == MessageRole::Assistant {
-                    labels.0
-                } else {
-                    labels.1
-                };
-                format!("{who}: {}", m.text)
-            })
-            .collect();
-        st.rendered = st.transcript.len();
-        let header = if st.director_msgs.is_empty() {
-            loc.t("prompt.dialogue.script_opening")
-        } else {
-            loc.t("prompt.dialogue.script_more")
-        };
-        let user = format!(
-            "{header}\n\n{}\n\n{}",
-            new_lines.join("\n\n"),
-            loc.t("prompt.dialogue.ask")
-        );
+        let user = self.dialogue_script(st, labels);
         st.director_msgs.push(ApiMessage::user(user));
         let request = ChatRequest {
             system: Some(director_system.to_string()),
@@ -2865,109 +2843,191 @@ impl TurnLoop<'_> {
             match verdict {
                 Verdict::Continue => {}
                 Verdict::Stop { reason, summary } => {
-                    let line = match &summary {
-                        Some(s) => loc.tf(
-                            "tool.run_dialogue.stop_line_summary",
-                            &[("reason", &reason), ("summary", s)],
-                        ),
-                        None => loc.tf("tool.run_dialogue.stop_line", &[("reason", &reason)]),
-                    };
-                    self.dialogue_intervention(st, line);
+                    self.dialogue_stop(st, &reason, summary.as_deref());
                     return Ok(Some((reason, summary)));
                 }
                 Verdict::Note { to_a, to_b, text } => {
-                    let to = match (to_a, to_b) {
-                        (true, false) => labels.0.to_string(),
-                        (false, true) => labels.1.to_string(),
-                        _ => format!("{}, {}", labels.0, labels.1),
-                    };
-                    self.dialogue_intervention(
-                        st,
-                        loc.tf(
-                            "tool.run_dialogue.note_line",
-                            &[("to", &to), ("text", &text)],
-                        ),
-                    );
-                    if to_a {
-                        st.notes_a.push(text.clone());
-                    }
-                    if to_b {
-                        st.notes_b.push(text);
-                    }
+                    self.dialogue_note(st, labels, (to_a, to_b), text);
                 }
                 Verdict::Retry { note } => {
-                    // Only a generated line can be retried, and the retry's
-                    // regeneration spends a `max_messages` slot of its own.
-                    if st.generated == 0 || st.generated >= parsed.max_messages {
-                        continue;
-                    }
-                    let Some(last) = st
-                        .transcript
-                        .iter()
-                        .rposition(|m| m.role != MessageRole::System)
-                    else {
-                        continue;
-                    };
-                    let speaker_a = st.transcript[last].role == MessageRole::Assistant;
-                    let who = if speaker_a { labels.0 } else { labels.1 };
-                    // A discard cannot be expressed by appending: the open
-                    // transcript gets the full replacement (stage 2), with
-                    // the intervention row saying what happened.
-                    st.transcript.remove(last);
-                    let line = match &note {
-                        Some(n) => loc.tf(
-                            "tool.run_dialogue.retry_line_note",
-                            &[("who", who), ("note", n)],
-                        ),
-                        None => loc.tf("tool.run_dialogue.retry_line", &[("who", who)]),
-                    };
-                    st.transcript.push(Message::new(MessageRole::System, line));
-                    st.rendered = st.transcript.len();
-                    self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
-                    let line = self
-                        .dialogue_line(
-                            st,
-                            parsed,
-                            labels,
-                            speaker_a,
-                            note.as_deref(),
-                            sampling,
-                            muted,
-                            cancel,
-                            run_base,
-                        )
-                        .await?;
-                    self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
-                    st.transcript.push(line);
-                    st.generated += 1;
+                    self.dialogue_retry(
+                        st,
+                        parsed,
+                        labels,
+                        note.as_deref(),
+                        sampling,
+                        muted,
+                        cancel,
+                        run_base,
+                    )
+                    .await?;
                 }
-                Verdict::Rewrite { text } => {
-                    let Some(last) = st
-                        .transcript
-                        .iter()
-                        .rposition(|m| m.role != MessageRole::System)
-                    else {
-                        continue;
-                    };
-                    let who = if st.transcript[last].role == MessageRole::Assistant {
-                        labels.0
-                    } else {
-                        labels.1
-                    };
-                    let line = loc.tf("tool.run_dialogue.rewrite_line", &[("who", who)]);
-                    // The final cut replaces the words; the original's
-                    // thoughts described a line that no longer exists. An
-                    // in-place edit cannot be expressed by appending: the
-                    // open transcript gets the full replacement (stage 2).
-                    st.transcript[last].text = text;
-                    st.transcript[last].thoughts = None;
-                    st.transcript.push(Message::new(MessageRole::System, line));
-                    st.rendered = st.transcript.len();
-                    self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
-                }
+                Verdict::Rewrite { text } => self.dialogue_rewrite(st, labels, text),
             }
         }
         Ok(None)
+    }
+
+    /// The incremental script one checkpoint shows the director
+    /// (research §3.3): the transcript lines it has not seen yet, each
+    /// labelled by its speaker, under the opening or the continuation header.
+    /// Advances `rendered` — interventions are excluded, since the director's
+    /// own tool-call turns already carry them.
+    fn dialogue_script(&self, st: &mut DialogueState, labels: (&str, &str)) -> String {
+        let loc = self.ctx.loc;
+        let new_lines: Vec<String> = st.transcript[st.rendered..]
+            .iter()
+            .filter(|m| m.role != MessageRole::System)
+            .map(|m| {
+                let who = if m.role == MessageRole::Assistant {
+                    labels.0
+                } else {
+                    labels.1
+                };
+                format!("{who}: {}", m.text)
+            })
+            .collect();
+        st.rendered = st.transcript.len();
+        let header = if st.director_msgs.is_empty() {
+            loc.t("prompt.dialogue.script_opening")
+        } else {
+            loc.t("prompt.dialogue.script_more")
+        };
+        format!(
+            "{header}\n\n{}\n\n{}",
+            new_lines.join("\n\n"),
+            loc.t("prompt.dialogue.ask")
+        )
+    }
+
+    /// The `Stop` verdict's intervention row — the reason, and the director's
+    /// closing summary when it wrote one.
+    fn dialogue_stop(&mut self, st: &mut DialogueState, reason: &str, summary: Option<&str>) {
+        let loc = self.ctx.loc;
+        let line = match summary {
+            Some(s) => loc.tf(
+                "tool.run_dialogue.stop_line_summary",
+                &[("reason", reason), ("summary", s)],
+            ),
+            None => loc.tf("tool.run_dialogue.stop_line", &[("reason", reason)]),
+        };
+        self.dialogue_intervention(st, line);
+    }
+
+    /// The `Note` verdict: a standing direction filed as an intervention row
+    /// and appended to each addressed participant's notes — identity stays
+    /// with the run from the moment it was issued (research §3.4).
+    fn dialogue_note(
+        &mut self,
+        st: &mut DialogueState,
+        labels: (&str, &str),
+        to: (bool, bool),
+        text: String,
+    ) {
+        let loc = self.ctx.loc;
+        let (to_a, to_b) = to;
+        let whom = match to {
+            (true, false) => labels.0.to_string(),
+            (false, true) => labels.1.to_string(),
+            _ => format!("{}, {}", labels.0, labels.1),
+        };
+        self.dialogue_intervention(
+            st,
+            loc.tf(
+                "tool.run_dialogue.note_line",
+                &[("to", &whom), ("text", &text)],
+            ),
+        );
+        if to_a {
+            st.notes_a.push(text.clone());
+        }
+        if to_b {
+            st.notes_b.push(text);
+        }
+    }
+
+    /// The `Retry` verdict: discard the last line and generate it again, with
+    /// the director's note as a one-shot instruction. A no-op when there is
+    /// nothing generated to retry or the `max_messages` cap leaves no slot for
+    /// the regeneration.
+    #[allow(clippy::too_many_arguments)]
+    async fn dialogue_retry(
+        &mut self,
+        st: &mut DialogueState,
+        parsed: &crate::features::tools::dialogue::DialogueArgs,
+        labels: (&str, &str),
+        note: Option<&str>,
+        sampling: &SamplingConfig,
+        muted: &SamplingConfig,
+        cancel: &CancellationToken,
+        run_base: u64,
+    ) -> Result<(), DialogueEnd> {
+        let loc = self.ctx.loc;
+        // Only a generated line can be retried, and the retry's regeneration
+        // spends a `max_messages` slot of its own.
+        if st.generated == 0 || st.generated >= parsed.max_messages {
+            return Ok(());
+        }
+        let Some(last) = st
+            .transcript
+            .iter()
+            .rposition(|m| m.role != MessageRole::System)
+        else {
+            return Ok(());
+        };
+        let speaker_a = st.transcript[last].role == MessageRole::Assistant;
+        let who = if speaker_a { labels.0 } else { labels.1 };
+        // A discard cannot be expressed by appending: the open transcript
+        // gets the full replacement (stage 2), with the intervention row
+        // saying what happened.
+        st.transcript.remove(last);
+        let line = match note {
+            Some(n) => loc.tf(
+                "tool.run_dialogue.retry_line_note",
+                &[("who", who), ("note", n)],
+            ),
+            None => loc.tf("tool.run_dialogue.retry_line", &[("who", who)]),
+        };
+        st.transcript.push(Message::new(MessageRole::System, line));
+        st.rendered = st.transcript.len();
+        self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
+        let line = self
+            .dialogue_line(
+                st, parsed, labels, speaker_a, note, sampling, muted, cancel, run_base,
+            )
+            .await?;
+        self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
+        st.transcript.push(line);
+        st.generated += 1;
+        Ok(())
+    }
+
+    /// The `Rewrite` verdict: the director's final cut replaces the last
+    /// line's words in place. A no-op when there is no line to rewrite.
+    fn dialogue_rewrite(&mut self, st: &mut DialogueState, labels: (&str, &str), text: String) {
+        let loc = self.ctx.loc;
+        let Some(last) = st
+            .transcript
+            .iter()
+            .rposition(|m| m.role != MessageRole::System)
+        else {
+            return;
+        };
+        let who = if st.transcript[last].role == MessageRole::Assistant {
+            labels.0
+        } else {
+            labels.1
+        };
+        let line = loc.tf("tool.run_dialogue.rewrite_line", &[("who", who)]);
+        // The final cut replaces the words; the original's thoughts described
+        // a line that no longer exists. An in-place edit cannot be expressed
+        // by appending: the open transcript gets the full replacement
+        // (stage 2).
+        st.transcript[last].text = text;
+        st.transcript[last].thoughts = None;
+        st.transcript.push(Message::new(MessageRole::System, line));
+        st.rendered = st.transcript.len();
+        self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
     }
 
     /// Files one director intervention as a `System` entry of the transcript

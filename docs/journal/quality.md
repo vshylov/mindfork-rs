@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -30,6 +30,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the help dialog's table builder (done)
 - Post-M9: SonarQube follow-up — three complexity findings from the `/continue` merges (done)
 - Post-M9: SonarQube follow-up — the chat-body stub's complexity (done)
+- Post-M9: SonarQube follow-up — the dialogue director and its probe (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1091,3 +1092,48 @@ structure (AGENTS.md §3).
   (AGENTS.md §3) — a pure refactor of a test-module helper, no engine, memory
   or tool surface changed. No CHANGELOG entry: nothing the user sees changed
   (§4).
+### Post-M9: SonarQube follow-up — the dialogue director and its probe (done)
+
+- **Two `rust:S3776` issues open on `main`** after the `run_dialogue` merges
+  (2026-08-28/29) — the `docs/lessons.md` §10 gap once more: a green PR quality
+  gate judges new-code *ratings*, so a pair of maintainability smells surfaces
+  only on the next `main` analysis. Both are the same shape, the one the
+  verdict protocol invites — a `match` whose five arms each carry a whole
+  mechanism inline. `dialogue_checkpoint` (`src/app/orchestrator/generation.rs`)
+  landed at cognitive complexity **37** against the 15 allowed, and the stage-0
+  probe's `run_dialogue` (`src/shared/api/dialogue_probe.rs`) at **57** — the
+  highest figure this journal records. Branch
+  `refactor/sonar-dialogue-complexity`.
+- **`dialogue_checkpoint` gave up its script and its four acting verdicts**:
+  `dialogue_script` (the lines the director has not been shown, labelled by
+  speaker, plus the `rendered` advance), then `dialogue_stop`, `dialogue_note`,
+  `dialogue_retry` and `dialogue_rewrite`. What is left is the checkpoint its
+  doc comment describes — render the increment, ask, record the verdicts in the
+  director's own conversation, apply them in call order — with the verdict
+  `match` a table of one-liners. The two `continue`s that skipped a verdict
+  became early returns inside `dialogue_retry`/`dialogue_rewrite`, which is the
+  same skip. ~37 → ~5.
+- **The probe's `run_dialogue` lost the `speak` closure and the whole
+  checkpoint block**: `speak` is a free `async fn` now (the muted re-ask for the
+  all-thinking empty turn included), the checkpoint is `checkpoint`, and its
+  five verdicts are `verdict_stop` / `verdict_note` / `verdict_retry` /
+  `verdict_rewrite`. Two shapes carried the split: the run's mutable state —
+  transcript, standing notes, issued directions, report, seed, next checkpoint —
+  moved into a `RunState` struct instead of a seven-parameter thread, and the
+  `'dialogue`-labelled break became a `Checkpoint::{Continue, Stop}` return, so
+  the two places that end a run (the director's `dialogue_stop`, and a retry
+  whose regeneration would pass `max_messages`) say so in the type rather than
+  by jumping out of a nested match. ~57 → ~8.
+- **Behaviour is unchanged by construction** — every extracted body is the same
+  expressions in the same order; the one rewrite is that label-break, and it
+  ends the loop at exactly the same two points and abandons the remaining
+  verdict calls exactly as `break 'dialogue` did. The Sonar snippet pre-check
+  takes no Rust (lessons §10), so the PR analysis is the measurement that closes
+  these.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2676 green, 126 `#[ignore]`, counts unchanged**: the director path is
+  exercised by the orchestrator's dialogue tests (`dialogue.rs` drives all five
+  verdicts through the mock), and the probe is `#[cfg(test)]` `#[ignore]` code
+  the live gate runs. **No live run required** (AGENTS.md §3) — a pure refactor,
+  no engine, memory or tool surface changed. No CHANGELOG entry: nothing the
+  user sees changed (§4).
