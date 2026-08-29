@@ -1,7 +1,7 @@
 /target
 __pycache__/
 # Website (site/, docs/research/mindfork-io-website.md): build output and the
-# brand assets mirrored from artwork/ by tools/site_sync_assets.py.
+# brand assets mirrored from assets/ by tools/site_sync_assets.py.
 site/public/
 site/static/screenshots/
 site/static/brand/

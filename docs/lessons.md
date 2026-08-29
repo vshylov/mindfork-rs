@@ -51,7 +51,7 @@ stage 2*.
 **Keep subagents out of a second build of the same crate.** An agent building in a
 *copy* of the tree poisons the shared `target/`, so `cargo test` runs artifacts
 compiled from other sources — seven tests "failed", six with `Cargo.toml` /
-`Cargo.lock` / `artwork` **not found** (`CARGO_MANIFEST_DIR` baked in from the copy).
+`Cargo.lock` / `assets` **not found** (`CARGO_MANIFEST_DIR` baked in from the copy).
 `cargo clean -p mindfork-rs` fixed it. Treat a cluster of path-not-found failures as a
 build-artifact symptom, not a code one. Cost ~20 minutes of false debugging.
 — *embedding-model change — stage 2 (re-embedding in place)*.
@@ -133,7 +133,7 @@ pipeline is deterministic.
 
 **Anything a build script stamps into the binary goes stale the moment the script
 declares `rerun-if-changed`.** Cargo then re-runs it for those paths *only* — ours
-are `dictionaries/`, `artwork/`, `syntaxes/` — so editing `src/` rebuilds the binary
+are `dictionaries/`, `assets/`, `syntaxes/` — so editing `src/` rebuilds the binary
 without re-running the script, and a compiled-in timestamp/SHA freezes at whenever
 one of those directories last moved. Forcing a re-run on every build pays for it in
 the script's own work on every `cargo check`; watching `src/` too buys *partial*
@@ -145,6 +145,19 @@ gate a test, not a comment. And prefer a fact the build owns over a fact the
 filesystem owns: the executable's mtime is accurate until a copy, a backup restore
 or a rewriting tool turns "built on" into "touched on", with no way to tell.
 — *the build date on the "About" tab*.
+
+**A top-level directory here is a build input, so renaming one is not a docs edit.**
+`assets/` (ex-`artwork/`) reaches the `.exe` through `build.rs` (`rerun-if-changed`
+plus the `winresource` icon), the Linux packages through `nfpm.yaml`, the Windows
+installer through two backslash paths in `mindfork.iss`, the site deploy through a
+workflow `paths:` trigger, and two tests through `CARGO_MANIFEST_DIR` joins. Only
+that last group fails `cargo test` — a sweep that fixes the prose and the Rust leaves
+a green suite and a silently broken installer. So before renaming anything at the
+repository root, grep the name in `build.rs`, `packaging/`, `.github/workflows/`,
+`tools/`, `.gitignore` and `.dockerignore`; `git mv` first so history follows; rewrite
+by pattern, not by eye; and assert that the ordinary English word which happens to
+match survives the substitution — here the OFL's permission "to create artwork".
+— *`artwork/` renamed to `assets/`*.
 
 ---
 
@@ -1252,7 +1265,7 @@ from 19 minutes*.
 **A docs-only classifier reads the whole PR file list, not the last push.** Merging a CI
 branch into a docs PR therefore correctly makes it non-docs-only. Its allowlist must
 exclude files that *look* like docs but are read by the build or a gate test (`LICENSE`,
-artwork SVGs, locale JSON, `Cargo.toml`) — established by grepping `include_str!` /
+`assets/` SVGs, locale JSON, `Cargo.toml`) — established by grepping `include_str!` /
 `include_bytes!` / `CARGO_MANIFEST_DIR`, not by assumption. **Recorded twice**, and the
 second time was a different tool with the same premise: a `.dockerignore` written to keep
 the build context small excluded `/docs` wholesale, and `shared/credits.rs` pulls

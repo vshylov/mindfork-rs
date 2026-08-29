@@ -3,7 +3,7 @@
 //! Each recipe builds a screen from the demo fixture (`features/demo`), renders
 //! it into a `TestBackend` and serializes the frame (`shared/shot`). The
 //! `#[ignore]` test at the bottom is the regenerator: it (re)writes the
-//! committed dumps under `artwork/screenshots/dumps/`, which
+//! committed dumps under `assets/screenshots/dumps/`, which
 //! `tools/screenshots.py` then turns into images. Ordinary tests keep the
 //! recipes honest — deterministic, grid-covering, with the showcase content
 //! actually inside the frame — and the drift gate keeps the committed dumps
@@ -187,7 +187,7 @@ mod tests {
     }
 
     fn dumps_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("artwork/screenshots/dumps")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/screenshots/dumps")
     }
 
     fn dump_name(frame: &ShotFrame) -> String {
@@ -311,7 +311,7 @@ mod tests {
     /// `cargo test dump_demo_frames -- --ignored`
     /// then `python tools/screenshots.py` to re-render the images.
     #[test]
-    #[ignore = "writes artwork/screenshots/dumps/"]
+    #[ignore = "writes assets/screenshots/dumps/"]
     fn dump_demo_frames() {
         let root = dumps_dir();
         fs::create_dir_all(&root).unwrap();

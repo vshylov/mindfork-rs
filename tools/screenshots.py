@@ -4,7 +4,7 @@
 Why: screenshots of a real session would expose private data and rot as the
 app evolves. Instead the app renders its screens headlessly from a demo
 fixture and serializes each frame as JSON (`cargo test dump_demo_frames --
---ignored` writes `artwork/screenshots/dumps/*.json`; a drift-gate test keeps
+--ignored` writes `assets/screenshots/dumps/*.json`; a drift-gate test keeps
 those dumps honest). This script renders them: **PNG** for the README (GitHub
 cannot load fonts into an embedded SVG) and **SVG** for mindfork.io (crisp at
 any zoom; the font arrives by `@font-face` reference, served by the site
@@ -18,7 +18,7 @@ column span (default 1), absent `fg`/`bg` mean the frame's canvas colors, and
 `m` is a string of modifier letters (B/D/I/U/R/H/S).
 
 Fonts: JetBrains Mono (the brand font; OFL) probed from the system the same
-way `artwork/build-wordmarks.py` does, with symbol-font fallbacks for glyphs
+way `assets/build-wordmarks.py` does, with symbol-font fallbacks for glyphs
 outside its coverage (rounded borders and box drawing are in; `✦`/`⚒`-class
 symbols usually are not). The TTFs are deliberately not vendored; pass
 `--font-dir` if probing fails. The SVG writer uses the same faces for
@@ -54,8 +54,8 @@ except ImportError:  # pragma: no cover - environment guard
     sys.exit("fontTools is required: pip install pillow fonttools")
 
 REPO = Path(__file__).resolve().parent.parent
-DUMPS = REPO / "artwork" / "screenshots" / "dumps"
-OUT = REPO / "artwork" / "screenshots"
+DUMPS = REPO / "assets" / "screenshots" / "dumps"
+OUT = REPO / "assets" / "screenshots"
 
 # Supersampling factor: glyphs are drawn at SS x the target size and the
 # finished sheet is downscaled once with Lanczos — much crisper edges than

@@ -9,7 +9,7 @@
 //! Next to the glyph is drawn the **wordmark** — the word `mindfork` in its own pixel
 //! font (the SVG wordmark doesn't work for the terminal: its text has been converted to curves).
 //! Together they form a **horizontal lockup** — the same composition as
-//! `artwork/mindfork-wordmark.svg`: the word is half the glyph's height, its baseline sits one
+//! `assets/mindfork-wordmark.svg`: the word is half the glyph's height, its baseline sits one
 //! row above the glyph's bottom.
 //!
 //! **Colors are the fixed brand ones, not from the palette**: the logo isn't retinted by the
@@ -22,7 +22,7 @@
 //! `▌` role rails.
 //!
 //! The single source of truth for the glyph's geometry is
-//! `artwork/mindfork-icon-transparent.svg`; the test `glyph_matches_artwork_svg` checks
+//! `assets/mindfork-icon-transparent.svg`; the test `glyph_matches_asset_svg` checks
 //! the table below against it, so the code and the asset don't silently drift apart.
 
 use ratatui::style::{Color, Style};
@@ -261,12 +261,12 @@ mod tests {
     }
 
     /// A gate against code/asset drift: the `GLYPH` table must match
-    /// `artwork/mindfork-icon-transparent.svg` — the single source of geometry.
+    /// `assets/mindfork-icon-transparent.svg` — the single source of geometry.
     #[test]
-    fn glyph_matches_artwork_svg() {
+    fn glyph_matches_asset_svg() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/artwork/mindfork-icon-transparent.svg"
+            "/assets/mindfork-icon-transparent.svg"
         );
         let svg = std::fs::read_to_string(path).expect("the icon is in place");
         let from_svg = parse_rects(&svg);
@@ -276,7 +276,7 @@ mod tests {
             .collect();
         assert_eq!(
             from_svg, from_code,
-            "GLYPH diverged from artwork/mindfork-icon-transparent.svg — \
+            "GLYPH diverged from assets/mindfork-icon-transparent.svg — \
              update the table or the asset"
         );
     }
@@ -286,7 +286,7 @@ mod tests {
     fn ink_bounds_match_svg_viewbox() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/artwork/mindfork-icon-transparent.svg"
+            "/assets/mindfork-icon-transparent.svg"
         );
         let svg = std::fs::read_to_string(path).expect("the icon is in place");
         assert!(

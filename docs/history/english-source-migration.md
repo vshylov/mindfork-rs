@@ -43,7 +43,7 @@ in-test assertion strings that check `ru` output, intentional `[ru]` desktop /
 ## Phases (one commit each, on `chore/english-source`)
 0. **Tooling + glossary + 2 validation samples**, then pause for glossary review.
 1. **Living docs** — README, spec, architecture, install, import-format, AGENTS,
-   roadmap, CHANGELOG, ADRs, PR template, artwork/README.
+   roadmap, CHANGELOG, ADRs, PR template, assets/README.
 2. **CLAUDE.md** (7k-line journal) via split/translate/reassemble.
 3. **Archive docs** — `docs/history/*`, `docs/research/*`, `docs/notes-vec0.md`.
 4. **Code comments** (~11.4k lines) — subagents batched by directory cluster;

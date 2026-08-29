@@ -51,7 +51,7 @@ pub fn platform() -> String {
 /// The timestamp is compiled in by `build.rs` (`MINDFORK_BUILD_EPOCH`, Unix
 /// seconds; `SOURCE_DATE_EPOCH` overrides it for reproducible builds). Cargo
 /// re-runs a build script only when one of its declared `rerun-if-changed`
-/// paths moves — ours are `dictionaries/`, `artwork/` and `syntaxes/` — so
+/// paths moves — ours are `dictionaries/`, `assets/` and `syntaxes/` — so
 /// editing `src/` rebuilds the binary **without** re-running the script: a
 /// development build would show the date of some unrelated day and go on
 /// showing it. `debug_assertions` is the honest line between the two cases: a

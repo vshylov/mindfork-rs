@@ -16,14 +16,14 @@ on:
   pull_request:
     paths:
       - "site/**"
-      - "artwork/**"
+      - "assets/**"
       - "tools/site_sync_assets.py"
       - ".github/workflows/site.yml"
   push:
     branches: [main]
     paths:
       - "site/**"
-      - "artwork/**"
+      - "assets/**"
       - "tools/site_sync_assets.py"
       - ".github/workflows/site.yml"
   # Manual redeploy (e.g. after an infra change with no site diff).
@@ -50,7 +50,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: zola@0.22.1
-      - name: Mirror brand assets from artwork/
+      - name: Mirror brand assets into site/static/
         run: python tools/site_sync_assets.py
       - name: Check internal links
         run: zola --root site check --skip-external-links
@@ -75,7 +75,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: zola@0.22.1
-      - name: Mirror brand assets from artwork/
+      - name: Mirror brand assets into site/static/
         run: python tools/site_sync_assets.py
       - name: Build
         run: zola --root site build

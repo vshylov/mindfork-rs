@@ -7,7 +7,7 @@ typeface gets substituted, and the wordmark looks broken. So the glyphs are conv
 the file becomes self-contained and renders the same everywhere.
 
 Font: **JetBrains Mono ExtraBold** (SIL Open Font License 1.1) — determined from the
-reference `wordmark-example.png` by fitting metrics (see `artwork/README.md §Font`).
+reference `wordmark-example.png` by fitting metrics (see `assets/README.md §Font`).
 The OFL permits using the font to create artwork and distributing the
 resulting outlines; the font file itself isn't checked into the repo — it's only needed for
 regeneration.
@@ -16,10 +16,10 @@ The lockup's geometry (the icon-to-text proportions) was measured from the refer
 `ASC_RATIO`/`GAP_RATIO`/`BASE_RATIO`/`TRACKING` below.
 
 Run:
-    python artwork/build-wordmarks.py [--font <path to JetBrainsMono-ExtraBold.ttf>]
+    python assets/build-wordmarks.py [--font <path to JetBrainsMono-ExtraBold.ttf>]
 
 Without `--font` the font is looked up in standard locations (system fonts, JetBrains
-IDE bundles). Overwrites `artwork/mindfork-wordmark*.svg`.
+IDE bundles). Overwrites `assets/mindfork-wordmark*.svg`.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
-# --- Brand palette (see artwork/README.md) ---------------------------------
+# --- Brand palette (see assets/README.md) ---------------------------------
 ORANGE = "#c25a27"  # accent: "fork" and the glyph's stem
 GRAY = "#5c6370"  # the glyph's branches
 PLATE = "#09090b"  # the icon's backdrop
@@ -108,7 +108,7 @@ def glyph_paths(font: TTFont, text: str, start_index: int = 0) -> str:
 
 def ink_width(text: str = "mindfork") -> float:
     """The word's ink width in font units (for layout and the viewBox)."""
-    # 'm'.xMin=38 … 'k'.xMax=580 (measured against the font; see artwork/README.md)
+    # 'm'.xMin=38 … 'k'.xMax=580 (measured against the font; see assets/README.md)
     return (len(text) - 1) * ADV + 580 - LSB_M
 
 

@@ -80,7 +80,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   but are read by the build or a gate test — established by grepping
   `include_str!`/`include_bytes!`/`CARGO_MANIFEST_DIR`, not by assumption — and
   therefore must never be in it: **`LICENSE`** (`include_str!` in
-  `shared/credits.rs`, asserted by a test), **`artwork/*.svg`** (parsed by the
+  `shared/credits.rs`, asserted by a test), **`assets/*.svg`** (parsed by the
   `widgets/logo.rs` "code ≡ asset" gate), **`locales/*.json`** (`include_str!` +
   the i18n parity gates), **`Cargo.toml`/`Cargo.lock`** (the credits gates), plus
   `tools/`, `packaging/`, `dictionaries/`, `tests/fixtures/` and `.github/`

@@ -42,7 +42,7 @@ track should encourage day-to-day root usage.
 
 The site does not start from a blank page — three finished tracks feed it:
 
-- **Brand identity** ([artwork/README.md](../../artwork/README.md),
+- **Brand identity** ([assets/README.md](../../assets/README.md),
   [docs/branding.md](../branding.md)): palette (accent `#c25a27`, branches
   `#5c6370`, backplate `#09090b`, text `#e4e4e7`/`#18181b`, tagline
   `#71717a`), **JetBrains Mono ExtraBold** (OFL 1.1), the pixel 16×16 glyph
@@ -50,7 +50,7 @@ The site does not start from a blank page — three finished tracks feed it:
   self-contained SVGs (dark/light/mono/stacked/tagline), icons 16–256 px and a
   ready `.ico` favicon, the tagline `TUI · RUST · LOCAL LLM`.
 - **Generated screenshots** ([docs/history/demo-screenshots.md](../history/demo-screenshots.md)):
-  `artwork/screenshots/*.png` — five screens × dark/light, produced from JSON
+  `assets/screenshots/*.png` — five screens × dark/light, produced from JSON
   frame dumps by `tools/screenshots.py` and guarded against rot by a unit
   test. The site can embed these PNGs on day one; the deferred **SVG writer
   (stage 4)** belongs to this track's later stages — the site decides the
@@ -228,7 +228,7 @@ themes (**tabi** — which does prove `ru` localization in the wild,
 **abridge**) are general dev-blog designs still on ≤ 0.22. Meanwhile the
 brand system the site must express (palette, JetBrains Mono, the pixel
 glyph, dark/light) is already fully specified in
-[artwork/README.md](../../artwork/README.md) — a stock theme would fight
+[assets/README.md](../../assets/README.md) — a stock theme would fight
 it. A Zola theme is a handful of Tera templates plus Sass; terminimal
 serves as visual prior art, not a dependency (MIT, so borrowing fragments
 is clean).
@@ -250,9 +250,9 @@ site/
   sass/                  # brand palette as variables; dark/light via
                          # prefers-color-scheme + manual toggle
   static/
-    screenshots/ → sourced from artwork/screenshots (see §5.4)
+    screenshots/ → sourced from assets/screenshots (see §5.4)
     fonts/               # JetBrainsMono woff2 subset, self-hosted
-    favicon.ico → artwork/mindfork.ico
+    favicon.ico → assets/mindfork.ico
 infra/
   website.cfn.yaml       # the one CloudFormation stack (us-east-1)
 .github/workflows/site.yml
@@ -296,7 +296,7 @@ idempotent, the whole site infra reviewable in one PR.
 ### 5.4 Screenshots flow
 
 Stage 1 embeds the existing PNGs (copied into `site/static/` at build time —
-single source of truth stays `artwork/screenshots/`). The later stage builds
+single source of truth stays `assets/screenshots/`). The later stage builds
 the deferred **SVG writer** in `tools/screenshots.py` with the exact sizes
 and the dark/light switching the site's design settles on — closing the
 roadmap item as designed, from the consumer side.
@@ -307,7 +307,7 @@ roadmap item as designed, from the consumer side.
   (`taiki-e/install-action` — the official docs' recommended Actions route;
   pinned to 0.22.1 until the #3229 fix ships, then 0.23.x) → `zola check`
   (broken links) → `zola build` — a build gate, no deploy.
-- **Push to `main`** touching `site/**` or `artwork/screenshots/**`:
+- **Push to `main`** touching `site/**` or `assets/screenshots/**`:
   build → OIDC role → `s3 sync --delete` → invalidate `/*`.
 - Repo gates: `site/` needs a `cyrillic_scan.py` carve-out only when `/ru/`
   content lands (same class of exemption as `locales/*.json`).

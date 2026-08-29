@@ -47,7 +47,7 @@ read [lessons.md](../lessons.md).
   number, not a migration. The 0.22.1 file-watcher also never fires on
   Windows, so the dev loop is "edit → restart `zola serve`" — worth knowing
   before doubting one's own CSS.
-- **S1 scaffold**: a custom theme on the brand system (artwork/README.md) —
+- **S1 scaffold**: a custom theme on the brand system (assets/README.md) —
   dark/light with a toggle (localStorage, `prefers-color-scheme` fallback
   for no-JS; the wordmark and every screenshot swap per theme), JetBrains
   Mono woff2 self-hosted (Cyrillic subset included for the future `/ru/`),
@@ -62,8 +62,8 @@ read [lessons.md](../lessons.md).
   to right-aligned caption glyphs (`─ □ ✕`) to not suggest a platform the
   app does not support.
 - **Repo integration**: brand assets under `site/static/` are derived data
-  mirrored from `artwork/` by `tools/site_sync_assets.py` (gitignored, so
-  the screenshots' single source of truth stays rot-gated in `artwork/`);
+  mirrored from `assets/` by `tools/site_sync_assets.py` (gitignored, so
+  the screenshots' single source of truth stays rot-gated in `assets/`);
   `link_check.py` skips `site/` (its links live in Zola's URL space, which
   `zola build` checks itself); `cyrillic_scan.py` skips `.woff2` (binary
   fonts legitimately carry Cyrillic glyph bytes). Tests: **no Rust
@@ -110,7 +110,7 @@ read [lessons.md](../lessons.md).
 ### Post-M9: website — S3 CI deploy (site.yml: PR gate + OIDC deploy) (done)
 
 - **`.github/workflows/site.yml`** (branch `feat/website-ci`): pull requests
-  touching `site/**`, `artwork/**`, the asset-mirror script or the workflow
+  touching `site/**`, `assets/**`, the asset-mirror script or the workflow
   itself get a **build gate** — pinned Zola 0.22.1
   (`taiki-e/install-action`, matching local dev until getzola/zola#3229
   ships), the asset mirror, `zola check --skip-external-links` (internal
@@ -211,7 +211,7 @@ read [lessons.md](../lessons.md).
   holds a neofetch-style **"at a glance" card** in the standard `.term`
   chrome (branch `feat/site-hero-fetch-panel`): a box-drawing rendition
   of the brand icon's topology (accent trunk, two `--branch` merges — the
-  same two-tone fork as `artwork/`) beside seven key→value rows: engine /
+  same two-tone fork as `assets/`) beside seven key→value rows: engine /
   cloud / memory / tools / ui / runs on / license. Every value restates a
   fact the features section already claims; the panel deliberately shows
   **no fake command line** (its window title is "mindfork — at a glance")

@@ -1,6 +1,6 @@
 # Design plan: logo and wordmark integration
 
-Track: bring the newly created `artwork/` directory to a full-fledged identity —
+Track: bring the newly created `assets/` directory to a full-fledged identity —
 make the assets portable, set up a brand guide, embed the icon into packaging
 (Windows exe/installer, Linux menu) and into the TUI itself, and put the
 wordmark into the documentation.
@@ -11,7 +11,7 @@ Packaging precedent — [installers.md](history/installers.md).
 
 ---
 
-## 1. What's already there (`artwork/` inventory)
+## 1. What's already there (`assets/` inventory)
 
 | File | What it is | Usable as-is |
 |---|---|---|
@@ -73,9 +73,9 @@ reference **pixel-for-pixel** — total word width 1249 px and the "icon → tex
 gap 213 px in both; a confirming detail — the descender of `o`/`d` (−10 font
 units) predicts their bottom edge exactly at the measured 348 px.
 
-The assets are reproducible: `artwork/build-wordmarks.py` (palette, tracking,
+The assets are reproducible: `assets/build-wordmarks.py` (palette, tracking,
 and lockup proportions as constants), provenance and usage rules —
-`artwork/README.md`. Side effect: `viewBox` values were tightened to the
+`assets/README.md`. Side effect: `viewBox` values were tightened to the
 actual content (horizontal — `219.9×48`, vertical — `128×99.4`, with the
 tagline — `238.2×57.9`) instead of the previous values, which never rendered
 correctly.
@@ -86,7 +86,7 @@ correctly.
 
 ```mermaid
 flowchart TB
-    ART["artwork/ — single source"]
+    ART["assets/ — single source"]
     subgraph PKG["Packaging"]
         WIN["Windows: .exe icon (winresource)<br/>+ Inno: SetupIconFile, wizard images"]
         LIN["Linux: .desktop + hicolor icons<br/>(nfpm → deb/rpm/pacman)"]
@@ -96,7 +96,7 @@ flowchart TB
     end
     subgraph DOC["Documentation"]
         RM["README: wordmark in the header<br/>(dark/light via picture)"]
-        BG["artwork/README.md — brand guide"]
+        BG["assets/README.md — brand guide"]
     end
     ART --> WIN
     ART --> LIN
@@ -129,7 +129,7 @@ fn embed_windows_icon() {
         return; // Windows host, but a different target — the resource doesn't apply
     }
     let mut res = winresource::WindowsResource::new();
-    res.set_icon(".../artwork/mindfork.ico");
+    res.set_icon(".../assets/mindfork.ico");
     if let Err(err) = res.compile() {
         println!("cargo:warning=could not embed the icon into .exe: {err}");
     }
@@ -145,7 +145,7 @@ Side effect: `UninstallDisplayIcon={app}\mindfork-rs.exe` in
 
 Separately, `[Setup]` got `SetupIconFile` (the icon of `setup.exe` itself) and
 `WizardSmallImageFile` — a logo in the header of the wizard pages
-(`artwork/mindfork-wizard-small.png`, 138×140 — the modern-style size at 100%
+(`assets/mindfork-wizard-small.png`, 138×140 — the modern-style size at 100%
 DPI, a white background under Inno's white header). We **don't** do a large
 `WizardImageFile` (a panel on the "Finished" page) — that's a separate
 composition, and the welcome page is disabled by default in Inno 6; future
@@ -254,7 +254,7 @@ FSD):
   isn't retinted by the theme (that's a property of it as a mark). The only
   exception is degenerate terminals;
 - **a gate against drifting from the asset**: a test parses the `<rect>`
-  elements from `artwork/mindfork-icon-transparent.svg` and cross-checks them
+  elements from `assets/mindfork-icon-transparent.svg` and cross-checks them
   against the constants table in the code. The same technique as the existing
   gates (i18n key-parity, "labels fit within `LABEL_CAP`") — the asset and the
   code won't silently drift apart.
@@ -288,7 +288,7 @@ on `d`/`f`/`k`, and **2-pixel strokes** — exactly the weight of the glyph's
 bars (in its grid they're also 2 units).
 
 Proportions are taken from the horizontal lockup (metrics —
-`artwork/README.md`), not eyeballed:
+`assets/README.md`), not eyeballed:
 
 | Quantity | Brand | In the terminal |
 |---|---|---|
@@ -342,15 +342,15 @@ first frame and gets annoying with frequent launches.
 
   ```html
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="artwork/mindfork-wordmark-dark.svg">
-    <img alt="mindfork" src="artwork/mindfork-wordmark-light.svg" width="330">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mindfork-wordmark-dark.svg">
+    <img alt="mindfork" src="assets/mindfork-wordmark-light.svg" width="330">
   </picture>
   ```
 
   Condition R1 (text as outlines) is met — §2. We keep `alt` as text: the
   heading stays accessible for screen readers and for those with images
   disabled.
-- **`artwork/README.md`** — a brand guide: palette with HEX codes, the purpose
+- **`assets/README.md`** — a brand guide: palette with HEX codes, the purpose
   of each file, which variant to use where, clear space, what and how to use
   to regenerate the assets (otherwise in six months nobody will remember where
   the `.ico` came from).
@@ -364,7 +364,7 @@ first frame and gets annoying with frequent launches.
 **User's decisions (2026-07-18):** R1 — (a) outlines; **R2 — (a) in the `F1`
 header**; **R3 — (a) leave the theme alone**; **R4 — (a) `.desktop` with
 `Terminal=true`**. R5–R7 stay per the recommendation (don't do it /
-`artwork/` as the source / future work).
+`assets/` as the source / future work).
 
 | # | Question | Options | Decision |
 |---|---|---|---|
@@ -373,7 +373,7 @@ header**; **R3 — (a) leave the theme alone**; **R4 — (a) `.desktop` with
 | **R3** | Brand orange `#c25a27` as the theme accent | (a) leave the theme alone; (b) replace `accent`; (c) a new "brand" theme | ✅ **(a)** — `accent` carries the meaning "activity" (generation, the token counter); retinting would break the semantics for the sake of cosmetics. The logo is already drawn in the brand colors anyway |
 | **R4** | `.desktop` for a TUI application | (a) yes, `Terminal=true`; (b) no | ✅ **(a)** — standard practice for console programs (htop and the like); without it, theme icons are pointless |
 | **R5** | A CLI banner (`--version`/help) | (a) no; (b) ASCII-art wordmark | **(a)** — would need a separate ASCII asset and its upkeep; the payoff is cosmetic |
-| **R6** | Where the build assets live | (a) `artwork/` as the single source, packaging references it; (b) copies in `packaging/` | **(a)** — copies drift apart |
+| **R6** | Where the build assets live | (a) `assets/` as the single source, packaging references it; (b) copies in `packaging/` | **(a)** — copies drift apart |
 | **R7** | AppStream metainfo (GNOME/KDE software centers) | (a) future work; (b) now | **(a)** — software centers give little benefit for a `Terminal=true` application; revisit when the repository goes public |
 
 ---
@@ -385,12 +385,12 @@ packaging and CI, parallel branches would conflict on files.
 
 | Stage | Branch | Content | Live run |
 |---|---|---|---|
-| **1** | `feat/brand-assets` | assets in git; ~~R1 (text to outlines)~~ ✅; ~~`artwork/README.md`~~ ✅; what remains — wordmark in the README header | not required (assets/docs). SVGs verified by rasterization and comparison against the reference (§2) |
+| **1** | `feat/brand-assets` | assets in git; ~~R1 (text to outlines)~~ ✅; ~~`assets/README.md`~~ ✅; what remains — wordmark in the README header | not required (assets/docs). SVGs verified by rasterization and comparison against the reference (§2) |
 | **2** ✅ | `feat/windows-icon` | `winresource` in `build.rs`; `SetupIconFile` + `WizardSmallImageFile` in `.iss`; `cargo deny` for the new dependency | **done**: the icon extracted from `.exe` and `setup.exe` (colors cross-checked), `.iss` compiled, the wizard screenshotted |
 | **3** ✅ | `feat/linux-desktop-entry` | `.desktop` + hicolor icons in `nfpm.yaml`; checks in the `packaging.yml` smoke | **done**: YAML/paths/`.desktop` structure verified locally; container installs — up to `packaging.yml` on the PR |
 | **4** ✅ | `feat/tui-logo` | `widgets/logo.rs` (half-block 10×6) + the `F1` header + a "code ≡ SVG" gate test | **done**; no live run needed (pure UI, covered by `TestBackend`) |
 
-Stage 1 goes first: until the wordmark is fixed and `artwork/` is in git, the
+Stage 1 goes first: until the wordmark is fixed and `assets/` is in git, the
 other stages have nothing to build on.
 
 **Each stage's DoD** — standard (AGENTS.md): `fmt`/`clippy -D warnings`/`test`

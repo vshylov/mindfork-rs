@@ -98,32 +98,32 @@ contents:
   # (mindfork), so the source files are renamed on install.
   # We don't add cache-refresh scriptlets: both Debian (the update-icon-caches
   # trigger) and Fedora (a file trigger on /usr/share/icons/hicolor) do it themselves.
-  - src: ./artwork/mindfork-icon-16.png
+  - src: ./assets/mindfork-icon-16.png
     dst: /usr/share/icons/hicolor/16x16/apps/mindfork.png
     file_info:
       mode: 0644
-  - src: ./artwork/mindfork-icon-32.png
+  - src: ./assets/mindfork-icon-32.png
     dst: /usr/share/icons/hicolor/32x32/apps/mindfork.png
     file_info:
       mode: 0644
-  - src: ./artwork/mindfork-icon-48.png
+  - src: ./assets/mindfork-icon-48.png
     dst: /usr/share/icons/hicolor/48x48/apps/mindfork.png
     file_info:
       mode: 0644
-  - src: ./artwork/mindfork-icon-64.png
+  - src: ./assets/mindfork-icon-64.png
     dst: /usr/share/icons/hicolor/64x64/apps/mindfork.png
     file_info:
       mode: 0644
-  - src: ./artwork/mindfork-icon-128.png
+  - src: ./assets/mindfork-icon-128.png
     dst: /usr/share/icons/hicolor/128x128/apps/mindfork.png
     file_info:
       mode: 0644
-  - src: ./artwork/mindfork-icon-256.png
+  - src: ./assets/mindfork-icon-256.png
     dst: /usr/share/icons/hicolor/256x256/apps/mindfork.png
     file_info:
       mode: 0644
   # The vector variant — with a backdrop, like the raster ones (a consistent look in the menu).
-  - src: ./artwork/mindfork-icon.svg
+  - src: ./assets/mindfork-icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/mindfork.svg
     file_info:
       mode: 0644

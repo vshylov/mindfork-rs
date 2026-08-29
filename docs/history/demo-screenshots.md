@@ -67,7 +67,7 @@ when the committed captures no longer match the code.
   assembled into any ready-made chat.
 - **Python tool conventions.** `tools/*.py` are stdlib-only (urllib, not
   requests) + argparse; the one third-party precedent is
-  `artwork/build-wordmarks.py`, which uses `fontTools` and probes the system
+  `assets/build-wordmarks.py`, which uses `fontTools` and probes the system
   for JetBrains Mono with an explicit `--font` override — the exact pattern
   a raster renderer needs.
 
