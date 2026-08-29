@@ -1,11 +1,11 @@
 # Research: gpt-oss-120b (split Q8_0) on the live e2e gate
 
-**Status:** **done.** Forks F1–F6 resolved (*user's decision, 2026-08-29*); the
-runner, the workflow and the tests are on `feat/e2e-gpt-oss-120b`
-([PR #417](https://github.com/vshylov/mindfork-rs/pull/417)), and the full suite
-has been dispatched against the model — **117 passed, 11 failed, none of them a
-product defect** (§10). **Ten of the eleven are repaired and re-verified live**;
-one is left deliberately (§10.2).
+**Status:** **done, and dispatched from CI.** Forks F1–F6 resolved (*user's
+decision, 2026-08-29*); merged as
+[PR #417](https://github.com/vshylov/mindfork-rs/pull/417). The local dispatch
+found **117 passed, 11 failed, none of them a product defect** (§10), ten of
+which were repaired and re-verified live; the CI dispatch that followed the merge
+is **124 passed, 1 failed**, and that one failure is not this track's (§10.3).
 **Date:** 2026-08-29.
 **Extends:** [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md) (the
 gate itself, stages 0–3) and
@@ -13,9 +13,9 @@ gate itself, stages 0–3) and
 (how a second chat model was added — the shape this one follows).
 **Journal:** [docs/journal/ci.md](../journal/ci.md).
 
-**Total spend: ≈$2.75**, across eight throwaway endpoints — the probes, one
-full dispatch and two re-verifications. Every endpoint deleted, every deletion
-verified.
+**Total spend: ≈$4.65**, across eleven throwaway endpoints — the probes, a local
+dispatch, two re-verifications and the CI dispatch. Every endpoint deleted, every
+deletion verified.
 
 ## 1. Why this model, and not just a third of the same kind
 
@@ -393,7 +393,7 @@ route; the smoke now removes the other routes instead. Re-verified live,
 2026-08-30: `turn 2 tool calls: ["code_read"]`, and
 `F5 on this server: no-go - no parsed tool call` printed as the evidence it is.
 
-### 10.2. Left red on purpose
+### 10.2. Left alone on purpose — and flaky, not red
 
 **`fetch_url_address_policy_e2e_live`** — "I'm unable to fetch that URL", with no
 tool call, so the address policy was never exercised. gpt-oss refuses markedly
@@ -402,5 +402,49 @@ arm answered "I'm sorry, but I can't help with that" and *passed*, because there
 a refusal is the control). Firming the prompt into "you must call `fetch_url`"
 would change what the smoke asks of Gemma and Qwen, where it is green today, to
 fix a model that is arguably behaving well — so it stays as it is, known and
-written down (*user's decision, 2026-08-30*). A dispatch on this model is
-therefore expected at **127 passed, 1 failed**.
+written down (*user's decision, 2026-08-30*).
+
+**Correction, from the CI dispatch (§10.3): it is not reliably red.** This
+document previously predicted "127 passed, 1 failed" for a dispatch on this
+model, reasoning from the single local run. In CI the same smoke **passed** — the
+model called the tool. So the honest description is a *flake on this model*
+(refuses sometimes, complies sometimes), not a standing failure, which makes the
+case for leaving it alone stronger rather than weaker: there is no permanent red
+to get used to, and a prompt firm enough to remove the flake would be firm enough
+to change the test for the two families where it never flakes.
+
+### 10.3. The CI dispatch — 124 passed, 1 failed
+
+[Run 33276655992](https://github.com/vshylov/mindfork-rs/actions/runs/33276655992),
+`workflow_dispatch` on `main` with `model: gpt-oss-120b` and the instance left at
+`model-default`, 2026-08-29: 20 min 41 s wall, endpoints ready in 320 s, suite
+859 s, three endpoints deleted and the "Endpoints still alive" step reporting
+`(no endpoints)`. ≈$1.90.
+
+**What this dispatch existed to prove** is the half a local run cannot: the
+workflow's own path. It holds — the log shows `chat hardware: nvidia-h200 x1 @
+aws/us-west-2` and `variant Q8_0/*`, i.e. `model-default` resolved through the
+model record to a GPU *and the region that GPU lives in*, and both declarations
+were derived and printed (`MINDFORK_LIVE_TEXT_ONLY=1`,
+`MINDFORK_LIVE_SPLIT_MODEL=1`). The three vision smokes skipped by name, and the
+split chain reported `/repository/Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf`
+shown as `gpt-oss-120b-Q8_0`.
+
+**The single failure is `runs_real_python_in_sandbox`, and it is not about this
+model.** The smoke provisioned its own sandbox on the runner (`Done. Python
+sandbox installed.`) and then died inside it:
+
+```
+error: compile error: Validate("Failed to create V8 module: null module reference returned from V8")
+```
+
+That is the `wasmer`/WASIX sidecar failing on `ubuntu-latest`, in a smoke that
+never speaks to the engine at all — so it is model-independent by construction
+and would fail identically on a Gemma or Qwen dispatch today. It is *not* the
+old "no wasmer on this machine" note from remote-e2e-hf.md §3: since then the
+smoke learned to install one, so what used to be an absent sandbox is now a
+broken one. **Out of this track's scope, and worth its own.**
+
+The count also differs from the local run for a boring reason: Linux compiles
+nine fewer tests than Windows (the real-clipboard round trip among them), so the
+live set is 125 there against 128 here.
