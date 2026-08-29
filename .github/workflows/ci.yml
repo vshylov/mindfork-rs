@@ -43,7 +43,7 @@ jobs:
   # The allowlist is deliberately narrow — an *allowlist*, so anything new or
   # unrecognized falls through to running the tests. Files that look like docs
   # but are read by the build or by a gate test, and therefore must NOT be in
-  # it: LICENSE (include_str! in shared/credits.rs), artwork/*.svg (parsed by
+  # it: LICENSE (include_str! in shared/credits.rs), assets/*.svg (parsed by
   # the widgets/logo.rs gate), locales/*.json (include_str! + the i18n gates),
   # Cargo.toml / Cargo.lock (the credits gates), tools/, packaging/,
   # dictionaries/, tests/fixtures/ and .github/ itself.

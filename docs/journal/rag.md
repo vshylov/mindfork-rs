@@ -920,7 +920,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **A process trap worth recording** (cost ~20 min of false debugging): a
   subagent building the crate in a *copy* of the tree poisoned the shared
   `target/`, so `cargo test` ran artifacts compiled from other sources — seven
-  tests "failed", six with `Cargo.toml`/`Cargo.lock`/`artwork` **not found**
+  tests "failed", six with `Cargo.toml`/`Cargo.lock`/`assets` **not found**
   (`CARGO_MANIFEST_DIR` baked in from the copy) and one asserting against a
   locale string it had never been compiled with. `cargo clean -p mindfork-rs`
   restored a clean 1420/0. When delegating, keep subagents out of a second build

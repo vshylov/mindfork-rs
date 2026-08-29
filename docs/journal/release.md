@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -39,6 +39,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the Windows installer moves to Inno Setup 7 (done)
 - Post-M9: the binary/command renamed to `mindfork` (done)
 - Release 0.9.8 (prepared)
+- Post-M9: `artwork/` renamed to `assets/` (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -439,13 +440,13 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 
 ### Post-M9: branding — logo and wordmark (stages 1–4) (done)
 - **A new "branding" track** (design doc [docs/branding.md](../../docs/branding.md)):
-  bring the `artwork/` directory to full-fledged branding — portable assets,
+  bring the `assets/` directory to full-fledged branding — portable assets,
   a brand guide, a packaging icon, a TUI logo, a wordmark in the docs.
   Forks R1–R7 confirmed by the user on 2026-07-18: **R2** — the logo in the
   help overlay's header (`F1`), **R3** — leave the interface palette
   **untouched** (`accent` carries the meaning "activity"; the logo is drawn
   in the brand colors), **R4** — `.desktop` with `Terminal=true`; R5–R7 per
-  the recommendation (no CLI banner, `artwork/` is the single source,
+  the recommendation (no CLI banner, `assets/` is the single source,
   AppStream — future work).
 - **Stage 1 `feat/brand-assets`** — assets committed to git + a wordmark
   repair. **Key finding**: all six `mindfork-wordmark*.svg` carried
@@ -464,9 +465,9 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   detail — the descender of `o`/`d` (−10 font units) predicts their bottom
   edge exactly at the measured 348 px. The font was found locally (bundled
   with PyCharm) — no download needed; the `.ttf` isn't checked into the repo
-  (needed only for regeneration). Added `artwork/build-wordmarks.py` (a
+  (needed only for regeneration). Added `assets/build-wordmarks.py` (a
   generator; the palette, tracking, and lockup proportions are constants)
-  and `artwork/README.md` (a brand guide: palette, glyph geometry, metrics,
+  and `assets/README.md` (a brand guide: palette, glyph geometry, metrics,
   usage rules). The `viewBox` values were tightened to the actual content
   (`219.9×48` instead of `340×80` etc.) — the previous values assumed a size
   twice the reference and never rendered correctly; the vertical lockup was
@@ -488,7 +489,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   builds Windows on a windows runner). A failure to embed doesn't break the
   build (`cargo:warning`) — the app must still build on a machine without
   the Windows SDK. `SetupIconFile` and `WizardSmallImageFile` were added to
-  `.iss` (`artwork/mindfork-wizard-small.png`, 138×140 — the size for the
+  `.iss` (`assets/mindfork-wizard-small.png`, 138×140 — the size for the
   modern style, a white background under Inno's white header);
   `UninstallDisplayIcon` and the `[Icons]` shortcuts picked up the icon on
   their own.
@@ -541,7 +542,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   isn't drawn at all — the hotkeys aren't pushed around and no extra scroll
   appears (the same degradation as the scrollbar and Mermaid).
 - **A "code ≡ asset" gate**: a test parses the `<rect>` elements from
-  `artwork/mindfork-icon-transparent.svg` and cross-checks them against the
+  `assets/mindfork-icon-transparent.svg` and cross-checks them against the
   `GLYPH` table in the code — the asset and the code won't silently drift
   apart (the technique mirrors i18n key-parity and `LABEL_CAP`).
   **Mutation-tested**: editing one constant fails the test with a clear
@@ -562,7 +563,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   Assets/packaging untouched; changes only in `widgets/logo.rs` and
   `screens/chat/popups.rs`.
 - **The wordmark is a custom pixel font, not the SVG.** Reusing
-  `artwork/mindfork-wordmark*.svg` isn't possible: the text there **has been
+  `assets/mindfork-wordmark*.svg` isn't possible: the text there **has been
   converted to outlines** (stage 1, §2 of branding.md) — there's nothing to
   rasterize them with in the terminal. So `logo.rs` gained a `#`/`.` matrix
   per letter (`WORDMARK`, 8 glyphs for the word), drawn with the same
@@ -571,7 +572,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   same weight as the icon's bars (its grid also uses 2-unit bars). The
   result — 52 columns × 4 rows; the lockup as a whole — **65×6**.
 - **Proportions taken from the brand metrics, not eyeballed**
-  (`artwork/README.md`): word height = `0.5227 × S`, where `S` is the
+  (`assets/README.md`): word height = `0.5227 × S`, where `S` is the
   **icon size** (16) → ≈ 8 pixels = 4 rows vs. 6; the baseline
   (`0.7418 × S`) → the word's bottom sits **one row above** the icon's
   bottom (`WORDMARK_TOP_ROW = 1`); the gap `0.3608 × S` is measured from the
@@ -894,7 +895,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   span; named-ANSI mapped to xterm values; canvas constants live next to the
   palettes in `theme.rs`); `app/demo_shots` holds the recipe (`ChatScreen`,
   `set_settings(Dark, En)`, `Ready` server statuses, `TestBackend` 116x44) and
-  the `#[ignore]` regenerator writing `artwork/screenshots/dumps/`.
+  the `#[ignore]` regenerator writing `assets/screenshots/dumps/`.
 - **`tools/screenshots.py`** (Pillow + fontTools — the `build-wordmarks.py`
   third-party precedent): glyphs are placed by grid cell, so the dump's
   geometry is authoritative and font metrics cannot drift the layout;
@@ -967,7 +968,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **README**: a theme-aware hero `<picture>` (dark/light PNGs switched by
   `prefers-color-scheme`) plus a `<details>` gallery of the other four, and
   a stated promise next to them: screenshots are generated from code and a
-  gate fails the build when they drift. `artwork/screenshots/README.md`
+  gate fails the build when they drift. `assets/screenshots/README.md`
   documents the two-command regeneration.
 - **Tests**: 1972 unit green (+1: the drift gate; the determinism, grid and
   showcase guards now sweep the whole matrix), 85 `#[ignore]` unchanged.
@@ -1449,3 +1450,46 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   header carries the new version (its test count and date were already
   current); README's project-status paragraph moves `v0.9.7` / 2304 / 99 →
   `v0.9.8` / 2616 / 109.
+
+### Post-M9: `artwork/` renamed to `assets/` (done)
+- **Why**: the directory had outgrown its name. It started as logo sources — the
+  icon, the wordmarks, `mindfork.ico`, the generator and the brand guide — and
+  since the demo-screenshots track it also carries `screenshots/`: the rendered
+  PNG/SVG and the JSON frame dumps behind them. A `fontTools` script and a set of
+  serialized terminal frames are not artwork, and the repository's own prose had
+  already stopped calling them that — `.gitignore` says "brand assets mirrored
+  from …", the mirror script is `tools/site_sync_assets.py`, `.dockerignore`
+  calls the directory "a Windows-only build input". `assets/` is the word the
+  repo was using; the directory name just hadn't caught up.
+- **`media/` was proposed and rejected**: it means images/audio/video, which
+  excludes `build-wordmarks.py` and `screenshots/dumps/*.json`, and in *this*
+  repository a top-level `media/` reads as runtime media — the app attaches
+  images to messages (spec §9.10). A `brand/` was rejected for the opposite
+  reason: product screenshots are not brand assets, and splitting them out would
+  have made the rename a restructuring.
+- **The rename is a build change, not a docs change.** The directory is an input
+  to three build systems, so a prose-only sweep would have left `cargo test`
+  green and the installer broken: `build.rs` (`rerun-if-changed` plus the
+  `winresource` icon embed), `packaging/nfpm.yaml` (six hicolor PNGs and the
+  scalable SVG), `packaging/windows/mindfork.iss` (`SetupIconFile`,
+  `WizardSmallImageFile` — the two backslash paths), `site.yml`'s `paths:`
+  trigger, `tools/site_sync_assets.py`, `tools/screenshots.py`, and the two
+  `CARGO_MANIFEST_DIR` joins in `widgets/logo.rs` and `app/demo_shots.rs`.
+- **`git mv` for the 50 files** so `git log --follow` keeps working, then one
+  scripted rewrite of **119 references across 29 files**, with the English noun
+  protected by an assertion in the script: the OFL clause in `assets/README.md`
+  and `build-wordmarks.py` — permission "to create artwork and distribute the
+  resulting curves" — is the word, not the path, and stays. The only identifier
+  carrying the old name, `widgets::logo::tests::glyph_matches_artwork_svg`,
+  became `glyph_matches_asset_svg`.
+- **Journal and history prose was rewritten too**, not just the relative links
+  `link_check.py` would have caught. A past entry naming a directory that no
+  longer exists costs the next reader more than a rewritten record does; what the
+  entries say happened is unchanged.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **2679 unit tests, 126 `#[ignore]`**, the count unmoved by
+  the rename; the documentation gates (`cyrillic_scan`, `link_check`,
+  `doc_index_check`, `list_scroll_check`, `wizard_rtf --check`) green, and
+  `tools/site_sync_assets.py` re-run by hand mirrors its 25 files from the new
+  path. No live run needed — nothing on an engine, memory or tool path is
+  touched.

@@ -2841,7 +2841,7 @@ tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name and
 description, then the facts — version, build date (`YYYY-MM-DD`, UTC; stamped in by
 `build.rs` and shown in **release builds only** — cargo does not re-run a build script
 when `src/` changes, so a development binary would carry the date of whenever
-`dictionaries/`/`artwork/`/`syntaxes/` last moved, and a missing row beats a wrong date;
+`dictionaries/`/`assets/`/`syntaxes/` last moved, and a missing row beats a wrong date;
 `SOURCE_DATE_EPOCH` overrides the stamp for reproducible builds), license (the SPDX id
 from `Cargo.toml`; the full
 text is its own tab), build target (`std::env::consts` — the OS and architecture the

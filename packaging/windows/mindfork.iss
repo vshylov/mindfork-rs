@@ -92,8 +92,8 @@ UninstallDisplayIcon={app}\mindfork.exe
 ; Inno 6, and taken unchanged by 7 (the header logo was looked at on a 64-bit setup).
 ; The installed .exe's icon is embedded by build.rs (winresource), so the
 ; [Icons] shortcuts and UninstallDisplayIcon pick it up with no extra settings.
-SetupIconFile={#SourcePath}..\..\artwork\mindfork.ico
-WizardSmallImageFile={#SourcePath}..\..\artwork\mindfork-wizard-small.png
+SetupIconFile={#SourcePath}..\..\assets\mindfork.ico
+WizardSmallImageFile={#SourcePath}..\..\assets\mindfork-wizard-small.png
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"; \

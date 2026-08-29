@@ -10,9 +10,9 @@
 /.vscode
 
 # The website, brand assets and packaging output — nothing the Linux build reads.
-# (`artwork/` is a Windows-only build input: the `.exe` icon via `winresource`.)
+# (`assets/` is a Windows-only build input: the `.exe` icon via `winresource`.)
 /site
-/artwork
+/assets
 /dist
 /infra
 

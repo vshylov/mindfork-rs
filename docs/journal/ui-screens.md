@@ -2692,7 +2692,7 @@ storage or tool surface is touched.
   variable appearing.
 - **The row is release-only, and that is the design decision, not a shortcut.**
   A build script re-runs only when one of its declared `rerun-if-changed` paths
-  moves; ours are `dictionaries/`, `artwork/` and `syntaxes/`. Editing `src/`
+  moves; ours are `dictionaries/`, `assets/` and `syntaxes/`. Editing `src/`
   rebuilds the binary and does **not** re-run the script, so a development
   binary would carry the date of whenever one of those directories last changed
   and keep showing it for weeks. `build_date()` therefore returns `Option` and

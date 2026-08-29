@@ -102,7 +102,7 @@ needed for regeneration.
 
 ```
 pip install fonttools
-python artwork/build-wordmarks.py
+python assets/build-wordmarks.py
 ```
 
 The script looks for `JetBrainsMono-ExtraBold.ttf` in the system fonts and in

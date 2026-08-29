@@ -10,7 +10,7 @@
 //! aren't an error (spellcheck simply turns off).
 //!
 //! **Icon.** For the Windows target, an icon resource from
-//! `artwork/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
+//! `assets/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
 //! default icon. Shortcuts and the installer's `UninstallDisplayIcon`
 //! (`packaging/windows/mindfork.iss`) pick it up from here for free too. See docs/branding.md §4.1.
 //!
@@ -72,7 +72,7 @@ fn main() {
 /// **The value is only as fresh as the last run of this script**, and this
 /// script declares `rerun-if-changed` paths, so cargo will not re-run it when
 /// `src/` changes — a development binary would carry the date of whenever
-/// `dictionaries/`, `artwork/` or `syntaxes/` last moved. That is why the row
+/// `dictionaries/`, `assets/` or `syntaxes/` last moved. That is why the row
 /// is shown for release builds alone (`credits::build_date`); forcing a re-run
 /// on every build would rebuild the syntax dump each time and buy a row nobody
 /// reads in a debug build.
@@ -103,12 +103,12 @@ fn embed_build_stamp() {
 /// still build — the icon is cosmetic.
 #[cfg(windows)]
 fn embed_windows_icon() {
-    println!("cargo:rerun-if-changed=artwork/mindfork.ico");
+    println!("cargo:rerun-if-changed=assets/mindfork.ico");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return; // a Windows host, but a different target — the resource doesn't apply
     }
-    let icon = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("artwork/mindfork.ico");
+    let icon = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets/mindfork.ico");
     if !icon.is_file() {
         println!(
             "cargo:warning=icon not found, .exe will ship without it: {}",
@@ -130,7 +130,7 @@ fn embed_windows_icon() {
 /// ship a `.exe` with no icon.
 #[cfg(not(windows))]
 fn embed_windows_icon() {
-    println!("cargo:rerun-if-changed=artwork/mindfork.ico");
+    println!("cargo:rerun-if-changed=assets/mindfork.ico");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         println!(
