@@ -70,13 +70,14 @@ split by subsystem.
   chat with one question and one tool-assisted answer could say "34 msg".
   Sub-agent transcript rows count the same way.
 
-- **One Russian word for a sub-agent.** The Russian interface spelled it three
-  ways — two hyphenated forms and one solid — and two of them could show on one
-  screen: the role header over a sub-agent's reply disagreed with the label on
-  the tool card that started it, and the settings screen with both. The solid
-  spelling now stands everywhere: the feed's role header, the transcript rows
-  in the chat list, `/subagents`, the settings fields, and the tool
-  descriptions the model itself reads. English text is unchanged.
+- **One word for a subagent, in both languages.** Each interface spelled it
+  more than one way, and two spellings could show on the same screen: the role
+  header over a subagent's reply disagreed with the label on the tool card that
+  started it, and the settings screen with both — three ways in Russian, two in
+  English. The unhyphenated spelling now stands everywhere: the feed's role
+  header, the transcript rows in the chat list, `/subagents`, the settings
+  fields, and the tool descriptions the assistant itself reads, which now match
+  the name of the tool they describe.
 
 ### Fixed
 
