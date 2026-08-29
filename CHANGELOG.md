@@ -40,6 +40,17 @@ split by subsystem.
   and the status bar shows which line is being written — or that the director
   is judging the scene — while the dialogue runs.
 
+### Fixed
+
+- **The Python sandbox installs and runs again.** `mindfork sandbox setup`
+  fetched the Python package without a version, and a build published in the
+  Wasmer registry on 18–21 August 2026 cannot be compiled by the runtime the
+  app pins — so a sandbox installed after that date could not run Python at all,
+  failing with a compile error the moment a script was executed. The package is
+  now pinned to an exact version. An **already installed** sandbox was never
+  affected; if you installed one in that window, re-run
+  `mindfork sandbox setup --force`.
+
 ### Data
 
 - Chat files move to schema **v3** (a version stamp, no shape change): a chat

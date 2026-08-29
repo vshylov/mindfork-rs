@@ -25,7 +25,34 @@ use crate::shared::sandbox::{SandboxRunner, WasmerSandbox, locate_wasmer};
 /// The `wasmer` version the lock list is pinned to (GitHub release tag `v<...>`).
 pub const WASMER_VERSION: &str = "7.2.0";
 /// The CPython package in the Wasmer registry (downloaded into `python.webc`).
-const PYTHON_PACKAGE: &str = "python/python";
+///
+/// **The `=` is load-bearing.** A wasmer package selector is a semver *range*,
+/// not a pin: `python/python@3.13.5` resolves to the newest `3.13.x`, which is
+/// how an unversioned `python/python` and a naively "pinned" one end up at the
+/// same place. Measured against the live registry, 2026-08-30:
+///
+/// | Selector | Resolves to |
+/// |---|---|
+/// | `python/python` | 3.13.17 |
+/// | `python/python@3.13.5` | **3.13.17** |
+/// | `python/python@=3.13.5` | 3.13.5 |
+///
+/// What made that matter: the registry published 3.13.15/16/17 on 18–21 August
+/// 2026, and their payload is 155,874,883 bytes against 3.13.5's 44,680,028 —
+/// a build [`WASMER_VERSION`] cannot compile. Every fresh `sandbox setup` since
+/// then produced a sandbox that could not run Python at all, failing with
+/// `Validate("Failed to create V8 module: null module reference returned from
+/// V8")` (and, earlier and more quietly, a partial warm-up). The runtime beside
+/// this line was already pinned exactly; the package it runs was not.
+///
+/// 3.13.5 is the last version before that batch and is what every working
+/// sandbox in this project holds — verified byte for byte, sha256
+/// `c03ebe0946e66edf598fd7a1f192101f60e4e9c0095aecd04e049989692bdcab`.
+/// Bumping it means downloading the candidate and running
+/// `runs_real_python_in_sandbox` against a **freshly provisioned** directory:
+/// an existing sandbox keeps working across a bad publish, so only a fresh one
+/// can tell you.
+const PYTHON_PACKAGE: &str = "python/python@=3.13.5";
 /// User-Agent for downloads (GitHub/PyPI sometimes reject an empty UA).
 const USER_AGENT: &str = "mindfork-sandbox-setup";
 
@@ -512,6 +539,23 @@ fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The `=` in [`PYTHON_PACKAGE`] is not decoration: without it the selector
+    /// is a semver range and the registry hands back the newest `3.13.x`, which
+    /// is the exact shape that broke every fresh sandbox install in August 2026.
+    /// This is here so that removing it fails a test instead of a user.
+    #[test]
+    fn the_python_package_is_pinned_exactly() {
+        let (_name, version) = PYTHON_PACKAGE
+            .split_once('@')
+            .expect("the package must carry a version selector");
+        assert!(
+            version.starts_with('='),
+            "`{PYTHON_PACKAGE}` is a semver *range*, not a pin - it resolves to the \
+             newest matching version. Use `@=<version>`."
+        );
+    }
+
     use super::*;
     use crate::shared::i18n::{Lang, locale};
 
