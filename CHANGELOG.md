@@ -63,6 +63,14 @@ split by subsystem.
 
 ### Changed
 
+- **The self-model screen (`F3`) reads as two named halves.** The
+  self-description and the goals now sit under an **"Assistant"** header, and
+  the traits, interests and relationship under **"User"** — where you have
+  given the assistant or yourself a name in the profile settings, the screen
+  uses that name instead of the label, matching the names over the messages in
+  the chat. Blank lines now separate every section, and every observation from
+  the next, so the model's own prose no longer runs together into one block.
+
 - **The chat list counts messages the way the conversation reads.** The row's
   `N msg` is now the number of messages you see when you open the chat — your
   questions and the assistant's replies. It used to count every stored row,

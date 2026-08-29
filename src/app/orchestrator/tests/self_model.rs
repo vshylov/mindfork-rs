@@ -298,12 +298,12 @@ async fn update_self_model_persists_and_reemits() {
         .unwrap();
 
     // Re-emitting the snapshot reflects the edit.
-    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::SelfModelView(_)))
+    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::SelfModelView { .. }))
         .await
         .unwrap();
     match ev {
-        AppEvent::SelfModelView(m) => {
-            assert_eq!(m.expect("expected a model").summary, "ценю ясность");
+        AppEvent::SelfModelView { model, .. } => {
+            assert_eq!(model.expect("expected a model").summary, "ценю ясность");
         }
         _ => unreachable!(),
     }

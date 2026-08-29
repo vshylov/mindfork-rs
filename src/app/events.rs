@@ -722,9 +722,19 @@ pub enum AppEvent {
     /// (then empty). Cards only: the payload never travels through the event channel.
     StagedImages(Vec<ImageInfo>),
     /// A snapshot of the active profile's "self-model" (a reply to `RequestSelfModel`)
-    /// for the viewer screen (`F3`). `None` — the model hasn't been created yet. `Box` —
-    /// a large type, don't bloat the enum. See docs/history/self-model-mvp.md.
-    SelfModelView(Box<Option<crate::entities::self_model::SelfModel>>),
+    /// for the viewer screen (`F3`). `model: None` — the model hasn't been created
+    /// yet. `Box` — a large type, don't bloat the enum. See
+    /// docs/history/self-model-mvp.md.
+    ///
+    /// `names` are that **profile's** role names: the screen heads its two halves
+    /// with the assistant's and the user's name (spec §17.7). They come from the
+    /// profile rather than from the active chat, whose names a subagent
+    /// transcript re-labels for the run (`Orchestrator::names_of`) — the
+    /// self-model belongs to the profile, not to a run.
+    SelfModelView {
+        model: Box<Option<crate::entities::self_model::SelfModel>>,
+        names: CharacterNames,
+    },
     /// The "self-model" changed (via background reflection or turn tools) — a signal
     /// **with no snapshot**. If the `F3` screen is open, UI re-requests a fresh snapshot
     /// (`RequestSelfModel`); ignored when the screen is closed. See stage 5 of the

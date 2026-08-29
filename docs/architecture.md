@@ -2602,11 +2602,16 @@ transcript's id, which `switch_to` already opens read-only.
 **"Self-model"** (`F3`, view+edit) — the orchestrator
 owns the data, so `OpenSelfModel` doesn't open the screen right away; it
 sends `AppCommand::RequestSelfModel`; the screen is created on the reply
-event `AppEvent::SelfModelView` (the active profile's model snapshot).
+event `AppEvent::SelfModelView { model, names }` (the active profile's model
+snapshot, plus that **profile's** `character_names` — the screen heads its
+two halves with them, spec §17.7; deliberately not the active chat's, which
+`names_of` re-labels for a subagent run).
 Edits are handed off by the screen as `SelfModelIntent::Edit` →
 `AppCommand::UpdateSelfModel`; the orchestrator applies it, saves, and
 **re-emits** `SelfModelView` — the open screen updates in place (`set_model`,
-selection is preserved). See [docs/self-model-mvp.md](history/self-model-mvp.md).
+selection is preserved). All three emits go through one
+`Orchestrator::emit_self_model_view(pid)`, which reads the snapshot and the
+names off the same `pid`. See [docs/self-model-mvp.md](history/self-model-mvp.md).
 
 **Interface language (axis B, i18n).** The UI locale, `&'static Locale`
 (from `config.interface.language`, independent of the agents' language

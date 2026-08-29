@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use crate::entities::profile::CharacterNames;
 use crate::features::demo;
 use crate::screens::chat::ChatScreen;
 use crate::screens::chat_list::ChatListScreen;
@@ -150,6 +151,9 @@ pub fn settings_frame(theme: Theme, tools: bool) -> ShotFrame {
 pub fn self_model_frame(theme: Theme) -> ShotFrame {
     let mut screen = SelfModelScreen::new(
         Some(demo::self_model()),
+        // The demo profile names neither side, so the two halves are headed by
+        // the localized "Assistant"/"User" labels.
+        CharacterNames::default(),
         Palette::for_theme(theme),
         locale(Lang::En),
     );
@@ -235,7 +239,10 @@ mod tests {
         // "1B draft" pins the typed input draft (an edit that grows the feed
         // must not push the input's text out), "First week with mindfork" is
         // the list's last fixture row (the fill reaches the frame's bottom),
-        // "receipts beat repetition" the newest self-model observation.
+        // "receipts beat repetition" the last self-model observation that still
+        // fits — the section headers and the blank rows between fields cost the
+        // frame a row each, so it pins that the observations reach into view at
+        // all.
         #[rustfmt::skip]
         let needles = |screen: &str| -> &'static [&'static str] {
             match screen {
@@ -243,7 +250,7 @@ mod tests {
                 "chat-list" => &["Speculative", "Dolomites", "Mermaid", "First week with mindfork"],
                 "settings-model" => &["llama-server.exe", "16384", "draft-simple", "gemma-4-1B"],
                 "settings-tools" => &["Agentic loop", "Wasmer sandbox", "Web search"],
-                "self-model" => &["reproducible", "VRAM", "methodical", "receipts beat repetition"],
+                "self-model" => &["Assistant", "reproducible", "User", "methodical", "receipts beat repetition"],
                 other => panic!("no needles for {other}"),
             }
         };
