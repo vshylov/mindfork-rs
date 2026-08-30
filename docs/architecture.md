@@ -2314,7 +2314,8 @@ reflection, tools mid-turn), a lightweight `SelfModelChanged` arrives — if
 the `F3` screen is open, runtime sends `RequestSelfModel` and updates it with
 a fresh snapshot; when the screen is closed, the signal is ignored (it
 doesn't open the screen, unlike `SelfModelView`). Sizes/injection/protocol/
-auto-reflection are fields in the "Tools" settings section (`Sm*`).
+auto-reflection are fields of the "Self-model" group in the **"Memory"**
+settings section (`Sm*`, `catalog::memory_fields`).
 The observation list's **direction** is a display rule of the screen alone
 (`entities::self_model::order_narrative`, by each row's own `created_at`, newest
 first by default): `interface.self_model_note_order` is read once at open, out of
