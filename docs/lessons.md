@@ -859,6 +859,20 @@ A row whose middle varies in length needs a width-aware fit that decides which p
 gives way (`RagBanner::fit`), not a truncation from the end.
 — *the indexing banner fits its row, the collapsed pill wraps whole*.
 
+**Two alternating layouts are themselves the noise — degrade the content, not
+the geometry.** The status bar picked per frame between hints-beside-the-pill
+and hints-on-a-full-width-row-below, whichever came out shorter; the pill
+swells and shrinks at every turn boundary, so the choice flipped constantly and
+planted a wall of keycaps under the indicators exactly while the user watched
+them. Tuning the tie threshold could not help (60%, then none, then reverted —
+one PR): the fork was between two arrangements, neither of which read well. The
+fix was one geometry with a degradation rule — a corner block of bounded depth
+that sheds its least important entries when crowded, anchored on the one entry
+that reopens the full list (`F1`). When a widget's parts compete for space,
+pick the shape once and decide which content gives way; a layout that switches
+shapes with its content switches exactly when the content is moving.
+— *the status bar's hints never leave the corner*.
+
 **A `ListState` built inside `render` is a scroll position that is recomputed
 every frame.** ratatui moves a list's offset only far enough to bring the
 selection into view, so starting from `0` on every draw means "scroll until the

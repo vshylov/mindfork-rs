@@ -60,8 +60,11 @@ split by subsystem.
   was running, a status line full of indicators (generation, the token counter,
   attached files) left the hints too little room and pushed them one per line —
   up to six rows of status bar in a window where they fit on one. The hints now
-  move to a line of their own below the indicators whenever that is shorter, so
-  a busy status line costs at most one extra row.
+  stay a compact block in the bar's right corner, at most two rows tall: when
+  the indicators leave it too little room, the block temporarily hides its
+  least important hints instead of wrapping — every hidden shortcut is still on
+  the `F1` help — and shows them again once the turn's indicators go. The bar
+  never grows past two rows, and hints never land under the indicators.
 
 - **The Python sandbox installs and runs again.** `mindfork sandbox setup`
   fetched the Python package without a version, and a build published in the

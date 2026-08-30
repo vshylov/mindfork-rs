@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a tool call's card opens when the call starts (done)
 - Post-M9: `Theme::Auto` follows the terminal, over OSC 11 (done)
 - Post-M9: a busy status line stops stacking the hotkeys into a column (done)
+- Post-M9: the status bar's hints never leave the corner — shed, don't wrap (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2195,3 +2196,58 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   screenshot, both tie directions, and crowded-but-saves-a-line), the screenshot
   state rendered in `TestBackend` at 120 columns, and the "at most one row" sweep
   over widths × languages. Pure UI — no live run needed. 2701 green.
+
+### Post-M9: the status bar's hints never leave the corner — shed, don't wrap (done)
+- **Symptom** (the day after the entry above): its fix kept the bar short by
+  moving the hints onto a **full-width row below** the pill whenever that was
+  shorter — and at the commonest window widths it always was. A generating
+  pill of 63 columns at a 120-column window (`chat`+`emb` chips, the
+  generation chip, a token counter with thoughts) left the grid 54: two
+  columns beside (3 rows) against one wide row below (2) — so every turn
+  planted a 107-column wall of keycaps starting under the server chips, and
+  the turn ending teleported them back beside the pill. The 60% threshold the
+  user saw in the code never fired: it only ever decided ties, and this was
+  not a tie. Within one PR the threshold had already been dropped ("a tie
+  sends the hints down") and reverted six minutes later — a sign the fork was
+  between two arrangements neither of which read well, not between tie rules.
+- **The fork, and the user's decision (2026-08-30)**: may the bar *hide*
+  hints when space is tight, or must every hint always be visible somewhere,
+  paying rows for it? Options laid out with rendered mockups: (A) a corner
+  block of at most two rows that sheds hints by priority; (B) = A plus
+  merging the generation chip into the token counter (`⟳ токены: N…`) so the <!-- cyrillic-ok -->
+  busy pill loses 17 columns exactly when it is fattest; (C) never hide —
+  the corner block grows to 3–4 rows instead. Chosen: **A**, plain. B was
+  offered and not taken; C rejected — it re-opens the same question at narrow
+  widths and pays rows for hints a running turn does not need.
+- **The rule** (`widgets/status_bar.rs`): the grid-below layout is deleted;
+  `top_row_cols` and the threshold with it. The hints are always a
+  right-aligned grid beside the pill, at most `HINT_ROWS_MAX = 2` rows deep
+  (the reference look is the quiet pill's 3×2 grid; deeper reads as the old
+  stacked column). When the pill leaves too little width, `trim_to_fit` walks
+  `keep_order` — `F1` (the door to the full per-screen list every hidden hint
+  is still on), `Esc` (its label carries `EscTarget` state), `Ctrl+Q`,
+  `Ctrl+W`, `Ctrl+P`, `Ctrl+N`; scroll mode pins `Ctrl+W` first, a mode
+  light, not a hint — and keeps every hint whose addition still fits. A
+  too-wide cell is **passed over, not a lock-out** (the narrow `Ctrl+N` can
+  return where the wide mouse toggle shed), and a block that lost `F1` is
+  refused outright. Degenerate fallback — a pill so wide not even `F1` fits
+  beside it: `F1` alone on a row below, the sole remnant of the old layout.
+- **The invariant it buys**, and the sweep that states it: the bar is never
+  taller than two rows — quiet, generating, scroll mode, disconnect reasons,
+  every language, widths 12..=240 — and `F1` is present at every width that
+  can hold its cell. The previous invariant ("a fuller pill costs at most one
+  row") is subsumed. Within a turn the pill only grows, so hints shed
+  monotonically — no flicker — and return when the turn's chips leave.
+- **Where it shows** (ru, 120 columns): the generating pill keeps `Ctrl+W`,
+  `F1`, `Esc`, `Ctrl+Q` as a 2×2 corner block on its own rows; the busiest
+  pill (attachments too, 85 columns) keeps `F1`/`Esc`/`Ctrl+N`/`Ctrl+Q`; the
+  quiet bar is byte-identical to before (the 3×2 reference grid), and the
+  settings screen's `hotkey_lines` — full-width, no pill to crowd it —
+  deliberately keeps wrapping and never sheds.
+- **Tests**: `trim_to_fit` on the ru cell widths (fit, shed, pass-over,
+  the F1-anchor refusal, the scroll pin), the keep-order↔hotkey-list mapping
+  pin, the two screenshot states rendered in `TestBackend` at 120 columns
+  (column-exact alignment asserts), the F1-alone fallback at 96, and the
+  two-rows-and-F1 sweep over widths × languages × states. The demo-dump
+  drift gate passed untouched — the en hints fit at the capture width. Pure
+  UI — no live run needed. 2721 green (+4).
