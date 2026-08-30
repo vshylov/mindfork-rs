@@ -14,6 +14,8 @@
 //! - [`restart_queue`] — [`RestartQueue`]: debounce for (re)launching servers
 //!   on engine-settings edits;
 //! - [`generation`] — send/regenerate/delete exchange + the agentic-loop task;
+//! - [`llm_history`] — seeding a profile's language-model history from what its
+//!   chats already record (spec §9.14);
 //! - [`chats`] — managing the chat list and the draft;
 //! - [`profiles`] — creating/editing/deleting profiles;
 //! - [`settings`] — config and (re)launching servers via the supervisor;
@@ -35,6 +37,7 @@ mod engines;
 mod generation;
 mod images;
 mod impersonation;
+mod llm_history;
 mod mcp;
 mod model_name;
 mod profiles;
@@ -660,6 +663,12 @@ impl Orchestrator {
             self.chats.push(chat);
         }
         self.chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
+
+        // Profiles and chats are both loaded now, and nothing has recorded an
+        // exchange yet: the one moment a language-model history that is still
+        // empty can be seeded from the metadata the stored replies already
+        // carry (spec §9.14, [`llm_history`]).
+        self.seed_llm_history();
 
         // Restore the last-open chat — or transcript — if it's still visible;
         // otherwise the most recently modified chat (the previous behavior).

@@ -168,7 +168,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-30, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2701 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2711 unit tests
 green, 128 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -200,9 +200,13 @@ being recent is dropped, not shortened.
   profile's dated history of model changes, recorded in `data.db` after each
   landed exchange when the pair (name, mode) differs from the newest record;
   `llm_*` deliberately mirrors the `self_model` family it must never be
-  confused with, and an engine that names no model records nothing and says so
-  ([docs/research/language-model-history.md](docs/research/language-model-history.md),
-  spec §9.14, [docs/journal/tools.md](docs/journal/tools.md)).
+  confused with, and an engine that names no model records nothing and says so.
+  A history that has **never** been written to is seeded once at startup from
+  the model names the profile's stored replies already carry — one rule, *what
+  the recorder would have written had it existed then*, so nothing about the
+  seed needs its own semantics (and no "already seeded" flag exists)
+  ([docs/research/language-model-history.md](docs/research/language-model-history.md)
+  §9, spec §9.14, [docs/journal/tools.md](docs/journal/tools.md)).
 - **`run_dialogue` — a dialogue of two personas, directed by the assistant** —
   the subagent track's promised next feature, **complete (both stages)**: a
   loop-executed

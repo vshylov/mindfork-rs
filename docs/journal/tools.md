@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `run_dialogue` — the live transcript, stage 2, track complete (done)
 - Post-M9: `get_llm_name`/`get_llm_history` — the language model, named and dated (done)
 - Post-M9: the Python package pinned exactly — a selector is a range (done)
+- Post-M9: the language-model history, seeded from the chats that predate it (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -2944,3 +2945,64 @@ the tag `probe/code-search-stage5`.
 - **Guarded**: `the_python_package_is_pinned_exactly` fails if the `=` is ever
   tidied away, because without it the constant silently becomes a range again.
   2698 unit tests green, 128 `#[ignore]`.
+
+### Post-M9: the language-model history, seeded from the chats that predate it (done)
+- **The trigger**, from the user, the day the history tools landed: the tools
+  work and the history is **empty** — the recorder starts recording the day it
+  ships, so every profile that existed before it answers "nothing recorded yet"
+  about a past that is written down in full. The parked bullet at the end of
+  docs/research/language-model-history.md §8 ("a one-time backfill is possible
+  later") was exactly this; it is now that document's §9.
+- **The whole design is one sentence**: *the seed is what the recorder would
+  have written, had it existed when those replies were generated.* Every
+  question the backfill raises answers itself from it, which is why there were
+  no forks to confirm: records ordered by the replies' own timestamps **across
+  the profile's chats** (the recorder fired per exchange, in time order — two
+  chats are not each other's future), `changed_at` taken from the reply and not
+  from the seeding moment (a history dated "now" is a list of names), and
+  consecutive runs of the same (name, mode) collapsed exactly as
+  `llm_history_note`'s dedup collapses them — A→B→A stays three records. Same
+  for scope: only chats the app can see (a soft-deleted chat is gone from every
+  other read path — this is not the place for an exception), and only
+  `Chat::messages`, so a sub-agent transcript — which runs on the parent turn's
+  engine and lives on a tool-call record — is skipped by construction.
+- **One-time without a marker.** The condition is the data: a history with **no
+  records at all** is seeded, and the emptiness check sits *inside* the
+  transaction that writes (`Db::llm_history_seed`), so the first record ever
+  written — seeded or recorded — closes the door, and a failed seed leaves
+  nothing rather than a half-history that looks non-empty and can never be
+  completed. Deliberately **no** "already seeded" flag: a profile whose replies
+  name no model (the pre-`MessageMetadata` corpus, or an engine that never said
+  a name) writes nothing and stays seedable, so a later launch that does find
+  something still fills it. That re-scan walks chats `bootstrap` has just loaded
+  into memory — cheaper than the row that would record having done it.
+- **Where it runs**: `Orchestrator::bootstrap`, after profiles and chats are
+  loaded and before anything can record a record of its own; best-effort per
+  profile like the recorder itself (a failed read or write is logged and
+  skipped — no part of startup hangs on bookkeeping). Noticed while writing it:
+  this is also the one reconstructible part of the `data.db`-lost-next-to-chats
+  scenario (`Storage::chats_without_db`) — the history refills itself there.
+- **Structure**: the derivation and the startup hook are a new
+  `app/orchestrator/llm_history.rs`; the forward recorder stays in
+  `generation.rs` (a move would have mixed a refactor into a behaviour change).
+- **Tests**: suite at **2711 unit / 128 `#[ignore]`** (+10): the storage seed
+  (fills an empty history in order and dates it from the records, refuses a
+  history that has any record, seeds nothing from nothing and stays seedable),
+  the pure derivation (the interleaved two-chat sequence with the dedup and the
+  A→B→A tail, replies naming no model and messages that are not replies,
+  per-profile isolation, a sub-agent transcript adding nothing), and bootstrap
+  end to end (seeds from stored chat files, skips a hidden chat, is idempotent
+  across two launches, and — the join that matters — the recorder then *continues*
+  the seeded history: the model the seed ends on writes no record, a new one
+  appends).
+- **Run on the real binary** (an engine smoke is not what this needed — no
+  engine, provider or tool path changed; `features/tools/llm.rs` is untouched
+  and reads the same table, and `llm_name_and_history_e2e_live` still covers
+  the tool end). Three headless launches of `mindfork.exe` on a portable data
+  root: the first created the data directory, then two dated replies for one
+  model and one for another were written into the chat file by hand
+  (`llm_history` empty), the second launch left
+  `2026-01-01 … gemma-4-31b (managed)` + `2026-02-01 … qwen-3.6-27b (external)`
+  in `data.db` — the middle duplicate collapsed, both dates the replies' own —
+  and the third added nothing and logged nothing (one `seeded the
+  language-model history … records=2` line in the whole log).

@@ -1,9 +1,10 @@
 # Research: the assistant learns its language model, and the profile keeps a history of changes
 
-Status: **decided and implemented** (branch `feat/llm-name-history`). The
-forks in §4 were confirmed by the user on 2026-08-29; §3 describes the design
-as adopted. The shipped shape is documented in spec §9.14 — this file keeps
-the reasoning and the options that were *not* taken.
+Status: **decided and implemented** (branch `feat/llm-name-history`), plus the
+one-time backfill of §9 (branch `feat/llm-history-backfill`). The forks in §4
+were confirmed by the user on 2026-08-29; §3 describes the design as adopted.
+The shipped shape is documented in spec §9.14 — this file keeps the reasoning
+and the options that were *not* taken.
 
 ## 1. The ask
 
@@ -263,4 +264,52 @@ status/test count. i18n: `tool.get_llm_name.*`/`tool.get_llm_history.*` +
   revisit only if a real profile shows bloat.
 - Deriving history retroactively from existing chats' `MessageMetadata` — a
   one-time backfill is possible later (the `migrate_self_narrative` pattern)
-  but is not part of the ask.
+  but is not part of the ask. **Done afterwards — see §9.**
+
+## 9. Follow-up: the one-time seed (2026-08-30)
+
+The feature shipped and immediately showed what the last bullet of §8 had
+parked: on every profile that existed before it, `get_llm_history` answers
+"nothing recorded yet" — truthfully, and about a past that is written down in
+full. Every stored assistant reply already carries the model that generated it;
+only the aggregate was missing. So the backfill was implemented
+(`app/orchestrator/llm_history.rs`, spec §9.14).
+
+**The rule, and why there is only one.** *The seed is what the recorder would
+have written, had it existed when those replies were generated.* Everything
+else follows and needed no separate decision: records are ordered by the
+replies' own timestamps **across the profile's chats** (the recorder fired per
+exchange, in time order — two chats are not each other's future), `changed_at`
+is that timestamp rather than the seeding moment (a history dated "now" is a
+list of names), and consecutive runs of the same (name, mode) collapse exactly
+as `llm_history_note`'s dedup collapses them — A→B→A is still three records.
+The rule also settles the scope questions: only chats the app can see
+(a soft-deleted chat is gone from every other read path, and this is not the
+place to make an exception), only `Chat::messages` (a sub-agent transcript runs
+on the parent turn's engine — §8 above — and lives on a tool-call record, so it
+is skipped by construction).
+
+**One-time without a marker.** The condition is the data itself: a history with
+**no records at all** is seeded, and the check happens inside the transaction
+that writes (`Db::llm_history_seed`), so the first record ever written — seeded
+or recorded — closes the door, and a seed that fails halfway leaves nothing
+behind rather than a half-history that looks non-empty and can never be
+completed. What the condition deliberately does *not* get is a "seeded already"
+flag: a profile whose replies name no model (the pre-`MessageMetadata` corpus,
+or an engine that never said a name) writes nothing and stays seedable, so a
+later launch that does find something still fills it. The re-scan costs a walk
+over chats that bootstrap has just loaded into memory — cheaper than the row
+that would record having done it.
+
+**Where it runs.** `Orchestrator::bootstrap`, after profiles and chats are
+loaded and before anything can record a first record of its own; best-effort
+per profile, like the recorder (a failed read or write is logged and skipped —
+no part of startup hangs on bookkeeping). A side effect worth naming: this is
+also the repair path for a history lost with a missing `data.db` next to
+surviving chat files (`Storage::chats_without_db`) — the one part of that loss
+that is reconstructible.
+
+**Rejected, again.** Deriving the history *on demand* inside the tool, which §2
+set aside for the original feature and which the seed does not resurrect: the
+stored aggregate remains the source of truth, the derivation runs once at
+startup, and after the first record exists nothing scans anything.
