@@ -1988,20 +1988,27 @@ Two main screens + overlays (modals):
   characters longer costs a whole extra row at common widths — the alternative label is
   a short **directional** one ("to search"), which also can't be misread as
   "`Esc` opens search".
-- **The bar's own layout** is picked per frame between two arrangements: the
-  indicators (server chips, generation, the token counter, the quiet
-  background/speech/attachment chips) on the left of the **top** row with the
-  hint grid right-aligned beside them — or the indicators alone on the top row
-  and the grid right-aligned across the **full width below**. The shorter of the
-  two wins. Sharing a row costs the grid the indicators' width, and that width is
-  not fixed: mid-turn the line carries a generation indicator, a token counter
-  with thoughts and the attachment chips, which at common widths squeezes the
-  grid down to a single column — one hint per line, six rows of status bar taken
-  out of the feed where two would do. On a tie the indicators keep the top row
-  (the compact, ordinary look) unless they already take more than **60%** of the
-  width, where the hints read better as one wide grid on a line of their own. The
-  consequence worth stating, because it is what the rule is for: **a fuller
-  status line costs at most one extra row**, whatever it carries.
+- **The bar's own layout** keeps the hints in one place: the indicators (server
+  chips, generation, the token counter, the quiet background/speech/attachment
+  chips) sit on the left of the **top** row, and the hint grid is right-aligned
+  **beside them** — a corner block at most **two rows** deep, columns lined up
+  vertically, an incomplete bottom row landing under the columns above. The
+  block never moves below the indicators and never grows deeper: when the
+  indicators leave it too little width — mid-turn the line carries a generation
+  indicator, a token counter with thoughts and the attachment chips — it
+  **sheds hints** instead, least important first (`F1` last: it opens the full
+  per-screen list every hidden hint is still on; `Esc` next-to-last — its label
+  carries navigation state; in scroll mode the mouse toggle is pinned first, as
+  the mode's indicator), and shows them again once the turn's chips leave the
+  line. Both earlier arrangements are gone deliberately: the one-hint-per-line
+  column beside a busy pill, and the grid on a full-width line **below** the
+  indicators — which planted keycaps right under the text and, the indicators
+  swelling and shrinking at every turn boundary, teleported the hints between
+  two shapes (user's decision, 2026-08-30). The consequence worth stating,
+  because it is what the rule is for: **the bar is never taller than two rows,
+  and the hints always read as one corner block** — a fuller status line costs
+  hints, not rows. In the degenerate case where not even `F1` fits beside the
+  indicators, it alone takes the second row.
 
 ### 11.2. The chat list (an overlay)
 

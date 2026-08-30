@@ -18,6 +18,11 @@ use crate::shared::wrap;
 /// Named so the substitution in [`lines`] isn't a bare string match.
 const ESC_KEY: &str = "Esc";
 
+/// The help hotkey — the one hint the corner block sheds last (see
+/// [`keep_order`]) and the last-resort row when nothing fits beside the pill
+/// ([`lines`]). Named like [`ESC_KEY`] so the lookup isn't a bare string match.
+const HELP_KEY: &str = "F1";
+
 /// Keys of the status bar's fixed hotkeys (after the mouse toggle `Ctrl+W`, whose
 /// description depends on the mode). "Key" + a description key (localized in [`lines`]).
 /// The `Esc` entry carries its **default** description; the live one comes from
@@ -123,9 +128,10 @@ const IMAGE_GLYPH: char = '#';
 /// `≡` reads as "a document" without borrowing a neighbour's meaning.
 const TRANSCRIPT_GLYPH: char = '≡';
 
-/// Draws the status line in `area`. When hotkeys don't fit by width, they
-/// wrap onto the next lines as a neat grid (like in the chat-list overlay);
-/// the caller reserves height for this via [`height`]. See spec §11.1, §11.3.
+/// Draws the status line in `area`. The hotkeys sit beside the status pill as
+/// a right-aligned corner grid at most [`HINT_ROWS_MAX`] rows deep — a crowded
+/// pill sheds hints rather than growing the bar (see [`lines`]); the caller
+/// reserves height via [`height`]. See spec §11.1, §11.3.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -138,16 +144,18 @@ pub fn render(
 }
 
 /// How many lines the status bar takes at width `width` — the caller reserves
-/// exactly this height (minimum 1). Hotkeys wrap when they don't fit.
+/// exactly this height (minimum 1). Never more than [`HINT_ROWS_MAX`]: the
+/// corner grid is capped, and the degenerate fallback is one `F1` row.
 pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'static Locale) -> u16 {
     lines(width, model, palette, loc)
         .len()
         .clamp(1, u16::MAX as usize) as u16
 }
 
-/// Lays hotkeys out in a neat grid, **right-aligned** to `width` — the same
-/// wrapping logic as the chat screen's status bar, but without the status pill
-/// (`state = None`). Column count — the max that fits the width (→ fewest rows);
+/// Lays hotkeys out in a neat grid, **right-aligned** to `width` — the
+/// settings screen's layout: with no status pill to crowd it, and unlike the
+/// chat bar's corner block ([`lines`]), it wraps to as many rows as it needs
+/// and never sheds an entry. Column count — the max that fits the width (→ fewest rows);
 /// on overflow hotkeys wrap down, columns line up vertically, and an
 /// incomplete bottom row is right-aligned under the columns above. Returns empty for
 /// an empty set. Used by the settings screen (see spec §11.1, §11.6).
@@ -168,18 +176,26 @@ pub fn hotkey_lines(
     right_grid(hotkeys, &cell_w, cols, width, None, None, palette)
 }
 
-/// Builds the status bar's lines. On the left, on the **top** row — "state" (the status
-/// pill, generation indicator, token counter), left-aligned. On the right —
-/// hotkeys (starting with the mouse toggle `Ctrl+W`, whose description = the current mode), laid out
-/// as a neat grid and **right-aligned**: when everything fits — one line
-/// (pill on the left, hotkeys on the right); when it doesn't — hotkeys wrap DOWN into a grid
-/// whose columns line up vertically, and an incomplete (wrapped) row is right-aligned —
-/// its keys land exactly under the columns of the row above, not drawing attention to
-/// the left/middle part of the window.
+/// Builds the status bar's lines. On the left of the **top** row — "state"
+/// (the status pill: server chips, generation indicator, token counter, the
+/// quiet chips), left-aligned. On the right — hotkeys (starting with the mouse
+/// toggle `Ctrl+W`, whose description = the current mode), laid out as a neat
+/// right-aligned grid **beside the pill**, at most [`HINT_ROWS_MAX`] rows
+/// deep, columns lined up vertically and an incomplete bottom row landing
+/// exactly under the columns above.
 ///
-/// Whether the pill shares the top row with the grid is decided by
-/// [`top_row_cols`]: a long pill leaves the grid too little width, and the
-/// hints end up stacked in one tall column. See spec §11.1, §11.3.
+/// The grid never moves below the pill and never grows past that depth: when
+/// the pill leaves it too little width, the block **sheds hints** instead
+/// ([`trim_to_fit`], lowest [`keep_order`] rank first) — a busy pill costs
+/// hints, not rows, so the hints always read as one corner block and the bar
+/// never exceeds [`HINT_ROWS_MAX`] rows. Before this rule the bar had a second
+/// arrangement — the grid on a full-width line below the pill — and the pill
+/// growing every turn (generation chip, token counter) teleported the hints
+/// between the two, planting a wall of keycaps right under the indicators
+/// (user's decision, 2026-08-30). Every hidden hint is still on the `F1` help
+/// list, which is why `F1` sheds last; in the degenerate case where not even
+/// it fits beside the pill, it alone takes a row below — the sole remnant of
+/// the old layout. See spec §11.1, §11.3.
 fn lines(
     width: usize,
     model: &StatusModel,
@@ -200,55 +216,100 @@ fn lines(
         .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
         .collect();
 
-    if let Some(cols) = top_row_cols(&cell_w, state_w, width) {
-        return right_grid(
-            &hotkeys,
-            &cell_w,
-            cols,
-            width,
-            Some(state),
-            accent_idx,
-            palette,
-        );
+    let avail = width.saturating_sub(state_w + GAP);
+    let kept = trim_to_fit(&cell_w, avail, model.mouse_scroll);
+    if !kept.is_empty() {
+        let sub: Vec<(&str, &str)> = kept.iter().map(|&i| hotkeys[i]).collect();
+        let sub_w: Vec<usize> = kept.iter().map(|&i| cell_w[i]).collect();
+        // The accent follows the mouse toggle into the kept sub-list — or is
+        // dropped with it (it never is while anything is kept: scroll mode
+        // pins the toggle at the top of `keep_order`).
+        let accent = accent_idx.and_then(|a| kept.iter().position(|&i| i == a));
+        let cols = corner_cols(&sub_w, avail).unwrap_or(1);
+        return right_grid(&sub, &sub_w, cols, width, Some(state), accent, palette);
     }
 
-    // "state" gets the top line to itself, and the hotkeys go into a
-    // right-aligned grid below it, over the full width (no overlap).
-    let cols = widest_grid(&cell_w, width).unwrap_or(1);
+    // Degenerate: the pill leaves no corner that could anchor on `F1`. The
+    // help entry stays reachable — alone on a row of its own, right-aligned
+    // (the sole remnant of the old grid-below-the-pill layout).
+    debug_assert_eq!(hotkeys[HELP_IDX].0, HELP_KEY);
     let mut out = vec![Line::from(state)];
-    out.extend(right_grid(
-        &hotkeys, &cell_w, cols, width, None, accent_idx, palette,
-    ));
+    if cell_w[HELP_IDX] <= width {
+        out.extend(right_grid(
+            &hotkeys[HELP_IDX..=HELP_IDX],
+            &cell_w[HELP_IDX..=HELP_IDX],
+            1,
+            width,
+            None,
+            None,
+            palette,
+        ));
+    }
     out
 }
 
-/// The share of the width past which the status pill counts as **crowding** the
-/// hotkey grid: with less than 40% of the line left, the grid is a couple of
-/// narrow columns at best, and every hint the pill costs it is a whole extra
-/// row. Only decides ties (see [`top_row_cols`]) — a layout that saves a line
-/// wins whatever the pill's share.
-const STATE_SHARE_MAX_PCT: usize = 60;
+/// The most rows the chat bar's hint block may take. Two is the tallest block
+/// that still reads as a corner legend — the reference look is the 3×2 grid
+/// beside a quiet pill; deeper, and it becomes the one-hint-per-line column
+/// the bar used to stack beside a busy pill. Past this depth the block sheds
+/// hints ([`trim_to_fit`]) rather than growing.
+const HINT_ROWS_MAX: usize = 2;
 
-/// How many columns the hotkey grid gets on the pill's own row — `None` when the
-/// grid should go **below** the pill instead, over the full width.
-///
-/// Both layouts are laid out and the shorter one wins: sharing the row costs the
-/// grid `state_w + GAP` of width, and a pill busy enough (generating + tokens +
-/// attachments, in a wordy locale) squeezes it down to a single column, i.e. one
-/// row per hint — six lines of status bar taken out of the feed where two would
-/// do. On a tie the pill keeps the top row, unless it is already past
-/// [`STATE_SHARE_MAX_PCT`] of the width: then the hints read better as one wide
-/// grid on a line of their own.
-fn top_row_cols(cell_w: &[usize], state_w: usize, width: usize) -> Option<usize> {
-    let n = cell_w.len();
-    // The most columns (→ the fewest rows) that fit beside the pill, and on a
-    // full-width line of their own. A grid always gets at least one column below,
-    // even when it overflows — there is nothing narrower to fall back to.
-    let shared = widest_grid(cell_w, width.saturating_sub(state_w + GAP))?;
-    let below = widest_grid(cell_w, width).unwrap_or(1);
-    let (shared_h, below_h) = (n.div_ceil(shared), 1 + n.div_ceil(below));
-    let crowded = state_w * 100 > width * STATE_SHARE_MAX_PCT;
-    (shared_h < below_h || (shared_h == below_h && !crowded)).then_some(shared)
+/// [`HELP_KEY`]'s index in [`hotkey_list`]'s order (right after the prepended
+/// mouse toggle). `keep_order_matches_the_hotkey_list` pins the mapping.
+const HELP_IDX: usize = 1;
+
+/// The order the corner block **keeps** hints when the pill leaves it too
+/// little width — later entries shed first. `F1` outlives everything: it opens
+/// the full per-screen hotkey list every hidden hint is still on (spec §11.7).
+/// `Esc` next — its label carries live navigation state ([`EscTarget`]). Then
+/// quit, the mouse toggle, settings, new chat. In scroll mode the mouse toggle
+/// instead jumps to the front: accent-highlighted, it is the one thing on
+/// screen saying why native selection is off — a mode light, not a hint.
+/// Values index [`hotkey_list`]'s order; `keep_order_matches_the_hotkey_list`
+/// pins the mapping.
+fn keep_order(mouse_pinned: bool) -> [usize; 6] {
+    if mouse_pinned {
+        [0, HELP_IDX, 2, 5, 4, 3]
+    } else {
+        [HELP_IDX, 2, 5, 0, 4, 3]
+    }
+}
+
+/// The hints the corner block shows at `avail` columns: walk [`keep_order`]
+/// and keep every hint whose addition still fits a ≤[`HINT_ROWS_MAX`]-row grid
+/// (one that does not is passed over, so the narrower ones after it still
+/// get their chance). Returned in display order; empty when nothing fits.
+/// A block that lost `F1` is refused outright — a legend hiding its own door
+/// to the full list while lesser hints stay would be an artifact of cell
+/// widths, not a priority — and the caller falls back to the `F1`-below row.
+/// Within a turn the pill only grows (the token counter), so hints shed
+/// monotonically — no flicker — and return when the turn's chips leave.
+fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool) -> Vec<usize> {
+    let mut kept: Vec<usize> = Vec::new();
+    for idx in keep_order(mouse_pinned) {
+        let mut candidate = kept.clone();
+        candidate.push(idx);
+        candidate.sort_unstable();
+        let w: Vec<usize> = candidate.iter().map(|&i| cell_w[i]).collect();
+        if corner_cols(&w, avail).is_some() {
+            kept = candidate;
+        }
+    }
+    if !kept.contains(&HELP_IDX) {
+        return Vec::new();
+    }
+    kept
+}
+
+/// The most columns whose grid fits `avail` within [`HINT_ROWS_MAX`] rows (→
+/// the fewest rows); `None` when no allowed column count fits. Unlike
+/// [`widest_grid`] it refuses to go deeper instead of narrower — the chat bar
+/// sheds hints at that point ([`trim_to_fit`]).
+fn corner_cols(cell_w: &[usize], avail: usize) -> Option<usize> {
+    (cell_w.len().div_ceil(HINT_ROWS_MAX)..=cell_w.len())
+        .rev()
+        .find(|&c| grid_layout(cell_w, c).2 <= avail)
 }
 
 /// The most columns whose grid fits into `avail` (→ the fewest rows); `None`
@@ -865,13 +926,21 @@ mod tests {
     }
 
     #[test]
-    fn hotkeys_wrap_to_grid_when_narrow() {
-        // Narrow width → hotkeys don't fit and wrap onto the next lines.
+    fn a_narrow_bar_wraps_to_two_rows_and_sheds_the_rest() {
+        // At 40 columns the corner beside the chat chip holds four hints as a
+        // 2×2 block; the wide mouse toggle and settings shed (both are on the
+        // F1 help list) instead of stacking extra rows.
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        let h = height(40, &m, &Palette::default(), ru());
-        assert!(h > 1, "expected hotkeys to wrap, height = {h}");
-        // All hotkeys are present despite wrapping (including the mouse toggle).
+        assert_eq!(height(40, &m, &Palette::default(), ru()), 2);
+        let text = rows_of(40, &m).join("\n");
+        for kept in ["F1", "справка", "чаты", "новый", "выход"] {
+            assert!(text.contains(kept), "{kept} kept: {text}");
+        }
+        for shed in ["мышь", "настройки"] {
+            assert!(!text.contains(shed), "{shed} shed: {text}");
+        }
+        // Every hint is back where the line has room (the `flat` width, 200).
         let flat = flat(&ready(), false, 0, None, false, false);
         assert!(flat.contains("Ctrl+W") && flat.contains("мышь: выделение"));
         for (_, desc) in HOTKEYS {
@@ -972,60 +1041,205 @@ mod tests {
     }
 
     #[test]
-    fn crowded_pill_gives_the_hotkey_grid_a_line_of_its_own() {
+    fn trim_keeps_the_highest_ranked_hints_that_fit() {
         // The cell widths of the chat's six hotkeys in the ru bundle: one wide
         // cell (the mouse toggle) and five short ones. Synthetic on purpose —
         // the rule is about widths, and shouldn't be re-measured against wording.
         let cells = [24, 12, 10, 14, 18, 14];
-        // A quiet pill: the whole grid fits beside it — one line, as before.
-        assert_eq!(top_row_cols(&cells, 5, 120), Some(6));
-        // The busy pill of the screenshot: beside it a single column fits (six
-        // rows of status bar), below it all six (two lines) — it goes below.
-        assert_eq!(top_row_cols(&cells, 85, 120), None);
-        // Two lines either way, pill under 60% of the width — it keeps the top row.
-        assert_eq!(top_row_cols(&cells, 40, 120), Some(4));
-        // The same tie past 60% — the hints read better as one grid of their own.
-        assert_eq!(top_row_cols(&cells, 120, 190), None);
-        // Saving a line always wins, however crowded: both layouts are one grid row.
-        assert_eq!(top_row_cols(&cells, 170, 280), Some(6));
+        // Room for one row — everything stays, as one row of six.
+        assert_eq!(trim_to_fit(&cells, 107, false), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(corner_cols(&cells, 107), Some(6));
+        // The quiet pill's remainder at 120 columns — everything stays, as the
+        // reference 3×2 grid.
+        assert_eq!(trim_to_fit(&cells, 71, false), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(corner_cols(&cells, 71), Some(3));
+        // The generating pill's remainder — settings and new-chat shed.
+        assert_eq!(trim_to_fit(&cells, 54, false), vec![0, 1, 2, 5]);
+        // Tighter still — the wide mouse toggle sheds too, and new-chat comes
+        // back in its place: a too-wide cell is passed over, not a lock-out.
+        assert_eq!(trim_to_fit(&cells, 32, false), vec![1, 2, 3, 5]);
+        // Barely a corner: F1 anchors a one-column block, then nothing — a
+        // block that cannot hold F1 is refused even when Esc alone would fit.
+        assert_eq!(trim_to_fit(&cells, 12, false), vec![1, 2]);
+        assert!(trim_to_fit(&cells, 11, false).is_empty());
+        // Scroll mode pins the mouse toggle ahead of everything: it stays at a
+        // width where it shed above (a one-column block with F1)…
+        assert_eq!(trim_to_fit(&cells, 25, true), vec![0, 1]);
+        // …and where even it cannot fit, it is passed over like any other.
+        assert_eq!(trim_to_fit(&cells, 23, true), vec![1, 2]);
+    }
+
+    /// `keep_order` addresses hints by index into `hotkey_list`'s order — this
+    /// pins the mapping so a reordering of the list cannot silently reshuffle
+    /// the shedding priority (or detach `HELP_IDX` from `F1`).
+    #[test]
+    fn keep_order_matches_the_hotkey_list() {
+        let statuses = ready();
+        let m = model(&statuses, false, 0, None, false, false);
+        let keys: Vec<&str> = hotkey_list(&m, ru()).iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys[HELP_IDX], HELP_KEY);
+        let named = |order: [usize; 6]| order.map(|i| keys[i]);
+        assert_eq!(
+            named(keep_order(false)),
+            ["F1", "Esc", "Ctrl+Q", "Ctrl+W", "Ctrl+P", "Ctrl+N"]
+        );
+        assert_eq!(
+            named(keep_order(true)),
+            ["Ctrl+W", "F1", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
+        );
     }
 
     #[test]
-    fn busy_status_keeps_the_hotkeys_in_one_row() {
-        // The screenshot behind the rule: at 120 columns the busy pill left the
-        // grid 32 — one column, six rows. Now the pill takes the top line and
-        // the hints stay a single row under it.
+    fn a_busy_pill_sheds_hints_but_keeps_the_corner_block() {
+        // The state that once stacked six hint rows, then sent the hints onto
+        // a full-width row below the pill: at 120 columns the busy pill leaves
+        // the corner 32. Now the wide hints shed (mouse toggle, settings) and
+        // the rest stay a 2×2 block beside the pill — two rows, and no keycap
+        // ever sits under the indicators.
         let statuses = ServerStatuses {
             chat: ServerStatus::Ready,
             embed: ServerStatus::Ready,
             impersonation: ServerStatus::NotConfigured,
         };
         let r = rows_of(120, &busy(&statuses));
-        assert_eq!(r.len(), 2, "pill on top, hints on one row below: {r:?}");
+        assert_eq!(r.len(), 2, "pill plus a two-row corner block: {r:?}");
         assert!(
             r[0].trim_start().starts_with('●') && r[0].contains("токены"),
-            "the pill has the top line to itself: {:?}",
+            "the pill keeps the top row: {:?}",
             r[0]
         );
-        for key in ["Ctrl+W", "F1", "Esc", "Ctrl+N", "Ctrl+P", "Ctrl+Q"] {
-            assert!(r[1].contains(key), "{key} on the hint row: {:?}", r[1]);
-        }
+        assert!(
+            r[0].contains("F1") && r[0].trim_end().ends_with("чаты"),
+            "kept hints share the pill's row: {:?}",
+            r[0]
+        );
         assert!(
             r[1].starts_with(' ') && r[1].trim_end().ends_with("выход"),
-            "the hint row is right-aligned: {:?}",
+            "the wrapped row is right-aligned: {:?}",
             r[1]
+        );
+        // Columns line up: the wrap lands exactly under the column above.
+        // Compare position in CHARACTERS (Cyrillic is multibyte).
+        let char_col = |line: &str, pat: &str| line.find(pat).map(|b| line[..b].chars().count());
+        assert_eq!(
+            char_col(&r[1], "Ctrl+N"),
+            char_col(&r[0], "F1"),
+            "\n{:?}\n{:?}",
+            r[0],
+            r[1]
+        );
+        let text = r.join("\n");
+        assert!(
+            !text.contains("мышь") && !text.contains("настройки"),
+            "shed hints are hidden, not wrapped: {text}"
         );
     }
 
+    /// The screenshot behind the corner rule: a generating pill of 63 columns
+    /// at a 120-column window used to send all six hints onto a full-width row
+    /// below — a wall of keycaps starting under the server chips. Now the two
+    /// widest hints shed and the block stays beside the pill.
     #[test]
-    fn a_fuller_pill_costs_at_most_one_row() {
-        // The invariant the layout rule buys, in every language and at every
-        // width: whatever the pill carries, it costs the bar at most one row
-        // over an empty one — the grid can always fall back to a full-width line
-        // of its own. Before, a busy pill cost five.
+    fn the_generating_pill_keeps_the_hints_in_the_corner() {
+        let statuses = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::NotConfigured,
+        };
+        let m = StatusModel {
+            generating: true,
+            tokens: 4732,
+            context: Some(22597),
+            context_exact: true,
+            reasoning: 4732,
+            ..model(&statuses, false, 0, None, false, false)
+        };
+        let r = rows_of(120, &m);
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert!(r[0].contains("токены: 27329 (рассужд. 4732)"), "{:?}", r[0]);
+        assert!(
+            r[0].trim_end().ends_with("справка"),
+            "the mouse toggle and F1 share the pill's row: {:?}",
+            r[0]
+        );
+        let char_col = |line: &str, pat: &str| line.find(pat).map(|b| line[..b].chars().count());
+        assert_eq!(
+            char_col(&r[1], "Esc"),
+            char_col(&r[0], "Ctrl+W"),
+            "a right-aligned 2×2 block, nothing under the pill:\n{:?}\n{:?}",
+            r[0],
+            r[1]
+        );
+        let text = r.join("\n");
+        assert!(
+            !text.contains("новый") && !text.contains("настройки"),
+            "{text}"
+        );
+    }
+
+    /// Scroll mode survives shedding: the accent-highlighted mouse toggle is a
+    /// mode light, pinned ahead of everything, and keeps its accent inside the
+    /// trimmed block.
+    #[test]
+    fn scroll_mode_pins_the_mouse_toggle_through_trimming() {
+        let statuses = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::NotConfigured,
+        };
+        let mut m = busy(&statuses);
+        m.mouse_scroll = true;
+        let p = Palette::default();
+        let ls = lines(120, &m, &p, ru());
+        assert_eq!(ls.len(), 2);
+        let accent_span = ls
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.contains("прокрутка"))
+            .expect("the pinned mouse toggle is shown");
+        assert_eq!(accent_span.style.fg, Some(p.accent));
+        let flat: String = ls
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(flat.contains("F1"), "F1 rides along: {flat}");
+        assert!(!flat.contains("настройки"), "sheds still happen: {flat}");
+    }
+
+    /// A pill that fills the window leaves no corner that could anchor on
+    /// `F1` — the bar falls back to the help entry alone on a row below, the
+    /// one hint that must survive every layout.
+    #[test]
+    fn a_wall_of_pill_leaves_f1_alone_below() {
+        let statuses = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::NotConfigured,
+        };
+        let r = rows_of(96, &busy(&statuses));
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert!(r[0].contains("файлы"), "the pill keeps its row: {:?}", r[0]);
+        let below = r[1].trim();
+        assert!(
+            below.starts_with("F1") && below.ends_with("справка"),
+            "F1 alone: {:?}",
+            r[1]
+        );
+        assert!(r[1].starts_with(' '), "right-aligned: {:?}", r[1]);
+    }
+
+    #[test]
+    fn the_bar_never_exceeds_two_rows_and_keeps_f1() {
+        // The invariant the corner rule buys, stated across widths, languages
+        // and states: the bar is never taller than HINT_ROWS_MAX rows however
+        // full the pill (before, a busy pill cost up to five extra rows, then
+        // a full-width hint row), and the help entry survives at every width
+        // that can hold its cell.
         let p = Palette::default();
         let quiet_statuses = ready();
         let quiet = model(&quiet_statuses, false, 0, None, false, false);
+        let scroll = model(&quiet_statuses, false, 0, None, false, true);
         let busy_statuses = ServerStatuses {
             chat: ServerStatus::Disconnected("connection refused".into()),
             embed: ServerStatus::Ready,
@@ -1034,9 +1248,25 @@ mod tests {
         let busy = busy(&busy_statuses);
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            for w in 40..=240usize {
-                let (q, b) = (height(w, &quiet, &p, loc), height(w, &busy, &p, loc));
-                assert!(b <= q + 1, "{lang:?} w={w}: quiet {q} rows, busy {b}");
+            let f1_cell = 2 + 2 + 1 + str_w(loc.t("ui.status.hotkey.help"));
+            for w in 12..=240usize {
+                for m in [&quiet, &scroll, &busy] {
+                    let ls = lines(w, m, &p, loc);
+                    assert!(
+                        ls.len() <= HINT_ROWS_MAX,
+                        "{lang:?} w={w}: {} rows",
+                        ls.len()
+                    );
+                    let flat: String = ls
+                        .iter()
+                        .flat_map(|l| l.spans.iter())
+                        .map(|s| s.content.as_ref())
+                        .collect();
+                    assert!(
+                        w < f1_cell || flat.contains("F1"),
+                        "{lang:?} w={w}: F1 missing: {flat}"
+                    );
+                }
             }
         }
     }
