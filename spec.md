@@ -1983,11 +1983,20 @@ Two main screens + overlays (modals):
   screen that answers this, so a label still saying "chats" would be the old answer in
   exactly the flow that needs the new one. It is **derived** from the navigation state
   once per frame rather than mirrored into a flag, which makes the hint true of every
-  frame by construction. The wording is constrained by the grid: the hints are laid out
-  in right-aligned columns whose width comes from the longest cell, so a label a few
-  characters longer costs a whole extra row at common widths — the alternative label is
-  a short **directional** one ("to search"), which also can't be misread as
-  "`Esc` opens search".
+  frame by construction. **A running turn outranks all of it**: mid-turn `Esc` goes
+  nowhere — it cancels the generation first — so the label says *cancel* and hands the
+  navigation target back the moment the turn ends. Two surfaces answer for the key
+  while a turn runs (the input box's title reads "generation… `Esc` cancel", and the
+  `F1` row says both), and the bar spent every turn contradicting them; the same word
+  is now used on all of them. That half is read from the same per-frame snapshot as the
+  generation indicator rather than from a fourth navigation target — the back-stack the
+  rest is derived from knows nothing about turns — and what the label mirrors is the
+  **key's own precedence**: cancel first, then back. The wording is constrained by the
+  grid: the hints are laid out in right-aligned columns whose width comes from the
+  longest cell, so a label a few characters longer can cost a hint (the corner block
+  sheds rather than grows — see the layout bullet below). Hence a short **directional**
+  label ("to search"), which also can't be misread as "`Esc` opens search"; and hence
+  "cancel", the shortest word that says what a running turn's `Esc` does.
 - **The bar's own layout** keeps the hints in one place: the indicators (server
   chips, generation, the token counter, the quiet background/speech/attachment
   chips) sit on the left of the **top** row, and the hint grid is right-aligned

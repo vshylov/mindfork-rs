@@ -14,8 +14,10 @@ use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
 /// The one hotkey whose description is not fixed: `Esc` means "go back", and
-/// where back goes depends on how the chat was reached (see [`EscTarget`]).
-/// Named so the substitution in [`lines`] isn't a bare string match.
+/// where back goes depends on how the chat was reached (see [`EscTarget`]) —
+/// except while a turn is running, when it cancels first (see
+/// [`esc_hint_key`]). Named so the substitution in [`lines`] isn't a bare
+/// string match.
 const ESC_KEY: &str = "Esc";
 
 /// The help hotkey — the one hint the corner block sheds last (see
@@ -67,6 +69,29 @@ impl EscTarget {
     }
 }
 
+/// The `Esc` hint's bundle key, in the key's own order of precedence: while a
+/// turn runs `Esc` **cancels it** and goes nowhere
+/// (`ChatScreen::handle_plain_key`), and only otherwise does it go back to
+/// where [`EscTarget`] points. The bar was the last surface still telling the
+/// pre-cancel story mid-turn — the input box's title says "Esc cancel", the
+/// `F1` row says both, and `/stop` exists precisely because the key is
+/// overloaded — so the two on-screen hints contradicted each other for the
+/// length of every turn.
+///
+/// Generation is **not** a fourth [`EscTarget`]: that enum is derived from the
+/// navigation back-stack in `app/runtime`, which knows nothing about turns, and
+/// a variant its only producer could never build would be a trap. Both halves
+/// are read here instead, off one per-frame [`StatusModel`] — the same snapshot
+/// the generation chip and the input box's title are drawn from, so the three
+/// cannot disagree. See spec §11.1.
+fn esc_hint_key(model: &StatusModel) -> &'static str {
+    if model.generating {
+        "ui.status.hotkey.cancel"
+    } else {
+        model.esc_target.hint_key()
+    }
+}
+
 /// Gap between hotkey columns and between the status pill and the hotkey grid.
 const GAP: usize = 3;
 
@@ -102,7 +127,9 @@ pub struct StatusModel<'a> {
     /// (an attachment is paid every turn, a staged image once, on the next
     /// send), and merging them would claim otherwise. See spec §9.10.
     pub staged_images: Option<&'a str>,
-    /// Where `Esc` goes from here — it decides the `Esc` hint's wording.
+    /// Where `Esc` goes from here — it decides the `Esc` hint's wording
+    /// outside a turn; while `generating`, the key cancels instead and the
+    /// hint says so ([`esc_hint_key`]).
     pub esc_target: EscTarget,
     /// The open "chat" is a sub-agent transcript, read-only (spec §11.2): a
     /// quiet chip says so, next to the input box's title that says the same.
@@ -262,7 +289,8 @@ const HELP_IDX: usize = 1;
 /// The order the corner block **keeps** hints when the pill leaves it too
 /// little width — later entries shed first. `F1` outlives everything: it opens
 /// the full per-screen hotkey list every hidden hint is still on (spec §11.7).
-/// `Esc` next — its label carries live navigation state ([`EscTarget`]). Then
+/// `Esc` next — its label is the live one ([`esc_hint_key`]: the running
+/// turn's cancel, else where back goes). Then
 /// quit, the mouse toggle, settings, new chat. In scroll mode the mouse toggle
 /// instead jumps to the front: accent-highlighted, it is the one thing on
 /// screen saying why native selection is off — a mode light, not a hint.
@@ -460,7 +488,7 @@ fn hotkey_list(model: &StatusModel, loc: &'static Locale) -> Vec<(&'static str, 
         // `Esc` is the one hint whose meaning moves with the state; the rest are
         // fixed. Keeping it in the const preserves one ordered list.
         let desc_key = if *key == ESC_KEY {
-            model.esc_target.hint_key()
+            esc_hint_key(model)
         } else {
             *default
         };
@@ -1108,8 +1136,11 @@ mod tests {
             "the pill keeps the top row: {:?}",
             r[0]
         );
+        // The pill is a **running turn's**, so the `Esc` cell that ends the
+        // top row reads "cancel" rather than a navigation target
+        // ([`esc_hint_key`]) — the label moves, the corner block does not.
         assert!(
-            r[0].contains("F1") && r[0].trim_end().ends_with("чаты"),
+            r[0].contains("F1") && r[0].trim_end().ends_with(ru().t("ui.status.hotkey.cancel")),
             "kept hints share the pill's row: {:?}",
             r[0]
         );
@@ -1380,5 +1411,50 @@ mod tests {
         let from_results = text(EscTarget::SearchResults);
         assert!(from_results.contains(results), "{from_results}");
         assert!(!from_results.contains(chats), "{from_results}");
+    }
+
+    /// Mid-turn `Esc` goes nowhere: it cancels the generation first
+    /// (`ChatScreen::handle_plain_key`), which is why `/stop` and `/chats`
+    /// exist as its two explicit halves. The bar was the last surface still
+    /// telling the pre-cancel story — for the length of every turn it claimed
+    /// "chats" a row under an input box titled "Esc cancel" — so the running
+    /// turn now outranks the navigation target, and hands it straight back
+    /// when the turn ends.
+    #[test]
+    fn esc_hint_says_cancel_while_a_turn_runs() {
+        let statuses = ready();
+        let cancel = ru().t("ui.status.hotkey.cancel");
+        let text = |generating, target| {
+            let mut m = model(&statuses, generating, 0, None, false, false);
+            m.esc_target = target;
+            rows_of(120, &m).join(" ")
+        };
+
+        for target in [
+            EscTarget::ChatList,
+            EscTarget::SearchResults,
+            EscTarget::PreviousChat,
+        ] {
+            let goes_to = ru().t(target.hint_key());
+            // The turn's meaning wins over every navigation target...
+            let mid_turn = text(true, target);
+            assert!(mid_turn.contains(cancel), "{target:?}: {mid_turn}");
+            assert!(
+                !mid_turn.contains(goes_to),
+                "{target:?}: the navigation label outlived the turn: {mid_turn}"
+            );
+            // ...and is not sticky: the target is back the moment it ends.
+            let idle = text(false, target);
+            assert!(idle.contains(goes_to), "{target:?}: {idle}");
+            assert!(!idle.contains(cancel), "{target:?}: {idle}");
+        }
+
+        // One word for one key across the two surfaces that answer for it: the
+        // input box's title spells the whole hint out, the bar's cell carries
+        // the label alone.
+        assert!(
+            ru().t("ui.chat.input.generating").contains(cancel),
+            "the bar and the input box must not use two words for one key"
+        );
     }
 }

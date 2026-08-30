@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Theme::Auto` follows the terminal, over OSC 11 (done)
 - Post-M9: a busy status line stops stacking the hotkeys into a column (done)
 - Post-M9: the status bar's hints never leave the corner — shed, don't wrap (done)
+- Post-M9: mid-turn the `Esc` hint says "cancel" (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2251,3 +2252,61 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   two-rows-and-F1 sweep over widths × languages × states. The demo-dump
   drift gate passed untouched — the en hints fit at the capture width. Pure
   UI — no live run needed. 2721 green (+4).
+
+### Post-M9: mid-turn the `Esc` hint says "cancel" (done)
+- **Symptom.** The bar's `Esc` hint answers *where back goes* — "chats", "to
+  search", "back" — and kept answering it while a turn ran, one row under an
+  input box titled "generation… `Esc` cancel". Mid-turn `Esc` does not go back
+  at all: `handle_plain_key` cancels the generation and stays put. So for the
+  length of every turn the two hints on screen contradicted each other, and the
+  one that was wrong was the one the bar exists to be right about — the same
+  drift the `EscTarget` mechanism was built to prevent, arriving through the
+  axis it did not model. The surrounding text already told the whole story: the
+  `F1` row says "the chat list (or back where you came from) · cancel
+  generation", README says "the status bar says which", and `/stop` and
+  `/chats` exist *because* the key is overloaded mid-turn.
+- **Decided: fix it.** The alternative — "acceptable as-is, the input box
+  already says it" — was rejected: redundancy is cheap, a contradiction is not,
+  and spec §11.1's own rule for this hint is that it is true of every frame by
+  construction.
+- **Not a fourth `EscTarget`.** The obvious shape was a `Cancel` variant, and it
+  would have been a variant its only producer could never build:
+  `runtime::esc_target` derives the enum from the navigation back-stack, which
+  knows nothing about turns, so the screen would have had to override it anyway.
+  Instead `status_bar::esc_hint_key` reads both halves off the one per-frame
+  `StatusModel` — the same snapshot the generation chip and the input title are
+  drawn from — in the key handler's own order of precedence: running turn
+  first, target otherwise. `EscTarget` stays "where back goes", one meaning per
+  type, and the label mirrors the key's `if generating` rather than restating it.
+- **The word: "cancel"/"отмена", not "stop"/"стоп".** One key answered by three <!-- cyrillic-ok -->
+  surfaces should be answered in one word, and the input box and the `F1` row
+  had already picked this one. `stop` is a column narrower in en and would have
+  made the change free (below), but it would have bought that column by
+  introducing a second word for one action — the shape of the defect being
+  fixed.
+- **The width cost, measured** rather than argued, since the corner block sheds
+  hints when the pill crowds it: over widths 40..=220 × both mouse modes × a
+  light and a heavy mid-turn pill, the shed set is **identical** in Russian
+  ("отмена" 6 vs "чаты" 4 — the `Esc` cell is never its column's widest, the <!-- cyrillic-ok -->
+  14-column `Ctrl+N`/`Ctrl+Q` are), and in English differs at **three exact
+  widths** (busy pill 102 and — in scroll mode — 127; light pill 45 and 70),
+  where the block is one column short of the wider cell and loses one more
+  hint. Those are knife-edge widths at which the corner is already down to one
+  to three hints of six, all of them on the `F1` list. The spec's older wording
+  note ("costs a whole extra row at common widths") was corrected with it: since
+  the shed rule, a longer label costs a hint, not a row.
+- **Out of scope, deliberately: overlays.** A tool-confirmation popup takes
+  `Esc` to mean "decline" *while the turn runs*, and the emoji/suggestion/
+  confirm popups shadow it too. The bar has never known about overlays (no
+  popup state reaches `StatusModel`, and a widget below `screens` should not
+  learn it), and each of those says what `Esc` does in its own text — the
+  popup's option list literally reads "Esc — decline". The persistent state
+  lasting whole minutes is the one worth a label.
+- **Tests**: one new (`esc_hint_says_cancel_while_a_turn_runs`) — rendered
+  through `TestBackend` at 120 columns, it pins the swap against all three
+  navigation targets, that it is not sticky (the target is back the moment the
+  turn ends), and that the bar's label is the word the input box's title
+  already uses, so the two cannot drift apart. The busy-pill shedding test's
+  fixture is a generating one, so its top-row assertion now anchors on the
+  cancel label — the corner block itself was unchanged. Pure UI — no live run
+  needed (AGENTS.md §3). 2722 green (+1).
