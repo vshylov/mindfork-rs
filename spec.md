@@ -2723,7 +2723,9 @@ section and subsection), `Esc` — cancel.
   globally" hint — honestly showing that it's unavailable to the model.
 - **Interface**: the *Appearance* group (theme, **legacy-terminal compatibility** —
   see below, table row separators, Mermaid diagrams, **the model's name next to the
-  assistant's header** — `show_model_name`, off by default, §11.3, OSC 52 clipboard),
+  assistant's header** — `show_model_name`, off by default, §11.3, OSC 52 clipboard,
+  **which end the self-model screen lists observations from** —
+  `self_model_note_order`, newest first by default, [§17.7](#177-ui--the-self-model-screen-f3)),
   *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
   (confirming `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
   message / after the assistant's reply (default) / off, §11.2), *Conversation
@@ -3725,6 +3727,18 @@ for viewing and **manual editing**:
   paragraph. Headers and blank rows are the same `Decoration` row kind the
   cursor skips, so the selection opens on the self-description, never on the
   header above it;
+- **the observations are ordered by their own date**, newest first by default:
+  the narrative grows at its end, and what the assistant noticed last is what a
+  person opens the screen for — putting it under the header saves scrolling past
+  the whole history. `interface.self_model_note_order` ("Interface" section,
+  [§11.6](#116-the-settings-screen)) flips it to oldest first, for reading the
+  narrative forward as the story of how the self-model got here. The sort key is
+  the row's own `created_at` — the date the row shows — deliberately **not** the
+  order the snapshot arrives in: that one is `updated_at`-descending (it is what
+  caps the list by recency, `self_model.max_narrative`), so a revised observation
+  would otherwise jump to the top under a date saying it belongs further down.
+  The setting is read when the screen opens; it changes display only, never what
+  the model is told or what the cap keeps;
 - navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
   Both panes scroll by the rule in [§11.2](#112-the-chat-list-an-overlay) (the window follows the
   selection, it is not dragged by it). The field pane additionally keeps **one

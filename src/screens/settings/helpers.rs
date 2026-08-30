@@ -1262,6 +1262,26 @@ pub(super) fn auto_title_label(m: AutoTitleMode, loc: &'static Locale) -> String
     .to_string()
 }
 
+/// The order of self-model observation orders (matches `cycle_note_order`): the
+/// default — newest first — is the entry the row opens on.
+pub(super) const NOTE_ORDERS: [NoteOrder; 2] = [NoteOrder::NewestFirst, NoteOrder::OldestFirst];
+
+/// Cyclically shifts the self-model observation order, direction-aware.
+pub(super) fn cycle_note_order(m: NoteOrder, dir: i32) -> NoteOrder {
+    let idx = NOTE_ORDERS.iter().position(|&x| x == m).unwrap_or(0) as i32;
+    let n = NOTE_ORDERS.len() as i32;
+    NOTE_ORDERS[(((idx + dir) % n + n) % n) as usize]
+}
+
+/// The self-model observation order's label (`interface.self_model_note_order`).
+pub(super) fn note_order_label(m: NoteOrder, loc: &'static Locale) -> String {
+    loc.t(match m {
+        NoteOrder::NewestFirst => "ui.settings.choice.note_order_newest",
+        NoteOrder::OldestFirst => "ui.settings.choice.note_order_oldest",
+    })
+    .to_string()
+}
+
 /// Cyclically shifts the OSC-52 mode, direction-aware.
 pub(super) fn cycle_osc52(m: Osc52Mode, dir: i32) -> Osc52Mode {
     let idx = OSC52_MODES.iter().position(|&x| x == m).unwrap_or(0) as i32;

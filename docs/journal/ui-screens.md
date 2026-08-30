@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (54)
+## Entries (55)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -66,6 +66,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the build date on the "About" tab (done)
 - Post-M9: the chat list counts messages as the conversation reads (done)
 - Post-M9: the self-model screen reads as two named halves (done)
+- Post-M9: the self-model screen lists its observations newest first (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2815,3 +2816,63 @@ storage or tool surface is touched.
   landing below the first header on open and on a fresh snapshot. A live run is
   not required (AGENTS.md §3) — pure UI; verified against the real render through
   the screenshot pipeline, which draws the actual screen headlessly.
+
+### Post-M9: the self-model screen lists its observations newest first (done)
+
+**What.** `F3`'s observation list is now ordered by the observation's **own
+date**, newest first, and the direction is a setting —
+`interface.self_model_note_order` ("Interface" section, Appearance group:
+*newest first* / *oldest first*). Default: newest first (spec §17.7, §11.6).
+
+**Why it was a defect and not only a missing setting.** The screen rendered
+`m.narrative.iter().rev()` under a comment reading "newest on top" — and it was
+neither. The `F3` snapshot's narrative is built by
+`Orchestrator::self_model_view_snapshot` from `self_notes_recent` →
+`Db::note_list`, whose SQL is `ORDER BY n.updated_at DESC`: the list already
+arrives **newest first**, so reversing it put the **oldest** observation under
+the header. A person opening the screen to see what the assistant noticed last
+had to scroll past the entire narrative to find it.
+
+**Why nothing caught it.** The demo fixture `features::demo::self_model` lists
+its six observations **oldest first** (a readable table in the source), so
+`.rev()` produced a correct-looking screenshot, and the `F3` capture is the one
+render of this screen the gates actually look at. The screen's own tests checked
+the geometry (headers, blank rows, `Del`) and never the order. Lesson-shaped:
+**a fixture ordered the opposite way to production hides an ordering bug behind
+a green screenshot** — the new tests build the snapshot the way the orchestrator
+actually does, newest first, and assert what comes out.
+
+**Key decisions.**
+- **Sort by `created_at`, not by the arrival order.** `created_at` is the date
+  each row *shows*; the arrival order is `updated_at`-descending, which is what
+  caps the list by recency (`self_model.max_narrative`) — keeping it as the
+  display order would let a revised observation jump to the top under a date
+  saying it belongs further down. One rule, `entities::self_model::order_narrative`
+  (a stable sort, so same-instant observations keep their incoming order).
+- **The truncation stays recency-based.** The cap is applied in the orchestrator
+  before the screen sees the list; sorting afterwards means "oldest first" shows
+  the *newest* `max_narrative` observations read forward, not the oldest ones.
+- **Sorted in the screen, not in the orchestrator.** The order is a display rule
+  and the screen is where it belongs — and, incidentally, this is what kept the
+  `F3` screenshot byte-identical (the demo fixture's ascending order re-sorts to
+  exactly what `.rev()` used to produce). Only the settings captures drifted, by
+  the Interface section's field count, 14 → 15.
+- **The setting is read when the screen opens** (`ChatScreen::self_model_note_order`
+  → `SelfModelScreen::new`, the `clipboard_osc52` shape) rather than broadcast on
+  every `Settings` event: `ActiveScreen` holds one overlay, so settings cannot be
+  edited while `F3` stands, and every `F3` builds the screen anew.
+- **Home in `InterfaceSettings`, row in the "Interface" section.** It changes
+  nothing the model is told and nothing the narrative cap keeps, so it does not
+  belong in `SelfModelSettings` (narrative sizes and injection volume) next to
+  the `Sm*` rows in "Memory" — and every other `interface.*` field is edited in
+  the section of the same name. The `/` field search finds it from either word.
+
+**Tests** (2717 green, +6): `order_narrative` both ways over an input ordered
+like neither, and its stability on equal timestamps; the screen's list newest
+first by default and flipped by the setting, dates included; `Del` deleting the
+row the cursor stands on in either direction (the ids ride the rows, so the
+reversed list is not a mirror); the settings row present, described, and cycling
+back to where it started; the default in `AppConfig`, and an `interface` section
+written before the key existed keeping it. A live run is not required
+(AGENTS.md §3) — pure UI; the real render is exercised through the screenshot
+pipeline.

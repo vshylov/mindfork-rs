@@ -176,6 +176,16 @@ confuse it with), or to stop claiming the property in the comment.
 — *self-model injection — per-section budgets*, *MCP servers — secrets for the `env`
 map and JSON import*, *engine failures stop being silent*.
 
+**A fixture ordered the opposite way to production hides an ordering bug behind a
+green test.** The self-model screen reversed the list it was handed, under a comment
+claiming "newest on top"; the snapshot already arrived newest-first, so the screen
+showed the **oldest** observation at the top for as long as the feature existed. The
+one render any gate looked at was the demo capture — and the demo fixture lists its
+observations oldest-first, so `.rev()` produced a correct-looking screenshot. Build
+the fixture the way the producer actually emits it (here: the `ORDER BY … DESC` the
+query really uses), and assert the order, not just the geometry.
+— *the self-model screen lists its observations newest first*.
+
 **A test that waits on an event must bound the wait, or a regression hangs instead of
 failing.** The orchestrator's `wait_for` helper blocks until the event channel
 *closes*, so removing the code under test made a run sit past ten minutes; wrapped in

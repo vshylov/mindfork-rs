@@ -1323,6 +1323,23 @@ pub enum AutoTitleMode {
     Off,
 }
 
+/// The order the **self-model screen** (`F3`) lists observations in
+/// (`interface.self_model_note_order`, spec §17.7). A display rule only: the
+/// snapshot the screen receives is capped by recency (`self_model.max_narrative`)
+/// whichever way it is then read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteOrder {
+    /// Newest observation first (default): the narrative grows at its end, and
+    /// what the assistant noticed last is what a person opens the screen to read
+    /// — putting it under the header saves scrolling past the whole history.
+    #[default]
+    NewestFirst,
+    /// Oldest first — the narrative read forward, as the story of how the
+    /// self-model got here.
+    OldestFirst,
+}
+
 /// Interface settings (theme, spellcheck, dictionaries). See spec §11.6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1379,6 +1396,10 @@ pub struct InterfaceSettings {
     /// itself (spec §11.2, docs/history/auto-chat-title.md). On by default,
     /// firing after the first reply; `Off` leaves only the chat-list action.
     pub auto_title: AutoTitleMode,
+    /// The order observations are listed in on the self-model screen (`F3`,
+    /// spec §17.7). `NewestFirst` by default — the last thing the assistant
+    /// noticed is the one a person opens that screen for.
+    pub self_model_note_order: NoteOrder,
 }
 
 impl Default for InterfaceSettings {
@@ -1395,6 +1416,7 @@ impl Default for InterfaceSettings {
             language: crate::shared::i18n::Lang::default(),
             clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
             auto_title: AutoTitleMode::default(),
+            self_model_note_order: NoteOrder::default(),
         }
     }
 }
@@ -2283,6 +2305,14 @@ mod tests {
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
+        // The self-model screen lists the newest observation first: it is the one
+        // a person opens that screen to read (spec §17.7). An `interface` section
+        // written before the key existed keeps that default rather than losing the
+        // section's other values — the additive-field rule (AGENTS.md §3).
+        assert_eq!(c.interface.self_model_note_order, NoteOrder::NewestFirst);
+        let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(old.interface.theme, Theme::Dark);
+        assert_eq!(old.interface.self_model_note_order, NoteOrder::NewestFirst);
         // Old-terminal compatibility mode is off by default.
         assert!(!c.interface.terminal_compat);
         // Markdown-table row separators are off by default.
@@ -2588,6 +2618,7 @@ mod tests {
                 language: crate::shared::i18n::Lang::Ru,
                 clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
                 auto_title: AutoTitleMode::AfterUserMessage,
+                self_model_note_order: NoteOrder::OldestFirst,
             },
             ..Default::default()
         };

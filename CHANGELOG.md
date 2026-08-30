@@ -43,7 +43,18 @@ split by subsystem.
   and the status bar shows which line is being written — or that the director
   is judging the scene — while the dialogue runs.
 
+- **The self-model screen (`F3`) can be read from either end.** A new setting,
+  *Interface → Self-model: observations*, chooses whether the observation list
+  starts from the newest or the oldest one. Newest first is the default — what
+  the assistant noticed last is usually what you opened the screen for.
+
 ### Fixed
+
+- **The self-model screen listed its observations oldest first.** The `F3`
+  screen showed the oldest observation directly under the "Observations"
+  header, so seeing the most recent one meant scrolling past the whole
+  narrative. The list now starts with the newest (and the new setting above
+  flips it back if you prefer reading the narrative forward).
 
 - **The status bar no longer stacks the key hints into a column.** While a turn
   was running, a status line full of indicators (generation, the token counter,

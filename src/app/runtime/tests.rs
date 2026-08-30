@@ -3,6 +3,7 @@
 use super::*;
 use crate::entities::chat::FeedView;
 use crate::features::chat_search_sort::SortMode;
+use crate::shared::config::NoteOrder;
 
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -231,6 +232,7 @@ fn self_model_changed_refreshes_open_screen_only() {
         Default::default(),
         screen.palette(),
         screen.loc(),
+        NoteOrder::default(),
     )));
     apply_event(
         &mut screen,
@@ -619,6 +621,7 @@ fn character_names_event_reaches_the_feed() {
         Default::default(),
         screen.palette(),
         screen.loc(),
+        NoteOrder::default(),
     )));
     apply_event(
         &mut screen,
@@ -1413,6 +1416,7 @@ fn f1_opens_the_help_over_any_screen_and_owns_the_keys() {
         Default::default(),
         Palette::default(),
         h.screen.loc(),
+        NoteOrder::default(),
     )));
     h.feed(key(KeyCode::F(1)));
     let state = h.help.open.as_ref().expect("the dialog opened over F3");

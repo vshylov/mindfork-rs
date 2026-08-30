@@ -782,6 +782,17 @@ impl ChatScreen {
             .unwrap_or_default()
     }
 
+    /// Which end of the narrative the self-model screen (`F3`) lists observations
+    /// from (`interface.self_model_note_order`, spec §17.7). Read from the last
+    /// settings snapshot, like [`Self::clipboard_osc52`] — before the first
+    /// `Settings` event the default (newest first) applies.
+    pub fn self_model_note_order(&self) -> crate::shared::config::NoteOrder {
+        self.settings_snapshot
+            .as_ref()
+            .map(|(config, ..)| config.interface.self_model_note_order)
+            .unwrap_or_default()
+    }
+
     /// The current spellcheck settings `(enabled, selected dictionaries)` from
     /// the last settings snapshot — for (re)loading dictionaries in
     /// `app/runtime.rs`. See spec §11.6.

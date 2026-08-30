@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::shared::config::SelfModelSettings;
+use crate::shared::config::{NoteOrder, SelfModelSettings};
 use crate::shared::i18n::Locale;
 
 /// Render/storage parameters for the "self-model" (from `config.self_model`). Passed
@@ -83,6 +83,22 @@ pub struct NarrativeSegment {
     pub id: Uuid,
     pub text: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// Orders observations for **display** (the `F3` screen, spec §17.7) by their
+/// own `created_at` — the date each row shows — so the dates read monotonically
+/// down the list whichever direction the reader picked. Deliberately not the
+/// order the snapshot arrives in: that one is `updated_at`-descending (it is what
+/// caps the list by recency, `self_model.max_narrative`), and a revised
+/// observation would jump to the top under a date that says otherwise. The sort
+/// is stable — segments stamped in the same instant keep the incoming order.
+pub fn order_narrative(narrative: &[NarrativeSegment], order: NoteOrder) -> Vec<&NarrativeSegment> {
+    let mut out: Vec<&NarrativeSegment> = narrative.iter().collect();
+    match order {
+        NoteOrder::NewestFirst => out.sort_by_key(|s| std::cmp::Reverse(s.created_at)),
+        NoteOrder::OldestFirst => out.sort_by_key(|s| s.created_at),
+    }
+    out
 }
 
 /// A long-term goal/intention of the agent.
@@ -1134,6 +1150,62 @@ mod tests {
         assert!(r.contains("черты: любопытный"));
         assert!(r.contains("интересы: Rust"));
         assert!(r.contains("отношения: доверительные"));
+    }
+
+    /// A segment stamped `mins` minutes after a fixed epoch, labeled by that offset.
+    fn dated_seg(mins: i64) -> NarrativeSegment {
+        NarrativeSegment {
+            id: Uuid::new_v4(),
+            text: format!("obs {mins}"),
+            created_at: chrono::TimeZone::timestamp_opt(&Utc, mins * 60, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn narrative_is_ordered_by_its_own_date_both_ways() {
+        // The input order is deliberately neither: what the F3 snapshot brings is
+        // `updated_at`-descending, and the rows show `created_at` (spec §17.7).
+        let input = vec![dated_seg(20), dated_seg(5), dated_seg(30), dated_seg(10)];
+        let texts = |order| {
+            order_narrative(&input, order)
+                .into_iter()
+                .map(|s| s.text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            texts(NoteOrder::NewestFirst),
+            ["obs 30", "obs 20", "obs 10", "obs 5"]
+        );
+        assert_eq!(
+            texts(NoteOrder::OldestFirst),
+            ["obs 5", "obs 10", "obs 20", "obs 30"]
+        );
+        // The default is what a person opens the screen for — the newest.
+        assert_eq!(texts(NoteOrder::default()), texts(NoteOrder::NewestFirst));
+    }
+
+    #[test]
+    fn same_instant_segments_keep_the_incoming_order() {
+        // A stable sort: two observations recorded in the same instant (a batch
+        // write) must not shuffle between renders.
+        let (a, b) = (dated_seg(7), dated_seg(7));
+        let input = vec![
+            NarrativeSegment {
+                text: "first".into(),
+                ..a
+            },
+            NarrativeSegment {
+                text: "second".into(),
+                ..b
+            },
+        ];
+        for order in [NoteOrder::NewestFirst, NoteOrder::OldestFirst] {
+            let texts: Vec<&str> = order_narrative(&input, order)
+                .into_iter()
+                .map(|s| s.text.as_str())
+                .collect();
+            assert_eq!(texts, ["first", "second"], "{order:?}");
+        }
     }
 
     #[test]

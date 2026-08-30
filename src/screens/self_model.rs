@@ -17,7 +17,8 @@ use ratatui::widgets::{Clear, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::profile::CharacterNames;
-use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
+use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit, order_narrative};
+use crate::shared::config::NoteOrder;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -110,6 +111,11 @@ pub struct SelfModelScreen {
     editor: Option<Editor>,
     /// Confirmation for clearing the whole model (`Ctrl+K` twice).
     confirm_clear: bool,
+    /// Which end of the narrative the observations are listed from
+    /// (`interface.self_model_note_order`, spec §17.7). Taken at open time: the
+    /// screen is a full-screen overlay, so settings cannot be edited while it
+    /// stands, and every `F3` builds it anew.
+    note_order: NoteOrder,
 }
 
 impl SelfModelScreen {
@@ -119,6 +125,7 @@ impl SelfModelScreen {
         names: CharacterNames,
         palette: Palette,
         loc: &'static Locale,
+        note_order: NoteOrder,
     ) -> Self {
         let mut screen = Self {
             model,
@@ -129,6 +136,7 @@ impl SelfModelScreen {
             scroll: 0,
             editor: None,
             confirm_clear: false,
+            note_order,
         };
         // Row 0 is the "Assistant" header — a decoration. Land the cursor on
         // the first selectable row instead of highlighting a header on open.
@@ -287,8 +295,10 @@ impl SelfModelScreen {
             RowAction::Relationship,
         ));
 
-        // The narrative (newest on top) — deletable via `Del`. Also behind a separator and
-        // a header, so observations don't blend into the user's half.
+        // The narrative — deletable via `Del`. Also behind a separator and
+        // a header, so observations don't blend into the user's half. Which end
+        // it starts from is the reader's setting (`interface.self_model_note_order`,
+        // spec §17.7), newest first by default.
         if !m.narrative.is_empty() {
             rows.push(spacer());
             rows.push(header(&loc.tf(
@@ -297,7 +307,10 @@ impl SelfModelScreen {
             )));
             rows.push(spacer());
         }
-        for (i, seg) in m.narrative.iter().rev().enumerate() {
+        for (i, seg) in order_narrative(&m.narrative, self.note_order)
+            .into_iter()
+            .enumerate()
+        {
             if i > 0 {
                 rows.push(spacer());
             }
@@ -768,7 +781,13 @@ mod tests {
 
     #[test]
     fn esc_closes_ctrl_q_and_f10_quit() {
-        let mut s = SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            None,
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
         assert_eq!(
             s.handle_key(key(KeyCode::Esc)),
             Some(SelfModelIntent::Close)
@@ -790,6 +809,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         // The first row is the self-description.
         assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
@@ -813,6 +833,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         s.handle_key(key(KeyCode::Enter)); // open the self-description editor
         s.handle_key(key(KeyCode::Char('A')));
@@ -833,6 +854,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         s.handle_key(key(KeyCode::Down)); // onto the goal
         assert!(matches!(s.selected_action(), Some(RowAction::Goal(_))));
@@ -850,7 +872,13 @@ mod tests {
 
     #[test]
     fn add_goal_commits_and_empty_is_noop() {
-        let mut s = SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            None,
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
         // Rows of the empty model: [·Assistant·, ·spacer·, Summary, ·spacer·, AddGoal,
         // ·spacer·, ·User·, ·spacer·, Traits, ·spacer·, Interests, ·spacer·,
         // Relationship] — the cursor skips decorations, so one `Down` off the
@@ -878,6 +906,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
@@ -899,6 +928,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
@@ -937,13 +967,131 @@ mod tests {
             .collect()
     }
 
+    /// Adds an observation with an explicit date (the rows are ordered by it).
+    fn push_dated(m: &mut SelfModel, text: &str, day: u32) {
+        m.narrative
+            .push(crate::entities::self_model::NarrativeSegment {
+                id: Uuid::new_v4(),
+                text: text.into(),
+                created_at: chrono::TimeZone::with_ymd_and_hms(
+                    &chrono::Utc,
+                    2026,
+                    3,
+                    day,
+                    12,
+                    0,
+                    0,
+                )
+                .unwrap(),
+            });
+    }
+
+    /// A model whose observations arrive **newest first** — the order the
+    /// orchestrator's snapshot actually has (`note_list` is `updated_at`-descending).
+    fn model_with_dated_observations() -> SelfModel {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        push_dated(&mut m, "самое новое", 9);
+        push_dated(&mut m, "среднее", 5);
+        push_dated(&mut m, "самое старое", 1);
+        m
+    }
+
+    /// The observation rows, top to bottom (the header and the blank rows dropped).
+    fn observation_texts(s: &SelfModelScreen) -> Vec<String> {
+        s.rows()
+            .iter()
+            .filter(|(_, a)| matches!(a, RowAction::Insight(_)))
+            .map(|(l, _)| l.spans.iter().map(|sp| sp.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn observations_are_listed_newest_first_by_default() {
+        // The default is reverse-chronological: what the assistant noticed last sits
+        // under the header, where a person opening `F3` looks first (spec §17.7).
+        // The regression this pins: the screen used to `.rev()` whatever order the
+        // snapshot arrived in, and the snapshot is *already* newest-first — so the
+        // oldest observation was the one on top.
+        let s = SelfModelScreen::new(
+            Some(model_with_dated_observations()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
+        let texts = observation_texts(&s);
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert!(texts[0].ends_with("самое новое"), "{texts:?}");
+        assert!(texts[2].ends_with("самое старое"), "{texts:?}");
+        // The dates read downward too — the row's own date is the sort key.
+        assert!(texts[0].starts_with("[2026-03-09] "), "{texts:?}");
+        assert!(texts[2].starts_with("[2026-03-01] "), "{texts:?}");
+    }
+
+    #[test]
+    fn oldest_first_setting_flips_the_observation_list() {
+        let s = SelfModelScreen::new(
+            Some(model_with_dated_observations()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::OldestFirst,
+        );
+        let texts = observation_texts(&s);
+        assert!(texts[0].ends_with("самое старое"), "{texts:?}");
+        assert!(texts[2].ends_with("самое новое"), "{texts:?}");
+    }
+
+    #[test]
+    fn del_removes_the_observation_the_cursor_stands_on_in_either_order() {
+        // The order is a display rule: `Del` carries the row's own id, so the
+        // reversed list deletes the row the user is looking at, not its mirror.
+        for (order, expected) in [
+            (NoteOrder::NewestFirst, "самое новое"),
+            (NoteOrder::OldestFirst, "самое старое"),
+        ] {
+            let m = model_with_dated_observations();
+            let wanted = m
+                .narrative
+                .iter()
+                .find(|s| s.text == expected)
+                .map(|s| s.id)
+                .unwrap();
+            let mut s = SelfModelScreen::new(
+                Some(m),
+                CharacterNames::default(),
+                Palette::default(),
+                ru(),
+                order,
+            );
+            // Walk to the first observation row and delete it.
+            let first = s
+                .rows()
+                .iter()
+                .position(|(_, a)| matches!(a, RowAction::Insight(_)))
+                .unwrap();
+            s.selected = first;
+            assert_eq!(
+                s.handle_key(key(KeyCode::Delete)),
+                Some(SelfModelIntent::Edit(SelfModelEdit::DeleteInsight(wanted))),
+                "{order:?}"
+            );
+        }
+    }
+
     #[test]
     fn sections_are_headed_and_separated_by_blank_rows() {
         // Every section is a header (or a field) with a blank row around it, so two
         // fields of wrapped prose never read as one paragraph (spec §17.7).
         let mut m = model();
         push_insight(&mut m, "второе наблюдение");
-        let s = SelfModelScreen::new(Some(m), CharacterNames::default(), Palette::default(), ru());
+        let s = SelfModelScreen::new(
+            Some(m),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
         let texts = row_texts(&s);
         let at = |needle: &str| {
             texts
@@ -997,6 +1145,7 @@ mod tests {
             },
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         let texts = row_texts(&s);
         assert_eq!(texts[0], "Гайя");
@@ -1013,6 +1162,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         assert!(matches!(s.selected_action(), Some(RowAction::Summary)));
         s.set_model(None, CharacterNames::default());
@@ -1029,6 +1179,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         let mut seen = Vec::new();
         loop {
@@ -1051,14 +1202,20 @@ mod tests {
     #[test]
     fn render_empty_and_populated_do_not_panic() {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        let mut empty =
-            SelfModelScreen::new(None, CharacterNames::default(), Palette::default(), ru());
+        let mut empty = SelfModelScreen::new(
+            None,
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
         term.draw(|f| empty.render(f)).unwrap();
         let mut full = SelfModelScreen::new(
             Some(model()),
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         term.draw(|f| full.render(f)).unwrap();
     }
@@ -1074,6 +1231,7 @@ mod tests {
                 CharacterNames::default(),
                 Palette::default(),
                 ru(),
+                NoteOrder::default(),
             );
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
@@ -1115,6 +1273,7 @@ mod tests {
             CharacterNames::default(),
             Palette::default(),
             ru(),
+            NoteOrder::default(),
         );
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
@@ -1149,8 +1308,13 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "описание".into();
         push_insight(&mut m, &"очень длинное наблюдение ".repeat(40));
-        let mut s =
-            SelfModelScreen::new(Some(m), CharacterNames::default(), Palette::default(), ru());
+        let mut s = SelfModelScreen::new(
+            Some(m),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
         let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         // Move all the way to the bottom (onto the long insight) and redraw — scroll should
