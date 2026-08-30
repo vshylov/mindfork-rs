@@ -2471,7 +2471,13 @@ state, never persisted.
 The status bar's `Esc` hint (`status_bar::EscTarget`) is **derived** from this
 stack by a pure function called once per frame in the draw path, not mirrored into
 a flag — mirroring would mean writing the same rule at each set/clear site to keep
-one word honest, which is how a hint drifts from the key it describes.
+one word honest, which is how a hint drifts from the key it describes. The label
+itself is resolved a step later, by `status_bar::esc_hint_key`, in the key handler's
+own order of precedence: a **running turn** wins, because mid-turn `Esc` cancels and
+goes nowhere, and only otherwise does the target speak. Generation is deliberately
+not a fourth `EscTarget` — this stack could never produce it — so the widget reads
+both halves off the one `StatusModel` the generation chip and the input box's title
+are drawn from, and the three cannot disagree within a frame.
 
 **Exporting a conversation** (`features/export_command.rs` +
 `chat_export::{export_filename, to_import_json}`, spec §11.7). `/export` parses

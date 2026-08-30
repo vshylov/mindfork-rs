@@ -56,6 +56,13 @@ split by subsystem.
   narrative. The list now starts with the newest (and the new setting above
   flips it back if you prefer reading the narrative forward).
 
+- **The status bar's `Esc` hint now says "cancel" while a reply is generating.**
+  `Esc` cancels a running generation and only goes back — to the chat list, the
+  search results or the conversation you came from — once it has finished, but
+  the bar kept naming the destination for the whole turn, one row under an input
+  box that says "generation… Esc cancel". The two hints agree now, and the
+  destination comes back the moment the turn ends.
+
 - **The status bar no longer stacks the key hints into a column.** While a turn
   was running, a status line full of indicators (generation, the token counter,
   attached files) left the hints too little room and pushed them one per line —
