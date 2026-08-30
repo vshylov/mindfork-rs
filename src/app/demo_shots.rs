@@ -19,7 +19,7 @@ use crate::screens::chat::ChatScreen;
 use crate::screens::chat_list::ChatListScreen;
 use crate::screens::self_model::SelfModelScreen;
 use crate::screens::settings::SettingsScreen;
-use crate::shared::config::Theme;
+use crate::shared::config::{NoteOrder, Theme};
 use crate::shared::i18n::{Lang, locale};
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::shot::{self, ShotFrame};
@@ -156,6 +156,8 @@ pub fn self_model_frame(theme: Theme) -> ShotFrame {
         CharacterNames::default(),
         Palette::for_theme(theme),
         locale(Lang::En),
+        // The capture set shows the shipped default: newest observation first.
+        NoteOrder::default(),
     );
     capture("self-model", theme, PANEL_H, |f| screen.render(f))
 }

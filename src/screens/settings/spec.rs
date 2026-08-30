@@ -171,6 +171,17 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 })
             },
         ),
+        ISmNoteOrder => choice(
+            |c, dir| {
+                c.interface.self_model_note_order =
+                    cycle_note_order(c.interface.self_model_note_order, dir)
+            },
+            |c, loc| {
+                index_menu(&NOTE_ORDERS, c.interface.self_model_note_order, |m| {
+                    note_order_label(m, loc)
+                })
+            },
+        ),
         IAutoTitle => choice(
             |c, dir| c.interface.auto_title = cycle_auto_title(c.interface.auto_title, dir),
             |c, loc| {

@@ -1368,6 +1368,12 @@ impl SettingsScreen {
                     FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),
                 )
                 .describe(loc.t("ui.settings.desc.osc52")),
+                row(
+                    FieldId::ISmNoteOrder,
+                    loc.t("ui.settings.field.sm_note_order"),
+                    FieldKind::Choice(note_order_label(i.self_model_note_order, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.sm_note_order")),
             ],
         );
         rows.extend(grouped(

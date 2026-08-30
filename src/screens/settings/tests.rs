@@ -677,6 +677,40 @@ fn interface_has_the_auto_title_choice() {
 }
 
 #[test]
+fn interface_has_the_self_model_note_order_choice() {
+    let mut s = screen();
+    // In the "Interface" section, with a hint — the labels say which end the list
+    // starts from, not which screen they govern.
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::ISmNoteOrder));
+    assert!(field_desc(&s, FieldId::ISmNoteOrder).is_some());
+
+    // Newest first by default: on the `F3` screen the last observation is the one
+    // a person came to read (spec §17.7).
+    use crate::shared::config::NoteOrder;
+    assert_eq!(
+        s.config.interface.self_model_note_order,
+        NoteOrder::NewestFirst
+    );
+    let mut seen = vec![s.config.interface.self_model_note_order];
+    for _ in 0..2 {
+        match s.cycle_field(FieldId::ISmNoteOrder, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.self_model_note_order),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            NoteOrder::NewestFirst,
+            NoteOrder::OldestFirst,
+            NoteOrder::NewestFirst,
+        ],
+        "the cycle must return to where it started"
+    );
+}
+
+#[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();
     // The field is in the "Interface" section (the "Appearance" group).

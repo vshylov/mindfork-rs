@@ -24,8 +24,8 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
-    ManagedSettings, McpServerConfig, MediaResolution, PythonMode, SecretSlot, ServerMode,
-    SpecType, Theme, TtsCloudSettings, TtsMode,
+    ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode, SecretSlot,
+    ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -701,6 +701,8 @@ enum FieldId {
     IMermaid,
     /// Show the model's name next to the assistant's header in the feed.
     IModelName,
+    /// Which end of the narrative the self-model screen (`F3`) lists observations from.
+    ISmNoteOrder,
     ISpell,
     IDicts,
     /// Confirmation before `Ctrl+R`/`Ctrl+E` (irreversible operations).

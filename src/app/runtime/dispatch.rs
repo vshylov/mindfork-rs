@@ -391,6 +391,7 @@ fn show_self_model(
                 names,
                 screen.palette(),
                 screen.loc(),
+                screen.self_model_note_order(),
             )))
         }
     }
