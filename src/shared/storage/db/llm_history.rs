@@ -60,6 +60,55 @@ impl Db {
         )?;
         Ok(true)
     }
+
+    /// Fills an **empty** history with `records`, in the order given, and
+    /// answers how many rows were written — the one-time backfill of a profile
+    /// whose exchanges predate the recorder (spec §9.14). The records are
+    /// derived from what the stored replies already attest to; deriving them is
+    /// the caller's job (`Orchestrator::seed_llm_history`), because chats live
+    /// in JSON, not here.
+    ///
+    /// "Only an empty history" is checked **inside the transaction** that
+    /// writes, so the function is safe to call from anywhere: a history that
+    /// gained its first record meanwhile is left alone, and a seed that fails
+    /// halfway leaves nothing behind — a partially seeded history would look
+    /// non-empty and never be completed.
+    pub fn llm_history_seed(&self, profile_id: Uuid, records: &[LlmChange]) -> Result<usize> {
+        if records.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let occupied = tx
+            .query_row(
+                "SELECT 1 FROM llm_history WHERE profile_id = ?1 LIMIT 1",
+                params![profile_id.to_string()],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some();
+        if occupied {
+            // Dropping the transaction rolls back a read-only body — nothing
+            // to undo, and nothing written.
+            return Ok(0);
+        }
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO llm_history(profile_id, changed_at, model, mode)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for rec in records {
+                stmt.execute(params![
+                    profile_id.to_string(),
+                    rec.changed_at.to_rfc3339(),
+                    rec.model,
+                    rec.mode.key(),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(records.len())
+    }
 }
 
 /// A stored row back into the entity. Only this module ever writes the rows,
@@ -148,6 +197,83 @@ mod tests {
         assert_eq!(
             list.iter().map(|r| r.model.as_str()).collect::<Vec<_>>(),
             ["m1", "m1", "m2", "m1"]
+        );
+    }
+
+    /// A dated record, so a seed's order can be told from its timestamps.
+    fn dated(ts: &str, model: &str, mode: ServerMode) -> LlmChange {
+        LlmChange {
+            changed_at: ts.parse::<DateTime<Utc>>().unwrap(),
+            model: model.into(),
+            mode,
+        }
+    }
+
+    #[test]
+    fn llm_history_seed_fills_an_empty_history_in_the_order_given() {
+        let db = Db::open_in_memory().unwrap();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let records = [
+            dated("2026-01-01T10:00:00Z", "gemma-4", ServerMode::Managed),
+            dated("2026-02-01T10:00:00Z", "qwen-3.6", ServerMode::External),
+            dated("2026-03-01T10:00:00Z", "gemma-4", ServerMode::Managed),
+        ];
+
+        assert_eq!(db.llm_history_seed(a, &records).unwrap(), 3);
+        let list = db.llm_history(a).unwrap();
+        // The stored dates are the derived ones, not the seeding moment: a
+        // backfill whose records all carried "now" would say nothing.
+        assert_eq!(list, records.to_vec());
+        // …and it is a per-profile operation, like every other query here.
+        assert!(db.llm_history(b).unwrap().is_empty());
+
+        // The record the recorder appends next dedups against the seed's tail:
+        // the seeded history is a real history, not a decoration.
+        assert!(
+            !db.llm_history_note(a, &rec("gemma-4", ServerMode::Managed))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn llm_history_seed_never_touches_a_history_that_has_records() {
+        let db = Db::open_in_memory().unwrap();
+        let pid = Uuid::new_v4();
+        assert!(
+            db.llm_history_note(pid, &rec("m1", ServerMode::Managed))
+                .unwrap()
+        );
+
+        // One record is enough to make the profile "already recorded" — the
+        // backfill is one-time by construction, not by a flag someone can
+        // forget to set.
+        assert_eq!(
+            db.llm_history_seed(
+                pid,
+                &[dated("2020-01-01T00:00:00Z", "old", ServerMode::External)]
+            )
+            .unwrap(),
+            0
+        );
+        let list = db.llm_history(pid).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].model, "m1");
+    }
+
+    #[test]
+    fn llm_history_seed_of_nothing_writes_nothing() {
+        // A profile whose chats attest to no model at all (every reply predates
+        // `MessageMetadata.model`) stays empty — and stays *seedable*, so a
+        // later launch that does find something still fills it.
+        let db = Db::open_in_memory().unwrap();
+        let pid = Uuid::new_v4();
+        assert_eq!(db.llm_history_seed(pid, &[]).unwrap(), 0);
+        assert!(db.llm_history(pid).unwrap().is_empty());
+        assert_eq!(
+            db.llm_history_seed(pid, &[dated("2026-01-01T00:00:00Z", "m", ServerMode::Grok)])
+                .unwrap(),
+            1
         );
     }
 }

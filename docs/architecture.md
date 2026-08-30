@@ -185,6 +185,14 @@ src/
 │  │  │                     written back to settings. `effective_model_name()`
 │  │  │                     is what the turn reads; the screen gets the
 │  │  │                     discovered half via `AppEvent::EngineModel`. Spec §11.3
+│  │  ├─ llm_history.rs     the one-time seed of a profile's language-model
+│  │  │                     history (spec §9.14): at bootstrap, a history with
+│  │  │                     no records at all is filled from the model names the
+│  │  │                     profile's stored replies already carry — "what the
+│  │  │                     recorder would have written, had it existed then"
+│  │  │                     (timestamps from the replies, time-ordered across
+│  │  │                     the chats, consecutive (name, mode) runs collapsed).
+│  │  │                     The forward recorder itself is in generation.rs
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor
 │  │  ├─ title.rs           chat auto-title (background task) + the automatic
@@ -1661,7 +1669,7 @@ by `ToolGroup` (`Ord`).
 | Group          | Tools                                                          |
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
-| Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
+| Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record; a history with no records at all is seeded once at bootstrap from the chats' stored metadata — `orchestrator/llm_history.rs`). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |

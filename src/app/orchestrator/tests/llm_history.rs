@@ -252,3 +252,156 @@ fn llm_change_compares_by_name_and_mode() {
         }
     );
 }
+
+/// A stored reply dated `ts` — what a chat file written before the recorder
+/// existed carries: the model name has always been there, only the profile's
+/// history was missing.
+fn dated_reply(ts: &str, model: &str, mode: ServerMode) -> Message {
+    let mut msg = reply(Some(model), mode, MessageFinish::Stop);
+    msg.timestamp = ts.parse().unwrap();
+    msg
+}
+
+/// The dates and names of a profile's stored history, the shape the assertions
+/// below read in.
+fn stored_history(orch: &Orchestrator, pid: Uuid) -> Vec<(String, String)> {
+    orch.storage
+        .db()
+        .llm_history(pid)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.changed_at.format("%Y-%m-%d").to_string(), r.model))
+        .collect()
+}
+
+#[tokio::test]
+async fn bootstrap_seeds_an_empty_history_from_what_the_chats_already_record() {
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    orch.storage.json().upsert_profile(&profile).unwrap();
+
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::user("привет"));
+    chat.push_message(dated_reply(
+        "2026-01-01T10:00:00Z",
+        "gemma-4",
+        ServerMode::Managed,
+    ));
+    chat.push_message(dated_reply(
+        "2026-02-01T10:00:00Z",
+        "qwen-3.6",
+        ServerMode::External,
+    ));
+    let chat_id = chat.id;
+    orch.storage.json().save_chat(&chat).unwrap();
+    // A soft-deleted chat is gone from every read path (spec §5.3) — this one
+    // included, or the history would speak for a conversation the user removed.
+    let mut hidden = Chat::from_profile(&profile, "удалённый");
+    hidden.is_hidden = true;
+    hidden.push_message(dated_reply(
+        "2026-01-15T10:00:00Z",
+        "hidden-chat-model",
+        ServerMode::Grok,
+    ));
+    orch.storage.json().save_chat(&hidden).unwrap();
+
+    orch.bootstrap().unwrap();
+
+    // Dated by the replies themselves, in their own order — a backfill stamped
+    // "now" would be a list of names, not a history.
+    assert_eq!(
+        stored_history(&orch, pid),
+        [
+            ("2026-01-01".to_string(), "gemma-4".to_string()),
+            ("2026-02-01".to_string(), "qwen-3.6".to_string()),
+        ]
+    );
+
+    // Seeding is one-time: a second launch on the same data adds nothing.
+    orch.bootstrap().unwrap();
+    assert_eq!(stored_history(&orch, pid).len(), 2);
+
+    // …and the recorder continues the seeded history rather than restarting it:
+    // the model the seed ends on writes no record, a new one appends.
+    land_turn(
+        &mut orch,
+        chat_id,
+        vec![reply(
+            Some("qwen-3.6"),
+            ServerMode::External,
+            MessageFinish::Stop,
+        )],
+    );
+    assert_eq!(stored_history(&orch, pid).len(), 2);
+    land_turn(
+        &mut orch,
+        chat_id,
+        vec![reply(
+            Some("gpt-5.2"),
+            ServerMode::OpenAi,
+            MessageFinish::Stop,
+        )],
+    );
+    assert_eq!(
+        stored_history(&orch, pid)
+            .iter()
+            .map(|(_, model)| model.as_str())
+            .collect::<Vec<_>>(),
+        ["gemma-4", "qwen-3.6", "gpt-5.2"]
+    );
+}
+
+#[test]
+fn bootstrap_leaves_a_history_that_has_records_alone() {
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    orch.storage.json().upsert_profile(&profile).unwrap();
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(dated_reply(
+        "2020-01-01T10:00:00Z",
+        "ancient",
+        ServerMode::Managed,
+    ));
+    orch.storage.json().save_chat(&chat).unwrap();
+    // One recorded exchange is enough to make the profile's history its own:
+    // the backfill is for a history that has never been written to.
+    orch.storage
+        .db()
+        .llm_history_note(
+            pid,
+            &LlmChange {
+                changed_at: "2026-08-30T10:00:00Z".parse().unwrap(),
+                model: "gemma-4".into(),
+                mode: ServerMode::Managed,
+            },
+        )
+        .unwrap();
+
+    orch.bootstrap().unwrap();
+
+    assert_eq!(
+        stored_history(&orch, pid),
+        [("2026-08-30".to_string(), "gemma-4".to_string())]
+    );
+}
+
+#[test]
+fn bootstrap_seeds_nothing_from_chats_whose_replies_name_no_model() {
+    // The pre-metadata corpus: replies are there, the model name is not. The
+    // history stays empty — and stays seedable, so a launch that does find
+    // something still fills it (`llm_history_seed`).
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    orch.storage.json().upsert_profile(&profile).unwrap();
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::user("привет"));
+    chat.push_message(Message::assistant("ответ"));
+    orch.storage.json().save_chat(&chat).unwrap();
+
+    orch.bootstrap().unwrap();
+
+    assert!(orch.storage.db().llm_history(pid).unwrap().is_empty());
+}

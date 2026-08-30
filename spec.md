@@ -1861,6 +1861,22 @@ docs/research/language-model-history.md.
   baseline record on the first qualifying exchange (the original model would
   otherwise be unrecoverable). Best-effort: a failed write is logged and never
   fails the turn.
+- **The one-time seed.** The recorder only exists from the release that
+  introduced it, so a profile whose exchanges predate it would keep an empty
+  history until its next reply — while every one of those replies already names
+  its model in `MessageMetadata`. So at startup a history with **no records at
+  all** is filled once from that metadata (`orchestrator/llm_history.rs`), by
+  one rule: *the seed is what the recorder would have written, had it existed
+  then* — the profile's stored assistant replies that name a model, in their own
+  timestamp order across the profile's chats, dated by those timestamps (a
+  backfill stamped "now" would say nothing), with consecutive runs of the same
+  pair collapsed exactly as the recorder's dedup collapses them. Only the chats
+  the app can see (a soft-deleted one is gone from every read path) and only the
+  parent conversation (a sub-agent transcript runs on the parent turn's engine).
+  One-time without a flag: the first record ever written — seeded or recorded —
+  closes the door, checked inside the writing transaction. Deriving nothing is
+  not a failure: replies that name no model leave the history empty and
+  seedable, and the same path refills a history lost with a missing `data.db`.
 - **When the engine does not say.** A turn whose model name is unknown
   (`MessageMetadata.model = None` — an external server with no typed name and
   no discovery answer) records nothing, and `get_llm_name` answers honestly

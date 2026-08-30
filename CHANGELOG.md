@@ -23,7 +23,10 @@ split by subsystem.
   dated history of model changes — recorded automatically after each exchange
   whose model differs from the last recorded one. The names are deliberately
   distinct from the `get_self_model` family: the LLM is not the assistant's
-  stored personality.
+  stored personality. **The history does not start blank**: on first launch
+  after the update, a profile that has none is filled from the conversations
+  already on disk — every stored reply records the model that wrote it, so the
+  history goes back as far as your chats do, with the real dates.
 
 - **A dialogue of two personas, staged and directed by the assistant**
   (`run_dialogue`). Ask for a scene and the assistant composes two characters,
