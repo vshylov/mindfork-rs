@@ -747,6 +747,21 @@ actually offers) rather than to correct the sentence, because a sentence
 maintained by hand drifts again on the next stage.
 — *the code workspace — stage 3*.
 
+**Deriving a label proves it tracks the axis you chose — and nothing about the
+axis you did not model.** The status bar's `Esc` hint was built to be *derived,
+not mirrored*, precisely so it could never drift from the navigation state — and
+it still spent every turn lying, because during generation `Esc` cancels instead
+of going back, and the back-stack it derives from knows nothing about turns. The
+tell was in the code that already existed: the key handler's own `if generating`,
+an input box titled "Esc cancel" a row above, and a pair of commands (`/stop`,
+`/chats`) that exist *only* because the key is overloaded — a key that needed
+disambiguating in the command layer was never going to be described by one word
+from one source. Before trusting a derived label, read the handler it describes
+and check that **every branch of its condition reaches the label**; where a
+second axis exists, resolve the label in the handler's own order of precedence,
+off one snapshot, so the surfaces cannot disagree within a frame.
+— *mid-turn the `Esc` hint says "cancel"*.
+
 **A path check validates the string, not the thing the string names.**
 `is_file()` on the managed server's GGUF passes for part 1 of a three-part model
 whose other parts never finished downloading, and for part 2 of a model
