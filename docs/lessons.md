@@ -908,6 +908,30 @@ convention is what let this spread in the first place, `tools/list_scroll_check.
 — *the chat list scrolls symmetrically*, *the same for every other list*,
 *the gate under it*.
 
+**crossterm does not deliver a sequence it cannot parse — it deletes it.** On an
+unrecognised escape sequence `Parser::advance` takes the `Err` branch and calls
+`self.buffer.clear()`, so the app sees **no event at all** — not `Esc`, not the
+letters, nothing. Konsole is where this bites: its default keytab answers
+`Shift+Return` with `\EOM` (SS3 `M`, the keypad Enter), crossterm's SS3 arm knows
+only `ABCDHF`/`P–S`, and the keypress vanishes. The debugging trap is that a key
+which does *nothing* reads like a bug in your own `match`, while a key the
+terminal cannot express reads like a key that was never pressed — the two are
+indistinguishable from inside the app. Before searching the handler, check what
+the terminal actually sends (`showkey -a`, or feed the bytes through a pty into
+crossterm) and what its parser does with those bytes.
+— *the line-break hint names the chord the terminal can deliver*.
+
+**A hint that names a chord promises the terminal can deliver it.** The input
+box advertised `Shift+Enter` unconditionally; on every unix terminal without the
+kitty keyboard protocol that promise is false — the key either sends a bare CR
+(so it *submits*, the opposite of what the footer says) or, in Konsole, nothing
+at all. The app already had the working fallback (`Alt+Enter`) and named it only
+in `F1`. Where a capability is negotiated at startup, the answer belongs in what
+the UI says, not only in what the handler accepts: `shared::keys::newline_chord`
+is set once from `app/runtime` next to the protocol push, and the two footers
+interpolate it.
+— *the line-break hint names the chord the terminal can deliver*.
+
 ---
 
 ## 6. Windows and cross-platform

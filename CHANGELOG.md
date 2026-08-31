@@ -50,6 +50,16 @@ split by subsystem.
 
 ### Fixed
 
+- **In KDE Konsole the input box promised a key the terminal cannot send.** The
+  footer said "Shift+Enter newline", but Konsole maps that combination to a
+  sequence the app never receives — pressing it did nothing at all. The line
+  break itself has always had a second chord, `Alt+Enter`, which works there;
+  the footer (and the same footer in the settings and self-model editors) now
+  names whichever of the two your terminal can actually deliver. Nothing
+  changed for terminals that do support `Shift+Enter` — Windows, and any unix
+  terminal speaking the kitty keyboard protocol. If you would rather keep the
+  chord in Konsole, point its keytab at `\E[13;2u` for `Return+Shift`.
+
 - **The self-model screen listed its observations oldest first.** The `F3`
   screen showed the oldest observation directly under the "Observations"
   header, so seeing the most recent one meant scrolling past the whole

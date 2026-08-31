@@ -207,12 +207,19 @@ impl ChatScreen {
                 &self.palette,
             );
         } else {
+            // The idle footer names the chord that this terminal can actually
+            // deliver (`shared::keys::newline_chord`, spec §11.5): on a
+            // terminal without the kitty protocol `Shift+Enter` never arrives,
+            // and advertising it there is a promise the app cannot keep.
             let input_title = if self.read_only() {
-                self.loc.t("ui.chat.input.read_only")
+                self.loc.t("ui.chat.input.read_only").to_string()
             } else if self.generating {
-                self.loc.t("ui.chat.input.generating")
+                self.loc.t("ui.chat.input.generating").to_string()
             } else {
-                self.loc.t("ui.chat.input.idle")
+                self.loc.tf(
+                    "ui.chat.input.idle",
+                    &[("newline", crate::shared::keys::newline_chord())],
+                )
             };
             let focused = self.profile_overlay.is_none()
                 && self.suggest.is_none()
@@ -224,7 +231,7 @@ impl ChatScreen {
                 frame,
                 input_area,
                 crate::widgets::input_box::RenderOpts {
-                    title: input_title,
+                    title: input_title.as_str(),
                     focused,
                     command,
                     placeholder: self.loc.t("ui.chat.input.placeholder"),
