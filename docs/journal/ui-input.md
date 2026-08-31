@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -40,6 +40,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: OSC 52 — the note that did not close the door (done)
 - Post-M9: the draft flush lags the intent — a spent command resurfaces in the box (done)
 - Post-M9: the restored message and the draft are separated by a blank line (done)
+- Post-M9: the line-break hint names the chord the terminal can deliver (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1469,3 +1470,67 @@ whitespace-only restored message that must leave the draft alone. 2548 unit
 tests green.
 
 **A live model run is not required** (AGENTS.md §3) — pure UI.
+
+### Post-M9: the line-break hint names the chord the terminal can deliver (done)
+
+- **Symptom** (reported from KDE Konsole): `Shift+Enter` in the input box does
+  **nothing** — not a line break, and not the send that a "bare" terminal would
+  give. **Cause**, in three parts, none of them in our key handler:
+  1. Konsole's default keytab maps `Shift+Return` to `\EOM` — SS3 `M`, the
+     keypad Enter (`data/keyboard-layouts/default.keytab`, `key Return+Shift`);
+     unchanged in every release, and it is the keytab a new profile gets.
+  2. crossterm 0.29's SS3 arm knows `A B C D H F` and `P–S` only; anything else
+     returns `Err`, and `Parser::advance`'s `Err` branch does
+     `self.buffer.clear()` — so the three bytes are **deleted**, and the app is
+     handed no event whatsoever. That is why the symptom is silence rather than
+     a stray `Esc` or a send.
+  3. The kitty protocol, which would have made the keytab irrelevant, is not
+     available: no released Konsole answers `CSI ? u`. `src/KittyKeyMap.h`,
+     `handleKittyKeyboardQuery` and the profile property `KittyKeyboardEnabled`
+     (default `true`) exist only on `master` — absent from every tag through
+     `v26.04.0` — so `supports_keyboard_enhancement()` is correctly `false` and
+     `runtime` pushes nothing. Konsole's kitty *graphics* and *notifications*,
+     which it has had for years, are different protocols; that is what the
+     wrong `konsole(22.12+)` line in
+     [layout-independent-hotkeys.md](../research/layout-independent-hotkeys.md)
+     §3.3 conflated (corrected there, with the evidence).
+- **Measured, not assumed.** Four byte strings fed through a pty into
+  crossterm 0.29: `ESC O M` → *no event*; `\r` → `Enter`; `ESC \r` → `Enter`+`ALT`
+  (this is what Konsole sends for `Alt+Enter`: `Vt102Emulation::sendKeyEvent`
+  prepends `\033` when no keytab entry claims the modifier); `ESC [ 13;2u` →
+  `Enter`+`SHIFT`. So the app's existing `Alt+Enter` fallback (audit item 11)
+  already works there — and a user who prefers the chord can point Konsole's
+  keytab at `\E[13;2u`, which crossterm reads as `Shift+Enter`.
+- **What changed.** Nothing in what the app *accepts* — both chords were, and
+  remain, handled everywhere a line break is (chat, the settings editor, the
+  self-model editor). What changed is what it **claims**: the input box's idle
+  footer and the multiline editors' footer now interpolate
+  `shared::keys::newline_chord()`, which answers `Shift+Enter` where a modified
+  `Enter` is reportable and `Alt+Enter` where it is not. `app/runtime` sets the
+  flag once, right where it decides whether to push `DISAMBIGUATE_ESCAPE_CODES`
+  (and unconditionally `true` on Windows, where the Console API reports
+  modifiers itself). Unset — tests, and any path with no terminal behind it —
+  reads as `Shift+Enter`, which is why the committed demo dumps do not drift.
+- **Why a global rather than a threaded parameter.** Same shape, and the same
+  reason, as `theme::detected_background`: one immutable fact about the terminal
+  the process is attached to, read from render paths that run every frame. The
+  choice itself is a pure `chord_for(bool)` so it can be tested without touching
+  the `OnceLock` — a test that `set`s it would re-label the UI for the whole
+  test binary.
+- **Deliberately left alone**: the in-feed search counter
+  (`ui.chat.search.counter`) still names `Shift+Enter`, because it names `↑`
+  beside it — the alternative is already on screen, and it works everywhere.
+
+**Tests** (+2, `shared/keys`): the chord follows the flag in both directions,
+and the default with the flag unset is the historical `Shift+Enter` (the
+assertion that keeps the screenshot dumps and every other test stable). 2717
+unit tests green on Linux — below CLAUDE.md's headline count, which is measured
+on Windows where the `#[cfg(windows)]` tests also run.
+
+**A live model run is not required** (AGENTS.md §3) — pure UI wording plus a
+startup flag. The evidence that matters here is terminal-side, and both
+directions were run: the app driven on a real pty that stays **silent** to
+`CSI ? u` (Konsole's situation) draws `Alt+Enter newline` in the footer, and
+the same binary on a pty that **answers** `\E[?1u\E[?62;c` draws
+`Shift+Enter newline`. Plus the pty probe of crossterm's parser and Konsole's
+own keytab, recorded above.

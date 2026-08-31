@@ -316,13 +316,24 @@ pub fn run(
     #[cfg(unix)]
     {
         let _ = execute!(stdout(), EnableBracketedPaste);
-        if supports_keyboard_enhancement().unwrap_or(false) {
+        let reported = supports_keyboard_enhancement().unwrap_or(false);
+        if reported {
             let _ = execute!(
                 stdout(),
                 PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
             );
         }
+        // Whether the push happened decides which chord the input box's footer
+        // advertises: `Shift+Enter` is only *deliverable* here if it did (spec
+        // §11.5). Konsole is why the footer had to stop asserting it — its
+        // default keytab answers `Shift+Return` with `\EOM`, which crossterm
+        // drops on the floor, so the advertised key did visibly nothing.
+        crate::shared::keys::set_modified_enter_reported(reported);
     }
+    // Windows needs no protocol — the Console API reports modifiers itself, so
+    // `Shift+Enter` is always the right thing to advertise there.
+    #[cfg(windows)]
+    crate::shared::keys::set_modified_enter_reported(true);
     // Mouse capture is OFF by default: then native mouse text selection works. Feed
     // wheel scrolling is enabled via a toggle (`Ctrl+W`) — it sends
     // `EnableMouseCapture`/`DisableMouseCapture` (see `dispatch`). We augment ratatui's

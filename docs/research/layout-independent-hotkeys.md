@@ -106,7 +106,7 @@ behavior is *unspecified by any standard* and terminal-specific:
 - With `DISAMBIGUATE_ESCAPE_CODES` (what we push today), the terminal encodes
   `Ctrl+<key>` as `CSI <codepoint>;<mods>u` where `<codepoint>` is the key's
   unshifted character **in the active layout** — i.e. on kitty/foot/wezterm/
-  ghostty/alacritty(0.13+)/konsole(22.12+) a Russian-layout `Ctrl+L` reaches us
+  ghostty/alacritty(0.13+) a Russian-layout `Ctrl+L` reaches us
   as `Ctrl+Char('д')` (JCUKEN table saves it), and a Greek/Hebrew/… one as the <!-- cyrillic-ok -->
   native letter (dead hotkey). Note the irony: on such terminals our
   `DISAMBIGUATE` push *replaces* the terminal-side legacy fallback with
@@ -133,6 +133,22 @@ behavior is *unspecified by any standard* and terminal-specific:
 | unix, VTE family (legacy) | C0 of physical key (terminal fallback) | works | works |
 | unix, kitty-protocol terminals | layout char + CONTROL (we push DISAMBIGUATE) | works (JCUKEN) | **broken** |
 | unix, no fallback, no protocol | bare char, no CONTROL | broken | broken (unfixable client-side) |
+
+**Correction (2026-08-31): Konsole is not a kitty-protocol terminal.** This
+document listed `konsole(22.12+)` among them in §3.3; the claim does not hold.
+No released Konsole answers `CSI ? u` — `src/KittyKeyMap.h`,
+`handleKittyKeyboardQuery` and the profile property `KittyKeyboardEnabled`
+exist only on `master`, and are absent from every tag through `v26.04.0`
+(kitty *graphics* and *notifications*, which Konsole does have, are separate
+protocols). Konsole therefore belongs on the legacy side of the table above —
+which of the two legacy rows was **not** re-measured, the `Ctrl`+letter path
+being untouched by this correction. Its legacy encoding does hold one case of
+its own: the default keytab answers `Shift+Return` with
+`\EOM` (SS3 `M`), which crossterm's unix parser cannot parse and *drops*, so
+the key produces no event at all rather than a `Ctrl`-less character. That is
+what surfaced the bug this correction came from — see
+[docs/journal/ui-input.md](../journal/ui-input.md), "Post-M9: the line-break
+hint names the chord the terminal can deliver".
 
 ## 4. Solution space
 

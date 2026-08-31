@@ -638,12 +638,15 @@ impl SelfModelScreen {
         let loc = self.loc;
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
-            let title = loc.t("ui.editor.multiline_footer");
+            let title = loc.tf(
+                "ui.editor.multiline_footer",
+                &[("newline", crate::shared::keys::newline_chord())],
+            );
             dim_background(frame, &palette);
             frame.render_widget(Clear, popup);
             editor
                 .input
-                .render(frame, popup, RenderOpts::focused(title), &palette);
+                .render(frame, popup, RenderOpts::focused(&title), &palette);
         }
     }
 }

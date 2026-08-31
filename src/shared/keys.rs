@@ -32,6 +32,12 @@
 //! here, and no call site changes. Terminals of the VTE family (GNOME Terminal
 //! & co.) need none of this: in the legacy encoding they fall back to the Latin
 //! group themselves and send the C0 code of the physical key.
+//!
+//! The module's second half is the other direction of the same question — not
+//! "which key was that" but "which chord can this terminal even deliver":
+//! [`newline_chord`] names the one that inserts a line break here (spec §11.5).
+
+use std::sync::OnceLock;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -144,6 +150,63 @@ fn physical_char(c: char) -> char {
 /// never remapped by position (see [`physical_key_char`]).
 pub fn is_slash_key(c: char) -> bool {
     c == '/' || c == '.'
+}
+
+// --------------------------------------------------------------------------
+// What the terminal can say about `Enter` (spec §11.5)
+// --------------------------------------------------------------------------
+
+/// Whether the terminal reports modifiers on `Enter` — i.e. whether pressing
+/// `Shift+Enter` can reach the app as anything other than a bare `Enter`.
+///
+/// True on Windows (the Console API always reports modifiers) and on a unix
+/// terminal that accepted the kitty keyboard protocol; false on every other
+/// unix terminal, where the legacy encoding sends the same CR for both — or,
+/// in Konsole's case, something we never see at all (see [`newline_chord`]).
+///
+/// A process-wide `OnceLock` set once from startup (`app/runtime`), for the
+/// same reason [`crate::shared::theme::detected_background`] is one: it is a
+/// single immutable fact about the terminal this process is attached to, read
+/// from render paths that run per frame. Unset — in tests, and in any path
+/// that never initialised a terminal — reads as `true`, which keeps the
+/// historical wording (and the committed screenshot dumps) unchanged.
+static MODIFIED_ENTER_REPORTED: OnceLock<bool> = OnceLock::new();
+
+/// The chord to name when the terminal *does* report a modified `Enter`.
+const SHIFT_ENTER: &str = "Shift+Enter";
+/// The chord to name when it does not; both are handled everywhere a line
+/// break is accepted (`screens/chat/input.rs`, settings, the self-model editor).
+const ALT_ENTER: &str = "Alt+Enter";
+
+/// Records what the terminal turned out to be capable of. Called once, from
+/// startup; later calls are ignored, so nothing can re-label a running UI.
+pub fn set_modified_enter_reported(reported: bool) {
+    let _ = MODIFIED_ENTER_REPORTED.set(reported);
+}
+
+/// The chord that actually inserts a line break in this terminal — what the
+/// input box's footer and the multiline editors advertise.
+///
+/// Both chords always work; only one of them is always *deliverable*. The
+/// terminal that forced this to be a question rather than a constant is
+/// **Konsole**: its default keytab maps `Shift+Return` to `\EOM` (SS3 `M`,
+/// the keypad Enter), crossterm's unix parser has no arm for that final byte,
+/// and its `Err` branch clears the buffer — so the keypress produces no event
+/// at all and the footer's promise silently fails. No released Konsole
+/// (≤ 26.04) answers the kitty protocol's `CSI ? u` either, so there is
+/// nothing to negotiate: on such a terminal the honest thing is to name
+/// `Alt+Enter`, which arrives as `ESC` + CR = `Enter`+`ALT`.
+pub fn newline_chord() -> &'static str {
+    chord_for(MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true))
+}
+
+/// The pure half of [`newline_chord`] — the choice itself, without the global.
+const fn chord_for(modified_enter_reported: bool) -> &'static str {
+    if modified_enter_reported {
+        SHIFT_ENTER
+    } else {
+        ALT_ENTER
+    }
 }
 
 /// Resolving a character back to its physical key through the Windows keyboard
@@ -345,6 +408,24 @@ mod tests {
 
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn newline_chord_follows_what_the_terminal_can_report() {
+        // The whole point of the flag: on a terminal that cannot deliver a
+        // modified `Enter` (Konsole sends `\EOM`, which crossterm drops; a bare
+        // xterm sends a plain CR) the footer must name the chord that works.
+        assert_eq!(chord_for(true), "Shift+Enter");
+        assert_eq!(chord_for(false), "Alt+Enter");
+    }
+
+    #[test]
+    fn newline_chord_defaults_to_shift_enter_until_startup_says_otherwise() {
+        // Unset — tests, and any path with no terminal behind it (the demo
+        // frame dumps among them). The default must be the historical wording,
+        // and this test must not `set` the global: it is process-wide, and one
+        // test flipping it would re-label every other test's UI.
+        assert_eq!(newline_chord(), "Shift+Enter");
     }
 
     #[test]

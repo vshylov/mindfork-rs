@@ -127,9 +127,12 @@ impl SettingsScreen {
         // error the title carries a red message and the editor doesn't close.
         let err = editor.error;
         let base_title = if editor.multiline {
-            loc.t("ui.editor.multiline_footer")
+            loc.tf(
+                "ui.editor.multiline_footer",
+                &[("newline", crate::shared::keys::newline_chord())],
+            )
         } else {
-            loc.t("ui.settings.ui.editor_single")
+            loc.t("ui.settings.ui.editor_single").to_string()
         };
         let title = match err {
             Some(e) => format!(
@@ -137,7 +140,7 @@ impl SettingsScreen {
                 palette.glyphs().warn,
                 loc.t("ui.settings.ui.esc_cancel")
             ),
-            None => base_title.to_string(),
+            None => base_title,
         };
         let popup = if editor.multiline {
             centered_rect(80, 40, multiline_popup_height(area), area)
