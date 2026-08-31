@@ -124,6 +124,20 @@ split by subsystem.
 
 ### Changed
 
+- **The key hints at the bottom of every screen now sit in the same place, and
+  name only the keys that work.** They line up flush with the right edge on the
+  chat list, the settings, self-model, changes and search screens, the way the
+  chat screen's already did — the four that used to start at the left and fray
+  at the right no longer do. And each screen's hints follow what you have
+  selected: on the self-model screen (`F3`) an observation no longer offers
+  "Enter edit" (observations are deleted, not edited) and `Space` shows only on
+  a goal; on the changes screen (`F4`) `↑↓` says *file* or *scroll the diff*
+  depending on which pane you are in, and `R` is offered only on a file that can
+  actually be put back; in the settings `←→`, `Space` and `Del` appear on the
+  fields they apply to. `F1` — which opens the full key list from anywhere — is
+  now among the hints on every screen, along with `Ctrl+Q` on the two screens
+  that quit without saying so.
+
 - **The self-model screen (`F3`) reads as two named halves.** The
   self-description and the goals now sit under an **"Assistant"** header, and
   the traits, interests and relationship under **"User"** — where you have

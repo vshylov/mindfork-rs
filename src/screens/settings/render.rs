@@ -20,29 +20,31 @@ impl SettingsScreen {
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
-        let area = frame.area();
         let palette = self.palette();
         let loc = self.loc();
-        let hints = self.footer_hints();
-        // The hotkey line — below the panel (outside the border), wraps as a grid using
-        // the same logic as the chat screen's status bar (right-aligned). Height computed up front.
-        let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
-        let status_h = (hotkeys.len() as u16).max(1);
-
-        frame.render_widget(Clear, area);
-        let [panel_area, status_area] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
-
-        let block = palette.panel(
+        // The fields built from the **default** config, once per frame: the
+        // `•` "modified" marker needs them, and so does the footer, which hides
+        // `Del reset` on a row already at its default. Building them costs a
+        // whole throwaway screen (`default_fields`), so the two consumers share
+        // one build rather than taking one each.
+        let defaults = self.default_fields();
+        let hints = self.footer_hints(&defaults);
+        // The hotkey line — below the panel (outside the border), right-aligned
+        // and wrapping to as many rows as it needs, through the one hint grid
+        // every screen's footer uses (`shared::ui::screen_chrome`).
+        let chrome = screen_chrome(
+            frame,
+            &palette,
             format!(
                 "{}{}",
                 palette.glyphs().settings_icon,
                 loc.t("ui.settings.ui.title")
             ),
-            true,
+            None,
+            &hints,
         );
-        let inner = block.inner(panel_area);
-        frame.render_widget(&block, panel_area);
+        let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
+        let area = frame.area();
         frame.render_widget(Paragraph::new(hotkeys), status_area);
 
         let [menu_area, fields_area] =
@@ -52,7 +54,7 @@ impl SettingsScreen {
         // the sum matches the number of fields in search.
         let counts = self.section_counts();
         self.render_menu(frame, menu_area, &counts);
-        self.render_fields(frame, fields_area);
+        self.render_fields(frame, fields_area, &defaults);
 
         // The editor on top — with a real cursor (`InputBox::render` requires `&mut`).
         self.render_editor_popup(frame, area, &palette);
@@ -70,40 +72,57 @@ impl SettingsScreen {
         }
     }
 
-    /// The contextual footer's hotkey hints for the current focus and section.
-    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+    /// The contextual footer's hotkey hints for the current focus, section and
+    /// selected field.
+    ///
+    /// Contextual footer. The hints differ **by focus** — that's what teaches the
+    /// navigation model, which is otherwise undiscoverable: on the sections only
+    /// Enter goes in, and inside the pane the arrows only change a value while Esc
+    /// steps back out. Section-specific extras (Profiles: create/delete) are
+    /// appended in both states. See docs/history/settings-navigation.md §5.1.
+    ///
+    /// Inside the pane the three value keys are also **per field**, because
+    /// `handle_fields_key` is: `←→` only cycles a `Choice`, `Space` only flips a
+    /// `Toggle`, and `Del` resets only where `reset_field` has something to do
+    /// (never on profile/user data, and not on a row already at its default).
+    /// A key that would be a no-op is not advertised — spec §11.2,
+    /// docs/history/status-hints-unified.md §2.2.
+    fn footer_hints(&self, defaults: &[FieldRow]) -> Vec<(&'static str, &'static str, bool)> {
         let loc = self.loc();
-        // Contextual footer. The hints differ **by focus** — that's what teaches the
-        // navigation model, which is otherwise undiscoverable: on the sections only
-        // Enter goes in, and inside the pane the arrows only change a value while Esc
-        // steps back out. Section-specific extras (Profiles: create/delete) are
-        // appended in both states. See docs/history/settings-navigation.md §5.1.
         let on_menu = self.focus == Focus::Menu;
-        let mut hints: Vec<(&'static str, &'static str)> = if on_menu {
+        let mut hints: Vec<(&'static str, &'static str, bool)> = if on_menu {
             vec![
-                ("Tab/↑↓", loc.t("ui.settings.hint.section")),
-                ("Enter", loc.t("ui.settings.hint.enter_fields")),
-                ("/", loc.t("ui.settings.hint.search")),
-                // The settings screen isn't listed in the `F1` help overlay, so the
-                // footer is the only place these are discoverable.
-                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
+                ("Tab/↑↓", loc.t("ui.settings.hint.section"), false),
+                ("Enter", loc.t("ui.settings.hint.enter_fields"), false),
+                ("/", loc.t("ui.settings.hint.search"), false),
+                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo"), false),
             ]
         } else {
-            vec![
-                ("↑↓", loc.t("ui.settings.hint.fields")),
-                ("←→", loc.t("ui.settings.hint.choose")),
-                ("Enter", loc.t("ui.settings.hint.edit")),
-                ("Space", loc.t("ui.settings.hint.toggle")),
-                ("Del", loc.t("ui.settings.hint.reset")),
-                ("Tab", loc.t("ui.settings.hint.section")),
-                ("/", loc.t("ui.settings.hint.search")),
-                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo")),
-            ]
+            let fields = self.fields();
+            let field = fields.get(self.field_idx);
+            let mut hints = vec![("↑↓", loc.t("ui.settings.hint.fields"), false)];
+            if matches!(field.map(|f| &f.kind), Some(FieldKind::Choice(_))) {
+                hints.push(("←→", loc.t("ui.settings.hint.choose"), false));
+            }
+            hints.push(("Enter", loc.t("ui.settings.hint.edit"), false));
+            if matches!(field.map(|f| &f.kind), Some(FieldKind::Toggle(_))) {
+                hints.push(("Space", loc.t("ui.settings.hint.toggle"), false));
+            }
+            if field.is_some_and(|f| self.reset_changes_something(f, defaults)) {
+                hints.push(("Del", loc.t("ui.settings.hint.reset"), false));
+            }
+            hints.extend([
+                ("Tab", loc.t("ui.settings.hint.section"), false),
+                ("/", loc.t("ui.settings.hint.search"), false),
+                ("Ctrl+Z/Y", loc.t("ui.settings.hint.undo"), false),
+            ]);
+            hints
         };
         if matches!(self.section(), Section::Profiles | Section::Plugins) {
-            hints.push(("Ctrl+N", loc.t("ui.settings.hint.new")));
-            hints.push(("Ctrl+D", loc.t("ui.settings.hint.delete")));
+            hints.push(("Ctrl+N", loc.t("ui.settings.hint.new"), false));
+            hints.push(("Ctrl+D", loc.t("ui.settings.hint.delete"), true));
         }
+        hints.push(("F1", loc.t("ui.settings.hint.help"), false));
         hints.push((
             "Esc",
             if on_menu {
@@ -111,9 +130,30 @@ impl SettingsScreen {
             } else {
                 loc.t("ui.settings.hint.to_sections")
             },
+            false,
         ));
-        hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
+        hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit"), false));
         hints
+    }
+
+    /// Whether `Del` on this row would change anything — the read-only twin of
+    /// [`SettingsScreen::reset_field`], following the same three branches in the
+    /// same order: a secret row resets when a secret is stored, user data never
+    /// resets, and a config row resets only while its value differs from the
+    /// default one. `defaults` is the per-frame [`SettingsScreen::default_fields`]
+    /// build, shared with the `•` marker.
+    fn reset_changes_something(&self, f: &FieldRow, defaults: &[FieldRow]) -> bool {
+        if let Some(key) = self.secret_field_key(f.id) {
+            return self.secret_present(Some(&key));
+        }
+        if is_profile_field(f.id) {
+            return false;
+        }
+        let loc = self.loc();
+        defaults
+            .iter()
+            .find(|d| d.id == f.id)
+            .is_some_and(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
     }
 
     /// Draws the field editor popup, when one is open (a no-op otherwise).
@@ -443,7 +483,7 @@ impl SettingsScreen {
         }
     }
 
-    pub(super) fn render_fields(&mut self, frame: &mut Frame, area: Rect) {
+    pub(super) fn render_fields(&mut self, frame: &mut Frame, area: Rect, defaults: &[FieldRow]) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
@@ -468,7 +508,7 @@ impl SettingsScreen {
         self.render_fields_header(frame, head_area, focused, on_tabs, tabs, &palette);
 
         let inner_w = list_area.width as usize;
-        let (items, select) = self.build_field_items(&fields, focused, inner_w, &palette);
+        let (items, select) = self.build_field_items(&fields, defaults, focused, inner_w, &palette);
         let total = items.len();
 
         // Selection — a soft backdrop (as in the section menu and the chat list), not
@@ -602,6 +642,7 @@ impl SettingsScreen {
     fn build_field_items(
         &self,
         fields: &[FieldRow],
+        default_fields: &[FieldRow],
         focused: bool,
         inner_w: usize,
         palette: &Palette,
@@ -615,9 +656,6 @@ impl SettingsScreen {
         // group's toggles (on/total) for the header counter.
         let label_col = section_label_col(fields);
         let group_toggles = group_toggle_counts(fields);
-
-        // Fields from the default config — for the "modified" marker (built once).
-        let default_fields = self.default_fields();
 
         // Build the elements: a group header is inserted at the transition to a new
         // non-empty group; `select` — the selected field's position among the elements

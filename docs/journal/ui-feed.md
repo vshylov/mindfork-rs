@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a busy status line stops stacking the hotkeys into a column (done)
 - Post-M9: the status bar's hints never leave the corner — shed, don't wrap (done)
 - Post-M9: mid-turn the `Esc` hint says "cancel" (done)
+- Post-M9: the bar's hint grid becomes everyone's (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2310,3 +2311,45 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   fixture is a generating one, so its top-row assertion now anchors on the
   cancel label — the corner block itself was unchanged. Pure UI — no live run
   needed (AGENTS.md §3). 2722 green (+1).
+
+### Post-M9: the bar's hint grid becomes everyone's (done)
+
+**What.** The geometry the last two entries built for the status bar — cells
+filled row-by-row with an **incomplete bottom row right-aligned under the
+columns above**, the block hugging the right edge — moved out of
+`widgets/status_bar.rs` into `shared::ui`, and is now what draws every screen's
+footer too. `status_bar::hotkey_lines` (the settings screen's copy) is gone, and
+so is `Palette::hotkey_grid` (the left-aligned one the chat list, search, `F3`
+and `F4` used). The reasoning, the audit and the forks belong to the screens'
+side of the change:
+[ui-screens.md](ui-screens.md) — *one hint grid, and footers that name only the
+keys that work*, and
+[docs/history/status-hints-unified.md](../history/status-hints-unified.md).
+
+**What changed on this side.** Nothing the bar renders: `lines` still picks its
+own column count (`corner_cols`, capped at `HINT_ROWS_MAX`), still sheds through
+`trim_to_fit`/`keep_order`, and still puts the pill on the top row — that is the
+half of the layout the pill's competition for width makes chat-specific, and it
+stayed here. What left is the half that was never chat-specific:
+`grid_layout` → `ui::hint_grid_layout`, `widest_grid` → `ui::widest_hint_grid`,
+`right_grid` → `ui::render_hint_grid` (which took the pill as an optional `lead`
+and the mouse-mode light as an optional `accent`), and the cell-width formula.
+`hotkey_list` grew the third tuple field every other hint list carries — the
+`danger` flag — always `false` here, since nothing on this bar is destructive;
+in exchange the bar would now draw a red keycap correctly if it ever gained one.
+
+**Why it is worth an entry here at all.** The bar's own history is the argument
+the screens' change rests on: right alignment was adopted here because a
+left-aligned block "merged and visually competed" with the indicators on its
+left, and the bottom row was pulled right because a wrapped row reads as a
+column when it lands under the columns above and as a floating group when it
+does not. Neither observation was ever about the pill. Leaving two
+implementations of it was what let four screens keep the arrangement this bar
+had already rejected.
+
+**Tests**: the bar's own are unchanged and green, including the two that measure
+character positions (`wrapped_grid_is_right_aligned_with_pill_on_top_line`,
+`the_bar_never_exceeds_two_rows_and_keeps_f1`) — which is the point: the
+extraction had to be invisible here. `hotkey_lines_wraps_and_right_aligns` moved
+to `shared::ui` as `a_footer_is_right_aligned_and_wraps`, alongside new tests
+for the shared geometry. Pure UI — no live run needed (AGENTS.md §3).

@@ -11,6 +11,7 @@ use ratatui::widgets::Paragraph;
 use crate::shared::i18n::Locale;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
+use crate::shared::ui;
 use crate::shared::wrap;
 
 /// The one hotkey whose description is not fixed: `Esc` means "go back", and
@@ -91,9 +92,6 @@ fn esc_hint_key(model: &StatusModel) -> &'static str {
         model.esc_target.hint_key()
     }
 }
-
-/// Gap between hotkey columns and between the status pill and the hotkey grid.
-const GAP: usize = 3;
 
 /// A state snapshot for the status line — the screen assembles it in one place
 /// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), so a new
@@ -179,30 +177,6 @@ pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'stati
         .clamp(1, u16::MAX as usize) as u16
 }
 
-/// Lays hotkeys out in a neat grid, **right-aligned** to `width` — the
-/// settings screen's layout: with no status pill to crowd it, and unlike the
-/// chat bar's corner block ([`lines`]), it wraps to as many rows as it needs
-/// and never sheds an entry. Column count — the max that fits the width (→ fewest rows);
-/// on overflow hotkeys wrap down, columns line up vertically, and an
-/// incomplete bottom row is right-aligned under the columns above. Returns empty for
-/// an empty set. Used by the settings screen (see spec §11.1, §11.6).
-pub fn hotkey_lines(
-    width: usize,
-    hotkeys: &[(&str, &str)],
-    palette: &Palette,
-) -> Vec<Line<'static>> {
-    if hotkeys.is_empty() {
-        return Vec::new();
-    }
-    // Cell width as in `lines`: "key" (+2 for padding) + a space + the description.
-    let cell_w: Vec<usize> = hotkeys
-        .iter()
-        .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
-        .collect();
-    let cols = widest_grid(&cell_w, width).unwrap_or(1);
-    right_grid(hotkeys, &cell_w, cols, width, None, None, palette)
-}
-
 /// Builds the status bar's lines. On the left of the **top** row — "state"
 /// (the status pill: server chips, generation indicator, token counter, the
 /// quiet chips), left-aligned. On the right — hotkeys (starting with the mouse
@@ -237,23 +211,29 @@ fn lines(
     // `accent` color — the same one that highlights markdown headings in the feed.
     let accent_idx = model.mouse_scroll.then_some(0usize);
 
-    // Each cell's width: "key" (+2 for padding) + a space + the description.
-    let cell_w: Vec<usize> = hotkeys
-        .iter()
-        .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
-        .collect();
+    let cell_w = ui::hint_cell_widths(&hotkeys);
 
-    let avail = width.saturating_sub(state_w + GAP);
+    let avail = width.saturating_sub(state_w + ui::HINT_GAP);
     let kept = trim_to_fit(&cell_w, avail, model.mouse_scroll);
     if !kept.is_empty() {
-        let sub: Vec<(&str, &str)> = kept.iter().map(|&i| hotkeys[i]).collect();
+        let sub: Vec<(&str, &str, bool)> = kept.iter().map(|&i| hotkeys[i]).collect();
         let sub_w: Vec<usize> = kept.iter().map(|&i| cell_w[i]).collect();
         // The accent follows the mouse toggle into the kept sub-list — or is
         // dropped with it (it never is while anything is kept: scroll mode
         // pins the toggle at the top of `keep_order`).
         let accent = accent_idx.and_then(|a| kept.iter().position(|&i| i == a));
         let cols = corner_cols(&sub_w, avail).unwrap_or(1);
-        return right_grid(&sub, &sub_w, cols, width, Some(state), accent, palette);
+        return ui::render_hint_grid(
+            &ui::HintGrid {
+                items: &sub,
+                cell_w: &sub_w,
+                cols,
+                width,
+                lead: Some(state),
+                accent,
+            },
+            palette,
+        );
     }
 
     // Degenerate: the pill leaves no corner that could anchor on `F1`. The
@@ -262,14 +242,10 @@ fn lines(
     debug_assert_eq!(hotkeys[HELP_IDX].0, HELP_KEY);
     let mut out = vec![Line::from(state)];
     if cell_w[HELP_IDX] <= width {
-        out.extend(right_grid(
-            &hotkeys[HELP_IDX..=HELP_IDX],
-            &cell_w[HELP_IDX..=HELP_IDX],
-            1,
-            width,
-            None,
-            None,
+        out.extend(ui::hotkey_grid(
             palette,
+            &hotkeys[HELP_IDX..=HELP_IDX],
+            width,
         ));
     }
     out
@@ -332,20 +308,13 @@ fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool) -> Vec<usize>
 
 /// The most columns whose grid fits `avail` within [`HINT_ROWS_MAX`] rows (→
 /// the fewest rows); `None` when no allowed column count fits. Unlike
-/// [`widest_grid`] it refuses to go deeper instead of narrower — the chat bar
-/// sheds hints at that point ([`trim_to_fit`]).
+/// [`ui::widest_hint_grid`], which every screen's footer uses, it refuses to go
+/// deeper instead of narrower — the chat bar sheds hints at that point
+/// ([`trim_to_fit`]).
 fn corner_cols(cell_w: &[usize], avail: usize) -> Option<usize> {
     (cell_w.len().div_ceil(HINT_ROWS_MAX)..=cell_w.len())
         .rev()
-        .find(|&c| grid_layout(cell_w, c).2 <= avail)
-}
-
-/// The most columns whose grid fits into `avail` (→ the fewest rows); `None`
-/// when not even a single column does.
-fn widest_grid(cell_w: &[usize], avail: usize) -> Option<usize> {
-    (1..=cell_w.len())
-        .rev()
-        .find(|&c| grid_layout(cell_w, c).2 <= avail)
+        .find(|&c| ui::hint_grid_layout(cell_w, c).2 <= avail)
 }
 
 /// The "state" cluster on the left of the top row: server chips + generation +
@@ -477,13 +446,18 @@ fn token_counter_span(
 }
 
 /// Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
-fn hotkey_list(model: &StatusModel, loc: &'static Locale) -> Vec<(&'static str, &'static str)> {
+/// The third field is the shared grid's "dangerous key" flag — the chat bar has
+/// no destructive hint, so it is always `false` here.
+fn hotkey_list(
+    model: &StatusModel,
+    loc: &'static Locale,
+) -> Vec<(&'static str, &'static str, bool)> {
     let mouse_desc = if model.mouse_scroll {
         loc.t("ui.status.mouse.scroll")
     } else {
         loc.t("ui.status.mouse.select")
     };
-    let mut hotkeys: Vec<(&'static str, &'static str)> = vec![("Ctrl+W", mouse_desc)];
+    let mut hotkeys: Vec<(&'static str, &'static str, bool)> = vec![("Ctrl+W", mouse_desc, false)];
     hotkeys.extend(HOTKEYS.iter().map(|(key, default)| {
         // `Esc` is the one hint whose meaning moves with the state; the rest are
         // fixed. Keeping it in the const preserves one ordered list.
@@ -492,7 +466,7 @@ fn hotkey_list(model: &StatusModel, loc: &'static Locale) -> Vec<(&'static str, 
         } else {
             *default
         };
-        (*key, loc.t(desc_key))
+        (*key, loc.t(desc_key), false)
     }));
     hotkeys
 }
@@ -545,119 +519,6 @@ fn secondary_chip(
     }
     let (glyph, color) = status_glyph(status, palette);
     Some(chip(glyph, label.to_string(), color))
-}
-
-/// Lays hotkeys out on a grid of `cols` columns: cells fill row-by-row,
-/// left-to-right/top-to-bottom, but **an incomplete bottom row is right-aligned** (its cells
-/// take the rightmost columns, under the full rows). Returns a map
-/// `grid[row][col] = Some(cell index)`, column widths (max over each column's cells)
-/// and the block's total width (the sum of columns + gaps). This way wrapped keys land
-/// exactly under the columns of the row above (as in the chat-list window), not as a "floating" group.
-fn grid_layout(cell_w: &[usize], cols: usize) -> (Vec<Vec<Option<usize>>>, Vec<usize>, usize) {
-    let n = cell_w.len();
-    let rows = n.div_ceil(cols);
-    let full = (rows - 1) * cols; // cells in full rows
-    let empty_lead = cols - (n - full); // empty columns at the start of the bottom row
-
-    let mut grid = vec![vec![None; cols]; rows];
-    for i in 0..n {
-        let (r, c) = if i < full {
-            (i / cols, i % cols)
-        } else {
-            (rows - 1, empty_lead + (i - full))
-        };
-        grid[r][c] = Some(i);
-    }
-
-    let mut colw = vec![0usize; cols];
-    for row in &grid {
-        for (c, cell) in row.iter().enumerate() {
-            if let Some(i) = cell {
-                colw[c] = colw[c].max(cell_w[*i]);
-            }
-        }
-    }
-    let block_w = colw.iter().sum::<usize>() + GAP * cols.saturating_sub(1);
-    (grid, colw, block_w)
-}
-
-/// Draws hotkeys as a grid right-aligned to `width` (columns aligned
-/// vertically; an incomplete bottom row — under the rightmost columns). If
-/// `state` is given, the status pill is inserted at the left edge of the **top** row.
-fn right_grid(
-    hotkeys: &[(&str, &str)],
-    cell_w: &[usize],
-    cols: usize,
-    width: usize,
-    mut state: Option<Vec<Span<'static>>>,
-    accent_idx: Option<usize>,
-    palette: &Palette,
-) -> Vec<Line<'static>> {
-    let (grid, colw, block_w) = grid_layout(cell_w, cols);
-    let lead = width.saturating_sub(block_w);
-
-    let mut out: Vec<Line<'static>> = Vec::new();
-    for (r, row) in grid.iter().enumerate() {
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        push_row_lead(&mut spans, r, &mut state, lead);
-        // Columns: a cell is padded out to the column's width (+ a gap, except the last),
-        // an empty column — entirely spaces (this way columns line up vertically).
-        for (c, cell) in row.iter().enumerate() {
-            let gap = if c + 1 < cols { GAP } else { 0 };
-            match cell {
-                Some(i) => push_hotkey_cell(
-                    &mut spans,
-                    hotkeys[*i],
-                    accent_idx == Some(*i),
-                    colw[c].saturating_sub(cell_w[*i]) + gap,
-                    palette,
-                ),
-                None => spans.push(Span::raw(" ".repeat(colw[c] + gap))),
-            }
-        }
-        out.push(Line::from(spans));
-    }
-    out
-}
-
-/// The left margin of grid row `r`: on the top row — the status pill (taken out
-/// of `state`), the rest (and other rows) — spaces (the grid is right-aligned).
-fn push_row_lead(
-    spans: &mut Vec<Span<'static>>,
-    r: usize,
-    state: &mut Option<Vec<Span<'static>>>,
-    lead: usize,
-) {
-    if r == 0
-        && let Some(pill) = state.take()
-    {
-        let state_w = spans_width(&pill);
-        spans.extend(pill);
-        if lead > state_w {
-            spans.push(Span::raw(" ".repeat(lead - state_w)));
-        }
-    } else if lead > 0 {
-        spans.push(Span::raw(" ".repeat(lead)));
-    }
-}
-
-/// One occupied grid cell: the hint (its description accent-highlighted when
-/// `accented`) followed by `pad` spaces out to the column's width + gap.
-fn push_hotkey_cell(
-    spans: &mut Vec<Span<'static>>,
-    (key, desc): (&str, &str),
-    accented: bool,
-    pad: usize,
-    palette: &Palette,
-) {
-    if accented {
-        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
-    } else {
-        spans.extend(palette.hint(key, desc));
-    }
-    if pad > 0 {
-        spans.push(Span::raw(" ".repeat(pad)));
-    }
 }
 
 /// The visible width of a string in terminal columns.
@@ -1104,7 +965,7 @@ mod tests {
     fn keep_order_matches_the_hotkey_list() {
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        let keys: Vec<&str> = hotkey_list(&m, ru()).iter().map(|(k, _)| *k).collect();
+        let keys: Vec<&str> = hotkey_list(&m, ru()).iter().map(|(k, _, _)| *k).collect();
         assert_eq!(keys[HELP_IDX], HELP_KEY);
         let named = |order: [usize; 6]| order.map(|i| keys[i]);
         assert_eq!(
@@ -1300,27 +1161,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn hotkey_lines_wraps_and_right_aligns() {
-        let p = Palette::default();
-        let items: &[(&str, &str)] = &[
-            ("Tab", "секция"),
-            ("↑↓", "поля"),
-            ("Enter", "правка"),
-            ("Esc", "назад"),
-            ("Ctrl+C", "выход"),
-        ];
-        // Wide — one line, right-aligned (ends with the last key's description).
-        let wide = hotkey_lines(200, items, &p);
-        assert_eq!(wide.len(), 1);
-        let flat: String = wide[0].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(flat.contains("Tab") && flat.trim_end().ends_with("выход"));
-        // Narrow — wraps onto several lines.
-        assert!(hotkey_lines(24, items, &p).len() > 1);
-        // An empty set — no lines.
-        assert!(hotkey_lines(80, &[], &p).is_empty());
     }
 
     #[test]

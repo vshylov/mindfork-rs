@@ -19,14 +19,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use uuid::Uuid;
 
 use crate::features::chat_search::{SearchGroup, Snippet};
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::render_scrollbar;
+use crate::shared::ui::{render_scrollbar, screen_chrome};
 use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 
@@ -264,43 +264,41 @@ impl SearchScreen {
         Line::from(spans)
     }
 
-    /// Draws the results full-screen.
-    pub fn render(&mut self, frame: &mut Frame) {
-        let area = frame.area();
-        let palette = self.palette;
+    /// The footer's hints for the current state. `Enter` opens the selected
+    /// hit — with no results there is none, and the key does nothing
+    /// (`handle_key` returns early off `self.hits().get(..)`), so the hint goes
+    /// with it: an advertised key that is a no-op is worse than a missing hint
+    /// (spec §11.2). `F1` sits before `Esc`, as on the chat bar — it opens the
+    /// full key list, which is what makes hiding a hint safe.
+    fn hints(&self) -> Vec<(&'static str, &'static str, bool)> {
         let loc = self.loc;
-        frame.render_widget(Clear, area);
-
-        // The hotkey grid at the bottom, sized first so the panel gets exactly
-        // the rest (as in the chat list).
-        let hk: [(&str, &str, bool); 4] = [
-            ("↑↓ PgUp/Dn Home/End", loc.t("ui.search.hk.select"), false),
-            ("Enter", loc.t("ui.search.hk.open"), false),
+        let mut hk: Vec<(&'static str, &'static str, bool)> =
+            vec![("↑↓ PgUp/Dn Home/End", loc.t("ui.search.hk.select"), false)];
+        if !self.hits().is_empty() {
+            hk.push(("Enter", loc.t("ui.search.hk.open"), false));
+        }
+        hk.extend([
+            ("F1", loc.t("ui.search.hk.help"), false),
             ("Esc", loc.t("ui.search.hk.back"), false),
             ("Ctrl+Q", loc.t("ui.search.hk.quit"), false),
-        ];
-        let hotkeys = palette.hotkey_grid(&hk, area.width as usize);
-        let status_h = (hotkeys.len() as u16).max(1);
-        let [panel_area, status_area] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+        ]);
+        hk
+    }
 
-        let block = palette
-            .panel(
-                format!("{} {}", palette.glyphs().search, loc.t("ui.search.title")),
-                true,
-            )
-            .title(
-                Line::from(Span::styled(
-                    format!(
-                        " {} ",
-                        loc.tf("ui.search.matches", &[("n", &self.total.to_string())])
-                    ),
-                    palette.muted_style(),
-                ))
-                .right_aligned(),
-            );
-        let inner = block.inner(panel_area);
-        frame.render_widget(block, panel_area);
+    /// Draws the results full-screen.
+    pub fn render(&mut self, frame: &mut Frame) {
+        let palette = self.palette;
+        let loc = self.loc;
+
+        let chrome = screen_chrome(
+            frame,
+            &palette,
+            format!("{} {}", palette.glyphs().search, loc.t("ui.search.title")),
+            Some(loc.tf("ui.search.matches", &[("n", &self.total.to_string())])),
+            &self.hints(),
+        );
+        let (inner, panel_area, status_area, hotkeys) =
+            (chrome.inner, chrome.panel, chrome.status, chrome.hotkeys);
 
         // Inside: the query being answered, a "showing N of M" line when the
         // cap bit, then the results.
@@ -547,6 +545,27 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         format!("{:?}", term.backend().buffer())
+    }
+
+    /// `Enter` is advertised only while there is a hit to open, and `F1` — which
+    /// works here as on every screen — is now among the hints
+    /// (docs/history/status-hints-unified.md §2.2).
+    #[test]
+    fn the_footer_drops_enter_with_no_hits() {
+        let mut s = screen();
+        let keys = |s: &SearchScreen| -> Vec<&'static str> {
+            s.hints().iter().map(|(k, _, _)| *k).collect()
+        };
+        assert!(keys(&s).contains(&"Enter"));
+        assert!(keys(&s).contains(&"F1"), "help opens from here too");
+
+        // No results: `Enter` returns `None` (there is no hit to resolve), so
+        // the hint goes with it.
+        s.set_results("маркер".into(), Vec::new(), 0);
+        assert!(!keys(&s).contains(&"Enter"), "{:?}", s.hints());
+        assert!(s.handle_key(key(KeyCode::Enter)).is_none());
+        // The screen still says how to leave.
+        assert!(keys(&s).contains(&"Esc") && keys(&s).contains(&"Ctrl+Q"));
     }
 
     /// A transcript's group is drawn as the list draws it: under its parent,

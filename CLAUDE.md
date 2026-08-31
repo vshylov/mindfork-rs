@@ -168,7 +168,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-08-31, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2724 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2735 unit tests
 green, 128 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -180,6 +180,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **One hint grid, and footers that name only the keys that work** — the four
+  screens the chat bar's two recent reworks never reached (chat list, search,
+  `F3`, `F4`) were drawing their hints through a **second, left-aligned**
+  implementation of the same layout; there is now one
+  (`shared::ui::render_hint_grid`), right-aligned everywhere, with only the
+  bar's capped/shedding column choice — the part the status pill's competition
+  for the row makes chat-specific — left behind in `status_bar`. And every
+  footer is built from the state its own key handler dispatches on, so the rule
+  spec §11.2 has stated since the chat list shipped (*an advertised key that is
+  a no-op is worse than a missing hint*) now holds on all six surfaces rather
+  than one: an observation on `F3` no longer offers "Enter edit" against an
+  editor that has always refused it, `R` goes with a file already gone, and
+  `F1` — the door to the full list every hidden hint is on — is finally
+  advertised everywhere
+  ([docs/history/status-hints-unified.md](docs/history/status-hints-unified.md),
+  spec §11.1, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **A third model on the live gate: gpt-oss-120b, split across two files** —
   the gate had only ever run single-file models, so `shared/gguf.rs` (which
   exists to strip a `-00001-of-00002` tail off a name) had met nothing but

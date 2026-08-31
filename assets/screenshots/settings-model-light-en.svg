@@ -36,11 +36,12 @@
 <text xml:space="preserve" y="575.44"><tspan x="10" fill="#787c82">│</tspan><tspan x="240.4" fill="#bec1c6">│</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="596.56"><tspan x="10" fill="#787c82">│</tspan><tspan x="240.4" fill="#bec1c6">│</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="617.68"><tspan x="10" textLength="1113.6" fill="#787c82">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</tspan></text>
-<rect x="134.8" y="622.48" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="317.2" y="622.48" width="67.2" height="21.12" fill="#dee0e4"/>
-<rect x="518.8" y="622.48" width="28.8" height="21.12" fill="#dee0e4"/>
-<rect x="643.6" y="622.48" width="96" height="21.12" fill="#dee0e4"/>
+<rect x="19.6" y="622.48" width="76.8" height="21.12" fill="#dee0e4"/>
+<rect x="202" y="622.48" width="67.2" height="21.12" fill="#dee0e4"/>
+<rect x="403.6" y="622.48" width="28.8" height="21.12" fill="#dee0e4"/>
+<rect x="528.4" y="622.48" width="96" height="21.12" fill="#dee0e4"/>
+<rect x="749.2" y="622.48" width="38.4" height="21.12" fill="#dee0e4"/>
 <rect x="864.4" y="622.48" width="48" height="21.12" fill="#dee0e4"/>
 <rect x="998.8" y="622.48" width="76.8" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="638.8"><tspan x="144.4" textLength="67.2" fill="#4a4e54">Tab/↑↓ </tspan><tspan x="221.2" textLength="67.2" fill="#6e747c">section</tspan><tspan x="326.8" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="394" textLength="96" fill="#6e747c">parameters</tspan><tspan x="528.4" textLength="19.2" fill="#4a4e54">/ </tspan><tspan x="557.2" textLength="57.6" fill="#6e747c">search</tspan><tspan x="653.2" textLength="86.4" fill="#4a4e54">Ctrl+Z/Y </tspan><tspan x="749.2" textLength="86.4" fill="#6e747c">undo/redo</tspan><tspan x="874" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="922" textLength="48" fill="#6e747c">close</tspan><tspan x="1008.4" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="1085.2" textLength="38.4" fill="#6e747c">quit</tspan></text>
+<text xml:space="preserve" y="638.8"><tspan x="29.2" textLength="67.2" fill="#4a4e54">Tab/↑↓ </tspan><tspan x="106" textLength="67.2" fill="#6e747c">section</tspan><tspan x="211.6" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="278.8" textLength="96" fill="#6e747c">parameters</tspan><tspan x="413.2" textLength="19.2" fill="#4a4e54">/ </tspan><tspan x="442" textLength="57.6" fill="#6e747c">search</tspan><tspan x="538" textLength="86.4" fill="#4a4e54">Ctrl+Z/Y </tspan><tspan x="634" textLength="86.4" fill="#6e747c">undo/redo</tspan><tspan x="758.8" textLength="28.8" fill="#4a4e54">F1 </tspan><tspan x="797.2" textLength="38.4" fill="#6e747c">help</tspan><tspan x="874" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="922" textLength="48" fill="#6e747c">close</tspan><tspan x="1008.4" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="1085.2" textLength="38.4" fill="#6e747c">quit</tspan></text>
 </svg>

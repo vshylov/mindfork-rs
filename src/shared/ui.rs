@@ -177,11 +177,217 @@ impl ListScroll {
     }
 }
 
+/// Gap between hotkey-grid columns, and between the chat bar's status pill and
+/// the grid beside it.
+pub const HINT_GAP: usize = 3;
+
+/// One hint's cell width in columns: the keycap (the label plus the two spaces
+/// [`Palette::keycap`] wraps it in), a space, and the description.
+pub fn hint_cell_width(key: &str, desc: &str) -> usize {
+    str_width(key) + 2 + 1 + str_width(desc)
+}
+
+/// The cell widths of a whole hint list, in its display order.
+pub fn hint_cell_widths(items: &[(&str, &str, bool)]) -> Vec<usize> {
+    items
+        .iter()
+        .map(|(key, desc, _)| hint_cell_width(key, desc))
+        .collect()
+}
+
+/// Places `cell_w.len()` cells on a grid of `cols` columns: they fill
+/// row-by-row, left-to-right/top-to-bottom, but **an incomplete bottom row is
+/// right-aligned** — its cells take the rightmost columns, under the full rows
+/// above. Returns `grid[row][col] = Some(cell index)`, the column widths (the
+/// max over the cells actually placed in each column) and the block's total
+/// width (columns + gaps).
+///
+/// The right-aligned bottom row is what makes a wrapped hint land exactly under
+/// the column above it rather than as a floating group — see spec §11.1 and the
+/// journal entry *status bar — pill top-left, hotkey grid right*.
+pub fn hint_grid_layout(
+    cell_w: &[usize],
+    cols: usize,
+) -> (Vec<Vec<Option<usize>>>, Vec<usize>, usize) {
+    let n = cell_w.len();
+    let rows = n.div_ceil(cols);
+    let full = (rows - 1) * cols; // cells in full rows
+    let empty_lead = cols - (n - full); // empty columns at the start of the bottom row
+
+    let mut grid = vec![vec![None; cols]; rows];
+    for i in 0..n {
+        let (r, c) = if i < full {
+            (i / cols, i % cols)
+        } else {
+            (rows - 1, empty_lead + (i - full))
+        };
+        grid[r][c] = Some(i);
+    }
+
+    let mut colw = vec![0usize; cols];
+    for row in &grid {
+        for (c, cell) in row.iter().enumerate() {
+            if let Some(i) = cell {
+                colw[c] = colw[c].max(cell_w[*i]);
+            }
+        }
+    }
+    let block_w = colw.iter().sum::<usize>() + HINT_GAP * cols.saturating_sub(1);
+    (grid, colw, block_w)
+}
+
+/// The most columns whose grid fits into `avail` (→ the fewest rows); `None`
+/// when not even a single column does.
+pub fn widest_hint_grid(cell_w: &[usize], avail: usize) -> Option<usize> {
+    (1..=cell_w.len())
+        .rev()
+        .find(|&c| hint_grid_layout(cell_w, c).2 <= avail)
+}
+
+/// Everything a hint block needs beyond its items: how wide the strip is, how
+/// many columns to use, what shares its top row, and which cell is the one
+/// highlighted mode light.
+pub struct HintGrid<'a> {
+    /// Hints in display order: key, description, and whether the key is
+    /// "dangerous" (a red keycap — delete and friends).
+    pub items: &'a [(&'a str, &'a str, bool)],
+    /// Each item's cell width ([`hint_cell_widths`]) — passed in because the
+    /// caller has usually computed it already to choose `cols`.
+    pub cell_w: &'a [usize],
+    /// Columns to lay the block out in ([`widest_hint_grid`], or the chat bar's
+    /// own capped choice).
+    pub cols: usize,
+    /// The strip's full width; the block hugs its right edge.
+    pub width: usize,
+    /// Spans to put at the **left of the top row** — the chat bar's status
+    /// pill. `None` on the screens, whose footers are hints and nothing else.
+    pub lead: Option<Vec<Span<'static>>>,
+    /// The one cell whose description is drawn in `accent` instead of muted —
+    /// the chat bar's mouse-mode light. `None` elsewhere.
+    pub accent: Option<usize>,
+}
+
+/// Draws a hint block right-aligned to `grid.width`: columns line up
+/// vertically, an incomplete bottom row lands under the columns above, and
+/// `grid.lead` (when given) opens the top row on the left.
+///
+/// The one hint-grid renderer in the application — every footer and the chat
+/// bar's corner block come out of here, so they cannot drift apart in
+/// alignment, spacing or keycap styling (docs/history/status-hints-unified.md §2.1).
+pub fn render_hint_grid(grid: &HintGrid, palette: &Palette) -> Vec<Line<'static>> {
+    if grid.items.is_empty() || grid.cols == 0 {
+        return Vec::new();
+    }
+    let (cells, colw, block_w) = hint_grid_layout(grid.cell_w, grid.cols);
+    let lead_w = grid.width.saturating_sub(block_w);
+    let mut lead = grid.lead.clone();
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for (r, row) in cells.iter().enumerate() {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        push_row_lead(&mut spans, r, &mut lead, lead_w);
+        // A cell is padded out to its column's width (+ a gap, except in the
+        // last column); an empty column is all spaces, so columns line up.
+        for (c, cell) in row.iter().enumerate() {
+            let gap = if c + 1 < grid.cols { HINT_GAP } else { 0 };
+            match cell {
+                Some(i) => push_hint_cell(&mut spans, grid, palette, *i, colw[c], gap),
+                None => spans.push(Span::raw(" ".repeat(colw[c] + gap))),
+            }
+        }
+        out.push(Line::from(spans));
+    }
+    out
+}
+
+/// One occupied grid cell: the hint — its description accent-highlighted when
+/// this is the block's mode light, its keycap red when the key is "dangerous" —
+/// followed by padding out to `col_w` plus the trailing `gap`. A column is
+/// never narrower than the cells in it, so the padding cannot underflow.
+fn push_hint_cell(
+    spans: &mut Vec<Span<'static>>,
+    grid: &HintGrid,
+    palette: &Palette,
+    i: usize,
+    col_w: usize,
+    gap: usize,
+) {
+    let (key, desc, danger) = grid.items[i];
+    if grid.accent == Some(i) {
+        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
+    } else {
+        spans.extend(palette.hint_marked(key, desc, danger));
+    }
+    let pad = col_w.saturating_sub(grid.cell_w[i]) + gap;
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad)));
+    }
+}
+
+/// The left margin of grid row `r`: on the top row — the lead cluster (taken
+/// out of `lead`), everywhere else — spaces, since the block is right-aligned.
+fn push_row_lead(
+    spans: &mut Vec<Span<'static>>,
+    r: usize,
+    lead: &mut Option<Vec<Span<'static>>>,
+    lead_w: usize,
+) {
+    if r == 0
+        && let Some(pill) = lead.take()
+    {
+        let pill_w: usize = pill.iter().map(|s| str_width(&s.content)).sum();
+        spans.extend(pill);
+        if lead_w > pill_w {
+            spans.push(Span::raw(" ".repeat(lead_w - pill_w)));
+        }
+    } else if lead_w > 0 {
+        spans.push(Span::raw(" ".repeat(lead_w)));
+    }
+}
+
+/// A screen's footer: hints laid out **right-aligned** into the widest grid
+/// that fits `width`, wrapping to as many rows as they need. Empty for an empty
+/// list.
+///
+/// Unlike the chat bar's corner block, a footer never sheds a hint: it has the
+/// whole width and no status pill competing for it, so it grows a row instead
+/// (user's decision, 2026-08-31 — docs/history/status-hints-unified.md §2.1).
+pub fn hotkey_grid(
+    palette: &Palette,
+    items: &[(&str, &str, bool)],
+    width: usize,
+) -> Vec<Line<'static>> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let cell_w = hint_cell_widths(items);
+    let cols = widest_hint_grid(&cell_w, width).unwrap_or(1);
+    render_hint_grid(
+        &HintGrid {
+            items,
+            cell_w: &cell_w,
+            cols,
+            width,
+            lead: None,
+            accent: None,
+        },
+        palette,
+    )
+}
+
+/// The visible width of a string in terminal columns.
+fn str_width(s: &str) -> usize {
+    crate::shared::wrap::display_width(&s.chars().collect::<Vec<_>>())
+}
+
 /// What [`screen_chrome`] hands back: where the content goes, where the hotkey
 /// grid goes, and the grid itself.
 pub struct ScreenChrome {
     /// Inside the panel's border — where the screen draws its own content.
     pub inner: Rect,
+    /// The panel itself, border included. A screen that draws a scrollbar
+    /// **on** the right border (`render_scrollbar`) measures it from here.
+    pub panel: Rect,
     /// The strip below the panel, for [`Self::hotkeys`] or a warning line.
     pub status: Rect,
     pub hotkeys: Vec<Line<'static>>,
@@ -194,9 +400,9 @@ pub struct ScreenChrome {
 /// status row from it, split vertically, build the panel, take its `inner`,
 /// render it. The duplication gate found the pair when the changes screen became
 /// the fourth; this is the seam the rule says to build when a new thing is a
-/// sibling of an existing one (docs/lessons.md §2). The three older screens keep
-/// their own copies for now: a mechanical refactor does not share a PR with a
-/// feature, and they are this function's obvious next callers.
+/// sibling of an existing one (docs/lessons.md §2). The search, self-model and
+/// settings screens joined it when their footers moved onto the one hint grid
+/// (docs/history/status-hints-unified.md).
 ///
 /// `right` is the muted, right-aligned title some screens carry (a match count,
 /// a summary); the caller still renders `hotkeys` into `status`, because a screen
@@ -210,7 +416,7 @@ pub fn screen_chrome(
 ) -> ScreenChrome {
     let area = frame.area();
     frame.render_widget(Clear, area);
-    let hotkeys = palette.hotkey_grid(hk, area.width as usize);
+    let hotkeys = hotkey_grid(palette, hk, area.width as usize);
     let status_h = (hotkeys.len() as u16).max(1);
     let [panel_area, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
@@ -224,6 +430,7 @@ pub fn screen_chrome(
     frame.render_widget(block, panel_area);
     ScreenChrome {
         inner,
+        panel: panel_area,
         status,
         hotkeys,
     }
@@ -279,6 +486,122 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    /// A hint block's rows as plain strings.
+    fn grid_text(items: &[(&str, &str, bool)], width: usize) -> Vec<String> {
+        hotkey_grid(&Palette::default(), items, width)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// Every footer in the application is right-aligned and wraps rather than
+    /// sheds — the one property the screens share with the chat bar's corner
+    /// block (docs/history/status-hints-unified.md §2.1).
+    #[test]
+    fn a_footer_is_right_aligned_and_wraps() {
+        let items: &[(&str, &str, bool)] = &[
+            ("Tab", "section", false),
+            ("↑↓", "fields", false),
+            ("Enter", "edit", false),
+            ("Esc", "back", false),
+            ("Ctrl+Q", "quit", false),
+        ];
+        // Wide — one row, flush against the right edge.
+        let wide = grid_text(items, 200);
+        assert_eq!(wide.len(), 1);
+        assert_eq!(
+            wide[0].chars().count(),
+            200,
+            "the row is padded out to the width"
+        );
+        assert!(wide[0].trim_end().ends_with("quit"), "{:?}", wide[0]);
+        assert!(wide[0].starts_with("    "), "left margin: {:?}", wide[0]);
+        // Narrow — more rows, and every hint is still there: a footer never sheds.
+        let narrow = grid_text(items, 24);
+        assert!(narrow.len() > 1);
+        let all = narrow.join("");
+        for (key, _, _) in items {
+            assert!(all.contains(key), "{key} was shed: {narrow:?}");
+        }
+        // An empty set — no rows at all (the caller reserves a minimum height).
+        assert!(hotkey_grid(&Palette::default(), &[], 80).is_empty());
+        // A width no single cell fits into still lays out (one column, clipped
+        // by the terminal) rather than panicking — `render` is called on every
+        // frame, including the first one on a 1-column pane.
+        for w in [0usize, 1, 2] {
+            assert_eq!(grid_text(items, w).len(), items.len());
+        }
+    }
+
+    /// An incomplete bottom row takes the **rightmost** columns, so a wrapped
+    /// hint lands exactly under the column above it instead of reading as a
+    /// floating group. Asserted in character positions, on the rendered rows.
+    #[test]
+    fn a_wrapped_row_lands_under_the_columns_above() {
+        // Four equal-width cells at a width that fits three per row.
+        let items: &[(&str, &str, bool)] = &[
+            ("K1", "aaaa", false),
+            ("K2", "bbbb", false),
+            ("K3", "cccc", false),
+            ("K4", "dddd", false),
+        ];
+        let cell = hint_cell_width("K1", "aaaa");
+        let width = cell * 3 + HINT_GAP * 2;
+        let rows = grid_text(items, width);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(
+            rows[1].find("K4"),
+            rows[0].find("K3"),
+            "the wrapped cell sits under the last column: {rows:?}"
+        );
+        assert!(
+            rows[1][..rows[1].find("K4").unwrap()].trim().is_empty(),
+            "everything left of the wrapped cell is padding: {rows:?}"
+        );
+        assert_eq!(rows[1].chars().count(), width);
+    }
+
+    /// The layout is the same one the chat bar's corner block uses, so the two
+    /// cannot drift: the block hugs the right edge at every column count.
+    #[test]
+    fn the_block_width_accounts_for_every_column_and_gap() {
+        let cell_w = vec![10, 12, 8, 14, 9];
+        for cols in 1..=cell_w.len() {
+            let (grid, colw, block_w) = hint_grid_layout(&cell_w, cols);
+            assert_eq!(grid[0].len(), cols);
+            assert_eq!(
+                block_w,
+                colw.iter().sum::<usize>() + HINT_GAP * (cols - 1),
+                "cols={cols}"
+            );
+            // Every cell is placed exactly once.
+            let mut seen: Vec<usize> = grid.iter().flatten().flatten().copied().collect();
+            seen.sort_unstable();
+            assert_eq!(seen, (0..cell_w.len()).collect::<Vec<_>>(), "cols={cols}");
+        }
+        // The widest grid that fits is the one with the fewest rows.
+        assert_eq!(widest_hint_grid(&cell_w, 1000), Some(5));
+        assert_eq!(widest_hint_grid(&cell_w, 5), None);
+    }
+
+    /// A "dangerous" key is drawn in the danger color; its neighbour is not.
+    #[test]
+    fn a_dangerous_key_gets_a_red_keycap() {
+        let p = Palette::default();
+        let items: &[(&str, &str, bool)] = &[("Del", "delete", true), ("Esc", "back", false)];
+        let line = &hotkey_grid(&p, items, 80)[0];
+        let keycap = |key: &str| {
+            line.spans
+                .iter()
+                .find(|s| s.content.trim() == key)
+                .unwrap_or_else(|| panic!("no {key} keycap"))
+                .style
+                .fg
+        };
+        assert_eq!(keycap("Del"), Some(p.keycap_danger));
+        assert_eq!(keycap("Esc"), Some(p.keycap_fg));
+    }
 
     /// Symbols of the buffer's right column (the scrollbar lives there).
     fn right_column(term: &Terminal<TestBackend>) -> Vec<String> {
