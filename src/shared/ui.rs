@@ -291,24 +291,37 @@ pub fn render_hint_grid(grid: &HintGrid, palette: &Palette) -> Vec<Line<'static>
         for (c, cell) in row.iter().enumerate() {
             let gap = if c + 1 < grid.cols { HINT_GAP } else { 0 };
             match cell {
-                Some(i) => {
-                    let (key, desc, danger) = grid.items[*i];
-                    if grid.accent == Some(*i) {
-                        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
-                    } else {
-                        spans.extend(palette.hint_marked(key, desc, danger));
-                    }
-                    let pad = colw[c].saturating_sub(grid.cell_w[*i]) + gap;
-                    if pad > 0 {
-                        spans.push(Span::raw(" ".repeat(pad)));
-                    }
-                }
+                Some(i) => push_hint_cell(&mut spans, grid, palette, *i, colw[c], gap),
                 None => spans.push(Span::raw(" ".repeat(colw[c] + gap))),
             }
         }
         out.push(Line::from(spans));
     }
     out
+}
+
+/// One occupied grid cell: the hint — its description accent-highlighted when
+/// this is the block's mode light, its keycap red when the key is "dangerous" —
+/// followed by padding out to `col_w` plus the trailing `gap`. A column is
+/// never narrower than the cells in it, so the padding cannot underflow.
+fn push_hint_cell(
+    spans: &mut Vec<Span<'static>>,
+    grid: &HintGrid,
+    palette: &Palette,
+    i: usize,
+    col_w: usize,
+    gap: usize,
+) {
+    let (key, desc, danger) = grid.items[i];
+    if grid.accent == Some(i) {
+        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
+    } else {
+        spans.extend(palette.hint_marked(key, desc, danger));
+    }
+    let pad = col_w.saturating_sub(grid.cell_w[i]) + gap;
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad)));
+    }
 }
 
 /// The left margin of grid row `r`: on the top row — the lead cluster (taken
