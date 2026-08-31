@@ -20,7 +20,7 @@ use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
-use crate::shared::ui::{ListScroll, render_scrollbar};
+use crate::shared::ui::{ListScroll, hotkey_grid, render_scrollbar};
 use crate::shared::wrap;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -944,10 +944,9 @@ impl ChatListState {
     }
 
     /// Status (hotkey) lines at the bottom of the screen — like on the chat screen: "keycaps"
-    /// on a muted background + muted descriptions, laid out in a neat grid
-    /// (columns line up vertically). The number of rows is fitted to width `width`:
-    /// we take the max number of columns that fit the width (fewest rows). In
-    /// rename mode — a single hint line.
+    /// on a muted background + muted descriptions, laid out by the one hint grid
+    /// ([`hotkey_grid`]): right-aligned, columns lined up vertically, wrapping
+    /// to as many rows as `width` needs. In rename mode — a single hint line.
     fn status_lines(
         &self,
         palette: &Palette,
@@ -998,10 +997,13 @@ impl ChatListState {
                 }
             })
         });
-        let mut items: Vec<(&str, &str, bool)> = vec![
-            ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
-            ("Enter", loc.t("ui.chatlist.hk.open"), false),
-        ];
+        let mut items: Vec<(&str, &str, bool)> =
+            vec![("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false)];
+        // `Enter` opens the selected row — on an empty list there is none, and
+        // the key does nothing (`open_selected` returns `None`).
+        if selected.is_some() {
+            items.push(("Enter", loc.t("ui.chatlist.hk.open"), false));
+        }
         if let Some(desc) = fold {
             items.push(("Ctrl+O", desc, false));
         }
@@ -1019,6 +1021,11 @@ impl ChatListState {
             items.push(("Del", loc.t("ui.chatlist.hk.delete"), true));
         }
         items.extend([
+            // `F1` opens the help from every screen and is the door to the full
+            // key list — including the hints this footer hides for the current
+            // row (docs/history/status-hints-unified.md §2.2). Its place is right before
+            // `Esc`, as on the chat bar.
+            ("F1", loc.t("ui.chatlist.hk.help"), false),
             ("Esc", loc.t("ui.chatlist.hk.back"), false),
             ("Ctrl+Q", loc.t("ui.chatlist.hk.quit"), false),
             ("Tab", sort_desc.as_str(), false),
@@ -1028,7 +1035,7 @@ impl ChatListState {
         if self.scope == SearchScope::Content {
             items.push(("Ctrl+G", loc.t("ui.chatlist.hk.search_messages"), false));
         }
-        palette.hotkey_grid(&items, width)
+        hotkey_grid(palette, &items, width)
     }
 }
 
@@ -1948,6 +1955,53 @@ mod tree_tests {
         let on_child = ChatListState::new(chats, Some(critic));
         assert!(!status_text(&on_child).contains("Del"));
         assert!(!status_text(&on_child).contains("Ctrl+D"));
+    }
+
+    /// `F1` opens the help from here as from anywhere, and `Enter` needs a row
+    /// to open — an empty list has none, and `open_selected` returns nothing
+    /// (docs/history/status-hints-unified.md §2.2).
+    #[test]
+    fn the_hotkey_grid_advertises_help_and_drops_enter_on_an_empty_list() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let full = ChatListState::new(family(), None);
+        assert!(status_text(&full).contains("F1"));
+        assert!(status_text(&full).contains(loc.t("ui.chatlist.hk.open")));
+
+        let empty = ChatListState::new(Vec::new(), None);
+        let text = status_text(&empty);
+        assert!(
+            !text.contains(loc.t("ui.chatlist.hk.open")),
+            "nothing to open: {text}"
+        );
+        assert!(
+            text.contains("F1"),
+            "the way to the full list stays: {text}"
+        );
+    }
+
+    /// The footer is right-aligned like every other screen's: the block hugs the
+    /// right edge, and a wrapped bottom row lands under the columns above
+    /// (docs/history/status-hints-unified.md §2.1).
+    #[test]
+    fn the_hotkey_grid_hugs_the_right_edge() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let s = ChatListState::new(family(), None);
+        let rows: Vec<String> = s
+            .status_lines(&Palette::default(), 116, loc)
+            .iter()
+            .map(|l| l.spans.iter().map(|sp| sp.content.as_ref()).collect())
+            .collect();
+        assert!(rows.len() > 1, "the list is long enough to wrap: {rows:?}");
+        for r in &rows {
+            assert_eq!(wrap::display_width(&r.chars().collect::<Vec<_>>()), 116);
+        }
+        // The last row ends flush right, and the rows before it are padded to
+        // the same edge — that is what "one block in the corner" means.
+        assert!(
+            !rows.last().unwrap().ends_with("  "),
+            "the block ends at the edge: {:?}",
+            rows.last()
+        );
     }
 
     #[test]

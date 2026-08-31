@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (55)
+## Entries (56)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -67,6 +67,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the chat list counts messages as the conversation reads (done)
 - Post-M9: the self-model screen reads as two named halves (done)
 - Post-M9: the self-model screen lists its observations newest first (done)
+- Post-M9: one hint grid, and footers that name only the keys that work (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -207,6 +208,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   breaks in `set_text`/`insert_str` (a clipboard paste) collapse into a space (the
   "one logical line" invariant). `clear`/`set_text` reset `hscroll`.
 - **The settings screen** (`screens/settings.rs`): the field editor opens in
+- Post-M9: one hint grid, and footers that name only the keys that work (done)
   single-line mode for all text fields; **the exception is the profile's system
   message** (`FieldId::PSystem`) — multiline by nature. For it the editor is
   multiline (`set_single_line(false)`), inside a **large popup** (~80% width, ~60%
@@ -2876,3 +2878,102 @@ back to where it started; the default in `AppConfig`, and an `interface` section
 written before the key existed keeping it. A live run is not required
 (AGENTS.md §3) — pure UI; the real render is exercised through the screenshot
 pipeline.
+
+### Post-M9: one hint grid, and footers that name only the keys that work (done)
+
+**What.** Every screen's hotkey footer is now drawn by one renderer,
+`shared::ui::render_hint_grid` — **right-aligned**, columns lined up vertically,
+an incomplete bottom row landing under the columns above — and every footer is
+built from the state its own key handler reads, so a key that would do nothing
+on the current row is not advertised. Plan and forks:
+[docs/history/status-hints-unified.md](../history/status-hints-unified.md).
+
+**Why.** Two defects with one cause: the screens were never part of the chat
+bar's two recent reworks (the corner block, PR #423; the live `Esc` label,
+PR #424), so they had both a different grid and a static hint list.
+
+- **Two grids.** `status_bar::hotkey_lines` (right-aligned, no `danger` flag)
+  drew the settings footer; `Palette::hotkey_grid` (**left**-aligned, `danger`
+  flag) drew the chat list's, search's, the self-model screen's and the changes
+  screen's. Both computed the same cell widths and both picked "the most columns
+  that fit"; they differed only in where the block landed. Side by side in the
+  committed demo dumps, the chat bar and settings ended flush right while the
+  chat list and `F3` began flush left and frayed at the right edge.
+- **Hints that named keys which do nothing.** The rule was already in the code
+  and in spec §11.2 — *an advertised key that is a no-op is worse than a missing
+  hint* — and exactly one surface followed it (the chat list drops `Del` and
+  `Ctrl+D` on a transcript, `Ctrl+G` outside content mode, `Ctrl+O` on a chat
+  with no transcripts). Reading each key handler against its footer turned up
+  eight more places. The reported one: standing on an observation on the `F3`
+  screen, the footer read "Enter edit" while `begin_edit` has returned `None`
+  there since the screen was written — *insights aren't edited, only deleted*.
+
+**What each footer learned.**
+
+| Screen | Was | Is |
+|---|---|---|
+| self-model | `Enter edit · Space goal status · Del delete` on every row | `Enter` on the six editable rows (worded *add a goal* on the add row), `Space` on a goal, `Del` on a goal or an observation |
+| changes | `↑↓ file` in both panes, `R` on every file | `↑↓ file` in the file pane, `↑↓ PgUp/Dn scroll the diff` in the diff pane; `R` only where `is_revertable()` holds |
+| settings | `←→ choose · Space toggle · Del reset` on every field | `←→` on a `Choice`, `Space` on a `Toggle`, `Del` where `reset_field` would do something |
+| search | `Enter open` with no results | `Enter` only while there is a hit |
+| chat list | (already contextual) | `Enter` also drops on an empty list |
+| all five | — | `F1 help`, plus `Ctrl+Q quit` on the two screens that handled it silently and `↑↓ select` on `F3` |
+
+**Key decisions.**
+
+- **The one renderer lives in `shared/ui.rs`, not in `theme.rs`.** `shared::ui`
+  already owns `screen_chrome`, the helper that renders these rows, and it may
+  depend on `shared::theme` while the reverse cannot. `Palette` keeps only what
+  is genuinely about color — `hint`, `hint_highlight_value`, and the new
+  `hint_marked`, the one place the danger keycap is chosen. `grid_layout` and
+  `right_grid` moved out of `status_bar` into the same module, so the chat bar's
+  corner block and the screens' footers now share their geometry; what stays
+  chat-specific is only `corner_cols`/`trim_to_fit`/`keep_order` — the capped,
+  shedding column choice.
+- **The screens wrap; they do not shed** (user's decision, 2026-08-31). The
+  chat bar's `HINT_ROWS_MAX = 2` and its shed order exist because the hints
+  share a row with a pill that swells at every turn boundary. A full-screen
+  panel's footer has the whole width and no competitor, so it grows a row
+  instead — which is what the settings footer already did. The awkward part of
+  the corner block, a priority order over the keys, stays confined to the one
+  surface that needs it.
+- **Hide, don't dim.** Dimming would keep the block's geometry stable as the
+  selection moves, at the cost of a third keycap style beside normal and danger
+  — and it would contradict a rule the code and the spec already state. The
+  accepted cost is a footer that reflows: on the self-model screen at 116
+  columns a goal's eight hints wrap to two rows where a summary's six fit one,
+  so the panel's bottom border moves by a row as the cursor enters and leaves
+  the goal block. Reserving the tallest set's height instead would put a
+  permanent blank row under every other row, which is worse.
+- **The `F1` dialog keeps listing everything.** That is what makes hiding safe,
+  and it is why the chat bar sheds `F1` last. A test walks every selectable row
+  of `F3` and asserts each key its footer names is in the screen's `F1` section
+  (matching on normalized spelling — the footer packs a pair as `↑↓`, the dialog
+  spaces it as `↑/↓`).
+- **`default_fields()` is built once per frame.** The settings footer's `Del`
+  gate is the read-only twin of `reset_field` and needs the default field set —
+  which the `•` "modified" marker already built. Rather than take one each, the
+  two now share one build threaded from `render`; `reset_changes_something`
+  follows `reset_field`'s three branches in its order (a secret row resets while
+  a secret is stored, user data never resets, a config row resets while it
+  differs from the default).
+- **The clear confirmation on `F3` keeps its one-row strip** by passing
+  `screen_chrome` no hints at all: the question never trails a blank row, and
+  the panel keeps the space the hidden hints would have cost.
+- **Three more screens moved onto `screen_chrome`** (search, self-model,
+  settings) — the callers its own doc comment named as obvious. `ScreenChrome`
+  gained `panel`, since a screen drawing a scrollbar *on* the right border
+  measures it from the panel rather than from `inner`.
+
+**Tests** (2735 green, +11): the shared grid — right-aligned and padded to the
+width, wrapping without shedding, a wrapped cell's column position equal to the
+column above it, every cell placed exactly once at every column count, a danger
+keycap red and its neighbour not; per screen — the `F3` walk over every
+selectable row against `selected_action`, its help cross-check, the changes
+footer by pane and by revertability (with `r` asserted to arm nothing on a
+`Gone` file), search's `Enter` gone with no hits, the chat list's `Enter` gone
+on an empty list and its block flush right on every row, and the settings
+footer walked across a section's field kinds plus a `Del` hint that appears when
+a toggle is flipped and goes away with the cursor. A live run is not required
+(AGENTS.md §3) — pure UI; the real render is exercised headlessly through the
+screenshot pipeline, whose dumps and images are regenerated here.

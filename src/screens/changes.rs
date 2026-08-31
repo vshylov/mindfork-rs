@@ -229,17 +229,45 @@ impl ChangesScreen {
             .min(len.saturating_sub(1))
     }
 
+    /// The footer's hints for the focused pane and the selected file.
+    ///
+    /// Two of these keys are not the same key in both panes or on every row,
+    /// and the footer used to say they were: `↑↓` moves the file selection only
+    /// while the file pane has focus (in the diff pane it scrolls, which is
+    /// what `PgUp/Dn` does there too — one hint names both), and `R` arms a
+    /// revert only on a file that has bytes to put back (`is_revertable`), so a
+    /// deleted file's row drops it rather than offering a question whose answer
+    /// changes nothing. `F1`/`Ctrl+Q` are handled here and were never
+    /// advertised. See spec §11.2, docs/history/status-hints-unified.md §2.2.
+    fn hints(&self) -> Vec<(&'static str, &'static str, bool)> {
+        let loc = self.loc;
+        let mut hk: Vec<(&'static str, &'static str, bool)> = match self.focus {
+            Focus::Files => vec![
+                ("↑↓", loc.t("ui.changes.hk.select"), false),
+                ("PgUp/Dn", loc.t("ui.changes.hk.scroll"), false),
+            ],
+            Focus::Diff => vec![("↑↓ PgUp/Dn", loc.t("ui.changes.hk.scroll"), false)],
+        };
+        hk.push(("Tab", loc.t("ui.changes.hk.pane"), false));
+        if self
+            .selected_file()
+            .is_some_and(|f| f.state.is_revertable())
+        {
+            hk.push(("R", loc.t("ui.changes.hk.revert"), false));
+        }
+        hk.extend([
+            ("F1", loc.t("ui.changes.hk.help"), false),
+            ("Esc", loc.t("ui.changes.hk.back"), false),
+            ("Ctrl+Q", loc.t("ui.changes.hk.quit"), false),
+        ]);
+        hk
+    }
+
     /// Draws the screen full-screen.
     pub fn render(&mut self, frame: &mut Frame) {
         let palette = self.palette;
         let loc = self.loc;
-        let hk: [(&str, &str, bool); 5] = [
-            ("↑↓", loc.t("ui.changes.hk.select"), false),
-            ("Tab", loc.t("ui.changes.hk.pane"), false),
-            ("PgUp/Dn", loc.t("ui.changes.hk.scroll"), false),
-            ("R", loc.t("ui.changes.hk.revert"), false),
-            ("Esc", loc.t("ui.changes.hk.back"), false),
-        ];
+        let hk = self.hints();
         let chrome = screen_chrome(
             frame,
             &palette,
@@ -547,6 +575,50 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// The footer follows the focused pane and the selected file — the two
+    /// axes `handle_key` itself branches on (docs/history/status-hints-unified.md §2.2).
+    #[test]
+    fn the_footer_follows_the_pane_and_the_file() {
+        let loc = loc();
+        let mut gone = modified("src/gone.rs");
+        gone.state = FileState::Gone;
+        gone.lines.clear();
+        let mut s = screen(vec![modified("src/a.rs"), gone]);
+        let keys = |s: &ChangesScreen| -> Vec<&'static str> {
+            s.hints().iter().map(|(k, _, _)| *k).collect()
+        };
+        let descs = |s: &ChangesScreen| -> Vec<&'static str> {
+            s.hints().iter().map(|(_, d, _)| *d).collect()
+        };
+
+        // File pane: the arrows pick a file, and `R` is offered on a modified one.
+        assert!(descs(&s).contains(&loc.t("ui.changes.hk.select")));
+        assert!(keys(&s).contains(&"R"), "a modified file can be put back");
+        // The diff pane: the arrows scroll there, in one hint with `PgUp/Dn`.
+        press(&mut s, KeyCode::Tab);
+        assert!(!descs(&s).contains(&loc.t("ui.changes.hk.select")));
+        assert_eq!(
+            descs(&s)
+                .iter()
+                .filter(|d| **d == loc.t("ui.changes.hk.scroll"))
+                .count(),
+            1,
+            "one hint names the scroll, not two: {:?}",
+            s.hints()
+        );
+        press(&mut s, KeyCode::Tab);
+
+        // A file that is already gone has no bytes to put back, and `R` says so
+        // by not being there — the key arms nothing on that row.
+        press(&mut s, KeyCode::Down);
+        assert!(!keys(&s).contains(&"R"), "{:?}", s.hints());
+        assert!(press(&mut s, KeyCode::Char('r')).is_none());
+        assert!(s.confirming.is_none(), "and nothing was armed");
+
+        // The two global keys the screen handled but never advertised.
+        assert!(keys(&s).contains(&"F1") && keys(&s).contains(&"Ctrl+Q"));
     }
 
     #[test]

@@ -1625,7 +1625,127 @@ fn footer_hints_differ_by_focus() {
     let fields = footer(&mut s);
     assert!(fields.contains("к секциям"), "Esc steps back: {fields:?}");
     assert!(!fields.contains("закрыть"), "not a close here: {fields:?}");
-    assert!(fields.contains("сброс"), "Del is pane-only: {fields:?}");
+    assert!(
+        fields.contains("поля"),
+        "the pane's own navigation: {fields:?}"
+    );
+    assert!(
+        !menu.contains("поля"),
+        "the pane's keys stay in the pane: {menu:?}"
+    );
+}
+
+/// Inside the pane the three value keys are shown only where they do something
+/// — `handle_fields_key` branches on the field's kind, and the footer must
+/// branch with it (docs/history/status-hints-unified.md §2.2).
+#[test]
+fn footer_hints_follow_the_selected_field() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let footer = |s: &mut SettingsScreen| -> String {
+        let mut term = Terminal::new(TestBackend::new(200, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect();
+        lines
+            .iter()
+            .rev()
+            .take_while(|l| l.starts_with(' '))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // Walk the "Interface" section's fields and check every footer against the
+    // kind of the row the cursor stands on — the same value `handle_fields_key`
+    // dispatches on, so the two cannot disagree.
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    s.handle_key(key(KeyCode::Enter));
+    let mut saw_choice = false;
+    let mut saw_toggle = false;
+    for _ in 0..30 {
+        // The kind as a tag: `FieldKind` is not `Clone`, and the footer must be
+        // rendered (a `&mut` borrow) after reading it.
+        let kind = s.fields().get(s.field_idx).map(|f| match f.kind {
+            FieldKind::Toggle(_) => 'T',
+            FieldKind::Choice(_) => 'C',
+            FieldKind::Text(_) => 'X',
+        });
+        let f = footer(&mut s);
+        match kind {
+            Some('C') => {
+                saw_choice = true;
+                assert!(f.contains("выбор"), "a Choice cycles with ←→: {f:?}");
+                assert!(!f.contains("тумблер"), "…and does not toggle: {f:?}");
+            }
+            Some('T') => {
+                saw_toggle = true;
+                assert!(f.contains("тумблер"), "a Toggle flips with Space: {f:?}");
+                assert!(!f.contains("выбор"), "…and does not cycle: {f:?}");
+            }
+            _ => {}
+        }
+        // `Del` resets only a row that differs from the default — a freshly
+        // built screen has none, so it is never advertised here.
+        assert!(!f.contains("сброс"), "nothing is modified yet: {f:?}");
+        s.handle_key(key(KeyCode::Down));
+    }
+    assert!(saw_choice && saw_toggle, "the walk must cover both kinds");
+}
+
+/// `Del` is advertised exactly while it would do something: the section's first
+/// toggle is flipped, and the hint appears on that row and on no other.
+#[test]
+fn the_reset_hint_follows_a_modified_field() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let footer = |s: &mut SettingsScreen| -> String {
+        let mut term = Terminal::new(TestBackend::new(200, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .filter(|l| l.starts_with(' '))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    s.handle_key(key(KeyCode::Enter));
+    // Stand on the section's first toggle and flip it.
+    let toggle_idx = s
+        .fields()
+        .iter()
+        .position(|f| matches!(f.kind, FieldKind::Toggle(_)))
+        .expect("the Interface section has a toggle");
+    for _ in 0..toggle_idx {
+        s.handle_key(key(KeyCode::Down));
+    }
+    assert!(
+        !footer(&mut s).contains("сброс"),
+        "at its default — nothing to reset"
+    );
+    s.handle_key(key(KeyCode::Char(' ')));
+    assert!(
+        footer(&mut s).contains("сброс"),
+        "modified — Del now resets it"
+    );
+    // The next row is untouched, so the hint goes away with the cursor.
+    s.handle_key(key(KeyCode::Down));
+    assert!(
+        !footer(&mut s).contains("сброс"),
+        "the neighbouring row is still at its default"
+    );
 }
 
 #[test]
@@ -1656,7 +1776,7 @@ fn hotkeys_render_below_panel_and_wrap_when_narrow() {
     };
     // Wide — hotkeys fit on one row below the panel, right-aligned
     // (ending in "quit"); the row above them is the panel's bottom border (not a space).
-    let wide = rows(120, 24);
+    let wide = rows(160, 24);
     assert_eq!(status_rows(&wide), 1, "wide — one hotkey row");
     let last = wide.last().unwrap();
     assert!(last.contains("Tab") && last.contains("выход"));

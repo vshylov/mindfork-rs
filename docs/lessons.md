@@ -762,6 +762,38 @@ second axis exists, resolve the label in the handler's own order of precedence,
 off one snapshot, so the surfaces cannot disagree within a frame.
 — *mid-turn the `Esc` hint says "cancel"*.
 
+**A rule followed by one of six surfaces is a coincidence, not a rule.** The
+spec has said since the chat list shipped that *an advertised key that is a
+no-op is worse than a missing hint*, and the chat list obeyed it three times
+over — dropping `Del`/`Ctrl+D` on a transcript, `Ctrl+G` outside content mode,
+`Ctrl+O` on a chat with no transcripts. The other five footers were arrays of
+string constants next to key handlers that branch: `Enter edit` on a self-model
+observation the editor has always refused, `R put this file back` on a file
+already gone, `←→ choose` on a field with nothing to cycle. The failure is a
+weaker form of the one above — those labels were not *derived from the wrong
+axis*, they were not derived at all — and it is the more common one, because a
+constant reads as intentional in review. Two habits close it: when a key handler
+branches on a value, the hint for that key is built from **the same value in the
+same frame**; and when a rule is meant to hold across surfaces, it is worth a
+test **per surface** — a walk over every row, asserting the footer against the
+handler's own dispatch value — since a sentence in the spec cannot fail.
+— *one hint grid, and footers that name only the keys that work*.
+
+**Two implementations of one layout diverge on the first improvement to either.**
+The hotkey grid existed twice — `Palette::hotkey_grid` and
+`status_bar::hotkey_lines` — computing identical cell widths and differing only
+in alignment. The bar's copy then got two reworks in a week; the other got
+neither, so four screens kept the left-aligned arrangement the bar had already
+rejected by measurement. Nothing failed: both were correct, and neither drifted
+from *itself*. Look for this wherever a helper was copied "for one caller" —
+the tell is a doc comment naming the other callers as future work
+(`screen_chrome` did exactly that, and the note was a year of drift waiting to
+happen). Extract to the layer both callers already depend on, and keep only what
+is genuinely specific to one of them behind it — here the chat bar's capped,
+shedding column choice, which exists solely because the status pill competes for
+the same row.
+— *one hint grid, and footers that name only the keys that work*.
+
 **A path check validates the string, not the thing the string names.**
 `is_file()` on the managed server's GGUF passes for part 1 of a three-part model
 whose other parts never finished downloading, and for part 2 of a model

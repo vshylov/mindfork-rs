@@ -35,10 +35,9 @@ use crate::shared::osc52::Osc52Mode;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, dim_background, render_scrollbar};
+use crate::shared::ui::{ListScroll, dim_background, render_scrollbar, screen_chrome};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
-use crate::widgets::status_bar;
 
 /// The settings screen's "Shortcuts" section (`F1`): one row per key the
 /// handler in `apply.rs` matches — a new arm gets a row here (AGENTS.md §3).

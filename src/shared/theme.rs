@@ -21,11 +21,12 @@
 use std::sync::OnceLock;
 
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::shared::config::Theme;
 use crate::shared::osc11::Background;
+#[cfg(test)]
 use crate::shared::wrap;
 
 /// What the terminal answered when asked for its background at startup
@@ -469,92 +470,30 @@ impl Palette {
         spans
     }
 
-    /// Lays out hotkey hints into a neat grid within `width`: "keycap" +
-    /// muted description, columns line up vertically. The number of columns
-    /// is picked as the max that fits the width (→ fewest rows); overflowing
-    /// one row wraps hotkeys onto the next. `danger` marks a "dangerous" key
-    /// (e.g. delete) in red. Used in the chat screen's status bar and in the
-    /// chat-list overlay — for a matching look.
-    pub fn hotkey_grid(&self, items: &[(&str, &str, bool)], width: usize) -> Vec<Line<'static>> {
-        let n = items.len();
-        if n == 0 {
-            return Vec::new();
+    /// Like [`Palette::hint`], but a "dangerous" key (delete and friends) gets a
+    /// red keycap. The one place the two keycap styles are chosen between:
+    /// every hint in the application is drawn by
+    /// [`crate::shared::ui::render_hint_grid`], which calls this.
+    pub fn hint_marked(&self, key: &str, desc: &str, danger: bool) -> Vec<Span<'static>> {
+        if !danger {
+            return self.hint(key, desc);
         }
-        // Cell width = "keycap" (characters + 2 for padding) + space + description.
-        let cell_w: Vec<usize> = items
-            .iter()
-            .map(|(key, desc, _)| keycap_width(key) + 1 + str_width(desc))
-            .collect();
-        let cols = grid_cols(&cell_w, width);
-        let widths = grid_col_widths(&cell_w, cols);
-
-        // Lay out into rows; pad each cell out to the column width, so columns
-        // line up vertically.
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        for row in items.chunks(cols) {
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            for (c, (key, desc, danger)) in row.iter().enumerate() {
-                spans.push(self.grid_keycap(key, *danger));
-                spans.push(Span::styled(format!(" {desc}"), self.muted_style()));
-                let used = keycap_width(key) + 1 + str_width(desc);
-                let pad = widths[c].saturating_sub(used) + if c + 1 < cols { GAP } else { 0 };
-                if pad > 0 {
-                    spans.push(Span::raw(" ".repeat(pad)));
-                }
-            }
-            lines.push(Line::from(spans));
-        }
-        lines
-    }
-
-    /// A grid cell's "keycap": `danger` marks a "dangerous" key (e.g. delete)
-    /// in red, otherwise the ordinary [`Palette::keycap`].
-    fn grid_keycap(&self, key: &str, danger: bool) -> Span<'static> {
-        if danger {
+        vec![
             Span::styled(
                 format!(" {key} "),
                 Style::new().fg(self.keycap_danger).bg(self.keycap_bg),
-            )
-        } else {
-            self.keycap(key)
-        }
+            ),
+            Span::styled(format!(" {desc}"), self.muted_style()),
+        ]
     }
 }
 
-const GAP: usize = 3; // gap between hotkey-grid columns
-
-/// Column widths for `cols` columns (row-major layout).
-fn grid_col_widths(cell_w: &[usize], cols: usize) -> Vec<usize> {
-    let mut w = vec![0usize; cols];
-    for (i, cw) in cell_w.iter().enumerate() {
-        w[i % cols] = w[i % cols].max(*cw);
-    }
-    w
-}
-
-/// Picks the max number of columns that fits the width (→ fewest rows).
-fn grid_cols(cell_w: &[usize], width: usize) -> usize {
-    let mut cols = 1;
-    for c in (1..=cell_w.len()).rev() {
-        let total: usize =
-            grid_col_widths(cell_w, c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
-        if total <= width {
-            cols = c;
-            break;
-        }
-    }
-    cols
-}
-
-/// Visible width of a line in terminal columns.
+/// Visible width of a line in terminal columns. Only the glyph-set tests
+/// measure anything here now — the hint grid does its own measuring in
+/// [`crate::shared::ui`].
+#[cfg(test)]
 fn str_width(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
-}
-
-/// Width of a "keycap" in columns: label characters + 2 (surrounding padding,
-/// as in [`Palette::keycap`], which formats `" {label} "`).
-fn keycap_width(label: &str) -> usize {
-    str_width(label) + 2
 }
 
 impl Default for Palette {

@@ -1716,6 +1716,12 @@ exist at all.
   pre-image. `↑↓` picks a file, `Tab` hands the arrows to the diff, `PgUp/PgDn`
   scrolls it, `r` puts one file back behind a confirmation naming it, `Esc`
   returns to the chat.
+  - The footer says which of those apply right now
+    ([§11.1](#111-screens-and-navigation)): `↑↓` is worded *file* in the file
+    pane and *scroll the diff* in the diff pane — where it and `PgUp/PgDn` are
+    one hint, because they do the same thing there — and `r` is shown only on a
+    file that has bytes to put back. A file already gone from disk has none, so
+    arming a revert on it would ask a question whose answer changes nothing.
   - The diff is **against the journal, not against git**, for the reason the
     journal exists: an attached directory need not be a repository, and a
     repository routinely carries the user's own uncommitted work, which is not
@@ -2018,6 +2024,37 @@ Two main screens + overlays (modals):
   and the hints always read as one corner block** — a fuller status line costs
   hints, not rows. In the degenerate case where not even `F1` fits beside the
   indicators, it alone takes the second row.
+- **Every screen's hint row is the same block.** The chat bar's geometry — cells
+  filled row-by-row, columns lined up vertically, an incomplete bottom row
+  right-aligned **under the columns above**, the block hugging the right edge —
+  is one implementation (`shared::ui::render_hint_grid`), and the chat list, the
+  settings screen, the self-model screen (`F3`), the changes screen (`F4`) and
+  the message-search screen all draw their footers with it. Only the chat bar
+  caps its depth and sheds: it shares a row with indicators that swell at every
+  turn boundary, while a full-screen panel's footer has the whole width and no
+  competitor, so **a screen's footer wraps to as many rows as it needs and never
+  hides a key for want of space** (user's decision, 2026-08-31). Before this the
+  grid existed twice and the four screens drawing it the second way were
+  left-aligned and ragged at the right edge — the arrangement the bar itself had
+  already rejected, for the reason it rejected it: a left-aligned block competes
+  with whatever sits to its left.
+- **A hint names a key that does something *here*.** The rule
+  [§11.2](#112-the-chat-list-an-overlay) states — an advertised key that is a
+  no-op is worse than a missing hint — applies to every screen, against the
+  **current** selection and focus, not just to the chat list. Each footer is
+  built from the same state its key handler dispatches on, in the same frame, so
+  the two cannot disagree: `F3` offers `Enter` only on a row that opens an
+  editor (an observation is deleted, never edited) and `Space` only on a goal;
+  `F4` words `↑↓` for the focused pane and offers `R` only on a file that has
+  bytes to put back; the settings screen offers `←→` on a choice, `Space` on a
+  toggle and `Del` where a reset would change something; `Enter` goes away where
+  there is nothing selected to open. Hiding is safe because **`F1` lists every
+  key of every screen** regardless ([§11.7](#117-keybindings-preliminary)) — it
+  is the same reason the chat bar sheds `F1` last — and `F1` is now itself among
+  the hints on every screen. The cost, accepted deliberately: a footer reflows
+  as the selection moves, and can gain or lose a row with it; the alternative,
+  dimming an inapplicable hint, would add a third keycap style and contradict
+  the rule.
 
 ### 11.2. The chat list (an overlay)
 
@@ -2760,7 +2797,11 @@ entered the pane, users built the model "`←` leaves it", but `←` has to cycl
 `Choice` value — and the first fields of most sections are `Choice` (the server
 mode, the theme), so the intended return keystroke silently changed a setting that
 is saved at once and restarts the server. The hotkey footer is **focus-contextual**
-— that's where the model is stated. Which pane holds the focus is shown by a marker
+— that's where the model is stated. Inside the pane it is **field-contextual**
+too, by the rule in [§11.1](#111-screens-and-navigation): `←→` is shown on a
+`Choice`, `Space` on a `Toggle`, and `Del` only where a reset would change
+something (never on profile/user data, and not on a row already at its default —
+the same three branches, in the same order, that the reset itself takes). Which pane holds the focus is shown by a marker
 in each title (`▸` on the sections, `◆` on the parameters): the glyph is always
 drawn and only its **colour** moves — green for the pane that has the focus, muted
 for the other. See docs/history/settings-navigation.md.
@@ -3755,6 +3796,15 @@ for viewing and **manual editing**:
   would otherwise jump to the top under a date saying it belongs further down.
   The setting is read when the screen opens; it changes display only, never what
   the model is told or what the cap keeps;
+- **the footer names only what the selected row answers** ([§11.1](#111-screens-and-navigation)):
+  three of these keys act on the row the cursor stands on and do nothing on the
+  others, so the hint row is built from the same value the key handler
+  dispatches on. `Enter` appears on the six editable rows — worded *add a goal*
+  on the "add a goal" row — and **not on an observation**, which is deleted and
+  never edited; `Space` appears on a goal; `Del` on a goal or an observation.
+  `↑↓`, `Ctrl+K`, `F1`, `Esc` and `Ctrl+Q` are unconditional: they are about the
+  screen or the whole model, not the selection. The clear confirmation takes the
+  footer's place as a single line;
 - navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
   Both panes scroll by the rule in [§11.2](#112-the-chat-list-an-overlay) (the window follows the
   selection, it is not dragged by it). The field pane additionally keeps **one

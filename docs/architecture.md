@@ -307,7 +307,11 @@ src/
 │  │                        show the interface language's text
 │  │                        (credits::license_text), the disclaimer through
 │  │                        shared::markdown (ADR 0003)
-│  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode
+│  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode. The hint
+│  │                        block's geometry is shared::ui's; what is local is the
+│  │                        capped, shedding column choice the status pill's
+│  │                        competition for the row makes chat-specific
+│  │                        (HINT_ROWS_MAX/corner_cols/trim_to_fit/keep_order)
 │  ├─ profile_list.rs       profile selection overlay when creating a chat
 │  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U)
 │
@@ -572,13 +576,27 @@ src/
    │                       ListScroll (a list's scroll offset kept between frames —
    │                       the ONLY place a ListState is built; see spec §11.2),
    │                       prime_full_redraw (full-redraw sentinel — space +
-   │                       marker modifier, doesn't touch wide-glyph tail cells)
+   │                       marker modifier, doesn't touch wide-glyph tail cells),
+   │                       screen_chrome (a full-screen screen's panel + footer
+   │                       strip) and the ONE hotkey grid: hint_grid_layout /
+   │                       widest_hint_grid / render_hint_grid (+ the hotkey_grid
+   │                       convenience). Right-aligned, columns lined up
+   │                       vertically, an incomplete bottom row under the columns
+   │                       above; the chat bar passes its status pill as `lead`
+   │                       and the mouse-mode light as `accent`, and keeps only
+   │                       its capped/shedding column choice locally. Every
+   │                       footer and the bar come out of here, so they cannot
+   │                       drift (spec §11.1,
+   │                       docs/history/status-hints-unified.md)
    ├─ wrap.rs              word wrap by column (unicode-width) + width-aware truncation
    │                       (truncate_to_width — tail, elide_middle — both ends kept)
    ├─ i18n.rs              agent scaffold language (axis A) + UI (axis B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
    ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light.
+   │                       Colour only: keycap/hint/hint_marked (the one place a
+   │                       "dangerous" red keycap is chosen) — the grid that lays
+   │                       hints out lives in ui.rs, one layer up.
    │                       Auto's polarity-dependent values (the `dark` flag and
    │                       the keycap/selection backdrop) come from a process-wide
    │                       OnceLock set once at startup — set_detected_background

@@ -39,10 +39,11 @@
 <text xml:space="preserve" y="575.44"><tspan x="10" fill="#6e7580">│</tspan><tspan x="1114" fill="#6e7580">│</tspan></text>
 <text xml:space="preserve" y="596.56"><tspan x="10" fill="#6e7580">│</tspan><tspan x="38.8" textLength="124.8" fill="#7e848b">[2026-07-30] </tspan><tspan x="163.6" textLength="950.4">Answers that cite the note they came from get fewer follow-ups — receipts beat repetition.         </tspan><tspan x="1114" fill="#6e7580">│</tspan></text>
 <text xml:space="preserve" y="617.68"><tspan x="10" textLength="1113.6" fill="#6e7580">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</tspan></text>
-<rect x="10" y="622.48" width="67.2" height="21.12" fill="#21242a"/>
-<rect x="154" y="622.48" width="67.2" height="21.12" fill="#21242a"/>
-<rect x="365.2" y="622.48" width="48" height="21.12" fill="#21242a"/>
-<rect x="509.2" y="622.48" width="76.8" height="21.12" fill="#21242a"/>
-<rect x="672.4" y="622.48" width="48" height="21.12" fill="#21242a"/>
-<text xml:space="preserve" y="638.8"><tspan x="19.6" textLength="57.6" fill="#848a92">Enter </tspan><tspan x="86.8" textLength="38.4" fill="#7e848b">edit</tspan><tspan x="163.6" textLength="57.6" fill="#848a92">Space </tspan><tspan x="230.8" textLength="105.6" fill="#7e848b">goal status</tspan><tspan x="374.8" textLength="38.4" fill="#e87468">Del </tspan><tspan x="422.8" textLength="57.6" fill="#7e848b">delete</tspan><tspan x="518.8" textLength="67.2" fill="#848a92">Ctrl+K </tspan><tspan x="595.6" textLength="48" fill="#7e848b">clear</tspan><tspan x="682" textLength="38.4" fill="#848a92">Esc </tspan><tspan x="730" textLength="48" fill="#7e848b">close</tspan></text>
+<rect x="307.6" y="622.48" width="38.4" height="21.12" fill="#21242a"/>
+<rect x="442" y="622.48" width="67.2" height="21.12" fill="#21242a"/>
+<rect x="586" y="622.48" width="76.8" height="21.12" fill="#21242a"/>
+<rect x="749.2" y="622.48" width="38.4" height="21.12" fill="#21242a"/>
+<rect x="864.4" y="622.48" width="48" height="21.12" fill="#21242a"/>
+<rect x="998.8" y="622.48" width="76.8" height="21.12" fill="#21242a"/>
+<text xml:space="preserve" y="638.8"><tspan x="317.2" textLength="28.8" fill="#848a92">↑↓ </tspan><tspan x="355.6" textLength="57.6" fill="#7e848b">select</tspan><tspan x="451.6" textLength="57.6" fill="#848a92">Enter </tspan><tspan x="518.8" textLength="38.4" fill="#7e848b">edit</tspan><tspan x="595.6" textLength="67.2" fill="#848a92">Ctrl+K </tspan><tspan x="672.4" textLength="48" fill="#7e848b">clear</tspan><tspan x="758.8" textLength="28.8" fill="#848a92">F1 </tspan><tspan x="797.2" textLength="38.4" fill="#7e848b">help</tspan><tspan x="874" textLength="38.4" fill="#848a92">Esc </tspan><tspan x="922" textLength="48" fill="#7e848b">close</tspan><tspan x="1008.4" textLength="67.2" fill="#848a92">Ctrl+Q </tspan><tspan x="1085.2" textLength="38.4" fill="#7e848b">quit</tspan></text>
 </svg>

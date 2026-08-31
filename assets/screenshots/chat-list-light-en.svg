@@ -35,19 +35,20 @@
 <text xml:space="preserve" y="533.2"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#bec1c6">● </tspan><tspan x="58" textLength="998.4">Reading GGUF metadata in Python                                                                         </tspan><tspan x="1056.4" textLength="48" fill="#6e747c">9 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="554.32"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#bec1c6">● </tspan><tspan x="58" textLength="998.4">First week with mindfork: impressions                                                                   </tspan><tspan x="1056.4" textLength="48" fill="#6e747c">5 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="575.44"><tspan x="10" textLength="1113.6" fill="#787c82">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</tspan></text>
-<rect x="10" y="580.24" width="201.6" height="21.12" fill="#dee0e4"/>
-<rect x="307.6" y="580.24" width="67.2" height="21.12" fill="#dee0e4"/>
-<rect x="557.2" y="580.24" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="806.8" y="580.24" width="38.4" height="21.12" fill="#dee0e4"/>
-<rect x="950.8" y="580.24" width="76.8" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="596.56"><tspan x="19.6" textLength="192" fill="#4a4e54">↑↓ PgUp/Dn Home/End </tspan><tspan x="221.2" textLength="57.6" fill="#6e747c">select</tspan><tspan x="317.2" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="384.4" textLength="38.4" fill="#6e747c">open</tspan><tspan x="566.8" textLength="67.2" fill="#4a4e54">Ctrl+F </tspan><tspan x="643.6" textLength="134.4" fill="#6e747c">search: titles</tspan><tspan x="816.4" textLength="28.8" fill="#4a4e54">F2 </tspan><tspan x="854.8" textLength="57.6" fill="#6e747c">rename</tspan><tspan x="960.4" textLength="67.2" fill="#4a4e54">Ctrl+R </tspan><tspan x="1037.2" textLength="86.4" fill="#6e747c">auto-name</tspan></text>
-<rect x="10" y="601.36" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="307.6" y="601.36" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="557.2" y="601.36" width="38.4" height="21.12" fill="#dee0e4"/>
-<rect x="806.8" y="601.36" width="48" height="21.12" fill="#dee0e4"/>
-<rect x="950.8" y="601.36" width="48" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="617.68"><tspan x="19.6" textLength="67.2" fill="#4a4e54">Ctrl+N </tspan><tspan x="96.4" textLength="28.8" fill="#6e747c">new</tspan><tspan x="317.2" textLength="67.2" fill="#4a4e54">Ctrl+D </tspan><tspan x="394" textLength="48" fill="#6e747c">clone</tspan><tspan x="566.8" textLength="28.8" fill="#4a4e54">F5 </tspan><tspan x="605.2" textLength="86.4" fill="#6e747c">clipboard</tspan><tspan x="816.4" textLength="38.4" fill="#b22222">Del </tspan><tspan x="864.4" textLength="57.6" fill="#6e747c">delete</tspan><tspan x="960.4" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="1008.4" textLength="38.4" fill="#6e747c">back</tspan></text>
-<rect x="10" y="622.48" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="307.6" y="622.48" width="48" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="638.8"><tspan x="19.6" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="96.4" textLength="38.4" fill="#6e747c">quit</tspan><tspan x="317.2" textLength="38.4" fill="#4a4e54">Tab </tspan><tspan x="365.2" textLength="163.2" fill="#6e747c">sort: by modified</tspan></text>
+<rect x="38.8" y="580.24" width="201.6" height="21.12" fill="#dee0e4"/>
+<rect x="336.4" y="580.24" width="67.2" height="21.12" fill="#dee0e4"/>
+<rect x="499.6" y="580.24" width="76.8" height="21.12" fill="#dee0e4"/>
+<rect x="749.2" y="580.24" width="38.4" height="21.12" fill="#dee0e4"/>
+<rect x="902.8" y="580.24" width="76.8" height="21.12" fill="#dee0e4"/>
+<text xml:space="preserve" y="596.56"><tspan x="48.4" textLength="192" fill="#4a4e54">↑↓ PgUp/Dn Home/End </tspan><tspan x="250" textLength="57.6" fill="#6e747c">select</tspan><tspan x="346" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="413.2" textLength="38.4" fill="#6e747c">open</tspan><tspan x="509.2" textLength="67.2" fill="#4a4e54">Ctrl+F </tspan><tspan x="586" textLength="134.4" fill="#6e747c">search: titles</tspan><tspan x="758.8" textLength="28.8" fill="#4a4e54">F2 </tspan><tspan x="797.2" textLength="57.6" fill="#6e747c">rename</tspan><tspan x="912.4" textLength="67.2" fill="#4a4e54">Ctrl+R </tspan><tspan x="989.2" textLength="86.4" fill="#6e747c">auto-name</tspan></text>
+<rect x="38.8" y="601.36" width="76.8" height="21.12" fill="#dee0e4"/>
+<rect x="336.4" y="601.36" width="76.8" height="21.12" fill="#dee0e4"/>
+<rect x="499.6" y="601.36" width="38.4" height="21.12" fill="#dee0e4"/>
+<rect x="749.2" y="601.36" width="48" height="21.12" fill="#dee0e4"/>
+<rect x="902.8" y="601.36" width="38.4" height="21.12" fill="#dee0e4"/>
+<text xml:space="preserve" y="617.68"><tspan x="48.4" textLength="67.2" fill="#4a4e54">Ctrl+N </tspan><tspan x="125.2" textLength="28.8" fill="#6e747c">new</tspan><tspan x="346" textLength="67.2" fill="#4a4e54">Ctrl+D </tspan><tspan x="422.8" textLength="48" fill="#6e747c">clone</tspan><tspan x="509.2" textLength="28.8" fill="#4a4e54">F5 </tspan><tspan x="547.6" textLength="86.4" fill="#6e747c">clipboard</tspan><tspan x="758.8" textLength="38.4" fill="#b22222">Del </tspan><tspan x="806.8" textLength="57.6" fill="#6e747c">delete</tspan><tspan x="912.4" textLength="28.8" fill="#4a4e54">F1 </tspan><tspan x="950.8" textLength="38.4" fill="#6e747c">help</tspan></text>
+<rect x="499.6" y="622.48" width="48" height="21.12" fill="#dee0e4"/>
+<rect x="749.2" y="622.48" width="76.8" height="21.12" fill="#dee0e4"/>
+<rect x="902.8" y="622.48" width="48" height="21.12" fill="#dee0e4"/>
+<text xml:space="preserve" y="638.8"><tspan x="509.2" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="557.2" textLength="38.4" fill="#6e747c">back</tspan><tspan x="758.8" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="835.6" textLength="38.4" fill="#6e747c">quit</tspan><tspan x="912.4" textLength="38.4" fill="#4a4e54">Tab </tspan><tspan x="960.4" textLength="163.2" fill="#6e747c">sort: by modified</tspan></text>
 </svg>

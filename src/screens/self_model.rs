@@ -10,7 +10,7 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
@@ -22,7 +22,7 @@ use crate::shared::config::NoteOrder;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::dim_background;
+use crate::shared::ui::{dim_background, screen_chrome};
 use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -489,76 +489,84 @@ impl SelfModelScreen {
         }
     }
 
-    /// The screen's hotkey line (pairs "key — description — is it dangerous"). Laid out
-    /// into a grid via the shared helper [`Palette::hotkey_grid`] — the same wrap logic as in
-    /// the chat-list overlay (left-to-right, columns line up vertically).
-    /// Pairs "key — description key — is it dangerous"; descriptions are resolved through the locale
-    /// in [`Self::render`].
-    const HOTKEYS: [(&str, &str, bool); 5] = [
-        ("Enter", "ui.self_model.hk.edit", false),
-        ("Space", "ui.self_model.hk.goal_status", false),
-        ("Del", "ui.self_model.hk.delete", true),
-        ("Ctrl+K", "ui.self_model.hk.clear", false),
-        ("Esc", "ui.self_model.hk.close", false),
-    ];
+    /// The screen's hotkey line, for the row the cursor stands on.
+    ///
+    /// Three of these keys act on the **selected row** and do nothing on the
+    /// others, and the footer used to name all three unconditionally: on an
+    /// observation it read "Enter edit" while `begin_edit` returns `None` there
+    /// ("insights aren't edited, only deleted"), and on the summary it offered
+    /// `Del` and `Space`, neither of which that row answers. So the list is
+    /// built from [`Self::selected_action`] — the same value `handle_key`
+    /// dispatches on, read in the same frame — and a key that would be a no-op
+    /// is not advertised (spec §11.2, docs/history/status-hints-unified.md §2.2). The
+    /// full list stays one `F1` away, which is what makes hiding safe.
+    ///
+    /// `Ctrl+K` and `Esc` are unconditional: they are about the whole model,
+    /// not the selection. Pairs "key — description — is it dangerous"; the
+    /// descriptions are already localized.
+    fn hints(&self) -> Vec<(&'static str, &'static str, bool)> {
+        let loc = self.loc;
+        let action = self.selected_action();
+        let mut hk: Vec<(&'static str, &'static str, bool)> =
+            vec![("↑↓", loc.t("ui.self_model.hk.select"), false)];
+        // `Enter` opens the editor for the six editable rows; on the "add a
+        // goal" row it does not edit anything, so it is worded as what it does.
+        match action {
+            Some(RowAction::AddGoal) => hk.push(("Enter", loc.t("ui.self_model.hk.add"), false)),
+            Some(
+                RowAction::Summary
+                | RowAction::Goal(_)
+                | RowAction::Traits
+                | RowAction::Interests
+                | RowAction::Relationship,
+            ) => hk.push(("Enter", loc.t("ui.self_model.hk.edit"), false)),
+            _ => {}
+        }
+        if matches!(action, Some(RowAction::Goal(_))) {
+            hk.push(("Space", loc.t("ui.self_model.hk.goal_status"), false));
+        }
+        if matches!(action, Some(RowAction::Goal(_) | RowAction::Insight(_))) {
+            hk.push(("Del", loc.t("ui.self_model.hk.delete"), true));
+        }
+        hk.extend([
+            ("Ctrl+K", loc.t("ui.self_model.hk.clear"), false),
+            ("F1", loc.t("ui.self_model.hk.help"), false),
+            ("Esc", loc.t("ui.self_model.hk.close"), false),
+            ("Ctrl+Q", loc.t("ui.self_model.hk.quit"), false),
+        ]);
+        hk
+    }
 
     /// Draws the screen full-screen: the field list + a hotkey line (below the
     /// panel, outside the border); the editor — as a popup.
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette;
-
-        // The hotkey line — below the panel (outside the border), wraps as a grid like in the
-        // chat-list overlay. During the clear confirmation, a warning takes its place (1 row).
-        // Compute the height ahead of time, so exactly the right number of rows is reserved for it.
-        // Localize the hotkey descriptions (keys and "danger" — as in the const).
         let loc = self.loc;
-        let hk_items: [(&str, &str, bool); 5] = [
-            (
-                Self::HOTKEYS[0].0,
-                loc.t(Self::HOTKEYS[0].1),
-                Self::HOTKEYS[0].2,
-            ),
-            (
-                Self::HOTKEYS[1].0,
-                loc.t(Self::HOTKEYS[1].1),
-                Self::HOTKEYS[1].2,
-            ),
-            (
-                Self::HOTKEYS[2].0,
-                loc.t(Self::HOTKEYS[2].1),
-                Self::HOTKEYS[2].2,
-            ),
-            (
-                Self::HOTKEYS[3].0,
-                loc.t(Self::HOTKEYS[3].1),
-                Self::HOTKEYS[3].2,
-            ),
-            (
-                Self::HOTKEYS[4].0,
-                loc.t(Self::HOTKEYS[4].1),
-                Self::HOTKEYS[4].2,
-            ),
-        ];
-        let hotkeys = palette.hotkey_grid(&hk_items, area.width as usize);
-        let status_h = if self.confirm_clear {
-            1
-        } else {
-            (hotkeys.len() as u16).max(1)
-        };
-        let [panel_area, status_area] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
-        let block = palette.panel(
+        // The hotkey line — below the panel (outside the border), right-aligned
+        // and wrapping to as many rows as it needs, like every other screen's
+        // footer (`screen_chrome`). The clear confirmation takes the strip
+        // instead, and it is one line: passing no hints leaves `screen_chrome`
+        // its minimum height, so the question never trails a blank row and the
+        // panel keeps the space the hidden hints would have cost.
+        let hints = if self.confirm_clear {
+            Vec::new()
+        } else {
+            self.hints()
+        };
+        let chrome = screen_chrome(
+            frame,
+            &palette,
             format!(
                 "{} {}",
                 palette.glyphs().assistant_icon,
                 loc.t("ui.self_model.title")
             ),
-            true,
+            None,
+            &hints,
         );
-        let inner = block.inner(panel_area);
-        frame.render_widget(block, panel_area);
+        let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
 
         // Word wrap: long values (models write a lot of text) don't fit
         // on one line. Every logical list line is wrapped into several
@@ -780,6 +788,113 @@ mod tests {
         m.user_model.perceived_traits = vec!["скептичный".into()];
         push_insight(&mut m, "замечен интерес к Rust");
         m
+    }
+
+    /// The footer names only the keys the selected row answers.
+    ///
+    /// The report that started this: standing on an observation, the footer read
+    /// "Enter edit" while `begin_edit` returns `None` there — insights are
+    /// deleted, never edited. The walk below stands on **every** selectable row
+    /// and checks the three row-dependent hints against `selected_action`, the
+    /// same value `handle_key` dispatches on.
+    #[test]
+    fn the_footer_names_only_what_the_selected_row_answers() {
+        let mut m = model();
+        m.user_model.current_interests = vec!["Rust".into()];
+        m.user_model.relationship_dynamic = "рабочая".into();
+        let mut s = SelfModelScreen::new(
+            Some(m),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
+        let loc = ru();
+        let (edit, add, goal, del) = (
+            loc.t("ui.self_model.hk.edit"),
+            loc.t("ui.self_model.hk.add"),
+            loc.t("ui.self_model.hk.goal_status"),
+            loc.t("ui.self_model.hk.delete"),
+        );
+        let mut seen_insight = false;
+        let mut seen_goal = false;
+        let mut seen_add = false;
+        for i in s.selectable_indices() {
+            s.selected = i;
+            let action = s.selected_action().expect("a selectable row");
+            let hints = s.hints();
+            let has = |desc: &str| hints.iter().any(|(_, d, _)| *d == desc);
+            match action {
+                RowAction::Insight(_) => {
+                    seen_insight = true;
+                    assert!(!has(edit), "an observation is not editable: {hints:?}");
+                    assert!(!has(goal), "…and has no goal status: {hints:?}");
+                    assert!(has(del), "…but Del deletes it: {hints:?}");
+                }
+                RowAction::Goal(_) => {
+                    seen_goal = true;
+                    assert!(has(edit) && has(goal) && has(del), "{hints:?}");
+                }
+                RowAction::AddGoal => {
+                    seen_add = true;
+                    assert!(has(add), "the row adds rather than edits: {hints:?}");
+                    assert!(!has(edit) && !has(goal) && !has(del), "{hints:?}");
+                }
+                // Summary, traits, interests, relationship: editable, and neither
+                // `Space` nor `Del` does anything on them.
+                _ => {
+                    assert!(has(edit), "{action:?} is editable: {hints:?}");
+                    assert!(!has(goal) && !has(del), "{action:?}: {hints:?}");
+                }
+            }
+            // The keys that are about the whole model, not the row.
+            assert!(
+                hints
+                    .iter()
+                    .any(|(k, _, _)| *k == "Ctrl+K" || *k == "Esc" || *k == "F1"),
+                "{hints:?}"
+            );
+        }
+        assert!(
+            seen_insight && seen_goal && seen_add,
+            "the walk must cover all three special rows"
+        );
+    }
+
+    /// Every hint the footer can hide is still reachable: the keys it names on
+    /// some row are all in the screen's `F1` section, which is what makes hiding
+    /// safe (docs/history/status-hints-unified.md §2.3).
+    #[test]
+    fn every_hidden_hint_is_in_the_help_section() {
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
+        for i in s.selectable_indices() {
+            s.selected = i;
+            for (key, _, _) in s.hints() {
+                // `F1` and `Ctrl+Q` are global keys, listed in the dialog's
+                // "Everywhere" section rather than this screen's.
+                if key == "F1" || key == "Ctrl+Q" {
+                    continue;
+                }
+                // The two surfaces spell a key pair differently by convention
+                // — the footer packs it (`↑↓`), the dialog spaces it out
+                // (`↑/↓`, `Ctrl+K Ctrl+K`) — so the comparison drops the
+                // separators and matches on the prefix.
+                let norm = |k: &str| k.replace(['/', ' '], "");
+                assert!(
+                    HELP_SECTION
+                        .rows
+                        .iter()
+                        .any(|(k, _)| norm(k).starts_with(&norm(key))),
+                    "{key} is advertised but not in the F1 section"
+                );
+            }
+        }
     }
 
     #[test]
