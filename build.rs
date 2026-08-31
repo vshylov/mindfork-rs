@@ -7,7 +7,9 @@
 //! root's `dictionaries/` (checked into the repo; the release workflow also packs them into
 //! `data/dictionaries/`); this script copies them into the output directory so
 //! `cargo run` sees spellcheck right away, with no manual copying. Missing dictionaries
-//! aren't an error (spellcheck simply turns off).
+//! aren't an error (spellcheck simply turns off). The **destination** is an input of this
+//! script as well as its output (`copy_dictionaries`) — without that, a `data/dictionaries`
+//! deleted by hand never comes back.
 //!
 //! **Icon.** For the Windows target, an icon resource from
 //! `assets/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
@@ -31,12 +33,32 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
-    // Re-copy only when the source dictionaries change.
-    println!("cargo:rerun-if-changed=dictionaries");
-
     embed_build_stamp();
     embed_windows_icon();
     build_syntax_dump();
+    copy_dictionaries();
+}
+
+/// Copies the repository's `dictionaries/` into the portable data root next to
+/// the binary (`target/<profile>/data/dictionaries/`, see shared/paths.rs).
+///
+/// **Both `rerun-if-changed` sides are load-bearing.** The source, so that an
+/// edited dictionary reaches the build. The destination, because cargo re-runs a
+/// build script only for the paths it declares — and a declared path that does
+/// not exist counts as changed. Without the destination among them, a
+/// `data/dictionaries` that is *deleted* never comes back: wiping `data/` is the
+/// ordinary way to put the app back to a fresh install, nothing under `src/`
+/// re-runs this script, and so `cargo run` / `cargo run -r` keep launching a
+/// build with spellcheck silently off until `dictionaries/`, `assets/` or
+/// `syntaxes/` happen to move for their own reasons. Measured on 1.96.0: after
+/// `rm -rf target/release/data` a no-op `cargo check --release` did not re-create
+/// it, and on a probe crate with the same declaration shape neither did a build
+/// after a `src/` edit or a `Cargo.toml` touch (docs/journal/release.md).
+///
+/// The destination is declared only once there is something to copy: a declared
+/// path that never gets created would re-run this script on **every** build.
+fn copy_dictionaries() {
+    println!("cargo:rerun-if-changed=dictionaries");
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src = manifest.join("dictionaries");
@@ -50,6 +72,8 @@ fn main() {
     };
     // The portable data root = `<profile>/data/` (see shared/paths.rs).
     let dst = profile_dir.join("data").join("dictionaries");
+    println!("cargo:rerun-if-changed={}", dst.display());
+
     if let Err(err) = copy_dir(&src, &dst) {
         println!("cargo:warning=could not copy dictionaries: {err}");
     }
@@ -188,6 +212,16 @@ fn profile_dir() -> Option<PathBuf> {
 }
 
 /// Copies regular files from `src` into `dst` (no recursion, no hidden files).
+///
+/// **The destination's timestamps are kept still**, because `dst` is a
+/// `rerun-if-changed` input of this script (see [`copy_dictionaries`]): a file
+/// already there is left alone ([`is_up_to_date`]), and one that is copied is
+/// given its source's modification time. A copy that stamped "now" on every run
+/// would leave the destination looking newer than the fingerprint, so cargo
+/// would re-run this script on every build — and each re-run re-stamps
+/// `MINDFORK_BUILD_EPOCH` ([`embed_build_stamp`]), which relinks the whole
+/// binary (in release: LTO, one codegen unit). Recreating the directory still
+/// costs one such extra run, which is the case where the work is wanted anyway.
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -198,7 +232,41 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         if name.to_string_lossy().starts_with('.') || !path.is_file() {
             continue;
         }
-        fs::copy(&path, dst.join(&name))?;
+        let target = dst.join(&name);
+        if is_up_to_date(&path, &target) {
+            continue;
+        }
+        fs::copy(&path, &target)?;
+        stamp_mtime(&path, &target);
     }
     Ok(())
+}
+
+/// Is `dst` already the copy of `src` this script would make? Same length and
+/// not older — the exact pair [`copy_dir`] leaves behind. Enough to notice an
+/// edited dictionary: a rewrite that happens to preserve the byte count still
+/// moves the modification time.
+fn is_up_to_date(src: &Path, dst: &Path) -> bool {
+    let (Ok(src), Ok(dst)) = (src.metadata(), dst.metadata()) else {
+        return false;
+    };
+    src.len() == dst.len()
+        && match (src.modified(), dst.modified()) {
+            (Ok(src), Ok(dst)) => dst >= src,
+            _ => false,
+        }
+}
+
+/// Gives `dst` the modification time of `src` (see [`copy_dir`] for why).
+///
+/// Best effort: a filesystem that refuses the update costs an extra build-script
+/// run, not a broken build, so a failure is deliberately ignored rather than
+/// turned into a `cargo:warning` nobody can act on.
+fn stamp_mtime(src: &Path, dst: &Path) {
+    let Ok(mtime) = src.metadata().and_then(|m| m.modified()) else {
+        return;
+    };
+    if let Ok(file) = fs::File::options().write(true).open(dst) {
+        let _ = file.set_modified(mtime);
+    }
 }
