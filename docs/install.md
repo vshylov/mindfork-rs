@@ -52,10 +52,11 @@ originals govern:
 
 - the **MIT license** ([LICENSE](../LICENSE)), which has to be accepted to continue;
 - the **disclaimer** — the same text as [DISCLAIMER.md](../DISCLAIMER.md) and the
-  app's `F1` → "Disclaimer" tab, covering what the models may say and do;
+  app's `F1` → "Legal" tab, covering what the models may say and do;
 - the **privacy policy** ([PRIVACY.md](../PRIVACY.md)): what the program keeps on
-  your machine, what leaves it and which setting has to be on first. It grants
-  nothing and asks for nothing, so `Next` simply continues.
+  your machine, what leaves it and which setting has to be on first — the same
+  text the app shows under the disclaimer on that `F1` tab. It grants nothing and
+  asks for nothing, so `Next` simply continues.
 
 All of those files are installed next to the program. Then come two custom
 steps: **application language**
