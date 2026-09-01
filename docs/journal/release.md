@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -43,6 +43,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the dictionaries are copied more than once (done)
 - Post-M9: a place for the user's own dictionaries (done)
 - Post-M9: the release metadata — one product, one name, measured on both artifacts (done)
+- Post-M9: the privacy policy in the wizard, the archive and the third translation (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1655,3 +1656,53 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Also: `/dist/` is now git-ignored — it is the installer's `OutputDir`, and
   compiling the script by hand (which the Inno 7 doc invites) left an untracked
   4 MB executable in the tree. 2744 unit tests green, 129 `#[ignore]`.
+
+### Post-M9: the privacy policy in the wizard, the archive and the third translation (done)
+- **Stage 4 of the code-signing track** ([code-signing.md](../research/code-signing.md)
+  §8.1, F7a). The policy written in stage 1 stops being a file on GitHub: the
+  Windows wizard shows it after the disclaimer, the installer leaves a copy
+  beside the program, and every release archive carries it. Note that after
+  F8a — the web tools becoming opt-in — the page is a **choice, not a
+  requirement**: with no transfer to systems the user did not specify, the
+  condition that would have demanded an install-time notice no longer applies.
+- **Three things the design could not see from outside Inno.**
+  `CreateOutputMsgMemoPage` takes its text as an `AnsiString` and renders RTF,
+  so the file has to travel *inside* the setup — a `[Files]` entry with
+  `dontcopy`, pulled out at wizard time by `ExtractTemporaryFile`. Those two
+  entries must sit at the **top** of `[Files]`: with `SolidCompression`,
+  extracting a file means decompressing everything listed before it, so a
+  temporary file near the bottom would stall the wizard behind the whole
+  payload. And the per-language choice that `[Languages]` makes for the licence
+  and the disclaimer has to be made in code here, because a page built in
+  `[Code]` has no `[Languages]` entry of its own.
+- **`tools/wizard_rtf.py` learned pipe tables** — one bullet per row, first cell
+  bold, the rest as `label: value` pairs taken from the header (trailing
+  punctuation stripped, so a column asking "Holds your conversations?" does not
+  produce a `?:` pair). That rendering is only honest when a row is a *record*;
+  `PRIVACY.md` §4 was two independent lists laid out as a two-column table, and
+  a row-wise rendering would have implied a pairing that does not exist — so the
+  source became two lists, which is what it always was. The rule is written down
+  in the script's own docstring, next to the subset it supports.
+- **Two errors in the English original, found by the translation.** §1 pointed
+  at "§8 and §9" for the website and GitHub, which are §9 and §10; and §7 said
+  the machine-bound encryption "protects a copied file", where what ADR 0008
+  actually claims is protection *against* a settings file carried off to another
+  machine. Both fixed in both languages. A translator reading for meaning is a
+  better proofreader than another pass over one's own prose.
+- **Verified without installing anything.** The script compiles on the local
+  Inno Setup 7.1.0, which also compiles `[Code]`, so the page's Pascal is
+  checked. For the rendering, both RTFs were loaded into a **real RichEdit** —
+  the same control the wizard's memo page uses — off-screen through a WinForms
+  probe, and captured: headings, bold/italic, monospace paths and the hanging
+  indent all land, links keep their text, and the ru file's `\uNNNN` escapes
+  decode to Cyrillic. The table rendering was checked the same way on a probe
+  built from §2 alone.
+- **Sizes**, since they end up in every download: `privacy.rtf` 23 KB,
+  `privacy-ru.rtf` 114 KB (Cyrillic quadruples through `\uNNNN` escapes), both
+  compressed in the setup.
+- Fixed on the way: `docs/install.md` still said the licence and the disclaimer
+  are "shown in English in either wizard language", which stopped being true
+  when the ru translations landed; it now lists the three read-only pages in
+  order. 2744 unit tests green, 129 `#[ignore]` — no Rust changed, and the
+  gates that matter here are `wizard_rtf.py --check`, `link_check` and
+  `cyrillic_scan`.

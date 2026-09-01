@@ -145,10 +145,14 @@ jobs:
           mkdir -p dist
 
           # A shared doc set for every archive.
-          # Flattened into the archive root; the two ru files are the
-          # translations of the pair above (docs/legal-ru-translations.md).
-          DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md docs/install.md
-                docs/legal/LICENSE.ru.txt docs/legal/DISCLAIMER.ru.md)
+          # Flattened into the archive root; the three ru files are the
+          # translations of their originals (docs/legal-ru-translations.md).
+          # PRIVACY.md travels with them: the Windows installer shows it during
+          # setup and leaves a copy next to the program, and an archive user
+          # should not have to go to the website for the same text.
+          DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md PRIVACY.md docs/install.md
+                docs/legal/LICENSE.ru.txt docs/legal/DISCLAIMER.ru.md
+                docs/legal/PRIVACY.ru.md)
 
           # Put spellcheck dictionaries into data/dictionaries/ — the portable layout
           # the app reads next to the binary (data/ next to the exe → spellcheck

@@ -20,14 +20,23 @@ The **Russian** pages do need it, and for a second reason on top of the Markdown
 a plain-text file full of Cyrillic would leave the compiler guessing at an
 encoding, while the output below is pure ASCII by construction.
 
-The Markdown subset is the one `DISCLAIMER.md` actually uses: ATX headings,
+The Markdown subset is the one these documents actually use: ATX headings,
 paragraphs (hard-wrapped in the source, unwrapped here so the wizard's memo can
 wrap them to its own width), `-` bullet lists with indented continuation lines,
-`---` rules, and inline `**bold**`, `*italic*`, `` `code` `` and
+`---` rules, pipe tables, and inline `**bold**`, `*italic*`, `` `code` `` and
 `[links](target)` — a link keeps its text and drops the target, which in a
 wizard page cannot be clicked anyway. Anything outside that subset is passed
 through as literal text rather than silently dropped, so a new construct shows
 up in the output instead of disappearing from a legal notice.
+
+**Tables become labelled bullets**, one per row, rather than an RTF table: the
+memo's width is not ours to know, and a table laid out for a width it does not
+have is less readable than prose, not more. The first cell leads in bold and the
+rest follow as `label: value` pairs taken from the header row — which only reads
+correctly when the row *is* a record (first cell names it, the others describe
+it). A table whose columns are independent lists says something the rendering
+would then quietly deny, so those are written as two lists in the source
+instead; `PRIVACY.md` §4 is the case that settled this.
 
 Every non-ASCII character becomes a `\\uNNNN?` escape, so the output is pure
 ASCII: no encoding negotiation with the compiler, and no Cyrillic for
@@ -58,6 +67,8 @@ PAIRS = [
     ("DISCLAIMER.md", "packaging/windows/disclaimer.rtf"),
     ("docs/legal/DISCLAIMER.ru.md", "packaging/windows/disclaimer-ru.rtf"),
     ("docs/legal/LICENSE.ru.txt", "packaging/windows/license-ru.rtf"),
+    ("PRIVACY.md", "packaging/windows/privacy.rtf"),
+    ("docs/legal/PRIVACY.ru.md", "packaging/windows/privacy-ru.rtf"),
 ]
 
 # Half-point font sizes: body 9pt, `##` 11pt, `#` 13pt — the wizard's own
@@ -148,6 +159,18 @@ def heading(level: int, text: str) -> str:
     )
 
 
+def table_row(headers: list[str], cells: list[str]) -> str:
+    """One row of a pipe table, as a bullet: the first cell leads in bold, the
+    rest follow as `label: value` taken from the header row. A header's trailing
+    punctuation is dropped, so a column asking "Holds your conversations?" does
+    not produce a `?:` pair."""
+    parts = [f"**{cells[0]}**"]
+    for header, cell in zip(headers[1:], cells[1:]):
+        label = header.rstrip("?: ").strip()
+        parts.append(f"*{label}:* {cell}" if label else cell)
+    return bullet([" — ".join(parts)])
+
+
 def rule() -> str:
     """`---` → an empty paragraph carrying a bottom border."""
     return r"\pard\sb120\sa120\brdrb\brdrs\brdrw10\brsp40\par" + "\n"
@@ -160,9 +183,18 @@ def render(markdown: str, source: str = "DISCLAIMER.md") -> str:
     body: list[str] = []
     pending: list[str] = []  # the paragraph or list item being accumulated
     pending_is_bullet = False
+    table: list[list[str]] = []  # the pipe table being accumulated
+
+    def flush_table() -> None:
+        nonlocal table
+        if table:
+            headers, rows = table[0], table[1:]
+            body.extend(table_row(headers, cells) for cells in rows)
+        table = []
 
     def flush() -> None:
         nonlocal pending, pending_is_bullet
+        flush_table()
         if pending:
             body.append(bullet(pending) if pending_is_bullet else paragraph(pending))
         pending, pending_is_bullet = [], False
@@ -178,6 +210,14 @@ def render(markdown: str, source: str = "DISCLAIMER.md") -> str:
         elif re.fullmatch(r"-{3,}", stripped):
             flush()
             body.append(rule())
+        elif stripped.startswith("|") and stripped.endswith("|"):
+            # A pipe table. The `|---|---|` separator carries no content and is
+            # dropped; everything else is cells, the first row being the header.
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if not all(re.fullmatch(r":?-{1,}:?", c) for c in cells):
+                if not table:
+                    flush()
+                table.append(cells)
         elif m := re.match(r"[-*]\s+(.*)", stripped):
             flush()
             pending, pending_is_bullet = [m.group(1)], True

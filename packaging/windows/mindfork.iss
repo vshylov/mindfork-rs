@@ -138,6 +138,18 @@ en.InfoBeforeLabel=Please read the disclaimer below before continuing. It supple
 ru.InfoBeforeLabel=Пожалуйста, прочитайте дисклеймер перед продолжением. Он дополняет принятую вами лицензию и не изменяет её.
 
 [CustomMessages]
+; The "Privacy policy" page — read-only, straight after the disclaimer, so the
+; three legal texts stand together at the start of the wizard. The policy grants
+; nothing and asks for nothing, so it gets no acceptance of its own: Next
+; continues, exactly like the disclaimer page (docs/research/code-signing.md
+; §8.1). The prompt names the installed copy rather than the website, because at
+; this point the user has no browser open and will have the file.
+en.PrivacyCaption=Privacy policy
+ru.PrivacyCaption=Политика конфиденциальности
+en.PrivacySub=What mindfork stores, and what it sends where.
+ru.PrivacySub=Что mindfork хранит и что куда отправляет.
+en.PrivacyPrompt=The program has no telemetry and sends nothing to its author. The full text below is installed as PRIVACY.md next to the program. When you are ready to continue, click Next.
+ru.PrivacyPrompt=Программа не собирает телеметрию и ничего не отправляет автору. Полный текст ниже устанавливается рядом с программой как PRIVACY.md. Когда будете готовы продолжить, нажмите «Далее».
 ; The "Application language" page.
 en.AppLangCaption=Application language
 ru.AppLangCaption=Язык приложения
@@ -174,6 +186,14 @@ en.SandboxStatus=Installing the Python sandbox (this may take several minutes)..
 ru.SandboxStatus=Установка Python-песочницы (может занять несколько минут)…
 
 [Files]
+; The privacy policy as the wizard shows it, in both languages. `dontcopy` keeps
+; them out of the install (the readable PRIVACY.md below is what lands on disk);
+; the [Code] section pulls the right one out with ExtractTemporaryFile.
+; **They come first on purpose**: with SolidCompression, extracting a file means
+; decompressing everything listed before it, so a temporary file near the bottom
+; would stall the wizard behind the whole payload.
+Source: "{#SourcePath}privacy.rtf"; Flags: dontcopy
+Source: "{#SourcePath}privacy-ru.rtf"; Flags: dontcopy
 ; AfterInstall (not CurStepChanged(ssPostInstall), where this used to live): [Run]
 ; entries are processed BEFORE ssPostInstall — measured, not assumed — and the
 ; optional `sandbox setup` run needs defaults.json to already be there, or it would
@@ -194,6 +214,10 @@ Source: "{#SourcePath}..\..\DISCLAIMER.md"; DestDir: "{app}"; Flags: ignoreversi
 ; originals: whoever read the ru pages in this wizard can find that text again.
 Source: "{#SourcePath}..\..\docs\legal\LICENSE.ru.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\legal\DISCLAIMER.ru.md"; DestDir: "{app}"; Flags: ignoreversion
+; The privacy policy the wizard just showed, so it can be re-read offline — and
+; its translation, on the same footing as the pair above.
+Source: "{#SourcePath}..\..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\..\docs\legal\PRIVACY.ru.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
@@ -237,6 +261,7 @@ Type: files; Name: "{app}\defaults.json"
 
 [Code]
 var
+  PrivacyPage: TOutputMsgMemoWizardPage;
   LangPage: TInputOptionWizardPage;
   DataPage: TInputOptionWizardPage;
   DirPage: TInputDirWizardPage;
@@ -245,8 +270,37 @@ var
     without silently inverting the language written into defaults.json. }
   EnLangIndex, RuLangIndex: Integer;
 
+{ The privacy policy as RTF, in the language the wizard is running in — the same
+  per-language choice [Languages] makes for the license and the disclaimer, made
+  here because a page built in [Code] gets no such entry. The files are pure
+  ASCII by construction (tools/wizard_rtf.py escapes everything above it), which
+  is why an AnsiString carries them unharmed. }
+function PrivacyRtf: AnsiString;
+var
+  RtfFile: String;
+  Rtf: AnsiString;
+begin
+  if ActiveLanguage = 'ru' then
+    RtfFile := 'privacy-ru.rtf'
+  else
+    RtfFile := 'privacy.rtf';
+  ExtractTemporaryFile(RtfFile);
+  { AddBackslash rather than a literal separator, as on the data-location page. }
+  if LoadStringFromFile(AddBackslash(ExpandConstant('{tmp}')) + RtfFile, Rtf) then
+    Result := Rtf
+  else
+    Result := '';
+end;
+
 procedure InitializeWizard;
 begin
+  { The privacy policy page: read-only, straight after the disclaimer, and shown
+    on every run — a legal notice, not a setting, so unlike the two pages below
+    it is never skipped on an upgrade. }
+  PrivacyPage := CreateOutputMsgMemoPage(wpInfoBefore,
+    CustomMessage('PrivacyCaption'), CustomMessage('PrivacySub'),
+    CustomMessage('PrivacyPrompt'), PrivacyRtf);
+
   { The application-language picker page (radio buttons). }
   LangPage := CreateInputOptionPage(wpSelectDir,
     CustomMessage('AppLangCaption'), CustomMessage('AppLangSub'),

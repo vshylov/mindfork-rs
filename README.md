@@ -605,10 +605,12 @@ Neither text is a privacy policy, and there is one:
 it and only on which setting of yours, and what reaches the author of this
 software, which is nothing.
 
-Both texts have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt)
-and [docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) — shown on those `F1` tabs
-and on the installer's wizard pages when the interface language is Russian. They are
-unofficial, for convenience: the English originals are the texts that have legal force.
+All three have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt),
+[docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) and
+[docs/legal/PRIVACY.ru.md](docs/legal/PRIVACY.ru.md) — shown on the installer's wizard
+pages when the interface language is Russian, and, for the first two, on those `F1` tabs.
+They are unofficial, for convenience: the English originals are the texts that have legal
+force.
 
 ## Project status
 

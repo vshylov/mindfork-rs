@@ -447,6 +447,15 @@ acceptance — the same contract the disclaimer page already has, since the poli
 describes behaviour rather than granting rights. It is skipped automatically in
 a silent install, which is correct.
 
+**As built**, two details were not visible from here. `CreateOutputMsgMemoPage`
+takes the text as an `AnsiString` and displays RTF, so the page needs the file
+*inside* the setup — a `[Files]` entry with `dontcopy`, pulled out at wizard time
+with `ExtractTemporaryFile`; and because this script sets `SolidCompression`,
+those two entries have to sit at the **top** of `[Files]`, or extracting them
+means decompressing the whole payload first. The language choice, which
+`[Languages]` makes for the licence and the disclaimer, is made in code here —
+a page built in `[Code]` has no such entry.
+
 The real cost is the text pipeline, not the page. Everything shown in the wizard
 goes through `tools/wizard_rtf.py` (a Markdown subset rendered to RTF, verified
 in CI by `--check`), and which text a page shows is a per-language choice made in
@@ -564,8 +573,8 @@ change rewrites two sections of `PRIVACY.md`, the metadata change invalidates an
 uninstaller stub signed before it (§6.6), and the application wants every visible
 surface already in place (F2).
 
-Stages 1–3 are **done**: the docs (#430), the opt-in defaults (#431), and the
-metadata below.
+Stages 1–4 are **done**: the docs (#430), the opt-in defaults (#431), the
+metadata below (#432), and the wizard page with the policy in the archive.
 
 1. **This branch (docs only)** — this document and `PRIVACY.md`, with links from
    README and SECURITY.md and a pointer from the roadmap. No code, no pipeline
@@ -583,12 +592,12 @@ metadata below.
    explicitly in `build.rs`; `VersionInfoVersion`, `VersionInfoProductName` and
    friends in the `.iss` (§6.2). Verified by compiling the installer locally on
    Inno 7.1.0 and reading both resources back.
-4. **`feat/installer-privacy-page`** (F7a, §8.1) — `PRIVACY.md` into
-   `release.yml`'s `DOCS=(…)` and the installer's `[Files]`; the custom wizard
-   page; `docs/legal/PRIVACY.ru.md` and its two generated RTFs; and, on the back
-   of the same machinery, the pointer from DISCLAIMER.md §5. Stages 3 and 4 are
-   both the installer and could share one branch if that reads better than two
-   PRs a day apart.
+4. **`feat/installer-privacy-page`** (F7a, §8.1) — **done.** `PRIVACY.md` into
+   `release.yml`'s `DOCS=(…)` and the installer's `[Files]`; the wizard page
+   (`CreateOutputMsgMemoPage` after `wpInfoBefore`, the RTF pulled out of the
+   setup with `ExtractTemporaryFile`); `docs/legal/PRIVACY.ru.md` and its two
+   generated RTFs; and, on the back of the same machinery, the pointer from
+   DISCLAIMER.md §5.
 5. **`docs/dictionary-provenance`** — `dictionaries/SOURCES.md` in the shape of
    `syntaxes/SOURCES.md` (§3.1). Independent of everything else; the one item
    most likely to become a question mid-review.
