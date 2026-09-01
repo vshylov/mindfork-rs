@@ -1576,7 +1576,7 @@
   "ui.settings.field.table_separators": "Разделители строк таблиц",
   "ui.settings.field.mermaid": "Диаграммы Mermaid",
   "ui.settings.field.model_name": "Имя модели в ленте",
-  "ui.settings.field.spell": "Спелл-чек",
+  "ui.settings.field.spell": "Проверять орфографию",
   "ui.settings.field.dicts": "Словари (через запятую)",
   "ui.settings.field.confirm_keys": "Подтверждать перегенерацию/удаление",
   "ui.settings.field.copy_thoughts": "С «мыслями»",
