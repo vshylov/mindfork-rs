@@ -1,0 +1,20 @@
+{# A legal document: the privacy policy, the code signing policy. `page.html`
+   without its byline — a policy has no author line and no reading time, and
+   "12 min read" over a legal text reads as a warning rather than a service.
+   Each of these documents states its own date in its first paragraph, which is
+   the line a reader actually wants. #}
+{% extends "base.html" %}
+
+{% block title %}<title>{{ page.title }} — mindfork</title>{% endblock %}
+{% block desc %}{% if page.description %}<meta name="description" content="{{ page.description }}">{% else %}<meta name="description" content="{{ config.description }}">{% endif %}{% endblock %}
+
+{% block content %}
+<article class="prose-wrap">
+  <div class="wrap narrow">
+    <h1 class="post-h1">{{ page.title }}</h1>
+    <div class="prose">
+      {{ page.content | safe }}
+    </div>
+  </div>
+</article>
+{% endblock %}
