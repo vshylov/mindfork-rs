@@ -598,6 +598,11 @@ leaves it when you use a cloud provider, is spelled out in
 **[DISCLAIMER.md](DISCLAIMER.md)** — also readable in the app on the `F1` →
 "Disclaimer" tab. It supplements the license and takes nothing away from it.
 
+Neither text is a privacy policy, and there is one:
+**[PRIVACY.md](PRIVACY.md)** — what stays on your machine and where, what leaves
+it and only on which setting of yours, and what reaches the author of this
+software, which is nothing.
+
 Both texts have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt)
 and [docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) — shown on those `F1` tabs
 and on the installer's wizard pages when the interface language is Russian. They are
