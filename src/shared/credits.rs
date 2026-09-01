@@ -564,4 +564,89 @@ mod tests {
             );
         }
     }
+
+    /// Reads a repository file the way [`cargo_runtime_deps`] reads the manifest.
+    fn repo_file(relative: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{relative} is present: {e}"))
+    }
+
+    /// The value of an Inno Setup `[Setup]` directive, by exact name.
+    fn directive(script: &str, name: &str) -> String {
+        let prefix = format!("{name}=");
+        script
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("mindfork.iss has no {name} directive"))[prefix.len()..]
+            .trim()
+            .to_string()
+    }
+
+    /// **One product, one name**, across the two files that stamp it.
+    ///
+    /// `build.rs` writes the binary's VERSIONINFO — the product name from its own
+    /// constant, the copyright read straight out of `LICENSE` — while
+    /// `mindfork.iss` writes the same six strings for `setup.exe` and cannot read
+    /// a file, so its copy of the copyright line is the one that can drift.
+    ///
+    /// This is a signing gate, not tidiness: SignPath enforces product name and
+    /// version through a file metadata restriction, so a disagreement between the
+    /// two artifacts is a *rejected signing request* during a release — found by a
+    /// person who is waiting to approve it, with a tag already pushed
+    /// (docs/research/code-signing.md §6.2). The Inno defaults that would fill
+    /// these in are worse than absent: `VersionInfoVersion` is `0.0.0.0` unless
+    /// set, and `VersionInfoProductName` inherits from `AppName`, so it is right
+    /// only until a neighbouring directive moves.
+    #[test]
+    fn the_installer_and_the_binary_declare_the_same_product() {
+        let iss = repo_file("packaging/windows/mindfork.iss");
+        let build_rs = repo_file("build.rs");
+
+        // The brand, as build.rs stamps it into the .exe.
+        let product = build_rs
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("const PRODUCT_NAME: &str = \"")?
+                    .split_once('"')
+                    .map(|(name, _)| name.to_string())
+            })
+            .expect("build.rs declares PRODUCT_NAME");
+
+        // Three files, one brand: the app's own constant, what build.rs stamps
+        // into the binary, and what the installer declares.
+        assert_eq!(
+            product, APP_NAME,
+            "build.rs and credits disagree on the brand"
+        );
+        assert_eq!(directive(&iss, "AppName"), product);
+        assert_eq!(directive(&iss, "VersionInfoProductName"), product);
+        assert_eq!(
+            directive(&iss, "VersionInfoCompany"),
+            directive(&iss, "AppPublisher"),
+        );
+        assert_eq!(
+            directive(&iss, "VersionInfoDescription"),
+            format!("{product} Setup"),
+        );
+
+        // The copyright line build.rs takes from LICENSE, spelled out in the .iss.
+        let expected = LICENSE_TEXT
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("Copyright (c)"))
+            .expect("LICENSE carries a copyright line");
+        assert_eq!(
+            directive(&iss, "VersionInfoCopyright"),
+            expected,
+            "the installer's copyright drifted from LICENSE — build.rs reads that file, \
+             this one cannot"
+        );
+
+        // Both version fields come from the tag, never from Inno's 0.0.0.0 default.
+        for name in ["VersionInfoVersion", "VersionInfoProductVersion"] {
+            assert_eq!(directive(&iss, name), "{#AppVersion}", "{name}");
+        }
+    }
 }

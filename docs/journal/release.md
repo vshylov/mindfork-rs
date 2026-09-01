@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -42,6 +42,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `artwork/` renamed to `assets/` (done)
 - Post-M9: the dictionaries are copied more than once (done)
 - Post-M9: a place for the user's own dictionaries (done)
+- Post-M9: the release metadata — one product, one name, measured on both artifacts (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1602,3 +1603,55 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   (`cyrillic_scan`, `link_check`, `doc_index_check`, `list_scroll_check`,
   `wizard_rtf --check`) green. No live run needed — nothing on an engine, memory
   or tool path is touched.
+
+### Post-M9: the release metadata — one product, one name, measured on both artifacts (done)
+- **Why now**: stage 3 of the code-signing track
+  ([docs/research/code-signing.md](../research/code-signing.md) §6.2, fork F3 —
+  the user chose the brand `mindfork` on 2026-09-01). SignPath pins product name
+  and version through a **file metadata restriction**, so these strings stop
+  being cosmetic the moment signing lands: a disagreement between the two
+  artifacts becomes a rejected signing request during a release, found by the
+  person waiting to approve it with a tag already pushed.
+- **What the artifacts actually said** — read off the built files, not assumed:
+
+  | Field | `mindfork.exe` before | `setup.exe` before | now |
+  |---|---|---|---|
+  | `ProductName` | `mindfork-rs` | `mindfork` (inherited from `AppName`) | `mindfork` |
+  | `FileDescription` | `mindfork-rs` | `mindfork Setup` | `mindfork` / `mindfork Setup` |
+  | `FileVersion` / `ProductVersion` | 0.9.8 | **0.0.0.0** | 0.9.8 |
+  | `CompanyName` | *empty* | `Vladimir Shylov` | `Vladimir Shylov` |
+  | `LegalCopyright` | *empty* | *empty* | from `LICENSE` |
+  | `OriginalFilename` | *empty* | *empty* | set on both |
+
+  Two defects, opposite in kind. `winresource` fills the resource from Cargo
+  metadata unless told otherwise, so the binary announced the **package id**
+  where every user-facing surface says the brand — and `FileDescription`, the
+  field Windows shows as the program name in the UAC dialog and Task Manager,
+  said `mindfork-rs` too. Inno, meanwhile, defaults `VersionInfoVersion` to
+  `0.0.0.0` and only *inherits* the rest (`VersionInfoProductName` ← `AppName`,
+  `VersionInfoCompany` ← `AppPublisher`), so the installer shipped a zero
+  version and was otherwise right only by accident.
+- **The copyright is read, not written twice.** `build.rs` takes the
+  `Copyright (c) …` line out of `LICENSE` (with a `rerun-if-changed` on it), so
+  the year cannot go stale in a signed binary. The `.iss` cannot read a file, so
+  it keeps its own copy — and a gate test,
+  `credits::the_installer_and_the_binary_declare_the_same_product`, holds the
+  two together along with the company, the description and both version fields.
+  The brand is checked three ways in the same test, because it is written in
+  three places: `credits::APP_NAME` (what the app calls itself), `PRODUCT_NAME`
+  in `build.rs` (what the binary declares) and `AppName`/`VersionInfoProductName`
+  in the `.iss` (what the installer declares). The
+  test was checked the only way a gate is worth checking: flipping the `.iss` to
+  `mindfork-rs` fails it, `left: "mindfork-rs" / right: "mindfork"`.
+- **Verified end to end on Windows**: the debug `.exe` re-read after the build,
+  and the installer **actually compiled** with the local Inno Setup 7.1.0
+  (`ISCC /DAppVersion=0.9.8 /DBinDir=…\target\debug`) and its version resource
+  read back — which is also what confirms `VersionInfoOriginalFileName` is a
+  directive this compiler accepts.
+- **Ordering note for the signing stage**: Inno regenerates the signed
+  uninstaller stub when `VersionInfo` directives change, so the stub must be
+  produced *after* this stage, never before
+  ([code-signing.md](../research/code-signing.md) §6.6).
+- Also: `/dist/` is now git-ignored — it is the installer's `OutputDir`, and
+  compiling the script by hand (which the Inno 7 doc invites) left an untracked
+  4 MB executable in the tree. 2744 unit tests green, 129 `#[ignore]`.

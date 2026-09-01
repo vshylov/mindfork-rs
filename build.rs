@@ -11,10 +11,13 @@
 //! script as well as its output (`copy_dictionaries`) — without that, a `data/dictionaries`
 //! deleted by hand never comes back.
 //!
-//! **Icon.** For the Windows target, an icon resource from
+//! **Icon and version info.** For the Windows target, an icon resource from
 //! `assets/mindfork.ico` is embedded into the `.exe` — otherwise Explorer, the taskbar, and Alt+Tab show the
 //! default icon. Shortcuts and the installer's `UninstallDisplayIcon`
 //! (`packaging/windows/mindfork.iss`) pick it up from here for free too. See docs/branding.md §4.1.
+//! The same resource carries the VERSIONINFO strings — product name, description,
+//! company, copyright — which Windows shows in the UAC dialog, Task Manager and
+//! Explorer, and which code signing pins (docs/research/code-signing.md §6.2).
 //!
 //! **Build stamp.** The moment of the build goes in as `MINDFORK_BUILD_EPOCH`
 //! (Unix seconds, or `SOURCE_DATE_EPOCH` when set) and surfaces as the build-date
@@ -31,6 +34,21 @@
 
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+
+/// The name the product presents under, in the `.exe`'s VERSIONINFO block.
+///
+/// The brand, not the package id: `AppName` in the installer, the command, the
+/// shortcut and every user-facing surface say `mindfork`, while `mindfork-rs`
+/// stays the name of files and directories (docs/research/binary-rename.md).
+/// `winresource` would otherwise take `package.name` and stamp the wrong one.
+///
+/// Gated by host, like everything else the resource needs: on a Linux host the
+/// crate that would read it is not even a dependency (see [`embed_windows_icon`]).
+#[cfg(windows)]
+const PRODUCT_NAME: &str = "mindfork";
+/// `CompanyName` — the same string as the installer's `AppPublisher`.
+#[cfg(windows)]
+const PUBLISHER: &str = "Vladimir Shylov";
 
 fn main() {
     embed_build_stamp();
@@ -142,9 +160,53 @@ fn embed_windows_icon() {
     }
     let mut res = winresource::WindowsResource::new();
     res.set_icon(icon.to_string_lossy().as_ref());
+    // The rest of the VERSIONINFO block. `winresource` fills it from Cargo
+    // metadata unless told otherwise, which spells the product `mindfork-rs`
+    // (`package.name`) and leaves company, copyright and original file name
+    // empty — measured on the built artifact, not assumed. Two consumers make
+    // that more than cosmetic: Windows shows `FileDescription` as the program
+    // name in the UAC dialog and Task Manager, and code signing pins these
+    // strings through a file metadata restriction, so they must agree with the
+    // installer's `VersionInfo*` (docs/research/code-signing.md §6.2).
+    // `FileVersion`/`ProductVersion` are deliberately left to Cargo: the
+    // manifest is already the single source of truth for the version.
+    let copyright = copyright_from_license();
+    for (key, value) in [
+        ("ProductName", PRODUCT_NAME),
+        ("FileDescription", PRODUCT_NAME),
+        ("CompanyName", PUBLISHER),
+        ("LegalCopyright", copyright.as_str()),
+        ("OriginalFilename", "mindfork.exe"),
+    ] {
+        res.set(key, value);
+    }
     if let Err(err) = res.compile() {
         println!("cargo:warning=could not embed the icon into .exe: {err}");
     }
+}
+
+/// The copyright line, read out of `LICENSE` rather than written down twice.
+///
+/// The year is the part that drifts, and a stale one in a signed binary is the
+/// kind of detail nobody notices until it is in front of a reviewer. The
+/// installer's `VersionInfoCopyright` cannot read a file, so it keeps its own
+/// copy — pinned to this same line by `credits::tests` instead.
+#[cfg(windows)]
+fn copyright_from_license() -> String {
+    println!("cargo:rerun-if-changed=LICENSE");
+    let path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("LICENSE");
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .map(str::trim)
+                .find(|line| line.starts_with("Copyright (c)"))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| {
+            println!("cargo:warning=no copyright line in LICENSE; .exe will ship without one");
+            String::new()
+        })
 }
 
 /// The non-Windows-host variant: `winresource` is unavailable (see above).

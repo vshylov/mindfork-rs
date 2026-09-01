@@ -99,7 +99,7 @@ already is.
 | MFA on GitHub and SignPath | to confirm before applying → |
 | Team roles: Authors / Reviewers / Approvers | a solo maintainer states himself in all three; the page has to say so → |
 | "Code signing policy" on the home page, with their attribution line, roles and privacy statement | **to write** (§7) → |
-| Product name and version attributes set and enforced | **broken today** (§6.2) → |
+| Product name and version attributes set and enforced | was broken on both artifacts; fixed in `feat/release-metadata` (§6.2), and held by a gate test ✔ |
 | Every release approved manually; artifacts built from source verifiably | approval is a human step in the release ritual (§6.3); the build is already reproducible from a tag → |
 | For OSS: every job up to the signing request runs on GitHub-hosted agents | `release.yml` uses `ubuntu-22.04` and `windows-latest` throughout ✔ |
 | Certificate is issued to **SignPath Foundation** — they are the publisher | accepted cost: dialogs will say "SignPath Foundation", not "Vladimir Shylov" (F1) |
@@ -258,7 +258,15 @@ implementation time and neither is default: `actions/upload-artifact` zips by
 default, so either the artifact configuration is rooted at `<zip-file>` or the
 upload passes `archive: false` and the signing step `skip-decompress: true`.
 
-### 6.2 The metadata is wrong today — measured
+### 6.2 The metadata was wrong — measured, then fixed
+
+**Done in `feat/release-metadata` (2026-09-02)**, product name `mindfork` per
+F3. What follows is the state that made the stage necessary; both artifacts were
+re-read afterwards, and the two now agree field by field. The copyright is read
+out of `LICENSE` by `build.rs` so the year cannot go stale, and the `.iss` copy
+of it — the one file that cannot read another — is pinned by
+`credits::the_installer_and_the_binary_declare_the_same_product`.
+
 
 SignPath requires all product-name attributes to be the project's name and all
 product-version attributes to be the same value in every build, and enforces
@@ -556,6 +564,9 @@ change rewrites two sections of `PRIVACY.md`, the metadata change invalidates an
 uninstaller stub signed before it (§6.6), and the application wants every visible
 surface already in place (F2).
 
+Stages 1–3 are **done**: the docs (#430), the opt-in defaults (#431), and the
+metadata below.
+
 1. **This branch (docs only)** — this document and `PRIVACY.md`, with links from
    README and SECURITY.md and a pointer from the roadmap. No code, no pipeline
    change, no journal entry (AGENTS.md §4 exempts a pure-docs PR). `PRIVACY.md`
@@ -567,10 +578,11 @@ surface already in place (F2).
    describe a version that does not exist. Touches tools, so it needs a live run
    (AGENTS.md §3), a `CHANGELOG.md` entry under **Changed**/**Security**, and a
    journal entry in [tools.md](../journal/tools.md).
-3. **`feat/release-metadata`** (F3) — `ProductName`, `FileDescription`,
-   `CompanyName`, `LegalCopyright` and `OriginalFilename` set explicitly in
-   `build.rs`; `VersionInfoVersion`, `VersionInfoProductName` and friends in the
-   `.iss` (§6.2). Pure packaging, no live run.
+3. **`feat/release-metadata`** (F3) — **done.** `ProductName`,
+   `FileDescription`, `CompanyName`, `LegalCopyright` and `OriginalFilename` set
+   explicitly in `build.rs`; `VersionInfoVersion`, `VersionInfoProductName` and
+   friends in the `.iss` (§6.2). Verified by compiling the installer locally on
+   Inno 7.1.0 and reading both resources back.
 4. **`feat/installer-privacy-page`** (F7a, §8.1) — `PRIVACY.md` into
    `release.yml`'s `DOCS=(…)` and the installer's `[Files]`; the custom wizard
    page; `docs/legal/PRIVACY.ru.md` and its two generated RTFs; and, on the back
