@@ -56,7 +56,9 @@ there are no backport branches.
   refused before anything is replaced.
 
 A report that breaks any of these promises is exactly what this policy is
-for.
+for. The same ground from the user's side — every file the app writes, every
+destination it can contact and the setting that has to be on first — is
+[PRIVACY.md](PRIVACY.md).
 
 ## Scope
 

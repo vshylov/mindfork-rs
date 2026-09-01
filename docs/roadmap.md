@@ -380,10 +380,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   trivial to add, left out so there is one fewer place a password can come from.
 - **Installers — groundwork** (core is **done**,
   [docs/history/installers.md](history/installers.md): Windows Inno Setup +
-  Linux nfpm, shipped with releases): Windows code signing (deferred until
-  public launch — SignPath/Certum/Azure Artifact Signing, §5 of the doc);
-  winget manifest (portable-zip until signing); AUR `mindfork-rs-bin`; MSI
-  for GPO/Intune on demand.
+  Linux nfpm, shipped with releases): Windows code signing — R8 was deferred
+  there "until public launch", and is now **designed**
+  ([research/code-signing.md](research/code-signing.md): SignPath Foundation,
+  the metadata that has to be fixed first, and the two signing steps in
+  `release.yml`), waiting only on the repository going public; winget manifest
+  (portable-zip until signing — unblocked once the setup executable is signed);
+  AUR `mindfork-rs-bin`; MSI for GPO/Intune on demand.
 - **Publishing to crates.io as `mindfork`** — the short name is **still free**
   (checked 2026-07-26; the registry API 404s on it), and the "About" dialog
   (`F1`) already lists `crates.io/crates/mindfork` as the future home. The
