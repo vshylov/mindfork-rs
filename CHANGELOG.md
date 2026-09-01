@@ -84,6 +84,13 @@ split by subsystem.
 
 ### Fixed
 
+- **The program's own name, as Windows shows it.** `mindfork.exe` announced
+  itself as `mindfork-rs` — the package name — everywhere Windows reads a file's
+  properties: Task Manager, Explorer's details, the "unknown publisher" dialog.
+  It now says `mindfork`, like everything else, and carries the author and the
+  copyright it was missing. The installer, in turn, had been shipping a version
+  of `0.0.0.0`; it now carries the real one.
+
 - **In KDE Konsole the input box promised a key the terminal cannot send.** The
   footer said "Shift+Enter newline", but Konsole maps that combination to a
   sequence the app never receives — pressing it did nothing at all. The line

@@ -82,6 +82,25 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#SourcePath}..\..\dist
 OutputBaseFilename=mindfork-rs-v{#AppVersion}-x86_64-setup
+; Version info for setup.exe itself — the same strings build.rs stamps into
+; mindfork.exe, so one product speaks with one name. Explicit rather than left to
+; Inno's defaults for two reasons. The defaults are partly wrong: VersionInfoVersion
+; is 0.0.0.0 unless set, so the installer shipped a zero version, and
+; VersionInfoProductVersion follows it. And the ones that are right are right only
+; by inheritance — VersionInfoProductName falls back to AppName, VersionInfoCompany
+; to AppPublisher — which is a value that silently changes when a neighbouring
+; directive does. Code signing pins these strings through a file metadata
+; restriction (docs/research/code-signing.md §6.2), so "right by accident" is not
+; good enough. VersionInfoCopyright is the copyright line from LICENSE: build.rs
+; reads that file directly, this one cannot, so the gate test
+; credits::the_installer_and_the_binary_declare_the_same_product holds them together.
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductName=mindfork
+VersionInfoDescription=mindfork Setup
+VersionInfoCompany=Vladimir Shylov
+VersionInfoCopyright=Copyright (c) 2026 Vladimir Shylov
+VersionInfoOriginalFileName=mindfork-rs-v{#AppVersion}-x86_64-setup.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

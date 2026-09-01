@@ -1,4 +1,9 @@
 /target
+# The Windows installer's output directory (OutputDir in
+# packaging/windows/mindfork.iss). CI builds it on a runner and uploads it;
+# locally it appears whenever someone compiles the script by hand, which
+# docs/research/inno-setup-7.md invites.
+/dist/
 __pycache__/
 # Website (site/, docs/research/mindfork-io-website.md): build output and the
 # brand assets mirrored from assets/ by tools/site_sync_assets.py.
