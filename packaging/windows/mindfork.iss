@@ -211,6 +211,10 @@ Source: "{#BinDir}\mindfork.exe"; DestDir: "{app}"; Flags: ignoreversion; AfterI
 ; mode=system they're absent from the data directory, the app takes them from here.
 Source: "{#SourcePath}..\..\dictionaries\*.aff"; DestDir: "{app}\data\dictionaries"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\dictionaries\*.dic"; DestDir: "{app}\data\dictionaries"; Flags: ignoreversion
+; ...and their licences beside them: third-party work under BSD-style and LGPL
+; terms, both of which require the notice to accompany a redistribution
+; (dictionaries/SOURCES.md).
+Source: "{#SourcePath}..\..\dictionaries\licenses\*.txt"; DestDir: "{app}\data\dictionaries\licenses"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion

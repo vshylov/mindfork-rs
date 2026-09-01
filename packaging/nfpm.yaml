@@ -81,6 +81,13 @@ contents:
     dst: /usr/lib/mindfork-rs/data/dictionaries/
     file_info:
       mode: 0644
+  # Their licences travel with them: the dictionaries are third-party work under
+  # BSD-style and LGPL terms, both of which require the notice to accompany a
+  # redistribution (dictionaries/SOURCES.md).
+  - src: ./dictionaries/licenses/*.txt
+    dst: /usr/lib/mindfork-rs/data/dictionaries/licenses/
+    file_info:
+      mode: 0644
 
   # The user-facing entry point: a symlink from PATH to the real binary.
   - src: /usr/lib/mindfork-rs/mindfork

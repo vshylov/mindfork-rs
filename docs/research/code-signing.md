@@ -581,8 +581,9 @@ change rewrites two sections of `PRIVACY.md`, the metadata change invalidates an
 uninstaller stub signed before it (§6.6), and the application wants every visible
 surface already in place (F2).
 
-Stages 1–4 are **done**: the docs (#430), the opt-in defaults (#431), the
-metadata below (#432), and the wizard page with the policy in the archive.
+Stages 1–5 are **done**: the docs (#430), the opt-in defaults (#431), the
+metadata below (#432), the wizard page with the policy in the archive (#433,
+and the app's own "Legal" tab in #434), and the dictionaries' provenance.
 
 1. **This branch (docs only)** — this document and `PRIVACY.md`, with links from
    README and SECURITY.md and a pointer from the roadmap. No code, no pipeline
@@ -606,9 +607,13 @@ metadata below (#432), and the wizard page with the policy in the archive.
    setup with `ExtractTemporaryFile`); `docs/legal/PRIVACY.ru.md` and its two
    generated RTFs; and, on the back of the same machinery, the pointer from
    DISCLAIMER.md §5.
-5. **`docs/dictionary-provenance`** — `dictionaries/SOURCES.md` in the shape of
-   `syntaxes/SOURCES.md` (§3.1). Independent of everything else; the one item
-   most likely to become a question mid-review.
+5. **`feat/dictionary-provenance`** — **done.** `dictionaries/SOURCES.md` in the
+   shape of `syntaxes/SOURCES.md` (§3.1), every row confirmed by matching bytes
+   against the upstream it names — plus the licence texts, which were missing
+   altogether and are now wired into the archives, the Linux packages and the
+   installer, since both licences require the notice to accompany a
+   redistribution. `feat/`, not `docs/`: it turned out to be a packaging change
+   as much as a record.
 6. **The site, and the door opened** — the "Code signing policy" and "Privacy"
    pages (§7), and `AllowedIps` emptied so the stack stops answering 403 to
    everyone but you. F2's own precondition, and the one thing on this list that

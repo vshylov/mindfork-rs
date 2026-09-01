@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -44,6 +44,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a place for the user's own dictionaries (done)
 - Post-M9: the release metadata — one product, one name, measured on both artifacts (done)
 - Post-M9: the privacy policy in the wizard, the archive and the third translation (done)
+- Post-M9: the dictionaries get a provenance record — and their licences (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1706,3 +1707,55 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   order. 2744 unit tests green, 129 `#[ignore]` — no Rust changed, and the
   gates that matter here are `wizard_rtf.py --check`, `link_check` and
   `cyrillic_scan`.
+
+### Post-M9: the dictionaries get a provenance record — and their licences (done)
+- **Why**: stage 5 of the code-signing track
+  ([code-signing.md](../research/code-signing.md) §3.1). The vendored grammars
+  next door are exemplary — `syntaxes/SOURCES.md` pins repository, commit,
+  licence and vendored licence text per file — while `dictionaries/` held six
+  files and no record at all. The commit that added them (`40d3b49`, 2026-06-29)
+  said only "added ... dictionaries". For a signer whose condition is "no
+  component that is not open source", that is the question a reviewer asks; for
+  everyone else it is plain redistribution hygiene.
+- **Established by matching bytes, not by memory.** Every claim in the new
+  `dictionaries/SOURCES.md` was confirmed by downloading a candidate and
+  comparing sha256:
+  - `en_US.*` and `en_GB.*` are **byte-identical to `ropensci/hunspell`
+    `inst/dict/`** — which is also what explains the stray comment
+    `# Jeroen: removed numbers from WORDCHARS for R` sitting in `en_US.aff`
+    (Jeroen Ooms maintains that R package);
+  - that repo's own `readme.txt` names the origin — the LibreOffice **English
+    dictionaries extension 2018-11.01** — and the origin confirms it: both
+    `.dic` files are **byte-identical to `LibreOffice/dictionaries` `en/` at
+    `605e1d1`** (2018-10-25), and `en_GB.aff`'s header says *"V 2.66,
+    2018-11-01"*;
+  - `ru_RU.*` are **byte-identical to `wooorm/dictionaries` `dictionaries/ru/`**
+    (`index.aff`/`index.dic`), generated in turn from LibreOffice's.
+- **Both `.aff` files are modified relative to the origin**, and the same way:
+  `WORDCHARS 0123456789’` → `WORDCHARS ’`, plus stripped trailing whitespace on
+  ~1000 lines of `en_GB.aff`. Worth recording rather than glossing: one of the
+  two licences is LGPL, where stating modifications is the point.
+- **Licences, which were missing entirely.** `licenses/en_US.txt` (SCOWL —
+  Kevin Atkinson, with Ispell/WordNet/12dicts notices), `licenses/en_GB.txt`
+  (the LGPL statement and the Bartlett/Kelk/Brown/Pinto attribution) and
+  `licenses/ru_RU.txt` (BSD 3-clause style, Alexander I. Lebedev 1997–2008, plus
+  a 2012 fix by László Németh). The two English ones are the upstream READMEs
+  **at our vintage's commit**, not today's: master's `README_en_GB.txt` has
+  grown a changelog for releases we do not ship.
+- **And they now travel.** The licences were vendored *and* wired into every
+  artifact that carries the dictionaries — `stage_data` in `release.yml`, an
+  `nfpm.yaml` entry, a `[Files]` line in the installer — because both licences
+  require the notice to accompany a redistribution, and until now three archives,
+  three package formats and one installer shipped the words without them.
+  `build.rs` needs no change and gets none: `copy_dir` skips subdirectories, and
+  the loader only ever pairs an `.aff` with a `.dic`, so `licenses/` is invisible
+  to the dev build either way.
+- **One thing deliberately not done**: the `en_GB` licence is stated as "LGPL"
+  with no version, because that is what the 2018 files say — upstream first
+  bundled an explicit LGPL v3 text in its 2019-03-01 release. Moving to a current
+  upstream would fix that *and* change the word list (upstream's `en_GB.dic` has
+  grown from 996 KB to 1.2 MB), so it is a behaviour change and belongs in its
+  own PR. Recorded in SOURCES.md so the next person does not have to re-derive it.
+- Verified: the installer compiles on Inno 7.1.0 with the three licence files
+  compressed into it, both YAML files parse, and the archive staging was
+  dry-run locally. 2745 unit tests green, 129 `#[ignore]` — no Rust changed.
