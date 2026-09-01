@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (56)
+## Entries (57)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -68,6 +68,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the self-model screen reads as two named halves (done)
 - Post-M9: the self-model screen lists its observations newest first (done)
 - Post-M9: one hint grid, and footers that name only the keys that work (done)
+- Post-M9: the privacy policy joins the disclaimer on one "Legal" tab (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -2977,3 +2978,46 @@ footer walked across a section's field kinds plus a `Del` hint that appears when
 a toggle is flipped and goes away with the cursor. A live run is not required
 (AGENTS.md §3) — pure UI; the real render is exercised headlessly through the
 screenshot pipeline, whose dumps and images are regenerated here.
+
+### Post-M9: the privacy policy joins the disclaimer on one "Legal" tab (done)
+<!-- cyrillic-ok:start: the ru tab labels are the measurement -->
+- **The ask, and why it could not be a tab.** With the policy shipping in the
+  installer and the archive (stage 4 of the code-signing track), the app itself
+  was the one place it could not be read. A seventh `F1` tab is not available:
+  `HELP_MIN_WIDTH` is 76, the **`ru` tab strip already measures exactly 76**
+  (`О программе│Клавиши│Команды│Лицензия│Дисклеймер│Компоненты`) and the English
+  one 72, and `the_help_tab_strip_fits_the_dialog_in_every_locale` holds that
+  line — the rightmost tab is the one that would be silently truncated, for one
+  language only. spec §11.7 had already recorded the constraint when the
+  translations landed; this is the first change to run into it.
+- **So: one tab, renamed.** `HelpTab::Disclaimer` → `HelpTab::Legal`,
+  `ui.help.tab.disclaimer` → `ui.help.tab.legal`, "Legal" / «Правовое».
+  Renaming rather than quietly appending, because the point of putting the
+  policy in `F1` is that it can be *found*: a tab called "Disclaimer" holding a
+  privacy policy is a tab nobody opens looking for one. The same rule the
+  installer's wizard page was named by — `mindfork.iss` renamed Inno's stock
+  "Information" page to "Disclaimer" for exactly this reason — applied a second
+  time, now that the tab holds two documents instead of one. **User's decision
+  (2026-09-02)** between "Legal"/«Правовое», "Documents"/«Документы» and keeping
+  the old name; «Правовое» (8 chars) also *frees* two columns on the ru strip.
+<!-- cyrillic-ok:end -->
+- **Two documents, one scroll.** `legal_lines` renders
+  `disclaimer_text(lang)` + `---` + `privacy_text(lang)` through the markdown
+  renderer in a single pass, so the boundary is a rule between two `#` headings
+  rather than a mode to be in or a second scroll position to remember.
+  `credits::PRIVACY_TEXT`/`PRIVACY_TEXT_RU`/`privacy_text` mirror the disclaimer
+  trio exactly, so the language rule ("`ru` gets the translation, everyone else
+  the authoritative English") needed no new semantics.
+- **A test that would have passed while asserting nothing.** The obvious check —
+  render the tab and look for the policy's heading — is a *false* green: the
+  drawn frame is a 60-row viewport and the second document starts ~130 rendered
+  rows down, so the marker is simply not on screen. Caught by writing it that way
+  first and watching it fail. The real test reads `legal_lines` directly and
+  asserts both documents in both languages, and the viewport-based neighbour got
+  a comment saying why it only checks the first.
+- Docs that named the tab followed: spec §11.7 (the tab list, the renderer note,
+  the "not a tail on License" paragraph), README's key table and legal section,
+  `docs/install.md`, and the `mindfork.iss` comment that had justified the ru
+  wizard caption by pointing at the F1 tab's word — now the same rule stated
+  twice rather than one borrowed from the other. 2745 unit tests green,
+  129 `#[ignore]`.

@@ -91,6 +91,10 @@ terms, over which the author has no control. Choose what you share accordingly;
 if that matters to you, run a local model, which is what this project was built
 for in the first place.
 
+Which files hold what, which destinations the software can reach at all, and
+which setting of yours has to be on before it reaches any of them, is set out in
+[PRIVACY.md](PRIVACY.md) — installed beside this file.
+
 ## 6. Limitation of liability
 
 To the maximum extent permitted by applicable law, and in addition to the

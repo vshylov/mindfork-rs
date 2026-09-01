@@ -46,11 +46,19 @@ Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It is a
 64-bit program, like the application it carries, so on a system that cannot run
 mindfork it does not open at all. It installs
 **for the current user without administrator rights** (an "all users" option is
-available). It opens with the **MIT license** (which has to be accepted to
-continue) and the **disclaimer** — the same text as
-[DISCLAIMER.md](../DISCLAIMER.md) and the app's `F1` → "Disclaimer" tab, covering
-what the models may say and do; both are shown in English in either wizard
-language, and both files are installed next to the program. Then come two custom
+available). It opens with three read-only pages, in the wizard's own language —
+Russian gets the unofficial translations from `docs/legal/`, and the English
+originals govern:
+
+- the **MIT license** ([LICENSE](../LICENSE)), which has to be accepted to continue;
+- the **disclaimer** — the same text as [DISCLAIMER.md](../DISCLAIMER.md) and the
+  app's `F1` → "Legal" tab, covering what the models may say and do;
+- the **privacy policy** ([PRIVACY.md](../PRIVACY.md)): what the program keeps on
+  your machine, what leaves it and which setting has to be on first — the same
+  text the app shows under the disclaimer on that `F1` tab. It grants nothing and
+  asks for nothing, so `Next` simply continues.
+
+All of those files are installed next to the program. Then come two custom
 steps: **application language**
 (Russian/English) and **data location** — the standard OS folder
 (`%APPDATA%\mindfork-rs\data`, recommended), portable (next to the app), or a custom

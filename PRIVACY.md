@@ -32,7 +32,7 @@ responsible for what you send them, on the terms you accepted with them; the
 author is not a party to that relationship and has no visibility into it.
 
 For the website and the GitHub repository the author does make the choices —
-see §8 and §9, where both are deliberately kept as thin as they can be.
+see §9 and §10, where both are deliberately kept as thin as they can be.
 
 ## 2. What stays on your machine
 
@@ -202,17 +202,31 @@ text passes through whatever is between you and the host.
 
 ## 4. What is off until you turn it on
 
-| Off by default | On by default |
-|---|---|
-| **The web tools** — search, page fetching, YouTube (§3.3) | Fetching the content of search results, once the web tools are on |
-| Python execution (`tools.python_enabled`) | Preferring a keyed search provider, once you have said where its key lives |
-| The file tools (`tools.fs_enabled`) — and their jail, `fs_root`, is **empty** until you set it, so enabling them without a root leaves them unrestricted | Naming a new chat automatically (one extra model request) |
-| MCP plugins — master switch and per-profile, both | Sandbox network access, once Python is enabled |
-| Cross-chat search for the assistant (`chat_search`, `chat_read`) | Cloud as the *default* speech provider (nothing is spoken until `/tts`) |
-| The self-model tools — and with them the injection of the self-model into the system prompt | The remaining ordinary tools (notes, RAG, time, and so on — local) |
-| Reflection and the consolidation passes | |
-| Reaching private/loopback addresses from the web tools | |
-| **The confirmation prompt before a dangerous tool call** (`tools.confirm_dangerous`) — opt-in, so tools that are enabled run without asking | |
+**Off until you say otherwise:**
+
+- the **web tools** — search, page fetching, YouTube (§3.3);
+- **Python execution** (`tools.python_enabled`);
+- the **file tools** (`tools.fs_enabled`) — and their jail, `fs_root`, is empty
+  until you set it, so enabling them without a root leaves them unrestricted;
+- **MCP plugins** — the master switch and the per-profile one, both;
+- **cross-chat search** for the assistant (`chat_search`, `chat_read`);
+- the **self-model tools** — and with them the injection of the self-model into
+  the system prompt;
+- **reflection** and the consolidation passes;
+- reaching **private or loopback addresses** from the web tools;
+- the **confirmation prompt** before a dangerous tool call
+  (`tools.confirm_dangerous`) — it is opt-in, so tools you have enabled run
+  without asking.
+
+**On unless you turn them off:**
+
+- fetching the **content of search results**, once the web tools are on;
+- preferring a **keyed search provider**, once you have said where its key lives;
+- **naming a new chat** automatically, which is one extra model request;
+- **network access inside the Python sandbox**, once Python is enabled;
+- the cloud as the **default speech provider** — though nothing is spoken until
+  you invoke `/tts`;
+- the ordinary local tools: notes, the knowledge base, the time, and so on.
 
 ## 5. What the author receives
 
@@ -245,8 +259,9 @@ keys, MCP tokens, a search API key, the backup password — are stored inside
 Linux a key derived from the host's machine id and your user name, with
 ChaCha20-Poly1305. A settings file copied to another computer therefore carries
 no usable secret. The design and, importantly, its limits are in
-[ADR 0008](docs/decisions/0008-api-key-storage.md): this protects a copied file,
-not code running as you on your own machine. As an alternative you can store the
+[ADR 0008](docs/decisions/0008-api-key-storage.md): it defends against a
+settings file carried off to another machine, not against code running as you on
+your own. As an alternative you can store the
 *name* of an environment variable instead of a key, in which case the app never
 holds the value at all. Keys are sent only to the service they belong to.
 

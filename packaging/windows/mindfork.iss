@@ -38,11 +38,14 @@ AppPublisher=Vladimir Shylov
 AppPublisherURL=https://mindfork.io
 AppSupportURL=https://github.com/vshylov/mindfork-rs/issues
 AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
-; The two legal pages, in the order the wizard shows them:
+; The legal pages, in the order the wizard shows them:
 ;  * the MIT text on Inno's own license page (accept/decline gates Next);
 ;  * the disclaimer on the "info before install" page: read-only, Next continues.
 ;    It is a supplement to the license, not a second contract, so it gets one
-;    acceptance rather than two.
+;    acceptance rather than two;
+;  * the privacy policy, read-only as well. Inno has only one InfoBeforeFile, so
+;    that page is built in [Code] (PrivacyPage) rather than declared here, and
+;    picks its language there instead of in [Languages].
 ; WHICH text each page shows is a per-language choice, so it lives in [Languages]
 ; below, on the same line as that language's message file — one place to look,
 ; rather than a default here and an override there. What the entries point at:
@@ -57,7 +60,7 @@ AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
 ;    (docs/history/legal-ru-translations.md). Generated for the markdown, and for the
 ;    encoding: an RTF of \uNNNN? escapes is pure ASCII, where a Cyrillic .txt
 ;    would leave the compiler guessing.
-; All three .rtf files come from tools/wizard_rtf.py, kept in step with their
+; All five .rtf files come from tools/wizard_rtf.py, kept in step with their
 ; sources by `--check` in CI's lint job. Never edit one by hand: the installer
 ; would then present a different text than the repository, the release archives
 ; and the app's F1 tabs.
@@ -125,9 +128,12 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"; \
 ; whose closing line says not to use the software if you disagree with it. Naming the
 ; page after what it holds is also what makes the license → disclaimer pair legible as
 ; two steps rather than one page plus a stray readme. The ru caption is the borrowed
-; "дисклеймер" (cyrillic-ok: the ru caption itself), the same word the app's F1
-; tab settled on (locales/ru.json, ui.help.tab.disclaimer): the native alternative
-; mostly means a slip of the tongue. The text on the page is Russian too now
+; "дисклеймер" (cyrillic-ok: the ru caption itself): the native alternative mostly
+; means a slip of the tongue. The app's F1 tab used to carry the same word and is now
+; the "Legal" tab (ui.help.tab.legal) — not a divergence but the same rule applied twice:
+; this page holds one document and is named after it, that tab holds two (the
+; disclaimer and the privacy policy) and is named after what they have in common.
+; The text on the page is Russian too now
 ; (see [Languages]); before this, only the caption ever was.
 ; InfoBeforeClickLabel ("When you are ready to continue with Setup, click Next") is
 ; left at Inno's default — it says the right thing already.
@@ -138,6 +144,18 @@ en.InfoBeforeLabel=Please read the disclaimer below before continuing. It supple
 ru.InfoBeforeLabel=Пожалуйста, прочитайте дисклеймер перед продолжением. Он дополняет принятую вами лицензию и не изменяет её.
 
 [CustomMessages]
+; The "Privacy policy" page — read-only, straight after the disclaimer, so the
+; three legal texts stand together at the start of the wizard. The policy grants
+; nothing and asks for nothing, so it gets no acceptance of its own: Next
+; continues, exactly like the disclaimer page (docs/research/code-signing.md
+; §8.1). The prompt names the installed copy rather than the website, because at
+; this point the user has no browser open and will have the file.
+en.PrivacyCaption=Privacy policy
+ru.PrivacyCaption=Политика конфиденциальности
+en.PrivacySub=What mindfork stores, and what it sends where.
+ru.PrivacySub=Что mindfork хранит и что куда отправляет.
+en.PrivacyPrompt=The program has no telemetry and sends nothing to its author. The full text below is installed as PRIVACY.md next to the program. When you are ready to continue, click Next.
+ru.PrivacyPrompt=Программа не собирает телеметрию и ничего не отправляет автору. Полный текст ниже устанавливается рядом с программой как PRIVACY.md. Когда будете готовы продолжить, нажмите «Далее».
 ; The "Application language" page.
 en.AppLangCaption=Application language
 ru.AppLangCaption=Язык приложения
@@ -174,6 +192,14 @@ en.SandboxStatus=Installing the Python sandbox (this may take several minutes)..
 ru.SandboxStatus=Установка Python-песочницы (может занять несколько минут)…
 
 [Files]
+; The privacy policy as the wizard shows it, in both languages. `dontcopy` keeps
+; them out of the install (the readable PRIVACY.md below is what lands on disk);
+; the [Code] section pulls the right one out with ExtractTemporaryFile.
+; **They come first on purpose**: with SolidCompression, extracting a file means
+; decompressing everything listed before it, so a temporary file near the bottom
+; would stall the wizard behind the whole payload.
+Source: "{#SourcePath}privacy.rtf"; Flags: dontcopy
+Source: "{#SourcePath}privacy-ru.rtf"; Flags: dontcopy
 ; AfterInstall (not CurStepChanged(ssPostInstall), where this used to live): [Run]
 ; entries are processed BEFORE ssPostInstall — measured, not assumed — and the
 ; optional `sandbox setup` run needs defaults.json to already be there, or it would
@@ -194,6 +220,10 @@ Source: "{#SourcePath}..\..\DISCLAIMER.md"; DestDir: "{app}"; Flags: ignoreversi
 ; originals: whoever read the ru pages in this wizard can find that text again.
 Source: "{#SourcePath}..\..\docs\legal\LICENSE.ru.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\legal\DISCLAIMER.ru.md"; DestDir: "{app}"; Flags: ignoreversion
+; The privacy policy the wizard just showed, so it can be re-read offline — and
+; its translation, on the same footing as the pair above.
+Source: "{#SourcePath}..\..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\..\docs\legal\PRIVACY.ru.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
@@ -237,6 +267,7 @@ Type: files; Name: "{app}\defaults.json"
 
 [Code]
 var
+  PrivacyPage: TOutputMsgMemoWizardPage;
   LangPage: TInputOptionWizardPage;
   DataPage: TInputOptionWizardPage;
   DirPage: TInputDirWizardPage;
@@ -245,8 +276,37 @@ var
     without silently inverting the language written into defaults.json. }
   EnLangIndex, RuLangIndex: Integer;
 
+{ The privacy policy as RTF, in the language the wizard is running in — the same
+  per-language choice [Languages] makes for the license and the disclaimer, made
+  here because a page built in [Code] gets no such entry. The files are pure
+  ASCII by construction (tools/wizard_rtf.py escapes everything above it), which
+  is why an AnsiString carries them unharmed. }
+function PrivacyRtf: AnsiString;
+var
+  RtfFile: String;
+  Rtf: AnsiString;
+begin
+  if ActiveLanguage = 'ru' then
+    RtfFile := 'privacy-ru.rtf'
+  else
+    RtfFile := 'privacy.rtf';
+  ExtractTemporaryFile(RtfFile);
+  { AddBackslash rather than a literal separator, as on the data-location page. }
+  if LoadStringFromFile(AddBackslash(ExpandConstant('{tmp}')) + RtfFile, Rtf) then
+    Result := Rtf
+  else
+    Result := '';
+end;
+
 procedure InitializeWizard;
 begin
+  { The privacy policy page: read-only, straight after the disclaimer, and shown
+    on every run — a legal notice, not a setting, so unlike the two pages below
+    it is never skipped on an upgrade. }
+  PrivacyPage := CreateOutputMsgMemoPage(wpInfoBefore,
+    CustomMessage('PrivacyCaption'), CustomMessage('PrivacySub'),
+    CustomMessage('PrivacyPrompt'), PrivacyRtf);
+
   { The application-language picker page (radio buttons). }
   LangPage := CreateInputOptionPage(wpSelectDir,
     CustomMessage('AppLangCaption'), CustomMessage('AppLangSub'),

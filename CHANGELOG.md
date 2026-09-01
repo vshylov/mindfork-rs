@@ -16,6 +16,20 @@ split by subsystem.
 
 ### Added
 
+- **The privacy policy is readable in the app.** `F1` → the tab that used to be
+  "Disclaimer" is now **"Legal"** and carries both documents — the disclaimer
+  first, then the policy, in the interface language. One tab rather than two
+  because the tab strip has no room for a seventh, and renamed because a tab
+  called "Disclaimer" holding a privacy policy is a tab nobody looks in for one.
+
+- **A privacy policy, and the installer shows it.** `PRIVACY.md` says what the
+  program keeps on your machine, what leaves it and which setting of yours has
+  to be on first, and what reaches the author — which is nothing. The Windows
+  installer now has a page for it, after the disclaimer, in the language the
+  wizard is running in; the file is installed next to the program and ships in
+  the release archives, with a Russian translation beside the two the project
+  already had.
+
 - **A place of your own for spellcheck dictionaries.** In an installed (not
   portable) build the dictionaries that come with mindfork live next to the
   program, in a folder you are not meant to write to — so the data folder now

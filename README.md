@@ -366,7 +366,7 @@ screen you were on, marked *you are here*. The highlights:
 | `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol, KDE Konsole among them; the input box's footer names the one your terminal can deliver) |
 | `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results or the conversation you came from (the status bar says which) |
 | `Ctrl+Q` / `F10` | quit (or type `/exit` — see the commands below, for terminals that keep both keys for themselves) |
-| `F1` | help and about (tabs: hotkeys, commands, license, disclaimer, components) |
+| `F1` | help and about (tabs: hotkeys, commands, license, legal, components) |
 | `Ctrl+P` | settings |
 | `F3` | the self-model screen — what the assistant currently thinks about itself, and about you |
 | `Ctrl+N` | new chat (with a profile picker) |
@@ -598,17 +598,20 @@ exactly as readily as an aligned one. What that means for warranty and
 liability, for the tools a model can invoke on your machine, and for what
 leaves it when you use a cloud provider, is spelled out in
 **[DISCLAIMER.md](DISCLAIMER.md)** — also readable in the app on the `F1` →
-"Disclaimer" tab. It supplements the license and takes nothing away from it.
+"Legal" tab. It supplements the license and takes nothing away from it.
 
 Neither text is a privacy policy, and there is one:
 **[PRIVACY.md](PRIVACY.md)** — what stays on your machine and where, what leaves
 it and only on which setting of yours, and what reaches the author of this
-software, which is nothing.
+software, which is nothing. It shares the `F1` → "Legal" tab with the
+disclaimer, and the Windows installer shows it during setup.
 
-Both texts have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt)
-and [docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) — shown on those `F1` tabs
-and on the installer's wizard pages when the interface language is Russian. They are
-unofficial, for convenience: the English originals are the texts that have legal force.
+All three have a Russian translation — [docs/legal/LICENSE.ru.txt](docs/legal/LICENSE.ru.txt),
+[docs/legal/DISCLAIMER.ru.md](docs/legal/DISCLAIMER.ru.md) and
+[docs/legal/PRIVACY.ru.md](docs/legal/PRIVACY.ru.md) — shown on the installer's wizard
+pages when the interface language is Russian, and on the `F1` tabs.
+They are unofficial, for convenience: the English originals are the texts that have legal
+force.
 
 ## Project status
 
